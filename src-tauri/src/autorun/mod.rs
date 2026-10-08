@@ -236,6 +236,11 @@ pub struct StepRecord {
     /// Left out when there was none, so older run files read the same.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dialog: Option<StepDialog>,
+    /// Each component the step used, in order, with the version it had
+    /// when the step ran. Left out when there was none, so older run files
+    /// read the same.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<components::ComponentUse>,
 }
 
 /// A browser dialog a step met: its kind (`alert`, `confirm`, `prompt`,

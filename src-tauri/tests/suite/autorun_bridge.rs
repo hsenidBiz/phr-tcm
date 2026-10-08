@@ -1766,6 +1766,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
                 downloads: vec![],
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             }],
             proposed: String::new(),
             reason: String::new(),
@@ -2157,7 +2158,7 @@ async fn a_quirk_on_its_own_names_failed_steps_and_never_overrides_a_person() {
         "case_id": 7, "title": "case 7", "verdict": "", "note": "", "steps": [], "proposed": "Failed"
     }))
     .unwrap();
-    case.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![], tab: None, dialog: None });
+    case.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() });
     case.steps.push(StepRecord {
         step_number: 2,
         outcomes: vec![ActionOutcome::failed("waited 5000ms: button \"Save\" not found")],
@@ -2165,6 +2166,7 @@ async fn a_quirk_on_its_own_names_failed_steps_and_never_overrides_a_person() {
         downloads: vec![],
         tab: None,
         dialog: None,
+        components: Vec::new(),
     });
     run.cases.push(case);
     save_run(dir.path(), &run).unwrap();

@@ -194,3 +194,123 @@ fn users_of_lists_the_scripts_that_use_it() {
     let none = users_of(dir.path(), "never used");
     assert!(none.cases.is_empty());
 }
+
+// ---- expansion ----
+
+use v2_lib::autorun::components::expand;
+
+fn made(name: &str, inputs: serde_json::Value, actions: serde_json::Value) -> Component {
+    serde_json::from_value(json!({ "name": name, "description": "d", "inputs": inputs, "actions": actions, "version": 1 }))
+        .expect("a component")
+}
+
+fn given(v: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+    v.as_object().cloned().expect("an object")
+}
+
+fn actions(v: serde_json::Value) -> Vec<Action> {
+    serde_json::from_value(v).expect("actions")
+}
+
+#[test]
+fn text_inputs_fill_values() {
+    let c = made(
+        "Pick a date",
+        json!([{ "name": "day", "kind": "text", "description": "" }]),
+        json!([
+            { "kind": "fill", "selector": { "role": "textbox", "name": "Day" }, "value": "{{day}}" },
+            { "kind": "check_text", "value": "picked {{day}} and {{day}}, not {{other}}" },
+            { "kind": "click", "selector": { "role": "gridcell", "name": "{{day}}" } }
+        ]),
+    );
+    let out = expand(&c, &given(json!({ "day": "5" }))).unwrap();
+    assert_eq!(
+        out,
+        actions(json!([
+            { "kind": "fill", "selector": { "role": "textbox", "name": "Day" }, "value": "5" },
+            { "kind": "check_text", "value": "picked 5 and 5, not {{other}}" },
+            { "kind": "click", "selector": { "role": "gridcell", "name": "5" } }
+        ]))
+    );
+    // A value that itself reads like a placeholder is typed as it is.
+    let out = expand(&c, &given(json!({ "day": "{{day}}" }))).unwrap();
+    assert_eq!(out[0], actions(json!([{ "kind": "fill", "selector": { "role": "textbox", "name": "Day" }, "value": "{{day}}" }]))[0]);
+}
+
+#[test]
+fn a_target_input_replaces_its_placeholder() {
+    let c = made(
+        "Open a menu",
+        json!([{ "name": "field", "kind": "target", "description": "" }]),
+        json!([
+            { "kind": "click", "selector": { "input": "field" } },
+            { "kind": "when_visible", "selector": { "role": "menu" }, "then": [
+                { "kind": "click", "selector": { "input": "field" } }
+            ] }
+        ]),
+    );
+    let out = expand(&c, &given(json!({ "field": { "role": "textbox", "name": "Leave start" } }))).unwrap();
+    assert_eq!(
+        out,
+        actions(json!([
+            { "kind": "click", "selector": { "role": "textbox", "name": "Leave start" } },
+            { "kind": "when_visible", "selector": { "role": "menu" }, "then": [
+                { "kind": "click", "selector": { "role": "textbox", "name": "Leave start" } }
+            ] }
+        ]))
+    );
+    // A chain given for a lone placeholder becomes the whole chain.
+    let out = expand(&c, &given(json!({ "field": [{ "role": "dialog" }, { "role": "button", "name": "Go" }] }))).unwrap();
+    assert_eq!(out[0], actions(json!([{ "kind": "click", "selector": [{ "role": "dialog" }, { "role": "button", "name": "Go" }] }]))[0]);
+    // A caller's locator is never searched for text placeholders.
+    let t = made(
+        "Type",
+        json!([{ "name": "field", "kind": "target", "description": "" }, { "name": "v", "kind": "text", "description": "" }]),
+        json!([{ "kind": "fill", "selector": { "input": "field" }, "value": "{{v}}" }]),
+    );
+    let out = expand(&t, &given(json!({ "field": { "text": "{{v}}" }, "v": "x" }))).unwrap();
+    assert_eq!(out, actions(json!([{ "kind": "fill", "selector": { "text": "{{v}}" }, "value": "x" }])));
+}
+
+#[test]
+fn a_target_input_inside_a_chain_expands_in_place() {
+    let c = made(
+        "Edit a row",
+        json!([{ "name": "row", "kind": "target", "description": "" }]),
+        json!([{ "kind": "click", "selector": [{ "css": "#grid" }, { "input": "row" }, { "role": "button", "name": "Edit" }] }]),
+    );
+    let one = expand(&c, &given(json!({ "row": { "role": "row", "name": "Annual" } }))).unwrap();
+    assert_eq!(
+        one,
+        actions(json!([{ "kind": "click", "selector": [
+            { "css": "#grid" }, { "role": "row", "name": "Annual" }, { "role": "button", "name": "Edit" }
+        ] }]))
+    );
+    let chain = expand(&c, &given(json!({ "row": [{ "role": "rowgroup" }, { "role": "row", "name": "Annual" }] }))).unwrap();
+    assert_eq!(
+        chain,
+        actions(json!([{ "kind": "click", "selector": [
+            { "css": "#grid" }, { "role": "rowgroup" }, { "role": "row", "name": "Annual" }, { "role": "button", "name": "Edit" }
+        ] }]))
+    );
+    for wrong in [json!("#row"), json!(5), json!({ "input": "row" }), json!([])] {
+        let err = expand(&c, &given(json!({ "row": wrong }))).unwrap_err();
+        assert_eq!(err, "Edit a row needs row to be a locator", "{wrong}");
+    }
+}
+
+#[test]
+fn a_missing_input_is_named() {
+    let c = made(
+        "Pick a date",
+        json!([{ "name": "field", "kind": "target", "description": "" }, { "name": "day", "kind": "text", "description": "" }]),
+        json!([{ "kind": "fill", "selector": { "input": "field" }, "value": "{{day}}" }]),
+    );
+    assert_eq!(expand(&c, &given(json!({ "field": { "css": "#d" } }))).unwrap_err(), "Pick a date needs day");
+    assert_eq!(expand(&c, &given(json!({ "field": { "css": "#d" }, "day": null }))).unwrap_err(), "Pick a date needs day");
+    assert_eq!(expand(&c, &given(json!({ "day": "5" }))).unwrap_err(), "Pick a date needs field");
+    assert_eq!(
+        expand(&c, &given(json!({ "field": { "css": "#d" }, "day": { "css": "#x" } }))).unwrap_err(),
+        "Pick a date needs day to be text"
+    );
+}

@@ -146,6 +146,7 @@ fn not_run(step: &StepScript, why: &str) -> StepRecord {
         downloads: Vec::new(),
         tab: None,
         dialog: None,
+        components: Vec::new(),
     }
 }
 
@@ -380,7 +381,7 @@ async fn run_case_in<D: Driver>(
             };
             let ok = out.last().is_some_and(|o| o.ok);
             signed_in = Some(ok);
-            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new(), tab: None, dialog: None });
+            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new(), tab: None, dialog: None, components: Vec::new() });
         }
         skip = (signed_in == Some(false)).then_some(AFTER_FAILED_SIGN_IN);
     }
@@ -407,6 +408,7 @@ async fn run_case_in<D: Driver>(
                 downloads: Vec::new(),
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             });
         }
     }
@@ -489,7 +491,7 @@ async fn run_case_in<D: Driver>(
         } else if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
         }
-        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new(), tab: in_run.tab, dialog: in_run.dialog });
+        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new(), tab: in_run.tab, dialog: in_run.dialog, components: in_run.components });
         page_errors_seen += in_run.page_errors_seen;
     }
 

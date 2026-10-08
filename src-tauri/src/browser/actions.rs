@@ -789,14 +789,19 @@ pub struct ActionOutcome {
     #[serde(skip)]
     #[specta(skip)]
     pub harness: bool,
+    /// The component this action came from, when a `use_component` was
+    /// expanded into it. Left out otherwise, so older run files read the
+    /// same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
 }
 
 impl ActionOutcome {
     pub fn passed(detail: impl Into<String>) -> Self {
-        ActionOutcome { ok: true, detail: detail.into(), screenshot: None, harness: false }
+        ActionOutcome { ok: true, detail: detail.into(), screenshot: None, harness: false, component: None }
     }
     pub fn failed(detail: impl Into<String>) -> Self {
-        ActionOutcome { ok: false, detail: detail.into(), screenshot: None, harness: false }
+        ActionOutcome { ok: false, detail: detail.into(), screenshot: None, harness: false, component: None }
     }
 }
 
@@ -1185,6 +1190,50 @@ impl Action {
             | Action::ExpectFocused { selector, .. } => vec![selector],
             Action::WhenVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter().flat_map(Action::targets)).collect()
+            }
+            Action::Drag { from, to, .. } => vec![from, to],
+            Action::ExpectRow { table, .. }
+            | Action::ExpectNoRow { table, .. }
+            | Action::ExpectSorted { table, .. }
+            | Action::ExpectRowCount { table, .. } => vec![table],
+            Action::Navigate { .. }
+            | Action::UseComponent { .. }
+            | Action::CheckText { .. }
+            | Action::CheckUrl { .. }
+            | Action::SignIn { .. }
+            | Action::ExpectResponse { .. }
+            | Action::ApiRequest { .. }
+            | Action::Reload
+            | Action::ExpireSession
+            | Action::ReturnToArea { .. }
+            | Action::PressKey { .. }
+            | Action::ExpectDownload { .. }
+            | Action::ExpectTab { .. }
+            | Action::OpenTab { .. }
+            | Action::SwitchTab { .. }
+            | Action::CloseTab { .. }
+            | Action::ExpectTabClosed { .. }
+            | Action::ExpectDialog { .. } => Vec::new(),
+        }
+    }
+
+    /// `targets`, to change in place: every target this action points at,
+    /// in the same order.
+    pub fn targets_mut(&mut self) -> Vec<&mut Target> {
+        match self {
+            Action::Click { selector }
+            | Action::Fill { selector, .. }
+            | Action::WaitFor { selector, .. }
+            | Action::ExpectVisible { selector, .. }
+            | Action::ExpectHidden { selector, .. }
+            | Action::ExpectText { selector, .. }
+            | Action::ExpectContainsText { selector, .. }
+            | Action::ExpectCount { selector, .. }
+            | Action::ExpectAttribute { selector, .. }
+            | Action::Upload { selector, .. }
+            | Action::ExpectFocused { selector, .. } => vec![selector],
+            Action::WhenVisible { selector, then, .. } => {
+                std::iter::once(selector).chain(then.iter_mut().flat_map(Action::targets_mut)).collect()
             }
             Action::Drag { from, to, .. } => vec![from, to],
             Action::ExpectRow { table, .. }

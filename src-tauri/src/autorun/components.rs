@@ -6,7 +6,10 @@
 
 use super::recipe::project_slug;
 use crate::browser::actions::Action;
+use crate::browser::locator::{has_input_placeholder, LocatorStep, Target};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -186,4 +189,183 @@ pub fn users_of(root: &Path, name: &str) -> Users {
         .collect();
     cases.sort_unstable();
     Users { cases }
+}
+
+/// One `use_component` a step ran: the component's saved name and the
+/// version it had then, kept on the step's record.
+#[derive(Serialize, Deserialize, specta::Type, Clone, Debug, PartialEq, Eq)]
+pub struct ComponentUse {
+    pub name: String,
+    pub version: u32,
+}
+
+/// Said when a script names a component this project does not have.
+pub fn not_saved(name: &str) -> String {
+    format!("{} is not saved in this project", name.trim())
+}
+
+fn needs(c: &Component, input: &str) -> String {
+    format!("{} needs {input}", c.name)
+}
+
+/// The caller's value for a target input, as the links it stands for: a
+/// locator object or a list of them, never a legacy string and never a
+/// placeholder itself.
+fn target_links(c: &Component, name: &str, v: &Value) -> Result<Vec<LocatorStep>, String> {
+    let wrong = || format!("{} to be a locator", needs(c, name));
+    if !(v.is_object() || v.is_array()) {
+        return Err(wrong());
+    }
+    let t: Target = serde_json::from_value(v.clone()).map_err(|_| wrong())?;
+    if t.validate().is_err() || has_input_placeholder(&t) {
+        return Err(wrong());
+    }
+    Ok(t.links())
+}
+
+/// `{{name}}` in `s` replaced by the text input of that name, in one pass:
+/// a value that itself reads like a placeholder is put in as it is, and a
+/// name that is not a text input is left alone.
+fn fill_text(s: &str, text: &BTreeMap<&str, String>) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = rest.find("{{") {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 2..];
+        match after.find("}}").and_then(|end| text.get(after[..end].trim()).map(|v| (end, v))) {
+            Some((end, v)) => {
+                out.push_str(v);
+                rest = &after[end + 2..];
+            }
+            None => {
+                out.push_str("{{");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn fill_text_in(v: &mut Value, text: &BTreeMap<&str, String>) {
+    match v {
+        Value::String(s) => *s = fill_text(s, text),
+        Value::Array(items) => items.iter_mut().for_each(|x| fill_text_in(x, text)),
+        Value::Object(map) => map.values_mut().for_each(|x| fill_text_in(x, text)),
+        _ => {}
+    }
+}
+
+/// `t` with each placeholder link replaced by its target input's links,
+/// spliced in place: one link stays a single locator, more make a chain.
+fn put_targets(t: &mut Target, links: &BTreeMap<&str, Vec<LocatorStep>>, c: &Component) -> Result<(), String> {
+    if !has_input_placeholder(t) {
+        return Ok(());
+    }
+    let mut out: Vec<LocatorStep> = Vec::new();
+    for step in t.links() {
+        match step.input.as_deref().map(str::trim) {
+            None => out.push(step),
+            Some(name) => out.extend(links.get(name).ok_or_else(|| needs(c, name))?.iter().cloned()),
+        }
+    }
+    *t = if out.len() == 1 { Target::One(out.remove(0)) } else { Target::Chain(out) };
+    Ok(())
+}
+
+/// The component's actions with `inputs` put in: each text input where its
+/// `{{name}}` is written in a value, then each target input in place of the
+/// locator link that names it. Every declared input must be given. The
+/// caller's locators go in last, so nothing in them is read as a
+/// placeholder.
+pub fn expand(c: &Component, inputs: &serde_json::Map<String, Value>) -> Result<Vec<Action>, String> {
+    let mut text: BTreeMap<&str, String> = BTreeMap::new();
+    let mut links: BTreeMap<&str, Vec<LocatorStep>> = BTreeMap::new();
+    for input in &c.inputs {
+        let name = input.name.trim();
+        let v = inputs.get(name).filter(|v| !v.is_null()).ok_or_else(|| needs(c, name))?;
+        match input.kind {
+            InputKind::Text => {
+                let s = match v {
+                    Value::String(s) => s.clone(),
+                    Value::Number(n) => n.to_string(),
+                    Value::Bool(b) => b.to_string(),
+                    _ => return Err(format!("{} to be text", needs(c, name))),
+                };
+                text.insert(name, s);
+            }
+            InputKind::Target => {
+                links.insert(name, target_links(c, name, v)?);
+            }
+        }
+    }
+    let unreadable = |e: serde_json::Error| format!("{} could not be read: {e}", c.name);
+    let mut out = Vec::with_capacity(c.actions.len());
+    for action in &c.actions {
+        let mut a = action.clone();
+        if !text.is_empty() {
+            let mut v = serde_json::to_value(&a).map_err(unreadable)?;
+            fill_text_in(&mut v, &text);
+            a = serde_json::from_value(v).map_err(unreadable)?;
+        }
+        for t in a.targets_mut() {
+            put_targets(t, &links, c)?;
+        }
+        out.push(a);
+    }
+    Ok(out)
+}
+
+fn uses_any(actions: &[Action]) -> bool {
+    actions.iter().flat_map(|a| a.each()).any(|a| matches!(a, Action::UseComponent { .. }))
+}
+
+/// One action of a step with every `use_component` in it expanded, a
+/// `when_visible`'s guarded ones included (the `when_visible` stays one
+/// action, so it is not tagged).
+fn expand_one(
+    file: &ComponentFile,
+    action: &Action,
+    uses: &mut Vec<ComponentUse>,
+) -> Result<Vec<(Action, Option<String>)>, String> {
+    match action {
+        Action::UseComponent { component, inputs } => {
+            let c = find(file, component).ok_or_else(|| not_saved(component))?;
+            let actions = expand(c, inputs)?;
+            uses.push(ComponentUse { name: c.name.clone(), version: c.version });
+            Ok(actions.into_iter().map(|a| (a, Some(c.name.clone()))).collect())
+        }
+        Action::WhenVisible { selector, within_ms, then } if uses_any(then) => {
+            let mut inner = Vec::with_capacity(then.len());
+            for a in then {
+                inner.extend(expand_one(file, a, uses)?.into_iter().map(|(a, _)| a));
+            }
+            Ok(vec![(Action::WhenVisible { selector: selector.clone(), within_ms: *within_ms, then: inner }, None)])
+        }
+        other => Ok(vec![(other.clone(), None)]),
+    }
+}
+
+/// A step's actions as they run: each `use_component` replaced by its
+/// component's actions with the inputs put in, each tagged with the
+/// component's name, and every use in order with the version it had. The
+/// components file is read only when the step uses one, so a step without
+/// any never depends on it.
+#[allow(clippy::type_complexity)]
+pub fn expand_step(
+    root: &Path,
+    org: &str,
+    project: &str,
+    actions: &[Action],
+) -> Result<(Vec<(Action, Option<String>)>, Vec<ComponentUse>), String> {
+    if !uses_any(actions) {
+        return Ok((actions.iter().cloned().map(|a| (a, None)).collect(), Vec::new()));
+    }
+    let file = load_components(root, org, project)?;
+    let mut uses = Vec::new();
+    let mut out = Vec::with_capacity(actions.len());
+    for a in actions {
+        out.extend(expand_one(&file, a, &mut uses)?);
+    }
+    Ok((out, uses))
 }

@@ -89,6 +89,7 @@ fn stop_reason_is_some_when_the_sign_in_step_failed() {
             downloads: vec![],
             tab: None,
             dialog: None,
+            components: Vec::new(),
         }],
         verdict: "Blocked".to_string(),
         ..empty_case()
@@ -179,11 +180,13 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                             detail: "button \"Save\" not found".to_string(),
                             screenshot: Some("shot-1-000002.jpg".to_string()),
                             harness: false,
+                            component: None,
                         }],
                         screenshot: None,
                         downloads: vec![],
                         tab: None,
                         dialog: None,
+                        components: Vec::new(),
                     },
                     StepRecord {
                         step_number: 3,
@@ -192,6 +195,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                         downloads: vec![],
                         tab: None,
                         dialog: None,
+                        components: Vec::new(),
                     },
                 ],
                 proposed: "Failed".to_string(),
@@ -214,11 +218,13 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                         detail: "the page refused: no such element".to_string(),
                         screenshot: None,
                         harness: false,
+                        component: None,
                     }],
                     screenshot: None,
                     downloads: vec![],
                     tab: None,
                     dialog: None,
+                    components: Vec::new(),
                 }],
                 proposed: "Failed".to_string(),
                 reason: "step 1: the page refused: no such element".to_string(),
@@ -326,6 +332,7 @@ fn describe_failures_shows_the_stop_line_only_when_stop_reason_is_some() {
                 downloads: vec![],
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             }],
             ..empty_case()
         }],
@@ -355,6 +362,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
                 downloads: vec![],
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             }],
             ..empty_case()
         }],
@@ -434,6 +442,7 @@ fn describe_failures_prints_not_run_outcomes_in_a_mixed_step() {
                 downloads: vec![],
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             }],
             ..empty_case()
         }],
@@ -466,6 +475,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
                 downloads: vec![],
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             }],
             ..empty_case()
         }],
@@ -535,7 +545,7 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
     let case = CaseRecord {
         proposed: "Blocked".to_string(),
         reason: unreached.to_string(),
-        steps: vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None, downloads: vec![], tab: None, dialog: None }],
+        steps: vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }],
         ..empty_case()
     };
     let expected = Some(
@@ -586,6 +596,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
             downloads: vec![],
             tab: None,
             dialog: None,
+            components: Vec::new(),
         }],
         ..empty_case()
     };
@@ -644,6 +655,7 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
                     downloads: vec!["Template.xlsx".to_string()],
                     tab: None,
                     dialog: None,
+                    components: Vec::new(),
                 },
                 StepRecord {
                     step_number: 2,
@@ -652,6 +664,7 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
                     downloads: vec!["errors.csv".to_string(), "errors (2).csv".to_string()],
                     tab: None,
                     dialog: None,
+                    components: Vec::new(),
                 },
                 StepRecord {
                     step_number: 3,
@@ -660,6 +673,7 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
                     downloads: vec![],
                     tab: None,
                     dialog: None,
+                    components: Vec::new(),
                 },
             ],
             ..empty_case()

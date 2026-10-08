@@ -11,6 +11,7 @@ use super::nav::{self, Route};
 use super::api_checks;
 use super::recipe::{self, SignInRecipe};
 use super::signin::{self, SignInOutcome};
+use super::components::{self, ComponentUse};
 use super::{store, PageErrors, StepDialog, StepScript};
 use crate::browser::dialogs;
 use crate::browser::actions::{
@@ -258,6 +259,9 @@ pub struct InRun<'a> {
     pub ignore_page_errors: Vec<String>,
     /// Learned back: how many page errors a `flag` counted in the step.
     pub page_errors_seen: u32,
+    /// Learned back: each component the step used, in order, with the
+    /// version it had, for its record.
+    pub components: Vec<ComponentUse>,
 }
 
 /// The longest an `expect_download` waits in a watched run or a try, which
@@ -270,8 +274,18 @@ pub const WATCHED_DOWNLOAD_WAIT_MS: u32 = 30_000;
 /// ran.
 pub const AFTER_STOP: &str = "not run: the run was stopped";
 
+/// The rest of a step after one of its components could not be used.
+pub const AFTER_COMPONENT: &str = "not run: a component in this step could not be run";
+
 /// `run_step_routed` inside an unattended run: the run's Stop reaches the
 /// step's waits through `run`, and the step says when it began.
+///
+/// Every `use_component` is expanded first (`components::expand_step`):
+/// its component's actions run in its place, each outcome naming the
+/// component, and `run.components` says which versions ran. One that
+/// cannot be expanded fails the step with its sentence before any action
+/// runs. An expanded action is carried out exactly as a written one, so
+/// what a `fill` types is kept out of its outcome the same way.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_step_in_run<D: Driver>(
     d: &mut D,
@@ -284,6 +298,64 @@ pub async fn run_step_in_run<D: Driver>(
     lease: &mut Held,
     route: Option<&Route>,
     area: AreaRoute<'_>,
+    run: &mut InRun<'_>,
+) -> Result<Vec<ActionOutcome>, String> {
+    run.components = Vec::new();
+    let (expanded, uses) = match components::expand_step(root, organization, project, &step.actions) {
+        Ok(x) => x,
+        Err(why) => {
+            run.began = None;
+            run.tab = None;
+            run.dialog = None;
+            run.page_errors_seen = 0;
+            let mut out = vec![ActionOutcome::failed(why)];
+            out.extend(step.actions.iter().skip(1).map(|_| ActionOutcome::failed(AFTER_COMPONENT)));
+            return Ok(out);
+        }
+    };
+    if uses.is_empty() {
+        let areas = run.areas;
+        return run_expanded(d, root, organization, project, step, timing, account, lease, route, area, areas, run).await;
+    }
+    let (actions, from): (Vec<Action>, Vec<Option<String>>) = expanded.into_iter().unzip();
+    // An area a component's `return_to_area` names, which the caller did
+    // not read with the step's own.
+    let missing: Vec<&str> = named_areas(&actions)
+        .into_iter()
+        .filter(|name| !run.areas.is_some_and(|m| m.contains_key(&nav::module_key(name))))
+        .collect();
+    let merged: Option<NamedAreas> = (!missing.is_empty()).then(|| {
+        let mut all = run.areas.cloned().unwrap_or_default();
+        all.extend(area_routes(root, organization, project, &missing));
+        all
+    });
+    let areas = merged.as_ref().or(run.areas);
+    let expanded_step = StepScript { step_number: step.step_number, actions, unchecked: step.unchecked.clone() };
+    run.components = uses;
+    let mut out =
+        run_expanded(d, root, organization, project, &expanded_step, timing, account, lease, route, area, areas, run)
+            .await?;
+    for (o, c) in out.iter_mut().zip(from) {
+        o.component = c;
+    }
+    Ok(out)
+}
+
+/// A step whose components are already expanded, run with `areas` for its
+/// `return_to_area` actions that name one.
+#[allow(clippy::too_many_arguments)]
+async fn run_expanded<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    step: &StepScript,
+    timing: &Timing,
+    account: &mut Option<String>,
+    lease: &mut Held,
+    route: Option<&Route>,
+    area: AreaRoute<'_>,
+    areas: Option<&NamedAreas>,
     run: &mut InRun<'_>,
 ) -> Result<Vec<ActionOutcome>, String> {
     // No recipe to run (none saved, no site address): navigation is open,
@@ -329,7 +401,6 @@ pub async fn run_step_in_run<D: Driver>(
     run.tab = None;
     run.dialog = None;
     let mut ran_in: Option<String> = None;
-    let areas = run.areas;
     let here =
         Here { root, organization, project, policy: &policy, direct_urls: nav_file.direct_urls, step: step.step_number };
     let mut out = Vec::with_capacity(step.actions.len());

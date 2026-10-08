@@ -1359,6 +1359,12 @@ export type ActionOutcome_Deserialize = {
 	 *  the webview cannot ask for anything outside that folder.
 	 */
 	screenshot?: string | null,
+	/**
+	 *  The component this action came from, when a `use_component` was
+	 *  expanded into it. Left out otherwise, so older run files read the
+	 *  same.
+	 */
+	component?: string | null,
 };
 
 export type ActionOutcome_Serialize = {
@@ -1370,6 +1376,12 @@ export type ActionOutcome_Serialize = {
 	 *  the webview cannot ask for anything outside that folder.
 	 */
 	screenshot?: string | null,
+	/**
+	 *  The component this action came from, when a `use_component` was
+	 *  expanded into it. Left out otherwise, so older run files read the
+	 *  same.
+	 */
+	component?: string | null,
 };
 
 export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; column?: never; component?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; expect?: never; file?: never; from?: never; headers?: never; inputs?: never; json?: never; key?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url_contains?: never; value?: never; within_ms?: never } | 
@@ -2541,6 +2553,15 @@ export type CleanupResult = {
 	ok: boolean,
 	/**  `deleted`, or the sentence the delete failed with. */
 	outcome: string,
+};
+
+/**
+ *  One `use_component` a step ran: the component's saved name and the
+ *  version it had then, kept on the step's record.
+ */
+export type ComponentUse = {
+	name: string,
+	version: number,
 };
 
 /**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */
@@ -4703,6 +4724,12 @@ export type StepRecord_Deserialize = {
 	 *  Left out when there was none, so older run files read the same.
 	 */
 	dialog?: StepDialog | null,
+	/**
+	 *  Each component the step used, in order, with the version it had
+	 *  when the step ran. Left out when there was none, so older run files
+	 *  read the same.
+	 */
+	components?: ComponentUse[],
 };
 
 export type StepRecord_Serialize = {
@@ -4728,6 +4755,12 @@ export type StepRecord_Serialize = {
 	 *  Left out when there was none, so older run files read the same.
 	 */
 	dialog?: StepDialog | null,
+	/**
+	 *  Each component the step used, in order, with the version it had
+	 *  when the step ran. Left out when there was none, so older run files
+	 *  read the same.
+	 */
+	components?: ComponentUse[],
 };
 
 /**
