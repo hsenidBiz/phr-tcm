@@ -41,6 +41,19 @@ pub struct AxNode {
     /// The DOM node behind it (`backendDOMNodeId`), when Chrome gave one -
     /// how an `Iframe` line finds the frame whose tree prints under it.
     pub backend: Option<i64>,
+    /// The AX `required` property: a field the page will not accept empty.
+    pub required: bool,
+}
+
+/// One printed line as data: what a caller needs to pick a control without
+/// parsing the text. `locator` is the value printed after `->` on the line,
+/// frame steps included, so the text and the data never disagree.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SnapLine {
+    pub role: String,
+    pub name: String,
+    pub locator: Target,
+    pub required: bool,
 }
 
 /// One iframe's own accessibility tree, printed under the iframe's line.
@@ -109,6 +122,7 @@ pub fn parse_nodes(v: &Value) -> Vec<AxNode> {
                 focusable: property_bool(raw, "focusable"),
                 disabled: property_bool(raw, "disabled"),
                 backend: raw["backendDOMNodeId"].as_i64(),
+                required: property_bool(raw, "required"),
             }
         })
         .collect()
@@ -142,15 +156,30 @@ fn truncate_name(name: &str) -> String {
 /// `"` or a `\` still comes out as valid JSON a `Target` can be read back
 /// from.
 /// The line's own locator, behind the steps of any frames it sits in.
-fn locator_suffix(role: &str, name: &str, frames: &[Value]) -> String {
+fn locator_value(role: &str, name: &str, frames: &[Value]) -> Value {
     let obj = if name.is_empty() { json!({ "role": role }) } else { json!({ "role": role, "name": name }) };
     if frames.is_empty() {
-        return format!(" -> {obj}");
+        return obj;
     }
     let mut chain = frames.to_vec();
     chain.push(obj);
-    format!(" -> {}", Value::Array(chain))
+    Value::Array(chain)
 }
+
+fn locator_suffix(role: &str, name: &str, frames: &[Value]) -> String {
+    format!(" -> {}", locator_value(role, name, frames))
+}
+
+/// The data behind a printed line: the same locator value the suffix prints.
+fn snap_line(node: &AxNode, frames: &[Value]) -> SnapLine {
+    let name = sanitize(&node.name);
+    let value = locator_value(&node.role, &name, frames);
+    let locator = serde_json::from_value::<Target>(value.clone()).unwrap_or_else(|_| Target::Legacy(value.to_string()));
+    SnapLine { role: node.role.clone(), name, locator, required: node.required }
+}
+
+/// A printed line and, when it carries a locator, its data.
+type Printed = (String, Option<SnapLine>);
 
 fn format_line(node: &AxNode, depth: usize, frames: &[Value]) -> String {
     let indent = " ".repeat(depth.min(12));
@@ -195,7 +224,7 @@ struct Tree<'a> {
     path: Vec<Value>,
 }
 
-fn walk(id: &str, depth: usize, tree: &Tree<'_>, out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>) {
+fn walk(id: &str, depth: usize, tree: &Tree<'_>, out: &mut Vec<Printed>, seen: &mut std::collections::HashSet<String>) {
     if !seen.insert(id.to_string()) {
         return;
     }
@@ -207,7 +236,7 @@ fn walk(id: &str, depth: usize, tree: &Tree<'_>, out: &mut Vec<String>, seen: &m
         }
         return;
     }
-    out.push(format_line(node, depth, &tree.path));
+    out.push((format_line(node, depth, &tree.path), Some(snap_line(node, &tree.path))));
     for child in &node.children {
         walk(child, depth + 1, tree, out, seen);
     }
@@ -216,7 +245,7 @@ fn walk(id: &str, depth: usize, tree: &Tree<'_>, out: &mut Vec<String>, seen: &m
     } else if node.role == "Iframe" && tree.path.len() >= MAX_FRAME_DEPTH {
         // `snapshot` follows frames only so deep: say so rather than let a
         // deeper frame's contents be silently missing.
-        out.push(format!("{}{DEEP_FRAMES_NOTE}", " ".repeat((depth + 1).min(12))));
+        out.push((format!("{}{DEEP_FRAMES_NOTE}", " ".repeat((depth + 1).min(12))), None));
     }
 }
 
@@ -228,9 +257,9 @@ pub const DEEP_FRAMES_NOTE: &str = "(frames nested deeper than 3 are not shown)"
 
 /// A frame's own tree, under its iframe's line, every locator behind the
 /// frame's step.
-fn walk_frame(frame: &FrameTree, depth: usize, path: &[Value], out: &mut Vec<String>) {
+fn walk_frame(frame: &FrameTree, depth: usize, path: &[Value], out: &mut Vec<Printed>) {
     if let Some(why) = &frame.unreadable {
-        out.push(format!("{}(frame contents could not be read: {})", " ".repeat(depth.min(12)), sanitize(why)));
+        out.push((format!("{}(frame contents could not be read: {})", " ".repeat(depth.min(12)), sanitize(why)), None));
         return;
     }
     let Some(root) = frame.nodes.first() else { return };
@@ -255,8 +284,15 @@ pub fn render(nodes: &[AxNode], limit: usize) -> String {
 /// `render`, with each frame's own tree printed under its iframe's line.
 /// The line limit counts every printed line, frames included.
 pub fn render_frames(nodes: &[AxNode], frames: &[FrameTree], limit: usize) -> String {
+    render_frames_with_lines(nodes, frames, limit).0
+}
+
+/// `render_frames`, and the lines it printed as data (only those that carry
+/// a locator, and only those inside the limit). The text is byte-identical.
+pub fn render_frames_with_lines(nodes: &[AxNode], frames: &[FrameTree], limit: usize) -> (String, Vec<SnapLine>) {
+    const EMPTY: &str = "the page has nothing a locator could name";
     let Some(root) = nodes.first() else {
-        return "the page has nothing a locator could name".to_string();
+        return (EMPTY.to_string(), vec![]);
     };
     let tree = Tree {
         by_id: nodes.iter().map(|n| (n.id.as_str(), n)).collect(),
@@ -267,23 +303,29 @@ pub fn render_frames(nodes: &[AxNode], frames: &[FrameTree], limit: usize) -> St
     let mut seen = std::collections::HashSet::new();
     walk(&root.id, 0, &tree, &mut lines, &mut seen);
     if lines.is_empty() {
-        return "the page has nothing a locator could name".to_string();
+        return (EMPTY.to_string(), vec![]);
     }
     let total = lines.len();
-    let mut out = lines.iter().take(limit).cloned().collect::<Vec<_>>().join("\n");
+    let mut out = lines.iter().take(limit).map(|(t, _)| t.clone()).collect::<Vec<_>>().join("\n");
+    let data: Vec<SnapLine> = lines.into_iter().take(limit).filter_map(|(_, d)| d).collect();
     if total > limit {
         if !out.is_empty() {
             out.push('\n');
         }
         out.push_str(&format!("... and {} more (raise the limit, or scope the probe)", total - limit));
     }
-    out
+    (out, data)
 }
 
 /// `Accessibility.getFullAXTree`, retried once after `Accessibility.enable`
 /// if the domain was never switched on - real Edge answers the first call
 /// that way rather than enabling it implicitly.
 pub async fn snapshot<D: Driver>(d: &mut D, limit: usize) -> Result<String, CdpError> {
+    snapshot_with_lines(d, limit).await.map(|(text, _)| text)
+}
+
+/// `snapshot`, and the printed lines as data.
+pub async fn snapshot_with_lines<D: Driver>(d: &mut D, limit: usize) -> Result<(String, Vec<SnapLine>), CdpError> {
     let result = match d.call("Accessibility.getFullAXTree", json!({})).await {
         Ok(v) => v,
         Err(CdpError::Protocol { message, .. }) if message.to_lowercase().contains("enabled") => {
@@ -304,7 +346,7 @@ pub async fn snapshot<D: Driver>(d: &mut D, limit: usize) -> Result<String, CdpE
             inner.frames = frames_in(d, &inner.nodes).await;
         }
     }
-    Ok(render_frames(&nodes, &frames, limit))
+    Ok(render_frames_with_lines(&nodes, &frames, limit))
 }
 
 /// The trees of the `Iframe` nodes in `nodes` (one level), each with the

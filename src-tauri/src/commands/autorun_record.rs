@@ -76,8 +76,8 @@ async fn refuse_other_sessions() -> Result<(), String> {
     if crate::commands::autorun_replay::replay_is_running() {
         return Err("an unattended run is going - wait for it, or stop it first".to_string());
     }
-    if crate::commands::autorun::supervised_session_is_open().await {
-        return Err("close the supervised browser first".to_string());
+    if let Some(busy) = crate::commands::autorun::open_session_refusal().await {
+        return Err(busy);
     }
     Ok(())
 }
@@ -218,7 +218,7 @@ pub struct ModuleTryResult {
 /// nothing was saved or lost - unlike a recording's `recorder::CANCELLED`.
 pub const TRY_CANCELLED: &str = "the check was cancelled - the saved path was not changed";
 
-fn now_iso() -> String {
+pub(crate) fn now_iso() -> String {
     crate::commands::queue::iso_utc((crate::autorun::sessions::now_ms() / 1000) as i64)
 }
 

@@ -792,7 +792,7 @@ async fn a_try_for_another_case_runs_in_main_and_closes_the_last_cases_tabs() {
     let mut lease = v2_lib::autorun::lease::Held::supervised();
     let check: Action = serde_json::from_value(json!({ "kind": "check_text", "value": "yes" })).unwrap();
     let (status, text) =
-        try_for_case(&mut d, &mut tabs_case, &mut account, &mut lease, dir.path(), "Acme", "Web", 2, &check).await;
+        try_for_case(&mut d, &mut tabs_case, &mut account, &mut lease, dir.path(), "Acme", "Web", 2, None, &check).await;
     assert_eq!(status, 200, "{text}");
     assert_eq!(d.tabs.closed_others, 1);
     assert!(d.tabs.open.is_empty(), "the last case's tab is still open");

@@ -21,6 +21,7 @@ import { Button } from "../../components/ui/button";
 import ActionDock from "../../components/ActionDock";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { cn } from "../../lib/cn";
+import { useDiscoveryActive } from "../../lib/discoveryActive";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import {
   IconCancel,
@@ -34,11 +35,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../../lib/toast";
 import { logUi } from "../../lib/uiLog";
 import {
-  RUN_GOING_REASON,
   cancelRunSetup,
   clearReviewRequest,
   onRunEnded,
   openRunSetup,
+  runBlockedReason,
   runIsGoing,
   useBackgroundRun,
 } from "../../lib/backgroundRun";
@@ -128,6 +129,8 @@ export default function AutoRun({
   const [confirmingClear, setConfirmingClear] = useState<number | null>(null);
   const [clearScriptsOpen, setClearScriptsOpen] = useState(false);
   const queryClient = useQueryClient();
+  /** Whether the assistant's discovery holds the Auto Run browser. */
+  const discovering = useDiscoveryActive();
 
   /** What the Setup panel and the readiness strip report, and whether a
    * run has what it needs. */
@@ -268,6 +271,9 @@ export default function AutoRun({
   /** One run at a time: while the store holds a run going (or paused at a
    * reset point), every Run button here waits for it. */
   const runGoing = runIsGoing(background);
+  /** Why every way of starting a run here waits, when it does: a run going,
+   * or the assistant's discovery holding the browser. Said in the title. */
+  const runBlocked = runBlockedReason(background, discovering);
   /** The plan the supervised pane pauses by at each reset point. */
   const [runPlan, setRunPlan] = useState<PlanView | null>(null);
   /** An unattended run paused at a reset point that the store does not
@@ -584,6 +590,7 @@ export default function AutoRun({
         onRun={() => {
           if (!runIsGoing()) setRunning([c.id]);
         }}
+        runBlocked={runBlocked}
         confirmingClear={confirmingClear === c.id}
         onAskClear={() => setConfirmingClear(c.id)}
         onClearDone={() => setConfirmingClear(null)}
@@ -856,8 +863,8 @@ export default function AutoRun({
                           size="sm"
                           tabIndex={floating ? -1 : undefined}
                           className="disabled:pointer-events-auto"
-                          disabled={planning || runGoing}
-                          title={runGoing ? RUN_GOING_REASON : undefined}
+                          disabled={planning || Boolean(runBlocked)}
+                          title={runBlocked}
                           onClick={() => void startPlanned("supervised")}
                         >
                           <IconRun aria-hidden />
@@ -868,8 +875,8 @@ export default function AutoRun({
                           variant="outline"
                           tabIndex={floating ? -1 : undefined}
                           className="disabled:pointer-events-auto"
-                          disabled={planning || runGoing}
-                          title={runGoing ? RUN_GOING_REASON : undefined}
+                          disabled={planning || Boolean(runBlocked)}
+                          title={runBlocked}
                           onClick={() => void startPlanned("unattended")}
                         >
                           <IconUnattended aria-hidden />
@@ -903,6 +910,7 @@ export default function AutoRun({
                   pbiId={pbi.id}
                   onReview={setReviewing}
                   onReplay={replayCase}
+                  replayBlocked={runBlocked}
                   filter={runsFilter}
                   onFilterChange={setRunsFilter}
                 />
@@ -1017,6 +1025,7 @@ export default function AutoRun({
               replayTo={replayTo?.step}
               // A replay to a step runs one case and never pauses.
               plan={replayTo ? null : runPlan}
+              browserBlocked={runBlocked}
               onClose={() => {
                 setRunning(null);
                 setRunPlan(null);
@@ -1062,6 +1071,7 @@ export default function AutoRun({
             rows.map((c) => [c.id, c.steps.flatMap((s, i) => (s.shared != null ? [i + 1] : []))]),
           )}
           onReplay={replayCase}
+          replayBlocked={runBlocked}
           onClose={() => {
             setReviewing(null);
             // Opened from Past runs, the card's Review button is still there

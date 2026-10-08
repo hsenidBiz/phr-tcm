@@ -18,7 +18,7 @@ import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, type CaseDiff } from "../lib/caseDiff";
 import { hasTesterNotes, testerNotes } from "../lib/testerNotes";
 import { cn } from "../lib/cn";
-import { fileName, fileOwners, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
+import { fileName, fileOwners, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type SyncChange, type WatchedFile } from "../lib/fileSync";
 import { loadDraftQueue, saveDraftQueue } from "../hooks/useQueue";
 import { keepUploaded } from "../lib/queueUploaded";
 import { summariseSubmit } from "../lib/submitSummary";
@@ -157,6 +157,7 @@ export default function QueueSection({
   queue,
   setQueue,
   flash,
+  fileChanges,
   watches = [],
   onQueueCleared,
   onWatchPatched,
@@ -172,6 +173,9 @@ export default function QueueSection({
   /** Rows a watched-file sync just touched, by caseKey - tinted so the
    * change report's counts can be traced to actual rows. */
   flash?: Record<string, "added" | "changed">;
+  /** What each open change report says the file did to a CHANGED row, by
+   * caseKey. Lets a NEW row show its own edit until the report is dismissed. */
+  fileChanges?: Record<string, SyncChange>;
   /** The JSON files this queue was imported from, so a comment typed in
    * the browser view knows which file to be written back into. Manual
    * Entry passes none - its cases live only in the app. */
@@ -1189,6 +1193,22 @@ export default function QueueSection({
   // Same occurrence-aware keys the file sync reports changes under, so a
   // second case sharing a title still lights up its own row.
   const rowKeys = useMemo(() => keysFor(queue), [queue]);
+  // A NEW row's open diff belongs to the change report that put it there:
+  // once the report is dismissed the row has no diff to show, so its open
+  // flag goes too (it would otherwise still count towards Collapse all).
+  useEffect(() => {
+    setExpandedDiffs((s) => {
+      let next: Set<number> | null = null;
+      for (const i of s) {
+        const row = queue[i];
+        if (row && row.update_id == null && !fileChanges?.[rowKeys[i]]) {
+          next ??= new Set(s);
+          next.delete(i);
+        }
+      }
+      return next ?? s;
+    });
+  }, [fileChanges, queue, rowKeys]);
   const held = useMemo(() => heldRows(queue, hold), [queue, hold]);
   const ambiguous = useMemo(() => ambiguousRows(queue, hold), [queue, hold]);
   // Fix round 1 (controller ruling): a hold refuses uploads only while one
@@ -1733,6 +1753,7 @@ export default function QueueSection({
                 held={held[i]}
                 ambiguous={ambiguous[i]}
                 touched={flash?.[rowKeys[i]]}
+                fileChange={tc.update_id == null ? fileChanges?.[rowKeys[i]] : undefined}
                 reviewing={reviewing}
                 problem={problems[i]}
                 duplicate={duplicates[i]}

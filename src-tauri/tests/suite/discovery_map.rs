@@ -1,0 +1,450 @@
+//! The per-project discovery map: what Auto Run has seen on the live app,
+//! kept as paths and locators only.
+
+use v2_lib::autorun::discovery_map::{
+    forget_area, is_stale, load_map, map_path, mark_failed, path_only, record_matched, record_outcome, record_seen,
+    record_write, seen_keys, seen_paths, WriteEntry, STALE_AFTER_MS,
+};
+use v2_lib::autorun::quirks::record_run_evidence;
+use v2_lib::autorun::store::save_script;
+use v2_lib::autorun::{CaseRecord, CaseScript, StepScript};
+use v2_lib::browser::locator::{LocatorStep, SeenKey, Target};
+use v2_lib::browser::snapshot::SnapLine;
+
+fn line(role: &str, name: &str) -> SnapLine {
+    SnapLine {
+        role: role.to_string(),
+        name: name.to_string(),
+        locator: Target::One(LocatorStep {
+            role: Some(role.to_string()),
+            name: Some(name.to_string()),
+            ..LocatorStep::default()
+        }),
+        required: false,
+    }
+}
+
+fn role_key(role: &str, name: &str) -> SeenKey {
+    SeenKey::Role { role: role.to_string(), name: name.to_lowercase() }
+}
+
+#[test]
+fn record_then_load_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut save = line("button", "Save");
+    save.required = true;
+    let lines = vec![
+        save,
+        line("textbox", "Name"),
+        line("link", "Home"),
+        line("table", "Rates"),
+        line("dialog", "Confirm"),
+        line("heading", "Rates"),
+    ];
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/leave", "Leave", &lines, Some("hr1"), true, 1000).unwrap();
+    // Seeing the same lines again adds nothing.
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/leave", "Leave", &lines, Some("hr1"), false, 2000).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas.len(), 1);
+    let a = &map.areas[0];
+    assert_eq!(a.area, "Leave");
+    assert_eq!(a.explored_at, Some(1000));
+    assert_eq!(a.account.as_deref(), Some("hr1"));
+    assert_eq!(a.pages.len(), 1);
+    let p = &a.pages[0];
+    assert_eq!((p.path.as_str(), p.title.as_str()), ("/leave", "Leave"));
+    assert_eq!(p.elements.len(), 6);
+    let kinds: Vec<&str> = p.elements.iter().map(|e| e.kind.as_str()).collect();
+    assert_eq!(kinds, ["button", "field", "link", "table", "dialog", "other"]);
+    assert!(p.elements[0].required);
+    assert_eq!(p.elements[0].key, role_key("button", "save"));
+}
+
+#[test]
+fn missing_map_is_empty_and_corrupt_map_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty());
+    let path = map_path(dir.path(), "Acme", "Web");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "{ not json").unwrap();
+    let err = load_map(dir.path(), "Acme", "Web").unwrap_err();
+    assert!(err.starts_with("The discovery map projects/") && err.contains("is damaged and could not be read"), "{err}");
+}
+
+#[test]
+fn concurrent_recordings_both_survive() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let handles: Vec<_> = ["Alpha", "Beta"]
+        .into_iter()
+        .map(|name| {
+            let root = root.clone();
+            std::thread::spawn(move || {
+                for i in 0..10 {
+                    let l = vec![line("button", &format!("{name}{i}"))];
+                    record_seen(&root, "Acme", "Web", Some("A"), "/p", "P", &l, None, false, 1).unwrap();
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+    let map = load_map(&root, "Acme", "Web").unwrap();
+    assert_eq!(map.areas[0].pages[0].elements.len(), 20);
+}
+
+#[test]
+fn the_map_stores_paths_and_locators_only() {
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(
+        dir.path(),
+        "Acme",
+        "Web",
+        Some("Leave"),
+        "https://h/x/leave?token=abc#f",
+        "Leave",
+        &[line("button", "Save")],
+        None,
+        true,
+        5,
+    )
+    .unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas[0].pages[0].path, "/x/leave");
+    let text = std::fs::read_to_string(map_path(dir.path(), "Acme", "Web")).unwrap();
+    for banned in ["token", "abc", "https://h"] {
+        assert!(!text.contains(banned), "{banned} in {text}");
+    }
+    assert_eq!(path_only("https://h:8080/a/b?q=1"), "/a/b");
+    assert_eq!(path_only("/a/b#frag"), "/a/b");
+    assert_eq!(path_only("https://h"), "/");
+}
+
+#[test]
+fn stale_after_thirty_days_or_a_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Go")], None, true, 1000).unwrap();
+    let a = load_map(dir.path(), "Acme", "Web").unwrap().areas.remove(0);
+    assert!(!is_stale(&a, 1000 + STALE_AFTER_MS));
+    assert!(is_stale(&a, 1000 + STALE_AFTER_MS + 1));
+    mark_failed(dir.path(), "Acme", "Web", "A").unwrap();
+    let a = load_map(dir.path(), "Acme", "Web").unwrap().areas.remove(0);
+    assert!(a.failed_since);
+    assert!(is_stale(&a, 1001));
+    // An area never explored is stale too.
+    mark_failed(dir.path(), "Acme", "Web", "B").unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert!(is_stale(map.areas.iter().find(|a| a.area == "B").unwrap(), 0));
+}
+
+#[test]
+fn discovering_clears_failed_since_and_sets_explored_at() {
+    let dir = tempfile::tempdir().unwrap();
+    mark_failed(dir.path(), "Acme", "Web", "A").unwrap();
+    // A plain sighting leaves the failure and the date alone.
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Go")], Some("u"), false, 50).unwrap();
+    let a = load_map(dir.path(), "Acme", "Web").unwrap().areas.remove(0);
+    assert!(a.failed_since);
+    assert_eq!(a.explored_at, None);
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Go")], Some("u"), true, 99).unwrap();
+    let a = load_map(dir.path(), "Acme", "Web").unwrap().areas.remove(0);
+    assert!(!a.failed_since);
+    assert_eq!(a.explored_at, Some(99));
+    assert_eq!(a.account.as_deref(), Some("u"));
+}
+
+#[test]
+fn forget_area_removes_only_that_area() {
+    let dir = tempfile::tempdir().unwrap();
+    for area in ["A", "B"] {
+        record_seen(dir.path(), "Acme", "Web", Some(area), "/p", "P", &[line("button", "Go")], None, true, 1).unwrap();
+    }
+    forget_area(dir.path(), "Acme", "Web", "A").unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let names: Vec<&str> = map.areas.iter().map(|a| a.area.as_str()).collect();
+    assert_eq!(names, ["B"]);
+}
+
+#[test]
+fn outcomes_are_capped_at_two_hundred() {
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..205 {
+        record_outcome(dir.path(), "Acme", "Web", "A", &format!("line {i}")).unwrap();
+    }
+    let a = load_map(dir.path(), "Acme", "Web").unwrap().areas.remove(0);
+    assert_eq!(a.outcomes.len(), 200);
+    assert_eq!(a.outcomes[0], "line 5");
+    assert_eq!(a.outcomes[199], "line 204");
+}
+
+#[test]
+fn seen_keys_include_the_unattributed_bucket() {
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/a", "A", &[line("button", "InA")], None, true, 1).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("B"), "/b", "B", &[line("button", "InB")], None, true, 1).unwrap();
+    record_seen(dir.path(), "Acme", "Web", None, "/c", "C", &[line("button", "Loose")], None, false, 1).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let keys = seen_keys(&map, &["A"]);
+    assert!(keys.contains(&role_key("button", "ina")));
+    assert!(keys.contains(&role_key("button", "loose")));
+    assert!(!keys.contains(&role_key("button", "inb")));
+    let paths = seen_paths(&map);
+    assert_eq!(paths.len(), 3);
+    assert!(paths.contains("/b"));
+}
+
+#[test]
+fn matched_links_are_added_once_and_writes_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, true, 1).unwrap();
+    let chain = Target::Chain(vec![
+        LocatorStep { role: Some("dialog".into()), name: Some("Confirm".into()), ..LocatorStep::default() },
+        LocatorStep { role: Some("button".into()), name: Some("Save".into()), ..LocatorStep::default() },
+    ]);
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "https://h/p?x=1", &chain, 2).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &chain, 3).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &Target::from("#id"), 4).unwrap();
+    record_write(
+        dir.path(),
+        "Acme",
+        "Web",
+        "A",
+        WriteEntry { method: "POST".into(), path: "/api/x".into(), at: 7, step: "Save".into() },
+    )
+    .unwrap();
+    let a = load_map(dir.path(), "Acme", "Web").unwrap().areas.remove(0);
+    assert_eq!(a.pages.len(), 1);
+    let els = &a.pages[0].elements;
+    assert_eq!(els.len(), 3, "{els:?}");
+    assert_eq!(els[1].kind, "dialog");
+    assert_eq!(els[2].key, SeenKey::Css("#id".into()));
+    assert_eq!(els[2].kind, "other");
+    assert_eq!(a.writes.len(), 1);
+}
+
+#[test]
+fn an_iframe_chain_puts_every_link_in_seen_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let chain = Target::Chain(vec![
+        LocatorStep { css: Some("iframe#pay".into()), ..LocatorStep::default() },
+        LocatorStep { role: Some("button".into()), name: Some("Save".into()), ..LocatorStep::default() },
+    ]);
+    let framed = SnapLine { role: "button".into(), name: "Save".into(), locator: chain, required: false };
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[framed, line("button", "Save")], None, true, 1).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    // The same name in the page and in the frame stays two elements.
+    assert_eq!(map.areas[0].pages[0].elements.len(), 2);
+    let keys = seen_keys(&map, &["A"]);
+    assert!(keys.contains(&SeenKey::Css("iframe#pay".into())));
+    assert!(keys.contains(&role_key("button", "save")));
+}
+
+#[test]
+fn record_write_stores_the_path_only() {
+    let dir = tempfile::tempdir().unwrap();
+    record_write(
+        dir.path(),
+        "Acme",
+        "Web",
+        "A",
+        WriteEntry { method: "POST".into(), path: "https://h/api/x?token=abc".into(), at: 1, step: "Save".into() },
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(map_path(dir.path(), "Acme", "Web")).unwrap();
+    assert!(text.contains("/api/x"));
+    assert!(!text.contains("token") && !text.contains("https://h"), "{text}");
+}
+
+fn run_case(case_id: i32, proposed: &str) -> CaseRecord {
+    CaseRecord {
+        case_id,
+        title: "a case".into(),
+        verdict: String::new(),
+        note: String::new(),
+        steps: vec![],
+        proposed: proposed.into(),
+        reason: String::new(),
+        duration_ms: None,
+        account: None,
+        retried: None,
+        notice: None,
+        page_errors_seen: 0,
+    }
+}
+
+fn saved_script(root: &std::path::Path, case_id: i32, area: Option<&str>) {
+    let script = CaseScript {
+        case_id,
+        title: "a case".into(),
+        account: None,
+        area: area.map(str::to_string),
+        steps: vec![StepScript { step_number: 2, actions: vec![], unchecked: None }],
+        repairs: 0,
+        last_repair: None,
+        suspected_defect: None,
+        no_save: false,
+        preconditions: vec![],
+        setup: None,
+        changes: vec![],
+        needs_unchanged: vec![],
+        saved_at: None,
+        fail_on_unexpected_dialog: false,
+        page_errors: None,
+        ignore_page_errors: vec![],
+    };
+    save_script(root, &script).unwrap();
+}
+
+#[test]
+fn a_failed_case_marks_its_area_stale() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_script(dir.path(), 7, Some("Orders"));
+    record_run_evidence(dir.path(), "Acme", "Web", &[run_case(7, "Failed")], 10);
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert!(map.areas.iter().find(|a| a.area == "Orders").unwrap().failed_since);
+}
+
+#[test]
+fn a_passed_case_does_not() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_script(dir.path(), 7, Some("Orders"));
+    record_run_evidence(dir.path(), "Acme", "Web", &[run_case(7, "Passed")], 10);
+    assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty());
+}
+
+#[test]
+fn a_case_without_an_area_marks_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_script(dir.path(), 7, None);
+    saved_script(dir.path(), 8, Some("  "));
+    record_run_evidence(dir.path(), "Acme", "Web", &[run_case(7, "Failed"), run_case(8, "Failed"), run_case(9, "Failed")], 10);
+    assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty());
+}
+
+// ---------------------------------------- final review: area names, damage
+
+/// Records an area named `name` under module `module` in the project's
+/// areas file, as the Areas dialog does.
+fn recorded_area(root: &std::path::Path, name: &str, module: &str) {
+    v2_lib::autorun::nav::put_path(
+        root,
+        "Acme",
+        "Web",
+        v2_lib::autorun::nav::ModulePath {
+            area: name.to_string(),
+            module: module.to_string(),
+            clicks: vec![Target::One(LocatorStep {
+                role: Some("link".into()),
+                name: Some(name.to_string()),
+                ..LocatorStep::default()
+            })],
+            arrived: "/hr/leave".to_string(),
+            recorded: "2026-10-08T10:00:00Z".to_string(),
+            start: String::new(),
+        },
+    )
+    .unwrap();
+}
+
+/// Finding 2: what a discovery in "leave" saw counts for a script that
+/// names "Leave", and is filed under the recorded area's own name. With
+/// no area recorded, the names still compare ignoring case and spaces.
+#[test]
+#[allow(non_snake_case)]
+fn discovering_leave_counts_for_a_script_naming_Leave() {
+    let dir = tempfile::tempdir().unwrap();
+    recorded_area(dir.path(), "Leave", "HR");
+    record_seen(dir.path(), "Acme", "Web", Some(" leave "), "/hr/leave", "", &[line("button", "Apply")], Some("hr1"), true, 1000)
+        .unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas.iter().map(|a| a.area.as_str()).collect::<Vec<_>>(), ["Leave"]);
+    assert!(seen_keys(&map, &["Leave"]).contains(&role_key("button", "apply")));
+
+    let bare = tempfile::tempdir().unwrap();
+    record_seen(bare.path(), "Acme", "Web", Some("leave"), "/hr/leave", "", &[line("button", "Apply")], None, true, 1000).unwrap();
+    record_matched(bare.path(), "Acme", "Web", Some("LEAVE"), "/hr/leave", &Target::One(LocatorStep {
+        role: Some("button".into()),
+        name: Some("Cancel".into()),
+        ..LocatorStep::default()
+    }), 1000)
+    .unwrap();
+    let map = load_map(bare.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas.len(), 1, "one area, however it was spelled: {:?}", map.areas);
+    let keys = seen_keys(&map, &["Leave"]);
+    assert!(keys.contains(&role_key("button", "apply")) && keys.contains(&role_key("button", "cancel")));
+    // The script names "Leave"; the map says "leave": still explored.
+    let section = v2_lib::autorun::discovery_map::explore_section(&["Leave"], &map, 1000);
+    assert_eq!(section, "", "a fresh map under another case was listed to explore: {section}");
+    forget_area(bare.path(), "Acme", "Web", "LEAVE").unwrap();
+    assert!(load_map(bare.path(), "Acme", "Web").unwrap().areas.is_empty(), "Forget map missed the area");
+}
+
+/// Finding 2: a failed run marks the recorded area stale even when the
+/// script spells it in another case, and makes no second area.
+#[test]
+fn a_failed_run_marks_the_area_stale_whatever_its_case() {
+    let dir = tempfile::tempdir().unwrap();
+    recorded_area(dir.path(), "Leave", "HR");
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], Some("hr1"), true, 5)
+        .unwrap();
+    saved_script(dir.path(), 7, Some("leave"));
+    record_run_evidence(dir.path(), "Acme", "Web", &[run_case(7, "Failed")], 10);
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas.len(), 1, "{:?}", map.areas);
+    assert!(map.areas[0].failed_since, "Leave stayed fresh after its script failed");
+    assert!(is_stale(&map.areas[0], 10));
+
+    // With no area recorded, an existing entry is still found by its key.
+    let bare = tempfile::tempdir().unwrap();
+    record_seen(bare.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], None, true, 5).unwrap();
+    mark_failed(bare.path(), "Acme", "Web", "LEAVE ").unwrap();
+    let map = load_map(bare.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas.len(), 1, "{:?}", map.areas);
+    assert!(map.areas[0].failed_since);
+}
+
+/// Finding 6: only what a discovery sees in a named area marks it
+/// explored; the bucket for no area never is.
+#[test]
+fn a_discovery_with_no_area_marks_nothing_explored() {
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(dir.path(), "Acme", "Web", None, "/", "", &[line("link", "Home")], Some("hr1"), true, 5).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas[0].area, "");
+    assert_eq!(map.areas[0].explored_at, None);
+}
+
+/// Finding 9: a damaged map names its file by its project-relative name,
+/// never a full path. Reset map moves it aside - never deleting it - and
+/// discovery starts an empty one; a map that reads is not reset.
+#[test]
+fn a_damaged_map_names_its_file_and_reset_map_moves_it_aside() {
+    use v2_lib::autorun::discovery_map::{map_file_name, reset_map};
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(reset_map(dir.path(), "Acme", "Web", 1).unwrap(), None, "no file, nothing to move");
+
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], None, true, 5).unwrap();
+    let refused = reset_map(dir.path(), "Acme", "Web", 1).unwrap_err();
+    assert!(refused.contains("Forget map"), "{refused}");
+    assert_eq!(load_map(dir.path(), "Acme", "Web").unwrap().areas.len(), 1, "a readable map was reset");
+
+    let path = map_path(dir.path(), "Acme", "Web");
+    std::fs::write(&path, "{ not a map").unwrap();
+    let file = map_file_name("Acme", "Web");
+    assert!(file.starts_with("projects/") && file.ends_with("-map.json"), "{file}");
+    let why = load_map(dir.path(), "Acme", "Web").unwrap_err();
+    assert!(why.contains(&file), "the refusal does not name the file: {why}");
+    assert!(why.contains("Reset map"), "the refusal gives no way out: {why}");
+    let full = dir.path().to_string_lossy().to_string();
+    assert!(!why.contains(&full), "a full path reached the sentence: {why}");
+    assert!(forget_area(dir.path(), "Acme", "Web", "Leave").is_err(), "a damaged map is never overwritten silently");
+
+    let aside = reset_map(dir.path(), "Acme", "Web", 1234).unwrap().expect("the file was moved");
+    assert!(aside.starts_with("projects/") && aside.ends_with("-map.corrupt-1234.json"), "{aside}");
+    assert_eq!(std::fs::read_to_string(dir.path().join(&aside)).unwrap(), "{ not a map", "the damaged file was not kept");
+    assert!(!path.exists());
+    assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty());
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], None, true, 5).unwrap();
+    assert_eq!(load_map(dir.path(), "Acme", "Web").unwrap().areas.len(), 1, "saves work again after the reset");
+}

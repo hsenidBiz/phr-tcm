@@ -41,6 +41,17 @@ pub(crate) struct Session {
     /// The case this browser's tabs belong to (`runner::tabs_for_case`):
     /// a step of another case closes every tab but `main` first.
     pub(crate) tabs_case: Option<i32>,
+    /// The discovery under way in this browser, if any: what the page
+    /// routes record is filed under its area and stamps that area explored.
+    pub(crate) discovery: Option<DiscoveryState>,
+}
+
+/// A discovery under way in the supervised browser: the area it explores
+/// and the account KEY it explores as (never a login). Both are `None` from
+/// the moment the browser opens for a discovery until its sign-in arrives.
+pub struct DiscoveryState {
+    pub area: Option<String>,
+    pub account: Option<String>,
 }
 
 /// The supervised session, for the bridge's page routes. Whoever locks
@@ -100,11 +111,21 @@ pub async fn auto_run_open_browser(app: tauri::AppHandle, browser_name: String) 
     if crate::commands::autorun_replay::replay_is_running() {
         return Err(UNATTENDED_GOING.to_string());
     }
+    // A discovery's browser is never replaced: heard before a replay is
+    // stopped, and again under the lock. No replay goes beside a discovery
+    // (`replay_supervised` refuses), so the lock is free to take.
+    if auto_run_discovery_active() {
+        return Err(busy_browser_sentence(true).to_string());
+    }
     // A replay going in the browser this replaces ends first: it is heard
     // without the session's lock, which the replay holds.
     crate::autorun::replay_to::stop();
     let mut slot = SESSION.lock().await;
-    open_into(&app, &mut slot, Browser::from_name(&browser_name)).await?;
+    crate::ai_bridge::refuse_while_discovering(&mut slot)?;
+    let opened = open_into(root(&app), &mut slot, Browser::from_name(&browser_name)).await;
+    // A discovery this replaced is over, whether or not the new one opened.
+    publish_discovery(&slot);
+    opened?;
     // The person's choice, once it opened, for a replay that finds no
     // browser. Best effort: the browser is open either way.
     match root(&app) {
@@ -129,12 +150,227 @@ async fn open_if_none(app: &tauri::AppHandle, slot: &mut Option<Session>) -> Res
         return Err(UNATTENDED_GOING.to_string());
     }
     let which = Browser::from_name(&store::last_browser(&root(app)?));
-    open_into(app, slot, which).await
+    open_into(root(app), slot, which).await
+}
+
+/// Said by `open_for_discovery` when the app set up no data directory.
+const NO_DATA_DIRECTORY: &str = "the app could not set up its data directory this session - restart the app";
+
+/// What a discovery is refused for before anything is looked at under the
+/// session's lock: an unattended run, a recording or check, a replay to a
+/// step. A replay holds the lock while it goes, so it is heard here, not
+/// waited for.
+pub(crate) fn refuse_discovery_while_busy() -> Result<(), String> {
+    if crate::commands::autorun_replay::replay_is_running() {
+        return Err(UNATTENDED_GOING.to_string());
+    }
+    crate::commands::autorun_record::refuse_while_recording()?;
+    if crate::autorun::replay_to::is_running() {
+        return Err(crate::autorun::replay_to::ALREADY_RUNNING.to_string());
+    }
+    Ok(())
+}
+
+/// Open the Auto Run browser for the assistant's discovery, in the browser
+/// named (`edge` or `chrome`). Refused while anything else holds the
+/// browser - a supervised browser already open included, which a
+/// discovery never replaces. The session is marked a discovery from the
+/// moment it opens; its area and account are set once the sign-in arrives.
+pub(crate) async fn open_for_discovery(browser_name: &str) -> Result<(), String> {
+    refuse_discovery_while_busy()?;
+    let mut slot = SESSION.lock().await;
+    if let Some(open) = slot.as_ref() {
+        return Err(busy_browser_sentence(open.discovery.is_some()).to_string());
+    }
+    let root = store::configured_root().ok_or_else(|| NO_DATA_DIRECTORY.to_string())?;
+    open_into(Ok(root), &mut slot, Browser::from_name(browser_name)).await?;
+    if let Some(session) = slot.as_mut() {
+        session.discovery = Some(DiscoveryState { area: None, account: None });
+    }
+    publish_discovery(&slot);
+    Ok(())
+}
+
+/// End the discovery under way, closing its browser. A browser the person
+/// opened is left alone, and with no discovery going this does nothing.
+pub(crate) async fn end_discovery() -> (u16, String) {
+    let mut slot = SESSION.lock().await;
+    let answer = crate::ai_bridge::end_discovery_in(&mut slot);
+    publish_discovery(&slot);
+    answer
+}
+
+/// End Discovery on Auto Run's Setup card: ends the discovery under way the
+/// way the assistant's `end_autorun_discovery` does, closing its browser,
+/// and says so to the window. A browser the person opened is left alone,
+/// and with no discovery going this does nothing. Nothing is lost: the map
+/// keeps what was seen.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_end_discovery() -> Result<(), String> {
+    end_discovery().await;
+    Ok(())
+}
+
+/// Whether a discovery holds the Auto Run browser, as last published. Kept
+/// beside the session rather than read from it, so asking never waits on
+/// the session lock a replay holds while it goes.
+static DISCOVERY_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The window `autorun_discovery_changed` goes to. Set once during app
+/// setup: the bridge, which starts and ends discoveries, has no
+/// `AppHandle` of its own. Unset in the test binaries, where publishing
+/// only moves the flag.
+static DISCOVERY_EVENTS: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+/// Called once during app setup.
+pub fn set_discovery_events(app: tauri::AppHandle) {
+    let _ = DISCOVERY_EVENTS.set(app);
+}
+
+/// Say whether `slot` now holds a discovery, to the window too when that
+/// changed. Called, with the session lock held, wherever a discovery can
+/// start or end: its open, its end, a failed sign-in closing it, Close
+/// browser, and Open browser replacing the session.
+pub(crate) fn publish_discovery(slot: &Option<Session>) {
+    use std::sync::atomic::Ordering;
+    use tauri_specta::Event as _;
+    let active = slot.as_ref().is_some_and(|s| s.discovery.is_some());
+    if DISCOVERY_ACTIVE.swap(active, Ordering::SeqCst) != active {
+        if let Some(app) = DISCOVERY_EVENTS.get() {
+            let _ = crate::events::AutorunDiscoveryChanged { active }.emit(app);
+        }
+    }
+}
+
+/// Whether the assistant is exploring the app in the Auto Run browser:
+/// Auto Run's runs and Open browser wait while it is.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_discovery_active() -> bool {
+    DISCOVERY_ACTIVE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// One area of the discovery map, as the Discovery card shows it.
+#[derive(serde::Serialize, specta::Type, Clone, Debug, PartialEq)]
+pub struct AreaView {
+    /// `""` is the bucket for what belongs to no area.
+    pub area: String,
+    /// Milliseconds since the epoch; a JavaScript number holds it exactly.
+    #[specta(type = Option<f64>)]
+    pub explored_at: Option<u64>,
+    pub account: Option<String>,
+    pub stale: bool,
+    /// Why it is stale, as a sentence; `None` when it is not.
+    pub stale_reason: Option<String>,
+    pub pages: u32,
+    pub elements: u32,
+    pub writes: Vec<crate::autorun::discovery_map::WriteEntry>,
+}
+
+#[derive(serde::Serialize, specta::Type, Clone, Debug, PartialEq)]
+pub struct MapView {
+    pub areas: Vec<AreaView>,
+}
+
+/// The project's discovery map at `now`, area by area. The bucket for what
+/// belongs to no area is never stale: there is nothing to explore again.
+pub fn map_view(root: &std::path::Path, org: &str, project: &str, now: u64) -> Result<MapView, String> {
+    use crate::autorun::discovery_map::{load_map, stale_reason};
+    let map = load_map(root, org, project)?;
+    let areas = map
+        .areas
+        .into_iter()
+        .map(|a| {
+            let why = if a.area.is_empty() { None } else { stale_reason(&a, now) };
+            AreaView {
+                stale: why.is_some(),
+                stale_reason: why.map(sentence_case),
+                pages: a.pages.len() as u32,
+                elements: a.pages.iter().map(|p| p.elements.len() as u32).sum(),
+                explored_at: a.explored_at,
+                account: a.account,
+                writes: a.writes,
+                area: a.area,
+            }
+        })
+        .collect();
+    Ok(MapView { areas })
+}
+
+/// `s` with its first letter capitalised.
+fn sentence_case(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// What discovery has mapped of this project, for the Discovery card.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_load_map(app: tauri::AppHandle, organization: String, project: String) -> Result<MapView, String> {
+    map_view(&root(&app)?, &organization, &project, crate::autorun::sessions::now_ms())
+}
+
+/// Forget what discovery mapped of `area`. Saved scripts keep running;
+/// new saves there need the area explored again.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_forget_map_area(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    area: String,
+) -> Result<(), String> {
+    crate::autorun::discovery_map::forget_area(&root(&app)?, &organization, &project, &area)
+}
+
+/// Reset map in the Discovery window, offered when the map cannot be read:
+/// the damaged file is moved aside (never deleted) and discovery starts an
+/// empty map. Hands back where it was moved, project-relative.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_reset_map(app: tauri::AppHandle, organization: String, project: String) -> Result<Option<String>, String> {
+    crate::autorun::discovery_map::reset_map(&root(&app)?, &organization, &project, crate::autorun::sessions::now_ms())
+}
+
+/// Said when something wants the browser a session holds. A discovery's
+/// names the assistant's own way out.
+pub fn busy_browser_sentence(discovering: bool) -> &'static str {
+    if discovering {
+        "the assistant is exploring the app in the Auto Run browser - end it with end_autorun_discovery, or press End discovery in Auto Run, Setup, first"
+    } else {
+        "close the supervised browser first"
+    }
+}
+
+/// The sentence for a browser a session holds, or `None` when none is
+/// open.
+pub async fn open_session_refusal() -> Option<String> {
+    SESSION.lock().await.as_ref().map(|s| busy_browser_sentence(s.discovery.is_some()).to_string())
+}
+
+impl crate::ai_bridge::DiscoveryBrowser for Session {
+    type D = Cdp;
+    fn parts(&mut self) -> crate::ai_bridge::DiscoveryParts<'_, Cdp> {
+        crate::ai_bridge::DiscoveryParts {
+            driver: &mut self.cdp,
+            lease: &mut self.lease,
+            signed_in: &mut self.account,
+            discovery: &mut self.discovery,
+        }
+    }
+    fn close(self) {
+        close_session(self);
+    }
 }
 
 /// Open the supervised browser into `slot`, closing one already there.
-/// Called with the session lock held.
-async fn open_into(app: &tauri::AppHandle, slot: &mut Option<Session>, which: Browser) -> Result<(), String> {
+/// `root` is the Auto Run folder its downloads go under. Called with the
+/// session lock held.
+async fn open_into(root: Result<PathBuf, String>, slot: &mut Option<Session>, which: Browser) -> Result<(), String> {
     // Looked at with the session lock held: a recording claims its slot and
     // then waits on this lock to look for a session, so the two can never
     // both miss each other.
@@ -168,7 +404,7 @@ async fn open_into(app: &tauri::AppHandle, slot: &mut Option<Session>, which: Br
     // Downloads are kept while this browser is open, in a folder emptied
     // as it opens and as it closes: they belong to no run. Losing them is
     // no reason not to open the browser either.
-    let downloads_root = match keep_supervised_downloads(app, &mut cdp).await {
+    let downloads_root = match keep_supervised_downloads(root, &mut cdp).await {
         Ok(root) => Some(root),
         Err(e) => {
             crate::applog::warn(format!("auto-run: downloads could not be switched on: {e}"));
@@ -183,6 +419,7 @@ async fn open_into(app: &tauri::AppHandle, slot: &mut Option<Session>, which: Br
         guarded_case: None,
         downloads_root,
         tabs_case: None,
+        discovery: None,
     });
     // A tab the page opens waits, paused, until this connection reads that
     // it opened and sets it up: read between commands too, or a popup a
@@ -210,8 +447,8 @@ pub(crate) fn close_browser(mut browser: LaunchedBrowser) {
 /// Point the supervised browser at `downloads/supervised`, emptied first
 /// of whatever an earlier session left there. Returns the Auto Run folder
 /// it lives in, for the close to empty it again.
-async fn keep_supervised_downloads(app: &tauri::AppHandle, cdp: &mut Cdp) -> Result<PathBuf, String> {
-    let root = root(app)?;
+async fn keep_supervised_downloads(root: Result<PathBuf, String>, cdp: &mut Cdp) -> Result<PathBuf, String> {
+    let root = root?;
     if let Err(e) = store::empty_supervised_downloads(&root) {
         crate::applog::warn(format!("auto-run: an earlier browser's downloads could not all be removed: {e}"));
     }
@@ -237,10 +474,12 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
     // case's setup still running is stopped between its template steps.
     crate::autorun::replay_to::stop();
     crate::autorun::setup::stop();
-    if let Some(s) = SESSION.lock().await.take() {
-        close_session(s);
+    // A discovery going in it ends with it: its state lives in the session.
+    let mut slot = SESSION.lock().await;
+    if crate::ai_bridge::close_browser_in(&mut slot) {
         crate::applog::info("Auto-run browser closed");
     }
+    publish_discovery(&slot);
     Ok(())
 }
 
@@ -405,6 +644,10 @@ pub(crate) async fn replay_supervised(
     // again for a replay the person has already stopped.
     if let Some(stopped) = replay_to::stopped_before_opening(&replay_to::CANCEL) {
         return Ok((stopped, Vec::new()));
+    }
+    // A discovery's browser is the assistant's: a replay never runs in it.
+    if let Err(why) = crate::ai_bridge::refuse_while_discovering(&mut slot) {
+        return Ok((ReplayEnd::Refused(why), Vec::new()));
     }
     let had_browser = slot.is_some();
     open_if_none(app, &mut slot).await?;
@@ -1457,8 +1700,8 @@ pub async fn refuse_while_a_run_is_going() -> Result<(), String> {
     if crate::commands::autorun_replay::replay_is_running() {
         return Err("an unattended run is going - wait for it, or stop it first".to_string());
     }
-    if supervised_session_is_open().await {
-        return Err("close the supervised browser first".to_string());
+    if let Some(busy) = open_session_refusal().await {
+        return Err(busy);
     }
     Ok(())
 }

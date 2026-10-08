@@ -173,7 +173,7 @@ export const autoRun: Screen = {
       locate: { role: "list", name: "Setup summary" },
       name: "Setup",
       does:
-        "What a run needs before it can start, one line each: the site address, the sign-in, the accounts, the areas, the test files and the database. " +
+        "What a run needs before it can start, one line each: the site address, the sign-in, the accounts, the areas, what discovery has mapped, the test files and the database. " +
         "A green dot means that part is ready, a red one that it is missing, and an amber one that it is worth a look. " +
         "The panel opens by itself when something a run needs is missing, and says **Needs attention**.",
     },
@@ -791,6 +791,23 @@ export const autoRun: Screen = {
         "The areas of the site a case can start in. Record one by clicking through the site's menu once in a browser the app opens; the app then finds its way there before step 1. **Try** checks a recorded area in a fresh browser.",
     },
     {
+      id: "view-discovery",
+      shot: SETUP,
+      group: "setup",
+      locate: { role: "button", name: "View discovery" },
+      name: "View (discovery)",
+      does:
+        "What your assistant has found out about the live site, area by area. Before it writes a script, the assistant opens the Auto Run browser, signs in and looks through the site itself, so a script is built from what is really on the page. " +
+        "The **Discovery** window lists each area with when it was explored and as which account, how many pages and elements were seen, and a **Stale** mark when the map is out of date. " +
+        "An area goes stale 30 days after it was explored, or when a script failed there. Expand **save requests** to see the requests the site made when it saved. " +
+        "**Forget map** (it asks first) clears one area's map; scripts keep running, and new saves there need the area explored again. " +
+        "A script save is refused when it points at something the assistant never saw on the live page. The exceptions are a name that contains, as whole words, something the script typed in an earlier step (typing **AutoTest Leave 7** covers a row **AutoTest Leave 7 Pending**, but not a **Leave** button), a check whose text is a whole word or phrase from the case, and a repair, which is held only to the steps it names. " +
+        "While discovery runs, **Open browser** and the Run buttons are greyed out, and hovering one shows **Discovery is using the Auto Run browser**. They come back when your assistant ends discovery. " +
+        "If your assistant stopped without ending it, **End discovery** appears beside **View** while discovery runs: it closes the assistant's browser, and what was mapped is kept. " +
+        "If the map cannot be read, the window offers **Reset map**, which moves the damaged file aside (it is kept, never deleted) and starts an empty map.",
+      tips: ["In your assistant, **/tcm:discover** starts this for a case. The row reads **Not explored yet** until an area has been explored."],
+    },
+    {
       id: "manage-test-files",
       shot: SETUP,
       group: "setup",
@@ -900,6 +917,7 @@ export const autoRun: Screen = {
         "Press **Edit** beside **Site address**, type the address of the site you test, and save.",
         "Press **Edit** beside **Accounts** and add your test accounts with the keys your team's scripts use, or add the ones the assistant proposed.",
         "Press **Edit** beside **Areas** and record the areas of the site your cases start in.",
+        "Ask your assistant to discover the site before it writes scripts. **View** beside **Discovery** shows what it has mapped.",
         "If your scripts upload files, add them with **Manage** beside **Test files**.",
       ],
     },

@@ -8,7 +8,6 @@ import { commands, type LocalRun_Serialize } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
-import { RUN_GOING_REASON, useRunGoing } from "../../lib/backgroundRun";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
@@ -57,6 +56,7 @@ export default function PastRuns({
   pbiId,
   onReview,
   onReplay,
+  replayBlocked,
   filter,
   onFilterChange,
 }: {
@@ -71,6 +71,9 @@ export default function PastRuns({
    * `step`, its first failed step. Offered only on a run of the PBI now
    * selected: the pane it opens saves under this PBI. */
   onReplay?: (caseId: number, title: string, step: number) => void;
+  /** Why Replay to step waits, when it does: an unattended run is going,
+   * or a discovery holds the Auto Run browser. */
+  replayBlocked?: string;
   /** Which results the list shows. Held by the screen, not here: this panel
    * unmounts whenever another tab is shown, and a person who picked Failed
    * expects it to still be Failed when they come back. */
@@ -79,7 +82,6 @@ export default function PastRuns({
 }) {
   const queryClient = useQueryClient();
   /** One run at a time: Replay to step waits for an unattended run going. */
-  const runGoing = useRunGoing();
   // "Clear results" lives here, beside the runs it clears, so it reads the
   // count straight off this query. The screen's Past runs tab reads the
   // same query for its count. That second subscriber once shifted render
@@ -259,8 +261,8 @@ export default function PastRuns({
                               variant="outline"
                               aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
                               className="disabled:pointer-events-auto"
-                              disabled={runGoing}
-                              title={runGoing ? RUN_GOING_REASON : undefined}
+                              disabled={Boolean(replayBlocked)}
+                              title={replayBlocked}
                               onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
                             >
                               Replay to step {replayTo}

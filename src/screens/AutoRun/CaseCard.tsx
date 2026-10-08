@@ -14,7 +14,6 @@ import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import { IconAdd, IconBug, IconEdit, IconHideDetails, IconRun, IconShowDetails } from "../../lib/actionIcons";
-import { RUN_GOING_REASON, useRunGoing } from "../../lib/backgroundRun";
 import { cn } from "../../lib/cn";
 import RunDownloads from "./RunDownloads";
 import { approvalWords, loadSetupView, setupViewKey } from "./setupApproval";
@@ -87,6 +86,7 @@ export default function CaseCard({
   onToggleOpen,
   onEdit,
   onRun,
+  runBlocked,
   confirmingClear,
   onAskClear,
   onClearDone,
@@ -105,6 +105,9 @@ export default function CaseCard({
   onToggleOpen: () => void;
   onEdit: () => void;
   onRun: () => void;
+  /** Why Run waits, when it does: an unattended run is going, or a
+   * discovery holds the Auto Run browser. */
+  runBlocked?: string;
   /** The suspected-defect Clear is waiting on Keep or Clear. */
   confirmingClear: boolean;
   onAskClear: () => void;
@@ -113,7 +116,6 @@ export default function CaseCard({
   lastRun?: { runId: string; steps?: ReadonlyArray<{ downloads?: string[] }> };
 }) {
   const bodyId = useId();
-  const runGoing = useRunGoing();
   const ready = Boolean(script);
   const defect = script?.suspected_defect;
   const files = script ? scriptFiles(script) : { uploads: [], downloads: [] };
@@ -286,10 +288,10 @@ export default function CaseCard({
                 variant="outline"
                 className="border-success text-success hover:border-success hover:bg-success/10 hover:text-success disabled:pointer-events-auto"
                 aria-label={`Run #${c.id}`}
-                // One run at a time: while an unattended run is going, this
-                // waits for it, and its title says why.
-                disabled={runGoing}
-                title={runGoing ? RUN_GOING_REASON : undefined}
+                // One run at a time: while an unattended run is going, or a
+                // discovery holds the browser, this waits, and its title says why.
+                disabled={Boolean(runBlocked)}
+                title={runBlocked}
                 onClick={onRun}
               >
                 <IconRun aria-hidden />

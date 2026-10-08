@@ -285,9 +285,16 @@ pub async fn route(
         // signed-in client. All were let through by the guard above.
         ("GET", "/autorun-guide") => (200, autorun_guide_with_quirks(ctx)),
         ("POST", "/autorun-script") => save_autorun_scripts(ctx, client, body).await,
-        ("GET", "/autorun-page") => autorun_page(target).await,
-        ("POST", "/autorun-probe") => autorun_probe(body).await,
+        ("GET", "/autorun-page") => autorun_page(ctx, target).await,
+        ("POST", "/autorun-probe") => autorun_probe(ctx, body).await,
         ("POST", "/autorun-try") => autorun_try(ctx, body).await,
+        // Discovery: the assistant opens the Auto Run browser itself, signs
+        // in as a saved account (the app types the password) and explores
+        // the live application, one action at a time.
+        ("POST", "/autorun-discover-start") => autorun_discover_start(ctx, body).await,
+        ("POST", "/autorun-discover-action") => autorun_discover_action(ctx, body).await,
+        ("POST", "/autorun-discover-end") => crate::commands::autorun::end_discovery().await,
+        ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body).await,
         ("POST", "/autorun-replay") => autorun_replay(ctx, body).await,
         ("GET", "/autorun-failures") => autorun_failures(target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
@@ -1583,7 +1590,8 @@ fn environment_database(ctx: &BridgeContext, env: &crate::environments::Environm
 
 /// The guide's own text, plus this project's sections when it has any: the
 /// module-screen rule while "Scripts may open pages by address" is off,
-/// then the recorded quirks. The constant (`autorun::guide::autorun_guide`)
+/// the recorded areas, the areas with no map or a stale one, then the
+/// recorded quirks. The constant (`autorun::guide::autorun_guide`)
 /// only says a quirks section exists; this reads what is actually on file,
 /// so the guide can never go stale on a live project.
 fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
@@ -1603,8 +1611,14 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
     let nav = crate::autorun::nav::load_nav(&root, &ctx.org, &ctx.project).unwrap_or_default();
     let quirks = crate::autorun::quirks::load_quirks(&root, &ctx.org, &ctx.project).unwrap_or_default();
     let files = project_test_files(&root, ctx);
+    let map = crate::autorun::discovery_map::load_map(&root, &ctx.org, &ctx.project).unwrap_or_else(|e| {
+        crate::applog::warn(&format!("Guide: {e}"));
+        Default::default()
+    });
+    let areas: Vec<&str> = nav.modules.iter().map(|m| m.name()).collect();
     for section in [
         crate::autorun::nav::guide_section(&nav),
+        crate::autorun::discovery_map::explore_section(&areas, &map, crate::autorun::sessions::now_ms()),
         crate::autorun::quirks::quirks_section(&quirks),
         crate::test_files::guide_section(&files),
     ] {
@@ -1618,7 +1632,7 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
 
 /// The page in the browser the person opened, as text: Chrome's own
 /// accessibility tree with a locator on every line.
-async fn autorun_page(target: &str) -> (u16, String) {
+async fn autorun_page(ctx: &BridgeContext, target: &str) -> (u16, String) {
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
@@ -1630,23 +1644,253 @@ async fn autorun_page(target: &str) -> (u16, String) {
         .filter(|n| *n > 0)
         .unwrap_or(crate::browser::snapshot::DEFAULT_LIMIT)
         .min(crate::browser::snapshot::DEFAULT_LIMIT * 10);
-    supervised_page(limit).await
+    supervised_page(&ctx.org, &ctx.project, limit).await
 }
 
 /// The supervised browser's page as text, `limit` lines at most: what
 /// `/autorun-page` answers, and what a replay that reached its step hands
-/// back beside its sentence.
-pub async fn supervised_page(limit: usize) -> (u16, String) {
+/// back beside its sentence. What it printed is filed in the project's
+/// discovery map.
+pub async fn supervised_page(organization: &str, project: &str, limit: usize) -> (u16, String) {
     // The lock is held for exactly one protocol job - whoever holds it
     // holds the browser, and the person may be using it.
     let mut slot = crate::commands::autorun::supervised().lock().await;
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
-    match crate::browser::snapshot::snapshot(&mut session.cdp, limit).await {
-        Ok(text) => (200, text),
-        Err(e) => (503, format!("the browser did not answer: {e}")),
+    let at = supervised_sighting(session, organization, project);
+    read_page(&mut session.cdp, limit, at.as_ref()).await
+}
+
+/// Where what the live page shows is filed in the discovery map
+/// (`autorun::discovery_map`): the project, the area it belongs to (`None`
+/// is the unattributed bucket), and whether a discovery is under way - in
+/// which case a page read stamps the area explored by `account`, an account
+/// KEY, never a login.
+pub struct Sighting {
+    pub root: std::path::PathBuf,
+    pub org: String,
+    pub project: String,
+    pub area: Option<String>,
+    pub account: Option<String>,
+    pub discovering: bool,
+}
+
+/// The area a recording belongs to: the discovery's own area, else the area
+/// the saved script of `case_id` names, else none (the unattributed bucket).
+/// A blank name counts as none.
+pub fn recording_area(root: &std::path::Path, discovery_area: Option<&str>, case_id: Option<i32>) -> Option<String> {
+    let named = |a: &str| {
+        let a = a.trim();
+        (!a.is_empty()).then(|| a.to_string())
+    };
+    discovery_area.and_then(named).or_else(|| {
+        let script = crate::autorun::store::load_script(root, case_id?).ok().flatten()?;
+        script.area.as_deref().and_then(named)
+    })
+}
+
+/// Where the supervised browser's sightings go, or `None` when there is
+/// nowhere to file them (no project chosen, no data directory).
+fn supervised_sighting(
+    session: &crate::commands::autorun::Session,
+    organization: &str,
+    project: &str,
+) -> Option<Sighting> {
+    if project.trim().is_empty() {
+        return None;
     }
+    let root = crate::autorun::store::configured_root()?;
+    discovery_sighting(
+        &root,
+        organization,
+        project,
+        session.discovery.as_ref(),
+        session.tabs_case,
+        session.account.as_deref(),
+    )
+}
+
+/// Where a browser's sightings go under `root`: the discovery's own area
+/// and account KEY while one is going (`discovery`), else the area of the
+/// case the browser last ran (`tabs_case`) and the account it signed in as
+/// (`signed_in`, a key too). `None` when no project is chosen.
+pub fn discovery_sighting(
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    discovery: Option<&crate::commands::autorun::DiscoveryState>,
+    tabs_case: Option<i32>,
+    signed_in: Option<&str>,
+) -> Option<Sighting> {
+    if project.trim().is_empty() {
+        return None;
+    }
+    Some(Sighting {
+        area: recording_area(root, discovery.and_then(|s| s.area.as_deref()), tabs_case),
+        account: discovery.and_then(|s| s.account.clone()).or_else(|| signed_in.map(str::to_string)),
+        discovering: discovery.is_some(),
+        root: root.to_path_buf(),
+        org: organization.to_string(),
+        project: project.to_string(),
+    })
+}
+
+/// The page the browser is on: its address's path (no host, query or
+/// fragment; empty when it cannot be read) and its title. The address is
+/// read as `nav::go_to_module` reads it to compare with `arrived`.
+pub async fn current_page<D: crate::browser::cdp::Driver>(d: &mut D) -> (String, String) {
+    let href = crate::browser::page::eval_value(d, "location.href").await;
+    let href = href.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let title = crate::browser::page::eval_value(d, "document.title").await;
+    let title = title.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let path = if href.trim().is_empty() { String::new() } else { crate::autorun::discovery_map::path_only(&href) };
+    (path, title)
+}
+
+/// A recording that could not be written is said in the log and never
+/// fails the route that made it.
+fn unrecorded(why: &str) {
+    crate::applog::warn(format!("Discovery map: what the page showed could not be recorded: {why}"));
+}
+
+/// The page as text, `limit` lines at most, with every locator it printed
+/// filed at `at`. The text is the same with or without `at`.
+pub async fn read_page<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    limit: usize,
+    at: Option<&Sighting>,
+) -> (u16, String) {
+    let (text, lines) = match crate::browser::snapshot::snapshot_with_lines(d, limit).await {
+        Ok(read) => read,
+        Err(e) => return (503, format!("the browser did not answer: {e}")),
+    };
+    if let Some(at) = at {
+        let (path, title) = current_page(d).await;
+        let recorded = if path.is_empty() {
+            Err("the page's address could not be read".to_string())
+        } else {
+            crate::autorun::discovery_map::record_seen(
+                &at.root,
+                &at.org,
+                &at.project,
+                at.area.as_deref(),
+                &path,
+                &title,
+                &lines,
+                at.account.as_deref(),
+                at.discovering,
+                crate::autorun::sessions::now_ms(),
+            )
+        };
+        if let Err(why) = recorded {
+            unrecorded(&why);
+        }
+    }
+    (200, text)
+}
+
+/// Files each locator in `targets` at `at` under the page at `path`.
+fn record_matched_targets(at: &Sighting, path: &str, targets: &[&crate::browser::locator::Target]) {
+    if targets.is_empty() || at.project.trim().is_empty() {
+        return;
+    }
+    if path.is_empty() {
+        unrecorded("the page's address could not be read");
+        return;
+    }
+    let now = crate::autorun::sessions::now_ms();
+    for target in targets {
+        let area = at.area.as_deref();
+        if let Err(why) =
+            crate::autorun::discovery_map::record_matched(&at.root, &at.org, &at.project, area, path, target, now)
+        {
+            unrecorded(&why);
+        }
+    }
+}
+
+/// The locators an action that WORKED must have matched at least once.
+/// Kinds that pass while matching nothing give none: `expect_hidden`, an
+/// `expect_count` of 0, `expect_no_row`, a `expect_row_count` with no
+/// positive bound, and `when_visible`, whose outcome does not say whether
+/// its selector was there. Matched without a catch-all, so a new kind will
+/// not compile until it is classified here.
+fn matched_targets(action: &crate::browser::actions::Action) -> Vec<&crate::browser::locator::Target> {
+    use crate::browser::actions::Action;
+    match action {
+        Action::Click { selector }
+        | Action::Fill { selector, .. }
+        | Action::Upload { selector, .. }
+        | Action::WaitFor { selector, .. }
+        | Action::ExpectVisible { selector, .. }
+        | Action::ExpectText { selector, .. }
+        | Action::ExpectContainsText { selector, .. }
+        | Action::ExpectAttribute { selector, .. }
+        | Action::ExpectFocused { selector, .. } => vec![selector],
+        Action::ExpectCount { selector, equals, .. } => {
+            if *equals >= 1 {
+                vec![selector]
+            } else {
+                vec![]
+            }
+        }
+        Action::Drag { from, to, .. } => vec![from, to],
+        Action::ExpectRow { table, .. } | Action::ExpectSorted { table, .. } => vec![table],
+        Action::ExpectRowCount { table, equals, at_least, .. } => {
+            if equals.is_some_and(|n| n >= 1) || at_least.is_some_and(|n| n >= 1) {
+                vec![table]
+            } else {
+                vec![]
+            }
+        }
+        Action::ExpectHidden { .. }
+        | Action::ExpectNoRow { .. }
+        | Action::WhenVisible { .. }
+        | Action::Navigate { .. }
+        | Action::CheckText { .. }
+        | Action::CheckUrl { .. }
+        | Action::SignIn { .. }
+        | Action::ExpectResponse { .. }
+        | Action::ApiRequest { .. }
+        | Action::Reload
+        | Action::ExpireSession
+        | Action::ReturnToArea { .. }
+        | Action::PressKey { .. }
+        | Action::ExpectDownload { .. }
+        | Action::ExpectTab { .. }
+        | Action::OpenTab { .. }
+        | Action::SwitchTab { .. }
+        | Action::CloseTab { .. }
+        | Action::ExpectTabClosed { .. }
+        | Action::ExpectDialog { .. } => vec![],
+    }
+}
+
+/// How many elements a probe's answer says matched (`"matches: N ..."`).
+fn probe_matches(text: &str) -> usize {
+    text.strip_prefix("matches: ")
+        .map(|rest| rest.chars().take_while(char::is_ascii_digit).collect::<String>())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+}
+
+/// What a locator matches on the page, as the probe answers it; a locator
+/// that matched at least once is filed at `at`.
+pub async fn probe_page<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    target: &crate::browser::locator::Target,
+    at: Option<&Sighting>,
+) -> (u16, String) {
+    let text = match crate::browser::snapshot::probe(d, target).await {
+        Ok(text) => text,
+        Err(e) => return (503, format!("the browser did not answer: {e}")),
+    };
+    if let Some(at) = at.filter(|_| probe_matches(&text) > 0) {
+        let (path, _) = current_page(d).await;
+        record_matched_targets(at, &path, &[target]);
+    }
+    (200, text)
 }
 
 /// One named field out of a small JSON body, or a refusal that says what
@@ -1661,7 +1905,7 @@ fn body_field(body: &str, key: &str, shape: &str) -> Result<serde_json::Value, (
 }
 
 /// What a locator matches on the open page right now.
-async fn autorun_probe(body: &str) -> (u16, String) {
+async fn autorun_probe(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let selector = match body_field(body, "selector", "{ \"selector\": <a script's target> }") {
         Ok(v) => v,
         Err(refused) => return refused,
@@ -1680,10 +1924,8 @@ async fn autorun_probe(body: &str) -> (u16, String) {
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
-    match crate::browser::snapshot::probe(&mut session.cdp, &target).await {
-        Ok(text) => (200, text),
-        Err(e) => (503, format!("the browser did not answer: {e}")),
-    }
+    let at = supervised_sighting(session, &ctx.org, &ctx.project);
+    probe_page(&mut session.cdp, &target, at.as_ref()).await
 }
 
 /// The applog line for a tried action: its kind, what it points at (a
@@ -1692,13 +1934,26 @@ async fn autorun_probe(body: &str) -> (u16, String) {
 /// tested without a browser. A `fill`'s VALUE is never in it - only its
 /// selector, the same as every other selector-carrying kind.
 pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> String {
+    format!(
+        "AI tried {} in the supervised browser: {}",
+        describe_action(action),
+        if ok { "ok" } else { "failed" }
+    )
+}
+
+/// An action in a few words: its kind and what it points at, as
+/// `describe_try` says it - never a `fill`'s value, a host or a query
+/// string. What the log and the discovery map keep of an action.
+pub fn describe_action(action: &crate::browser::actions::Action) -> String {
     use crate::browser::actions::Action;
     let kind = serde_json::to_value(action)
         .ok()
         .and_then(|v| v["kind"].as_str().map(str::to_string))
         .unwrap_or_default();
     let what = match action {
-        Action::Navigate { url } => url.clone(),
+        // Its path only: a host and a query string never reach a log line
+        // or the discovery map, and a query can carry a token.
+        Action::Navigate { url } => crate::autorun::discovery_map::path_only(url),
         Action::CheckUrl { contains } => contains.clone(),
         Action::CheckText { .. }
         | Action::SignIn { .. }
@@ -1741,10 +1996,41 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
         | Action::WhenVisible { selector, .. } => selector.describe(),
     };
     let target = if what.is_empty() { String::new() } else { format!(" {what}") };
-    format!(
-        "AI tried {kind}{target} in the supervised browser: {}",
-        if ok { "ok" } else { "failed" }
-    )
+    format!("{kind}{target}")
+}
+
+/// What no action an assistant runs may be: one read from its body by
+/// `/autorun-try` or `/autorun-discover-action`.
+fn refuse_as_a_tried_action(action: &crate::browser::actions::Action) -> Result<(), (u16, String)> {
+    // Signing in needs the tester's own accounts and the project's
+    // recipe. It is theirs to drive, and a script never carries a login.
+    if matches!(action, crate::browser::actions::Action::SignIn { .. }) {
+        return Err((400, "sign_in is not a thing an assistant does - the person signs in".to_string()));
+    }
+    action.validate().map_err(|why| (400, why))?;
+    // `validate()` allows `file://` (a saved script may need it for the
+    // live fixture, a development-only tab) but a TRIED action runs
+    // against whatever page the person actually has open - sending their
+    // browser to a local file is never something a rehearsal should do -
+    // nor is one guarded inside a `when_visible`.
+    if tried_addresses(action).iter().any(|url| url.trim().to_ascii_lowercase().starts_with("file:")) {
+        return Err((400, "a tried navigate goes to http or https only".to_string()));
+    }
+    Ok(())
+}
+
+/// Every address an action would send the browser to: a `navigate`'s or an
+/// `open_tab`'s, inside a `when_visible` too.
+fn tried_addresses(action: &crate::browser::actions::Action) -> Vec<&str> {
+    use crate::browser::actions::Action;
+    action
+        .each()
+        .into_iter()
+        .filter_map(|a| match a {
+            Action::Navigate { url } | Action::OpenTab { url, .. } => Some(url.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Run ONE action against the open page, so an assistant can find out
@@ -1763,28 +2049,8 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
             )
         }
     };
-    // Signing in needs the tester's own accounts and the project's
-    // recipe. It is theirs to drive, and a script never carries a login.
-    if matches!(action, crate::browser::actions::Action::SignIn { .. }) {
-        return (400, "sign_in is not a thing an assistant does - the person signs in".to_string());
-    }
-    if let Err(why) = action.validate() {
-        return (400, why);
-    }
-    // `validate()` allows `file://` (a saved script may need it for the
-    // live fixture, a development-only tab) but a TRIED action runs
-    // against whatever page the person actually has open - sending their
-    // browser to a local file is never something a rehearsal should do -
-    // nor is one guarded inside a `when_visible`.
-    let to_a_file = |a: &&crate::browser::actions::Action| {
-        matches!(
-            a,
-            crate::browser::actions::Action::Navigate { url } | crate::browser::actions::Action::OpenTab { url, .. }
-                if url.trim().to_ascii_lowercase().starts_with("file:")
-        )
-    };
-    if action.each().iter().any(to_a_file) {
-        return (400, "a tried navigate goes to http or https only".to_string());
+    if let Err(refused) = refuse_as_a_tried_action(&action) {
+        return refused;
     }
     // The case the try is for: its no-save guard applies, exactly as it
     // does to a step of that case, so a try can never send the save the
@@ -1817,6 +2083,7 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     {
         return (409, why);
     }
+    let discovery_area = session.discovery.as_ref().and_then(|s| s.area.clone());
     try_for_case(
         &mut session.cdp,
         &mut session.tabs_case,
@@ -1826,6 +2093,7 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
         &ctx.org,
         &ctx.project,
         case_id,
+        discovery_area.as_deref(),
         &action,
     )
     .await
@@ -1835,7 +2103,8 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
 /// case it last ran (`tabs_case`). A try for another case starts as that
 /// case's first step would: every tab but `main` is closed and `main` is
 /// current (`runner::tabs_for_case`), so it never acts in a tab another
-/// case left current.
+/// case left current. `discovery_area` is the area of a discovery under way
+/// in that browser: what a try that worked acted on is filed there first.
 #[allow(clippy::too_many_arguments)]
 pub async fn try_for_case<D: crate::browser::cdp::Driver>(
     d: &mut D,
@@ -1846,10 +2115,554 @@ pub async fn try_for_case<D: crate::browser::cdp::Driver>(
     organization: &str,
     project: &str,
     case_id: i32,
+    discovery_area: Option<&str>,
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
     crate::autorun::runner::tabs_for_case(d, tabs_case, case_id).await;
-    try_in(d, account, lease, root, organization, project, case_id, action).await
+    try_in_area(d, account, lease, root, organization, project, case_id, discovery_area, action).await
+}
+
+// ------------------------------------------------------------ discovery
+
+/// What a discovery works with in the Auto Run browser: its driver, its
+/// account lease, the account KEY it is signed in as, and the discovery
+/// under way in it (`None` in a browser the person opened).
+pub struct DiscoveryParts<'a, D> {
+    pub driver: &'a mut D,
+    pub lease: &'a mut crate::autorun::lease::Held,
+    pub signed_in: &'a mut Option<String>,
+    pub discovery: &'a mut Option<crate::commands::autorun::DiscoveryState>,
+}
+
+/// The Auto Run browser as a discovery sees it: the app's session
+/// (`commands::autorun::Session`), or a test's fake.
+pub trait DiscoveryBrowser {
+    type D: crate::browser::cdp::Driver;
+    fn parts(&mut self) -> DiscoveryParts<'_, Self::D>;
+    /// Close the browser, and with it the discovery and its lease.
+    fn close(self);
+}
+
+/// Said to a discovery action, or a page read for one, with no discovery
+/// going.
+pub const NO_DISCOVERY: &str = "no discovery is going - start one with start_autorun_discovery";
+
+/// Said when the browser a discovery opened was replaced (the person
+/// pressed Open browser) before its sign-in.
+const DISCOVERY_TAKEN_OVER: &str =
+    "the Auto Run browser was taken over before the discovery signed in - start the discovery again";
+
+/// The words of the page's live messages: alerts, statuses and live
+/// regions. Read before and after a discovery action, so the ones the
+/// action brought up can be told apart.
+const STATUS_TEXT_JS: &str = "Array.from(document.querySelectorAll('[role=alert],[role=status],[aria-live=assertive],[aria-live=polite]')).map(e => (e.innerText || '').trim()).filter(t => t.length > 0)";
+
+/// A name the body gave, trimmed; blank is none.
+fn named(text: Option<&str>) -> Option<String> {
+    text.map(str::trim).filter(|t| !t.is_empty()).map(str::to_string)
+}
+
+/// The page's live messages right now (`STATUS_TEXT_JS`), each on one short
+/// line. None when the page cannot say.
+async fn status_texts<D: crate::browser::cdp::Driver>(d: &mut D) -> Vec<String> {
+    match crate::browser::page::eval_value(d, STATUS_TEXT_JS).await {
+        Ok(serde_json::Value::Array(items)) => items.iter().filter_map(|v| v.as_str()).map(one_short_line).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `text` with every value a `fill` in `action` typed taken out: the map
+/// keeps what an action led to, never what was typed to get there.
+fn without_typed(text: &str, action: &crate::browser::actions::Action) -> String {
+    let mut out = text.to_string();
+    for a in action.each() {
+        if let crate::browser::actions::Action::Fill { value, .. } = a {
+            if !value.trim().is_empty() {
+                out = out.replace(value.as_str(), "(typed)");
+            }
+        }
+    }
+    out
+}
+
+/// Sign the browser a discovery just opened in as `account_key` (a KEY,
+/// never a login), and hand back where it landed: `{signed_in, detail,
+/// path, page}`, the path with no host or query. The discovery takes the
+/// account and `area` once the sign-in arrives, and the landing page is
+/// filed under that area, explored by that account. A sign-in that does
+/// not arrive - or an account that cannot be signed in at all - closes
+/// the browser and says why. A browser the person opened is never signed
+/// in or closed here.
+pub async fn discover_start_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    account_key: &str,
+    area: Option<&str>,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    let key = account_key.trim();
+    let failed = {
+        let Some(browser) = slot.as_mut() else {
+            return (409, NO_SUPERVISED_BROWSER.to_string());
+        };
+        let p = browser.parts();
+        if p.discovery.is_none() {
+            return (409, DISCOVERY_TAKEN_OVER.to_string());
+        }
+        let signed =
+            crate::autorun::signin::sign_in_leased(p.driver, root, organization, project, key, p.lease, p.signed_in, timing)
+                .await;
+        match signed {
+            Err(why) => why,
+            Ok(out) if !out.ok => out.detail,
+            Ok(out) => {
+                let area =
+                    named(area).map(|a| crate::autorun::discovery_map::canonical_area(root, organization, project, &a));
+                *p.discovery = Some(crate::commands::autorun::DiscoveryState { area, account: Some(key.to_string()) });
+                // The landing page is filed, but does not mark the area
+                // explored: nothing of the area itself has been seen yet.
+                let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref())
+                    .map(|at| Sighting { discovering: false, ..at });
+                let (status, page) = read_page(p.driver, crate::browser::snapshot::DEFAULT_LIMIT, at.as_ref()).await;
+                let (path, _) = current_page(p.driver).await;
+                let mut answer = serde_json::json!({
+                    "signed_in": true,
+                    "detail": out.detail,
+                    "path": path,
+                    "page": if status == 200 { page.as_str() } else { "" },
+                });
+                if status != 200 {
+                    answer["page_unavailable"] = serde_json::json!(page);
+                }
+                crate::applog::info(format!("Auto Run discovery started as {key}"));
+                return (200, answer.to_string());
+            }
+        }
+    };
+    if let Some(browser) = slot.take() {
+        browser.close();
+    }
+    crate::applog::info(format!("Auto Run discovery as {key} did not sign in; its browser is closed"));
+    (409, failed)
+}
+
+/// One action in the discovery's browser, run as `/autorun-try` runs one
+/// (`try_action`, case 0), with what it set off: `{ok, detail, path,
+/// dialogs, writes, page}`. Every write request the page sent (`SAVE_METHODS`)
+/// is logged in the area's map by method and path - never a query string -
+/// the page it ended on is filed, and a line saying what the action led to
+/// goes into the area's outcomes. Neither ever holds a value a `fill` typed.
+/// A non-blank `area` moves the discovery to that area first.
+pub async fn discover_action_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    action: &crate::browser::actions::Action,
+    area: Option<&str>,
+) -> (u16, String) {
+    let Some(browser) = slot.as_mut() else {
+        return (409, NO_DISCOVERY.to_string());
+    };
+    let p = browser.parts();
+    let Some(state) = p.discovery.as_mut() else {
+        return (409, NO_DISCOVERY.to_string());
+    };
+    if let Some(moved) = named(area) {
+        state.area = Some(crate::autorun::discovery_map::canonical_area(root, organization, project, &moved));
+    }
+    let area_name = state.area.clone();
+    let d = p.driver;
+    let recording = !project.trim().is_empty();
+    let bucket = area_name.as_deref().unwrap_or("");
+    let before = current_page(d).await.0;
+    let notes_before = status_texts(d).await;
+    let mark = crate::browser::cdp::Driver::net_mark(d);
+    let tried =
+        match try_action(d, p.signed_in, p.lease, root, organization, project, 0, area_name.as_deref(), action).await {
+            Ok(tried) => tried,
+            Err(refused) => return refused,
+        };
+    let what = describe_action(action);
+    let now = crate::autorun::sessions::now_ms();
+    let mut writes = Vec::new();
+    for sent in crate::browser::cdp::Driver::net_since(d, mark) {
+        if !crate::browser::save_guard::SAVE_METHODS.contains(&sent.method.as_str()) {
+            continue;
+        }
+        let path = without_typed(&crate::autorun::discovery_map::path_only(&sent.path_query), action);
+        if recording {
+            let entry = crate::autorun::discovery_map::WriteEntry {
+                method: sent.method.clone(),
+                path: path.clone(),
+                at: now,
+                step: what.clone(),
+            };
+            if let Err(why) = crate::autorun::discovery_map::record_write(root, organization, project, bucket, entry) {
+                unrecorded(&why);
+            }
+        }
+        writes.push(serde_json::json!({ "method": sent.method, "path": path }));
+    }
+    let after = current_page(d).await.0;
+    let new_notes: Vec<String> =
+        status_texts(d).await.into_iter().filter(|note| !notes_before.contains(note)).collect();
+    let dialogs: Vec<String> = tried.dialog.iter().map(|x| format!("{}: {}", x.kind, x.message)).collect();
+    if tried.outcome.ok && recording {
+        let led_to = match (&tried.dialog, new_notes.first()) {
+            (Some(x), _) => format!("{} \"{}\"", x.kind, one_short_line(&x.message)),
+            (None, Some(note)) => format!("\"{note}\""),
+            (None, None) if !after.is_empty() && after != before => format!("moved to {after}"),
+            (None, None) => "nothing visible changed".to_string(),
+        };
+        let line = one_short_line(&without_typed(&format!("{what}: {led_to}"), action));
+        if let Err(why) = crate::autorun::discovery_map::record_outcome(root, organization, project, bucket, &line) {
+            unrecorded(&why);
+        }
+    }
+    let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref());
+    let (status, page) = read_page(d, crate::browser::snapshot::DEFAULT_LIMIT, at.as_ref()).await;
+    let mut answer = serde_json::json!({
+        "ok": tried.outcome.ok,
+        "detail": tried.outcome.detail,
+        "path": after,
+        "dialogs": dialogs,
+        "writes": writes,
+        "page": if status == 200 { page.as_str() } else { "" },
+    });
+    if status != 200 {
+        answer["page_unavailable"] = serde_json::json!(page);
+    }
+    if let Some(shot) = &tried.outcome.screenshot {
+        answer["picture"] = serde_json::json!(shot);
+    }
+    (200, answer.to_string())
+}
+
+/// End the discovery in `slot`: its browser is closed. A browser the
+/// person opened is left as it is, and with nothing to end this is still
+/// an answer, not an error - ending twice is fine.
+pub fn end_discovery_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
+    if slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
+        if let Some(browser) = slot.take() {
+            browser.close();
+        }
+        crate::applog::info("Auto Run discovery ended; its browser is closed");
+        return (200, "the discovery is over and its browser is closed".to_string());
+    }
+    (200, "no discovery is going".to_string())
+}
+
+/// Refused while a discovery holds the browser in `slot`: a replay, or the
+/// person's Open browser, would otherwise take the discovery's browser
+/// over. The sentence names `end_autorun_discovery`.
+pub fn refuse_while_discovering<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Result<(), String> {
+    if slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
+        return Err(crate::commands::autorun::busy_browser_sentence(true).to_string());
+    }
+    Ok(())
+}
+
+/// Close whatever browser `slot` holds - a discovery ends with it. Whether
+/// there was one.
+pub fn close_browser_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
+    match slot.take() {
+        Some(browser) => {
+            browser.close();
+            true
+        }
+        None => false,
+    }
+}
+
+/// How many lines of the page a refused area hands back.
+const AREA_PAGE_LINES: usize = 40;
+
+/// Save the clicks a discovery found as an area named `name` under the
+/// test-case Module `module`, once a replay of them from home has arrived
+/// where the browser stands now: `{saved, arrived}`, and the discovery
+/// moves to the new area. The replay is the run's own trip (`go_to_module`
+/// from a fresh home, signed in again as the discovery's account when the
+/// session has gone), so a saved area is one a run can take. Clicks that
+/// do not arrive save nothing, and the refusal says where they stopped and
+/// what the page showed. A name already taken is refused before the
+/// browser is touched: the person replaces an area, never the assistant.
+#[allow(clippy::too_many_arguments)]
+pub async fn discover_area_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    name: &str,
+    module: &str,
+    clicks: Vec<crate::browser::locator::Target>,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    use crate::autorun::nav;
+    let Some(browser) = slot.as_mut() else {
+        return (409, NO_DISCOVERY.to_string());
+    };
+    let p = browser.parts();
+    let Some(state) = p.discovery.as_ref() else {
+        return (409, NO_DISCOVERY.to_string());
+    };
+    let (name, module) = (name.trim().to_string(), module.trim().to_string());
+    if name.is_empty() || module.is_empty() || clicks.is_empty() {
+        return (400, "an area needs a name, the module it belongs to and at least one click".to_string());
+    }
+    let navfile = match nav::load_nav(root, organization, project) {
+        Ok(n) => n,
+        Err(why) => return (409, why),
+    };
+    if nav::find_area(&navfile, &name).is_some() {
+        return (
+            409,
+            format!(
+                "An area named '{name}' already exists; pick another name or ask the person to replace it in Auto Run"
+            ),
+        );
+    }
+    let recipe = match crate::autorun::recipe::load_effective_recipe(root, organization, project) {
+        Ok(r) => r,
+        Err(why) => return (409, why),
+    };
+    let account = state.account.clone().or_else(|| p.signed_in.clone());
+    let d = p.driver;
+    // Where the clicks must arrive: where the assistant clicked its way to,
+    // read as a run's trip reads it.
+    let href = crate::browser::page::eval_value(d, "location.href").await;
+    let href = href.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let arrived = if href.trim().is_empty() { String::new() } else { nav::path_of(&href) };
+    if arrived.is_empty() {
+        return (409, "the page would not say where it is - read the page and try again".to_string());
+    }
+    let home = nav::Home::of(&recipe);
+    let mut went = nav::go_home(d, &home, timing).await;
+    let signed_in = went.ok
+        && crate::browser::expect::expect(
+            d,
+            &home.signed_in,
+            crate::browser::expect::Check::Visible,
+            timing.nav_ms,
+            timing.poll_ms,
+        )
+        .await
+        .ok;
+    if !signed_in {
+        // The saved session has gone: sign in again as the discovery's
+        // account, then start from home as a recording does.
+        let Some(key) = account else {
+            return (409, "the discovery has no account to sign in again with - start it again".to_string());
+        };
+        match crate::autorun::signin::sign_in_leased(d, root, organization, project, &key, p.lease, p.signed_in, timing)
+            .await
+        {
+            Err(why) => return (409, why),
+            Ok(out) if !out.ok => return (409, out.detail),
+            Ok(_) => {}
+        }
+        went = nav::go_home(d, &home, timing).await;
+    }
+    let reached = if went.ok {
+        let start = match crate::browser::page::eval_value(d, "location.href").await {
+            Ok(v) => nav::path_of(v.as_str().unwrap_or("")),
+            Err(_) => String::new(),
+        };
+        let path = nav::ModulePath {
+            area: name.clone(),
+            module,
+            clicks,
+            arrived,
+            recorded: crate::commands::autorun_record::now_iso(),
+            start,
+        };
+        let route = nav::Route::new(&recipe, path);
+        nav::go_to_module(d, &route, nav::TripFrom::SignIn, timing).await.map(|at| (at, route.path))
+    } else {
+        Err(nav::PathFailure { at: nav::Where::Home, reason: went.detail, harness: went.harness })
+    };
+    let (at, path) = match reached {
+        Ok(found) => found,
+        Err(failure) => {
+            let (status, page) = read_page(d, crate::browser::snapshot::DEFAULT_LIMIT, None).await;
+            let showed = if status == 200 {
+                page.lines().take(AREA_PAGE_LINES).collect::<Vec<_>>().join("\n")
+            } else {
+                "nothing - the page could not be read".to_string()
+            };
+            return (409, format!("The clicks did not arrive: {}. The page showed: {showed}", failure.for_dialog()));
+        }
+    };
+    let saved = path.clicks.len();
+    if let Err(why) = nav::put_path(root, organization, project, path) {
+        return (409, why);
+    }
+    if let Some(state) = p.discovery.as_mut() {
+        state.area = Some(name);
+    }
+    crate::applog::info(format!("Auto Run discovery saved an area ({saved} clicks)"));
+    (200, serde_json::json!({ "saved": true, "arrived": at }).to_string())
+}
+
+/// `/autorun-discover-start`: open the Auto Run browser for the assistant
+/// and sign in as `account` (`discover_start_in`). Refused, before
+/// anything opens, while anything else holds the browser, and for an
+/// account or recipe that is not there.
+async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    const SHAPE: &str =
+        "{ \"account\": <an account key>, \"area\": <an area name, optional>, \"browser\": \"edge\" | \"chrome\", optional }";
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {SHAPE}.")),
+    };
+    let Some(account) = named(v.get("account").and_then(|a| a.as_str())) else {
+        return (
+            400,
+            format!("this call needs an \"account\": the key of an account saved under Auto Run, Accounts. Expected {SHAPE}."),
+        );
+    };
+    let area = named(v.get("area").and_then(|a| a.as_str()));
+    let browser = match v.get("browser") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(b)) if matches!(b.trim().to_ascii_lowercase().as_str(), "edge" | "chrome") => {
+            Some(b.trim().to_ascii_lowercase())
+        }
+        Some(_) => return (400, "browser is \"edge\" or \"chrome\"".to_string()),
+    };
+    if let Err(why) = crate::commands::autorun::refuse_discovery_while_busy() {
+        return (409, why);
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    // No account, no recipe: said before a browser opens for nothing.
+    if let Err(why) = crate::autorun::signin::prepare(&root, &ctx.org, &ctx.project, &account) {
+        return (409, why);
+    }
+    let browser = browser.unwrap_or_else(|| crate::autorun::store::last_browser(&root));
+    if let Err(why) = crate::commands::autorun::open_for_discovery(&browser).await {
+        return (409, why);
+    }
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let answer = discover_start_in(
+        &mut slot,
+        &root,
+        &ctx.org,
+        &ctx.project,
+        &account,
+        area.as_deref(),
+        &crate::browser::timing::Timing::default(),
+    )
+    .await;
+    // A sign-in that failed closed the browser, and the discovery with it.
+    crate::commands::autorun::publish_discovery(&slot);
+    answer
+}
+
+/// `/autorun-discover-action`: one action in the discovery's browser
+/// (`discover_action_in`). Refused as a tried action is (`sign_in`, a local
+/// file), and a `navigate` or `open_tab` to a site outside the sign-in
+/// recipe's, before the browser is touched.
+async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    const SHAPE: &str = "{ \"action\": <one script action>, \"area\": <an area name, optional> }";
+    let raw = match body_field(body, "action", SHAPE) {
+        Ok(v) => v,
+        Err(refused) => return refused,
+    };
+    let action: crate::browser::actions::Action = match serde_json::from_value(raw) {
+        Ok(a) => a,
+        Err(e) => {
+            return (
+                400,
+                format!("that is not an action: {e} - call get_autorun_guide for the vocabulary."),
+            )
+        }
+    };
+    if let Err(refused) = refuse_as_a_tried_action(&action) {
+        return refused;
+    }
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    let area = named(v.get("area").and_then(|a| a.as_str()));
+    if let Some(busy) = unattended_run_is_using_the_browser() {
+        return busy;
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let recipe = match crate::autorun::recipe::load_effective_recipe(&root, &ctx.org, &ctx.project) {
+        Ok(r) => r,
+        Err(why) => return (409, why),
+    };
+    // A relative address names no site: the runner makes it absolute on the
+    // page and holds it to the same list.
+    let policy = crate::autorun::runner::policy_for(Some(&recipe));
+    for url in tried_addresses(&action) {
+        if let Some(origin) = crate::autorun::recipe::origin_of(url) {
+            if !policy.allows(url) {
+                return (
+                    400,
+                    format!(
+                        "{origin} is not one of {} - a discovery goes only where the sign-in recipe does",
+                        crate::browser::actions::ALLOWED_ORIGINS
+                    ),
+                );
+            }
+        }
+    }
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, area.as_deref()).await
+}
+
+/// `/autorun-discover-area`: save the clicks a discovery found as an area
+/// (`discover_area_in`), once a replay of them arrives.
+async fn autorun_discover_area(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    const SHAPE: &str = "{ \"name\": <the area's name>, \"module\": <the test-case Module it belongs to>, \"clicks\": [<a script's click selector>, ...] }";
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {SHAPE}.")),
+    };
+    let Some(name) = named(v.get("name").and_then(|a| a.as_str())) else {
+        return (400, format!("this call needs a \"name\" for the area. Expected {SHAPE}."));
+    };
+    let Some(module) = named(v.get("module").and_then(|a| a.as_str())) else {
+        return (400, format!("this call needs the \"module\" the area belongs to. Expected {SHAPE}."));
+    };
+    let clicks: Vec<crate::browser::locator::Target> = match v.get("clicks").cloned().map(serde_json::from_value) {
+        Some(Ok(clicks)) => clicks,
+        Some(Err(e)) => return (400, format!("those are not clicks: {e}. Expected {SHAPE}.")),
+        None => return (400, format!("this call needs the \"clicks\" from the home page. Expected {SHAPE}.")),
+    };
+    if clicks.is_empty() {
+        return (400, format!("an area needs at least one click from the home page. Expected {SHAPE}."));
+    }
+    for (i, click) in clicks.iter().enumerate() {
+        if let Err(e) = click.validate() {
+            return (400, format!("click {}: {e}", i + 1));
+        }
+    }
+    if let Some(busy) = unattended_run_is_using_the_browser() {
+        return busy;
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    discover_area_in(
+        &mut slot,
+        &root,
+        &ctx.org,
+        &ctx.project,
+        &name,
+        &module,
+        clicks,
+        &crate::browser::timing::Timing::default(),
+    )
+    .await
 }
 
 /// A future the replay host hands back: boxed, so the host can be a trait
@@ -1872,8 +2685,9 @@ pub trait ReplayHost: Send + Sync {
         project: String,
         req: crate::autorun::replay_to::ReplayRequest,
     ) -> HostFuture<'_, Result<crate::autorun::replay_to::ReplayEnd, String>>;
-    /// The page the replay left the browser on, as `/autorun-page` answers.
-    fn page(&self) -> HostFuture<'_, (u16, String)>;
+    /// The page the replay left the browser on, as `/autorun-page` answers
+    /// for this organization and project.
+    fn page(&self, organization: String, project: String) -> HostFuture<'_, (u16, String)>;
 }
 
 static REPLAY_HOST: std::sync::OnceLock<Box<dyn ReplayHost>> = std::sync::OnceLock::new();
@@ -1958,7 +2772,7 @@ pub async fn autorun_replay_with(
     match end {
         ReplayEnd::Refused(_) | ReplayEnd::Blocked(_) => (409, sentence),
         ReplayEnd::Ready { .. } => {
-            let answer = match host.page().await {
+            let answer = match host.page(ctx.org.clone(), ctx.project.clone()).await {
                 (200, page) => serde_json::json!({ "sentence": sentence, "page": page }),
                 (_, why) => serde_json::json!({ "sentence": sentence, "page_unavailable": why }),
             };
@@ -1988,7 +2802,8 @@ pub fn try_case_id(body: &str) -> Result<i32, (u16, String)> {
 /// One tried action in a browser already guarded for its case
 /// (`commands::autorun::guard_for_case`), as the route answers it.
 /// `case_id` is the case the try is for: a tried `return_to_area` goes to
-/// the area that case's saved script names.
+/// the area that case's saved script names. A try that worked files every
+/// locator it acted on in the discovery map, under that case's area.
 #[allow(clippy::too_many_arguments)]
 pub async fn try_in<D: crate::browser::cdp::Driver>(
     d: &mut D,
@@ -2000,6 +2815,57 @@ pub async fn try_in<D: crate::browser::cdp::Driver>(
     case_id: i32,
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
+    try_in_area(d, account, lease, root, organization, project, case_id, None, action).await
+}
+
+/// `try_in`, its sightings filed under `discovery_area` when one is given
+/// (`recording_area`).
+#[allow(clippy::too_many_arguments)]
+async fn try_in_area<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    account: &mut Option<String>,
+    lease: &mut crate::autorun::lease::Held,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    case_id: i32,
+    discovery_area: Option<&str>,
+    action: &crate::browser::actions::Action,
+) -> (u16, String) {
+    let tried = try_action(d, account, lease, root, organization, project, case_id, discovery_area, action).await;
+    let outcome = match tried {
+        Ok(tried) => tried.outcome,
+        Err(refused) => return refused,
+    };
+    let mut text = format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
+    if let Some(shot) = &outcome.screenshot {
+        text.push_str(&format!(" (picture: {shot})"));
+    }
+    (200, text)
+}
+
+/// What one action an assistant ran did: its outcome, and the dialog the
+/// page raised while it ran, if any.
+struct Tried {
+    outcome: crate::browser::actions::ActionOutcome,
+    dialog: Option<crate::autorun::StepDialog>,
+}
+
+/// One action, carried out by the runner's own step loop as a step of one
+/// numbered 0 (`try_in_area` says why), with what it acted on filed when it
+/// worked.
+#[allow(clippy::too_many_arguments)]
+async fn try_action<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    account: &mut Option<String>,
+    lease: &mut crate::autorun::lease::Held,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    case_id: i32,
+    discovery_area: Option<&str>,
+    action: &crate::browser::actions::Action,
+) -> Result<Tried, (u16, String)> {
     use crate::autorun::runner::{area_route, area_routes, named_areas, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
     // A bare `return_to_area` goes to the case's own area; one that names
     // an area goes to that one.
@@ -2022,6 +2888,10 @@ pub async fn try_in<D: crate::browser::cdp::Driver>(
     // SAVED, not here: a tried `fill` is not on its way into a file, and
     // it types the literal text it was given rather than standing in for
     // anything a recipe would have substituted.
+    // The page the try starts on: a click that navigates was matched on
+    // this page, not the one it leads to.
+    let matched = matched_targets(action);
+    let started_on = if matched.is_empty() { String::new() } else { current_page(d).await.0 };
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
     let mut run = InRun { areas: Some(&areas), ..Default::default() };
     let outcomes = match crate::autorun::runner::run_step_in_run(
@@ -2040,21 +2910,28 @@ pub async fn try_in<D: crate::browser::cdp::Driver>(
     .await
     {
         Ok(v) => v,
-        Err(why) => return (500, why),
+        Err(why) => return Err((500, why)),
     };
-    let Some(outcome) = outcomes.first() else {
-        return (500, "the action produced no outcome".to_string());
+    let Some(outcome) = outcomes.into_iter().next() else {
+        return Err((500, "the action produced no outcome".to_string()));
     };
     // Shown to a person reading Settings -> Logs, never returned to the
     // assistant - and never a `fill`'s VALUE, which `describe_try` never
     // even looks at.
     crate::applog::info(describe_try(action, outcome.ok));
-    let mut text =
-        format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
-    if let Some(shot) = &outcome.screenshot {
-        text.push_str(&format!(" (picture: {shot})"));
+    // Only a try that worked: a locator that failed was never seen working.
+    if outcome.ok {
+        let at = Sighting {
+            root: root.to_path_buf(),
+            org: organization.to_string(),
+            project: project.to_string(),
+            area: recording_area(root, discovery_area, Some(case_id)),
+            account: None,
+            discovering: false,
+        };
+        record_matched_targets(&at, &started_on, &matched);
     }
-    (200, text)
+    Ok(Tried { outcome, dialog: run.dialog })
 }
 
 /// A run's failed cases, as text an assistant can act on - and, when it
@@ -2996,6 +3873,10 @@ async fn save_autorun_scripts(
     // on: the assistant has decided that step was the script's fault after
     // all, so the mark goes once the save has landed.
     let mut repaired_marks: Vec<(i32, i32)> = Vec::new();
+    // Which steps of each script the seen check reads, by case: `None`
+    // for a new script (all of them), its declared steps for a repair. An
+    // unchanged resave is not listed: it was checked when it was saved.
+    let mut seen_scope: Vec<(i32, Option<Vec<i32>>)> = Vec::new();
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
@@ -3064,6 +3945,7 @@ async fn save_autorun_scripts(
                 // was fully declared, so `declared` is always Some here -
                 // there is no path where a script actually differs from
                 // disk and this branch is reached with nothing declared.
+                seen_scope.push((sent.case_id, crate::autorun::seen_check::steps_to_check(declared)));
                 if let Some(e) = declared {
                     let why = e.why.trim();
                     crate::applog::info(format!(
@@ -3099,6 +3981,7 @@ async fn save_autorun_scripts(
                 }
                 script.repairs = 0;
                 script.last_repair = None;
+                seen_scope.push((sent.case_id, None));
                 lines.push(format!("case {} (new)", script.case_id));
             }
         }
@@ -3154,6 +4037,30 @@ async fn save_autorun_scripts(
             crate::autorun::floor::check_floor(script, &crate::autorun::floor::expected_of(&case.steps));
         if !shortfalls.is_empty() {
             return (400, format!("case {}: {}", script.case_id, shortfalls.join("; ")));
+        }
+    }
+
+    // Gate 3: every locator a new or changed step names was seen on the
+    // live app (`seen_check`), so no script is saved against a guess.
+    if !seen_scope.is_empty() {
+        let map = match crate::autorun::discovery_map::load_map(&root, &ctx.org, &ctx.project) {
+            Ok(m) => m,
+            Err(e) => return (400, e),
+        };
+        for (case_id, only) in &seen_scope {
+            let (Some(script), Some(case)) = (
+                prepared.iter().find(|s| s.case_id == *case_id),
+                cases.iter().find(|c| c.id == *case_id),
+            ) else {
+                return (400, format!("case {case_id} could not be checked against the live app, so it was not saved"));
+            };
+            let case_text: Vec<String> =
+                case.steps.iter().flat_map(|s| [s.action.clone(), s.expected.clone()]).collect();
+            if let Err(why) =
+                crate::autorun::seen_check::check_seen(&map, script, &case_text, only.as_deref())
+            {
+                return (400, why);
+            }
         }
     }
 

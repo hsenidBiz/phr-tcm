@@ -21,6 +21,7 @@ import { activeEnvironment, effectiveSite, useEnvironments } from "../../lib/env
 import { unwrapStr } from "../../lib/ipc";
 import {
   IconAccounts,
+  IconDiscoveryMap,
   IconHideDetails,
   IconModulePaths,
   IconRecipe,
@@ -28,10 +29,13 @@ import {
   IconSaveWords,
   IconShowDetails,
   IconSiteAddress,
+  IconStop,
   IconTestFiles,
 } from "../../lib/actionIcons";
+import { useDiscoveryActive } from "../../lib/discoveryActive";
 import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
+import DiscoveryDialog, { discoverySummary, useDiscoveryMap } from "./DiscoveryDialog";
 import RecipeEditor from "./RecipeEditor";
 import RecordSignInDialog from "./RecordSignInDialog";
 import SaveWordsDialog, { BUILT_IN_SAVE_WORDS } from "./SaveWordsDialog";
@@ -84,6 +88,10 @@ export function useAutoRunSetup({
   const testFiles = useTestFiles(org, project);
   const testFileCount = testFiles.isSuccess ? (testFiles.data?.length ?? 0) : null;
   const areaCount = nav.isSuccess ? (nav.data?.modules.length ?? 0) : null;
+  // What discovery has mapped. Shares its key with the Discovery dialog, so
+  // Forget map there updates the row.
+  const discoveryMap = useDiscoveryMap(org, project);
+  const discoveryLine = discoverySummary(discoveryMap.data);
 
   const saved = recipe.data;
   // Where a run goes now: the active environment's address when it has one,
@@ -158,6 +166,8 @@ export function useAutoRunSetup({
     accounts,
     nav,
     testFiles,
+    discoveryMap,
+    discoveryLine,
     databases,
     activeDb,
     accountCount,
@@ -266,6 +276,18 @@ function summaryLines(s: AutoRunSetup): { label: string; status: Status; value: 
         : s.areaCount === 0
           ? ["warning", "None recorded yet"]
           : ["ready", `${plural(s.areaCount, "area")} recorded`];
+  const discoveryStale = (s.discoveryMap.data?.areas ?? []).some(
+    (a) => a.area !== "" && a.explored_at != null && a.stale,
+  );
+  const discovery: [Status, string] = !s.setupReady
+    ? ["quiet", pickProject]
+    : s.discoveryMap.isError
+      ? ["warning", "Could not be read"]
+      : s.discoveryLine == null
+        ? ["quiet", "Loading…"]
+        : s.discoveryLine === "Not explored yet"
+          ? ["quiet", s.discoveryLine]
+          : [discoveryStale ? "warning" : "ready", s.discoveryLine];
   const missingFiles = s.readiness.missingTestFiles.length;
   const files: [Status, string] = !s.setupReady
     ? ["quiet", pickProject]
@@ -294,6 +316,7 @@ function summaryLines(s: AutoRunSetup): { label: string; status: Status; value: 
     { label: "Sign-in", status: signIn[0], value: signIn[1] },
     { label: "Accounts", status: accounts[0], value: accounts[1] },
     { label: "Areas", status: areas[0], value: areas[1] },
+    { label: "Discovery", status: discovery[0], value: discovery[1] },
     { label: "Test files", status: files[0], value: files[1] },
     { label: "Database", status: db[0], value: db[1] },
   ];
@@ -325,9 +348,27 @@ export default function SetupPanel({
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [recordOpen, setRecordOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [siteOpen, setSiteOpen] = useState(false);
   const [testFilesOpen, setTestFilesOpen] = useState(false);
   const [saveWordsOpen, setSaveWordsOpen] = useState(false);
+  // While the assistant's discovery holds the Auto Run browser, End
+  // discovery is the person's way out of one the assistant never ended.
+  // Nothing is lost by ending it - the map keeps what was seen - so it asks
+  // no confirm.
+  const discovering = useDiscoveryActive();
+  const [ending, setEnding] = useState(false);
+  const [endProblem, setEndProblem] = useState<string | null>(null);
+  const endDiscovery = async () => {
+    setEndProblem(null);
+    setEnding(true);
+    try {
+      await unwrapStr(commands.autoRunEndDiscovery());
+    } catch (e) {
+      setEndProblem(e instanceof Error ? e.message : String(e));
+    }
+    setEnding(false);
+  };
 
   const { setupReady, recipe, envs, accounts, nav, testFiles, site, activeEnv } = s;
   const needsProject = setupReady ? undefined : "Pick an organization and project first";
@@ -542,6 +583,54 @@ export default function SetupPanel({
                 </Button>
               </SetupRow>
 
+              {/* What the assistant's discovery has seen of the live app,
+                  area by area. */}
+              <SetupRow
+                label="Discovery"
+                state={
+                  !setupReady ? (
+                    <span className="text-muted">{needsProject}</span>
+                  ) : s.discoveryMap.isError ? (
+                    <span className="text-danger">The discovery map could not be read</span>
+                  ) : s.discoveryLine == null ? (
+                    <span className="text-muted">Loading…</span>
+                  ) : s.discoveryLine === "Not explored yet" ? (
+                    <span className="text-muted">{s.discoveryLine}</span>
+                  ) : (
+                    s.discoveryLine
+                  )
+                }
+              >
+                {discovering && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={ending}
+                    title="Close the assistant's discovery browser so Auto Run can run again"
+                    onClick={() => void endDiscovery()}
+                  >
+                    <IconStop aria-hidden />
+                    End discovery
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label="View discovery"
+                  disabled={!setupReady}
+                  title={needsProject}
+                  onClick={() => setDiscoveryOpen(true)}
+                >
+                  <IconDiscoveryMap aria-hidden />
+                  View
+                </Button>
+              </SetupRow>
+              {endProblem && (
+                <p role="alert" className="text-xs text-danger">
+                  {endProblem}
+                </p>
+              )}
+
               <SetupRow
                 label="Test files"
                 state={
@@ -624,6 +713,9 @@ export default function SetupPanel({
       {siteOpen && <SiteAddressDialog org={org} project={project} onClose={() => setSiteOpen(false)} />}
       {saveWordsOpen && (
         <SaveWordsDialog org={org} project={project} view={nav.data ?? null} onClose={() => setSaveWordsOpen(false)} />
+      )}
+      {discoveryOpen && (
+        <DiscoveryDialog org={org} project={project} onClose={() => setDiscoveryOpen(false)} />
       )}
       {navOpen && (
         <AreasDialog org={org} project={project} caseModules={caseModules} onClose={() => setNavOpen(false)} />

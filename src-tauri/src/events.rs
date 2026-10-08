@@ -184,6 +184,14 @@ pub struct AutorunSessionChanged {
     pub account: Option<String>,
 }
 
+/// Emitted when a discovery starts or ends in the Auto Run browser: while
+/// `active`, the assistant is exploring the app there and Auto Run's own
+/// runs and Open browser wait for it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunDiscoveryChanged {
+    pub active: bool,
+}
+
 /// Emitted when the assistant asks to replay case `case_id` (`title`) up
 /// to step `step` and its script must not save: the app shows the Allow
 /// prompt for request `id` (`autorun::replay_ask`), and nothing runs until

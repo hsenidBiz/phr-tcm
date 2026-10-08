@@ -16,7 +16,6 @@ import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
 import { Textarea } from "../../components/ui/input";
-import { RUN_GOING_REASON, useRunGoing } from "../../lib/backgroundRun";
 import { cn } from "../../lib/cn";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
@@ -90,10 +89,11 @@ export default function RunReview(props: {
    * `step`, its first failed step. Not offered on a run of another PBI: the
    * pane it opens saves under the PBI now selected. */
   onReplay?: (caseId: number, title: string, step: number) => void;
+  /** Why Replay to step waits, when it does: an unattended run is going,
+   * or a discovery holds the Auto Run browser. */
+  replayBlocked?: string;
 }) {
-  const { runId, onClose, onReplay } = props;
-  /** One run at a time: Replay to step waits for an unattended run going. */
-  const runGoing = useRunGoing();
+  const { runId, onClose, onReplay, replayBlocked } = props;
   const queryClient = useQueryClient();
 
   const query = useQuery<LocalRun_Serialize | null>({
@@ -388,8 +388,8 @@ export default function RunReview(props: {
                       variant="outline"
                       aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
                       className="disabled:pointer-events-auto"
-                      disabled={runGoing}
-                      title={runGoing ? RUN_GOING_REASON : undefined}
+                      disabled={Boolean(replayBlocked)}
+                      title={replayBlocked}
                       onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
                     >
                       Replay to step {replayTo}

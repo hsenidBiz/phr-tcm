@@ -28,6 +28,7 @@ import {
   type ReplayProgress,
   type StepRecord,
 } from "../bindings";
+import { DISCOVERY_BUSY } from "./discoveryActive";
 
 /** A case's written step, as the script editor shows it. */
 export type WrittenStep = { action: string; expected: string; shared?: number | null };
@@ -176,6 +177,15 @@ export function useRunGoing(): boolean {
 
 /** What a Run button that waits for the run says. */
 export const RUN_GOING_REASON = "An unattended run is already going. Wait for it, or stop it.";
+
+/** Why a Run button (or Replay to step, or Open browser) waits, or
+ * undefined when nothing holds it: a run going says so first, then a
+ * discovery holding the Auto Run browser. One sentence per cause. */
+export function runBlockedReason(s: BackgroundRunState, discovering: boolean): string | undefined {
+  if (runIsGoing(s)) return RUN_GOING_REASON;
+  if (discovering) return DISCOVERY_BUSY;
+  return undefined;
+}
 
 /** Called once per run, as it ends. Returns the unsubscribe. */
 export function onRunEnded(cb: (e: RunEnded) => void): () => void {

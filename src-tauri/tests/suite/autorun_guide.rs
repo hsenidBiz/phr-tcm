@@ -792,3 +792,182 @@ fn the_guide_teaches_going_to_another_area_and_back() {
     assert_eq!(named, 1, "the section should have the one configurator example");
     assert!(!section.contains('\u{2013}') && !section.contains('\u{2014}'), "a dash crept in");
 }
+
+/// Scripts are written from the live app, never from its code: no text an
+/// assistant reads - the guide, any tool description, any command - may
+/// send it to the source for selectors again.
+#[test]
+fn the_guide_never_points_at_the_source() {
+    use v2_lib::autorun::discovery_map::{explore_section, AreaMap, DiscoveryMap};
+    let stub = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> { Ok((200, "{}".into())) };
+    let resp = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let mut texts: Vec<(String, String)> = vec![("the guide".into(), autorun_guide())];
+    for t in v["result"]["tools"].as_array().unwrap() {
+        texts.push((format!("tool {}", t["name"]), t.to_string()));
+    }
+    assert!(texts.len() > 40, "every tool description is read");
+    for c in v2_lib::ai_tools::COMMANDS {
+        texts.push((format!("/tcm:{}", c.stem), c.body.join("\n")));
+    }
+    let map = DiscoveryMap { areas: vec![AreaMap { area: "Old".into(), explored_at: Some(1), ..AreaMap::default() }] };
+    texts.push(("the areas to explore".into(), explore_section(&["Old", "New"], &map, u64::MAX / 2)));
+    for (what, text) in texts {
+        let lower = text.to_lowercase();
+        for banned in ["read the source", "application's source", "source-derived"] {
+            assert!(!lower.contains(banned), "{what} says {banned:?}");
+        }
+    }
+}
+
+/// The guide teaches discovery: its four tools, the save check, the three
+/// kinds of locator the check lets through unseen, what to do when a save
+/// is refused, the script's `area`, and the test name prefix.
+#[test]
+fn the_guide_names_the_discovery_tools_and_the_three_exceptions() {
+    let g = autorun_guide();
+    let section = g
+        .split("## Discovering the app")
+        .nth(1)
+        .map(|rest| rest.split("\n## ").next().unwrap())
+        .expect("the guide has no discovery section");
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for tool in [
+        "`start_autorun_discovery`",
+        "`discover_autorun_action`",
+        "`save_autorun_area`",
+        "`end_autorun_discovery`",
+        "`probe_autorun_locator`",
+    ] {
+        assert!(flat.contains(tool), "the discovery section never names {tool}: {flat}");
+    }
+    for said in [
+        "never read the application's code to write scripts",
+        "A save refuses any locator the app has not seen",
+        // The three exceptions.
+        "typed in an earlier step",
+        "whole word or phrase in the case's own steps or expected results",
+        "only the steps it declares",
+        "3 characters",
+        // navigate and open_tab are held to addresses discovery saw.
+        "`navigate`",
+        "`open_tab`",
+        // The area: credit for an area's locators needs the script to name it.
+        "Set the script's `area`",
+        // The prefix rule.
+        "test name prefix",
+        "Delete only records whose name carries that prefix",
+        // A refused save.
+        "then save again",
+    ] {
+        assert!(flat.contains(said), "the discovery section never says {said:?}: {flat}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+    // And the place sources are listed now names the live app.
+    let flat_all = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat_all.contains("**The live app, through discovery: locators and navigation ONLY.**"), "{flat_all}");
+}
+
+/// The live guide lists the areas to explore before a script is written or
+/// repaired there: an area with no map, and a stale one with its reason.
+#[test]
+fn areas_without_a_map_or_stale_are_listed() {
+    use v2_lib::autorun::discovery_map::{explore_section, AreaMap, DiscoveryMap, STALE_AFTER_MS};
+    let now = 100 * STALE_AFTER_MS;
+    let area = |name: &str, explored_at: Option<u64>, failed_since: bool| AreaMap {
+        area: name.into(),
+        explored_at,
+        failed_since,
+        ..AreaMap::default()
+    };
+    let map = DiscoveryMap {
+        areas: vec![
+            area("Fresh", Some(now - 1000), false),
+            area("Old", Some(now - STALE_AFTER_MS - 1), false),
+            area("Failed", Some(now - 1000), true),
+            area("Seen in a replay", None, false),
+            area("", None, false),
+        ],
+    };
+    let s = explore_section(&["Fresh", "Old", "Failed", "Never", "Seen in a replay"], &map, now);
+    assert!(s.starts_with("## Areas to explore\n"), "{s}");
+    assert!(s.contains("`start_autorun_discovery`"), "{s}");
+    let lines: Vec<&str> = s.lines().filter(|l| l.starts_with("- ")).collect();
+    assert_eq!(
+        lines,
+        vec![
+            "- Old: explored more than 30 days ago",
+            "- Failed: a script failed there since it was explored",
+            "- Never: no map yet",
+            "- Seen in a replay: no map yet",
+        ],
+        "{s}"
+    );
+    assert!(!s.contains("- Fresh"), "{s}");
+
+    // Nothing to explore, no section.
+    assert_eq!(explore_section(&["Fresh"], &map, now), "");
+    assert_eq!(explore_section(&[], &map, now), "");
+    assert!(!s.contains('\u{2014}') && !s.contains('\u{2013}'), "no em or en dashes");
+}
+
+/// Writing a script follows the generator pattern: each step is carried
+/// out live while it is written, and the script is saved once, after every
+/// step has run. A replay comes only after the save, and a fix then is a
+/// repair - the repair cap is not spent on first drafts.
+#[test]
+fn the_guide_saves_a_script_only_after_every_step_was_carried_out() {
+    let g = autorun_guide();
+    let section = g.split("## Discovering the app").nth(1).unwrap().split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "carry each step's actions out live with `discover_autorun_action` as you write them",
+        "Save with `save_autorun_script` only once every step has been carried out",
+        "any fix after the save is a repair: declared in `edits`, and counted toward the repair cap",
+    ] {
+        assert!(flat.contains(said), "the discovery section never says {said:?}: {flat}");
+    }
+}
+
+/// The recorded-areas section and the discovery section say the same rule
+/// for a script's `area`, word for word, so the two cannot drift apart: the
+/// save check credits a script only with what was seen in the area it
+/// names, so it always names one - default area or not.
+#[test]
+fn the_areas_section_and_the_guide_give_one_rule_for_area() {
+    use v2_lib::autorun::nav::{guide_section, NavFile, SET_AREA_RULE};
+    let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let guide = flat(&autorun_guide());
+    let nav: NavFile = serde_json::from_value(serde_json::json!({
+        "direct_urls": true,
+        "modules": [{ "area": "Leave Apply", "module": "Leave", "clicks": [], "arrived": "/hr/leave/apply", "recorded": "2026-10-08T10:00:00Z" }],
+    }))
+    .expect("a nav file");
+    let areas = flat(&guide_section(&nav));
+    assert!(guide.contains(SET_AREA_RULE), "the guide's discovery section lost the rule: {guide}");
+    assert!(areas.contains(SET_AREA_RULE), "the areas section lost the rule: {areas}");
+    for text in [&guide, &areas] {
+        assert!(!text.contains("whenever the case's screen is not its module's default area"), "{text}");
+    }
+
+    // The save tool says the same rule, and nothing an assistant reads -
+    // the guide, a tool description or a command - still tells it to leave
+    // `area` out for the default area.
+    let stub = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> { Ok((200, "{}".into())) };
+    let resp = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let save = tools.iter().find(|t| t["name"] == "save_autorun_script").unwrap();
+    assert!(save["description"].as_str().unwrap().contains(SET_AREA_RULE), "{save}");
+    let mut texts: Vec<(String, String)> =
+        vec![("the guide".into(), guide.clone()), ("the areas section".into(), areas.clone())];
+    for t in tools {
+        texts.push((format!("tool {}", t["name"]), flat(&t.to_string())));
+    }
+    for c in v2_lib::ai_tools::COMMANDS {
+        texts.push((format!("/tcm:{}", c.stem), flat(&c.body.join("\n"))));
+    }
+    for (what, text) in texts {
+        assert!(!text.contains("leave it out for the area named like"), "{what} still says to leave `area` out");
+    }
+}
