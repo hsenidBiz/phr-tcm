@@ -168,8 +168,8 @@ pub async fn auto_run_replay(
     let _claim = OneAtATime::claim().ok_or_else(|| {
         "an unattended run is already going - wait for it, or stop it first".to_string()
     })?;
-    if super::autorun::supervised_session_is_open().await {
-        return Err("close the supervised browser first".to_string());
+    if let Some(busy) = super::autorun::open_session_refusal().await {
+        return Err(busy);
     }
     super::autorun_record::refuse_while_recording()?;
     CANCEL.store(false, Ordering::SeqCst);
