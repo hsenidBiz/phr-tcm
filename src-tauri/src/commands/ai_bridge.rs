@@ -120,8 +120,10 @@ impl crate::ai_bridge::ReplayHost for AppReplayHost {
         })
     }
 
-    fn page(&self) -> crate::ai_bridge::HostFuture<'_, (u16, String)> {
-        Box::pin(crate::ai_bridge::supervised_page(crate::browser::snapshot::DEFAULT_LIMIT))
+    fn page(&self, organization: String, project: String) -> crate::ai_bridge::HostFuture<'_, (u16, String)> {
+        Box::pin(async move {
+            crate::ai_bridge::supervised_page(&organization, &project, crate::browser::snapshot::DEFAULT_LIMIT).await
+        })
     }
 }
 

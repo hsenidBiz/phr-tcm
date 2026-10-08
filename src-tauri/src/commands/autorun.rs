@@ -41,6 +41,16 @@ pub(crate) struct Session {
     /// The case this browser's tabs belong to (`runner::tabs_for_case`):
     /// a step of another case closes every tab but `main` first.
     pub(crate) tabs_case: Option<i32>,
+    /// The discovery under way in this browser, if any: what the page
+    /// routes record is filed under its area and stamps that area explored.
+    pub(crate) discovery: Option<DiscoveryState>,
+}
+
+/// A discovery under way in the supervised browser: the area it explores
+/// and the account KEY it explores as (never a login).
+pub(crate) struct DiscoveryState {
+    pub area: Option<String>,
+    pub account: Option<String>,
 }
 
 /// The supervised session, for the bridge's page routes. Whoever locks
@@ -183,6 +193,7 @@ async fn open_into(app: &tauri::AppHandle, slot: &mut Option<Session>, which: Br
         guarded_case: None,
         downloads_root,
         tabs_case: None,
+        discovery: None,
     });
     // A tab the page opens waits, paused, until this connection reads that
     // it opened and sets it up: read between commands too, or a popup a

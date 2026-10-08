@@ -1466,6 +1466,197 @@ async fn try_refuses_a_file_navigate_inside_a_when_visible() {
     }
 }
 
+// ------------------------------------------ what the page routes record
+
+use v2_lib::ai_bridge::{probe_page, read_page, recording_area, try_in, Sighting};
+use v2_lib::autorun::discovery_map::{load_map, AreaMap};
+use v2_lib::browser::snapshot::{snapshot_with_lines, DEFAULT_LIMIT, PROBE_SUMMARY_JS};
+
+fn sighting(root: &std::path::Path, area: Option<&str>) -> Sighting {
+    Sighting {
+        root: root.to_path_buf(),
+        org: "acme".into(),
+        project: "Web".into(),
+        area: area.map(str::to_string),
+        account: None,
+        discovering: false,
+    }
+}
+
+/// The map's area by name, `""` being the unattributed bucket.
+fn mapped_area(root: &std::path::Path, area: &str) -> Option<AreaMap> {
+    load_map(root, "acme", "Web").unwrap().areas.into_iter().find(|a| a.area == area)
+}
+
+/// A rating form with a Name field and a Save button, at
+/// `/hr/ratings?id=42`, titled Ratings.
+fn ratings_page() -> crate::common::ScriptedDriver {
+    crate::common::ScriptedDriver::new(|method, params| match method {
+        "Accessibility.getFullAXTree" => Ok(serde_json::json!({ "nodes": [
+            { "nodeId": "1", "ignored": false, "role": { "value": "form" }, "name": { "value": "Rating" },
+              "childIds": ["2", "3"] },
+            { "nodeId": "2", "ignored": false, "role": { "value": "textbox" }, "name": { "value": "Name" },
+              "childIds": [] },
+            { "nodeId": "3", "ignored": false, "role": { "value": "button" }, "name": { "value": "Save" },
+              "childIds": [] }
+        ] })),
+        "Runtime.evaluate" if params["expression"] == "location.href" => {
+            Ok(serde_json::json!({ "result": { "value": "https://app.example/hr/ratings?id=42#top" } }))
+        }
+        "Runtime.evaluate" if params["expression"] == "document.title" => {
+            Ok(serde_json::json!({ "result": { "value": "Ratings" } }))
+        }
+        other => panic!("unexpected {other} {params}"),
+    })
+}
+
+/// A page on which every locator finds `found` elements, at `/hr/ratings`.
+fn probed_page(found: usize) -> crate::common::ScriptedDriver {
+    crate::common::ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" if params["expression"] == "document" => {
+                Ok(serde_json::json!({ "result": { "objectId": "doc" } }))
+            }
+            "Runtime.evaluate" if params["expression"] == "location.href" => {
+                Ok(serde_json::json!({ "result": { "value": "https://app.example/hr/ratings" } }))
+            }
+            "Runtime.evaluate" if params["expression"] == "document.title" => {
+                Ok(serde_json::json!({ "result": { "value": "Ratings" } }))
+            }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS => {
+                Ok(serde_json::json!({ "result": { "value": true } }))
+            }
+            "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(serde_json::json!({
+                "result": { "value": { "tag": "button", "text": "Archive", "rect": [10.0, 20.0, 80.0, 24.0] } }
+            })),
+            "Runtime.callFunctionOn" => Ok(serde_json::json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => Ok(serde_json::json!({ "result": (0..found)
+                .map(|i| serde_json::json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                .collect::<Vec<_>>() })),
+            other => panic!("unexpected {other} {params}"),
+        }
+    })
+}
+
+fn archive() -> v2_lib::browser::locator::Target {
+    v2_lib::browser::locator::Target::from("#archive")
+}
+
+fn click_save() -> Action {
+    Action::Click { selector: "#save".into() }
+}
+
+/// Does `page` hold the CSS locator `css`?
+fn holds_css(page: &v2_lib::autorun::discovery_map::PageMap, css: &str) -> bool {
+    page.elements.iter().any(|e| e.key == v2_lib::browser::locator::SeenKey::Css(css.to_string()))
+}
+
+/// A page read files every locator it printed under the page's path and
+/// title, and hands the assistant the same text it always did. Only a
+/// discovery stamps the area as explored, by the account it ran as.
+#[tokio::test]
+async fn a_page_read_records_its_locators_in_the_map() {
+    let dir = TempDir::new();
+    let (status, text) =
+        read_page(&mut ratings_page(), DEFAULT_LIMIT, Some(&sighting(dir.path(), Some("Ratings")))).await;
+    assert_eq!(status, 200, "{text}");
+    let (expected, _) = snapshot_with_lines(&mut ratings_page(), DEFAULT_LIMIT).await.unwrap();
+    assert_eq!(text, expected, "the page text changed");
+
+    let area = mapped_area(dir.path(), "Ratings").expect("nothing was recorded");
+    assert_eq!(area.explored_at, None, "a page read is not a discovery");
+    assert_eq!(area.account, None);
+    assert_eq!(area.pages.len(), 1, "{:?}", area.pages);
+    let page = &area.pages[0];
+    assert_eq!(page.path, "/hr/ratings");
+    assert_eq!(page.title, "Ratings");
+    let names: Vec<&str> = page.elements.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"Save") && names.contains(&"Name"), "{names:?}");
+
+    let discovering =
+        Sighting { discovering: true, account: Some("admin".into()), ..sighting(dir.path(), Some("Ratings")) };
+    let (status, _) = read_page(&mut ratings_page(), DEFAULT_LIMIT, Some(&discovering)).await;
+    assert_eq!(status, 200);
+    let area = mapped_area(dir.path(), "Ratings").unwrap();
+    assert!(area.explored_at.is_some(), "a discovery's read did not stamp the area");
+    assert_eq!(area.account.as_deref(), Some("admin"));
+}
+
+/// A probe that matched files the locator it was asked about, even one the
+/// snapshot never printed (a page cut off at its limit, say).
+#[tokio::test]
+async fn a_matched_probe_records_a_locator_the_snapshot_cut_off() {
+    let dir = TempDir::new();
+    let (status, text) = probe_page(&mut probed_page(1), &archive(), Some(&sighting(dir.path(), None))).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("matches: 1"), "{text}");
+    let area = mapped_area(dir.path(), "").expect("nothing was recorded");
+    let page = area.pages.iter().find(|p| p.path == "/hr/ratings").expect("no page");
+    assert!(holds_css(page, "#archive"), "{:?}", page.elements);
+}
+
+#[tokio::test]
+async fn a_probe_with_no_match_records_nothing() {
+    let dir = TempDir::new();
+    let (status, text) = probe_page(&mut probed_page(0), &archive(), Some(&sighting(dir.path(), None))).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("matches: 0"), "{text}");
+    assert!(load_map(dir.path(), "acme", "Web").unwrap().areas.is_empty());
+}
+
+/// A try that worked files what it acted on; one that failed files nothing:
+/// a locator that did not work was never seen working.
+#[tokio::test]
+async fn an_ok_try_records_its_targets_and_a_failed_try_does_not() {
+    let dir = TempDir::new();
+    let mut account = None;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let mut d = crate::common::FakePage::default().driver();
+    let (status, text) =
+        try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &click_save()).await;
+    assert_eq!(status, 200);
+    assert!(text.starts_with("ok:"), "{text}");
+    let area = mapped_area(dir.path(), "").expect("nothing was recorded");
+    let page = area.pages.iter().find(|p| p.path == "/home").expect("no page");
+    assert!(holds_css(page, "#save"), "{:?}", page.elements);
+
+    let failed_dir = TempDir::new();
+    let mut d = crate::common::FakePage::default().driver();
+    d.block_after = Some(("Input.dispatchMouseEvent".into(), "the save was stopped".into()));
+    let (status, text) =
+        try_in(&mut d, &mut account, &mut lease, failed_dir.path(), "acme", "Web", 7, &click_save()).await;
+    assert_eq!(status, 200);
+    assert!(text.starts_with("failed:"), "{text}");
+    assert!(load_map(failed_dir.path(), "acme", "Web").unwrap().areas.is_empty());
+}
+
+/// The Ruling: a discovery's own area first, then the area of the script
+/// for the case being tried, then the unattributed bucket.
+#[tokio::test]
+async fn recordings_use_the_tried_cases_area() {
+    let dir = TempDir::new();
+    let script: CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 7, "title": "Save a rating", "area": "Ratings", "steps": []
+    }))
+    .unwrap();
+    v2_lib::autorun::store::save_script(dir.path(), &script).unwrap();
+
+    let mut account = None;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let mut d = crate::common::FakePage::default().driver();
+    let (_, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &click_save()).await;
+    assert!(text.starts_with("ok:"), "{text}");
+    assert!(mapped_area(dir.path(), "Ratings").is_some(), "{:?}", load_map(dir.path(), "acme", "Web"));
+    assert!(mapped_area(dir.path(), "").is_none(), "{:?}", load_map(dir.path(), "acme", "Web"));
+
+    assert_eq!(recording_area(dir.path(), Some("Leave"), Some(7)).as_deref(), Some("Leave"));
+    assert_eq!(recording_area(dir.path(), Some("  "), Some(7)).as_deref(), Some("Ratings"));
+    assert_eq!(recording_area(dir.path(), None, Some(7)).as_deref(), Some("Ratings"));
+    assert_eq!(recording_area(dir.path(), None, Some(99)), None);
+    assert_eq!(recording_area(dir.path(), None, None), None);
+}
+
 // --------------------------------------------------------- the read routes
 
 fn failed_run(id: &str, case_id: i32) -> LocalRun {

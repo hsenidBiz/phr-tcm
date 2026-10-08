@@ -285,8 +285,8 @@ pub async fn route(
         // signed-in client. All were let through by the guard above.
         ("GET", "/autorun-guide") => (200, autorun_guide_with_quirks(ctx)),
         ("POST", "/autorun-script") => save_autorun_scripts(ctx, client, body).await,
-        ("GET", "/autorun-page") => autorun_page(target).await,
-        ("POST", "/autorun-probe") => autorun_probe(body).await,
+        ("GET", "/autorun-page") => autorun_page(ctx, target).await,
+        ("POST", "/autorun-probe") => autorun_probe(ctx, body).await,
         ("POST", "/autorun-try") => autorun_try(ctx, body).await,
         ("POST", "/autorun-replay") => autorun_replay(ctx, body).await,
         ("GET", "/autorun-failures") => autorun_failures(target),
@@ -1618,7 +1618,7 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
 
 /// The page in the browser the person opened, as text: Chrome's own
 /// accessibility tree with a locator on every line.
-async fn autorun_page(target: &str) -> (u16, String) {
+async fn autorun_page(ctx: &BridgeContext, target: &str) -> (u16, String) {
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
@@ -1630,23 +1630,176 @@ async fn autorun_page(target: &str) -> (u16, String) {
         .filter(|n| *n > 0)
         .unwrap_or(crate::browser::snapshot::DEFAULT_LIMIT)
         .min(crate::browser::snapshot::DEFAULT_LIMIT * 10);
-    supervised_page(limit).await
+    supervised_page(&ctx.org, &ctx.project, limit).await
 }
 
 /// The supervised browser's page as text, `limit` lines at most: what
 /// `/autorun-page` answers, and what a replay that reached its step hands
-/// back beside its sentence.
-pub async fn supervised_page(limit: usize) -> (u16, String) {
+/// back beside its sentence. What it printed is filed in the project's
+/// discovery map.
+pub async fn supervised_page(organization: &str, project: &str, limit: usize) -> (u16, String) {
     // The lock is held for exactly one protocol job - whoever holds it
     // holds the browser, and the person may be using it.
     let mut slot = crate::commands::autorun::supervised().lock().await;
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
-    match crate::browser::snapshot::snapshot(&mut session.cdp, limit).await {
-        Ok(text) => (200, text),
-        Err(e) => (503, format!("the browser did not answer: {e}")),
+    let at = supervised_sighting(session, organization, project);
+    read_page(&mut session.cdp, limit, at.as_ref()).await
+}
+
+/// Where what the live page shows is filed in the discovery map
+/// (`autorun::discovery_map`): the project, the area it belongs to (`None`
+/// is the unattributed bucket), and whether a discovery is under way - in
+/// which case a page read stamps the area explored by `account`, an account
+/// KEY, never a login.
+pub struct Sighting {
+    pub root: std::path::PathBuf,
+    pub org: String,
+    pub project: String,
+    pub area: Option<String>,
+    pub account: Option<String>,
+    pub discovering: bool,
+}
+
+/// The area a recording belongs to: the discovery's own area, else the area
+/// the saved script of `case_id` names, else none (the unattributed bucket).
+/// A blank name counts as none.
+pub fn recording_area(root: &std::path::Path, discovery_area: Option<&str>, case_id: Option<i32>) -> Option<String> {
+    let named = |a: &str| {
+        let a = a.trim();
+        (!a.is_empty()).then(|| a.to_string())
+    };
+    discovery_area.and_then(named).or_else(|| {
+        let script = crate::autorun::store::load_script(root, case_id?).ok().flatten()?;
+        script.area.as_deref().and_then(named)
+    })
+}
+
+/// Where the supervised browser's sightings go, or `None` when there is
+/// nowhere to file them (no project chosen, no data directory).
+fn supervised_sighting(
+    session: &crate::commands::autorun::Session,
+    organization: &str,
+    project: &str,
+) -> Option<Sighting> {
+    if project.trim().is_empty() {
+        return None;
     }
+    let root = crate::autorun::store::configured_root()?;
+    let discovery = session.discovery.as_ref();
+    Some(Sighting {
+        area: recording_area(&root, discovery.and_then(|s| s.area.as_deref()), session.tabs_case),
+        account: discovery.and_then(|s| s.account.clone()).or_else(|| session.account.clone()),
+        discovering: discovery.is_some(),
+        root,
+        org: organization.to_string(),
+        project: project.to_string(),
+    })
+}
+
+/// The page the browser is on: its address's path (no host, query or
+/// fragment; empty when it cannot be read) and its title. The address is
+/// read as `nav::go_to_module` reads it to compare with `arrived`.
+pub async fn current_page<D: crate::browser::cdp::Driver>(d: &mut D) -> (String, String) {
+    let href = crate::browser::page::eval_value(d, "location.href").await;
+    let href = href.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let title = crate::browser::page::eval_value(d, "document.title").await;
+    let title = title.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let path = if href.trim().is_empty() { String::new() } else { crate::autorun::discovery_map::path_only(&href) };
+    (path, title)
+}
+
+/// A recording that could not be written is said in the log and never
+/// fails the route that made it.
+fn unrecorded(why: &str) {
+    crate::applog::warn(format!("Discovery map: what the page showed could not be recorded: {why}"));
+}
+
+/// The page as text, `limit` lines at most, with every locator it printed
+/// filed at `at`. The text is the same with or without `at`.
+pub async fn read_page<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    limit: usize,
+    at: Option<&Sighting>,
+) -> (u16, String) {
+    let (text, lines) = match crate::browser::snapshot::snapshot_with_lines(d, limit).await {
+        Ok(read) => read,
+        Err(e) => return (503, format!("the browser did not answer: {e}")),
+    };
+    if let Some(at) = at {
+        let (path, title) = current_page(d).await;
+        let recorded = if path.is_empty() {
+            Err("the page's address could not be read".to_string())
+        } else {
+            crate::autorun::discovery_map::record_seen(
+                &at.root,
+                &at.org,
+                &at.project,
+                at.area.as_deref(),
+                &path,
+                &title,
+                &lines,
+                at.account.as_deref(),
+                at.discovering,
+                crate::autorun::sessions::now_ms(),
+            )
+        };
+        if let Err(why) = recorded {
+            unrecorded(&why);
+        }
+    }
+    (200, text)
+}
+
+/// Files each locator in `targets` at `at` under the page the browser is on.
+async fn record_matched_targets<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    at: &Sighting,
+    targets: &[&crate::browser::locator::Target],
+) {
+    if targets.is_empty() || at.project.trim().is_empty() {
+        return;
+    }
+    let (path, _) = current_page(d).await;
+    if path.is_empty() {
+        unrecorded("the page's address could not be read");
+        return;
+    }
+    let now = crate::autorun::sessions::now_ms();
+    for target in targets {
+        let area = at.area.as_deref();
+        if let Err(why) =
+            crate::autorun::discovery_map::record_matched(&at.root, &at.org, &at.project, area, &path, target, now)
+        {
+            unrecorded(&why);
+        }
+    }
+}
+
+/// How many elements a probe's answer says matched (`"matches: N ..."`).
+fn probe_matches(text: &str) -> usize {
+    text.strip_prefix("matches: ")
+        .map(|rest| rest.chars().take_while(char::is_ascii_digit).collect::<String>())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+}
+
+/// What a locator matches on the page, as the probe answers it; a locator
+/// that matched at least once is filed at `at`.
+pub async fn probe_page<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    target: &crate::browser::locator::Target,
+    at: Option<&Sighting>,
+) -> (u16, String) {
+    let text = match crate::browser::snapshot::probe(d, target).await {
+        Ok(text) => text,
+        Err(e) => return (503, format!("the browser did not answer: {e}")),
+    };
+    if let Some(at) = at.filter(|_| probe_matches(&text) > 0) {
+        record_matched_targets(d, at, &[target]).await;
+    }
+    (200, text)
 }
 
 /// One named field out of a small JSON body, or a refusal that says what
@@ -1661,7 +1814,7 @@ fn body_field(body: &str, key: &str, shape: &str) -> Result<serde_json::Value, (
 }
 
 /// What a locator matches on the open page right now.
-async fn autorun_probe(body: &str) -> (u16, String) {
+async fn autorun_probe(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let selector = match body_field(body, "selector", "{ \"selector\": <a script's target> }") {
         Ok(v) => v,
         Err(refused) => return refused,
@@ -1680,10 +1833,8 @@ async fn autorun_probe(body: &str) -> (u16, String) {
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
-    match crate::browser::snapshot::probe(&mut session.cdp, &target).await {
-        Ok(text) => (200, text),
-        Err(e) => (503, format!("the browser did not answer: {e}")),
-    }
+    let at = supervised_sighting(session, &ctx.org, &ctx.project);
+    probe_page(&mut session.cdp, &target, at.as_ref()).await
 }
 
 /// The applog line for a tried action: its kind, what it points at (a
@@ -1817,6 +1968,7 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     {
         return (409, why);
     }
+    let discovery_area = session.discovery.as_ref().and_then(|s| s.area.clone());
     try_for_case(
         &mut session.cdp,
         &mut session.tabs_case,
@@ -1826,6 +1978,7 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
         &ctx.org,
         &ctx.project,
         case_id,
+        discovery_area.as_deref(),
         &action,
     )
     .await
@@ -1835,7 +1988,8 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
 /// case it last ran (`tabs_case`). A try for another case starts as that
 /// case's first step would: every tab but `main` is closed and `main` is
 /// current (`runner::tabs_for_case`), so it never acts in a tab another
-/// case left current.
+/// case left current. `discovery_area` is the area of a discovery under way
+/// in that browser: what a try that worked acted on is filed there first.
 #[allow(clippy::too_many_arguments)]
 pub async fn try_for_case<D: crate::browser::cdp::Driver>(
     d: &mut D,
@@ -1846,10 +2000,11 @@ pub async fn try_for_case<D: crate::browser::cdp::Driver>(
     organization: &str,
     project: &str,
     case_id: i32,
+    discovery_area: Option<&str>,
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
     crate::autorun::runner::tabs_for_case(d, tabs_case, case_id).await;
-    try_in(d, account, lease, root, organization, project, case_id, action).await
+    try_in_area(d, account, lease, root, organization, project, case_id, discovery_area, action).await
 }
 
 /// A future the replay host hands back: boxed, so the host can be a trait
@@ -1872,8 +2027,9 @@ pub trait ReplayHost: Send + Sync {
         project: String,
         req: crate::autorun::replay_to::ReplayRequest,
     ) -> HostFuture<'_, Result<crate::autorun::replay_to::ReplayEnd, String>>;
-    /// The page the replay left the browser on, as `/autorun-page` answers.
-    fn page(&self) -> HostFuture<'_, (u16, String)>;
+    /// The page the replay left the browser on, as `/autorun-page` answers
+    /// for this organization and project.
+    fn page(&self, organization: String, project: String) -> HostFuture<'_, (u16, String)>;
 }
 
 static REPLAY_HOST: std::sync::OnceLock<Box<dyn ReplayHost>> = std::sync::OnceLock::new();
@@ -1958,7 +2114,7 @@ pub async fn autorun_replay_with(
     match end {
         ReplayEnd::Refused(_) | ReplayEnd::Blocked(_) => (409, sentence),
         ReplayEnd::Ready { .. } => {
-            let answer = match host.page().await {
+            let answer = match host.page(ctx.org.clone(), ctx.project.clone()).await {
                 (200, page) => serde_json::json!({ "sentence": sentence, "page": page }),
                 (_, why) => serde_json::json!({ "sentence": sentence, "page_unavailable": why }),
             };
@@ -1988,7 +2144,8 @@ pub fn try_case_id(body: &str) -> Result<i32, (u16, String)> {
 /// One tried action in a browser already guarded for its case
 /// (`commands::autorun::guard_for_case`), as the route answers it.
 /// `case_id` is the case the try is for: a tried `return_to_area` goes to
-/// the area that case's saved script names.
+/// the area that case's saved script names. A try that worked files every
+/// locator it acted on in the discovery map, under that case's area.
 #[allow(clippy::too_many_arguments)]
 pub async fn try_in<D: crate::browser::cdp::Driver>(
     d: &mut D,
@@ -1998,6 +2155,23 @@ pub async fn try_in<D: crate::browser::cdp::Driver>(
     organization: &str,
     project: &str,
     case_id: i32,
+    action: &crate::browser::actions::Action,
+) -> (u16, String) {
+    try_in_area(d, account, lease, root, organization, project, case_id, None, action).await
+}
+
+/// `try_in`, its sightings filed under `discovery_area` when one is given
+/// (`recording_area`).
+#[allow(clippy::too_many_arguments)]
+async fn try_in_area<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    account: &mut Option<String>,
+    lease: &mut crate::autorun::lease::Held,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    case_id: i32,
+    discovery_area: Option<&str>,
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
     use crate::autorun::runner::{area_route, area_routes, named_areas, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
@@ -2049,6 +2223,18 @@ pub async fn try_in<D: crate::browser::cdp::Driver>(
     // assistant - and never a `fill`'s VALUE, which `describe_try` never
     // even looks at.
     crate::applog::info(describe_try(action, outcome.ok));
+    // Only a try that worked: a locator that failed was never seen working.
+    if outcome.ok {
+        let at = Sighting {
+            root: root.to_path_buf(),
+            org: organization.to_string(),
+            project: project.to_string(),
+            area: recording_area(root, discovery_area, Some(case_id)),
+            account: None,
+            discovering: false,
+        };
+        record_matched_targets(d, &at, &action.targets()).await;
+    }
     let mut text =
         format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
     if let Some(shot) = &outcome.screenshot {
