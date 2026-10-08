@@ -321,6 +321,19 @@ pub fn script_modified(root: &Path, case_id: i32) -> Option<String> {
     Some(crate::applog::iso_of(t))
 }
 
+/// Every saved script that reads; one that does not is skipped.
+pub fn list_scripts(root: &Path) -> Vec<CaseScript> {
+    let Ok(entries) = std::fs::read_dir(scripts_dir(root)) else {
+        return vec![];
+    };
+    entries
+        .flatten()
+        .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with("case-") && n.ends_with(".json")))
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .filter_map(|s| serde_json::from_str::<CaseScript>(&s).ok())
+        .collect()
+}
+
 /// `Ok(None)` for a case nobody has scripted yet - that is the normal
 /// state of most cases, not an error.
 pub fn load_script(root: &Path, case_id: i32) -> Result<Option<CaseScript>, String> {

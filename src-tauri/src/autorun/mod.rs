@@ -11,6 +11,7 @@ pub mod api_checks;
 pub mod approvals;
 pub mod cleanup;
 pub mod defects;
+pub mod components;
 pub mod discovery_map;
 pub mod downloads;
 pub mod edits;
