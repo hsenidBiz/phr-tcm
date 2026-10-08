@@ -521,3 +521,94 @@ fn healing_reads_only_add() {
     record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("link", "New")], None, None, 3000).unwrap();
     assert_eq!(names_on(dir.path(), "/p"), ["Save", "Old", "New"]);
 }
+
+// ------------------------------------------------------------- map size
+
+/// Two records of one kind are one page: a path segment that is an id
+/// (all digits, a GUID, or 16 or more hex characters) is kept as `:id`.
+/// The save-request log keeps the path as it was sent.
+#[test]
+fn addresses_that_differ_only_by_ids_are_one_page() {
+    use v2_lib::autorun::discovery_map::page_path;
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "https://h/leave/12345/edit?x=1", "", &[line("button", "Save")], None, None, 1)
+        .unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/leave/98765/edit", "", &[line("button", "Cancel")], None, None, 2).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/leave/555/edit", &Target::from("#id"), 3).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let pages: Vec<&str> = map.areas[0].pages.iter().map(|p| p.path.as_str()).collect();
+    assert_eq!(pages, ["/leave/:id/edit"]);
+    assert_eq!(map.areas[0].pages[0].elements.len(), 3);
+    assert!(seen_paths(&map).contains("/leave/:id/edit"));
+
+    assert_eq!(page_path("/x/3F2504E0-4F89-11D3-9A0C-0305E82C3301/view"), "/x/:id/view");
+    assert_eq!(page_path("/h/0123456789abcdef"), "/h/:id");
+    assert_eq!(page_path("/h/0123456789abcde"), "/h/0123456789abcde", "15 hex characters are a name");
+    assert_eq!(page_path("/api/v2/items/"), "/api/v2/items/");
+    assert_eq!(page_path("https://h/a/7?q=1#f"), "/a/:id");
+    assert_eq!(page_path("/"), "/");
+
+    record_write(
+        dir.path(),
+        "Acme",
+        "Web",
+        "A",
+        WriteEntry { method: "POST".into(), path: "/api/leave/12345".into(), at: 4, step: "Save".into() },
+    )
+    .unwrap();
+    let a = load_map(dir.path(), "Acme", "Web").unwrap().areas.remove(0);
+    assert_eq!(a.writes[0].path, "/api/leave/12345");
+}
+
+/// A map written before ids were collapsed still has its pages found: a
+/// new sighting files under the collapsed path and takes the old page over.
+#[test]
+fn an_older_map_page_with_an_id_is_taken_over_by_its_collapsed_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = map_path(dir.path(), "Acme", "Web");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let old = serde_json::json!({ "areas": [{ "area": "A", "explored_at": null, "account": null, "failed_since": false,
+        "pages": [{ "path": "/leave/42/edit", "title": "", "elements": [] }], "outcomes": [], "writes": [] }] });
+    std::fs::write(&path, old.to_string()).unwrap();
+    assert!(seen_paths(&load_map(dir.path(), "Acme", "Web").unwrap()).contains("/leave/:id/edit"));
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/leave/43/edit", "", &[line("button", "Save")], None, None, 1).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let pages: Vec<&str> = map.areas[0].pages.iter().map(|p| p.path.as_str()).collect();
+    assert_eq!(pages, ["/leave/:id/edit"]);
+}
+
+#[test]
+fn the_write_log_is_capped_at_500() {
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..505u64 {
+        let w = WriteEntry { method: "POST".into(), path: "/api/x".into(), at: i, step: format!("step {i}") };
+        record_write(dir.path(), "Acme", "Web", "A", w).unwrap();
+    }
+    let a = load_map(dir.path(), "Acme", "Web").unwrap().areas.remove(0);
+    assert_eq!(a.writes.len(), 500);
+    assert_eq!(a.writes[0].at, 5);
+    assert_eq!(a.writes[499].at, 504);
+}
+
+#[test]
+fn recording_nothing_new_does_not_rewrite_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = map_path(dir.path(), "Acme", "Web");
+    let lines = [line("button", "Save"), line("link", "Home")];
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &lines, None, None, 1).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &Target::from("#id"), 5).unwrap();
+    let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(60));
+
+    // The same read, a part of it, the same match: nothing changes.
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &lines, None, None, 2).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "https://h/p?q=1", "", &lines[..1], None, None, 3).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &Target::from("#id"), 5).unwrap();
+    assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), before, "the file was rewritten");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+
+    // Something new is written.
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "New")], None, None, 4).unwrap();
+    assert_ne!(std::fs::read_to_string(&path).unwrap(), text);
+}

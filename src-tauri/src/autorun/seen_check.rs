@@ -10,7 +10,7 @@
 //! result the step is checking for). Both match whole words only, and a
 //! typed value shorter than 3 characters exempts nothing.
 
-use super::discovery_map::{path_only, seen_keys, seen_paths, DiscoveryMap};
+use super::discovery_map::{page_path, path_only, seen_keys, seen_paths, DiscoveryMap};
 use super::edits::Edit;
 use super::CaseScript;
 use crate::browser::actions::Action;
@@ -136,8 +136,9 @@ fn scan(
         if checked {
             for action in step.actions.iter().flat_map(Action::each) {
                 if let Action::Navigate { url } | Action::OpenTab { url, .. } = action {
+                    // Compared as the map files a page; named as written.
                     let path = path_only(url);
-                    if !paths.contains(&path) {
+                    if !paths.contains(&page_path(url)) {
                         unseen.push(Unseen { step: step.step_number, locator: path });
                         if first_only {
                             return unseen;

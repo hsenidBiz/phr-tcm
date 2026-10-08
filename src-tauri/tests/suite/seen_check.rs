@@ -363,3 +363,16 @@ fn check_seen_all_lists_every_unseen_locator_and_check_seen_still_stops_at_the_f
     );
     assert!(check_seen_all(&map, &ok, &[], None).is_empty());
 }
+
+/// A navigate to another record of a page the map has seen passes: ids in
+/// a path are compared as `:id`, in the map as an older map holds them and
+/// in the address the script opens.
+#[test]
+fn a_navigate_to_another_record_of_a_seen_page_passes() {
+    let nav = |url: &str| script(None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "navigate", "url": url }] }]));
+    for seen in ["/leave/111/edit", "/leave/:id/edit"] {
+        let map = map_with("", seen, &[]);
+        assert_eq!(check_seen(&map, &nav("https://h/leave/222/edit?tab=2"), &[], None), Ok(()), "{seen}");
+        assert_eq!(check_seen(&map, &nav("/leave/222/view"), &[], None), Err(refusal(1, "/leave/222/view")), "{seen}");
+    }
+}
