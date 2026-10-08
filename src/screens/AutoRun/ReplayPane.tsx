@@ -42,6 +42,7 @@ import {
   type WrittenStep,
 } from "../../lib/backgroundRun";
 import { cn } from "../../lib/cn";
+import { DISCOVERY_BUSY, useDiscoveryActiveNow } from "../../lib/discoveryActive";
 import { dbReadAccessOn } from "../../lib/mcpTools";
 import { useMediaQuery } from "../../lib/useMediaQuery";
 import { resetLines } from "./plan";
@@ -120,6 +121,9 @@ export default function ReplayPane() {
 function RunWindow({ run }: { run: BackgroundRun }) {
   const { org, project, cases, plan, phase } = run;
   const { rows, phases, latest, position, records, resetNeeded } = run;
+  /** A discovery that began after this setup opened holds the browser:
+   * Start waits for it, as the store does. */
+  const discovering = useDiscoveryActiveNow();
 
   /** Same key the supervised pane uses - a stored value the picker cannot
    * show falls back to Edge, same reasoning as there. */
@@ -355,7 +359,13 @@ function RunWindow({ run }: { run: BackgroundRun }) {
               <IconCancel aria-hidden />
               Cancel
             </Button>
-            <Button size="sm" onClick={start}>
+            <Button
+              size="sm"
+              className="disabled:pointer-events-auto"
+              disabled={discovering}
+              title={discovering ? DISCOVERY_BUSY : undefined}
+              onClick={start}
+            >
               <IconUnattended aria-hidden />
               Start
             </Button>

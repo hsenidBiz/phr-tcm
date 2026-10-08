@@ -28,7 +28,7 @@ import {
   type ReplayProgress,
   type StepRecord,
 } from "../bindings";
-import { DISCOVERY_BUSY } from "./discoveryActive";
+import { DISCOVERY_BUSY, discoveryIsActive, useDiscoveryActiveNow } from "./discoveryActive";
 
 /** A case's written step, as the script editor shows it. */
 export type WrittenStep = { action: string; expected: string; shared?: number | null };
@@ -165,14 +165,19 @@ export function useBackgroundRun(): BackgroundRunState {
   return useSyncExternalStore(subscribeBackgroundRun, backgroundRunSnapshot);
 }
 
-/** Whether a run is going (or paused at a reset point): every Run button
- * waits for it. */
-export function runIsGoing(s: BackgroundRunState = state): boolean {
+/** Whether the store's own run is going (or paused at a reset point). */
+export function unattendedRunGoing(s: BackgroundRunState = state): boolean {
   return s.run?.phase === "running";
 }
 
+/** Whether the Auto Run browser is taken: a run going, or the assistant's
+ * discovery holding it. Every Run button waits, and no run starts. */
+export function runIsGoing(s: BackgroundRunState = state, discovering: boolean = discoveryIsActive()): boolean {
+  return unattendedRunGoing(s) || discovering;
+}
+
 export function useRunGoing(): boolean {
-  return runIsGoing(useBackgroundRun());
+  return runIsGoing(useBackgroundRun(), useDiscoveryActiveNow());
 }
 
 /** What a Run button that waits for the run says. */
@@ -182,7 +187,7 @@ export const RUN_GOING_REASON = "An unattended run is already going. Wait for it
  * undefined when nothing holds it: a run going says so first, then a
  * discovery holding the Auto Run browser. One sentence per cause. */
 export function runBlockedReason(s: BackgroundRunState, discovering: boolean): string | undefined {
-  if (runIsGoing(s)) return RUN_GOING_REASON;
+  if (unattendedRunGoing(s)) return RUN_GOING_REASON;
   if (discovering) return DISCOVERY_BUSY;
   return undefined;
 }
@@ -196,8 +201,9 @@ export function onRunEnded(cb: (e: RunEnded) => void): () => void {
 }
 
 /** Opens the run window on its setup for this selection. Refused while a
- * run is going: there is only ever one. A run ended and not looked at is
- * replaced; it is in Past runs. */
+ * run is going: there is only ever one. Refused too while discovery holds
+ * the browser. A run ended and not looked at is replaced; it is in Past
+ * runs. */
 export function openRunSetup(s: {
   org: string;
   project: string;
@@ -276,6 +282,8 @@ function onResetNeeded(gen: number, reset: AutorunResetNeeded) {
 export async function startRun(opts: RunOptions): Promise<void> {
   const r = state.run;
   if (!r || (r.phase !== "setup" && r.phase !== "failed")) return;
+  // A discovery that began after the setup opened holds the browser.
+  if (discoveryIsActive()) return;
   stopListening();
   generation += 1;
   const gen = generation;
@@ -375,7 +383,7 @@ export function closeRunWindow(): void {
 
 /** Asks the run to stop after the step it is on. */
 export async function stopRun(): Promise<void> {
-  if (!runIsGoing()) return;
+  if (!unattendedRunGoing()) return;
   // Said the instant it is pressed: the run itself only stops after its
   // current step, and there is nothing else to tell until it does.
   patchRun({ stopping: true });

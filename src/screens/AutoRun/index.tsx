@@ -41,6 +41,7 @@ import {
   openRunSetup,
   runBlockedReason,
   runIsGoing,
+  unattendedRunGoing,
   useBackgroundRun,
 } from "../../lib/backgroundRun";
 import { Modal } from "../../components/ui/modal";
@@ -270,7 +271,7 @@ export default function AutoRun({
   const background = useBackgroundRun();
   /** One run at a time: while the store holds a run going (or paused at a
    * reset point), every Run button here waits for it. */
-  const runGoing = runIsGoing(background);
+  const runGoing = unattendedRunGoing(background);
   /** Why every way of starting a run here waits, when it does: a run going,
    * or the assistant's discovery holding the browser. Said in the title. */
   const runBlocked = runBlockedReason(background, discovering);

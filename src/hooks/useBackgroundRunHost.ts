@@ -11,6 +11,7 @@ import {
   useBackgroundRun,
   type ReviewRequest,
 } from "../lib/backgroundRun";
+import { useDiscoveryActive } from "../lib/discoveryActive";
 import { toast } from "../lib/toast";
 
 /**
@@ -26,6 +27,9 @@ import { toast } from "../lib/toast";
  */
 export function useBackgroundRunHost(goToReview: (r: ReviewRequest) => void): void {
   const qc = useQueryClient();
+  // Keeps discovery's module-scope value current from anywhere in the app:
+  // the run store refuses to start on it, and the title-bar pill shows it.
+  useDiscoveryActive();
   /** The toast a background end raised, while it still means something. */
   const endToast = useRef<string | null>(null);
   useEffect(

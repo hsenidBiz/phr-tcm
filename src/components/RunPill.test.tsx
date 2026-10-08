@@ -13,10 +13,14 @@ import {
   startRun,
   type BackgroundRun,
 } from "../lib/backgroundRun";
+import { setDiscoveryActive } from "../lib/discoveryActive";
 import RunPill, { runPillView } from "./RunPill";
 import TitleBar from "./TitleBar";
 
-afterEach(() => resetBackgroundRun());
+afterEach(() => {
+  resetBackgroundRun();
+  setDiscoveryActive(false);
+});
 
 const CASES = Array.from({ length: 8 }, (_, i) => ({ id: i + 1, title: `Case ${i + 1}` }));
 
@@ -105,4 +109,26 @@ test("a running run's pill names its click, and the click opens the run window",
   fireEvent.click(pill);
   expect(backgroundRunSnapshot().run).toEqual(expect.objectContaining({ phase: "running", open: true }));
   clearMocks();
+});
+
+test("discovery with no run reads Discovering, in accent, as text that says what ends it", () => {
+  const note = "Discovery is using the Auto Run browser. It ends from End discovery on Auto Run's Discovery card.";
+  expect(runPillView(null, true)).toEqual({ text: "Discovering", action: note, tone: "accent" });
+  expect(runPillView(runIn({ phase: "setup", open: true }), true)?.text).toBe("Discovering");
+  // A run the store holds still shows as itself.
+  expect(runPillView(runIn({ phase: "finished", resultId: "run-9" }), true)?.text).toBe("Run finished, Review");
+
+  render(<RunPill />);
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  act(() => setDiscoveryActive(true));
+  const pill = screen.getByRole("status", { name: `Discovering. ${note}` });
+  expect(pill).toHaveAttribute("title", note);
+  expect(pill.className).toMatch(/\bbg-accent\/15\b/);
+  expect(pill.className).toMatch(/\btext-accent-fill\b/);
+  expect(screen.getByText("Discovering")).toHaveClass("label-trim");
+  // Nothing to click: End discovery on Auto Run is what ends it.
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+
+  act(() => setDiscoveryActive(false));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });

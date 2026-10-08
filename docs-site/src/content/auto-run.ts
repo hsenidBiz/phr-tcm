@@ -616,7 +616,8 @@ export const autoRun: Screen = {
         "**Run in background** (or Escape) closes the window and the run carries on: a pill in the window's title bar shows how far it has got, such as **Auto Run 3 of 8**, and clicking it opens the window again from any part of the app. " +
         "At a reset point the pill turns amber and reads **Reset needed**; click it to Continue or Stop. " +
         "When the run finishes with its window open, its review opens. Finished in the background, a message and the pill say **Run finished, Review**: click either to open the review on **Past runs**. " +
-        "While a run is going, the other Run buttons wait for it.",
+        "While a run is going, the other Run buttons wait for it. " +
+        "While your assistant's discovery is using the Auto Run browser and no run is going, the pill reads **Discovering**, and no run can start until **End discovery** (or the assistant) ends it.",
     },
 
     // --- Past runs -----------------------------------------------------------------

@@ -14,7 +14,8 @@ import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import RunPill from "../../components/RunPill";
 import { useBackgroundRunHost } from "../../hooks/useBackgroundRunHost";
-import { backgroundRunSnapshot, resetBackgroundRun } from "../../lib/backgroundRun";
+import { backgroundRunSnapshot, openRunSetup, resetBackgroundRun, startRun } from "../../lib/backgroundRun";
+import { setDiscoveryActive } from "../../lib/discoveryActive";
 import { toast } from "../../lib/toast";
 import AutoRun from "./index";
 import ReplayPane from "./ReplayPane";
@@ -25,6 +26,7 @@ vi.mock("../../lib/toast", () => ({
 
 afterEach(() => {
   resetBackgroundRun();
+  setDiscoveryActive(false);
   clearMocks();
   localStorage.clear();
   vi.clearAllMocks();
@@ -339,4 +341,59 @@ test("while a run goes, every Run button in Auto Run waits for it and says why",
   const replay = await screen.findByRole("button", { name: "Replay to step 2 for case 1" });
   expect(replay).toBeDisabled();
   expect(replay).toHaveAttribute("title", reason);
+});
+
+test("while discovery holds the browser, no unattended run starts and the pill says Discovering", async () => {
+  let active = true;
+  mockScreen((cmd) => {
+    if (cmd === "auto_run_discovery_active") return active;
+    return null;
+  });
+  renderShell();
+  await screen.findByText("Alpha check");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
+
+  const busy = "Discovery is using the Auto Run browser";
+  await waitFor(() => {
+    for (const b of screen.getAllByRole("button", { name: "Run 2 unattended" })) {
+      expect(b).toBeDisabled();
+      expect(b).toHaveAttribute("title", busy);
+    }
+  });
+  expect(screen.getByRole("status", { name: /^Discovering\. Discovery is using the Auto Run browser/ })).toBeInTheDocument();
+
+  // The store refuses too: no setup opens, so nothing can start.
+  let opened = true;
+  act(() => {
+    opened = openRunSetup({ org: "acme", project: "proj", pbi, cases: [{ id: 1, title: "Alpha check" }], plan: null });
+  });
+  expect(opened).toBe(false);
+  expect(backgroundRunSnapshot().run).toBeNull();
+
+  // A setup opened before discovery began cannot start once it holds the
+  // browser: Start waits, and the store does nothing.
+  const { emit } = await import("@tauri-apps/api/event");
+  active = false;
+  await act(async () => {
+    await emit("autorun-discovery-changed", { active: false });
+  });
+  await waitFor(() => expect(screen.queryByRole("status", { name: /^Discovering/ })).not.toBeInTheDocument());
+  act(() => {
+    opened = openRunSetup({ org: "acme", project: "proj", pbi, cases: [{ id: 1, title: "Alpha check" }], plan: null });
+  });
+  expect(opened).toBe(true);
+  const start = await screen.findByRole("button", { name: "Start" });
+  expect(start).toBeEnabled();
+  active = true;
+  await act(async () => {
+    await emit("autorun-discovery-changed", { active: true });
+  });
+  await waitFor(() => expect(start).toBeDisabled());
+  expect(start).toHaveAttribute("title", busy);
+  await act(async () => {
+    await startRun({ account: null, browserName: "edge", watch: false, retryTransient: true, dbReadAccess: true });
+  });
+  // Start's first act is to mark the run going: it never got that far.
+  expect(backgroundRunSnapshot().run?.phase).toBe("setup");
 });
