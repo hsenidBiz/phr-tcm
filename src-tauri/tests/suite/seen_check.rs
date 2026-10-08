@@ -96,8 +96,8 @@ fn a_locator_holding_text_typed_earlier_is_exempt_but_not_typed_later() {
     let earlier = script(
         Some("Ratings"),
         serde_json::json!([
-            { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "Quarterly Plan 2026" }] },
-            { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "cell", "name": "Quarterly  plan 2026" } }] }
+            { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "Quarterly Plan" }] },
+            { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "cell", "name": "Quarterly plan 2026" } }] }
         ]),
     );
     assert_eq!(check_seen(&map, &earlier, &[], None), Ok(()));
@@ -106,11 +106,11 @@ fn a_locator_holding_text_typed_earlier_is_exempt_but_not_typed_later() {
     let later = script(
         Some("Ratings"),
         serde_json::json!([
-            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "text": "Quarterly Plan" } }] },
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "role": "cell", "name": "Quarterly plan 2026" } }] },
             { "step_number": 2, "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "Quarterly Plan" }] }
         ]),
     );
-    assert_eq!(check_seen(&map, &later, &[], None), Err(refusal(1, "text \"Quarterly Plan\"")));
+    assert_eq!(check_seen(&map, &later, &[], None), Err(refusal(1, "cell \"Quarterly plan 2026\"")));
 }
 
 #[test]
@@ -279,12 +279,12 @@ fn a_whole_phrase_from_the_case_exempts_a_check() {
     }
 }
 
-/// Final review, finding 7: the typed-value exception matches the way the
-/// case exception does - the locator's whole name as whole words in what
-/// was typed - so typing "Test" into a search box does not let an unseen
-/// "Test connection" button through, nor a name that merely holds "2026".
+/// The typed-value exception: a value the script typed earlier, of at
+/// least 3 characters, exempts a locator whose text or name holds that
+/// value as whole words. Never the other way round: a short locator name
+/// that merely sits inside a longer typed value is not exempt.
 #[test]
-fn typing_test_does_not_exempt_test_connection() {
+fn a_typed_value_exempts_only_a_locator_that_holds_it_as_whole_words() {
     let map = map_with("Ratings", "/ratings", &[role("searchbox", "Search")]);
     let typed = |value: &str, name: &str| {
         script(
@@ -295,19 +295,38 @@ fn typing_test_does_not_exempt_test_connection() {
             ]),
         )
     };
+    // "test" is a whole word inside "Test connection".
+    assert_eq!(check_seen(&map, &typed("Test", "Test connection"), &[], None), Ok(()));
+    // The locator's name inside the typed value does not count.
     assert_eq!(
-        check_seen(&map, &typed("Test", "Test connection"), &[], None),
-        Err(refusal(2, "button \"Test connection\""))
-    );
-    assert_eq!(
-        check_seen(&map, &typed("2026", "Report 2026"), &[], None),
-        Err(refusal(2, "button \"Report 2026\""))
-    );
-    // The record the script typed, by its whole name: still exempt.
-    assert_eq!(check_seen(&map, &typed("AutoTest Leave 7", "autotest  leave 7"), &[], None), Ok(()));
-    // Part of a word is not a word.
-    assert_eq!(
-        check_seen(&map, &typed("AutoTestLeave", "Leave"), &[], None),
+        check_seen(&map, &typed("AutoTest Leave 7", "Leave"), &[], None),
         Err(refusal(2, "button \"Leave\""))
     );
+    // Part of a word is not a word.
+    assert_eq!(
+        check_seen(&map, &typed("Test", "Contest"), &[], None),
+        Err(refusal(2, "button \"Contest\""))
+    );
+    assert_eq!(
+        check_seen(&map, &typed("Test", "Testing"), &[], None),
+        Err(refusal(2, "button \"Testing\""))
+    );
+    // Two characters exempt nothing, even as a whole word.
+    assert_eq!(
+        check_seen(&map, &typed("QA", "QA report"), &[], None),
+        Err(refusal(2, "button \"QA report\""))
+    );
+}
+
+#[test]
+fn a_row_holding_the_typed_record_is_exempt() {
+    let map = map_with("Leave", "/leave", &[role("textbox", "Title")]);
+    let s = script(
+        Some("Leave"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Title" }, "value": "AutoTest Leave 7" }] },
+            { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "row", "name": "AutoTest Leave 7 Pending" } }] }
+        ]),
+    );
+    assert_eq!(check_seen(&map, &s, &[], None), Ok(()));
 }

@@ -1065,11 +1065,10 @@ What a save checks:
   actions inside `when_visible`, and the tab actions.
 - A `navigate` or `open_tab` address must be one discovery has visited.
 - Three kinds of locator pass without a sighting:
-  1. Text the script typed itself: a locator whose whole text or name, of
-     at least 3 characters, appears as a whole word or phrase in a value
-     the script typed in an earlier step. This is the record the script
-     just created. Typing "Test" does not let a "Test connection" button
-     through.
+  1. Text the script typed itself: a locator whose text or name contains,
+     as a whole word or phrase, a value of at least 3 characters that the
+     script typed in an earlier step. Typing "AutoTest Leave 7" lets a row
+     "AutoTest Leave 7 Pending" through, but not a "Leave" button.
   2. Text from the test case: a check (`wait_for` or an `expect_` action)
      whose text appears as a whole word or phrase in the case's own steps
      or expected results, of at least 3 characters.
