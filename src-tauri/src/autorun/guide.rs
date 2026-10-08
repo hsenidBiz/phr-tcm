@@ -1,13 +1,14 @@
 //! What an AI assistant reads before writing an action script.
 //!
-//! The assistant writing these scripts can usually see three things at
-//! once: the test case (through the bridge), the app's own source (it is
-//! a coding assistant, opened in that repo), and the database (through
-//! the company's DB MCP server). That combination is what makes generated
-//! scripts worth having - and it is also the trap this guide exists to
-//! close. An assistant that reads an implementation and asserts what the
-//! code currently does has written a mirror, not a test: it will pass
-//! through the exact regression it was supposed to catch.
+//! The assistant writing these scripts can usually see the test case
+//! (through the bridge), the live application (through discovery and the
+//! page tools), the database, and often the application's code as well,
+//! since it is a coding assistant opened in that repo. The code is the
+//! trap this guide exists to close: an assistant that asserts what the
+//! code currently does has written a mirror, not a test, and locators
+//! read from it are guesses. Scripts are written from what the live app
+//! showed, and the save check (`seen_check`) refuses any locator it never
+//! saw.
 //!
 //! So the guide is mostly about which source is allowed to decide what.
 
@@ -388,8 +389,6 @@ Looking up the real address, path and fields:
   reference only. Copy a path or a field name from a template, but
   never run a template from a script: a script has no action that does,
   and a template writes data.
-- The application's source can also show where a request goes. As with
-  selectors, that tells you WHERE to look, never what the answer should be.
 - What a check asserts comes from the case's expected result, written
   down by a person. If the case says the saved name is "Q4 Cycle", the
   `json` says "Q4 Cycle", whatever the code or a template happens to
@@ -970,14 +969,15 @@ through `css`, then `text`. Words are the most readable and the most
 fragile - they break when the wording changes, which is exactly when a
 human would notice anyway.
 
-If you can read the application's source, USE IT to find selectors. That
-is what source access is for: the real label of a field or id of a button
-beats a guess every time. Read the component, take it, move on.
+Every locator comes from the live page: what `get_autorun_page` printed,
+what `probe_autorun_locator` matched, or what `discover_autorun_action`
+acted on (see "Discovering the app").
 
 ## Seeing the page
 
-Three tools let you look before you write, against the browser the
-person has open on the Auto Run tab:
+Three tools let you look before you write, against the Auto Run browser:
+the one the person has open on the Auto Run tab, or your own discovery
+browser (see "Discovering the app"):
 
 - `get_autorun_page` shows what the accessibility tree calls things, one
   element per line, with the locator that reaches it on the end of the
@@ -990,29 +990,92 @@ person has open on the Auto Run tab:
   without it: a case marked `no_save` is tried with its saves stopped,
   as in a run.
 
-The person opens the browser and signs in - you cannot do either, except
-through a replay to a failing step (see "Repairing a script that failed"),
-which the app opens and signs in for. You never navigate away from where
-they are unless the case's own step says to. A `fill` you try really types
+The person opens their browser and signs in - you cannot do either in
+it, except through a replay to a failing step (see "Repairing a script
+that failed"), which the app opens and signs in for. To explore on your
+own, open a browser of your own with `start_autorun_discovery`. In the
+person's browser you never navigate away from where they are unless the
+case's own step says to. A `fill` you try really types
 into the application, so use test data, not the real thing. Never try
 `sign_in`: a tried sign-in is refused, and outside a replay the person
 signs in.
 
-## Three things that make a source-derived selector wrong
+## Discovering the app
 
-Reading the source is right, but the id you find is not always the id
-that exists at runtime. Check for these before you trust one:
+Discover the live app; never read the application's code to write scripts.
+A save refuses any locator the app has not seen.
 
-1. **Component libraries that wrap their real control.** A tag like
-   `<x-button id="save-host">` is often a HOST: the real `<button>` is
-   injected as a child at init, commonly with an id like
-   `save-host-button`, and text inputs likewise become `...-input`.
-   Clicking the host does nothing. Find the library's init code and see
-   what id it actually gives the control.
-2. **Ids built from data.** `group-header-gg-4711` is stable for one
+You open and drive a browser of your own to find what a script needs:
+
+- `start_autorun_discovery` opens the Auto Run browser and signs in as a
+  saved account, named by its key. The app replays the recorded sign-in
+  and types the password; you never see it. It answers the landing page.
+  If the sign-in fails, report it and stop; never try again in a loop. It
+  is refused while a run, a replay or the person's own browser holds the
+  Auto Run browser.
+- `discover_autorun_action` carries out one action and answers what it
+  did: the page afterwards, an address change, a dialog or message that
+  appeared, and the requests that wrote data. Carry each of the case's
+  steps out with it, the way a person would, and write the script from
+  what happened. `get_autorun_page` and `probe_autorun_locator` work in
+  the discovery browser too.
+- `save_autorun_area` saves a screen you reached through the menus as an
+  area: its name, its test case Module, and the clicks from the home page.
+  The app replays the clicks from the home page and saves the area only
+  if they arrive where you are. If you cannot reach a screen through the
+  menus, ask the person to record the area in Auto Run.
+- `end_autorun_discovery` closes the browser when you are done.
+
+What the app sees on a live page is kept in this project's map, area by
+area: while you explore, in the person's browser, and in replays. A save
+is checked against that map.
+
+Set the script's `area` to the area you explored: the name
+`save_autorun_area` gave it, or the area you started discovery in. A
+script gets credit for what was seen in its own area and in the areas it
+goes to with `return_to_area`; a script with no `area` only gets credit
+for locators not tied to an area.
+
+What a save checks:
+
+- Every locator in the script must have been seen on the live app: every
+  click, fill and check target, each link of a chained locator, the
+  actions inside `when_visible`, and the tab actions.
+- A `navigate` or `open_tab` address must be one discovery has visited.
+- Three kinds of locator pass without a sighting:
+  1. Text the script typed itself: a locator whose text or name holds a
+     value the script typed in an earlier step, of at least 3 characters.
+     This is the record the script just created.
+  2. Text from the test case: a check (`wait_for` or an `expect_` action)
+     whose text appears as a whole word or phrase in the case's own steps
+     or expected results, of at least 3 characters.
+  3. A repair: a save with `edits` checks only the steps it declares; the
+     steps it leaves alone are not checked again.
+
+A new script is checked in full. A script saved before is checked again
+only when it is next changed.
+
+A refusal names the step and the locator: `Step N: <the locator> was
+never seen on the live app.` Find it on the page with
+`probe_autorun_locator` or `discover_autorun_action`, then save again.
+Never swap in a locator you did not see to get past the check.
+
+Saving while you explore is allowed. Name anything you create with the
+environment's test name prefix. Delete only records whose name carries
+that prefix. The app logs every write discovery sends.
+
+An area listed under "Areas to explore" has no map yet, or a stale one:
+explore it again before you write or repair a script there.
+
+## Two things that make a seen locator wrong
+
+A locator that matched once is not always one that matches on every run.
+Check for these before you trust one:
+
+1. **Ids built from data.** `group-header-gg-4711` is stable for one
    record on one machine and wrong everywhere else. Match on the visible
    text instead.
-3. **Markup that does not exist yet.** Grids and cards rendered from an
+2. **Markup that does not exist yet.** Grids and cards rendered from an
    AJAX response, or cloned from a `<template>` when a modal opens, are
    absent at page load. `click`, `fill` and every `expect_` action wait
    for them; `check_text` does not, so follow a navigation with an
@@ -1031,9 +1094,10 @@ person to do by hand.
 
 This is the important part, and the one that goes wrong quietly.
 
-- **The application's source: locators and navigation ONLY.** How to
-  reach a screen and how to address a control. Never what the correct
-  outcome is.
+- **The live app, through discovery: locators and navigation ONLY.** How
+  to reach a screen and how to address a control, as the app showed it to
+  you. Never what the correct outcome is. The application's code is not a
+  source at all: never read it to write scripts.
 - **The test case's expected result: every assertion.** A human wrote it
   without reading the code, which is the whole point. Every `expect_` and
   `check_` action comes from there and nowhere else.

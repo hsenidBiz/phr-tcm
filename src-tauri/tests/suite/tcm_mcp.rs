@@ -80,8 +80,8 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the twenty-five dev-only
-    // tools (Auto Run's fourteen, then the API templates row's eleven) are listed
+    // debug assertions on), so with nothing disabled the twenty-nine dev-only
+    // tools (Auto Run's eighteen, then the API templates row's eleven) are listed
     // like any other switchable tool - between merge_case_files and
     // db_lookup, where they sit in the source.
     assert_eq!(
@@ -101,6 +101,10 @@ fn tools_list_names_every_tool() {
             "probe_autorun_locator",
             "try_autorun_action",
             "replay_autorun_to_step",
+            "start_autorun_discovery",
+            "discover_autorun_action",
+            "save_autorun_area",
+            "end_autorun_discovery",
             "get_autorun_failures",
             "record_autorun_quirk",
             "retire_autorun_quirk",
@@ -433,10 +437,10 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 42 in this development build: nothing is disabled by an unreachable
-    // bridge, including the twenty-five dev-only tools, which default to ON here
+    // 46 in this development build: nothing is disabled by an unreachable
+    // bridge, including the twenty-nine dev-only tools, which default to ON here
     // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 42, "an unreachable bridge must not disable anything, dev-only tools included");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 46, "an unreachable bridge must not disable anything, dev-only tools included");
 }
 
 /// The description is the only thing an assistant reads. It used to name
@@ -600,14 +604,14 @@ fn core_tools_survive_a_disabled_list_and_autorun_tools_are_switchable_in_a_dev_
 /// disappear from the list and a call gets the ORDINARY "switched off"
 /// sentence - not "not available", which would claim there is no switch
 /// when there plainly is one right here. They move as one row in the app,
-/// so the list the bridge reports names all eight together.
+/// so the list the bridge reports names them all together.
 #[test]
 fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordinary_way() {
     let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","save_autorun_area","end_autorun_discovery","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -998,7 +1002,7 @@ fn with_auto_run_off_and_api_templates_on_the_app_quirk_tools_stay() {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","save_autorun_area","end_autorun_discovery","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
             ));
         }
         calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
@@ -1058,7 +1062,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","save_autorun_area","end_autorun_discovery","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1264,4 +1268,89 @@ fn the_order_tool_rides_with_the_auto_run_tools() {
     assert!(d.contains("is not in PBI"), "{d}");
     assert!(d.contains("no saved script"), "{d}");
     assert!(!d.contains('\u{2014}'), "{d}");
+}
+
+/// The four discovery tools ride with the Auto Run tools, exactly as
+/// `probe_autorun_locator` does: listed where Auto Run is offered, gone and
+/// refused "switched off" when the person's list names them, refused "not
+/// available" where Auto Run is not offered. Each call forwards its
+/// arguments whole to its own bridge route.
+#[test]
+fn the_discovery_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
+    let tools: [(&str, &str, serde_json::Value, serde_json::Value); 4] = [
+        (
+            "start_autorun_discovery",
+            "/autorun-discover-start",
+            serde_json::json!({ "account": "admin", "area": "Leave Apply", "browser": "edge" }),
+            serde_json::json!(["account"]),
+        ),
+        (
+            "discover_autorun_action",
+            "/autorun-discover-action",
+            serde_json::json!({ "action": { "kind": "click", "selector": { "role": "button", "name": "Add" } }, "area": "Leave Apply" }),
+            serde_json::json!(["action"]),
+        ),
+        (
+            "save_autorun_area",
+            "/autorun-discover-area",
+            serde_json::json!({ "name": "Leave Apply", "module": "Leave", "clicks": [{ "role": "link", "name": "Leave" }] }),
+            serde_json::json!(["name", "module", "clicks"]),
+        ),
+        ("end_autorun_discovery", "/autorun-discover-end", serde_json::json!({}), serde_json::json!([])),
+    ];
+    let listed = listed_names(&stub(200, r#"{"disabled":[]}"#));
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let list: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    for (name, route, args, required) in tools {
+        assert!(DEV_ONLY_TOOLS.contains(&name), "{name} must gate like probe_autorun_locator");
+        assert!(!v2_lib::ai_tools::CORE_TOOLS.contains(&name), "{name} must be switchable");
+        assert!(listed.iter().any(|n| n == name), "{name} missing from {listed:?}");
+
+        let off = format!(r#"{{"disabled":["probe_autorun_locator","{name}"]}}"#);
+        let row_off = stub(200, &off);
+        assert!(!listed_names(&row_off).iter().any(|n| n == name), "{name}");
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": { "name": name, "arguments": args },
+        })
+        .to_string();
+        let v: serde_json::Value = serde_json::from_str(&handle_message(&req, "1.0.0", &row_off).unwrap()).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{name}: {v}");
+        assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("switched off"), "{name}: {v}");
+
+        let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), false);
+        assert!(!offered);
+        assert!(off.iter().any(|n| n == name), "{name}: {off:?}");
+        assert!(v2_lib::mcp::refusal_text(name, false).contains("not available"), "{name}");
+
+        let calls = std::cell::RefCell::new(vec![]);
+        let call = |method: &str, path: &str, body: &str| -> Result<(u16, String), String> {
+            calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+            Ok((200, "{}".into()))
+        };
+        let v: serde_json::Value = serde_json::from_str(&handle_message(&req, "1.0.0", &call).unwrap()).unwrap();
+        assert_ne!(v["result"]["isError"], serde_json::json!(true), "{name}: {v}");
+        let recorded = calls.borrow();
+        let last = recorded.last().unwrap();
+        assert_eq!((last.0.as_str(), last.1.as_str()), ("POST", route), "{name}");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&last.2).unwrap(), args, "{name}");
+
+        let tool = list["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap();
+        assert_eq!(tool["inputSchema"]["required"], required, "{name}");
+        let d = tool["description"].as_str().unwrap();
+        assert!(!d.is_empty(), "{name}");
+        assert!(!d.contains('\u{2014}') && !d.contains('\u{2013}'), "{name}: {d}");
+    }
+}
+
+/// `get_autorun_guide` no longer sends the assistant to the source: the
+/// live app is where locators come from now.
+#[test]
+fn the_guide_tool_no_longer_points_at_the_source() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_autorun_guide").unwrap();
+    let d = tool["description"].as_str().unwrap();
+    assert!(!d.contains("You may read the application's source for SELECTORS"), "{d}");
+    assert!(d.contains("every assertion comes from the test case's own expected result"), "{d}");
 }

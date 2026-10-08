@@ -273,3 +273,28 @@ pub fn seen_keys(map: &DiscoveryMap, areas: &[&str]) -> HashSet<SeenKey> {
 pub fn seen_paths(map: &DiscoveryMap) -> HashSet<String> {
     map.areas.iter().flat_map(|a| a.pages.iter()).map(|p| p.path.clone()).collect()
 }
+
+/// The live guide's `## Areas to explore`: each of `areas` (the recorded
+/// areas, by name) whose map is missing or stale at `now`, with why. Empty
+/// when there is nothing to explore, so the guide gains no empty heading.
+pub fn explore_section(areas: &[&str], map: &DiscoveryMap, now: u64) -> String {
+    let mut lines = String::new();
+    for name in areas {
+        let reason = match map.areas.iter().find(|a| a.area == *name) {
+            None => "no map yet",
+            Some(a) if !is_stale(a, now) => continue,
+            Some(a) if a.explored_at.is_none() => "no map yet",
+            Some(a) if a.failed_since => "a script failed there since it was explored",
+            Some(_) => "explored more than 30 days ago",
+        };
+        lines.push_str(&format!("- {name}: {reason}\n"));
+    }
+    if lines.is_empty() {
+        return lines;
+    }
+    format!(
+        "## Areas to explore\n\n\
+         These areas have no map yet, or a stale one. Explore an area with `start_autorun_discovery` \
+         before you write or repair a script there (see \"Discovering the app\").\n\n{lines}"
+    )
+}

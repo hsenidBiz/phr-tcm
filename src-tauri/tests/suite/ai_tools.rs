@@ -79,8 +79,8 @@ fn every_tool_gets_a_command_and_each_describes_itself() {
     // Auto Run is still in development: its tools are hidden and its
     // commands (`setup`, `heal`) are left out with them wherever they are
     // off, so nothing in the picker points at it.
-    const TOOLS: [&str; 6] = [
-        "begin-test-case-writing", "optimize", "get-wiki-info", "page", "setup", "heal",
+    const TOOLS: [&str; 7] = [
+        "begin-test-case-writing", "optimize", "get-wiki-info", "page", "setup", "discover", "heal",
     ];
     let stems: Vec<&str> = COMMANDS.iter().map(|c| c.stem).collect();
     assert_eq!(stems, TOOLS, "one command per tool, in call order");
@@ -605,6 +605,10 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "probe_autorun_locator",
             "try_autorun_action",
             "replay_autorun_to_step",
+            "start_autorun_discovery",
+            "discover_autorun_action",
+            "save_autorun_area",
+            "end_autorun_discovery",
             "get_autorun_failures",
             "record_autorun_quirk",
             "retire_autorun_quirk",
@@ -1596,4 +1600,80 @@ fn a_config_with_both_names_reports_both() {
     let tools = detect_in("", "", &|_| false, Some(root.as_str()));
     let cc = tools.iter().find(|t| t.id == "claude-code").unwrap();
     assert_eq!(cc.registered_servers, vec![TCM_SERVER, LEGACY_TCM_SERVER], "{cc:?}");
+}
+
+/// `/tcm:discover` walks an assistant through writing a script from what it
+/// saw on the live app. An Auto Run command, so it is written only where
+/// the Auto Run tools are offered; it names its steps in order, and every
+/// tool it names in backticks is one the bridge really lists.
+#[test]
+fn the_discover_command_writes_a_script_from_the_live_app() {
+    let c = COMMANDS.iter().find(|c| c.stem == "discover").expect("a discover command");
+    assert_eq!(c.tool, "start_autorun_discovery");
+    assert!(!c.desc.is_empty());
+    assert!(!c.hint.is_empty());
+
+    let dir = std::path::Path::new("D:/repo/.claude/commands/tcm");
+    let hidden = command_files_in(dir, &effective_disabled_for(&[], false));
+    assert!(
+        hidden.iter().all(|(p, _)| p.file_name().unwrap() != "discover.md"),
+        "discover must not be written where Auto Run is not offered"
+    );
+    let offered = command_files_in(dir, &effective_disabled_for(&[], true));
+    assert!(offered.iter().any(|(p, _)| p.file_name().unwrap() == "discover.md"));
+    let off = command_files_in(dir, &["start_autorun_discovery".to_string()]);
+    assert!(off.iter().all(|(p, _)| p.file_name().unwrap() != "discover.md"), "switched off, no command");
+
+    let body = c.body.join("\n");
+    assert!(body.contains("$ARGUMENTS"), "{body}");
+    let mcp = include_str!("../../src/mcp.rs");
+    let is_tool = |name: &str| mcp.contains(&format!("\"name\": \"{name}\""));
+    // The order of the work: each named tool appears after the one before.
+    let order = [
+        "get_test_cases",
+        "start_autorun_discovery",
+        "save_autorun_area",
+        "discover_autorun_action",
+        // Saved before the replay: a replay needs a saved script.
+        "save_autorun_script",
+        "replay_autorun_to_step",
+        "end_autorun_discovery",
+    ];
+    let mut from = 0;
+    for tool in order {
+        let at = body[from..]
+            .find(&format!("`{tool}`"))
+            .unwrap_or_else(|| panic!("/tcm:discover never names `{tool}` after the step before it: {body}"));
+        from += at;
+        assert!(is_tool(tool), "`{tool}` is not in the bridge's tool list");
+    }
+    // Field names (`area`, `edits`) are one word; a tool name has an underscore.
+    let named: Vec<&str> = body.split('`').skip(1).step_by(2).filter(|n| n.contains('_')).collect();
+    assert!(named.len() >= 9, "{named:?}");
+    for name in named {
+        assert!(is_tool(name), "/tcm:discover names `{name}`, which mcp.rs does not expose");
+    }
+    let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "ask the person to record the area in Auto Run",
+        "test name prefix",
+        "delete only records carrying that prefix",
+        "never read the application's code to write scripts",
+        "Choosing a model for the work",
+    ] {
+        assert!(flat.contains(said), "/tcm:discover never says {said:?}: {flat}");
+    }
+    assert!(flat.contains("`area`"), "the script's area must be named: {flat}");
+    assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
+}
+
+/// `/tcm:heal` explores a stale area again before repairing in it, and
+/// `/tcm:setup` names `/tcm:discover` as the way to find an area.
+#[test]
+fn heal_explores_a_stale_area_first_and_setup_names_discover() {
+    let heal = COMMANDS.iter().find(|c| c.stem == "heal").unwrap().body.join(" ");
+    let heal = heal.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(heal.contains("If the area's map is stale, run discovery on it before repairing."), "{heal}");
+    let setup = COMMANDS.iter().find(|c| c.stem == "setup").unwrap().body.join(" ");
+    assert!(setup.contains("/tcm:discover"), "{setup}");
 }
