@@ -761,6 +761,15 @@ fn a_try_must_name_its_case_as_a_number() {
 
 // ---------------------------------------------------------------- import
 
+/// Imports `file` with its one click seen on the live app and case 7 read
+/// from Azure DevOps, so the seen check lets it through.
+fn import_seen(root: &std::path::Path, file: &std::path::Path) {
+    let save = v2_lib::browser::locator::Target::from("#save");
+    v2_lib::autorun::discovery_map::record_matched(root, "acme", "PMS", None, "/", &save, 1).unwrap();
+    let cases: v2_lib::commands::autorun::CaseTexts = [(7, vec![])].into_iter().collect();
+    v2_lib::commands::autorun::import_scripts_from_path(root, "acme", "PMS", file.to_str().unwrap(), Some(&cases)).unwrap();
+}
+
 #[test]
 fn an_import_keeps_must_not_save_on_a_script_that_has_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -769,7 +778,7 @@ fn an_import_keeps_must_not_save_on_a_script_that_has_it() {
     plain.no_save = false;
     let file = dir.path().join("bundle.json");
     std::fs::write(&file, serde_json::to_string(&vec![plain]).unwrap()).unwrap();
-    v2_lib::commands::autorun::import_scripts_from_path(dir.path(), "acme", "PMS", file.to_str().unwrap()).unwrap();
+    import_seen(dir.path(), &file);
     assert!(v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap().no_save, "the import cleared it");
 }
 
@@ -779,7 +788,7 @@ fn an_import_can_turn_must_not_save_on() {
     on_disk(dir.path(), 7, false);
     let file = dir.path().join("bundle.json");
     std::fs::write(&file, serde_json::to_string(&vec![no_save_script(one_click())]).unwrap()).unwrap();
-    v2_lib::commands::autorun::import_scripts_from_path(dir.path(), "acme", "PMS", file.to_str().unwrap()).unwrap();
+    import_seen(dir.path(), &file);
     assert!(v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap().no_save);
 }
 

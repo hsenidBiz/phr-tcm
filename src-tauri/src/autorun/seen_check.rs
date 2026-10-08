@@ -10,7 +10,7 @@
 //! result the step is checking for). Both match whole words only, and a
 //! typed value shorter than 3 characters exempts nothing.
 
-use super::discovery_map::{path_only, seen_keys, seen_paths, DiscoveryMap};
+use super::discovery_map::{page_path, path_only, seen_keys, seen_paths, DiscoveryMap};
 use super::edits::Edit;
 use super::CaseScript;
 use crate::browser::actions::Action;
@@ -73,6 +73,15 @@ fn words(link: &LocatorStep) -> Vec<String> {
         .collect()
 }
 
+/// One locator, or one page path, a script names that the map has never
+/// seen: the step that names it and how it reads (`Target::describe`, or
+/// the path).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unseen {
+    pub step: i32,
+    pub locator: String,
+}
+
 /// Checks `script` against what `map` has seen, in step order: every
 /// step, or only `only_steps` on a repair. `case_text` is the test case's
 /// own step actions and expected results. The first failure is returned.
@@ -82,6 +91,32 @@ pub fn check_seen(
     case_text: &[String],
     only_steps: Option<&[i32]>,
 ) -> Result<(), String> {
+    match scan(map, script, case_text, only_steps, true).into_iter().next() {
+        Some(u) => Err(refusal(u.step, &u.locator)),
+        None => Ok(()),
+    }
+}
+
+/// [`check_seen`], but every failure in step order rather than the first:
+/// an import names all of them at once.
+pub fn check_seen_all(
+    map: &DiscoveryMap,
+    script: &CaseScript,
+    case_text: &[String],
+    only_steps: Option<&[i32]>,
+) -> Vec<Unseen> {
+    scan(map, script, case_text, only_steps, false)
+}
+
+/// The failures of the check, stopping at the first when `first_only`.
+fn scan(
+    map: &DiscoveryMap,
+    script: &CaseScript,
+    case_text: &[String],
+    only_steps: Option<&[i32]>,
+    first_only: bool,
+) -> Vec<Unseen> {
+    let mut unseen: Vec<Unseen> = Vec::new();
     let mut areas: Vec<&str> = script.area_name().into_iter().collect();
     for step in &script.steps {
         for action in step.actions.iter().flat_map(Action::each) {
@@ -101,9 +136,13 @@ pub fn check_seen(
         if checked {
             for action in step.actions.iter().flat_map(Action::each) {
                 if let Action::Navigate { url } | Action::OpenTab { url, .. } = action {
+                    // Compared as the map files a page; named as written.
                     let path = path_only(url);
-                    if !paths.contains(&path) {
-                        return Err(refusal(step.step_number, &path));
+                    if !paths.contains(&page_path(url)) {
+                        unseen.push(Unseen { step: step.step_number, locator: path });
+                        if first_only {
+                            return unseen;
+                        }
                     }
                 }
                 // `each` lists a `when_visible`'s own actions after it, so
@@ -129,7 +168,13 @@ pub fn check_seen(
                                 w.chars().count() >= MIN_TYPED_LEN && case_text.iter().any(|t| has_phrase(t, w))
                             });
                         if !typed_here && !in_case {
-                            return Err(refusal(step.step_number, &target.describe()));
+                            unseen.push(Unseen { step: step.step_number, locator: target.describe() });
+                            if first_only {
+                                return unseen;
+                            }
+                            // One line per target, however many of its
+                            // links are unseen.
+                            break;
                         }
                     }
                 }
@@ -144,5 +189,5 @@ pub fn check_seen(
             }
         }
     }
-    Ok(())
+    unseen
 }

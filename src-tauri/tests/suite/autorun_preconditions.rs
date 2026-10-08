@@ -318,7 +318,7 @@ async fn every_save_path_refuses_a_precondition_it_cannot_check() {
     let good = json!([{ "flow": "pms-performance-cycle", "stage": "publish", "value": 274 }]);
     let file = dir.path().join("bundle.json");
     std::fs::write(&file, json!([script_with(8, good.clone()), script_with(9, bad.clone())]).to_string()).unwrap();
-    assert_eq!(import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap()).unwrap_err(), expected(9));
+    assert_eq!(import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap(), None).unwrap_err(), expected(9));
     assert!(load_script(&root, 8).unwrap().is_none());
 
     // The assistant's save, refused before it needs Azure DevOps.

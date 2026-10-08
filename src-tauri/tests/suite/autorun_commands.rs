@@ -8,7 +8,7 @@ use v2_lib::autorun::CaseScript;
 use v2_lib::autorun::{LocalRun, PublishedRun};
 use v2_lib::commands::autorun::{
     describe_session_error, import_scripts_from_path, refuse_while_a_run_is_going, safe_run_id, save_script_from_editor,
-    NO_PROJECT,
+    CaseTexts, IMPORT_NEEDS_CASES, IMPORT_UNSEEN_THEN, NO_PROJECT,
 };
 use v2_lib::commands::autorun_replay::{replay_is_running, replay_timing, OneAtATime};
 
@@ -175,7 +175,8 @@ fn importing_a_utf8_file_with_a_bom_keeps_non_ascii_text_intact() {
     let file = dir.path().join("bundle.json");
     std::fs::write(&file, &bytes).unwrap();
 
-    let ids = import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap()).expect("import failed");
+    let cases = case_texts(&[(301, &[])]);
+    let ids = import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap(), Some(&cases)).expect("import failed");
     assert_eq!(ids, vec![301]);
 
     let loaded = load_script(&root, 301).unwrap().unwrap();
@@ -258,7 +259,7 @@ fn with_addresses_switched_off_the_editor_and_an_import_refuse_a_navigate_and_wr
 
     let file = dir.path().join("bundle.json");
     std::fs::write(&file, serde_json::Value::Array(vec![with_navigate(8)]).to_string()).unwrap();
-    let err = import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap()).unwrap_err();
+    let err = import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap(), None).unwrap_err();
     assert_eq!(err, format!("case 8: {}", no_address(2)));
     assert!(load_script(&root, 8).unwrap().is_none());
 
@@ -281,7 +282,7 @@ fn a_save_or_an_import_with_no_organization_or_project_is_refused_and_writes_not
     for (org, project) in [("", "Web"), ("acme", ""), ("  ", "Web"), ("acme", " ")] {
         let err = save_script_from_editor(&root, org, project, script.clone()).unwrap_err();
         assert_eq!(err, NO_PROJECT, "{org:?} / {project:?}");
-        let err = import_scripts_from_path(&root, org, project, file.to_str().unwrap()).unwrap_err();
+        let err = import_scripts_from_path(&root, org, project, file.to_str().unwrap(), None).unwrap_err();
         assert_eq!(err, NO_PROJECT, "{org:?} / {project:?}");
     }
     assert!(!err_names_an_address(NO_PROJECT), "{NO_PROJECT}");
@@ -386,4 +387,107 @@ fn an_editor_save_on_a_script_with_no_setup_stays_without_one() {
     assert_eq!(stored_setup(&root), None);
     save_script_from_editor(&root, "acme", "Web", with_setup(Some("sneaked-in"))).unwrap();
     assert_eq!(stored_setup(&root), None);
+}
+
+// ---- Imports get the same seen check as a save ---------------------------
+
+/// The test cases' own text by id, as the import fetches it.
+fn case_texts(cases: &[(i32, &[&str])]) -> CaseTexts {
+    cases.iter().map(|(id, text)| (*id, text.iter().map(|t| t.to_string()).collect())).collect()
+}
+
+fn button(name: &str) -> serde_json::Value {
+    serde_json::json!({ "role": "button", "name": name })
+}
+
+/// `root`'s map holds a Save button on the ratings page, and the page itself.
+fn seen_ratings(root: &std::path::Path) {
+    use v2_lib::autorun::discovery_map::record_matched;
+    let save: v2_lib::browser::locator::Target = serde_json::from_value(button("Save")).unwrap();
+    record_matched(root, "acme", "Web", None, "/ratings", &save, 1).unwrap();
+}
+
+fn ratings_script(case_id: i32, steps: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "case_id": case_id, "title": "t", "steps": steps })
+}
+
+#[test]
+fn an_import_with_an_unseen_locator_is_refused_listing_every_one_and_writes_nothing() {
+    let dir = TempDir::new();
+    let root = dir.path().join("data");
+    seen_ratings(&root);
+    let bundle = serde_json::json!([
+        ratings_script(7, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "click", "selector": button("Save") }] }])),
+        ratings_script(8, serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": button("Publish") }] },
+            { "step_number": 2, "actions": [{ "kind": "navigate", "url": "/elsewhere" }] }
+        ])),
+        ratings_script(9, serde_json::json!([{ "step_number": 3, "actions": [{ "kind": "click", "selector": button("Archive") }] }])),
+        ratings_script(10, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "click", "selector": button("Save") }] }]))
+    ]);
+    let file = dir.path().join("bundle.json");
+    std::fs::write(&file, bundle.to_string()).unwrap();
+    let cases = case_texts(&[(7, &[]), (8, &[]), (9, &[])]);
+    let err = import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap(), Some(&cases)).unwrap_err();
+    assert_eq!(
+        err,
+        [
+            "Case 8, step 1: button \"Publish\" was never seen on the live app.",
+            "Case 8, step 2: /elsewhere was never seen on the live app.",
+            "Case 9, step 3: button \"Archive\" was never seen on the live app.",
+            "Case 10: Azure DevOps has no test case with this id.",
+            IMPORT_UNSEEN_THEN,
+        ]
+        .join("\n")
+    );
+    for id in [7, 8, 9, 10] {
+        assert!(load_script(&root, id).unwrap().is_none(), "case {id} was written");
+    }
+}
+
+#[test]
+fn an_import_of_seen_scripts_is_written() {
+    let dir = TempDir::new();
+    let root = dir.path().join("data");
+    seen_ratings(&root);
+    v2_lib::autorun::discovery_map::record_seen(&root, "acme", "Web", None, "/ratings/123/edit", "", &[], None, None, 1)
+        .unwrap();
+    let bundle = serde_json::json!([ratings_script(7, serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "navigate", "url": "/ratings/123/edit" }] },
+        { "step_number": 2, "actions": [
+            { "kind": "click", "selector": button("Save") },
+            // Not on the map, but the case says it: a check may look for it.
+            { "kind": "expect_visible", "selector": { "text": "Rating saved" } }
+        ] }
+    ]))]);
+    let file = dir.path().join("bundle.json");
+    std::fs::write(&file, bundle.to_string()).unwrap();
+    let cases = case_texts(&[(7, &["Press Save", "Rating saved appears"])]);
+    let ids = import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap(), Some(&cases)).unwrap();
+    assert_eq!(ids, vec![7]);
+    assert!(load_script(&root, 7).unwrap().is_some());
+}
+
+#[test]
+fn an_import_without_its_test_cases_is_refused() {
+    let dir = TempDir::new();
+    let root = dir.path().join("data");
+    seen_ratings(&root);
+    let bundle = serde_json::json!([ratings_script(7, serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": button("Save") }] }
+    ]))]);
+    let file = dir.path().join("bundle.json");
+    std::fs::write(&file, bundle.to_string()).unwrap();
+    let err = import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap(), None).unwrap_err();
+    assert_eq!(err, IMPORT_NEEDS_CASES);
+    assert_eq!(IMPORT_NEEDS_CASES, "Imported scripts are checked against the live app and their test cases; sign in and try again.");
+    assert!(load_script(&root, 7).unwrap().is_none());
+
+    // A map nothing can read refuses the import as it refuses a save.
+    let map = v2_lib::autorun::discovery_map::map_path(&root, "acme", "Web");
+    std::fs::write(&map, "{ not a map").unwrap();
+    let cases = case_texts(&[(7, &[])]);
+    let err = import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap(), Some(&cases)).unwrap_err();
+    assert_eq!(err, v2_lib::autorun::discovery_map::load_map(&root, "acme", "Web").unwrap_err());
+    assert!(load_script(&root, 7).unwrap().is_none());
 }

@@ -18,6 +18,7 @@ use std::sync::Mutex;
 
 pub const STALE_AFTER_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 const MAX_OUTCOMES: usize = 200;
+const MAX_WRITES: usize = 500;
 
 #[derive(Serialize, Deserialize, specta::Type, Clone, Debug, Default, PartialEq)]
 pub struct DiscoveryMap {
@@ -52,6 +53,13 @@ pub struct SeenElement {
     /// `button | field | link | table | dialog | other`, from the role.
     pub kind: String,
     pub required: bool,
+    /// When a probe or a try last matched it on the live page, in
+    /// milliseconds since the epoch; 0 when only a page read showed it. A
+    /// discovery's later read of the page keeps an element it no longer
+    /// shows only when this falls inside that discovery.
+    #[serde(default)]
+    #[specta(type = f64)]
+    pub seen_at: u64,
 }
 
 #[derive(Serialize, Deserialize, specta::Type, Clone, Debug, PartialEq)]
@@ -153,11 +161,16 @@ pub fn canonical_area(root: &Path, org: &str, project: &str, name: &str) -> Stri
         .unwrap_or_else(|| name.to_string())
 }
 
-/// Load, change and write back under the lock.
+/// Load, change and write back under the lock. A change that leaves the
+/// map as it was writes nothing: most page reads see nothing new.
 fn update(root: &Path, org: &str, project: &str, change: impl FnOnce(&mut DiscoveryMap)) -> Result<(), String> {
     let _guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
     let mut map = load_map(root, org, project)?;
+    let before = map.clone();
     change(&mut map);
+    if map == before {
+        return Ok(());
+    }
     let path = map_path(root, org, project);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -177,9 +190,14 @@ fn area_mut<'a>(map: &'a mut DiscoveryMap, area: &str) -> &'a mut AreaMap {
     map.areas.last_mut().expect("just pushed")
 }
 
+/// The page filed at `path` (a `page_path`). A page an older map filed
+/// with its ids is found too, and takes the collapsed path.
 fn page_mut<'a>(area: &'a mut AreaMap, path: &str, title: &str) -> &'a mut PageMap {
-    if let Some(i) = area.pages.iter().position(|p| p.path == path) {
+    if let Some(i) = area.pages.iter().position(|p| p.path == path || page_path(&p.path) == path) {
         let page = &mut area.pages[i];
+        if page.path != path {
+            page.path = path.to_string();
+        }
         if page.title.is_empty() && !title.is_empty() {
             page.title = title.to_string();
         }
@@ -219,6 +237,39 @@ pub fn path_only(url_or_path: &str) -> String {
     }
 }
 
+/// Files what one read of a page showed. `discovery` is the start of the
+/// discovery under way, or `None` for any other read (a supervised page
+/// read while healing, a replay). A discovery's read replaces the page's
+/// elements with what it showed, keeping only those a probe or a try
+/// matched during this same discovery (`seen_at` at or after its start),
+/// since a long page's read is cut off before its end. Any other read only
+/// adds.
+/// Is this path segment an id: all digits, a GUID, or 16 or more hex
+/// characters?
+fn is_id_segment(seg: &str) -> bool {
+    let hex = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit());
+    if !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    let parts: Vec<&str> = seg.split('-').collect();
+    let guid = parts.len() == 5
+        && parts.iter().map(|p| p.len()).eq([8, 4, 4, 4, 12])
+        && parts.iter().all(|p| hex(p));
+    guid || (seg.len() >= 16 && hex(seg))
+}
+
+/// The path a map PAGE is filed under: `path_only`, with each segment that
+/// is an id kept as `:id`, so two records of one kind are one page
+/// (`/leave/12345/edit` is `/leave/:id/edit`). The save-request log keeps
+/// `path_only`.
+pub fn page_path(url_or_path: &str) -> String {
+    path_only(url_or_path)
+        .split('/')
+        .map(|seg| if is_id_segment(seg) { ":id" } else { seg })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn record_seen(
     root: &Path,
@@ -229,21 +280,25 @@ pub fn record_seen(
     title: &str,
     lines: &[SnapLine],
     account: Option<&str>,
-    discovering: bool,
+    discovery: Option<u64>,
     now: u64,
 ) -> Result<(), String> {
-    let path = path_only(page_path);
+    let path = self::page_path(page_path);
     let area = canonical_area(root, org, project, area.unwrap_or(""));
     update(root, org, project, |map| {
         let a = area_mut(map, &area);
         // Only what a discovery sees in a named area marks that area
         // explored: the bucket for no area is never explored.
-        if discovering && !area.is_empty() {
+        if discovery.is_some() && !area.is_empty() {
             a.explored_at = Some(now);
             a.failed_since = false;
             a.account = account.map(str::to_string);
         }
         let page = page_mut(a, &path, title);
+        let old = match discovery {
+            Some(_) => std::mem::take(&mut page.elements),
+            None => vec![],
+        };
         for line in lines {
             // The last link names the element; earlier links are frames.
             let Some(key) = line.locator.links().last().and_then(LocatorStep::seen_key) else { continue };
@@ -252,6 +307,7 @@ pub fn record_seen(
             if page.elements.iter().any(|e| e.locator == line.locator) {
                 continue;
             }
+            let seen_at = old.iter().find(|e| e.locator == line.locator).map_or(0, |e| e.seen_at);
             page.elements.push(SeenElement {
                 key,
                 locator: line.locator.clone(),
@@ -259,13 +315,22 @@ pub fn record_seen(
                 name: line.name.clone(),
                 kind: kind_for(&line.role).to_string(),
                 required: line.required,
+                seen_at,
             });
+        }
+        if let Some(started) = discovery {
+            for e in old {
+                let matched_now = e.seen_at != 0 && e.seen_at >= started;
+                if matched_now && !page.elements.iter().any(|n| n.locator == e.locator) {
+                    page.elements.push(e);
+                }
+            }
         }
     })
 }
 
 /// Adds each link of a target a probe or try matched, unless the page
-/// already has it.
+/// already has it, and stamps it matched at `now` (`seen_at`) either way.
 pub fn record_matched(
     root: &Path,
     org: &str,
@@ -273,16 +338,21 @@ pub fn record_matched(
     area: Option<&str>,
     page_path: &str,
     target: &Target,
-    _now: u64,
+    now: u64,
 ) -> Result<(), String> {
-    let path = path_only(page_path);
+    let path = self::page_path(page_path);
     let area = canonical_area(root, org, project, area.unwrap_or(""));
     update(root, org, project, |map| {
         let a = area_mut(map, &area);
         let page = page_mut(a, &path, "");
         for link in target.links() {
             let Some(key) = link.seen_key() else { continue };
-            if page.elements.iter().any(|e| e.key == key) {
+            let mut held = false;
+            for e in page.elements.iter_mut().filter(|e| e.key == key) {
+                e.seen_at = e.seen_at.max(now);
+                held = true;
+            }
+            if held {
                 continue;
             }
             let role = link.role.clone().unwrap_or_default();
@@ -293,6 +363,7 @@ pub fn record_matched(
                 name: link.name.clone().unwrap_or_default(),
                 kind: kind.to_string(),
                 required: false,
+                seen_at: now,
                 locator: Target::One(link),
             });
         }
@@ -302,7 +373,14 @@ pub fn record_matched(
 pub fn record_write(root: &Path, org: &str, project: &str, area: &str, w: WriteEntry) -> Result<(), String> {
     let w = WriteEntry { path: path_only(&w.path), ..w };
     let area = canonical_area(root, org, project, area);
-    update(root, org, project, |map| area_mut(map, &area).writes.push(w))
+    update(root, org, project, |map| {
+        let a = area_mut(map, &area);
+        a.writes.push(w);
+        if a.writes.len() > MAX_WRITES {
+            let drop = a.writes.len() - MAX_WRITES;
+            a.writes.drain(..drop);
+        }
+    })
 }
 
 pub fn record_outcome(root: &Path, org: &str, project: &str, area: &str, line: &str) -> Result<(), String> {
@@ -367,8 +445,10 @@ pub fn seen_keys(map: &DiscoveryMap, areas: &[&str]) -> HashSet<SeenKey> {
         .collect()
 }
 
+/// Every page path the map holds, as `page_path` files it: a page an
+/// older map filed with its ids counts too.
 pub fn seen_paths(map: &DiscoveryMap) -> HashSet<String> {
-    map.areas.iter().flat_map(|a| a.pages.iter()).map(|p| p.path.clone()).collect()
+    map.areas.iter().flat_map(|a| a.pages.iter()).map(|p| page_path(&p.path)).collect()
 }
 
 /// The live guide's `## Areas to explore`: each of `areas` (the recorded

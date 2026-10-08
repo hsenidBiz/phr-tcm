@@ -1525,7 +1525,7 @@ fn sighting(root: &std::path::Path, area: Option<&str>) -> Sighting {
         project: "Web".into(),
         area: area.map(str::to_string),
         account: None,
-        discovering: false,
+        discovering: None,
     }
 }
 
@@ -1621,7 +1621,7 @@ async fn a_page_read_records_its_locators_in_the_map() {
     assert!(names.contains(&"Save") && names.contains(&"Name"), "{names:?}");
 
     let discovering =
-        Sighting { discovering: true, account: Some("admin".into()), ..sighting(dir.path(), Some("Ratings")) };
+        Sighting { discovering: Some(1), account: Some("admin".into()), ..sighting(dir.path(), Some("Ratings")) };
     let (status, _) = read_page(&mut ratings_page(), DEFAULT_LIMIT, Some(&discovering)).await;
     assert_eq!(status, 200);
     let area = mapped_area(dir.path(), "Ratings").unwrap();

@@ -605,7 +605,7 @@ async fn saving_a_script_with_an_unrecorded_area_is_refused() {
     // written either.
     let file = dir.path().join("bundle.json");
     std::fs::write(&file, json!([script_in(8, Some("Manage Cycle")), script_in(9, Some("Appraisals"))]).to_string()).unwrap();
-    assert_eq!(import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap()).unwrap_err(), expected(9));
+    assert_eq!(import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap(), None).unwrap_err(), expected(9));
     assert!(load_script(&root, 8).unwrap().is_none());
     assert!(load_script(&root, 9).unwrap().is_none());
 

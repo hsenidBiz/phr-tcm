@@ -52,6 +52,9 @@ pub(crate) struct Session {
 pub struct DiscoveryState {
     pub area: Option<String>,
     pub account: Option<String>,
+    /// When the discovery started (milliseconds since the epoch): a page it
+    /// reads again keeps the locators matched since then.
+    pub started_at: u64,
 }
 
 /// The supervised session, for the bridge's page routes. Whoever locks
@@ -185,7 +188,8 @@ pub(crate) async fn open_for_discovery(browser_name: &str) -> Result<(), String>
     let root = store::configured_root().ok_or_else(|| NO_DATA_DIRECTORY.to_string())?;
     open_into(Ok(root), &mut slot, Browser::from_name(browser_name)).await?;
     if let Some(session) = slot.as_mut() {
-        session.discovery = Some(DiscoveryState { area: None, account: None });
+        session.discovery =
+            Some(DiscoveryState { area: None, account: None, started_at: crate::autorun::sessions::now_ms() });
     }
     publish_discovery(&slot);
     Ok(())
@@ -1200,26 +1204,92 @@ pub fn auto_run_clear_order(app: tauri::AppHandle, pbi_id: i32) -> Result<(), St
 /// leaves the tester unable to tell which cases are current. Returns the
 /// case ids that landed, so the screen can say what changed rather than
 /// just "done".
+///
+/// Every script is checked against the live app as an assistant's save is
+/// (`seen_check`), in full, before anything is written, so the test cases
+/// are read from Azure DevOps first: a case's own words may name what a
+/// check looks for. With no way to read them the import is refused, never
+/// let through unchecked.
 #[tauri::command]
 #[specta::specta]
-pub fn auto_run_import_scripts(
+pub async fn auto_run_import_scripts(
     app: tauri::AppHandle,
     organization: String,
     project: String,
     path: String,
 ) -> Result<Vec<i32>, String> {
-    import_scripts_from_path(&root(&app)?, &organization, &project, &path)
+    let root = root(&app)?;
+    require_project(&organization, &project)?;
+    let scripts = read_import_file(&path)?;
+    let cases = import_case_texts(&app, &organization, &scripts).await?;
+    import_scripts(&root, &organization, &project, scripts, cases.as_ref())
+}
+
+/// The test cases' own text by case id: each step's action and expected
+/// result, which the seen check reads.
+pub type CaseTexts = std::collections::HashMap<i32, Vec<String>>;
+
+/// Said when an import cannot read its scripts' test cases.
+pub const IMPORT_NEEDS_CASES: &str =
+    "Imported scripts are checked against the live app and their test cases; sign in and try again.";
+
+/// Closes the list of what an import named that was never seen.
+pub const IMPORT_UNSEEN_THEN: &str =
+    "Explore the area with discovery so its map holds what these scripts use, then import again.";
+
+/// The text of every case `scripts` are for, read from Azure DevOps (read
+/// only). `None` when they cannot be read: signed out or offline.
+async fn import_case_texts(
+    app: &tauri::AppHandle,
+    organization: &str,
+    scripts: &[CaseScript],
+) -> Result<Option<CaseTexts>, String> {
+    let Ok(token) = crate::state::get_fresh_token(app).await else { return Ok(None) };
+    let mut ids: Vec<i32> = scripts.iter().map(|s| s.case_id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    match crate::ado::AdoClient::new(token).get_test_cases_by_ids(organization, &ids, None, None).await {
+        Ok(cases) => Ok(Some(
+            cases
+                .into_iter()
+                .map(|c| (c.id, c.steps.into_iter().flat_map(|s| [s.action, s.expected]).collect()))
+                .collect(),
+        )),
+        // Azure DevOps refuses the whole batch when any id is not a work
+        // item, so it cannot say which: the ids are named back instead.
+        Err(crate::ado::AdoError::NotFound) => Err(format!(
+            "Azure DevOps has no work item for at least one of {}. An imported script is checked against its own test case, so nothing was imported.",
+            ids.iter().map(|i| format!("#{i}")).collect::<Vec<_>>().join(", ")
+        )),
+        Err(e) => {
+            crate::applog::warn(format!("Import scripts: the test cases could not be read: {e:?}"));
+            Ok(None)
+        }
+    }
 }
 
 /// The pure half of [`auto_run_import_scripts`]: everything that does not
 /// need an `AppHandle`, so it can be exercised directly in tests the same
-/// way `autorun::store`'s functions are.
-pub fn import_scripts_from_path(root: &std::path::Path, organization: &str, project: &str, path: &str) -> Result<Vec<i32>, String> {
+/// way `autorun::store`'s functions are. `cases` is the scripts' test
+/// cases' text, `None` when it could not be read.
+pub fn import_scripts_from_path(
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    path: &str,
+    cases: Option<&CaseTexts>,
+) -> Result<Vec<i32>, String> {
     require_project(organization, project)?;
+    let scripts = read_import_file(path)?;
+    import_scripts(root, organization, project, scripts, cases)
+}
+
+/// The scripts an import file holds; refused when it holds none.
+fn read_import_file(path: &str) -> Result<Vec<CaseScript>, String> {
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Could not read {path}: {e}"))?;
     let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
-    let mut scripts: Vec<CaseScript> = serde_json::from_str(content).map_err(|e| {
+    let scripts: Vec<CaseScript> = serde_json::from_str(content).map_err(|e| {
         format!(
             "that file is not a list of action scripts: {e}. Expected an array of {{ case_id, title, steps }}."
         )
@@ -1227,6 +1297,17 @@ pub fn import_scripts_from_path(root: &std::path::Path, organization: &str, proj
     if scripts.is_empty() {
         return Err("that file has no scripts in it".to_string());
     }
+    Ok(scripts)
+}
+
+/// Checks and writes the scripts an import file held: all or nothing.
+fn import_scripts(
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    mut scripts: Vec<CaseScript>,
+    cases: Option<&CaseTexts>,
+) -> Result<Vec<i32>, String> {
     crate::autorun::nav::check_project_rules(root, organization, project, &scripts)?;
     // An import can mark a script Must not save, never unmark one: only a
     // person saving from the editor turns the flag off.
@@ -1235,10 +1316,40 @@ pub fn import_scripts_from_path(root: &std::path::Path, organization: &str, proj
             sc.no_save = true;
         }
     }
+    check_imported_seen(root, organization, project, &scripts, cases)?;
     store::save_scripts_atomically(root, &scripts).map_err(|e| e.to_string())?;
     let ids: Vec<i32> = scripts.iter().map(|sc| sc.case_id).collect();
     crate::applog::info(format!("Imported {} auto-run script(s)", ids.len()));
     Ok(ids)
+}
+
+/// The save route's seen check, over every step of every imported script.
+/// Every failure is listed, script by script, then what to do.
+fn check_imported_seen(
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    scripts: &[CaseScript],
+    cases: Option<&CaseTexts>,
+) -> Result<(), String> {
+    let cases = cases.ok_or_else(|| IMPORT_NEEDS_CASES.to_string())?;
+    let map = crate::autorun::discovery_map::load_map(root, organization, project)?;
+    let mut lines: Vec<String> = Vec::new();
+    for sc in scripts {
+        let Some(text) = cases.get(&sc.case_id) else {
+            lines.push(format!("Case {}: Azure DevOps has no test case with this id.", sc.case_id));
+            continue;
+        };
+        for u in crate::autorun::seen_check::check_seen_all(&map, sc, text, None) {
+            lines.push(format!("Case {}, step {}: {} was never seen on the live app.", sc.case_id, u.step, u.locator));
+        }
+    }
+    if lines.is_empty() {
+        return Ok(());
+    }
+    crate::applog::info(format!("Import scripts refused: {} unseen locator(s) or missing case(s)", lines.len()));
+    lines.push(IMPORT_UNSEEN_THEN.to_string());
+    Err(lines.join("\n"))
 }
 
 #[tauri::command]

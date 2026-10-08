@@ -219,6 +219,33 @@ test("a rejected import call shows an error toast and re-enables the button", as
   expect(screen.getByRole("menuitem", { name: "Import scripts" })).toBeEnabled();
 });
 
+/// An import is checked against the live app like an assistant's save, and
+/// a refusal lists every locator that was never seen, then what to do. The
+/// person reads the whole list in the error, not just the first line.
+test("an import refused for unseen locators shows every one and what to do", async () => {
+  const refusal =
+    "Case 8, step 1: button \"Publish\" was never seen on the live app.\n" +
+    "Case 9, step 3: button \"Archive\" was never seen on the live app.\n" +
+    "Explore the area with discovery so its map holds what these scripts use, then import again.";
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "plugin:dialog|open") return "C:\\scripts.json";
+    if (cmd === "auto_run_import_scripts") throw refusal;
+  });
+  renderAutoRun();
+  render(<Toaster />);
+
+  await screen.findByText("Valid login");
+  chooseFromMore("Import scripts");
+
+  const shown = await screen.findByText(/could not import that file/i);
+  expect(shown.textContent).toContain('Case 8, step 1: button "Publish" was never seen on the live app.');
+  expect(shown.textContent).toContain('Case 9, step 3: button "Archive" was never seen on the live app.');
+  expect(shown.textContent).toContain("then import again.");
+});
+
 /// The script's full detail is JSON, behind Edit script - an assistant
 /// writes most of them, and hand-editing is how the format got proven.
 /// Invalid JSON must be refused at the point of saving, not written and

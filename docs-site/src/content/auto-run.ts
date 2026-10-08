@@ -256,7 +256,8 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "More" },
       name: "More",
       does:
-        "**Import scripts** reads one JSON file that can carry the scripts of every case in the Product Backlog Item, the way an assistant writes them. " +
+        "**Import scripts** reads one JSON file of scripts. Each one is checked the way an assistant's save is: every element it names must have been seen on the live app, and its test case is read from Azure DevOps, so sign in first. " +
+        "If any script fails, nothing is imported and the message lists each element that was never seen. " +
         "**Clear scripts** removes the scripts of the listed cases from this computer, after asking. Nothing in Azure DevOps changes.",
     },
     {
@@ -405,7 +406,7 @@ export const autoRun: Screen = {
       does:
         "What the app does at each step, in plain sentences under each of the case's steps: open a page, click, type, upload a test file, and check what the page shows. " +
         "A step whose expected result is not checked says why. A password is never shown: it reads **the account's password**. " +
-        "Most scripts are written by an assistant from the case's steps and imported with **More**, **Import scripts**.",
+        "Most scripts are written by an assistant from the case's steps. It finds each element on the live app and saves the script itself.",
       tips: [
         "An element the script finds only by its code shows that code in a smaller type. Point at it to see all of it.",
         "Tabs: a script can wait for a link to open a new tab, open one itself, switch between tabs and close one. " +
@@ -926,7 +927,8 @@ export const autoRun: Screen = {
       title: "Write or import scripts",
       steps: [
         "On **Test cases**, open a case and press **Add script**, write its actions, check that **Checks** covers every step, and press **Save script**.",
-        "Or let an assistant write the scripts for the whole Product Backlog Item, then press **More**, **Import scripts** and pick its file.",
+        "Or let an assistant write the scripts for the whole Product Backlog Item. It explores the site with discovery and saves each script itself.",
+        "To bring in a file of scripts, press **More**, **Import scripts** and pick it. The scripts are checked against the live app and their test cases the same way, so sign in first.",
         "A script whose case needs a draft of its own has a setup. Open the script, read its **Setup** and press **Approve setup**.",
       ],
     },
