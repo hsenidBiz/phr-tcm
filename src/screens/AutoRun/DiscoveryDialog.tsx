@@ -2,7 +2,9 @@
 // when it was explored and as which account, how many pages and elements it
 // saw, whether the map is stale and why, and the save requests the page
 // sent while it was explored. Forget map takes an area's map away (behind a
-// confirm), so the area is explored again before new saves there. Opened
+// confirm), so the area is explored again before new saves there. A map
+// that cannot be read offers Reset map, which moves the damaged file aside
+// (never deleting it) so discovery starts an empty one. Opened
 // from Auto Run's Setup card; the map itself is Rust's
 // (`autorun/discovery_map.rs`).
 
@@ -77,6 +79,20 @@ export default function DiscoveryDialog({
     await qc.invalidateQueries({ queryKey: discoveryMapKey(org, project) });
   };
 
+  // Moves a damaged map aside: no confirm, since nothing is deleted.
+  const [movedTo, setMovedTo] = useState<string | null>(null);
+  const reset = async () => {
+    setProblem(null);
+    setBusy(true);
+    try {
+      setMovedTo(await unwrapStr(commands.autoRunResetMap(org, project)));
+    } catch (e) {
+      setProblem(message(e));
+    }
+    setBusy(false);
+    await qc.invalidateQueries({ queryKey: discoveryMapKey(org, project) });
+  };
+
   const areas = map.data?.areas ?? [];
 
   return (
@@ -89,7 +105,20 @@ export default function DiscoveryDialog({
       </p>
 
       {map.isLoading && <p className="text-xs text-muted">Loading…</p>}
-      {map.isError && <p className="text-xs text-danger">{map.error.message}</p>}
+      {map.isError && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="min-w-0 flex-1 text-xs text-danger">{map.error.message}</p>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void reset()}>
+            <IconClear aria-hidden />
+            Reset map
+          </Button>
+        </div>
+      )}
+      {movedTo && (
+        <p className="text-xs text-muted">
+          The damaged map was kept as <span className="id-mono break-all">{movedTo}</span>.
+        </p>
+      )}
       {map.isSuccess && areas.length === 0 && (
         <p className="text-sm text-muted">
           Not explored yet. An assistant&apos;s <span className="id-mono">/tcm:discover</span> command explores an

@@ -798,8 +798,10 @@ export const autoRun: Screen = {
         "The **Discovery** window lists each area with when it was explored and as which account, how many pages and elements were seen, and a **Stale** mark when the map is out of date. " +
         "An area goes stale 30 days after it was explored, or when a script failed there. Expand **save requests** to see the requests the site made when it saved. " +
         "**Forget map** (it asks first) clears one area's map; scripts keep running, and new saves there need the area explored again. " +
-        "A script save is refused when it points at something the assistant never saw on the live page. The exceptions are text the script typed in an earlier step, a check whose text is a whole word or phrase from the case, and a repair, which is held only to the steps it names. " +
-        "While discovery runs, **Open browser** and the Run buttons are greyed out, and hovering one shows **Discovery is using the Auto Run browser**. They come back when your assistant ends discovery.",
+        "A script save is refused when it points at something the assistant never saw on the live page. The exceptions are a name the script typed in an earlier step (typing **Test** does not cover a **Test connection** button), a check whose text is a whole word or phrase from the case, and a repair, which is held only to the steps it names. " +
+        "While discovery runs, **Open browser** and the Run buttons are greyed out, and hovering one shows **Discovery is using the Auto Run browser**. They come back when your assistant ends discovery. " +
+        "If your assistant stopped without ending it, **End discovery** appears beside **View** while discovery runs: it closes the assistant's browser, and what was mapped is kept. " +
+        "If the map cannot be read, the window offers **Reset map**, which moves the damaged file aside (it is kept, never deleted) and starts an empty map.",
       tips: ["In your assistant, **/tcm:discover** starts this for a case. The row reads **Not explored yet** until an area has been explored."],
     },
     {

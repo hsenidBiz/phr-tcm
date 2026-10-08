@@ -29,8 +29,10 @@ import {
   IconSaveWords,
   IconShowDetails,
   IconSiteAddress,
+  IconStop,
   IconTestFiles,
 } from "../../lib/actionIcons";
+import { useDiscoveryActive } from "../../lib/discoveryActive";
 import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
 import DiscoveryDialog, { discoverySummary, useDiscoveryMap } from "./DiscoveryDialog";
@@ -350,6 +352,23 @@ export default function SetupPanel({
   const [siteOpen, setSiteOpen] = useState(false);
   const [testFilesOpen, setTestFilesOpen] = useState(false);
   const [saveWordsOpen, setSaveWordsOpen] = useState(false);
+  // While the assistant's discovery holds the Auto Run browser, End
+  // discovery is the person's way out of one the assistant never ended.
+  // Nothing is lost by ending it - the map keeps what was seen - so it asks
+  // no confirm.
+  const discovering = useDiscoveryActive();
+  const [ending, setEnding] = useState(false);
+  const [endProblem, setEndProblem] = useState<string | null>(null);
+  const endDiscovery = async () => {
+    setEndProblem(null);
+    setEnding(true);
+    try {
+      await unwrapStr(commands.autoRunEndDiscovery());
+    } catch (e) {
+      setEndProblem(e instanceof Error ? e.message : String(e));
+    }
+    setEnding(false);
+  };
 
   const { setupReady, recipe, envs, accounts, nav, testFiles, site, activeEnv } = s;
   const needsProject = setupReady ? undefined : "Pick an organization and project first";
@@ -582,6 +601,18 @@ export default function SetupPanel({
                   )
                 }
               >
+                {discovering && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={ending}
+                    title="Close the assistant's discovery browser so Auto Run can run again"
+                    onClick={() => void endDiscovery()}
+                  >
+                    <IconStop aria-hidden />
+                    End discovery
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -594,6 +625,11 @@ export default function SetupPanel({
                   View
                 </Button>
               </SetupRow>
+              {endProblem && (
+                <p role="alert" className="text-xs text-danger">
+                  {endProblem}
+                </p>
+              )}
 
               <SetupRow
                 label="Test files"

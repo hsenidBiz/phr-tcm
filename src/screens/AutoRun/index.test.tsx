@@ -552,6 +552,38 @@ test("the Setup card's Discovery row says what is mapped, and View opens the Dis
   expect(await screen.findByRole("listitem", { name: "Payroll" })).toHaveTextContent("Stale");
 });
 
+test("end_discovery_shows_while_discovery_is_active_and_ends_it", async () => {
+  let active = true;
+  const ended: string[] = [];
+  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) => {
+    if (cmd === "auto_run_discovery_active") return active;
+    if (cmd === "auto_run_end_discovery") {
+      ended.push(cmd);
+      active = false;
+      return null;
+    }
+    return null;
+  });
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+  openSetup();
+  const end = await within(row("Discovery")).findByRole("button", { name: "End discovery" });
+  fireEvent.click(end);
+  // No confirm: ending loses nothing, so the one click ends it.
+  await waitFor(() => expect(ended).toEqual(["auto_run_end_discovery"]));
+});
+
+test("end_discovery_is_not_offered_while_no_discovery_is_going", async () => {
+  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
+    cmd === "auto_run_discovery_active" ? false : null,
+  );
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+  openSetup();
+  await within(row("Discovery")).findByRole("button", { name: "View discovery" });
+  expect(within(row("Discovery")).queryByRole("button", { name: "End discovery" })).not.toBeInTheDocument();
+});
+
 // ---- Last result filter ----
 
 const rec = (case_id: number, verdict: string, proposed = "") => ({

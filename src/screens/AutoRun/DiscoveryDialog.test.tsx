@@ -175,3 +175,38 @@ test("the summary line counts explored and stale areas, or says none are explore
   ).toBe("2 areas explored, 1 stale");
   expect(discoverySummary({ areas: [area({ area: "", explored_at: null })] })).toBe("Not explored yet");
 });
+
+test("a_map_that_cannot_be_read_offers_reset_map_which_moves_it_aside", async () => {
+  let damaged = true;
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    if (cmd === "auto_run_load_map") {
+      if (damaged) throw "The discovery map projects/acme-map.json is damaged and could not be read (x).";
+      return { areas: [] };
+    }
+    if (cmd === "auto_run_reset_map") {
+      damaged = false;
+      return "projects/acme-map.corrupt-1.json";
+    }
+    return null;
+  });
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <DiscoveryDialog org="acme" project="Web" onClose={vi.fn()} />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByText(/projects\/acme-map\.json is damaged/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Reset map" }));
+  // No confirm: the file is kept, under the name it was moved to.
+  expect(await screen.findByText("projects/acme-map.corrupt-1.json")).toBeInTheDocument();
+  expect(calls).toContain("auto_run_reset_map");
+  expect(await screen.findByText(/Not explored yet/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reset map" })).not.toBeInTheDocument();
+});
+
+test("a_map_that_reads_offers_no_reset", async () => {
+  mount([area({ area: "Leave" })]);
+  await screen.findByRole("listitem", { name: "Leave" });
+  expect(screen.queryByRole("button", { name: "Reset map" })).not.toBeInTheDocument();
+});
