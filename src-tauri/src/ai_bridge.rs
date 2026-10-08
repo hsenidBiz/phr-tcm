@@ -3849,6 +3849,10 @@ async fn save_autorun_scripts(
     // on: the assistant has decided that step was the script's fault after
     // all, so the mark goes once the save has landed.
     let mut repaired_marks: Vec<(i32, i32)> = Vec::new();
+    // Which steps of each script the seen check reads, by case: `None`
+    // for a new script (all of them), its declared steps for a repair. An
+    // unchanged resave is not listed: it was checked when it was saved.
+    let mut seen_scope: Vec<(i32, Option<Vec<i32>>)> = Vec::new();
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
@@ -3917,6 +3921,7 @@ async fn save_autorun_scripts(
                 // was fully declared, so `declared` is always Some here -
                 // there is no path where a script actually differs from
                 // disk and this branch is reached with nothing declared.
+                seen_scope.push((sent.case_id, Some(declared.map(|e| e.steps.clone()).unwrap_or_default())));
                 if let Some(e) = declared {
                     let why = e.why.trim();
                     crate::applog::info(format!(
@@ -3952,6 +3957,7 @@ async fn save_autorun_scripts(
                 }
                 script.repairs = 0;
                 script.last_repair = None;
+                seen_scope.push((sent.case_id, None));
                 lines.push(format!("case {} (new)", script.case_id));
             }
         }
@@ -4007,6 +4013,30 @@ async fn save_autorun_scripts(
             crate::autorun::floor::check_floor(script, &crate::autorun::floor::expected_of(&case.steps));
         if !shortfalls.is_empty() {
             return (400, format!("case {}: {}", script.case_id, shortfalls.join("; ")));
+        }
+    }
+
+    // Gate 3: every locator a new or changed step names was seen on the
+    // live app (`seen_check`), so no script is saved against a guess.
+    if !seen_scope.is_empty() {
+        let map = match crate::autorun::discovery_map::load_map(&root, &ctx.org, &ctx.project) {
+            Ok(m) => m,
+            Err(e) => return (400, e),
+        };
+        for (case_id, only) in &seen_scope {
+            let (Some(script), Some(case)) = (
+                prepared.iter().find(|s| s.case_id == *case_id),
+                cases.iter().find(|c| c.id == *case_id),
+            ) else {
+                continue;
+            };
+            let case_text: Vec<String> =
+                case.steps.iter().flat_map(|s| [s.action.clone(), s.expected.clone()]).collect();
+            if let Err(why) =
+                crate::autorun::seen_check::check_seen(&map, script, &case_text, only.as_deref())
+            {
+                return (400, why);
+            }
         }
     }
 

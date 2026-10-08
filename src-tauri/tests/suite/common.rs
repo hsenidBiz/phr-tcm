@@ -910,3 +910,29 @@ pub fn saved_on_stage(id: &str, title: &str, stage: &str) -> v2_lib::api_templat
     });
     t
 }
+
+/// The live app as a save sees it: every target and `navigate` path the
+/// scripts in `body` (a save route body) use, recorded as seen in the
+/// discovery map - so a test about another gate saves its new scripts past
+/// the seen check. Entries that do not parse as a script are passed over;
+/// the route says why.
+pub fn see_scripts(root: &std::path::Path, org: &str, project: &str, body: &str) {
+    use v2_lib::autorun::discovery_map::{record_matched, record_seen};
+    use v2_lib::browser::actions::Action;
+    let Ok(v) = serde_json::from_str::<Value>(body) else { return };
+    let list = v.get("scripts").cloned().unwrap_or(v);
+    let scripts: Vec<v2_lib::autorun::CaseScript> = list
+        .as_array()
+        .map(|a| a.iter().filter_map(|s| serde_json::from_value(s.clone()).ok()).collect())
+        .unwrap_or_default();
+    for script in &scripts {
+        for action in script.steps.iter().flat_map(|s| s.actions.iter()).flat_map(Action::each) {
+            if let Action::Navigate { url } = action {
+                record_seen(root, org, project, None, url, "", &[], None, false, 0).unwrap();
+            }
+            for target in action.targets() {
+                record_matched(root, org, project, None, "/", target, 0).unwrap();
+            }
+        }
+    }
+}

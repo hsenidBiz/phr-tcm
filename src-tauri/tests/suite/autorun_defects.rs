@@ -523,6 +523,13 @@ fn case_7_with(clicks: &[(i32, &str)]) -> serde_json::Value {
     serde_json::json!([sc])
 }
 
+/// What the scripts in `body` use, recorded as seen on the live app, so
+/// the save's seen check passes them (`common::see_scripts`).
+fn see_scripts(root: &std::path::Path, body: &str) {
+    let c = ctx();
+    common::see_scripts(root, &c.org, &c.project, body);
+}
+
 /// A repair of another step keeps the mark; a repair whose declared steps
 /// include the marked one removes it - the assistant has decided the step
 /// was the script's fault after all - and the answer says so.
@@ -533,6 +540,7 @@ async fn a_repair_of_the_marked_step_removes_the_mark_and_of_another_keeps_it() 
     set_root(dir.path().to_path_buf());
     let (_server, client) = client_with_case_7().await;
     let first = case_7_with(&[]).to_string();
+    see_scripts(dir.path(), &first);
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     set_suspected_defect(dir.path(), 7, Some(mark(3, "saving answers Error 500"))).unwrap();
@@ -542,6 +550,7 @@ async fn a_repair_of_the_marked_step_removes_the_mark_and_of_another_keeps_it() 
         "edits": [{ "case_id": 7, "steps": [2], "why": "the edit button has a new id" }],
     })
     .to_string();
+    see_scripts(dir.path(), &other);
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &other, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     assert!(!out.contains("suspected defect"), "{out}");
@@ -555,6 +564,7 @@ async fn a_repair_of_the_marked_step_removes_the_mark_and_of_another_keeps_it() 
         "edits": [{ "case_id": 7, "steps": [3], "why": "the save button has a new id" }],
     })
     .to_string();
+    see_scripts(dir.path(), &marked);
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &marked, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     assert!(out.contains("suspected defect at step 3 cleared - the step was repaired"), "{out}");

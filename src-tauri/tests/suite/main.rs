@@ -129,6 +129,7 @@ mod report;
 mod run_order;
 mod save_guard;
 mod saved_session;
+mod seen_check;
 mod spec_pane;
 mod speccov;
 mod speccov_bridge;

@@ -127,14 +127,17 @@ async fn an_assistant_repair_may_add_preconditions_but_never_drop_or_change_one(
     let publish = serde_json::json!({ "flow": "pms-performance-cycle", "stage": "publish", "value": 274 });
     let rules = serde_json::json!({ "flow": "pms-performance-cycle", "stage": "rules", "value": 274 });
 
+    see_scripts(dir.path(), &send(serde_json::json!([])));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &send(serde_json::json!([])), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
 
     // Added to a saved script: a repair, and validated.
     let bad = serde_json::json!([{ "flow": "pms-performance-cycle", "stage": "published", "value": 274 }]);
+    see_scripts(dir.path(), &send(bad.clone()));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &send(bad), "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert_eq!(out, "case 7: precondition 1: flow Performance cycle wizard has no stage published");
+    see_scripts(dir.path(), &send(serde_json::json!([publish])));
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &send(serde_json::json!([publish])), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -155,6 +158,7 @@ async fn an_assistant_repair_may_add_preconditions_but_never_drop_or_change_one(
 
     // Dropped, or changed: refused, and the saved script keeps both.
     let kept = v2_lib::autorun::edits::PRECONDITIONS_KEPT;
+    see_scripts(dir.path(), &send(serde_json::json!([rules])));
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &send(serde_json::json!([rules])), "1.0.0").await;
     assert_eq!((status, out.as_str()), (400, kept));
@@ -361,6 +365,7 @@ async fn a_new_script_needs_no_declaration_but_must_meet_the_floor() {
         ]
     }])
     .to_string();
+    see_scripts(dir.path(), &checks_nothing);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &checks_nothing, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -374,6 +379,7 @@ async fn a_new_script_needs_no_declaration_but_must_meet_the_floor() {
     // the whole of what the cap prevents.
     let mut body = case_7("#toast", "Saved");
     body[0]["repairs"] = serde_json::json!(99);
+    see_scripts(dir.path(), &body.to_string());
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -388,6 +394,7 @@ async fn a_new_script_needs_no_declaration_but_must_meet_the_floor() {
         "edits": [edit_step_2("the toast has no id, only a class")],
     })
     .to_string();
+    see_scripts(dir.path(), &declared);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -423,6 +430,7 @@ async fn an_unchecked_step_with_a_reason_passes_the_floor() {
     }])
     .to_string();
 
+    see_scripts(dir.path(), &body);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -508,12 +516,14 @@ async fn an_edit_must_be_declared_and_a_check_may_not_go() {
         client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
 
     let first = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &first);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
 
     // Step 2's locator moved, and nothing said so.
     let undeclared = serde_json::json!({ "scripts": case_7(".toast", "Saved") }).to_string();
+    see_scripts(dir.path(), &undeclared);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &undeclared, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -530,6 +540,7 @@ async fn an_edit_must_be_declared_and_a_check_may_not_go() {
         "edits": [edit_step_2("the toast has no id, only a class")],
     })
     .to_string();
+    see_scripts(dir.path(), &declared);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -549,6 +560,7 @@ async fn an_edit_must_be_declared_and_a_check_may_not_go() {
         "edits": [edit_step_2("the toast never appears in my run")],
     })
     .to_string();
+    see_scripts(dir.path(), &weakened);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &weakened, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -569,6 +581,7 @@ async fn a_repairs_reason_is_persisted_and_survives_an_unchanged_resend() {
         client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
 
     let first = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &first);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -579,6 +592,7 @@ async fn a_repairs_reason_is_persisted_and_survives_an_unchanged_resend() {
         "edits": [edit_step_2("the toast has no id, only a class")],
     })
     .to_string();
+    see_scripts(dir.path(), &declared);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -590,6 +604,7 @@ async fn a_repairs_reason_is_persisted_and_survives_an_unchanged_resend() {
     // Re-sending the same script unchanged keeps the reason exactly as it
     // was - it did not repair anything this time.
     let resend = case_7(".toast", "Saved").to_string();
+    see_scripts(dir.path(), &resend);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &resend, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -656,11 +671,13 @@ async fn every_payload_shape_of_a_repair_keeps_its_edits() {
         let dir = TempDir::new();
         set_root(dir.path().to_path_buf());
         let first = case_7("#toast", "Saved").to_string();
+        see_scripts(dir.path(), &first);
         let (status, out) =
             route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
         assert_eq!(status, 200, "{name}: {out}");
 
         let body = tool_body(arguments);
+        see_scripts(dir.path(), &body);
         let (status, out) =
             route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
         if status != 200 || !out.contains("case 7 (repaired, 1 of 3 used)") {
@@ -680,6 +697,7 @@ async fn edits_null_on_a_new_script_is_no_declaration() {
     let (_server, client) =
         client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
     let body = tool_body(serde_json::json!({ "scripts": case_7("#toast", "Saved"), "edits": null }));
+    see_scripts(dir.path(), &body);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -696,11 +714,13 @@ async fn a_repair_without_edits_says_edits_is_missing() {
     let (_server, client) =
         client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
     let first = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &first);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
 
     let body = tool_body(serde_json::json!({ "scripts": case_7(".toast", "Saved") }));
+    see_scripts(dir.path(), &body);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -726,6 +746,7 @@ async fn with_other_cases_declared_an_undeclared_case_is_named_not_missing_edits
     ])
     .await;
     let first = serde_json::json!([case_7("#toast", "Saved")[0].clone(), case_9("Deleted")]).to_string();
+    see_scripts(dir.path(), &first);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -735,6 +756,7 @@ async fn with_other_cases_declared_an_undeclared_case_is_named_not_missing_edits
         "edits": [edit_step_2("the toast has no id, only a class")],
     })
     .to_string();
+    see_scripts(dir.path(), &body);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -755,6 +777,7 @@ async fn two_different_declarations_for_one_case_are_refused() {
     let (_server, client) =
         client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
     let first = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &first);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -768,6 +791,7 @@ async fn two_different_declarations_for_one_case_are_refused() {
     nested[0]["edits"] = edit_step_2("the toast has no id");
     let nested_and_top = serde_json::json!({ "scripts": nested, "edits": [edit_step_2("the toast moved")] });
     for body in [top_level, nested_and_top] {
+        see_scripts(dir.path(), &body.to_string());
         let (status, out) =
             route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
         assert_eq!((status, out.as_str()), (400, refusal), "{body}");
@@ -775,6 +799,7 @@ async fn two_different_declarations_for_one_case_are_refused() {
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 0, "nothing was written");
 
     let same_twice = serde_json::json!({ "scripts": nested, "edits": [edit_step_2("the toast has no id")] });
+    see_scripts(dir.path(), &same_twice.to_string());
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &same_twice.to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -791,6 +816,7 @@ async fn a_single_top_level_edit_object_is_a_one_entry_list() {
     let (_server, client) =
         client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
     let first = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &first);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -799,6 +825,7 @@ async fn a_single_top_level_edit_object_is_a_one_entry_list() {
         "scripts": case_7(".toast", "Saved"),
         "edits": edit_step_2("the toast has no id, only a class"),
     }));
+    see_scripts(dir.path(), &body);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -806,6 +833,7 @@ async fn a_single_top_level_edit_object_is_a_one_entry_list() {
 
     // Anything else that is not a list is still refused.
     let body = serde_json::json!({ "scripts": case_7("#toast", "Saved"), "edits": "two steps" }).to_string();
+    see_scripts(dir.path(), &body);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -867,6 +895,7 @@ async fn the_fourth_repair_is_refused_until_a_person_saves() {
     let (_server, client) =
         client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
 
+    see_scripts(dir.path(), &case_7("#toast", "v0").to_string());
     let (status, out) = route(
         &ctx(),
         Some(&client),
@@ -884,6 +913,7 @@ async fn the_fourth_repair_is_refused_until_a_person_saves() {
             "edits": [edit_step_2("the toast wording changed again")],
         })
         .to_string();
+        see_scripts(dir.path(), &body);
         let (status, out) =
             route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
         assert_eq!(status, 200, "repair {n}: {out}");
@@ -896,6 +926,7 @@ async fn the_fourth_repair_is_refused_until_a_person_saves() {
         "edits": [edit_step_2("one more try")],
     })
     .to_string();
+    see_scripts(dir.path(), &fourth);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &fourth, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -914,6 +945,7 @@ async fn the_fourth_repair_is_refused_until_a_person_saves() {
         "edits": [edit_step_2("the toast wording changed once more")],
     })
     .to_string();
+    see_scripts(dir.path(), &again);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &again, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -932,6 +964,7 @@ async fn a_quirk_travels_with_the_edit() {
     let (_server, client) =
         client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
 
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
     let (status, out) = route(
         &ctx(),
         Some(&client),
@@ -953,6 +986,7 @@ async fn a_quirk_travels_with_the_edit() {
         }],
     })
     .to_string();
+    see_scripts(dir.path(), &body);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -986,6 +1020,7 @@ async fn a_quirk_travels_with_the_edit() {
         }],
     })
     .to_string();
+    see_scripts(dir.path(), &repeat);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &repeat, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -1027,6 +1062,7 @@ async fn an_unchanged_script_costs_no_repair() {
     let both = |seven: &str, nine: &str| {
         serde_json::json!([case_7("#toast", seven)[0].clone(), case_9(nine)])
     };
+    see_scripts(dir.path(), &both("Saved", "Deleted").to_string());
     let (status, out) = route(
         &ctx(),
         Some(&client),
@@ -1045,6 +1081,7 @@ async fn an_unchanged_script_costs_no_repair() {
         "edits": [edit_step_2("the toast gained an exclamation mark")],
     })
     .to_string();
+    see_scripts(dir.path(), &body);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -1062,6 +1099,7 @@ async fn an_unchanged_script_costs_no_repair() {
         "edits": [{ "case_id": 9, "steps": [2], "why": "I thought I changed this" }],
     })
     .to_string();
+    see_scripts(dir.path(), &over_declared);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &over_declared, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -1074,6 +1112,7 @@ async fn an_unchanged_script_costs_no_repair() {
             "edits": [edit_step_2("the toast wording moved again")],
         })
         .to_string();
+        see_scripts(dir.path(), &body);
         let (status, out) =
             route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
         assert_eq!(status, 200, "{out}");
@@ -1081,6 +1120,7 @@ async fn an_unchanged_script_costs_no_repair() {
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 3, "at the cap");
 
     for round in 1..=4 {
+        see_scripts(dir.path(), &case_7("#toast", "Saved!!!").to_string());
         let (status, out) = route(
             &ctx(),
             Some(&client),
@@ -1148,6 +1188,7 @@ async fn reordering_the_steps_writes_nothing() {
         client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
 
     let first = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &first);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -1166,6 +1207,7 @@ async fn reordering_the_steps_writes_nothing() {
         ]
     }])
     .to_string();
+    see_scripts(dir.path(), &reordered);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &reordered, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -1189,6 +1231,7 @@ async fn reordering_the_steps_writes_nothing() {
         "edits": [{ "case_id": 7, "steps": [1, 2], "why": "reordered for readability" }],
     })
     .to_string();
+    see_scripts(dir.path(), &declared);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -1210,6 +1253,7 @@ async fn a_quirk_only_declaration_is_pinned_for_unchanged_and_refused_for_change
         client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
 
     let first = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &first);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -1226,6 +1270,7 @@ async fn a_quirk_only_declaration_is_pinned_for_unchanged_and_refused_for_change
         }],
     })
     .to_string();
+    see_scripts(dir.path(), &unchanged);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &unchanged, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -1248,6 +1293,7 @@ async fn a_quirk_only_declaration_is_pinned_for_unchanged_and_refused_for_change
         }],
     })
     .to_string();
+    see_scripts(dir.path(), &changed);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &changed, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -2189,10 +2235,12 @@ async fn a_resend_that_only_changes_the_area_is_a_repair() {
     let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
 
     let first = case_7_in(Some("Cycle Setup"), "#toast").to_string();
+    see_scripts(dir.path(), &first);
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
 
     let moved = case_7_in(Some("Manage Cycle"), "#toast").to_string();
+    see_scripts(dir.path(), &moved);
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &moved, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(out.contains("the area changed from \"Cycle Setup\" to \"Manage Cycle\" but was not declared"), "{out}");
@@ -2205,6 +2253,7 @@ async fn a_resend_that_only_changes_the_area_is_a_repair() {
         "edits": [{ "case_id": 7, "steps": [], "area": true, "why": "the case is about managing a cycle, not setting one up" }],
     })
     .to_string();
+    see_scripts(dir.path(), &declared);
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
@@ -2225,6 +2274,7 @@ async fn a_repair_that_leaves_the_area_out_does_not_erase_it() {
     let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
 
     let first = case_7_in(Some("Manage Cycle"), "#toast").to_string();
+    see_scripts(dir.path(), &first);
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
 
@@ -2233,6 +2283,7 @@ async fn a_repair_that_leaves_the_area_out_does_not_erase_it() {
         "edits": [edit_step_2("the toast has no id, only a class")],
     })
     .to_string();
+    see_scripts(dir.path(), &forgot);
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &forgot, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(out.contains("the area changed from \"Manage Cycle\" to the case's Module but was not declared"), "{out}");
@@ -2246,6 +2297,7 @@ async fn a_repair_that_leaves_the_area_out_does_not_erase_it() {
         "edits": [edit_step_2("the toast has no id, only a class")],
     })
     .to_string();
+    see_scripts(dir.path(), &kept);
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &kept, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().area.as_deref(), Some("Manage Cycle"));
@@ -2392,6 +2444,7 @@ async fn a_saved_script_records_when_it_was_saved() {
     let _root = crate::serial::autorun();
     set_root(dir.path().to_path_buf());
     let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &case_7("#toast", "Saved").to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -2410,6 +2463,7 @@ async fn a_repair_may_follow_what_the_case_itself_changed() {
     let _root = crate::serial::autorun();
     set_root(dir.path().to_path_buf());
     let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &case_7("#toast", "Saved").to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -2428,6 +2482,7 @@ async fn a_repair_may_follow_what_the_case_itself_changed() {
         "edits": [edit_step_2("the case no longer expects a toast at step 2")],
     })
     .to_string();
+    see_scripts(dir.path(), &following);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &following, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -2442,6 +2497,7 @@ async fn a_repair_against_an_unchanged_case_still_may_not_drop_a_check() {
     let _root = crate::serial::autorun();
     set_root(dir.path().to_path_buf());
     let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &case_7("#toast", "Saved").to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -2461,6 +2517,7 @@ async fn a_repair_against_an_unchanged_case_still_may_not_drop_a_check() {
         "edits": [edit_step_2("the toast never appears in my run")],
     })
     .to_string();
+    see_scripts(dir.path(), &weakened);
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &weakened, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
@@ -2482,6 +2539,7 @@ async fn marking_a_saved_script_is_no_repair() {
         async move { route(&ctx(), Some(client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await }
     };
 
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
     assert_eq!(send(case_7("#toast", "Saved")).await.0, 200);
     let mut marked = case_7("#toast", "Saved");
     marked[0]["changes"] = serde_json::json!(["cycle published"]);
@@ -2643,4 +2701,110 @@ async fn an_order_needs_a_signed_in_app() {
     let (status, out) = route(&ctx(), None, "POST", "/autorun-order", &body, "1.0.0").await;
     assert_eq!((status, out.as_str()), (503, "sign in to Test Case Manager first"));
     assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), None);
+}
+
+/// The live app as a save sees it: what the scripts in `body` use,
+/// recorded as seen (`common::see_scripts`).
+fn see_scripts(root: &std::path::Path, body: &str) {
+    let c = ctx();
+    crate::common::see_scripts(root, &c.org, &c.project, body);
+}
+
+/// The sentence a save refuses an unseen locator with.
+fn never_seen(step: i32, what: &str) -> String {
+    format!(
+        "Step {step}: {what} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+    )
+}
+
+/// A new script is checked in full against the discovery map: a locator
+/// the app never saw on the live page refuses the whole save.
+#[tokio::test]
+async fn a_new_script_with_an_unseen_locator_is_refused_and_nothing_is_written() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    // The page and the toast were seen; the Save button never was.
+    let body = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string().replace("#save", "#toast"));
+
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out), (400, never_seen(2, "#save")));
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None);
+}
+
+/// Saving a script again word for word is not checked: it was checked
+/// when it was first saved, and what the map holds now does not undo that.
+#[tokio::test]
+async fn an_unchanged_resave_is_not_checked() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let body = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &body);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    v2_lib::autorun::discovery_map::forget_area(dir.path(), "acme", "Web", "").unwrap();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("case 7 (unchanged)"), "{out}");
+}
+
+/// A repair is checked only at the steps it declares: step 1's page is no
+/// longer in the map, and that is not the repair's concern.
+#[tokio::test]
+async fn a_repair_checks_only_its_declared_steps() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let first = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &first);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    v2_lib::autorun::discovery_map::forget_area(dir.path(), "acme", "Web", "").unwrap();
+
+    let repair = |selector: &str| {
+        serde_json::json!({ "scripts": case_7(selector, "Saved"), "edits": [edit_step_2("the toast moved")] })
+            .to_string()
+    };
+    // Step 2's new toast was never seen.
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &repair(".toast"), "1.0.0").await;
+    assert_eq!((status, out), (400, never_seen(2, "#save")));
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 0);
+
+    // Step 2's locators seen; step 1's unseen page is not looked at.
+    see_scripts(
+        dir.path(),
+        &serde_json::json!([{ "case_id": 7, "title": "x", "steps": [{ "step_number": 2, "actions": [
+            { "kind": "click", "selector": "#save" },
+            { "kind": "expect_visible", "selector": ".toast" }
+        ]}]}])
+        .to_string(),
+    );
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &repair(".toast"), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
+}
+
+/// A map that cannot be read refuses the save with why: the check cannot
+/// be made, and a save it was not made on is not a save it passed.
+#[tokio::test]
+async fn an_unreadable_map_refuses_the_save() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let path = v2_lib::autorun::discovery_map::map_path(dir.path(), "acme", "Web");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "{ not a map").unwrap();
+
+    let body = case_7("#toast", "Saved").to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.starts_with("the discovery map could not be read"), "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None);
 }

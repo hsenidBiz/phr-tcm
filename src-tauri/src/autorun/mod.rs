@@ -34,6 +34,7 @@ pub mod reset_wait;
 pub mod replay_to;
 pub mod report;
 pub mod runner;
+pub mod seen_check;
 pub mod sessions;
 pub mod setup;
 pub mod signin;
