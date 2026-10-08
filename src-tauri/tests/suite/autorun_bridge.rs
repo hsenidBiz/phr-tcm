@@ -2101,7 +2101,7 @@ fn the_guard_still_holds_for_every_new_route() {
         "/autorun-defect",
         "/autorun-order",
         "/autorun-component-save",
-        "/autorun-component-remove",
+        "/autorun-component-retire",
     ];
     for path in autorun {
         let (status, body) =
@@ -2151,7 +2151,7 @@ async fn a_component_saved_with_no_discovery_going_is_refused() {
 }
 
 #[tokio::test]
-async fn a_component_is_removed_only_when_no_script_uses_it() {
+async fn a_component_is_retired_only_when_no_script_uses_it() {
     use v2_lib::autorun::components::{find, load_components, put, Component};
     let dir = TempDir::new();
     let _root = crate::serial::autorun();
@@ -2162,18 +2162,18 @@ async fn a_component_is_removed_only_when_no_script_uses_it() {
     used.steps[0].actions.push(Action::UseComponent { component: "pick a date".into(), inputs: Default::default() });
     save_scripts_atomically(dir.path(), &[used]).unwrap();
     let body = serde_json::json!({ "name": "Pick a date" }).to_string();
-    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-remove", &body, "1.0.0").await;
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-retire", &body, "1.0.0").await;
     assert_eq!((status, out.as_str()), (409, "Pick a date is used by case 7: change that script first."));
     assert!(find(&load_components(dir.path(), "acme", "Web").unwrap(), "Pick a date").is_some());
 
     save_scripts_atomically(dir.path(), &[scripted(7)]).unwrap();
-    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-remove", &body, "1.0.0").await;
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-retire", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     assert_eq!(out, serde_json::json!({ "removed": "Pick a date" }).to_string());
     assert!(load_components(dir.path(), "acme", "Web").unwrap().components.is_empty());
-    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-remove", &body, "1.0.0").await;
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-retire", &body, "1.0.0").await;
     assert_eq!((status, out.as_str()), (404, "Pick a date is not saved in this project"));
-    let (status, _) = route(&ctx(), None, "POST", "/autorun-component-remove", "{}", "1.0.0").await;
+    let (status, _) = route(&ctx(), None, "POST", "/autorun-component-retire", "{}", "1.0.0").await;
     assert_eq!(status, 400);
 }
 

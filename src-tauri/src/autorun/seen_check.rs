@@ -325,17 +325,21 @@ fn scan(
     unseen
 }
 
-/// Does this link carry a `{{x}}` text placeholder anywhere?
-fn holds_text_placeholder(link: &LocatorStep) -> bool {
-    serde_json::to_string(link).is_ok_and(|s| s.contains("{{"))
+/// Is this link left to the script: a target input's place, or one that
+/// holds a complete `{{x}}` text placeholder?
+fn input_link(link: &LocatorStep) -> bool {
+    link.input.is_some()
+        || serde_json::to_value(link).is_ok_and(|v| super::components::holds_text_placeholder(&v))
 }
 
 /// A component's own locators and the pages it goes to, checked against
 /// what `map` has seen in `area` (and in any area its actions return to),
 /// in order; the first unseen one is refused, named by the component's
-/// action. Two kinds are exempt, as only a script knows them: a link a
-/// target input fills (`{"input": ...}`), and a whole locator a text input
-/// is written into (`{{x}}`). A script's save checks both as they expand.
+/// action. Two kinds of link are exempt, as only a script knows them: one
+/// a target input fills (`{"input": ...}`), and one a text input is
+/// written into (`{{x}}`). Every other link, beside one of those in a
+/// chain too, must be on the map. A script's save checks the exempt ones
+/// as they expand.
 pub fn check_component_seen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) -> Result<(), String> {
     let mut areas: Vec<&str> = area.into_iter().collect();
     areas.extend(actions.iter().flat_map(Action::each).filter_map(Action::area_named));
@@ -357,12 +361,8 @@ pub fn check_component_seen(map: &DiscoveryMap, area: Option<&str>, actions: &[A
                 }
             }
             for t in own_targets(a) {
-                let links = t.links();
-                if links.iter().any(holds_text_placeholder) {
-                    continue;
-                }
                 let check = is_check(a);
-                if links.iter().filter(|l| l.input.is_none()).any(|l| link_unseen(l, &keys, &typed, &[], check)) {
+                if t.links().iter().filter(|l| !input_link(l)).any(|l| link_unseen(l, &keys, &typed, &[], check)) {
                     return Err(refused(i, &t.describe()));
                 }
             }

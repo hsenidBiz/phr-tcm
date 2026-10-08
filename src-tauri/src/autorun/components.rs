@@ -141,32 +141,50 @@ pub fn draft_fingerprint(c: &Component) -> String {
 }
 
 /// Load, change and write back under the lock; a change that leaves the
-/// file as it was writes nothing.
-fn update(root: &Path, org: &str, project: &str, change: impl FnOnce(&mut ComponentFile)) -> Result<(), String> {
+/// file as it was writes nothing, and a change that refuses writes nothing
+/// either.
+fn update_with<T>(
+    root: &Path,
+    org: &str,
+    project: &str,
+    change: impl FnOnce(&mut ComponentFile) -> Result<T, String>,
+) -> Result<T, String> {
     let _guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
     let mut file = load_components(root, org, project)?;
     let before = file.clone();
-    change(&mut file);
+    let out = change(&mut file)?;
     if file == before {
-        return Ok(());
+        return Ok(out);
     }
     let path = components_path(root, org, project);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-    crate::ai_tools::atomic_write(&path, &text)
+    crate::ai_tools::atomic_write(&path, &text)?;
+    Ok(out)
+}
+
+/// `update_with`, for a change that cannot refuse.
+fn update(root: &Path, org: &str, project: &str, change: impl FnOnce(&mut ComponentFile)) -> Result<(), String> {
+    update_with(root, org, project, |f| {
+        change(f);
+        Ok(())
+    })
+}
+
+/// `c` in `f`, replacing the component of the same name (by key).
+fn put_in(f: &mut ComponentFile, c: Component) {
+    let k = key(&c.name);
+    match f.components.iter().position(|x| key(&x.name) == k) {
+        Some(i) => f.components[i] = c,
+        None => f.components.push(c),
+    }
 }
 
 /// Saves `c`, replacing the component of the same name (by key).
 pub fn put(root: &Path, org: &str, project: &str, c: Component) -> Result<(), String> {
-    update(root, org, project, |f| {
-        let k = key(&c.name);
-        match f.components.iter().position(|x| key(&x.name) == k) {
-            Some(i) => f.components[i] = c,
-            None => f.components.push(c),
-        }
-    })
+    update(root, org, project, |f| put_in(f, c))
 }
 
 pub fn remove(root: &Path, org: &str, project: &str, name: &str) -> Result<(), String> {
@@ -476,23 +494,39 @@ pub struct Saved {
     pub cap_reached: bool,
 }
 
+/// Said when a component's string has a `{{` with no `}}` after it, or a
+/// `}}` with no `{{` before it.
+pub const UNCLOSED: &str = "A component has an unclosed {{ placeholder.";
+
 /// Every `{{x}}` written in `v`'s strings, by its trimmed name, read the
-/// way `fill_text` reads them.
-fn text_placeholders(v: &Value, out: &mut Vec<String>) {
+/// way `fill_text` reads them; `Err` when a string holds a `{{` or a `}}`
+/// that is not part of a complete placeholder.
+fn text_placeholders(v: &Value, out: &mut Vec<String>) -> Result<(), ()> {
     match v {
         Value::String(s) => {
             let mut rest = s.as_str();
-            while let Some(at) = rest.find("{{") {
-                let after = &rest[at + 2..];
-                let Some(end) = after.find("}}") else { break };
-                out.push(after[..end].trim().to_string());
-                rest = &after[end + 2..];
+            loop {
+                match (rest.find("{{"), rest.find("}}")) {
+                    (None, None) => return Ok(()),
+                    (Some(open), Some(close)) if open < close => {
+                        out.push(rest[open + 2..close].trim().to_string());
+                        rest = &rest[close + 2..];
+                    }
+                    _ => return Err(()),
+                }
             }
         }
-        Value::Array(items) => items.iter().for_each(|x| text_placeholders(x, out)),
-        Value::Object(map) => map.values().for_each(|x| text_placeholders(x, out)),
-        _ => {}
+        Value::Array(items) => items.iter().try_for_each(|x| text_placeholders(x, out)),
+        Value::Object(map) => map.values().try_for_each(|x| text_placeholders(x, out)),
+        _ => Ok(()),
     }
+}
+
+/// Does `v` hold a complete `{{x}}` text placeholder in any of its
+/// strings, read the way `fill_text` reads one?
+pub fn holds_text_placeholder(v: &Value) -> bool {
+    let mut found = Vec::new();
+    text_placeholders(v, &mut found).is_ok() && !found.is_empty()
 }
 
 /// A name a component may never type: a script signs in as its account.
@@ -532,8 +566,9 @@ pub fn check_component(c: &Component) -> Result<(), String> {
     let every: Vec<&Action> = c.actions.iter().flat_map(Action::each).collect();
 
     let mut texts: Vec<String> = Vec::new();
-    for a in &every {
-        text_placeholders(&serde_json::to_value(a).unwrap_or(Value::Null), &mut texts);
+    for a in &c.actions {
+        text_placeholders(&serde_json::to_value(a).unwrap_or(Value::Null), &mut texts)
+            .map_err(|()| UNCLOSED.to_string())?;
     }
     let mut targets: Vec<String> = Vec::new();
     for a in &every {
@@ -601,43 +636,52 @@ pub fn save_tried(
         return Err(TRY_IT_FIRST.to_string());
     }
     let name = draft.name.trim().to_string();
-    let file = load_components(root, org, project)?;
-    let (version, changes) = match find(&file, &name) {
-        None => (1, 0),
-        Some(old) => {
-            if why.is_none_or(|w| w.trim().is_empty()) {
-                return Err(format!("{name} is already saved: say why it changes in \"why\"."));
+    // The saved one is read, compared and replaced under one lock, so two
+    // saves can never both become the same next version.
+    update_with(root, org, project, |file| {
+        let (version, changes) = match find(file, &name) {
+            None => (1, 0),
+            Some(old) => {
+                if why.is_none_or(|w| w.trim().is_empty()) {
+                    return Err(format!("{name} is already saved: say why it changes in \"why\"."));
+                }
+                if let Some(weaker) = super::edits::weakens(&old.actions, &draft.actions) {
+                    return Err(format!("{name} {weaker}"));
+                }
+                (old.version + 1, old.changes + 1)
             }
-            if let Some(weaker) = super::edits::weakens(&old.actions, &draft.actions) {
-                return Err(format!("{name} {weaker}"));
-            }
-            (old.version + 1, old.changes + 1)
-        }
-    };
-    let saved = Component {
-        name: name.clone(),
-        description: draft.description.trim().to_string(),
-        tried_at: now,
-        tried_area: area.unwrap_or("").to_string(),
-        version,
-        changes,
-        ..draft
-    };
-    put(root, org, project, saved)?;
-    Ok(Saved { saved: name, version, changes, cap_reached: changes >= CHANGE_CAP })
+        };
+        let saved = Component {
+            name: name.clone(),
+            description: draft.description.trim().to_string(),
+            tried_at: now,
+            tried_area: area.unwrap_or("").to_string(),
+            version,
+            changes,
+            ..draft
+        };
+        put_in(file, saved);
+        Ok(Saved { saved: name.clone(), version, changes, cap_reached: changes >= CHANGE_CAP })
+    })
 }
 
 /// Removes `name` unless a saved script uses it, handing back its saved
 /// name; the refusal names those scripts by case id.
+/// The in-use check and the removal run under one lock.
 pub fn remove_unused(root: &Path, org: &str, project: &str, name: &str) -> Result<String, String> {
-    let file = load_components(root, org, project)?;
-    let c = find(&file, name).ok_or_else(|| not_saved(name))?;
-    match users_of(root, &c.name).cases.as_slice() {
-        [] => remove(root, org, project, &c.name).map(|()| c.name.clone()),
-        [one] => Err(format!("{} is used by case {one}: change that script first.", c.name)),
-        many => {
-            let ids = many.iter().map(i32::to_string).collect::<Vec<_>>().join(", ");
-            Err(format!("{} is used by cases {ids}: change those scripts first.", c.name))
+    update_with(root, org, project, |file| {
+        let saved = find(file, name).ok_or_else(|| not_saved(name))?.name.clone();
+        match users_of(root, &saved).cases.as_slice() {
+            [] => {
+                let k = key(&saved);
+                file.components.retain(|x| key(&x.name) != k);
+                Ok(saved)
+            }
+            [one] => Err(format!("{saved} is used by case {one}: change that script first.")),
+            many => {
+                let ids = many.iter().map(i32::to_string).collect::<Vec<_>>().join(", ");
+                Err(format!("{saved} is used by cases {ids}: change those scripts first."))
+            }
         }
-    }
+    })
 }

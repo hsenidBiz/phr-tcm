@@ -301,9 +301,9 @@ pub async fn route(
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
         ("POST", "/autorun-defect") => autorun_defect(body),
         // Components: saved only once the open discovery has tried them
-        // live, and removed only while no saved script uses them.
+        // live, and retired only while no saved script uses them.
         ("POST", "/autorun-component-save") => autorun_component_save(ctx, body).await,
-        ("POST", "/autorun-component-remove") => autorun_component_remove(ctx, body),
+        ("POST", "/autorun-component-retire") => autorun_component_retire(ctx, body),
         // Auto Run's own order for a PBI. Reads the PBI's cases from Azure
         // DevOps (a read) to refuse an id the PBI is not tested by.
         ("POST", "/autorun-order") => autorun_order(ctx, client, body).await,
@@ -2802,10 +2802,10 @@ async fn autorun_component_save(ctx: &BridgeContext, body: &str) -> (u16, String
     }
 }
 
-/// `/autorun-component-remove`: a component no saved script uses
+/// `/autorun-component-retire`: a component no saved script uses
 /// (`components::remove_unused`). One in use stays, and the refusal names
 /// the cases that use it.
-fn autorun_component_remove(ctx: &BridgeContext, body: &str) -> (u16, String) {
+fn autorun_component_retire(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let name = match body_field(body, "name", "{ \"name\": <the component's name> }") {
         Ok(serde_json::Value::String(s)) if !s.trim().is_empty() => s,
         Ok(_) => return (400, "\"name\" is a saved component's name".to_string()),

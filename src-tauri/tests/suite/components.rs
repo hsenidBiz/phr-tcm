@@ -577,3 +577,36 @@ fn a_component_in_use_cannot_be_removed() {
     assert!(find(&load_components(dir.path(), "o", "p").unwrap(), "unused").is_none());
     assert_eq!(remove_unused(dir.path(), "o", "p", "unused").unwrap_err(), "unused is not saved in this project");
 }
+
+#[test]
+fn a_fixed_link_beside_a_placeholder_link_is_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = made(
+        "Pick in a panel",
+        json!([{ "name": "day", "kind": "text", "description": "" }]),
+        json!([{ "kind": "click", "selector": [{ "css": "#guessed-panel" }, { "role": "gridcell", "name": "{{day}}" }] }]),
+    );
+    let prints = tried(&[&c]);
+    let err = save_tried(dir.path(), "o", "p", c.clone(), None, session(&prints), 50).unwrap_err();
+    assert!(err.starts_with("Action 1: ") && err.contains("was never seen on the live app"), "{err}");
+    // Once the panel is seen, the {{day}} cell beside it is still exempt.
+    seen_in(dir.path(), "Leave", &[json!({ "css": "#guessed-panel" })]);
+    save_tried(dir.path(), "o", "p", c, None, session(&prints), 50).unwrap();
+}
+
+#[test]
+fn an_unclosed_placeholder_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    for stray in ["{{day", "day}}", "}} {{day}}", "{{day}} {{"] {
+        let c = made(
+            "Pick a day",
+            json!([{ "name": "day", "kind": "text", "description": "" }]),
+            json!([
+                { "kind": "click", "selector": { "role": "gridcell", "name": "{{day}}" } },
+                { "kind": "click", "selector": [{ "css": "#unseen-panel" }, { "role": "gridcell", "name": stray }] }
+            ]),
+        );
+        let err = save_tried(dir.path(), "o", "p", c, None, None, 50).unwrap_err();
+        assert_eq!(err, "A component has an unclosed {{ placeholder.", "{stray}");
+    }
+}
