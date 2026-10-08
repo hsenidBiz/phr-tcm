@@ -5,6 +5,9 @@ use v2_lib::autorun::discovery_map::{
     forget_area, is_stale, load_map, map_path, mark_failed, path_only, record_matched, record_outcome, record_seen,
     record_write, seen_keys, seen_paths, WriteEntry, STALE_AFTER_MS,
 };
+use v2_lib::autorun::quirks::record_run_evidence;
+use v2_lib::autorun::store::save_script;
+use v2_lib::autorun::{CaseRecord, CaseScript, StepScript};
 use v2_lib::browser::locator::{LocatorStep, SeenKey, Target};
 use v2_lib::browser::snapshot::SnapLine;
 
@@ -251,4 +254,70 @@ fn record_write_stores_the_path_only() {
     let text = std::fs::read_to_string(map_path(dir.path(), "Acme", "Web")).unwrap();
     assert!(text.contains("/api/x"));
     assert!(!text.contains("token") && !text.contains("https://h"), "{text}");
+}
+
+fn run_case(case_id: i32, proposed: &str) -> CaseRecord {
+    CaseRecord {
+        case_id,
+        title: "a case".into(),
+        verdict: String::new(),
+        note: String::new(),
+        steps: vec![],
+        proposed: proposed.into(),
+        reason: String::new(),
+        duration_ms: None,
+        account: None,
+        retried: None,
+        notice: None,
+        page_errors_seen: 0,
+    }
+}
+
+fn saved_script(root: &std::path::Path, case_id: i32, area: Option<&str>) {
+    let script = CaseScript {
+        case_id,
+        title: "a case".into(),
+        account: None,
+        area: area.map(str::to_string),
+        steps: vec![StepScript { step_number: 2, actions: vec![], unchecked: None }],
+        repairs: 0,
+        last_repair: None,
+        suspected_defect: None,
+        no_save: false,
+        preconditions: vec![],
+        setup: None,
+        changes: vec![],
+        needs_unchanged: vec![],
+        saved_at: None,
+        fail_on_unexpected_dialog: false,
+        page_errors: None,
+        ignore_page_errors: vec![],
+    };
+    save_script(root, &script).unwrap();
+}
+
+#[test]
+fn a_failed_case_marks_its_area_stale() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_script(dir.path(), 7, Some("Orders"));
+    record_run_evidence(dir.path(), "Acme", "Web", &[run_case(7, "Failed")], 10);
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert!(map.areas.iter().find(|a| a.area == "Orders").unwrap().failed_since);
+}
+
+#[test]
+fn a_passed_case_does_not() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_script(dir.path(), 7, Some("Orders"));
+    record_run_evidence(dir.path(), "Acme", "Web", &[run_case(7, "Passed")], 10);
+    assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty());
+}
+
+#[test]
+fn a_case_without_an_area_marks_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_script(dir.path(), 7, None);
+    saved_script(dir.path(), 8, Some("  "));
+    record_run_evidence(dir.path(), "Acme", "Web", &[run_case(7, "Failed"), run_case(8, "Failed"), run_case(9, "Failed")], 10);
+    assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty());
 }
