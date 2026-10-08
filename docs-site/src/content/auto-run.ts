@@ -144,7 +144,7 @@ export const autoRun: Screen = {
     { id: "cases", title: "Choose what to run", summary: "The Product Backlog Item's test cases, which of them have a script, and how each one did last time." },
     { id: "scripts", title: "Write a script", summary: "What the app does at each step of a case, and the rules the case runs under." },
     { id: "watch", title: "Run while you watch", summary: "The app does the steps; you see them happen and decide the result." },
-    { id: "unattended", title: "Run unattended", summary: "The app runs the selection by itself and proposes a result for each case." },
+    { id: "unattended", title: "Run unattended", summary: "The app runs the selection by itself and proposes a result for each case, while you carry on with other work if you like." },
     { id: "runs", title: "Past runs and reviews", summary: "What came of each run, and sending the results you confirm to Azure DevOps." },
     { id: "setup", title: "Set up", summary: "The site, the sign-in, your test accounts, the areas of the site, and the files scripts upload." },
   ],
@@ -613,7 +613,11 @@ export const autoRun: Screen = {
       name: "Start",
       does:
         "Starts the run. The window follows it case by case, and each case can be opened to see its steps as they go; **Stop** ends the run after the step it is on. " +
-        "When the run finishes, its review opens.",
+        "**Run in background** (or Escape) closes the window and the run carries on: a pill in the window's title bar shows how far it has got, such as **Auto Run 3 of 8**, and clicking it opens the window again from any part of the app. " +
+        "At a reset point the pill turns amber and reads **Reset needed**; click it to Continue or Stop. " +
+        "When the run finishes with its window open, its review opens. Finished in the background, a message and the pill say **Run finished, Review**: click either to open the review on **Past runs**. " +
+        "While a run is going, the other Run buttons wait for it. " +
+        "While your assistant's discovery is using the Auto Run browser and no run is going, the pill reads **Discovering**, and no run can start until **End discovery** (or the assistant) ends it.",
     },
 
     // --- Past runs -----------------------------------------------------------------
@@ -941,7 +945,9 @@ export const autoRun: Screen = {
         "Select the cases, or filter the list and press **Select all shown**.",
         "Press **Run N unattended**.",
         "Choose who to sign in as and whether to watch, then press **Start**.",
-        "When the run finishes its review opens: confirm each case, or press **Accept all**, then **Send to Azure DevOps**.",
+        "To carry on with other work, press **Run in background**. The pill in the title bar shows how far the run has got; click it to open the run again.",
+        "If the pill turns amber and reads **Reset needed**, click it, put the named data back, and press **Continue**.",
+        "When the run finishes its review opens (from the background, click **Review** on the message or the pill): confirm each case, or press **Accept all**, then **Send to Azure DevOps**.",
       ],
     },
     {

@@ -105,7 +105,8 @@ export default function CaseCard({
   onToggleOpen: () => void;
   onEdit: () => void;
   onRun: () => void;
-  /** Why Run waits, when it does: a discovery holds the Auto Run browser. */
+  /** Why Run waits, when it does: an unattended run is going, or a
+   * discovery holds the Auto Run browser. */
   runBlocked?: string;
   /** The suspected-defect Clear is waiting on Keep or Clear. */
   confirmingClear: boolean;
@@ -285,8 +286,10 @@ export default function CaseCard({
               <Button
                 size="sm"
                 variant="outline"
-                className="border-success text-success hover:border-success hover:bg-success/10 hover:text-success"
+                className="border-success text-success hover:border-success hover:bg-success/10 hover:text-success disabled:pointer-events-auto"
                 aria-label={`Run #${c.id}`}
+                // One run at a time: while an unattended run is going, or a
+                // discovery holds the browser, this waits, and its title says why.
                 disabled={Boolean(runBlocked)}
                 title={runBlocked}
                 onClick={onRun}

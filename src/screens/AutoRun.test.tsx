@@ -3,9 +3,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Toaster } from "../components/ui/toaster";
 import { afterEach, expect, test } from "vitest";
+import { useBackgroundRunHost } from "../hooks/useBackgroundRunHost";
+import { resetBackgroundRun } from "../lib/backgroundRun";
 import AutoRun from "./AutoRun";
+import ReplayPane from "./AutoRun/ReplayPane";
 
 afterEach(() => {
+  resetBackgroundRun();
   clearMocks();
   localStorage.clear();
 });
@@ -17,6 +21,14 @@ type TabName = "Test cases" | "Past runs";
 /** The screen's tab of that name, whatever count or warning it carries. */
 const tab = (name: TabName) => screen.getByRole("tab", { name: new RegExp(`^${name}`) });
 
+/** What App mounts around the screen for an unattended run: its window, and
+ * the host that catches its end. The screen is already on the run's PBI, so
+ * there is nowhere to take the person. */
+function RunHost() {
+  useBackgroundRunHost(() => {});
+  return <ReplayPane />;
+}
+
 /** Renders the screen and opens one tab the way a person would. The screen
  * always opens on Test cases; `null` leaves it there without a click. */
 function renderAutoRun(open: TabName | null = "Test cases") {
@@ -24,6 +36,7 @@ function renderAutoRun(open: TabName | null = "Test cases") {
   const view = render(
     <QueryClientProvider client={qc}>
       <AutoRun org="acme" project="Web" pbi={PBI} />
+      <RunHost />
     </QueryClientProvider>,
   );
   if (open) fireEvent.click(tab(open));

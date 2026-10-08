@@ -6,9 +6,15 @@
 // Nothing here is a verdict. `proposed` is the machine's best guess at what
 // a person would have picked; it becomes a real verdict only once someone
 // reviews it, and only a reviewed run can ever reach Azure DevOps.
+//
+// The run itself lives in lib/backgroundRun, not here: this window is only
+// a view of it. It is mounted once, at App level, and shows whenever the
+// store says the window is open, so Run in background (or Escape) closes
+// it without touching the run, and the title-bar pill opens it again from
+// any section.
 
 import { useEffect, useId, useRef, useState } from "react";
-import { commands, events, type AutorunResetNeeded, type PlanView, type StepRecord } from "../../bindings";
+import { commands, type PlanView, type StepRecord } from "../../bindings";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -19,16 +25,30 @@ import {
   IconCancel,
   IconFollowRun,
   IconHideSteps,
+  IconRunInBackground,
   IconShowSteps,
   IconStepDone,
   IconStop,
   IconUnattended,
 } from "../../lib/actionIcons";
+import {
+  answerRunReset,
+  closeRunWindow,
+  sendRunToBackground,
+  startRun,
+  stopRun,
+  useBackgroundRun,
+  type BackgroundRun,
+  type WrittenStep,
+} from "../../lib/backgroundRun";
 import { cn } from "../../lib/cn";
+import { DISCOVERY_BUSY, useDiscoveryActiveNow } from "../../lib/discoveryActive";
 import { dbReadAccessOn } from "../../lib/mcpTools";
 import { useMediaQuery } from "../../lib/useMediaQuery";
 import { resetLines } from "./plan";
 import ResetNeededPanel from "./ResetNeededPanel";
+
+export { statusOf, type WrittenStep } from "../../lib/backgroundRun";
 
 // Same two browsers, same values, as the supervised pane's picker - and the
 // same storage key, so a person's choice there is their choice here too.
@@ -43,9 +63,6 @@ const RETRY_KEY = "tcm-v2-autorun-retry-transient";
 /** A window this tall has room to show the case after the running one as
  * well, so it opens too. Shorter, only the running case opens. */
 const TALL_WINDOW = "(min-height: 900px)";
-
-/** A case's written step, as the script editor shows it. */
-export type WrittenStep = { action: string; expected: string; shared?: number | null };
 
 /** How a finished case's written step went. */
 type StepResult = { kind: "passed" } | { kind: "failed"; detail: string } | { kind: "not_reached" };
@@ -67,22 +84,6 @@ function resultOf(records: readonly StepRecord[], stepNumber: number): StepResul
  * project, on this machine only. */
 export function runAccountKey(org: string, project: string): string {
   return `tcm-v2-autorun-run-account:${org}/${project}`;
-}
-
-/** The one line a row shows for the phase an unattended step is in - a pure
- * function so a test can drive it directly instead of through an event. */
-export function statusOf(p: {
-  phase: string;
-  step_number: number;
-  steps: number;
-  proposed: string;
-}): string {
-  if (p.phase === "opening") return "Opening the browser";
-  if (p.phase === "signing_in") return "Signing in";
-  if (p.phase === "module") return "Going to the module";
-  if (p.phase === "step") return `Step ${p.step_number} of ${p.steps}`;
-  if (p.phase === "done") return p.proposed ? `Proposed: ${p.proposed}` : "Nothing proposed";
-  return "Waiting";
 }
 
 /** Each phase with its case count, and a reset line at each boundary. */
@@ -107,31 +108,22 @@ function PlanSummary({ plan, cases }: { plan: PlanView; cases: { id: number; tit
   );
 }
 
-export default function ReplayPane({
-  org,
-  project,
-  pbiId,
-  cases,
-  plan = null,
-  onClose,
-  onFinished,
-}: {
-  org: string;
-  project: string;
-  pbiId: number;
-  /** The selection, run in this order - same contract as the supervised
-   * pane's `cases` prop. `module` is the case's Module field. */
-  cases: { id: number; title: string; module?: string; steps?: WrittenStep[] }[];
-  /** The plan for `cases`. Its phases and reset points show before Start,
-   * and only when there is more than one phase. */
-  plan?: PlanView | null;
-  onClose: () => void;
-  /** Called with the finished run's id once `auto_run_replay` resolves.
-   * The review screen opens from it. */
-  onFinished: (runId: string) => void;
-}) {
-  const [phase, setPhase] = useState<"setup" | "running" | "failed">("setup");
-  const [error, setError] = useState("");
+/** The run window, mounted once at App level. Shows while the store says
+ * it is open; everything it shows of a run comes from the store. */
+export default function ReplayPane() {
+  const { run } = useBackgroundRun();
+  if (!run || !run.open) return null;
+  // Keyed on the scope: the remembered account is per organisation and
+  // project, so another scope's setup starts from its own.
+  return <RunWindow key={`${run.org}/${run.project}`} run={run} />;
+}
+
+function RunWindow({ run }: { run: BackgroundRun }) {
+  const { org, project, cases, plan, phase } = run;
+  const { rows, phases, latest, position, records, resetNeeded } = run;
+  /** A discovery that began after this setup opened holds the browser:
+   * Start waits for it, as the store does. */
+  const discovering = useDiscoveryActiveNow();
 
   /** Same key the supervised pane uses - a stored value the picker cannot
    * show falls back to Edge, same reasoning as there. */
@@ -155,7 +147,9 @@ export default function ReplayPane({
 
   /** The tester's accounts, key and name only: the Sign in as choices. */
   const [accounts, setAccounts] = useState<{ key: string; label: string }[]>([]);
+  const settingUp = phase === "setup" || phase === "failed";
   useEffect(() => {
+    if (!settingUp) return;
     let live = true;
     commands
       .autoRunListAccounts()
@@ -168,7 +162,7 @@ export default function ReplayPane({
     return () => {
       live = false;
     };
-  }, []);
+  }, [settingUp]);
   const [picked, setPicked] = useState(() => {
     try {
       return localStorage.getItem(runAccountKey(org, project)) ?? "";
@@ -180,21 +174,6 @@ export default function ReplayPane({
    * silently: the run just uses each script's own account. */
   const runAccount = accounts.some((a) => a.key === picked) ? picked : "";
 
-  /** Status text per case id, filled in as `ReplayProgress` events arrive. */
-  const [rows, setRows] = useState<Record<number, string>>({});
-  /** The selection's own "case N of M" line - null until the first event. */
-  const [position, setPosition] = useState<{ index: number; total: number } | null>(null);
-  const [stopping, setStopping] = useState(false);
-  /** The last phase seen per case id: "done" marks a finished case. */
-  const [phases, setPhases] = useState<Record<number, string>>({});
-  /** The newest progress event's case and where it is - the running case is
-   * this one unless the event said "done". */
-  const [latest, setLatest] = useState<{ caseId: number; phase: string; step: number } | null>(
-    null,
-  );
-  /** A finished case's recorded steps, loaded from the run file after its
-   * "done" event. Absent when the load failed: the row keeps to its status. */
-  const [records, setRecords] = useState<Record<number, StepRecord[]>>({});
   /** Rows the person opened (true) or closed (false) by hand. Cleared for a
    * case when it starts and again when it finishes, so the automatic
    * behaviour takes over at both. */
@@ -216,132 +195,29 @@ export default function ReplayPane({
    * rows) and has not been released: a scroll now is the person's. */
   const pressedOnList = useRef(false);
 
-  /** The run this pane's own Start kicked off. Only set from the FIRST
-   * progress event seen after Start - a stray event from a run this pane
-   * did not start (a previous one that outlived its pane, say) must not
-   * overwrite what is on screen for the run actually in progress. */
-  const runId = useRef<string | null>(null);
-
-  /** The reset point the run is paused at, while it waits for an answer. */
-  const [resetNeeded, setResetNeeded] = useState<AutorunResetNeeded | null>(null);
-  const [answering, setAnswering] = useState(false);
-
+  // A case starting is locked open and a finished one folds: either way the
+  // person's own choice for it is spent. Each progress event is a new
+  // `latest`, so this runs once per event.
   useEffect(() => {
-    const un = events.autorunResetNeeded.listen((e) => {
-      const r = e.payload;
-      // Only the run this pane is showing.
-      if (runId.current !== null && r.run_id !== runId.current) return;
-      setAnswering(false);
-      setResetNeeded(r);
+    if (!latest) return;
+    setByHand((prev) => {
+      if (!(latest.caseId in prev)) return prev;
+      const { [latest.caseId]: _spent, ...rest } = prev;
+      return rest;
     });
-    return () => {
-      un.then((f) => f()).catch(() => {});
-    };
-  }, []);
+  }, [latest]);
 
-  useEffect(() => {
-    const un = events.replayProgress.listen((e) => {
-      const p = e.payload;
-      if (runId.current === null) runId.current = p.run_id;
-      if (p.run_id !== runId.current) return;
-      setRows((prev) => ({ ...prev, [p.case_id]: statusOf(p) }));
-      setPhases((prev) => ({ ...prev, [p.case_id]: p.phase }));
-      setLatest({ caseId: p.case_id, phase: p.phase, step: p.step_number });
-      // A case moving again means the pause is over.
-      if (p.phase !== "done") setResetNeeded(null);
-      setPosition({ index: p.index, total: p.total });
-      // A case starting is locked open and a finished one folds: either way
-      // the person's own choice for it is spent.
-      setByHand((prev) => {
-        if (!(p.case_id in prev)) return prev;
-        const { [p.case_id]: _spent, ...rest } = prev;
-        return rest;
-      });
-      const rid = runId.current;
-      if (p.phase === "done" && rid) {
-        // The run file is saved after every case. Never blocks the run: a
-        // failed load leaves the row on its status line.
-        commands
-          .autoRunLoadRun(rid)
-          .then((r) => {
-            if (runId.current !== rid || r.status !== "ok" || !r.data) return;
-            const rec = r.data.cases.find((x) => x.case_id === p.case_id);
-            if (rec) setRecords((prev) => ({ ...prev, [p.case_id]: rec.steps }));
-          })
-          .catch(() => {});
-      }
-    });
-    return () => {
-      un.then((f) => f()).catch(() => {});
-    };
-  }, []);
-
-  const start = async () => {
-    setPhase("running");
-    setError("");
-    setRows({});
-    setPosition(null);
-    setStopping(false);
-    setPhases({});
-    setLatest(null);
-    setRecords({});
+  const start = () => {
     setByHand({});
     setPaused(false);
-    setResetNeeded(null);
-    setAnswering(false);
-    runId.current = null;
-    try {
-      const r = await commands.autoRunReplay(
-        org,
-        project,
-        pbiId,
-        cases.map((c) => ({ case_id: c.id, title: c.title, module: c.module?.trim() || null })),
-        runAccount || null,
-        browserName,
-        watch,
-        retryTransient,
-        // Preconditions follow Database Read Access: off, none is checked.
-        dbReadAccessOn(),
-      );
-      if (r.status === "error") {
-        setError(r.error);
-        setPhase("failed");
-        return;
-      }
-      setResetNeeded(null);
-      onFinished(r.data.id);
-    } catch (e) {
-      // Same rethrow hazard as the supervised pane's own IPC calls - the
-      // generated wrapper rethrows an Error rather than resolving to
-      // {status: "error"} when the call itself rejects.
-      setError(e instanceof Error ? e.message : String(e));
-      setPhase("failed");
-    }
-  };
-
-  const stop = async () => {
-    // Said and disabled the instant the person presses it - the run itself
-    // only stops after its current step, and there is nothing else useful
-    // to tell them until it does.
-    setStopping(true);
-    await commands.autoRunReplayCancel().catch(() => {});
-  };
-
-  /** The person's answer at the reset point: Continue runs the next phase,
-   * Stop ends the run there. A refused answer (the run stopped meanwhile)
-   * leaves the run to end on its own. */
-  const answerReset = async (continueRun: boolean) => {
-    if (!resetNeeded) return;
-    setAnswering(true);
-    if (!continueRun) setStopping(true);
-    try {
-      const r = await commands.autoRunAnswerReset(resetNeeded.run_id, continueRun);
-      if (r.status === "error") setError(r.error);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-    setResetNeeded(null);
-    setAnswering(false);
+    void startRun({
+      account: runAccount || null,
+      browserName,
+      watch,
+      retryTransient,
+      // Preconditions follow Database Read Access: off, none is checked.
+      dbReadAccess: dbReadAccessOn(),
+    });
   };
 
   /** The case running now: the newest event's, unless that said "done". */
@@ -363,7 +239,8 @@ export default function ReplayPane({
   };
 
   // Follow the run: bring the case that just started into view. Only a change
-  // of case scrolls, and never while the person has the scroll.
+  // of case scrolls, and never while the person has the scroll. A window
+  // opened again from the title bar starts on the running case too.
   useEffect(() => {
     if (!pausedRef.current) scrollToRow(runningId);
   }, [runningId]);
@@ -380,21 +257,16 @@ export default function ReplayPane({
     };
   }, []);
 
-  /** The dialog closes on Escape/backdrop everywhere except while a run is
-   * actually going - closing the window would not stop it, only Stop does,
-   * so letting it look closeable there would be a lie. */
-  const closeIfIdle = () => {
-    if (phase === "running") return;
-    onClose();
-  };
-
+  // Escape and a backdrop click: a run going is sent to the background (it
+  // carries on, and the title-bar pill brings it back), a setup is
+  // cancelled. Only Stop ends a run.
   return (
-    <Modal onClose={closeIfIdle} className={`${MODAL_LARGE} space-y-3 overflow-y-auto p-4`}>
+    <Modal onClose={closeRunWindow} className={`${MODAL_LARGE} space-y-3 overflow-y-auto p-4`}>
       <h2 className="text-sm font-semibold text-text">Unattended run</h2>
 
-      {phase !== "running" ? (
+      {settingUp ? (
         <div className="space-y-3">
-          {error && <p className="text-xs text-danger">{error}</p>}
+          {run.error && <p className="text-xs text-danger">{run.error}</p>}
           {plan && plan.phases.length > 1 && <PlanSummary plan={plan} cases={cases} />}
           <label className="flex items-center gap-2 text-xs text-muted">
             Sign in as
@@ -483,11 +355,17 @@ export default function ReplayPane({
             answering runs once more, and is labelled Retried.
           </p>
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={onClose}>
+            <Button variant="ghost" size="sm" onClick={closeRunWindow}>
               <IconCancel aria-hidden />
               Cancel
             </Button>
-            <Button size="sm" onClick={start}>
+            <Button
+              size="sm"
+              className="disabled:pointer-events-auto"
+              disabled={discovering}
+              title={discovering ? DISCOVERY_BUSY : undefined}
+              onClick={start}
+            >
               <IconUnattended aria-hidden />
               Start
             </Button>
@@ -505,9 +383,9 @@ export default function ReplayPane({
               reset={resetNeeded}
               remaining={resetNeeded.remaining}
               titleOf={(id) => cases.find((c) => c.id === id)?.title}
-              busy={answering}
-              onContinue={() => void answerReset(true)}
-              onStop={() => void answerReset(false)}
+              busy={run.answering}
+              onContinue={() => void answerRunReset(true)}
+              onStop={() => void answerRunReset(false)}
             />
           )}
           {/* Only the person's own input pauses following - a bare `scroll`
@@ -581,25 +459,36 @@ export default function ReplayPane({
               );
             })}
           </ul>
+          {/* Leaving on the left, ending on the right: Run in background
+              closes the window and the run carries on; only Stop ends it. */}
           <div className="flex items-center justify-between gap-2">
-            {paused ? (
+            <div className="flex items-center gap-2">
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => {
-                  setPaused(false);
-                  scrollToRow(runningId ?? nextId);
-                }}
+                title="Close this window. The run carries on, and the title bar shows how it is going."
+                onClick={sendRunToBackground}
               >
-                <IconFollowRun aria-hidden />
-                Follow the run
+                <IconRunInBackground aria-hidden />
+                Run in background
               </Button>
-            ) : (
-              <span />
-            )}
-            <Button size="sm" variant="outline" disabled={stopping} onClick={stop}>
+              {paused && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setPaused(false);
+                    scrollToRow(runningId ?? nextId);
+                  }}
+                >
+                  <IconFollowRun aria-hidden />
+                  Follow the run
+                </Button>
+              )}
+            </div>
+            <Button size="sm" variant="outline" disabled={run.stopping} onClick={() => void stopRun()}>
               <IconStop aria-hidden />
-              {stopping ? "Stopping after this step" : "Stop"}
+              {run.stopping ? "Stopping after this step" : "Stop"}
             </Button>
           </div>
         </div>
@@ -607,7 +496,6 @@ export default function ReplayPane({
     </Modal>
   );
 }
-
 /** An opened row: the case's written steps, marked as the run reaches them.
  * While it runs, a line says what it is doing before step 1 and the current
  * step stands out; once finished, each step says how it went. */

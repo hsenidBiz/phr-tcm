@@ -63,6 +63,10 @@ import { isBetaVersion, markChangelogSeen, SHOW_CHANGELOG_EVENT, updatedFrom } f
 import type { ChangelogEntry } from "./lib/changelog";
 import SessionExpiredModal from "./components/SessionExpiredModal";
 import ReplayRequestModal from "./screens/AutoRun/ReplayRequestModal";
+import RunWindow from "./screens/AutoRun/ReplayPane";
+import RunPill from "./components/RunPill";
+import { clearReviewRequest } from "./lib/backgroundRun";
+import { useBackgroundRunHost } from "./hooks/useBackgroundRunHost";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
@@ -455,6 +459,24 @@ export default function App() {
     setWorkMode(false); // any tab click exits Work Manager mode
     setCaseSelection(null); // direct navigation returns Edit to PBI mode
   };
+  // The unattended run outlives the Auto Run screen (lib/backgroundRun):
+  // its end is caught here, and Review on its pill or toast brings the
+  // person to the run's PBI in Auto Run, whose screen opens the review.
+  // Not over the walkthrough, whose sample scope is not the person's.
+  useBackgroundRunHost((r) => {
+    if (tourOpen) {
+      clearReviewRequest();
+      return;
+    }
+    if (org !== r.org || project !== r.project) {
+      setOrgRaw(r.org);
+      setProjectRaw(r.project);
+      setCaseSelection(null);
+    }
+    if (pbi?.id !== r.pbi.id) setPbiRaw(r.pbi);
+    if (section !== "autorun" || workMode) goToSection("autorun");
+  });
+
   // Settings acts as a toggle: opening it remembers where you were (tab or
   // Work Manager); clicking the gear again returns you there.
   const beforeSettings = useRef<{ section: Section; workMode: boolean } | null>(null);
@@ -1041,6 +1063,9 @@ export default function App() {
         beta={isBetaVersion(appVersion.data ?? "") && !isCaptureMode()}
         // Environments are an Auto Run setting: named only where it shows.
         environment={autoRunShown ? environmentName : null}
+        // An unattended run going, paused, or ended: a click opens its
+        // window from anywhere, or its review once it has finished.
+        status={<RunPill />}
       />
       {tourOpen && signedIn && (
         <UiTour
@@ -1368,6 +1393,12 @@ export default function App() {
           mounted and listening: a request that arrives while the window
           is hidden in the tray is waiting here when it is shown again. */}
       <ReplayRequestModal />
+
+      {/* The unattended run's window: mounted here, not in Auto Run, so the
+          run's progress and its pauses can be opened from any section (the
+          title-bar pill), and Run in background closes it without touching
+          the run. It shows only while the run's store says it is open. */}
+      <RunWindow />
 
       {/* Only over a signed-in app: before sign-in the SignIn screen IS the
           prompt. "Not now" just closes it - cached data stays readable and
