@@ -949,4 +949,25 @@ fn the_areas_section_and_the_guide_give_one_rule_for_area() {
     for text in [&guide, &areas] {
         assert!(!text.contains("whenever the case's screen is not its module's default area"), "{text}");
     }
+
+    // The save tool says the same rule, and nothing an assistant reads -
+    // the guide, a tool description or a command - still tells it to leave
+    // `area` out for the default area.
+    let stub = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> { Ok((200, "{}".into())) };
+    let resp = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let save = tools.iter().find(|t| t["name"] == "save_autorun_script").unwrap();
+    assert!(save["description"].as_str().unwrap().contains(SET_AREA_RULE), "{save}");
+    let mut texts: Vec<(String, String)> =
+        vec![("the guide".into(), guide.clone()), ("the areas section".into(), areas.clone())];
+    for t in tools {
+        texts.push((format!("tool {}", t["name"]), flat(&t.to_string())));
+    }
+    for c in v2_lib::ai_tools::COMMANDS {
+        texts.push((format!("/tcm:{}", c.stem), flat(&c.body.join("\n"))));
+    }
+    for (what, text) in texts {
+        assert!(!text.contains("leave it out for the area named like"), "{what} still says to leave `area` out");
+    }
 }

@@ -1682,6 +1682,16 @@ fn heal_explores_a_stale_area_first_and_setup_names_discover() {
     let heal = COMMANDS.iter().find(|c| c.stem == "heal").unwrap().body.join(" ");
     let heal = heal.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(heal.contains("If the area's map is stale, run discovery on it before repairing."), "{heal}");
+    // Discovery is refused while the person's browser is open, and a replay
+    // is refused while discovery holds the browser: close, explore, end,
+    // then replay - in that order.
+    assert!(heal.contains("if the person's Auto Run browser is open, ask them to close it first"), "{heal}");
+    let at = |what: &str| heal.find(what).unwrap_or_else(|| panic!("/tcm:heal never says {what:?}: {heal}"));
+    let discovery = at("run discovery on it");
+    let start = at("`start_autorun_discovery`");
+    let end = at("`end_autorun_discovery`");
+    let replay = at("`replay_autorun_to_step`");
+    assert!(discovery < start && start < end && end < replay, "{heal}");
     let setup = COMMANDS.iter().find(|c| c.stem == "setup").unwrap().body.join(" ");
     assert!(setup.contains("/tcm:discover"), "{setup}");
 }

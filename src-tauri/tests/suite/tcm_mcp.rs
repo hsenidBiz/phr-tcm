@@ -1122,8 +1122,11 @@ fn the_account_tools_reach_their_routes() {
     assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap(), args);
 }
 
-/// Review of Task 8: an assistant learns a script may name its `area` -
-/// and that changing it is declared - from the save tool itself.
+/// Review of Task 8: an assistant learns a script names its `area` - and
+/// that changing it is declared - from the save tool itself. Since the save
+/// check credits a script only with what was seen in the area it names,
+/// the tool says to always set it (`nav::SET_AREA_RULE`), so a script's
+/// `area` is no longer shown as one to leave out.
 #[test]
 fn the_save_tool_documents_a_scripts_area() {
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.10.3", &stub(200, "")).unwrap();
@@ -1136,9 +1139,12 @@ fn the_save_tool_documents_a_scripts_area() {
         .expect("the save tool is listed in a development build")
         .clone();
     let description = tool["description"].as_str().unwrap();
-    assert!(description.contains("area (optional:"), "{description}");
+    assert!(description.contains(v2_lib::autorun::nav::SET_AREA_RULE), "{description}");
+    // The edit's `area` flag stays optional: true only when it changed.
+    assert!(description.contains("area (optional: true when you changed the script's area"), "{description}");
     let props = &tool["inputSchema"]["properties"];
-    assert!(props["scripts"]["description"].as_str().unwrap().contains("area?"), "{props}");
+    let scripts = props["scripts"]["description"].as_str().unwrap();
+    assert!(scripts.contains("area,") && !scripts.contains("area?"), "{props}");
     assert!(props["edits"]["description"].as_str().unwrap().contains("area?"), "{props}");
 }
 
