@@ -1594,8 +1594,8 @@ fn environment_database(ctx: &BridgeContext, env: &crate::environments::Environm
 
 /// The guide's own text, plus this project's sections when it has any: the
 /// module-screen rule while "Scripts may open pages by address" is off,
-/// the recorded areas, the areas with no map or a stale one, then the
-/// recorded quirks. The constant (`autorun::guide::autorun_guide`)
+/// the recorded areas, the areas with no map or a stale one, this
+/// project's components, then the recorded quirks. The constant (`autorun::guide::autorun_guide`)
 /// only says a quirks section exists; this reads what is actually on file,
 /// so the guide can never go stale on a live project.
 fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
@@ -1619,10 +1619,15 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
         crate::applog::warn(&format!("Guide: {e}"));
         Default::default()
     });
+    let components = crate::autorun::components::load_components(&root, &ctx.org, &ctx.project).unwrap_or_else(|e| {
+        crate::applog::warn(&format!("Guide: {e}"));
+        Default::default()
+    });
     let areas: Vec<&str> = nav.modules.iter().map(|m| m.name()).collect();
     for section in [
         crate::autorun::nav::guide_section(&nav),
         crate::autorun::discovery_map::explore_section(&areas, &map, crate::autorun::sessions::now_ms()),
+        crate::autorun::components::guide_section(&components),
         crate::autorun::quirks::quirks_section(&quirks),
         crate::test_files::guide_section(&files),
     ] {

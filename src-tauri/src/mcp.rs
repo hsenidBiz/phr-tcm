@@ -391,13 +391,17 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "discover_autorun_action",
-            "description": "Carry out ONE script action in the discovery browser and see what it did: the page afterwards, an address change, a dialog or message that appeared, and the requests that wrote data (method and path only). Use it to find each element a case's step needs by carrying the step out. Any one action in the script vocabulary works, such as a click, a fill, a key press or a navigate (held to the environment's allowed sites); sign_in and file addresses are refused. Anything you create uses the environment's test name prefix, and you delete only records whose name carries that prefix. Every write is logged. Needs start_autorun_discovery first.",
+            "description": "Carry out ONE script action in the discovery browser and see what it did: the page afterwards, an address change, a dialog or message that appeared, and the requests that wrote data (method and path only). Use it to find each element a case's step needs by carrying the step out. Any one action in the script vocabulary works, such as a click, a fill, a key press or a navigate (held to the environment's allowed sites); sign_in and file addresses are refused. Anything you create uses the environment's test name prefix, and you delete only records whose name carries that prefix. Every write is logged. A use_component action runs a component's actions with its inputs put in, and answers each of them as `steps`; send `draft` with it to try a component not saved yet, or a change to a saved one, before save_autorun_component. Needs start_autorun_discovery first.",
             "inputSchema": schema(serde_json::json!({
                 "action": {
                     "type": "object",
                     "description": "One action in the script vocabulary, e.g. { \"kind\": \"click\", \"selector\": ... } - call get_autorun_guide for all of them.",
                 },
                 "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
+                "draft": {
+                    "type": "object",
+                    "description": "Optional, with a use_component action only: the component to try in place of the saved one of that name, exactly as you will send it to save_autorun_component: { name, description, inputs, actions }.",
+                },
             }), &["action"]),
         },
         {
@@ -417,6 +421,40 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "name": "end_autorun_discovery",
             "description": "Close the discovery browser. Call it when you have finished exploring. Safe to call when no discovery is going.",
             "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
+            "name": "save_autorun_component",
+            "description": "Save a component: a widget or short flow worked out once on the live app, that any script then runs with one use_component action. Make one the first time a widget or short flow will be needed more than once; use a saved one instead of repeating its actions. Try it first with discover_autorun_action, a use_component of it with this component as its `draft`, and save it unchanged once that works; anything else is refused. Every fixed locator in it must have been seen; every input it declares must be used, and every one it uses declared; it cannot sign in, type a username or password, use another component, or build an address from an input. Saving a name already saved is a change: it needs `why`, is tried live again first, and may not remove a check or turn one into a non-check. After 3 accepted changes the save answers cap_reached: stop and report to the person instead of changing it again.",
+            "inputSchema": schema(serde_json::json!({
+                "name": { "type": "string", "description": "Its name, unique in this project, e.g. \"Pick a date\"." },
+                "description": { "type": "string", "description": "One line: what it does and when to use it." },
+                "inputs": {
+                    "type": "array",
+                    "description": "What a script passes it. A text input is written {{name}} in its actions' strings; a target input stands where a locator goes, as {\"input\": \"name\"}, alone or as one link of a chain.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" },
+                            "kind": { "type": "string", "enum": ["text", "target"] },
+                            "description": { "type": "string" },
+                        },
+                        "required": ["name", "kind", "description"],
+                    },
+                },
+                "actions": {
+                    "type": "array",
+                    "description": "Its actions, in the script vocabulary - call get_autorun_guide for them.",
+                    "items": { "type": "object" },
+                },
+                "why": { "type": "string", "description": "Only when changing a saved component: one sentence on why it changes." },
+            }), &["name", "description", "inputs", "actions"]),
+        },
+        {
+            "name": "remove_autorun_component",
+            "description": "Remove a saved component. Refused while a saved script uses it: the refusal names the cases, so change those scripts first.",
+            "inputSchema": schema(serde_json::json!({
+                "name": { "type": "string", "description": "The saved component's name." },
+            }), &["name"]),
         },
         {
             "name": "get_autorun_failures",
@@ -970,6 +1008,9 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "discover_autorun_action" => call("POST", "/autorun-discover-action", &args.to_string()),
         "save_autorun_area" => call("POST", "/autorun-discover-area", &args.to_string()),
         "end_autorun_discovery" => call("POST", "/autorun-discover-end", &args.to_string()),
+        // Components: each route reads its own named fields out of the body.
+        "save_autorun_component" => call("POST", "/autorun-component-save", &args.to_string()),
+        "remove_autorun_component" => call("POST", "/autorun-component-retire", &args.to_string()),
         "get_autorun_failures" => {
             let mut params: Vec<String> = vec![];
             if let Some(id) = args["case_id"].as_i64() {

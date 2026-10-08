@@ -266,9 +266,9 @@ fn target_links(c: &Component, name: &str, v: &Value) -> Result<Vec<LocatorStep>
     Ok(t.links())
 }
 
-/// `{{name}}` in `s` replaced by the text input of that name, in one pass:
-/// a value that itself reads like a placeholder is put in as it is, and a
-/// name that is not a text input is left alone.
+/// `{{name}}` in `s` replaced by the text input of that name, in one pass
+/// (`expand` refuses a value holding `{{` or `}}`); a name that is not a
+/// text input is left alone.
 fn fill_text(s: &str, text: &BTreeMap<&str, String>) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -335,6 +335,11 @@ pub fn expand(c: &Component, inputs: &serde_json::Map<String, Value>) -> Result<
                     Value::Bool(b) => b.to_string(),
                     _ => return Err(format!("{} to be text", needs(c, name))),
                 };
+                // Put into a locator, "{{day}}" would leave it reading as
+                // the component wrote it, past the seen check.
+                if s.contains("{{") || s.contains("}}") {
+                    return Err(format!("{} got a placeholder as {name}", c.name));
+                }
                 text.insert(name, s);
             }
             InputKind::Target => {
@@ -684,4 +689,46 @@ pub fn remove_unused(root: &Path, org: &str, project: &str, name: &str) -> Resul
             }
         }
     })
+}
+
+/// The live guide's list of this project's components: each one's name,
+/// its inputs as `name: kind`, and its description, then a line for each
+/// one changed `CHANGE_CAP` times or more. Empty with none saved.
+pub fn guide_section(file: &ComponentFile) -> String {
+    if file.components.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("## This project's components\n\n");
+    out.push_str("Use one with a use_component action instead of repeating its actions (see \"Components\").\n\n");
+    for c in &file.components {
+        let inputs = if c.inputs.is_empty() {
+            "no inputs".to_string()
+        } else {
+            c.inputs
+                .iter()
+                .map(|i| {
+                    let kind = match i.kind {
+                        InputKind::Text => "text",
+                        InputKind::Target => "target",
+                    };
+                    format!("{}: {kind}", i.name.trim())
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let description = c.description.split_whitespace().collect::<Vec<_>>().join(" ");
+        out.push_str(&format!("- {} ({inputs}): {description}\n", c.name.trim()));
+    }
+    let capped: Vec<&Component> = file.components.iter().filter(|c| c.changes >= CHANGE_CAP).collect();
+    if !capped.is_empty() {
+        out.push('\n');
+        for c in capped {
+            out.push_str(&format!(
+                "{} has had {} accepted changes: stop and report to the person before changing it again.\n",
+                c.name.trim(),
+                c.changes
+            ));
+        }
+    }
+    out
 }

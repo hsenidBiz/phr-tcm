@@ -813,6 +813,7 @@ fn the_guide_never_points_at_the_source() {
     }
     let map = DiscoveryMap { areas: vec![AreaMap { area: "Old".into(), explored_at: Some(1), ..AreaMap::default() }] };
     texts.push(("the areas to explore".into(), explore_section(&["Old", "New"], &map, u64::MAX / 2)));
+    texts.push(("this project's components".into(), v2_lib::autorun::components::guide_section(&sample_components())));
     for (what, text) in texts {
         let lower = text.to_lowercase();
         for banned in ["read the source", "application's source", "source-derived"] {
@@ -971,4 +972,124 @@ fn the_areas_section_and_the_guide_give_one_rule_for_area() {
     for (what, text) in texts {
         assert!(!text.contains("leave it out for the area named like"), "{what} still says to leave `area` out");
     }
+}
+
+/// Two components as a project might hold them: one with both kinds of
+/// input, changed up to the cap, and one with none.
+fn sample_components() -> v2_lib::autorun::components::ComponentFile {
+    serde_json::from_value(serde_json::json!({ "components": [
+        {
+            "name": "Pick a date",
+            "description": "Picks a day in a date field's calendar.",
+            "inputs": [
+                { "name": "field", "kind": "target", "description": "the date field" },
+                { "name": "day", "kind": "text", "description": "the day of the month" }
+            ],
+            "actions": [
+                { "kind": "click", "selector": { "input": "field" } },
+                { "kind": "click", "selector": { "role": "gridcell", "name": "{{day}}" } }
+            ],
+            "version": 4,
+            "changes": 3
+        },
+        {
+            "name": "Close the toast",
+            "description": "Closes the message in the corner, when one shows.",
+            "inputs": [],
+            "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Close" } }],
+            "version": 1
+        }
+    ] }))
+    .expect("a components file")
+}
+
+/// The guide teaches components: what one is, its two kinds of input with
+/// a "Pick a date" example that is a real component and a real use of it,
+/// when to make one, to use one already saved, how a draft is tried live
+/// before the save, the save rules, the change rule and the cap, and
+/// removal.
+#[test]
+fn the_guide_teaches_components() {
+    use v2_lib::autorun::components::{check_component, expand, Component, CHANGE_CAP};
+    let g = autorun_guide();
+    let at = g.find("\n## Components\n").expect("the guide has no Components section");
+    let section = g[at + 1..].split("\n## ").next().unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        // The two kinds of input.
+        "`text`",
+        "`target`",
+        "`{{name}}`",
+        r#"`{"input": "name"}`"#,
+        "Pick a date",
+        // When to make one, and to use what is saved.
+        "the first time a widget or short flow will be needed more than once",
+        "instead of repeating its actions",
+        "This project's components",
+        // Trying it live as a draft, then saving it unchanged.
+        "`discover_autorun_action`",
+        "`draft`",
+        "`save_autorun_component`",
+        "unchanged",
+        // The save rules.
+        "never seen",
+        "declared",
+        "sign in",
+        "another component",
+        "cannot hold `{{` or `}}`",
+        // Changing one.
+        "`why`",
+        "never weaker",
+        "tried live again",
+        "stop and report to the person",
+        // Removing one.
+        "`remove_autorun_component`",
+        "while a saved script uses it",
+        // Healing.
+        "fixed in the component",
+    ] {
+        assert!(flat.contains(said), "the Components section never says {said:?}: {flat}");
+    }
+    assert!(flat.contains(&format!("{CHANGE_CAP} accepted changes")), "{flat}");
+    assert!(!section.contains('\u{2013}') && !section.contains('\u{2014}'), "a dash crept in");
+
+    // The example is a component the save would take, and a use of it the
+    // runner expands.
+    let component: Component =
+        serde_json::from_str(first_balanced(section, 0, '{', '}')).expect("the example is not a component");
+    assert_eq!(component.name, "Pick a date");
+    check_component(&component).expect("the example breaks a save rule");
+    let use_at = section.find("\"use_component\"").expect("the section never uses the example");
+    let start = section[..use_at].rfind('{').unwrap();
+    let action: Action =
+        serde_json::from_str(first_balanced(section, start, '{', '}')).expect("the use is not an action");
+    let Action::UseComponent { component: named, inputs } = &action else { panic!("{action:?}") };
+    assert_eq!(named, "Pick a date");
+    let ran = expand(&component, inputs).expect("the use does not expand");
+    assert_eq!(ran.len(), component.actions.len());
+
+    // The action list's line points here.
+    assert!(g.contains(r#"see "Components""#), "the use_component line never points at the section");
+}
+
+/// The live guide lists this project's components: each one's name, its
+/// inputs as `name: kind`, and its description; a component at the change
+/// cap says so. With none saved, nothing is added.
+#[test]
+fn the_live_guide_lists_this_projects_components() {
+    use v2_lib::autorun::components::{guide_section, ComponentFile};
+    assert_eq!(guide_section(&ComponentFile::default()), "");
+    let section = guide_section(&sample_components());
+    assert!(section.starts_with("## This project's components\n"), "{section}");
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "- Pick a date (field: target, day: text): Picks a day in a date field's calendar.",
+        "- Close the toast (no inputs): Closes the message in the corner, when one shows.",
+        "Pick a date has had 3 accepted changes: stop and report to the person before changing it again.",
+        "use_component",
+    ] {
+        assert!(flat.contains(said), "the list never says {said:?}: {section}");
+    }
+    assert!(!flat.contains("Close the toast has had"), "{section}");
+    assert!(!section.contains('\u{2013}') && !section.contains('\u{2014}'), "a dash crept in");
 }

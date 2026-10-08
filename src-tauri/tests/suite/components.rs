@@ -232,9 +232,25 @@ fn text_inputs_fill_values() {
             { "kind": "click", "selector": { "role": "gridcell", "name": "5" } }
         ]))
     );
-    // A value that itself reads like a placeholder is typed as it is.
-    let out = expand(&c, &given(json!({ "day": "{{day}}" }))).unwrap();
-    assert_eq!(out[0], actions(json!([{ "kind": "fill", "selector": { "role": "textbox", "name": "Day" }, "value": "{{day}}" }]))[0]);
+}
+
+/// A text input holding `{{` or `}}` is refused: put into a locator, a
+/// value like "{{day}}" would leave the locator reading as the component
+/// wrote it, and slip past both the seen check and the placeholder check.
+#[test]
+fn a_text_input_holding_a_placeholder_is_refused() {
+    let c = made(
+        "Pick a date",
+        json!([{ "name": "day", "kind": "text", "description": "" }]),
+        json!([{ "kind": "click", "selector": { "role": "gridcell", "name": "{{day}}" } }]),
+    );
+    for value in ["{{day}}", "5 {{", "}} 5", "{{other}}"] {
+        let err = expand(&c, &given(json!({ "day": value }))).unwrap_err();
+        assert_eq!(err, "Pick a date got a placeholder as day", "{value}");
+    }
+    // Single braces are ordinary text.
+    let out = expand(&c, &given(json!({ "day": "{5}" }))).unwrap();
+    assert_eq!(out, actions(json!([{ "kind": "click", "selector": { "role": "gridcell", "name": "{5}" } }])));
 }
 
 #[test]

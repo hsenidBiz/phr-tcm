@@ -128,7 +128,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_sorted", "table": ..., "column": "Joined", "order": "descending", "as": "date" }` - the column is in that order
 - `{ "kind": "expect_row_count", "table": ..., "at_least": 1 }` - the table has that many rows (`equals`, `at_least` or `at_most`)
 - `{ "kind": "drag", "from": ..., "to": ..., "position": "before" }` - pick `from` up and drop it on `to`: `before` it, `after` it, or `onto` it (the default); `within_ms` (default 10000) is optional (see "Dragging to reorder")
-- `{ "kind": "use_component", "component": "pick-date", "inputs": { "day": "5" } }` - runs a saved component with its inputs; see Components
+- `{ "kind": "use_component", "component": "pick-date", "inputs": { "day": "5" } }` - runs a saved component with its inputs (see "Components")
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
 - `{ "kind": "expect_download", "name": "Template*.xlsx", "headers": { "exact": ["Employee No", "Name"] } }` - the file this step downloaded has that name (and, for a spreadsheet or text file, those headers, cells or text); see "Checking a downloaded file"
 - `{ "kind": "expect_tab", "name": "report" }` - wait for the tab the page opened since the previous step began, and call it `report`; `url_contains` and `within_ms` (default 10000) are optional (see "Tabs")
@@ -1096,6 +1096,85 @@ that prefix. The app logs every write discovery sends.
 
 An area listed under "Areas to explore" has no map yet, or a stale one:
 explore it again before you write or repair a script there.
+
+## Components
+
+A component is a widget or short flow worked out once on the live app
+and saved under a name, with inputs, so any script runs it with one
+step. Fixing it fixes every script that uses it. Here is one:
+
+```json
+{ "name": "Pick a date",
+  "description": "Picks a day in a date field's calendar.",
+  "inputs": [
+    { "name": "field", "kind": "target", "description": "the date field" },
+    { "name": "day", "kind": "text", "description": "the day of the month" }
+  ],
+  "actions": [
+    { "kind": "click", "selector": { "input": "field" } },
+    { "kind": "click", "selector": { "role": "gridcell", "name": "{{day}}" } }
+  ] }
+```
+
+and a script step's action using it:
+
+```json
+{ "kind": "use_component", "component": "Pick a date", "inputs": { "field": { "role": "textbox", "name": "Leave start" }, "day": "5" } }
+```
+
+An input has one of two kinds:
+
+- `text`: a value. The component writes it as `{{name}}` in its actions'
+  strings, and the script passes a string. A value cannot hold `{{` or
+  `}}`.
+- `target`: an element. The component writes `{"input": "name"}` where a
+  locator goes, alone or as one link of a chain, and the script passes a
+  locator. That locator goes through the save check like any other in
+  the script.
+
+When to make one: the first time a widget or short flow will be needed
+more than once, such as a date picker, a searchable dropdown, confirming
+the visible dialog or closing a message. When "This project's components"
+lists one that fits, use it instead of repeating its actions. Nothing
+forces you to use one.
+
+Make it during discovery:
+
+1. Work the widget out with `discover_autorun_action` as usual.
+2. Try the whole component: a use_component action naming it, on
+   `discover_autorun_action`, with the component itself sent as its
+   `draft`. The answer lists each of its actions with what it did.
+3. Save it with `save_autorun_component`, unchanged from the draft that
+   worked. Anything else is refused: try it again first.
+
+What a save checks:
+
+- Every locator it fixes must have been seen on the live app in the area
+  you are exploring; one never seen is refused. A target input is not a
+  locator yet, so it passes.
+- Every input it uses is declared, and every one declared is used.
+- It cannot sign in or type a username or password: a script signs in
+  as its account. It cannot use another component, and an input cannot
+  make an address.
+
+Components are for scripts. Fixtures and delete templates cannot use
+them.
+
+Changing one is saving its name again, held to the same rule as a
+repair:
+
+- Give `why`, one sentence.
+- It is never weaker: it may not drop a check the old one had, or turn
+  a check into an action that checks nothing.
+- It is tried live again, as a `draft`, before the save.
+- After 3 accepted changes the save still works, but stop and report to
+  the person instead of changing it again.
+
+A failure in a component names it beside the action. It is fixed in the
+component, not in the scripts that use it.
+
+`remove_autorun_component` removes one, and is refused while a saved
+script uses it; the refusal names the cases.
 
 ## Two things that make a seen locator wrong
 
