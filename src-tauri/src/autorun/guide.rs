@@ -1167,6 +1167,9 @@ repair:
 - It is never weaker: it may not drop a check the old one had, or turn
   a check into an action that checks nothing.
 - It is tried live again, as a `draft`, before the save.
+- It is checked against every saved script that uses it: a locator an
+  input goes into that was never seen, as that script would run it, is
+  refused, naming the case and step.
 - After 3 accepted changes the save still works, but stop and report to
   the person instead of changing it again.
 

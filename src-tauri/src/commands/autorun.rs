@@ -359,9 +359,10 @@ pub struct ComponentView {
     #[specta(type = Option<f64>)]
     pub tried_at: Option<u64>,
     pub version: u32,
-    /// Changes an assistant made since a person last saved it.
+    /// How many times it has been changed so far.
     pub changes: u32,
-    /// How many changes an assistant may make before a person looks.
+    /// After this many changes the assistant stops and asks the person
+    /// before changing it again.
     pub cap: u32,
     /// The saved scripts that use it, by case id. While any do, it stays.
     pub used_by_cases: Vec<i32>,

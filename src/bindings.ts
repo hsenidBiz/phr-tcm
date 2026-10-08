@@ -2596,9 +2596,12 @@ export type ComponentView = {
 	 */
 	tried_at: number | null,
 	version: number,
-	/**  Changes an assistant made since a person last saved it. */
+	/**  How many times it has been changed so far. */
 	changes: number,
-	/**  How many changes an assistant may make before a person looks. */
+	/**
+	 *  After this many changes the assistant stops and asks the person
+	 *  before changing it again.
+	 */
 	cap: number,
 	/**  The saved scripts that use it, by case id. While any do, it stays. */
 	used_by_cases: number[],

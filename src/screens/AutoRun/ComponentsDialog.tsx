@@ -1,7 +1,7 @@
 // The project's components: steps an assistant saved once, after trying
 // them on the live app, that scripts use by name. Each shows its inputs,
-// when and where it was last tried, its version, how often an assistant
-// has changed it since a person saved it, and the scripts that use it.
+// when and where it was last tried, its version, how many times it has
+// been changed so far, and the scripts that use it.
 // Remove is held while a script uses one and asks first otherwise. A file
 // that cannot be read offers Reset components, which moves the damaged
 // file aside (never deleting it). Opened from Auto Run's Setup card; the
@@ -135,7 +135,7 @@ export default function ComponentsDialog({
                   {c.changes >= c.cap && (
                     <Badge
                       className="bg-warning/15 text-warning"
-                      title="An assistant has changed it as often as it may; a person has to look at it"
+                      title={`Changed ${c.cap} times or more: the assistant stops and asks you before changing it again`}
                     >
                       Needs a look
                     </Badge>
@@ -185,7 +185,8 @@ export default function ComponentsDialog({
                   <span>Version {c.version}</span>
                   {c.changes > 0 && (
                     <span className={c.changes >= c.cap ? "text-warning" : undefined}>
-                      Changed {c.changes} of {c.cap} times since a person saved it
+                      Changed {c.changes} {c.changes === 1 ? "time" : "times"}
+                      {c.changes >= c.cap && "; the assistant stops and asks you before changing it again"}
                     </span>
                   )}
                 </p>

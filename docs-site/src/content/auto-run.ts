@@ -818,7 +818,7 @@ export const autoRun: Screen = {
       does:
         "The reusable steps your assistant has made for the site, such as picking a date in a date picker or confirming a dialog. A component takes text and target inputs, and every script that uses it gets its fixes. " +
         "The assistant makes a component during discovery, and only after it has tried the component live on the site. A component cannot use another component. " +
-        "The **Components** window lists each one with what it does and the inputs it takes, where and when it was tried, the cases that use it, and how many times it has been changed out of the 3 allowed. A change can never remove a check. " +
+        "The **Components** window lists each one with what it does and the inputs it takes, where and when it was tried, the cases that use it, and how many times it has been changed so far. After 3 changes, the assistant stops and asks you before changing it again. A change can never remove a check, and it is checked against every script that uses it. " +
         "**Remove** is greyed out while any script uses the component, and asks first otherwise; the scripts that use it have to be changed first. " +
         "If the components file cannot be read, the window offers **Reset components**, which moves the damaged file aside (it is kept, never deleted) and starts with none. " +
         "The row reads **None yet** until the assistant has made one. Fixtures and delete templates do not use components.",
