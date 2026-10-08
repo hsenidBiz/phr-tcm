@@ -663,7 +663,7 @@ export const commands = {
 	 *  the write on a blocking thread: reading a run's scripts and writing the
 	 *  page must not hold the main thread, which would freeze the window.
 	 */
-	autoRunOpenReport: (runId: string, ranAt: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_report", { runId, ranAt })),
+	autoRunOpenReport: (organization: string, project: string, runId: string, ranAt: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_report", { organization, project, runId, ranAt })),
 	/**
 	 *  Opens one of a run's downloads with the system's default app. Only a
 	 *  plain name in that run's own download folder is opened; anything else

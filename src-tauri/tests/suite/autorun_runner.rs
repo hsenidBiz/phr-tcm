@@ -861,8 +861,12 @@ mod components_in_a_step {
         assert!(d.calls.is_empty(), "an action ran: {:?}", d.calls);
         assert!(used.is_empty());
         assert_eq!(out.len(), 3, "{out:?}");
-        assert!(!out[0].ok && out[0].detail == "Ghost is not saved in this project", "{:?}", out[0]);
-        assert!(out[1..].iter().all(|o| !o.ok && o.detail.starts_with("not run:")), "{out:?}");
+        // The sentence is on the use; the click before it and the check
+        // after it are not run.
+        assert!(!out[1].ok && out[1].detail == "Ghost is not saved in this project", "{:?}", out[1]);
+        for i in [0, 2] {
+            assert!(!out[i].ok && out[i].detail.starts_with("not run:"), "{:?}", out[i]);
+        }
         assert!(out.iter().all(|o| o.screenshot.is_none()));
 
         // A missing input fails it the same way.

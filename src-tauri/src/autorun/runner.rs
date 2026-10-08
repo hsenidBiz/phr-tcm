@@ -274,7 +274,7 @@ pub const WATCHED_DOWNLOAD_WAIT_MS: u32 = 30_000;
 /// ran.
 pub const AFTER_STOP: &str = "not run: the run was stopped";
 
-/// The rest of a step after one of its components could not be used.
+/// Every other action of a step one of whose components could not be used.
 pub const AFTER_COMPONENT: &str = "not run: a component in this step could not be run";
 
 /// `run_step_routed` inside an unattended run: the run's Stop reaches the
@@ -303,13 +303,16 @@ pub async fn run_step_in_run<D: Driver>(
     run.components = Vec::new();
     let (expanded, uses) = match components::expand_step(root, organization, project, &step.actions) {
         Ok(x) => x,
-        Err(why) => {
+        Err((at, why)) => {
             run.began = None;
             run.tab = None;
             run.dialog = None;
             run.page_errors_seen = 0;
-            let mut out = vec![ActionOutcome::failed(why)];
-            out.extend(step.actions.iter().skip(1).map(|_| ActionOutcome::failed(AFTER_COMPONENT)));
+            // The sentence on the use that could not be expanded; every
+            // other action of the step is not run.
+            let out = (0..step.actions.len())
+                .map(|i| ActionOutcome::failed(if i == at { why.as_str() } else { AFTER_COMPONENT }))
+                .collect();
             return Ok(out);
         }
     };

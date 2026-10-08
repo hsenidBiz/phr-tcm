@@ -350,22 +350,24 @@ fn expand_one(
 /// component's actions with the inputs put in, each tagged with the
 /// component's name, and every use in order with the version it had. The
 /// components file is read only when the step uses one, so a step without
-/// any never depends on it.
+/// any never depends on it. An error says which of the step's actions it
+/// belongs to, by index: the use that could not be expanded (the first
+/// use, when the file itself could not be read).
 #[allow(clippy::type_complexity)]
 pub fn expand_step(
     root: &Path,
     org: &str,
     project: &str,
     actions: &[Action],
-) -> Result<(Vec<(Action, Option<String>)>, Vec<ComponentUse>), String> {
-    if !uses_any(actions) {
+) -> Result<(Vec<(Action, Option<String>)>, Vec<ComponentUse>), (usize, String)> {
+    let Some(first) = actions.iter().position(|a| uses_any(std::slice::from_ref(a))) else {
         return Ok((actions.iter().cloned().map(|a| (a, None)).collect(), Vec::new()));
-    }
-    let file = load_components(root, org, project)?;
+    };
+    let file = load_components(root, org, project).map_err(|why| (first, why))?;
     let mut uses = Vec::new();
     let mut out = Vec::with_capacity(actions.len());
-    for a in actions {
-        out.extend(expand_one(&file, a, &mut uses)?);
+    for (i, a) in actions.iter().enumerate() {
+        out.extend(expand_one(&file, a, &mut uses).map_err(|why| (i, why))?);
     }
     Ok((out, uses))
 }
@@ -421,26 +423,4 @@ pub fn ran_actions(actions: &[Action], outcomes: &[ActionOutcome], file: &Compon
         }
     }
     out
-}
-
-/// Every project's components under `root`, for a reader that does not
-/// know the run's project. A name saved in more than one project is left
-/// out, since which one ran cannot be told; a file that does not read is
-/// skipped.
-pub fn load_every_project(root: &Path) -> ComponentFile {
-    let mut seen: BTreeMap<String, Option<Component>> = BTreeMap::new();
-    let files = std::fs::read_dir(root.join("projects")).into_iter().flatten().flatten();
-    for entry in files {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if !name.ends_with("-components.json") {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(entry.path()) else { continue };
-        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-        let Ok(file) = serde_json::from_str::<ComponentFile>(text) else { continue };
-        for c in file.components {
-            seen.entry(key(&c.name)).and_modify(|e| *e = None).or_insert(Some(c));
-        }
-    }
-    ComponentFile { components: seen.into_values().flatten().collect() }
 }

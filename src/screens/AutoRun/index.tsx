@@ -908,6 +908,8 @@ export default function AutoRun({
               <div className="min-w-0 @min-[69rem]:order-last">{setupPanel}</div>
               <div className="min-w-0">
                 <PastRuns
+                  org={org}
+                  project={project}
                   pbiId={pbi.id}
                   onReview={setReviewing}
                   onReplay={replayCase}

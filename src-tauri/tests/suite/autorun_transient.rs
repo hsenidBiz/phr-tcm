@@ -246,3 +246,27 @@ fn a_mid_script_sign_in_whose_page_would_not_load_is_transient() {
     let wrong = failed_at_2("Blocked", ActionOutcome::failed("sign-in stopped at step 2: #password is not on the page"));
     assert_eq!(is_transient(&wrong, Some(&script(sign_in))), None);
 }
+
+// ---- components ----
+
+#[test]
+fn a_network_error_inside_a_component_is_retried_like_any_other() {
+    use v2_lib::autorun::components::ComponentFile;
+    use v2_lib::autorun::transient::is_transient_with;
+    let file: ComponentFile = serde_json::from_value(json!({ "components": [{
+        "name": "Load the cycle", "description": "d", "inputs": [], "version": 1,
+        "actions": [{ "kind": "check_text", "value": "Cycles" }, api_get()]
+    }] }))
+    .unwrap();
+    let sc = script(json!({ "kind": "use_component", "component": "Load the cycle", "inputs": {} }));
+    let detail = "GET /hr/api/cycles/42 answered 503, expected 200";
+    let mut case = failed_at_2("Failed", ActionOutcome::failed(detail));
+    let mut checked = ActionOutcome::passed("page contains Cycles");
+    checked.component = Some("Load the cycle".into());
+    case.steps[1].outcomes[0].component = Some("Load the cycle".into());
+    case.steps[1].outcomes.insert(0, checked);
+    assert_eq!(is_transient_with(&case, Some(&sc), &file), Some(format!("step 2: {detail}")));
+    // The same outcome read against a component that is not there: no
+    // action to read it by, so no second go.
+    assert_eq!(is_transient_with(&case, Some(&sc), &ComponentFile::default()), None);
+}

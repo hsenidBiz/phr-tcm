@@ -2151,3 +2151,35 @@ async fn an_unattended_run_records_the_components_each_step_used() {
     let saved = store::list_runs(root).into_iter().find(|r| r.id == "run-x").unwrap();
     assert_eq!(saved.cases[0].steps.iter().find(|s| s.step_number == 1).unwrap().components, one.components);
 }
+
+// ---- components ----
+
+/// A component's `navigate` refused because this project does not allow
+/// addresses is the run's refusal, as it is in a script's own step.
+#[test]
+fn a_refusal_inside_a_component_is_blocked_not_failed() {
+    use v2_lib::autorun::components::ComponentFile;
+    use v2_lib::autorun::replay::propose_with;
+    let file: ComponentFile = serde_json::from_value(serde_json::json!({ "components": [{
+        "name": "Open help", "description": "d", "inputs": [], "version": 1,
+        "actions": [{ "kind": "navigate", "url": "https://app.example/help" }]
+    }] }))
+    .unwrap();
+    let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [
+        { "kind": "check_text", "value": "yes" },
+        { "kind": "use_component", "component": "Open help", "inputs": {} }
+    ] }]));
+    let mut refused = ActionOutcome::failed(no_address(1));
+    refused.component = Some("Open help".into());
+    let steps = vec![StepRecord {
+        step_number: 1,
+        outcomes: vec![ActionOutcome::passed("page contains yes"), refused],
+        screenshot: None,
+        downloads: vec![],
+        tab: None,
+        dialog: None,
+        components: Vec::new(),
+    }];
+    let p = propose_with(&sc, &steps, None, false, &file);
+    assert_eq!((p.verdict, p.reason.as_str()), ("Blocked", no_address(1).as_str()));
+}

@@ -1410,6 +1410,8 @@ pub const REPORT_RUN_GONE: &str = "this run is no longer on this machine";
 pub fn write_report_at(
     offered: bool,
     root: &std::path::Path,
+    organization: &str,
+    project: &str,
     run_id: &str,
     ran_at: &str,
 ) -> Result<std::path::PathBuf, String> {
@@ -1423,9 +1425,10 @@ pub fn write_report_at(
         .iter()
         .filter_map(|c| store::load_script(root, c.case_id).ok().flatten())
         .collect();
-    // The command is not told the project: every project's components,
-    // a name two projects share left out (`load_every_project`).
-    let components = crate::autorun::components::load_every_project(root);
+    // The project's components, so an action one ran is named as it
+    // expands. A file that does not read leaves those actions named by
+    // their component only.
+    let components = crate::autorun::components::load_components(root, organization, project).unwrap_or_default();
     let html = crate::autorun::report::build_with_components(
         &run,
         &scripts,
@@ -1460,10 +1463,16 @@ pub const REPORT_NOT_OPENED: &str = "the report could not be opened in your brow
 /// page must not hold the main thread, which would freeze the window.
 #[tauri::command]
 #[specta::specta]
-pub async fn auto_run_open_report(app: tauri::AppHandle, run_id: String, ran_at: String) -> Result<(), String> {
+pub async fn auto_run_open_report(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    run_id: String,
+    ran_at: String,
+) -> Result<(), String> {
     let offered = crate::ai_tools::autorun_offered();
     let root = root(&app)?;
-    let path = tauri::async_runtime::spawn_blocking(move || write_report_at(offered, &root, &run_id, &ran_at))
+    let path = tauri::async_runtime::spawn_blocking(move || write_report_at(offered, &root, &organization, &project, &run_id, &ran_at))
         .await
         .map_err(|e| {
             crate::applog::warn(format!("auto run report: the writer stopped: {e}"));

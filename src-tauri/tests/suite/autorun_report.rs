@@ -312,7 +312,7 @@ fn opening_writes_the_page_to_reports_beside_the_shots_and_links_them() {
     let dir = TempDir::new();
     let root = seeded_root(&dir);
 
-    let path = write_report_at(true, &root, "run-1786000200000", "2 Oct 2026, 09:30").unwrap();
+    let path = write_report_at(true, &root, "Acme", "Web", "run-1786000200000", "2 Oct 2026, 09:30").unwrap();
     assert_eq!(path, root.join("reports").join("run-1786000200000.html"));
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("<dd>click text=Save</dd>"));
@@ -337,12 +337,12 @@ fn opening_writes_the_page_to_reports_beside_the_shots_and_links_them() {
 fn opening_again_overwrites_the_same_file() {
     let dir = TempDir::new();
     let root = seeded_root(&dir);
-    let first = write_report_at(true, &root, "run-1786000200000", "2 Oct 2026, 09:30").unwrap();
+    let first = write_report_at(true, &root, "Acme", "Web", "run-1786000200000", "2 Oct 2026, 09:30").unwrap();
     std::fs::write(&first, "stale").unwrap();
     // A picture that has since arrived is linked on the next open.
     std::fs::write(root.join("shots").join(PASSED_SHOT), JPEG).unwrap();
 
-    let second = write_report_at(true, &root, "run-1786000200000", "2 Oct 2026, 09:30").unwrap();
+    let second = write_report_at(true, &root, "Acme", "Web", "run-1786000200000", "2 Oct 2026, 09:30").unwrap();
     assert_eq!(first, second);
     let html = std::fs::read_to_string(&second).unwrap();
     assert!(html.starts_with("<!doctype html>"));
@@ -355,7 +355,7 @@ fn opening_is_refused_where_auto_run_is_not_offered() {
     let dir = TempDir::new();
     let root = seeded_root(&dir);
 
-    let err = write_report_at(false, &root, "run-1786000200000", "x").unwrap_err();
+    let err = write_report_at(false, &root, "Acme", "Web", "run-1786000200000", "x").unwrap_err();
     assert_eq!(err, "not available in this build");
     assert!(!root.join("reports").exists());
 }
@@ -364,9 +364,9 @@ fn opening_is_refused_where_auto_run_is_not_offered() {
 fn opening_says_so_for_a_run_that_is_gone_and_refuses_an_unsafe_id() {
     let dir = TempDir::new();
     let root = dir.path().join("autorun");
-    assert_eq!(write_report_at(true, &root, "run-1", "x").unwrap_err(), REPORT_RUN_GONE);
+    assert_eq!(write_report_at(true, &root, "Acme", "Web", "run-1", "x").unwrap_err(), REPORT_RUN_GONE);
     for bad in ["../run-1", "a/b", "a\\b", "", "run 1", "run-1.html"] {
-        let err = write_report_at(true, &root, bad, "x").unwrap_err();
+        let err = write_report_at(true, &root, "Acme", "Web", bad, "x").unwrap_err();
         assert!(err.contains("not a safe filename"), "{bad:?}: {err}");
     }
     assert!(!root.join("reports").exists());
@@ -419,7 +419,7 @@ fn a_navigate_address_is_reported_without_its_query_string() {
 fn opening_escapes_the_time_it_is_given() {
     let dir = TempDir::new();
     let root = seeded_root(&dir);
-    let path = write_report_at(true, &root, "run-1786000200000", "<script>x</script>").unwrap();
+    let path = write_report_at(true, &root, "Acme", "Web", "run-1786000200000", "<script>x</script>").unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("<dt>Ran</dt><dd>&lt;script&gt;x&lt;/script&gt;</dd>"));
     assert!(!html.to_lowercase().contains("<script"));
@@ -553,7 +553,7 @@ fn the_written_report_reads_each_downloads_size_from_the_runs_folder() {
     std::fs::write(folder.join("Template.xlsx"), vec![0u8; 5427]).unwrap();
     std::fs::write(folder.join("errors.csv"), vec![0u8; 1126]).unwrap();
 
-    let path = write_report_at(true, &root, "run-1786000200000", "x").unwrap();
+    let path = write_report_at(true, &root, "Acme", "Web", "run-1786000200000", "x").unwrap();
     let html = std::fs::read_to_string(path).unwrap();
     assert!(html.contains("Template.xlsx (5.3 KB), errors.csv (1.1 KB)"), "{html}");
     assert!(html.contains("&lt;b&gt;x&lt;/b&gt;&amp;.csv (no longer on this machine)"));
@@ -609,4 +609,42 @@ fn a_report_of_a_component_step_lines_up() {
         "{html}"
     );
     assert!(!html.contains("script on this machine has changed"), "{html}");
+}
+
+/// The report reads the components of the project it is opened for: the
+/// same name saved in another project is not the one that ran.
+#[test]
+fn the_report_reads_the_components_of_its_own_project() {
+    use crate::common::{component_case, component_run, component_script, pick_a_date, COMPONENT_TYPED};
+    use v2_lib::autorun::components::{expand, put};
+    let dir = TempDir::new();
+    let root = dir.path().join("autorun");
+    save_run(&root, &component_run(vec![component_case(7, "#start cannot be typed into")])).unwrap();
+    save_script(&root, &component_script(7)).unwrap();
+    put(&root, "Acme", "Web", pick_a_date()).unwrap();
+    let mut other = pick_a_date();
+    other.actions.truncate(1);
+    put(&root, "Other", "Project", other).unwrap();
+
+    let path = write_report_at(true, &root, "Acme", "Web", "run-1786000200000", "x").unwrap();
+    let html = std::fs::read_to_string(path).unwrap();
+    let typed = expand(
+        &pick_a_date(),
+        serde_json::json!({ "field": { "css": "#start" }, "day": COMPONENT_TYPED }).as_object().unwrap(),
+    )
+    .unwrap();
+    assert!(
+        html.contains(&format!("<dd>Pick a date: {}</dd>", v2_lib::autorun::report::esc(&action_words(&typed[1])))),
+        "{html}"
+    );
+    assert!(!html.contains("has changed since the run"), "{html}");
+
+    // Opened for the other project, its own (shorter) component does not
+    // expand to what ran.
+    let path = write_report_at(true, &root, "Other", "Project", "run-1786000200000", "x").unwrap();
+    let html = std::fs::read_to_string(path).unwrap();
+    assert!(
+        html.contains("<dd>Pick a date: action 3 (the component on this machine has changed since the run)</dd>"),
+        "{html}"
+    );
 }
