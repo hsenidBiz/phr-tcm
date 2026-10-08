@@ -1423,9 +1423,13 @@ pub fn write_report_at(
         .iter()
         .filter_map(|c| store::load_script(root, c.case_id).ok().flatten())
         .collect();
-    let html = crate::autorun::report::build_with_downloads(
+    // The command is not told the project: every project's components,
+    // a name two projects share left out (`load_every_project`).
+    let components = crate::autorun::components::load_every_project(root);
+    let html = crate::autorun::report::build_with_components(
         &run,
         &scripts,
+        &components,
         ran_at,
         &|name| store::shot_exists(root, name),
         &|name| store::download_size(root, run_id, name),

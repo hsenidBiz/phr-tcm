@@ -296,7 +296,7 @@ pub async fn route(
         ("POST", "/autorun-discover-end") => crate::commands::autorun::end_discovery().await,
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body).await,
         ("POST", "/autorun-replay") => autorun_replay(ctx, body).await,
-        ("GET", "/autorun-failures") => autorun_failures(target),
+        ("GET", "/autorun-failures") => autorun_failures(ctx, target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
         ("POST", "/autorun-defect") => autorun_defect(body),
@@ -2942,7 +2942,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
 
 /// A run's failed cases, as text an assistant can act on - and, when it
 /// must not touch the script at all, the reason why.
-fn autorun_failures(target: &str) -> (u16, String) {
+fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
@@ -2984,7 +2984,11 @@ fn autorun_failures(target: &str) -> (u16, String) {
         .iter()
         .filter_map(|c| crate::autorun::store::load_script(&root, c.case_id).ok().flatten())
         .collect();
-    (200, crate::autorun::failures::describe_failures(&run, &scripts))
+    // The project's components, so an action one ran is shown as it
+    // expands. A file that does not read leaves those actions named by
+    // their component only.
+    let components = crate::autorun::components::load_components(&root, &ctx.org, &ctx.project).unwrap_or_default();
+    (200, crate::autorun::failures::describe_failures_with(&run, &scripts, &components))
 }
 
 /// Record something learned about the application, attributed, so the

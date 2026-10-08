@@ -286,3 +286,41 @@ fn the_advice_says_how_to_tie_the_quirk_to_the_cases() {
     assert!(PATTERN_ADVICE.contains("EVERY case you repair"), "{PATTERN_ADVICE}");
     assert!(PATTERN_ADVICE.contains("`cases`"), "{PATTERN_ADVICE}");
 }
+
+// ---- components ----
+
+#[test]
+fn a_component_step_is_classified_by_its_expanded_action() {
+    use crate::common::{component_case, component_run, component_script, pick_a_date, pick_a_date_file, COMPONENT_TYPED};
+    use v2_lib::autorun::components::{expand, ComponentFile};
+    use v2_lib::autorun::patterns::{find_patterns_with, step_failures_with};
+    let missing = "waited 5000ms: #start not found";
+    let run = component_run(vec![component_case(11, missing), component_case(12, missing)]);
+    let scripts = [component_script(11), component_script(12)];
+    let typed = expand(
+        &pick_a_date(),
+        serde_json::json!({ "field": { "css": "#start" }, "day": COMPONENT_TYPED }).as_object().unwrap(),
+    )
+    .unwrap();
+
+    // The failure is the component's fill, not the script's third action.
+    let points = step_failures_with(&run.cases[0].steps[0], Some(&scripts[0]), &pick_a_date_file());
+    assert_eq!(points.len(), 2, "{points:?}");
+    assert_eq!((points[0].action, points[0].kind.as_deref()), (3, Some("fill")));
+    assert_eq!(points[0].target, action_target(&typed[1]));
+    assert_eq!((points[1].action, points[1].kind.as_deref()), (5, Some("check_text")));
+
+    let patterns = find_patterns_with(&run, &scripts, &pick_a_date_file());
+    let p = patterns
+        .iter()
+        .find(|p| p.targets.iter().any(|t| t.starts_with("fill on ")))
+        .unwrap_or_else(|| panic!("{patterns:?}"));
+    assert_eq!(p.targets, vec![format!("fill on {}", action_target(&typed[1]).unwrap())]);
+    assert_eq!(p.cases(), 2);
+
+    // Without the components, still lined up: classed by its component.
+    let points = step_failures_with(&run.cases[0].steps[0], Some(&scripts[0]), &ComponentFile::default());
+    assert_eq!(points[0].kind.as_deref(), Some("use_component"));
+    assert_eq!(points[0].target.as_deref(), Some("the component \"Pick a date\""));
+    assert_eq!(points[1].kind.as_deref(), Some("check_text"));
+}

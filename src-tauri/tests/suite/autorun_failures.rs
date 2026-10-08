@@ -693,3 +693,74 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
     // Names only: never the folder they are in.
     assert!(!out.contains("downloads\\") && !out.contains("downloads/"), "{out}");
 }
+
+// ---- components ----
+
+mod component_steps {
+    use crate::common::{component_case, component_run, component_script, pick_a_date_file, COMPONENT_TYPED};
+    use v2_lib::autorun::components::ComponentFile;
+    use v2_lib::autorun::failures::{describe_failures, describe_failures_with};
+
+    const TYPING: &str = "#start cannot be typed into";
+
+    #[test]
+    fn a_failure_inside_a_component_names_the_component_and_its_action() {
+        let run = component_run(vec![component_case(7, TYPING)]);
+        let text = describe_failures_with(&run, &[component_script(7)], &pick_a_date_file());
+        assert!(
+            text.contains(
+                "step 3, Pick a date, action 3: { \"kind\": \"fill\", \"selector\": { \"css\": \"#start\" }, \"value\": \"...\" }\n  page said: #start cannot be typed into"
+            ),
+            "{text}"
+        );
+        // The script's own action after the component lines up with it.
+        assert!(text.contains("step 3, action 5: { \"kind\": \"check_text\", \"value\": \"Saved\" }"), "{text}");
+        assert!(!text.contains("script changed"), "{text}");
+        assert!(!text.contains(COMPONENT_TYPED), "{text}");
+
+        // Without the components (gone, or not read), the action is named
+        // by its component, and the script is still not said to have
+        // changed.
+        for text in [
+            describe_failures(&run, &[component_script(7)]),
+            describe_failures_with(&run, &[component_script(7)], &ComponentFile::default()),
+        ] {
+            assert!(text.contains("step 3, Pick a date, action 3: component:"), "{text}");
+            assert!(text.contains("the component changed since the run"), "{text}");
+            assert!(text.contains("step 3, action 5: { \"kind\": \"check_text\", \"value\": \"Saved\" }"), "{text}");
+            assert!(!text.contains("script changed"), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_component_text_input_is_masked_in_the_failure_report() {
+        // A step whose component could not be used: the use itself is the
+        // failed action, so its JSON is shown.
+        let script: v2_lib::autorun::CaseScript = serde_json::from_value(serde_json::json!({
+            "case_id": 8, "title": "case 8",
+            "steps": [{ "step_number": 1, "actions": [
+                { "kind": "use_component", "component": "Pick a date",
+                  "inputs": { "field": { "css": "#start" }, "day": COMPONENT_TYPED, "count": 42 } },
+                { "kind": "when_visible", "selector": { "css": "#popup" }, "then": [
+                    { "kind": "use_component", "component": "Pick a date",
+                      "inputs": { "field": [{ "css": "#grid" }, { "text": "Row" }], "day": COMPONENT_TYPED } }
+                ] }
+            ] }]
+        }))
+        .unwrap();
+        let mut case = component_case(8, "x");
+        case.steps = serde_json::from_value(serde_json::json!([{ "step_number": 1, "outcomes": [
+            { "ok": false, "detail": "Pick a date is not saved in this project" },
+            { "ok": false, "detail": "#popup showed: Pick a date is not saved in this project" }
+        ] }]))
+        .unwrap();
+        let text = describe_failures_with(&component_run(vec![case]), &[script], &ComponentFile::default());
+        assert!(!text.contains(COMPONENT_TYPED), "{text}");
+        assert!(!text.contains("42"), "{text}");
+        assert!(
+            text.contains("\"inputs\": { \"field\": { \"css\": \"#start\" }, \"day\": \"...\", \"count\": \"...\" }"),
+            "{text}"
+        );
+        assert!(text.contains("\"field\": [{ \"css\": \"#grid\" }, { \"text\": \"Row\" }]"), "{text}");
+    }
+}

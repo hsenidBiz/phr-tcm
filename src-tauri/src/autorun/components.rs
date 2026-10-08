@@ -5,7 +5,7 @@
 //! case and runs of spaces do not tell two names apart.
 
 use super::recipe::project_slug;
-use crate::browser::actions::Action;
+use crate::browser::actions::{Action, ActionOutcome};
 use crate::browser::locator::{has_input_placeholder, LocatorStep, Target};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -368,4 +368,79 @@ pub fn expand_step(
         out.extend(expand_one(&file, a, &mut uses)?);
     }
     Ok((out, uses))
+}
+
+/// What one recorded outcome of a step ran, read back after the run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ran {
+    /// The action, when it can still be named: the script's own, or the
+    /// component's as it expands now. `None` when the script or the
+    /// component has changed since the run.
+    pub action: Option<Action>,
+    /// The component the outcome came from.
+    pub component: Option<String>,
+}
+
+/// A step's recorded `outcomes` paired with the actions that ran them: the
+/// script step's `actions` with each `use_component` expanded the way the
+/// runner expands it, from `file` as it is now. A component that is gone,
+/// or that now expands to a different number of actions than ran, leaves
+/// its outcomes named by their `component` only. A run with no component
+/// outcome pairs by position, as it always has.
+pub fn ran_actions(actions: &[Action], outcomes: &[ActionOutcome], file: &ComponentFile) -> Vec<Ran> {
+    if outcomes.iter().all(|o| o.component.is_none()) {
+        return (0..outcomes.len()).map(|i| Ran { action: actions.get(i).cloned(), component: None }).collect();
+    }
+    let tag = |o: &ActionOutcome| o.component.as_deref().map(key);
+    let mut out: Vec<Ran> = Vec::with_capacity(outcomes.len());
+    let mut script = actions.iter().peekable();
+    while out.len() < outcomes.len() {
+        let j = out.len();
+        let Some(a) = script.next() else {
+            out.push(Ran { action: None, component: outcomes[j].component.clone() });
+            continue;
+        };
+        let Action::UseComponent { component, inputs } = a else {
+            out.push(Ran { action: Some(a.clone()), component: None });
+            continue;
+        };
+        let k = key(component);
+        let ran = outcomes[j..].iter().take_while(|o| tag(o).as_deref() == Some(k.as_str())).count();
+        if ran == 0 {
+            // Not what ran here: the script has changed since the run.
+            continue;
+        }
+        let name = outcomes[j].component.clone();
+        let again = matches!(script.peek(), Some(Action::UseComponent { component: next, .. }) if key(next) == k);
+        let now = find(file, component)
+            .and_then(|c| expand(c, inputs).ok())
+            .filter(|ex| !ex.is_empty() && (ex.len() == ran || (again && ex.len() < ran)));
+        match now {
+            Some(ex) => out.extend(ex.into_iter().map(|a| Ran { action: Some(a), component: name.clone() })),
+            None => out.extend((0..ran).map(|_| Ran { action: None, component: name.clone() })),
+        }
+    }
+    out
+}
+
+/// Every project's components under `root`, for a reader that does not
+/// know the run's project. A name saved in more than one project is left
+/// out, since which one ran cannot be told; a file that does not read is
+/// skipped.
+pub fn load_every_project(root: &Path) -> ComponentFile {
+    let mut seen: BTreeMap<String, Option<Component>> = BTreeMap::new();
+    let files = std::fs::read_dir(root.join("projects")).into_iter().flatten().flatten();
+    for entry in files {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.ends_with("-components.json") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(entry.path()) else { continue };
+        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+        let Ok(file) = serde_json::from_str::<ComponentFile>(text) else { continue };
+        for c in file.components {
+            seen.entry(key(&c.name)).and_modify(|e| *e = None).or_insert(Some(c));
+        }
+    }
+    ComponentFile { components: seen.into_values().flatten().collect() }
 }

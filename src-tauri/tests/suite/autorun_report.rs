@@ -574,3 +574,39 @@ fn build_reads_each_downloads_size_from_the_data_root() {
     let html = build(&run_with_downloads(), &[script_201()], "x", &no_shots);
     assert!(html.contains("Template.xlsx (5.3 KB), errors.csv (no longer on this machine)"), "{html}");
 }
+
+// ---- components ----
+
+#[test]
+fn a_report_of_a_component_step_lines_up() {
+    use crate::common::{component_case, component_run, component_script, pick_a_date_file, COMPONENT_TYPED};
+    use v2_lib::autorun::components::{expand, ComponentFile};
+    use v2_lib::autorun::report::build_with_components;
+    let run = component_run(vec![component_case(7, "#start cannot be typed into")]);
+    let typed = expand(
+        &crate::common::pick_a_date(),
+        serde_json::json!({ "field": { "css": "#start" }, "day": COMPONENT_TYPED }).as_object().unwrap(),
+    )
+    .unwrap();
+    let html = build_with_components(&run, &[component_script(7)], &pick_a_date_file(), "x", &no_shots, &|_| None);
+    assert!(
+        html.contains(&format!("<dt>Action</dt><dd>Pick a date: {}</dd>", v2_lib::autorun::report::esc(&action_words(&typed[1])))),
+        "{html}"
+    );
+    // Every outcome is listed, those the component ran named by it.
+    assert!(html.contains("\u{2713} clicked #new</li>"), "{html}");
+    assert!(html.contains("\u{2713} Pick a date: clicked #start</li>"), "{html}");
+    assert!(html.contains("\u{2717} Pick a date: #start cannot be typed into</li>"), "{html}");
+    assert!(html.contains("\u{2717} page does NOT contain Saved</li>"), "{html}");
+    assert!(!html.contains(COMPONENT_TYPED));
+    assert!(!html.contains("script on this machine has changed"), "{html}");
+
+    // The component no longer there: named by the component, not called a
+    // changed script.
+    let html = build_with_components(&run, &[component_script(7)], &ComponentFile::default(), "x", &no_shots, &|_| None);
+    assert!(
+        html.contains("<dd>Pick a date: action 3 (the component on this machine has changed since the run)</dd>"),
+        "{html}"
+    );
+    assert!(!html.contains("script on this machine has changed"), "{html}");
+}

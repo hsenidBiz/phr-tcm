@@ -16,6 +16,7 @@
 //! keys, as the run recorded them, never logins. A case's downloads are a
 //! `Downloads:` line of names and sizes: never a link, never the folder.
 
+use super::components::{ran_actions, ComponentFile, Ran};
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::{CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord};
 use crate::browser::actions::{Action, ActionOutcome, DialogAnswer};
@@ -249,7 +250,13 @@ fn stopping_point(case: &CaseRecord) -> Option<(&StepRecord, usize, &ActionOutco
 
 /// The words for the action that stopped a case. The sign-in and the trip
 /// to the module are the runner's own, not the script's.
-fn stopped_action(case: &CaseRecord, step: &StepRecord, index: usize, script: Option<&CaseScript>) -> String {
+fn stopped_action(
+    case: &CaseRecord,
+    step: &StepRecord,
+    index: usize,
+    script: Option<&CaseScript>,
+    components: &ComponentFile,
+) -> String {
     match step.step_number {
         SIGN_IN_STEP => match &case.account {
             Some(a) => format!("sign in as {a}"),
@@ -258,15 +265,23 @@ fn stopped_action(case: &CaseRecord, step: &StepRecord, index: usize, script: Op
         MODULE_STEP => "go to the case's module".to_string(),
         n => match script {
             None => "(the script for this case is no longer on this machine)".to_string(),
-            Some(s) => s
-                .steps
-                .iter()
-                .find(|st| st.step_number == n)
-                .and_then(|st| st.actions.get(index))
-                .map(action_words)
-                .unwrap_or_else(|| {
-                    format!("action {} (the script on this machine has changed since the run)", index + 1)
-                }),
+            // Paired with what ran, a component's actions expanded.
+            Some(s) => {
+                let ran = s
+                    .steps
+                    .iter()
+                    .find(|st| st.step_number == n)
+                    .map(|st| ran_actions(&st.actions, &step.outcomes, components))
+                    .unwrap_or_default();
+                match ran.get(index) {
+                    Some(Ran { action: Some(a), component: Some(c) }) => format!("{c}: {}", action_words(a)),
+                    Some(Ran { action: Some(a), component: None }) => action_words(a),
+                    Some(Ran { action: None, component: Some(c) }) => {
+                        format!("{c}: action {} (the component on this machine has changed since the run)", index + 1)
+                    }
+                    _ => format!("action {} (the script on this machine has changed since the run)", index + 1),
+                }
+            }
         },
     }
 }
@@ -301,7 +316,7 @@ fn picture(name: &str, alt: &str, exists: &dyn Fn(&str) -> bool) -> String {
 /// The "step that stopped it" summary at the top of a Failed or Blocked
 /// case's section: why, the step and action in words, the page's message.
 /// Its pictures are not repeated here - the step list below shows them.
-fn stopped_summary(case: &CaseRecord, script: Option<&CaseScript>) -> String {
+fn stopped_summary(case: &CaseRecord, script: Option<&CaseScript>, components: &ComponentFile) -> String {
     let mut h = String::new();
     if !case.reason.is_empty() {
         h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc(&scrub_urls(&case.reason))));
@@ -312,7 +327,7 @@ fn stopped_summary(case: &CaseRecord, script: Option<&CaseScript>) -> String {
             h.push_str(&format!("<dt>Stopped at</dt><dd>{}</dd>", esc(&step_label(step.step_number))));
             h.push_str(&format!(
                 "<dt>Action</dt><dd>{}</dd>",
-                esc(&stopped_action(case, step, index, script))
+                esc(&stopped_action(case, step, index, script, components))
             ));
             h.push_str(&format!("<dt>Message</dt><dd>{}</dd>", esc(&scrub_urls(&outcome.detail))));
             h.push_str("</dl>");
@@ -344,7 +359,9 @@ fn steps_block(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> String {
             h.push_str("<ul class=\"actions\">");
             for o in &step.outcomes {
                 let (class, mark) = if o.ok { ("ok", "\u{2713}") } else { ("bad", "\u{2717}") };
-                h.push_str(&format!("<li class=\"{class}\">{mark} {}</li>", esc(&scrub_urls(&o.detail))));
+                // An action a component ran says which component.
+                let from = o.component.as_deref().map(|c| format!("{}: ", esc(c))).unwrap_or_default();
+                h.push_str(&format!("<li class=\"{class}\">{mark} {from}{}</li>", esc(&scrub_urls(&o.detail))));
             }
             h.push_str("</ul>");
         }
@@ -395,6 +412,7 @@ fn downloads_line(case: &CaseRecord, size_of: &dyn Fn(&str) -> Option<u64>) -> S
 fn case_section(
     case: &CaseRecord,
     script: Option<&CaseScript>,
+    components: &ComponentFile,
     exists: &dyn Fn(&str) -> bool,
     size_of: &dyn Fn(&str) -> Option<u64>,
 ) -> String {
@@ -416,7 +434,7 @@ fn case_section(
         css_key(b)
     ));
     if matches!(b, "Failed" | "Blocked") {
-        h.push_str(&stopped_summary(case, script));
+        h.push_str(&stopped_summary(case, script, components));
     } else if !case.reason.is_empty() {
         h.push_str(&format!("<p><strong>Why:</strong> {}</p>", esc(&scrub_urls(&case.reason))));
     }
@@ -521,6 +539,20 @@ pub fn build_with_downloads(
     exists: &dyn Fn(&str) -> bool,
     size_of: &dyn Fn(&str) -> Option<u64>,
 ) -> String {
+    build_with_components(run, scripts, &ComponentFile::default(), ran_at, exists, size_of)
+}
+
+/// [`build_with_downloads`], with the components the run's scripts use:
+/// an action a component ran is named as it expands from them, and by its
+/// component only when it no longer does.
+pub fn build_with_components(
+    run: &LocalRun,
+    scripts: &[CaseScript],
+    components: &ComponentFile,
+    ran_at: &str,
+    exists: &dyn Fn(&str) -> bool,
+    size_of: &dyn Fn(&str) -> Option<u64>,
+) -> String {
     let script_for = |id: i32| scripts.iter().find(|s| s.case_id == id);
     let when = if ran_at.trim().is_empty() { utc_time(&run.started_at) } else { ran_at.trim().to_string() };
     let mode = if run.mode == "unattended" { "Unattended" } else { "Supervised" };
@@ -593,7 +625,7 @@ pub fn build_with_downloads(
             for line in resets_before(run, case.case_id) {
                 h.push_str(&format!("<p class=\"reset\">{line}</p>"));
             }
-            h.push_str(&case_section(case, script_for(case.case_id), exists, size_of));
+            h.push_str(&case_section(case, script_for(case.case_id), components, exists, size_of));
         }
     }
 
