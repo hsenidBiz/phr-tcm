@@ -1,5 +1,5 @@
 import { Minus, Square, X } from "lucide-react";
-import { useCallback, useLayoutEffect } from "react";
+import { useCallback, useLayoutEffect, type ReactNode } from "react";
 import { TITLE_BAR_HEIGHT, TITLE_BAR_VAR } from "../lib/titleBar";
 import BetaPill from "./BetaPill";
 import EnvironmentPill from "./EnvironmentPill";
@@ -10,17 +10,21 @@ import FlaskLogo from "./FlaskLogo";
  * draws its own drag header. `beta`
  * puts the Beta pill after the title, so a beta build says so on every
  * screen. `environment` is the active environment's name, passed only when
- * there is more than one. */
+ * there is more than one. `status` is a clickable pill after those (the
+ * unattended run's, see RunPill): outside the drag group, which lets
+ * clicks through to the bar, so it can take its own. */
 export default function TitleBar({
   title,
   compact = false,
   beta = false,
   environment = null,
+  status = null,
 }: {
   title: string;
   compact?: boolean;
   beta?: boolean;
   environment?: string | null;
+  status?: ReactNode;
 }) {
   const win = useCallback(async () => {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -52,6 +56,7 @@ export default function TitleBar({
         {beta && <BetaPill />}
         {environment && <EnvironmentPill name={environment} />}
       </span>
+      {status}
       <div className="ml-auto flex h-full">
         <button
           aria-label="Minimize"

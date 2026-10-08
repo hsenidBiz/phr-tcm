@@ -8,6 +8,7 @@ import { commands, type LocalRun_Serialize } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
+import { RUN_GOING_REASON, useRunGoing } from "../../lib/backgroundRun";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
@@ -77,6 +78,8 @@ export default function PastRuns({
   onFilterChange: (f: ResultFilter) => void;
 }) {
   const queryClient = useQueryClient();
+  /** One run at a time: Replay to step waits for an unattended run going. */
+  const runGoing = useRunGoing();
   // "Clear results" lives here, beside the runs it clears, so it reads the
   // count straight off this query. The screen's Past runs tab reads the
   // same query for its count. That second subscriber once shifted render
@@ -255,6 +258,9 @@ export default function PastRuns({
                               size="sm"
                               variant="outline"
                               aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
+                              className="disabled:pointer-events-auto"
+                              disabled={runGoing}
+                              title={runGoing ? RUN_GOING_REASON : undefined}
                               onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
                             >
                               Replay to step {replayTo}

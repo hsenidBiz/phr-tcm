@@ -2,37 +2,44 @@
 //
 // The invariant under test: `auto_run_replay` is one call for the whole
 // selection, progress arrives as events keyed to the run it belongs to, and
-// the dialog cannot be walked away from while a run is actually going -
-// only Stop ends it.
+// walking away from the dialog while a run is going sends the run to the
+// background - only Stop ends it. The run lives in lib/backgroundRun; the
+// dialog is a view of it.
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { backgroundRunSnapshot, openRunSetup, resetBackgroundRun } from "../../lib/backgroundRun";
 import ReplayPane, { statusOf } from "./ReplayPane";
 
 afterEach(() => {
+  resetBackgroundRun();
   clearMocks();
   localStorage.clear();
   vi.restoreAllMocks();
 });
 
-function renderPane(
-  cases: { id: number; title: string; steps?: { action: string; expected: string }[] }[],
-  overrides: { onClose?: () => void; onFinished?: (runId: string) => void } = {},
-) {
-  const onClose = overrides.onClose ?? vi.fn();
-  const onFinished = overrides.onFinished ?? vi.fn();
-  render(
-    <ReplayPane
-      org="acme"
-      project="Web"
-      pbiId={42}
-      cases={cases}
-      onClose={onClose}
-      onFinished={onFinished}
-    />,
-  );
-  return { onClose, onFinished };
+type PaneCase = { id: number; title: string; module?: string; steps?: { action: string; expected: string }[] };
+
+/** Opens the run window on its setup for `cases`, the way the Auto Run
+ * screen's Run N unattended does, and mounts it. Any earlier run in the
+ * store is forgotten first, so each mount starts from a fresh setup. */
+function mountPane(cases: PaneCase[], plan: never | null = null) {
+  resetBackgroundRun();
+  act(() => {
+    openRunSetup({
+      org: "acme",
+      project: "Web",
+      pbi: { id: 42, title: "Login work", work_item_type: "Product Backlog Item" },
+      cases,
+      plan,
+    });
+  });
+  return render(<ReplayPane />);
+}
+
+function renderPane(cases: PaneCase[]) {
+  return mountPane(cases);
 }
 
 /** A payload for one `replay-progress` event, with sane defaults for the
@@ -121,16 +128,7 @@ test("the run is told Database Read Access is off, so it checks no precondition"
     },
     { shouldMockEvents: true },
   );
-  render(
-    <ReplayPane
-      org="acme"
-      project="Web"
-      pbiId={42}
-      cases={[{ id: 1, title: "A" }]}
-      onClose={vi.fn()}
-      onFinished={vi.fn()}
-    />,
-  );
+  mountPane([{ id: 1, title: "A" }]);
   fireEvent.click(await screen.findByRole("button", { name: "Start" }));
   await waitFor(() => expect(calls).toEqual([expect.objectContaining({ dbReadAccess: false })]));
 });
@@ -148,16 +146,7 @@ test("retrying transient failures is on by default and a remembered choice", asy
     { shouldMockEvents: true },
   );
 
-  const { unmount } = render(
-    <ReplayPane
-      org="acme"
-      project="Web"
-      pbiId={42}
-      cases={[{ id: 1, title: "A" }]}
-      onClose={vi.fn()}
-      onFinished={vi.fn()}
-    />,
-  );
+  const { unmount } = mountPane([{ id: 1, title: "A" }]);
 
   const option = await screen.findByRole("checkbox", { name: "Retry transient failures once" });
   expect(option).toHaveAttribute("aria-checked", "true");
@@ -168,16 +157,7 @@ test("retrying transient failures is on by default and a remembered choice", asy
   expect(localStorage.getItem("tcm-v2-autorun-retry-transient")).toBe("0");
   unmount();
 
-  render(
-    <ReplayPane
-      org="acme"
-      project="Web"
-      pbiId={42}
-      cases={[{ id: 1, title: "A" }]}
-      onClose={vi.fn()}
-      onFinished={vi.fn()}
-    />,
-  );
+  mountPane([{ id: 1, title: "A" }]);
   expect(
     await screen.findByRole("checkbox", { name: "Retry transient failures once" }),
   ).toHaveAttribute("aria-checked", "false");
@@ -196,16 +176,7 @@ test("watching is a remembered choice", async () => {
     { shouldMockEvents: true },
   );
 
-  const { unmount } = render(
-    <ReplayPane
-      org="acme"
-      project="Web"
-      pbiId={42}
-      cases={[{ id: 1, title: "A" }]}
-      onClose={vi.fn()}
-      onFinished={vi.fn()}
-    />,
-  );
+  const { unmount } = mountPane([{ id: 1, title: "A" }]);
 
   fireEvent.click(await screen.findByRole("checkbox", { name: "Watch the browser" }));
   fireEvent.click(screen.getByRole("button", { name: "Start" }));
@@ -214,16 +185,7 @@ test("watching is a remembered choice", async () => {
   expect(localStorage.getItem("tcm-v2-autorun-watch")).toBe("1");
   unmount();
 
-  render(
-    <ReplayPane
-      org="acme"
-      project="Web"
-      pbiId={42}
-      cases={[{ id: 1, title: "A" }]}
-      onClose={vi.fn()}
-      onFinished={vi.fn()}
-    />,
-  );
+  mountPane([{ id: 1, title: "A" }]);
   expect(await screen.findByRole("checkbox", { name: "Watch the browser" })).toHaveAttribute(
     "aria-checked",
     "true",
@@ -244,7 +206,7 @@ test("progress moves the rows and the finished run is handed on", async () => {
     { shouldMockEvents: true },
   );
 
-  const { onFinished } = renderPane([
+  renderPane([
     { id: 1, title: "Case A" },
     { id: 2, title: "Case B" },
   ]);
@@ -290,7 +252,9 @@ test("progress moves the rows and the finished run is handed on", async () => {
     resolveReplay({ id: "run-9" });
     await Promise.resolve();
   });
-  expect(onFinished).toHaveBeenCalledWith("run-9");
+  // Its window was open: the finished run goes straight to its review.
+  expect(backgroundRunSnapshot().review).toEqual(expect.objectContaining({ runId: "run-9", toPastRuns: false }));
+  expect(backgroundRunSnapshot().run).toBeNull();
 });
 
 test("progress for another run is ignored", async () => {
@@ -324,7 +288,7 @@ test("progress for another run is ignored", async () => {
   expect(screen.queryByText("Proposed: Passed")).not.toBeInTheDocument();
 });
 
-test("stop asks the run to stop and says so, and the dialog cannot be dismissed meanwhile", async () => {
+test("stop asks the run to stop and says so, and Escape meanwhile sends the run to the background", async () => {
   let cancelCalls = 0;
   mockIPC(
     (cmd) => {
@@ -338,7 +302,7 @@ test("stop asks the run to stop and says so, and the dialog cannot be dismissed 
     { shouldMockEvents: true },
   );
 
-  const { onClose } = renderPane([{ id: 1, title: "Case A" }]);
+  renderPane([{ id: 1, title: "Case A" }]);
   fireEvent.click(await screen.findByRole("button", { name: "Start" }));
 
   fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
@@ -347,7 +311,10 @@ test("stop asks the run to stop and says so, and the dialog cannot be dismissed 
   await waitFor(() => expect(cancelCalls).toBe(1));
 
   fireEvent.keyDown(window, { key: "Escape" });
-  expect(onClose).not.toHaveBeenCalled();
+  // The window goes; the run, still stopping, does not.
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Unattended run" })).not.toBeInTheDocument());
+  expect(backgroundRunSnapshot().run).toEqual(expect.objectContaining({ phase: "running", open: false, stopping: true }));
+  expect(cancelCalls).toBe(1);
 });
 
 test("a run that cannot start says why and lets the person try again", async () => {
@@ -365,14 +332,14 @@ test("a run that cannot start says why and lets the person try again", async () 
     { shouldMockEvents: true },
   );
 
-  const { onFinished } = renderPane([{ id: 1, title: "Case A" }]);
+  renderPane([{ id: 1, title: "Case A" }]);
   fireEvent.click(await screen.findByRole("button", { name: "Start" }));
 
   expect(
     await screen.findByText("an unattended run is already going - wait for it, or stop it first"),
   ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Start" })).toBeEnabled();
-  expect(onFinished).not.toHaveBeenCalled();
+  expect(backgroundRunSnapshot().review).toBeNull();
 });
 
 const ACCOUNTS = [{ key: "hr.admin", label: "HR Admin", username: "kim", password: "p" }];
@@ -390,16 +357,7 @@ function mountForAccount(calls: unknown[], asked: string[] = []) {
     },
     { shouldMockEvents: true },
   );
-  return render(
-    <ReplayPane
-      org="acme"
-      project="Web"
-      pbiId={42}
-      cases={[{ id: 1, title: "A", module: " Leave " }]}
-      onClose={vi.fn()}
-      onFinished={vi.fn()}
-    />,
-  );
+  return mountPane([{ id: 1, title: "A", module: " Leave " }]);
 }
 
 test("the account for the run is remembered per project and sent with each case's module", async () => {
@@ -803,20 +761,10 @@ const planOf = (phases: number[][], resets: unknown[]) =>
 
 test("with more than one phase the dialog lists the phases and the reset line", async () => {
   mockIPC(() => null, { shouldMockEvents: true });
-  render(
-    <ReplayPane
-      org="acme"
-      project="Web"
-      pbiId={42}
-      cases={[
+  mountPane([
         { id: 1, title: "Publish the cycle" },
         { id: 2, title: "Open the report" },
-      ]}
-      plan={planOf([[1], [2]], [{ before_case_id: 2, names: ["Cycle"], changed_by: [["Cycle", [1]]] }])}
-      onClose={vi.fn()}
-      onFinished={vi.fn()}
-    />,
-  );
+      ], planOf([[1], [2]], [{ before_case_id: 2, names: ["Cycle"], changed_by: [["Cycle", [1]]] }]));
   const plan = await screen.findByLabelText("Run plan");
   expect(within(plan).getByText("Phase 1: 1 case")).toBeInTheDocument();
   expect(within(plan).getByText("Phase 2: 1 case")).toBeInTheDocument();
@@ -827,17 +775,7 @@ test("with more than one phase the dialog lists the phases and the reset line", 
 
 test("with one phase the dialog shows nothing extra", async () => {
   mockIPC(() => null, { shouldMockEvents: true });
-  render(
-    <ReplayPane
-      org="acme"
-      project="Web"
-      pbiId={42}
-      cases={[{ id: 1, title: "A" }, { id: 2, title: "B" }]}
-      plan={planOf([[1, 2]], [])}
-      onClose={vi.fn()}
-      onFinished={vi.fn()}
-    />,
-  );
+  mountPane([{ id: 1, title: "A" }, { id: 2, title: "B" }], planOf([[1, 2]], []));
   await screen.findByRole("button", { name: "Start" });
   expect(screen.queryByLabelText("Run plan")).not.toBeInTheDocument();
   expect(screen.queryByText(/Phase \d/)).not.toBeInTheDocument();
@@ -931,4 +869,54 @@ test("a reset point of another run is not shown", async () => {
     });
   });
   expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument();
+});
+
+// ---- the run outlives its window ----
+
+test("Run in background sits left of Stop, closes the window, and the run carries on", async () => {
+  mockIPC((cmd) => (cmd === "auto_run_replay" ? new Promise(() => {}) : null), { shouldMockEvents: true });
+  renderPane([{ id: 1, title: "Case A" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+  const background = await screen.findByRole("button", { name: "Run in background" });
+  const stop = screen.getByRole("button", { name: "Stop" });
+  // Leaving on the left, ending on the right.
+  expect(background.compareDocumentPosition(stop) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+  fireEvent.click(background);
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Unattended run" })).not.toBeInTheDocument());
+  expect(backgroundRunSnapshot().run).toEqual(expect.objectContaining({ phase: "running", open: false }));
+
+  // Progress still lands in the store while the window is shut.
+  const { emit } = await import("@tauri-apps/api/event");
+  await act(async () => {
+    await emit("replay-progress", progress({ phase: "step", step_number: 1 }));
+  });
+  expect(backgroundRunSnapshot().run?.rows[1]).toBe("Step 1 of 1");
+});
+
+test("Escape while a run goes sends it to the background rather than doing nothing", async () => {
+  let cancels = 0;
+  mockIPC(
+    (cmd) => {
+      if (cmd === "auto_run_replay") return new Promise(() => {});
+      if (cmd === "auto_run_replay_cancel") cancels += 1;
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  renderPane([{ id: 1, title: "Case A" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+  await screen.findByRole("button", { name: "Run in background" });
+  fireEvent.keyDown(window, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Unattended run" })).not.toBeInTheDocument());
+  expect(backgroundRunSnapshot().run).toEqual(expect.objectContaining({ phase: "running", open: false, stopping: false }));
+  expect(cancels).toBe(0);
+});
+
+test("Escape on the setup still cancels it", async () => {
+  mockIPC(() => null, { shouldMockEvents: true });
+  renderPane([{ id: 1, title: "Case A" }]);
+  await screen.findByRole("button", { name: "Start" });
+  fireEvent.keyDown(window, { key: "Escape" });
+  await waitFor(() => expect(backgroundRunSnapshot().run).toBeNull());
 });

@@ -10,7 +10,9 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { Profiler } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "../../lib/toast";
+import { resetBackgroundRun } from "../../lib/backgroundRun";
 import AutoRun from "./index";
+import ReplayPane from "./ReplayPane";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
 
@@ -18,6 +20,7 @@ vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), w
 let savedRecipe: unknown = null;
 
 afterEach(() => {
+  resetBackgroundRun();
   savedRecipe = null;
   clearMocks();
   localStorage.clear();
@@ -100,6 +103,8 @@ function renderScreen() {
   const view = render(
     <QueryClientProvider client={qc}>
       <AutoRun org="acme" project="proj" pbi={pbi as never} />
+      {/* The unattended run's window, mounted beside the screen as App does. */}
+      <ReplayPane />
     </QueryClientProvider>,
   );
   openTab("Test cases");

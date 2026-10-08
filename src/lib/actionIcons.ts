@@ -114,6 +114,9 @@ export {
   ChevronDown as IconHideDetails,
   // Returning to the case running now after scrolling the list away.
   LocateFixed as IconFollowRun,
+  // Closing an unattended run's window while the run carries on: the
+  // window shrinks away, and the title bar's pill brings it back.
+  Minimize2 as IconRunInBackground,
   // The mark beside a step the run has already carried out.
   Check as IconStepDone,
 

@@ -16,6 +16,7 @@ import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
 import { Textarea } from "../../components/ui/input";
+import { RUN_GOING_REASON, useRunGoing } from "../../lib/backgroundRun";
 import { cn } from "../../lib/cn";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
@@ -91,6 +92,8 @@ export default function RunReview(props: {
   onReplay?: (caseId: number, title: string, step: number) => void;
 }) {
   const { runId, onClose, onReplay } = props;
+  /** One run at a time: Replay to step waits for an unattended run going. */
+  const runGoing = useRunGoing();
   const queryClient = useQueryClient();
 
   const query = useQuery<LocalRun_Serialize | null>({
@@ -384,6 +387,9 @@ export default function RunReview(props: {
                       size="sm"
                       variant="outline"
                       aria-label={`Replay to step ${replayTo} for case ${c.case_id}`}
+                      className="disabled:pointer-events-auto"
+                      disabled={runGoing}
+                      title={runGoing ? RUN_GOING_REASON : undefined}
                       onClick={() => onReplay?.(c.case_id, c.title, replayTo)}
                     >
                       Replay to step {replayTo}

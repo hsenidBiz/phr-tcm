@@ -33,6 +33,15 @@ import {
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "../../lib/toast";
 import { logUi } from "../../lib/uiLog";
+import {
+  RUN_GOING_REASON,
+  cancelRunSetup,
+  clearReviewRequest,
+  onRunEnded,
+  openRunSetup,
+  runIsGoing,
+  useBackgroundRun,
+} from "../../lib/backgroundRun";
 import { Modal } from "../../components/ui/modal";
 import CaseCard from "./CaseCard";
 import CaseSearch, { matchesSearch } from "./CaseSearch";
@@ -41,7 +50,6 @@ import ResetNeededPanel from "./ResetNeededPanel";
 import { fetchPlan } from "./plan";
 import PastRuns from "./PastRuns";
 import ReadinessStrip from "./ReadinessStrip";
-import ReplayPane from "./ReplayPane";
 import RunPane from "./RunPane";
 import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
@@ -254,24 +262,24 @@ export default function AutoRun({
   });
   /** The case ids queued for a run. `null` means no run is open. */
   const [running, setRunning] = useState<number[] | null>(null);
-  /** The case ids queued for an UNATTENDED run. Its own state, separate
-   * from `running` - the two panes are never open at once (both come from
-   * the same selection dock), but they are different flows with different
-   * dialogs. */
-  const [replaying, setReplaying] = useState<number[] | null>(null);
-  /** The plan the unattended run dialog shows: phases and reset points. */
-  const [replayPlan, setReplayPlan] = useState<PlanView | null>(null);
+  /** The unattended run lives in lib/backgroundRun, not here: it outlives
+   * this screen. Its window is mounted at App level. */
+  const background = useBackgroundRun();
+  /** One run at a time: while the store holds a run going (or paused at a
+   * reset point), every Run button here waits for it. */
+  const runGoing = runIsGoing(background);
   /** The plan the supervised pane pauses by at each reset point. */
   const [runPlan, setRunPlan] = useState<PlanView | null>(null);
-  /** An unattended run paused at a reset point while its own dialog is not
-   * open: the person left Auto Run (a shortcut or the palette navigates
-   * even over a dialog) and came back, or the pause came while away. The
-   * run waits with no time limit, so it is found again here. */
+  /** An unattended run paused at a reset point that the store does not
+   * know: one this app did not start in this session (the window was
+   * reloaded while it ran). A run the store holds has its pause shown by
+   * its own window, reopened from the title-bar pill, so this stands
+   * aside for it and the two never show at once. The run waits with no
+   * time limit, so it is found again here. */
   const [waitingReset, setWaitingReset] = useState<AutorunResetNeeded | null>(null);
   const [answeringReset, setAnsweringReset] = useState(false);
   useEffect(() => {
-    // The run's own dialog shows the panel while it is open.
-    if (replaying != null) {
+    if (runGoing) {
       setWaitingReset(null);
       return;
     }
@@ -289,7 +297,7 @@ export default function AutoRun({
       live = false;
       un.then((f) => f()).catch(() => {});
     };
-  }, [replaying]);
+  }, [runGoing]);
   const answerWaitingReset = async (continueRun: boolean) => {
     if (!waitingReset) return;
     setAnsweringReset(true);
@@ -305,14 +313,16 @@ export default function AutoRun({
   /** The Execution order dialog, with the cases it orders. */
   const [orderingOpen, setOrderingOpen] = useState(false);
   /** The run id under review, or null while no review dialog is open. An
-   * unattended run opens straight into this once it finishes - see
-   * ReplayPane's `onFinished` below. */
+   * unattended run opens straight into this once it finishes - see the
+   * review request below. */
   const [reviewing, setReviewing] = useState<string | null>(null);
   /** Replay to step N, pressed in Past runs or the review: the supervised
    * pane opens on the case (`running`) and replays it up to `step`. The
    * title is the run's, for a case no longer listed under this PBI. */
   const [replayTo, setReplayTo] = useState<{ caseId: number; title: string; step: number } | null>(null);
   const replayCase = (caseId: number, title: string, step: number) => {
+    // One run at a time: the buttons say so, and this is the backstop.
+    if (runIsGoing()) return;
     // The review is a dialog of its own: closing it leaves the pane in front.
     setReviewing(null);
     setReplayTo({ caseId, title, step });
@@ -320,6 +330,31 @@ export default function AutoRun({
   };
   /** Ticked cases, by id. A bulk run is these, in list order. */
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // A finished unattended run has run the selection, whether its window was
+  // open or not: leaving it ticked invites a second run of cases that were
+  // just decided.
+  useEffect(
+    () =>
+      onRunEnded((e) => {
+        if (e.ok) setSelected(new Set());
+      }),
+    [],
+  );
+  /** A finished run's review, handed over by the store: straight into it
+   * when its window was open at the finish, and on Past runs when the
+   * person pressed Review on the pill or the toast. App has already brought
+   * the screen to the run's PBI. */
+  const reviewRequest = background.review;
+  useEffect(() => {
+    if (!reviewRequest || !pbi || reviewRequest.pbi.id !== pbi.id || reviewRequest.org !== org) return;
+    clearReviewRequest();
+    if (reviewRequest.toPastRuns) setTab("runs");
+    setReviewing(reviewRequest.runId);
+  }, [reviewRequest, pbi, org]);
+  // A run window still on its setup belongs to the PBI it was opened for:
+  // another PBI, or leaving the screen, cancels it. A run that started
+  // carries on.
+  useEffect(() => () => cancelRunSetup(), [pbi?.id]);
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-autorun-group") === "on",
   );
@@ -511,8 +546,11 @@ export default function AutoRun({
         setRunPlan(plan);
         setRunning(order);
       } else {
-        setReplayPlan(plan);
-        setReplaying(order);
+        const picked = order
+          .map((id) => rows.find((x) => x.id === id))
+          .filter((c): c is (typeof rows)[number] => Boolean(c))
+          .map((c) => ({ id: c.id, title: c.title, module: c.module_value, steps: c.steps }));
+        if (picked.length > 0) openRunSetup({ org, project, pbi, cases: picked, plan });
       }
     } catch (e) {
       // The raw error goes to the app log; the person gets a sentence.
@@ -543,7 +581,9 @@ export default function AutoRun({
         open={openHere.has(c.id)}
         onToggleOpen={() => toggleCard(c.id)}
         onEdit={() => setEditing(c.id)}
-        onRun={() => setRunning([c.id])}
+        onRun={() => {
+          if (!runIsGoing()) setRunning([c.id]);
+        }}
         confirmingClear={confirmingClear === c.id}
         onAskClear={() => setConfirmingClear(c.id)}
         onClearDone={() => setConfirmingClear(null)}
@@ -809,10 +849,15 @@ export default function AutoRun({
                       <>
                         {/* No "N cases selected" text - the count is already in the
                             button's own label, same as Run Tests' floating pill. */}
+                        {/* One run at a time, said in words beside the
+                            buttons it holds back, not only in a title. */}
+                        {runGoing && <span className="text-xs text-muted">A run is already going</span>}
                         <Button
                           size="sm"
                           tabIndex={floating ? -1 : undefined}
-                          disabled={planning}
+                          className="disabled:pointer-events-auto"
+                          disabled={planning || runGoing}
+                          title={runGoing ? RUN_GOING_REASON : undefined}
                           onClick={() => void startPlanned("supervised")}
                         >
                           <IconRun aria-hidden />
@@ -822,7 +867,9 @@ export default function AutoRun({
                           size="sm"
                           variant="outline"
                           tabIndex={floating ? -1 : undefined}
-                          disabled={planning}
+                          className="disabled:pointer-events-auto"
+                          disabled={planning || runGoing}
+                          title={runGoing ? RUN_GOING_REASON : undefined}
                           onClick={() => void startPlanned("unattended")}
                         >
                           <IconUnattended aria-hidden />
@@ -983,7 +1030,7 @@ export default function AutoRun({
           );
         })()}
 
-      {waitingReset && replaying == null && (
+      {waitingReset && !runGoing && (
         // Only Continue or Stop ends the pause: the run waits for one.
         <Modal onClose={() => {}} label="Reset needed" className="w-full max-w-2xl p-4">
           <ResetNeededPanel
@@ -996,40 +1043,6 @@ export default function AutoRun({
           />
         </Modal>
       )}
-
-      {replaying != null &&
-        (() => {
-          const picked = replaying
-            .map((id) => rows.find((x) => x.id === id))
-            .filter((c): c is (typeof rows)[number] => Boolean(c))
-            .map((c) => ({ id: c.id, title: c.title, module: c.module_value, steps: c.steps }));
-          if (picked.length === 0) return null;
-          return (
-            <ReplayPane
-              org={org}
-              project={project}
-              pbiId={pbi.id}
-              cases={picked}
-              plan={replayPlan}
-              onClose={() => setReplaying(null)}
-              onFinished={(runId) => {
-                setReplaying(null);
-                // Same reasoning as the supervised pane's onClose - the
-                // selection has been run, so leaving it ticked invites a
-                // second run of cases that were just decided.
-                setSelected(new Set());
-                void queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
-                // A run that passes a marked step clears the mark on disk;
-                // the rows read each script through their own query.
-                void queryClient.invalidateQueries({ queryKey: ["autorun-script"] });
-                // Straight into its review rather than a toast pointing at
-                // Past runs - every case is still unconfirmed at this point,
-                // so there is nothing useful to do with this run BUT review it.
-                setReviewing(runId);
-              }}
-            />
-          );
-        })()}
 
       {reviewing != null && (
         <RunReview
