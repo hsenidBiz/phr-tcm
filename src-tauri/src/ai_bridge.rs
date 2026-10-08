@@ -1666,14 +1666,15 @@ pub async fn supervised_page(organization: &str, project: &str, limit: usize) ->
 /// (`autorun::discovery_map`): the project, the area it belongs to (`None`
 /// is the unattributed bucket), and whether a discovery is under way - in
 /// which case a page read stamps the area explored by `account`, an account
-/// KEY, never a login.
+/// KEY, never a login, and replaces what the map held for that page.
 pub struct Sighting {
     pub root: std::path::PathBuf,
     pub org: String,
     pub project: String,
     pub area: Option<String>,
     pub account: Option<String>,
-    pub discovering: bool,
+    /// When the discovery under way started, or `None` outside one.
+    pub discovering: Option<u64>,
 }
 
 /// The area a recording belongs to: the discovery's own area, else the area
@@ -1729,7 +1730,7 @@ pub fn discovery_sighting(
     Some(Sighting {
         area: recording_area(root, discovery.and_then(|s| s.area.as_deref()), tabs_case),
         account: discovery.and_then(|s| s.account.clone()).or_else(|| signed_in.map(str::to_string)),
-        discovering: discovery.is_some(),
+        discovering: discovery.map(|s| s.started_at),
         root: root.to_path_buf(),
         org: organization.to_string(),
         project: project.to_string(),
@@ -2220,11 +2221,14 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
             Ok(out) => {
                 let area =
                     named(area).map(|a| crate::autorun::discovery_map::canonical_area(root, organization, project, &a));
-                *p.discovery = Some(crate::commands::autorun::DiscoveryState { area, account: Some(key.to_string()) });
+                let started_at =
+                    p.discovery.as_ref().map_or_else(crate::autorun::sessions::now_ms, |s| s.started_at);
+                *p.discovery =
+                    Some(crate::commands::autorun::DiscoveryState { area, account: Some(key.to_string()), started_at });
                 // The landing page is filed, but does not mark the area
                 // explored: nothing of the area itself has been seen yet.
                 let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref())
-                    .map(|at| Sighting { discovering: false, ..at });
+                    .map(|at| Sighting { discovering: None, ..at });
                 let (status, page) = read_page(p.driver, crate::browser::snapshot::DEFAULT_LIMIT, at.as_ref()).await;
                 let (path, _) = current_page(p.driver).await;
                 let mut answer = serde_json::json!({
@@ -2927,7 +2931,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
             project: project.to_string(),
             area: recording_area(root, discovery_area, Some(case_id)),
             account: None,
-            discovering: false,
+            discovering: None,
         };
         record_matched_targets(&at, &started_on, &matched);
     }

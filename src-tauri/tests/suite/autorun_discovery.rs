@@ -113,11 +113,11 @@ fn slot(d: ScriptedDriver, discovery: Option<DiscoveryState>) -> (Option<FakeBro
 }
 
 fn opened_for_discovery() -> Option<DiscoveryState> {
-    Some(DiscoveryState { area: None, account: None })
+    Some(DiscoveryState { area: None, account: None, started_at: 1 })
 }
 
 fn exploring(area: &str) -> Option<DiscoveryState> {
-    Some(DiscoveryState { area: Some(area.to_string()), account: Some("admin".to_string()) })
+    Some(DiscoveryState { area: Some(area.to_string()), account: Some("admin".to_string()), started_at: 1 })
 }
 
 fn mapped_area(root: &std::path::Path, area: &str) -> Option<AreaMap> {
@@ -484,10 +484,10 @@ async fn end_is_idempotent() {
 #[tokio::test]
 async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
     let dir = TempDir::new();
-    let state = DiscoveryState { area: Some("Leave".into()), account: Some("admin".into()) };
+    let state = DiscoveryState { area: Some("Leave".into()), account: Some("admin".into()), started_at: 1 };
     let at = discovery_sighting(dir.path(), ORG, PROJECT, Some(&state), None, Some("manager"))
         .expect("a project is chosen, so there is somewhere to file it");
-    assert!(at.discovering);
+    assert!(at.discovering.is_some());
     let (status, text) = read_page(&mut signin_app(true), DEFAULT_LIMIT, Some(&at)).await;
     assert_eq!(status, 200, "{text}");
     let area = mapped_area(dir.path(), "Leave").expect("nothing was recorded");
@@ -496,7 +496,7 @@ async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
 
     let other = TempDir::new();
     let at = discovery_sighting(other.path(), ORG, PROJECT, None, None, Some("manager")).unwrap();
-    assert!(!at.discovering);
+    assert!(at.discovering.is_none());
     let (status, _) = read_page(&mut signin_app(true), DEFAULT_LIMIT, Some(&at)).await;
     assert_eq!(status, 200);
     let area = mapped_area(other.path(), "").expect("nothing was recorded");

@@ -41,9 +41,9 @@ fn record_then_load_round_trips() {
         line("dialog", "Confirm"),
         line("heading", "Rates"),
     ];
-    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/leave", "Leave", &lines, Some("hr1"), true, 1000).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/leave", "Leave", &lines, Some("hr1"), Some(1000), 1000).unwrap();
     // Seeing the same lines again adds nothing.
-    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/leave", "Leave", &lines, Some("hr1"), false, 2000).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/leave", "Leave", &lines, Some("hr1"), None, 2000).unwrap();
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
     assert_eq!(map.areas.len(), 1);
     let a = &map.areas[0];
@@ -82,7 +82,7 @@ fn concurrent_recordings_both_survive() {
             std::thread::spawn(move || {
                 for i in 0..10 {
                     let l = vec![line("button", &format!("{name}{i}"))];
-                    record_seen(&root, "Acme", "Web", Some("A"), "/p", "P", &l, None, false, 1).unwrap();
+                    record_seen(&root, "Acme", "Web", Some("A"), "/p", "P", &l, None, None, 1).unwrap();
                 }
             })
         })
@@ -106,7 +106,7 @@ fn the_map_stores_paths_and_locators_only() {
         "Leave",
         &[line("button", "Save")],
         None,
-        true,
+        Some(5),
         5,
     )
     .unwrap();
@@ -124,7 +124,7 @@ fn the_map_stores_paths_and_locators_only() {
 #[test]
 fn stale_after_thirty_days_or_a_failure() {
     let dir = tempfile::tempdir().unwrap();
-    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Go")], None, true, 1000).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Go")], None, Some(1000), 1000).unwrap();
     let a = load_map(dir.path(), "Acme", "Web").unwrap().areas.remove(0);
     assert!(!is_stale(&a, 1000 + STALE_AFTER_MS));
     assert!(is_stale(&a, 1000 + STALE_AFTER_MS + 1));
@@ -143,11 +143,11 @@ fn discovering_clears_failed_since_and_sets_explored_at() {
     let dir = tempfile::tempdir().unwrap();
     mark_failed(dir.path(), "Acme", "Web", "A").unwrap();
     // A plain sighting leaves the failure and the date alone.
-    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Go")], Some("u"), false, 50).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Go")], Some("u"), None, 50).unwrap();
     let a = load_map(dir.path(), "Acme", "Web").unwrap().areas.remove(0);
     assert!(a.failed_since);
     assert_eq!(a.explored_at, None);
-    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Go")], Some("u"), true, 99).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Go")], Some("u"), Some(99), 99).unwrap();
     let a = load_map(dir.path(), "Acme", "Web").unwrap().areas.remove(0);
     assert!(!a.failed_since);
     assert_eq!(a.explored_at, Some(99));
@@ -158,7 +158,7 @@ fn discovering_clears_failed_since_and_sets_explored_at() {
 fn forget_area_removes_only_that_area() {
     let dir = tempfile::tempdir().unwrap();
     for area in ["A", "B"] {
-        record_seen(dir.path(), "Acme", "Web", Some(area), "/p", "P", &[line("button", "Go")], None, true, 1).unwrap();
+        record_seen(dir.path(), "Acme", "Web", Some(area), "/p", "P", &[line("button", "Go")], None, Some(1), 1).unwrap();
     }
     forget_area(dir.path(), "Acme", "Web", "A").unwrap();
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
@@ -181,9 +181,9 @@ fn outcomes_are_capped_at_two_hundred() {
 #[test]
 fn seen_keys_include_the_unattributed_bucket() {
     let dir = tempfile::tempdir().unwrap();
-    record_seen(dir.path(), "Acme", "Web", Some("A"), "/a", "A", &[line("button", "InA")], None, true, 1).unwrap();
-    record_seen(dir.path(), "Acme", "Web", Some("B"), "/b", "B", &[line("button", "InB")], None, true, 1).unwrap();
-    record_seen(dir.path(), "Acme", "Web", None, "/c", "C", &[line("button", "Loose")], None, false, 1).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/a", "A", &[line("button", "InA")], None, Some(1), 1).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("B"), "/b", "B", &[line("button", "InB")], None, Some(1), 1).unwrap();
+    record_seen(dir.path(), "Acme", "Web", None, "/c", "C", &[line("button", "Loose")], None, None, 1).unwrap();
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
     let keys = seen_keys(&map, &["A"]);
     assert!(keys.contains(&role_key("button", "ina")));
@@ -197,7 +197,7 @@ fn seen_keys_include_the_unattributed_bucket() {
 #[test]
 fn matched_links_are_added_once_and_writes_are_kept() {
     let dir = tempfile::tempdir().unwrap();
-    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, true, 1).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(1), 1).unwrap();
     let chain = Target::Chain(vec![
         LocatorStep { role: Some("dialog".into()), name: Some("Confirm".into()), ..LocatorStep::default() },
         LocatorStep { role: Some("button".into()), name: Some("Save".into()), ..LocatorStep::default() },
@@ -231,7 +231,7 @@ fn an_iframe_chain_puts_every_link_in_seen_keys() {
         LocatorStep { role: Some("button".into()), name: Some("Save".into()), ..LocatorStep::default() },
     ]);
     let framed = SnapLine { role: "button".into(), name: "Save".into(), locator: chain, required: false };
-    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[framed, line("button", "Save")], None, true, 1).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[framed, line("button", "Save")], None, Some(1), 1).unwrap();
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
     // The same name in the page and in the frame stays two elements.
     assert_eq!(map.areas[0].pages[0].elements.len(), 2);
@@ -355,14 +355,14 @@ fn recorded_area(root: &std::path::Path, name: &str, module: &str) {
 fn discovering_leave_counts_for_a_script_naming_Leave() {
     let dir = tempfile::tempdir().unwrap();
     recorded_area(dir.path(), "Leave", "HR");
-    record_seen(dir.path(), "Acme", "Web", Some(" leave "), "/hr/leave", "", &[line("button", "Apply")], Some("hr1"), true, 1000)
+    record_seen(dir.path(), "Acme", "Web", Some(" leave "), "/hr/leave", "", &[line("button", "Apply")], Some("hr1"), Some(1000), 1000)
         .unwrap();
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
     assert_eq!(map.areas.iter().map(|a| a.area.as_str()).collect::<Vec<_>>(), ["Leave"]);
     assert!(seen_keys(&map, &["Leave"]).contains(&role_key("button", "apply")));
 
     let bare = tempfile::tempdir().unwrap();
-    record_seen(bare.path(), "Acme", "Web", Some("leave"), "/hr/leave", "", &[line("button", "Apply")], None, true, 1000).unwrap();
+    record_seen(bare.path(), "Acme", "Web", Some("leave"), "/hr/leave", "", &[line("button", "Apply")], None, Some(1000), 1000).unwrap();
     record_matched(bare.path(), "Acme", "Web", Some("LEAVE"), "/hr/leave", &Target::One(LocatorStep {
         role: Some("button".into()),
         name: Some("Cancel".into()),
@@ -386,7 +386,7 @@ fn discovering_leave_counts_for_a_script_naming_Leave() {
 fn a_failed_run_marks_the_area_stale_whatever_its_case() {
     let dir = tempfile::tempdir().unwrap();
     recorded_area(dir.path(), "Leave", "HR");
-    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], Some("hr1"), true, 5)
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], Some("hr1"), Some(5), 5)
         .unwrap();
     saved_script(dir.path(), 7, Some("leave"));
     record_run_evidence(dir.path(), "Acme", "Web", &[run_case(7, "Failed")], 10);
@@ -397,7 +397,7 @@ fn a_failed_run_marks_the_area_stale_whatever_its_case() {
 
     // With no area recorded, an existing entry is still found by its key.
     let bare = tempfile::tempdir().unwrap();
-    record_seen(bare.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], None, true, 5).unwrap();
+    record_seen(bare.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], None, Some(5), 5).unwrap();
     mark_failed(bare.path(), "Acme", "Web", "LEAVE ").unwrap();
     let map = load_map(bare.path(), "Acme", "Web").unwrap();
     assert_eq!(map.areas.len(), 1, "{:?}", map.areas);
@@ -409,7 +409,7 @@ fn a_failed_run_marks_the_area_stale_whatever_its_case() {
 #[test]
 fn a_discovery_with_no_area_marks_nothing_explored() {
     let dir = tempfile::tempdir().unwrap();
-    record_seen(dir.path(), "Acme", "Web", None, "/", "", &[line("link", "Home")], Some("hr1"), true, 5).unwrap();
+    record_seen(dir.path(), "Acme", "Web", None, "/", "", &[line("link", "Home")], Some("hr1"), Some(5), 5).unwrap();
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
     assert_eq!(map.areas[0].area, "");
     assert_eq!(map.areas[0].explored_at, None);
@@ -424,7 +424,7 @@ fn a_damaged_map_names_its_file_and_reset_map_moves_it_aside() {
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(reset_map(dir.path(), "Acme", "Web", 1).unwrap(), None, "no file, nothing to move");
 
-    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], None, true, 5).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], None, Some(5), 5).unwrap();
     let refused = reset_map(dir.path(), "Acme", "Web", 1).unwrap_err();
     assert!(refused.contains("Forget map"), "{refused}");
     assert_eq!(load_map(dir.path(), "Acme", "Web").unwrap().areas.len(), 1, "a readable map was reset");
@@ -445,6 +445,79 @@ fn a_damaged_map_names_its_file_and_reset_map_moves_it_aside() {
     assert_eq!(std::fs::read_to_string(dir.path().join(&aside)).unwrap(), "{ not a map", "the damaged file was not kept");
     assert!(!path.exists());
     assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty());
-    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], None, true, 5).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], None, Some(5), 5).unwrap();
     assert_eq!(load_map(dir.path(), "Acme", "Web").unwrap().areas.len(), 1, "saves work again after the reset");
+}
+
+// ------------------------------------------ exploring again replaces a page
+
+fn names_on(dir: &std::path::Path, path: &str) -> Vec<String> {
+    let map = load_map(dir, "Acme", "Web").unwrap();
+    let page = map.areas.iter().flat_map(|a| a.pages.iter()).find(|p| p.path == path).expect("no such page");
+    page.elements.iter().map(|e| e.name.clone()).collect()
+}
+
+/// A discovery's read of a page is what the page holds now: an element a
+/// later discovery no longer sees is dropped, on that page only.
+#[test]
+fn re_exploring_a_page_drops_what_is_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = [line("button", "Save"), line("button", "Old")];
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &first, None, Some(1000), 1000).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/q", "Q", &[line("button", "Other")], None, Some(1000), 1000).unwrap();
+    let again = [line("button", "Save"), line("link", "New")];
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &again, None, Some(2000), 2000).unwrap();
+    assert_eq!(names_on(dir.path(), "/p"), ["Save", "New"]);
+    assert_eq!(names_on(dir.path(), "/q"), ["Other"], "another page was touched");
+    // A second read in the same discovery replaces what only a read showed.
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("link", "New")], None, Some(2000), 2100).unwrap();
+    assert_eq!(names_on(dir.path(), "/p"), ["New"]);
+}
+
+fn deep() -> Target {
+    Target::One(LocatorStep { role: Some("button".into()), name: Some("Deep".into()), ..LocatorStep::default() })
+}
+
+/// A locator a probe or a try matched in this discovery stays, though the
+/// page read was cut off before it.
+#[test]
+fn a_locator_matched_earlier_in_the_same_discovery_survives_a_re_read() {
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(1000), 1000).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &deep(), 1500).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(1000), 1800).unwrap();
+    assert_eq!(names_on(dir.path(), "/p"), ["Save", "Deep"]);
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let kept = map.areas[0].pages[0].elements.iter().find(|e| e.name == "Deep").unwrap();
+    assert_eq!(kept.seen_at, 1500);
+    // Matching an element a read already holds stamps it, so it survives too.
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &Target::One(LocatorStep {
+        role: Some("button".into()),
+        name: Some("Save".into()),
+        ..LocatorStep::default()
+    }), 1900)
+    .unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[], None, Some(1000), 1950).unwrap();
+    assert_eq!(names_on(dir.path(), "/p"), ["Save", "Deep"]);
+}
+
+#[test]
+fn a_locator_matched_in_an_older_discovery_is_dropped_on_re_read() {
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(1000), 1000).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &deep(), 1500).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(5000), 5000).unwrap();
+    assert_eq!(names_on(dir.path(), "/p"), ["Save"]);
+}
+
+/// A page read while healing or replaying adds what it shows and drops
+/// nothing: it is not a discovery.
+#[test]
+fn healing_reads_only_add() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = [line("button", "Save"), line("button", "Old")];
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &first, None, Some(1000), 1000).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, None, 2000).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("link", "New")], None, None, 3000).unwrap();
+    assert_eq!(names_on(dir.path(), "/p"), ["Save", "Old", "New"]);
 }

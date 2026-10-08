@@ -26,6 +26,7 @@ fn map_with(area: &str, path: &str, links: &[LocatorStep]) -> DiscoveryMap {
             name: l.name.clone().unwrap_or_default(),
             kind: "other".to_string(),
             required: false,
+            seen_at: 0,
         })
         .collect();
     DiscoveryMap {

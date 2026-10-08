@@ -52,6 +52,13 @@ pub struct SeenElement {
     /// `button | field | link | table | dialog | other`, from the role.
     pub kind: String,
     pub required: bool,
+    /// When a probe or a try last matched it on the live page, in
+    /// milliseconds since the epoch; 0 when only a page read showed it. A
+    /// discovery's later read of the page keeps an element it no longer
+    /// shows only when this falls inside that discovery.
+    #[serde(default)]
+    #[specta(type = f64)]
+    pub seen_at: u64,
 }
 
 #[derive(Serialize, Deserialize, specta::Type, Clone, Debug, PartialEq)]
@@ -219,6 +226,13 @@ pub fn path_only(url_or_path: &str) -> String {
     }
 }
 
+/// Files what one read of a page showed. `discovery` is the start of the
+/// discovery under way, or `None` for any other read (a supervised page
+/// read while healing, a replay). A discovery's read replaces the page's
+/// elements with what it showed, keeping only those a probe or a try
+/// matched during this same discovery (`seen_at` at or after its start),
+/// since a long page's read is cut off before its end. Any other read only
+/// adds.
 #[allow(clippy::too_many_arguments)]
 pub fn record_seen(
     root: &Path,
@@ -229,7 +243,7 @@ pub fn record_seen(
     title: &str,
     lines: &[SnapLine],
     account: Option<&str>,
-    discovering: bool,
+    discovery: Option<u64>,
     now: u64,
 ) -> Result<(), String> {
     let path = path_only(page_path);
@@ -238,12 +252,16 @@ pub fn record_seen(
         let a = area_mut(map, &area);
         // Only what a discovery sees in a named area marks that area
         // explored: the bucket for no area is never explored.
-        if discovering && !area.is_empty() {
+        if discovery.is_some() && !area.is_empty() {
             a.explored_at = Some(now);
             a.failed_since = false;
             a.account = account.map(str::to_string);
         }
         let page = page_mut(a, &path, title);
+        let old = match discovery {
+            Some(_) => std::mem::take(&mut page.elements),
+            None => vec![],
+        };
         for line in lines {
             // The last link names the element; earlier links are frames.
             let Some(key) = line.locator.links().last().and_then(LocatorStep::seen_key) else { continue };
@@ -252,6 +270,7 @@ pub fn record_seen(
             if page.elements.iter().any(|e| e.locator == line.locator) {
                 continue;
             }
+            let seen_at = old.iter().find(|e| e.locator == line.locator).map_or(0, |e| e.seen_at);
             page.elements.push(SeenElement {
                 key,
                 locator: line.locator.clone(),
@@ -259,13 +278,22 @@ pub fn record_seen(
                 name: line.name.clone(),
                 kind: kind_for(&line.role).to_string(),
                 required: line.required,
+                seen_at,
             });
+        }
+        if let Some(started) = discovery {
+            for e in old {
+                let matched_now = e.seen_at != 0 && e.seen_at >= started;
+                if matched_now && !page.elements.iter().any(|n| n.locator == e.locator) {
+                    page.elements.push(e);
+                }
+            }
         }
     })
 }
 
 /// Adds each link of a target a probe or try matched, unless the page
-/// already has it.
+/// already has it, and stamps it matched at `now` (`seen_at`) either way.
 pub fn record_matched(
     root: &Path,
     org: &str,
@@ -273,7 +301,7 @@ pub fn record_matched(
     area: Option<&str>,
     page_path: &str,
     target: &Target,
-    _now: u64,
+    now: u64,
 ) -> Result<(), String> {
     let path = path_only(page_path);
     let area = canonical_area(root, org, project, area.unwrap_or(""));
@@ -282,7 +310,12 @@ pub fn record_matched(
         let page = page_mut(a, &path, "");
         for link in target.links() {
             let Some(key) = link.seen_key() else { continue };
-            if page.elements.iter().any(|e| e.key == key) {
+            let mut held = false;
+            for e in page.elements.iter_mut().filter(|e| e.key == key) {
+                e.seen_at = e.seen_at.max(now);
+                held = true;
+            }
+            if held {
                 continue;
             }
             let role = link.role.clone().unwrap_or_default();
@@ -293,6 +326,7 @@ pub fn record_matched(
                 name: link.name.clone().unwrap_or_default(),
                 kind: kind.to_string(),
                 required: false,
+                seen_at: now,
                 locator: Target::One(link),
             });
         }
