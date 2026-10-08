@@ -799,7 +799,7 @@ export const autoRun: Screen = {
         "An area goes stale 30 days after it was explored, or when a script failed there. Expand **save requests** to see the requests the site made when it saved. " +
         "**Forget map** (it asks first) clears one area's map; scripts keep running, and new saves there need the area explored again. " +
         "A script save is refused when it points at something the assistant never saw on the live page. The exceptions are text the script typed in an earlier step, a check whose text is a whole word or phrase from the case, and a repair, which is held only to the steps it names. " +
-        "While discovery runs, **Open browser** and the Run buttons are unavailable and say **Discovery is using the Auto Run browser**; they come back when it ends or when you press **Close browser**.",
+        "While discovery runs, **Open browser** and the Run buttons are greyed out, and hovering one shows **Discovery is using the Auto Run browser**. They come back when your assistant ends discovery.",
       tips: ["In your assistant, **/tcm:discover** starts this for a case. The row reads **Not explored yet** until an area has been explored."],
     },
     {
