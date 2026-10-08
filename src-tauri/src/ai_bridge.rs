@@ -294,6 +294,7 @@ pub async fn route(
         ("POST", "/autorun-discover-start") => autorun_discover_start(ctx, body).await,
         ("POST", "/autorun-discover-action") => autorun_discover_action(ctx, body).await,
         ("POST", "/autorun-discover-end") => crate::commands::autorun::end_discovery().await,
+        ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body).await,
         ("POST", "/autorun-replay") => autorun_replay(ctx, body).await,
         ("GET", "/autorun-failures") => autorun_failures(target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
@@ -2355,6 +2356,135 @@ pub fn close_browser_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
     }
 }
 
+/// How many lines of the page a refused area hands back.
+const AREA_PAGE_LINES: usize = 40;
+
+/// Save the clicks a discovery found as an area named `name` under the
+/// test-case Module `module`, once a replay of them from home has arrived
+/// where the browser stands now: `{saved, arrived}`, and the discovery
+/// moves to the new area. The replay is the run's own trip (`go_to_module`
+/// from a fresh home, signed in again as the discovery's account when the
+/// session has gone), so a saved area is one a run can take. Clicks that
+/// do not arrive save nothing, and the refusal says where they stopped and
+/// what the page showed. A name already taken is refused before the
+/// browser is touched: the person replaces an area, never the assistant.
+#[allow(clippy::too_many_arguments)]
+pub async fn discover_area_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    name: &str,
+    module: &str,
+    clicks: Vec<crate::browser::locator::Target>,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    use crate::autorun::nav;
+    let Some(browser) = slot.as_mut() else {
+        return (409, NO_DISCOVERY.to_string());
+    };
+    let p = browser.parts();
+    let Some(state) = p.discovery.as_ref() else {
+        return (409, NO_DISCOVERY.to_string());
+    };
+    let (name, module) = (name.trim().to_string(), module.trim().to_string());
+    if name.is_empty() || module.is_empty() || clicks.is_empty() {
+        return (400, "an area needs a name, the module it belongs to and at least one click".to_string());
+    }
+    let navfile = match nav::load_nav(root, organization, project) {
+        Ok(n) => n,
+        Err(why) => return (409, why),
+    };
+    if nav::find_area(&navfile, &name).is_some() {
+        return (
+            409,
+            format!(
+                "An area named '{name}' already exists; pick another name or ask the person to replace it in Auto Run"
+            ),
+        );
+    }
+    let recipe = match crate::autorun::recipe::load_effective_recipe(root, organization, project) {
+        Ok(r) => r,
+        Err(why) => return (409, why),
+    };
+    let account = state.account.clone().or_else(|| p.signed_in.clone());
+    let d = p.driver;
+    // Where the clicks must arrive: where the assistant clicked its way to,
+    // read as a run's trip reads it.
+    let href = crate::browser::page::eval_value(d, "location.href").await;
+    let href = href.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let arrived = if href.trim().is_empty() { String::new() } else { nav::path_of(&href) };
+    if arrived.is_empty() {
+        return (409, "the page would not say where it is - read the page and try again".to_string());
+    }
+    let home = nav::Home::of(&recipe);
+    let mut went = nav::go_home(d, &home, timing).await;
+    let signed_in = went.ok
+        && crate::browser::expect::expect(
+            d,
+            &home.signed_in,
+            crate::browser::expect::Check::Visible,
+            timing.nav_ms,
+            timing.poll_ms,
+        )
+        .await
+        .ok;
+    if !signed_in {
+        // The saved session has gone: sign in again as the discovery's
+        // account, then start from home as a recording does.
+        let Some(key) = account else {
+            return (409, "the discovery has no account to sign in again with - start it again".to_string());
+        };
+        match crate::autorun::signin::sign_in_leased(d, root, organization, project, &key, p.lease, p.signed_in, timing)
+            .await
+        {
+            Err(why) => return (409, why),
+            Ok(out) if !out.ok => return (409, out.detail),
+            Ok(_) => {}
+        }
+        went = nav::go_home(d, &home, timing).await;
+    }
+    let reached = if went.ok {
+        let start = match crate::browser::page::eval_value(d, "location.href").await {
+            Ok(v) => nav::path_of(v.as_str().unwrap_or("")),
+            Err(_) => String::new(),
+        };
+        let path = nav::ModulePath {
+            area: name.clone(),
+            module,
+            clicks,
+            arrived,
+            recorded: crate::commands::autorun_record::now_iso(),
+            start,
+        };
+        let route = nav::Route::new(&recipe, path);
+        nav::go_to_module(d, &route, nav::TripFrom::SignIn, timing).await.map(|at| (at, route.path))
+    } else {
+        Err(nav::PathFailure { at: nav::Where::Home, reason: went.detail, harness: went.harness })
+    };
+    let (at, path) = match reached {
+        Ok(found) => found,
+        Err(failure) => {
+            let (status, page) = read_page(d, crate::browser::snapshot::DEFAULT_LIMIT, None).await;
+            let showed = if status == 200 {
+                page.lines().take(AREA_PAGE_LINES).collect::<Vec<_>>().join("\n")
+            } else {
+                "nothing - the page could not be read".to_string()
+            };
+            return (409, format!("The clicks did not arrive: {}. The page showed: {showed}", failure.for_dialog()));
+        }
+    };
+    let saved = path.clicks.len();
+    if let Err(why) = nav::put_path(root, organization, project, path) {
+        return (409, why);
+    }
+    if let Some(state) = p.discovery.as_mut() {
+        state.area = Some(name);
+    }
+    crate::applog::info(format!("Auto Run discovery saved an area ({saved} clicks)"));
+    (200, serde_json::json!({ "saved": true, "arrived": at }).to_string())
+}
+
 /// `/autorun-discover-start`: open the Auto Run browser for the assistant
 /// and sign in as `account` (`discover_start_in`). Refused, before
 /// anything opens, while anything else holds the browser, and for an
@@ -2461,6 +2591,54 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
     }
     let mut slot = crate::commands::autorun::supervised().lock().await;
     discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, area.as_deref()).await
+}
+
+/// `/autorun-discover-area`: save the clicks a discovery found as an area
+/// (`discover_area_in`), once a replay of them arrives.
+async fn autorun_discover_area(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    const SHAPE: &str = "{ \"name\": <the area's name>, \"module\": <the test-case Module it belongs to>, \"clicks\": [<a script's click selector>, ...] }";
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {SHAPE}.")),
+    };
+    let Some(name) = named(v.get("name").and_then(|a| a.as_str())) else {
+        return (400, format!("this call needs a \"name\" for the area. Expected {SHAPE}."));
+    };
+    let Some(module) = named(v.get("module").and_then(|a| a.as_str())) else {
+        return (400, format!("this call needs the \"module\" the area belongs to. Expected {SHAPE}."));
+    };
+    let clicks: Vec<crate::browser::locator::Target> = match v.get("clicks").cloned().map(serde_json::from_value) {
+        Some(Ok(clicks)) => clicks,
+        Some(Err(e)) => return (400, format!("those are not clicks: {e}. Expected {SHAPE}.")),
+        None => return (400, format!("this call needs the \"clicks\" from the home page. Expected {SHAPE}.")),
+    };
+    if clicks.is_empty() {
+        return (400, format!("an area needs at least one click from the home page. Expected {SHAPE}."));
+    }
+    for (i, click) in clicks.iter().enumerate() {
+        if let Err(e) = click.validate() {
+            return (400, format!("click {}: {e}", i + 1));
+        }
+    }
+    if let Some(busy) = unattended_run_is_using_the_browser() {
+        return busy;
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    discover_area_in(
+        &mut slot,
+        &root,
+        &ctx.org,
+        &ctx.project,
+        &name,
+        &module,
+        clicks,
+        &crate::browser::timing::Timing::default(),
+    )
+    .await
 }
 
 /// A future the replay host hands back: boxed, so the host can be a trait

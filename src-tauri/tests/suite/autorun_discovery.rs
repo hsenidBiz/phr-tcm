@@ -13,18 +13,19 @@ use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use v2_lib::ai_bridge::{
-    close_browser_in, discover_action_in, discover_start_in, discovery_sighting, end_discovery_in, read_page, route,
-    BridgeContext, DiscoveryBrowser, DiscoveryParts,
+    close_browser_in, discover_action_in, discover_area_in, discover_start_in, discovery_sighting, end_discovery_in,
+    read_page, route, BridgeContext, DiscoveryBrowser, DiscoveryParts, NO_DISCOVERY,
 };
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::discovery_map::{load_map, map_path, AreaMap};
 use v2_lib::autorun::lease::Held;
+use v2_lib::autorun::nav::{find_area, load_nav, put_path, ModulePath};
 use v2_lib::autorun::recipe::{save_recipe, SignInRecipe};
 use v2_lib::autorun::store::set_root;
 use v2_lib::browser::actions::{Action, CHECK_TEXT_JS, HIGHLIGHT_JS};
 use v2_lib::browser::cdp::Event;
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
-use v2_lib::browser::locator::VISIBLE_JS;
+use v2_lib::browser::locator::{Target, VISIBLE_JS};
 use v2_lib::browser::snapshot::DEFAULT_LIMIT;
 use v2_lib::commands::autorun::{busy_browser_sentence, DiscoveryState};
 
@@ -529,4 +530,225 @@ async fn a_navigate_action_never_puts_a_host_or_query_in_the_map_or_its_outcome(
     let file = std::fs::read_to_string(map_path(dir.path(), ORG, PROJECT)).unwrap();
     assert!(!file.contains("token"), "a query string reached the map: {file}");
     assert!(!file.contains("hr.example.internal"), "a host reached the map: {file}");
+}
+
+// ------------------------------------------------------- saving an area
+
+/// A small menu-driven application. `#go` signs in (landing on
+/// `/hr/home/index`), `#leave` opens `/hr/leave` and `#apply` opens
+/// `/hr/leave/apply`; `#marker` shows only while signed in, and `#missing`
+/// is never on the page. Its address always carries a query string.
+fn menu_app(signed_in: bool, at: &str) -> ScriptedDriver {
+    let path = Arc::new(Mutex::new(at.to_string()));
+    let signed = Arc::new(AtomicBool::new(signed_in));
+    let mut last_css = String::new();
+    let mut d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Page.navigate" => {
+                *path.lock().unwrap() = v2_lib::autorun::nav::path_of(params["url"].as_str().unwrap_or(""));
+                json!({ "frameId": "F", "loaderId": "L" })
+            }
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.evaluate" if params["expression"] == "location.href" => json!({ "result": {
+                "value": format!("https://hr.example.internal{}?token=t0p-secret#top", path.lock().unwrap())
+            } }),
+            "Runtime.evaluate" if params["expression"] == "document.title" => json!({ "result": { "value": "Home" } }),
+            "Runtime.evaluate" => {
+                json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } })
+            }
+            "Accessibility.getFullAXTree" => json!({ "nodes": [
+                { "nodeId": "1", "ignored": false, "role": { "value": "form" }, "name": { "value": "Leave" },
+                  "childIds": ["2", "3"] },
+                { "nodeId": "2", "ignored": false, "role": { "value": "textbox" }, "name": { "value": "Name" },
+                  "childIds": [] },
+                { "nodeId": "3", "ignored": false, "role": { "value": "button" }, "name": { "value": "Save" },
+                  "childIds": [] }
+            ] }),
+            "Network.getAllCookies" => json!({ "cookies": [] }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": ready_probe() } }),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
+                json!({ "result": { "value": true } })
+            }
+            "Runtime.callFunctionOn" if f == FOCUS_JS => json!({ "result": { "value": "text" } }),
+            "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" => {
+                if let Some(sel) = params["arguments"][0]["value"].as_str() {
+                    last_css = sel.to_string();
+                }
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => {
+                let there = match last_css.as_str() {
+                    "#marker" => signed.load(Ordering::SeqCst),
+                    "#missing" => false,
+                    _ => true,
+                };
+                json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": "el" } })] } else { vec![] } })
+            }
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                let to = match last_css.as_str() {
+                    "#go" => {
+                        signed.store(true, Ordering::SeqCst);
+                        Some("/hr/home/index")
+                    }
+                    "#leave" => Some("/hr/leave"),
+                    "#apply" => Some("/hr/leave/apply"),
+                    _ => None,
+                };
+                if let Some(to) = to {
+                    *path.lock().unwrap() = to.to_string();
+                }
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    d.on_every_call_events.push((
+        "Page.navigate".into(),
+        Event { method: "Page.lifecycleEvent".into(), params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }) },
+    ));
+    d
+}
+
+fn css(sel: &str) -> Target {
+    serde_json::from_value(json!({ "css": sel })).unwrap()
+}
+
+/// Clicks that arrive where the assistant stands are replayed from home
+/// and saved as an area - module, clicks, where they arrived, when, and
+/// the home page they start from - and the discovery moves to it.
+#[tokio::test]
+async fn an_area_whose_clicks_arrive_is_saved_and_becomes_current() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, closed) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
+    browser.as_mut().unwrap().account = Some("admin".into());
+
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, " Leave Apply ", " Leave ", clicks.clone(), &quick())
+            .await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["saved"], true, "{body}");
+    assert_eq!(v["arrived"], "/hr/leave/apply", "{body}");
+    assert!(!body.contains("t0p-secret"), "{body}");
+    assert!(!closed.load(Ordering::SeqCst));
+
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    let saved = find_area(&nav, "leave apply").expect("the area was not saved");
+    assert_eq!(saved.area, "Leave Apply");
+    assert_eq!(saved.module, "Leave");
+    assert_eq!(saved.clicks, clicks);
+    assert_eq!(saved.arrived, "/hr/leave/apply");
+    assert_eq!(saved.start, "/", "the home page the clicks start from");
+    let r = saved.recorded.as_bytes();
+    assert!(r.len() == 20 && r[4] == b'-' && r[10] == b'T' && r[19] == b'Z', "{}", saved.recorded);
+
+    let state = browser.as_ref().unwrap().discovery.as_ref().unwrap();
+    assert_eq!(state.area.as_deref(), Some("Leave Apply"));
+}
+
+/// A browser whose saved session has gone signs in again, as the
+/// discovery's account, before the clicks are replayed.
+#[tokio::test]
+async fn an_area_is_checked_after_signing_in_again_when_the_session_is_gone() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(menu_app(false, "/hr/leave/apply"), exploring("Leave"));
+
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(browser.as_ref().unwrap().account.as_deref(), Some("admin"), "it did not sign in again");
+    assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply").is_some());
+}
+
+/// Clicks that do not arrive are refused with where they stopped and what
+/// the page showed - at most 40 lines of it - and nothing is saved.
+#[tokio::test]
+async fn an_area_whose_clicks_do_not_arrive_is_refused_with_what_the_page_showed() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
+    browser.as_mut().unwrap().account = Some("admin".into());
+
+    let clicks = vec![css("#leave"), css("#missing")];
+    let (status, out) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.starts_with("The clicks did not arrive: click 2"), "{out}");
+    let (_, showed) = out.split_once(". The page showed: ").expect("no page in the refusal");
+    assert!(showed.contains("button \"Save\""), "{out}");
+    assert!(showed.lines().count() <= 40, "{out}");
+    assert!(!out.contains("t0p-secret"), "{out}");
+
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    assert!(find_area(&nav, "Leave Apply").is_none(), "a path that did not arrive was saved");
+    assert_eq!(browser.as_ref().unwrap().discovery.as_ref().unwrap().area.as_deref(), Some("Leave"));
+}
+
+/// A name already taken is refused before the browser is touched.
+#[tokio::test]
+async fn an_existing_area_name_is_refused() {
+    let dir = root_with_recipe_and_account();
+    let existing = ModulePath {
+        area: "Leave Apply".into(),
+        module: "Leave".into(),
+        clicks: vec![css("#leave")],
+        arrived: "/hr/leave".into(),
+        recorded: "2026-10-01T00:00:00Z".into(),
+        start: String::new(),
+    };
+    put_path(dir.path(), ORG, PROJECT, existing.clone()).unwrap();
+    let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
+
+    let (status, out) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "leave apply", "Leave", vec![css("#apply")], &quick())
+            .await;
+    assert_eq!(status, 409, "{out}");
+    assert_eq!(
+        out,
+        "An area named 'leave apply' already exists; pick another name or ask the person to replace it in Auto Run"
+    );
+    assert!(browser.as_ref().unwrap().d.calls_to("Page.navigate").is_empty(), "the browser was touched");
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    assert_eq!(find_area(&nav, "Leave Apply"), Some(&existing), "the existing area was changed");
+}
+
+/// No discovery, no saving: not with no browser, not in the person's own
+/// browser (which is neither touched nor closed), and not through the
+/// route.
+#[tokio::test]
+async fn saving_an_area_needs_a_discovery_session() {
+    let dir = root_with_recipe_and_account();
+    let mut none: Option<FakeBrowser> = None;
+    let (status, out) =
+        discover_area_in(&mut none, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", vec![css("#leave")], &quick())
+            .await;
+    assert_eq!((status, out.as_str()), (409, NO_DISCOVERY));
+
+    let (mut theirs, closed) = slot(menu_app(true, "/hr/leave"), None);
+    let (status, out) =
+        discover_area_in(&mut theirs, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", vec![css("#leave")], &quick())
+            .await;
+    assert_eq!((status, out.as_str()), (409, NO_DISCOVERY));
+    assert!(!closed.load(Ordering::SeqCst));
+    assert!(theirs.as_ref().unwrap().d.calls_to("Page.navigate").is_empty(), "the person's browser was touched");
+    assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply").is_none());
+
+    let _g = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let body = json!({ "name": "Leave Apply", "module": "Leave", "clicks": [{ "css": "#leave" }] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-area", &body, "1.0.0").await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("start_autorun_discovery"), "{out}");
+
+    for bad in [
+        json!({ "module": "Leave", "clicks": [{ "css": "#leave" }] }),
+        json!({ "name": "Leave Apply", "clicks": [{ "css": "#leave" }] }),
+        json!({ "name": "Leave Apply", "module": "Leave", "clicks": [] }),
+    ] {
+        let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-area", &bad.to_string(), "1.0.0").await;
+        assert_eq!(status, 400, "{bad}: {out}");
+    }
 }
