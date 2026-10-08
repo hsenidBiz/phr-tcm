@@ -31,29 +31,43 @@ Copy-Item $exe.FullName $stage
 # - a beta: the release published last, stable or beta - `vpk download
 #   --pre` alone would take the newest PRERELEASE, which can be older than
 #   the newest stable that beta installs have already moved to.
+#
+# The base is found by its tag and fetched with gh, not `vpk download`: vpk
+# reads only the newest page of releases, so a stable after a run of betas
+# found "no releases" and 2.1.1 went out with no delta. vpk pack needs the
+# base's full package plus a releases.win.json naming it.
 if ($DeltaFrom) {
     $isBeta = $Version -match '-beta\.\d+$'
-    $pre = $false
-    if ($isBeta) {
-        $slug = $DeltaFrom -replace '^https://github\.com/', ''
-        try {
-            $last = gh release list -R $slug --limit 1 --json isPrerelease | ConvertFrom-Json
-            $pre = [bool]($last -and $last[0].isPrerelease)
-        } catch {
-            Write-Warning "Could not tell whether the last release was a beta - diffing against the newest stable."
+    $slug = $DeltaFrom -replace '^https://github\.com/', ''
+    $base = $null
+    try {
+        $list = gh release list -R $slug --limit 100 --exclude-drafts --json tagName,isPrerelease | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0) { throw "gh release list failed" }
+        $base = $list | Where-Object { $_.tagName -ne "v$Version" -and ($isBeta -or -not $_.isPrerelease) } | Select-Object -First 1
+    } catch {
+        Write-Warning "Could not list the releases: $_"
+    }
+    $fetched = $false
+    if ($base) {
+        $tag = $base.tagName
+        New-Item -ItemType Directory -Force $out | Out-Null
+        gh release download $tag -R $slug -p "*-full.nupkg" -p "releases.win.json" -D $out --clobber
+        $full = Get-ChildItem $out -Filter "*-full.nupkg" -ErrorAction SilentlyContinue | Select-Object -First 1
+        $feedPath = Join-Path $out "releases.win.json"
+        if ($LASTEXITCODE -eq 0 -and $full -and (Test-Path $feedPath)) {
+            # Keep only the full package's entry: the base's own delta is not
+            # downloaded, and a feed naming a missing file is not one to diff
+            # against. Written without a BOM - vpk reads it as JSON.
+            $feed = Get-Content $feedPath -Raw | ConvertFrom-Json
+            $feed.Assets = @($feed.Assets | Where-Object { $_.Type -eq "Full" })
+            if ($feed.Assets.Count -eq 1) {
+                [IO.File]::WriteAllText($feedPath, ($feed | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding $false))
+                Write-Host "Delta base: $tag ($($full.Name))"
+                $fetched = $true
+            }
         }
     }
-    $downloadArgs = @("download", "github", "--repoUrl", $DeltaFrom, "--outputDir", $out)
-    if ($pre) { $downloadArgs += "--pre" }
-    # Signed in through the same gh login the release uploads with. Without
-    # it vpk asks GitHub anonymously, which allows 60 requests an hour; on a
-    # day of several releases that runs out, vpk then reports "no releases
-    # found", and the release goes out with no delta. The token is passed,
-    # never printed.
-    $token = gh auth token 2>$null
-    if ($LASTEXITCODE -eq 0 -and $token) { $downloadArgs += @("--token", $token.Trim()) }
-    & vpk @downloadArgs
-    if ($LASTEXITCODE -ne 0) {
+    if (-not $fetched) {
         Write-Warning "Could not download the previous release - packing the full package only, so updates download it in full."
         if (Test-Path $out) { Remove-Item -Recurse -Force $out }
     }
