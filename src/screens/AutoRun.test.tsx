@@ -625,6 +625,9 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "auto_run_load_run", // read-only: the review dialog loading its own run
     "auto_run_load_recipe", // read-only, local: the Setup card and header's site address
     "auto_run_load_nav", // read-only, local: the Setup card's module path count
+    "auto_run_load_map", // read-only, local: the Setup card's Discovery line
+    "auto_run_discovery_active", // read-only, local: whether discovery holds the Auto Run browser
+    "auto_run_end_discovery", // local: ends the assistant's discovery and closes its browser (End discovery); never ADO
     "test_files_list", // read-only, local: the Setup card's Test files count
     "env_list", // read-only, local: the header's environment name and its address
     "db_databases", // read-only, local: the environments list checks its databases against these

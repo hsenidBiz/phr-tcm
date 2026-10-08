@@ -21,6 +21,7 @@ import { Button } from "../../components/ui/button";
 import ActionDock from "../../components/ActionDock";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { cn } from "../../lib/cn";
+import { DISCOVERY_BUSY, useDiscoveryActive } from "../../lib/discoveryActive";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import {
   IconCancel,
@@ -120,6 +121,9 @@ export default function AutoRun({
   const [confirmingClear, setConfirmingClear] = useState<number | null>(null);
   const [clearScriptsOpen, setClearScriptsOpen] = useState(false);
   const queryClient = useQueryClient();
+  // The assistant's discovery holds the Auto Run browser: every way of
+  // starting a run here waits for it, and says why.
+  const runBlocked = useDiscoveryActive() ? DISCOVERY_BUSY : undefined;
 
   /** What the Setup panel and the readiness strip report, and whether a
    * run has what it needs. */
@@ -544,6 +548,7 @@ export default function AutoRun({
         onToggleOpen={() => toggleCard(c.id)}
         onEdit={() => setEditing(c.id)}
         onRun={() => setRunning([c.id])}
+        runBlocked={runBlocked}
         confirmingClear={confirmingClear === c.id}
         onAskClear={() => setConfirmingClear(c.id)}
         onClearDone={() => setConfirmingClear(null)}
@@ -812,7 +817,8 @@ export default function AutoRun({
                         <Button
                           size="sm"
                           tabIndex={floating ? -1 : undefined}
-                          disabled={planning}
+                          disabled={planning || Boolean(runBlocked)}
+                          title={runBlocked}
                           onClick={() => void startPlanned("supervised")}
                         >
                           <IconRun aria-hidden />
@@ -822,7 +828,8 @@ export default function AutoRun({
                           size="sm"
                           variant="outline"
                           tabIndex={floating ? -1 : undefined}
-                          disabled={planning}
+                          disabled={planning || Boolean(runBlocked)}
+                          title={runBlocked}
                           onClick={() => void startPlanned("unattended")}
                         >
                           <IconUnattended aria-hidden />
@@ -856,6 +863,7 @@ export default function AutoRun({
                   pbiId={pbi.id}
                   onReview={setReviewing}
                   onReplay={replayCase}
+                  replayBlocked={runBlocked}
                   filter={runsFilter}
                   onFilterChange={setRunsFilter}
                 />
@@ -970,6 +978,7 @@ export default function AutoRun({
               replayTo={replayTo?.step}
               // A replay to a step runs one case and never pauses.
               plan={replayTo ? null : runPlan}
+              browserBlocked={runBlocked}
               onClose={() => {
                 setRunning(null);
                 setRunPlan(null);
@@ -1049,6 +1058,7 @@ export default function AutoRun({
             rows.map((c) => [c.id, c.steps.flatMap((s, i) => (s.shared != null ? [i + 1] : []))]),
           )}
           onReplay={replayCase}
+          replayBlocked={runBlocked}
           onClose={() => {
             setReviewing(null);
             // Opened from Past runs, the card's Review button is still there

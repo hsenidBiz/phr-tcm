@@ -101,7 +101,7 @@ impl ReplayHost for FakeHost {
             Ok(self.end.clone())
         })
     }
-    fn page(&self) -> HostFuture<'_, (u16, String)> {
+    fn page(&self, _organization: String, _project: String) -> HostFuture<'_, (u16, String)> {
         Box::pin(async { (200, "- button \"Submit\" [role=button name=\"Submit\"]".to_string()) })
     }
 }

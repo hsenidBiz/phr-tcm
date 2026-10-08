@@ -1213,3 +1213,25 @@ test("without a plan the supervised pane never pauses", async () => {
   expect(await screen.findByText("case 2 of 3")).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument();
 });
+
+test("while discovery holds the browser, Open browser is off and says why", async () => {
+  const s = mockSession();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <RunPane
+        org="acme"
+        project="Web"
+        pbiId={42}
+        cases={[{ id: 1, title: "Valid login" }]}
+        onClose={vi.fn()}
+        browserBlocked="Discovery is using the Auto Run browser"
+      />
+    </QueryClientProvider>,
+  );
+  const open = await screen.findByRole("button", { name: "Open browser" });
+  expect(open).toBeDisabled();
+  expect(open).toHaveAttribute("title", "Discovery is using the Auto Run browser");
+  fireEvent.click(open);
+  expect(s.launched).toEqual([]);
+});

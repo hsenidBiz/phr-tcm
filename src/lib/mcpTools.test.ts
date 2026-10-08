@@ -176,7 +176,7 @@ test("only the switchable tools are left, as eight rows in a development build",
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_results",
-    "get_autorun_guide+save_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+get_autorun_failures+record_autorun_quirk+retire_autorun_quirk+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+list_test_files",
+    "get_autorun_guide+save_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+start_autorun_discovery+discover_autorun_action+save_autorun_area+end_autorun_discovery+get_autorun_failures+record_autorun_quirk+retire_autorun_quirk+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+list_test_files",
     "get_api_template_guide+list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+save_api_fixture+run_api_fixture+list_api_fixtures+record_app_quirk+retire_app_quirk",
     "db_lookup+db_query",
     "get_tags",
@@ -217,7 +217,7 @@ test("the two database tools are one switchable row in either build kind", async
 
 /// With DEV stubbed true, the Auto Run group is offered as one row and its
 /// switch moves every tool in it together, the same as any other pair.
-test("with DEV stubbed true, the Auto Run scripts row carries all fourteen tools", async () => {
+test("with DEV stubbed true, the Auto Run scripts row carries all eighteen tools", async () => {
   vi.stubEnv("DEV", true);
   vi.resetModules();
   const mod = await import("./mcpTools");
@@ -231,6 +231,10 @@ test("with DEV stubbed true, the Auto Run scripts row carries all fourteen tools
     "probe_autorun_locator",
     "try_autorun_action",
     "replay_autorun_to_step",
+    "start_autorun_discovery",
+    "discover_autorun_action",
+    "save_autorun_area",
+    "end_autorun_discovery",
     "get_autorun_failures",
     "record_autorun_quirk",
     "retire_autorun_quirk",

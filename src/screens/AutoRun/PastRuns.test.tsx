@@ -17,14 +17,23 @@ function WithFilter({
   pbiId,
   onReview,
   onReplay,
+  replayBlocked,
 }: {
   pbiId: number | null;
   onReview: (id: string) => void;
   onReplay: (caseId: number, title: string, step: number) => void;
+  replayBlocked?: string;
 }) {
   const [filter, setFilter] = useState<ResultFilter>("All");
   return (
-    <PastRuns pbiId={pbiId} onReview={onReview} onReplay={onReplay} filter={filter} onFilterChange={setFilter} />
+    <PastRuns
+      pbiId={pbiId}
+      onReview={onReview}
+      onReplay={onReplay}
+      replayBlocked={replayBlocked}
+      filter={filter}
+      onFilterChange={setFilter}
+    />
   );
 }
 
@@ -54,6 +63,7 @@ function renderPastRuns(
   runs: unknown[],
   pbiId: number | null,
   onCommand?: (cmd: string, args: unknown) => unknown,
+  replayBlocked?: string,
 ) {
   mockIPC((cmd, args) => {
     if (cmd === "auto_run_list_runs") return runs;
@@ -64,7 +74,7 @@ function renderPastRuns(
   const onReplay = vi.fn();
   render(
     <QueryClientProvider client={qc}>
-      <WithFilter pbiId={pbiId} onReview={onReview} onReplay={onReplay} />
+      <WithFilter pbiId={pbiId} onReview={onReview} onReplay={onReplay} replayBlocked={replayBlocked} />
     </QueryClientProvider>,
   );
   return { onReview, onReplay };
@@ -460,4 +470,15 @@ test("a run with no reset points shows no reset line", async () => {
   renderPastRuns([runOf()], 7);
   await screen.findByText("Valid login");
   expect(screen.queryByText(/Reset: revert/)).not.toBeInTheDocument();
+});
+
+test("while discovery holds the browser, Replay to step is off and says why", async () => {
+  const { onReplay } = renderPastRuns([FAILED_AT_2], 42, undefined, "Discovery is using the Auto Run browser");
+
+  const failed = await screen.findByRole("listitem", { name: "Run of Valid login" });
+  const replay = within(failed).getByRole("button", { name: "Replay to step 2 for case 201" });
+  expect(replay).toBeDisabled();
+  expect(replay).toHaveAttribute("title", "Discovery is using the Auto Run browser");
+  fireEvent.click(replay);
+  expect(onReplay).not.toHaveBeenCalled();
 });

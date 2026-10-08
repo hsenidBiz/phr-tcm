@@ -322,16 +322,16 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_guide",
-            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. You may read the application's source for SELECTORS, but every assertion comes from the test case's own expected result, never from what the code happens to do.",
+            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. Locators come from what you saw on the live app, through discovery; every assertion comes from the test case's own expected result, never from what the code happens to do.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "save_autorun_script",
-            "description": "Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is { case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), area (optional: the recorded area the run takes the case to before step 1, by its name from get_autorun_guide; leave it out for the area named like the case's Module), steps: [{ step_number, actions }] }. Every script is checked against its OWN test case before anything is written: a step whose expected result nothing asserts is refused unless that step says why in `unchecked`. CHANGING a script that already exists is a repair and needs `edits` - one entry per case, { case_id, steps: [every step number you changed], why, area (optional: true when you changed the script's area, including leaving out one it had), quirk (optional: something you learned about the application) }. An assertion is never removed or weakened by a repair, and a script takes three repairs before a person has to open it in the app and save it there. All or nothing: one bad action, locator, case id or undeclared change rejects the whole batch. Call get_autorun_guide first for the action vocabulary.",
+            "description": format!("Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is {{ case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), area (the recorded area the run takes the case to before step 1, by its name from get_autorun_guide. {}), steps: [{{ step_number, actions }}] }}. Every script is checked against its OWN test case before anything is written: a step whose expected result nothing asserts is refused unless that step says why in `unchecked`. CHANGING a script that already exists is a repair and needs `edits` - one entry per case, {{ case_id, steps: [every step number you changed], why, area (optional: true when you changed the script's area, including leaving out one it had), quirk (optional: something you learned about the application) }}. An assertion is never removed or weakened by a repair, and a script takes three repairs before a person has to open it in the app and save it there. All or nothing: one bad action, locator, case id or undeclared change rejects the whole batch. Call get_autorun_guide first for the action vocabulary.", crate::autorun::nav::SET_AREA_RULE),
             "inputSchema": schema(serde_json::json!({
                 "scripts": {
                     "type": "array",
-                    "description": "One entry per test case: { case_id, title, account?, area?, steps }",
+                    "description": "One entry per test case: { case_id, title, account?, area, steps }",
                     "items": { "type": "object" },
                 },
                 "edits": {
@@ -343,14 +343,14 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_page",
-            "description": "Read the page in the browser the person opened on the Auto Run tab, as text: Chrome's own accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script - what a password field holds is never shown. Needs a supervised browser to be open.",
+            "description": "Read the page in the Auto Run browser, the one the person opened on the Auto Run tab or your discovery browser, as text: Chrome's own accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script - what a password field holds is never shown. Needs a supervised or discovery browser to be open.",
             "inputSchema": schema(serde_json::json!({
                 "limit": { "type": "number", "description": "How many lines before the snapshot stops (default 300). Raise it for a long page, or probe one locator instead of reading the whole tree." },
             }), &[]),
         },
         {
             "name": "probe_autorun_locator",
-            "description": "Ask the open browser what a locator matches RIGHT NOW: how many elements, and for each one its tag, its text, whether it is visible and where it sits. Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. A chain can pass through a same-origin iframe: name the iframe as one step and the element inside as the next. Needs a supervised browser to be open.",
+            "description": "Ask the open browser what a locator matches RIGHT NOW: how many elements, and for each one its tag, its text, whether it is visible and where it sits. Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. A chain can pass through a same-origin iframe: name the iframe as one step and the element inside as the next. Needs a supervised or discovery browser to be open.",
             "inputSchema": schema(serde_json::json!({
                 "selector": {
                     "type": ["object", "string"],
@@ -379,6 +379,44 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 "case_id": { "type": "number", "description": "The case whose saved script is replayed." },
                 "step": { "type": "number", "description": "The step to stop before: the failing step. Steps 1 to step - 1 run." },
             }), &["case_id", "step"]),
+        },
+        {
+            "name": "start_autorun_discovery",
+            "description": "Open the app's own Auto Run browser and sign in as a saved account, so you can explore the live application before you write a script. The app replays the recorded sign-in and types the password; you never see it. Answers the landing page as get_autorun_page shows it, and its address path. Refused while a run, a replay or a person's browser holds the Auto Run browser; a failed sign-in closes the browser and says why, so report it rather than trying again. Every locator you will put in a script must be seen on the live app first: a save refuses any locator the app has not seen. Never read the application's code to write scripts. Call end_autorun_discovery when you are done.",
+            "inputSchema": schema(serde_json::json!({
+                "account": { "type": "string", "description": "The KEY of the saved account to sign in as, from get_accounts. Never a username or a password." },
+                "area": { "type": "string", "description": "The recorded area you are exploring, by its name: pass it whenever the case's area is listed in the guide. What you see is filed under it; with none, it is filed under no area." },
+                "browser": { "type": "string", "enum": ["edge", "chrome"], "description": "Optional: which browser to open. The one last used, when left out." },
+            }), &["account"]),
+        },
+        {
+            "name": "discover_autorun_action",
+            "description": "Carry out ONE script action in the discovery browser and see what it did: the page afterwards, an address change, a dialog or message that appeared, and the requests that wrote data (method and path only). Use it to find each element a case's step needs by carrying the step out. Any one action in the script vocabulary works, such as a click, a fill, a key press or a navigate (held to the environment's allowed sites); sign_in and file addresses are refused. Anything you create uses the environment's test name prefix, and you delete only records whose name carries that prefix. Every write is logged. Needs start_autorun_discovery first.",
+            "inputSchema": schema(serde_json::json!({
+                "action": {
+                    "type": "object",
+                    "description": "One action in the script vocabulary, e.g. { \"kind\": \"click\", \"selector\": ... } - call get_autorun_guide for all of them.",
+                },
+                "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
+            }), &["action"]),
+        },
+        {
+            "name": "save_autorun_area",
+            "description": "Save a screen you found through the menus during discovery as an area, so runs can reach it before step 1. The app checks it first: from the home page, signed in, it replays your clicks and saves the area only if they arrive where the discovery browser is now. A refusal says what the page showed. A name already taken is refused; pick another or ask the person. Set each script's `area` to this name. If you cannot find the screen through the menus, ask the person to record the area in Auto Run instead.",
+            "inputSchema": schema(serde_json::json!({
+                "name": { "type": "string", "description": "The new area's name, unique in this project." },
+                "module": { "type": "string", "description": "The test case Module the area belongs to." },
+                "clicks": {
+                    "type": "array",
+                    "description": "In order, the locators clicked from the home page to reach the screen, each as a snapshot line's locator.",
+                    "items": { "type": ["object", "string", "array"] },
+                },
+            }), &["name", "module", "clicks"]),
+        },
+        {
+            "name": "end_autorun_discovery",
+            "description": "Close the discovery browser. Call it when you have finished exploring. Safe to call when no discovery is going.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "get_autorun_failures",
@@ -926,6 +964,12 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "probe_autorun_locator" => call("POST", "/autorun-probe", &args.to_string()),
         "try_autorun_action" => call("POST", "/autorun-try", &args.to_string()),
         "replay_autorun_to_step" => call("POST", "/autorun-replay", &args.to_string()),
+        // Discovery: each route reads its own named fields out of the body,
+        // so the arguments object travels whole.
+        "start_autorun_discovery" => call("POST", "/autorun-discover-start", &args.to_string()),
+        "discover_autorun_action" => call("POST", "/autorun-discover-action", &args.to_string()),
+        "save_autorun_area" => call("POST", "/autorun-discover-area", &args.to_string()),
+        "end_autorun_discovery" => call("POST", "/autorun-discover-end", &args.to_string()),
         "get_autorun_failures" => {
             let mut params: Vec<String> = vec![];
             if let Some(id) = args["case_id"].as_i64() {

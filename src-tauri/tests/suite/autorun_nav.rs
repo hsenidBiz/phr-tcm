@@ -639,7 +639,7 @@ fn the_guide_lists_each_area_with_its_module_and_where_it_lands() {
     ] {
         assert!(text.contains(line), "missing {line:?}: {text}");
     }
-    for must in ["`area`", "is not its module's default area", "named like the case's Module", "the module's only area"] {
+    for must in ["`area`", v2_lib::autorun::nav::SET_AREA_RULE, "named like the case's Module", "the module's only area"] {
         assert!(text.contains(must), "missing {must:?}: {text}");
     }
     assert!(!text.contains('\u{2014}'), "no em dashes in text an assistant reads");
@@ -671,4 +671,19 @@ fn a_dropped_duplicate_area_is_logged_once_per_file() {
         .filter(|l| l.message.contains("Acme / Logged once") && l.message.contains("\"PAYROLL\""))
         .count();
     assert_eq!(count, 1);
+}
+
+/// Final review, finding 1: a discovery reaches a listed area by clicking
+/// its menu path, so each area line gives that path, click by click, and
+/// the section says to carry it out with `discover_autorun_action`.
+#[test]
+fn the_areas_section_gives_each_areas_menu_path() {
+    let text = guide_section(&pms_and_leave());
+    let menu = format!(
+        "- Leave - Leave - /hr/leave/apply - menu path: {}, then {}\n",
+        path("Leave", "/x").clicks[0].describe(),
+        path("Leave", "/x").clicks[1].describe()
+    );
+    assert!(text.contains(&menu), "missing {menu:?}: {text}");
+    assert!(text.contains("`discover_autorun_action`"), "{text}");
 }

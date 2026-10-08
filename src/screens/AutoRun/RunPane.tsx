@@ -67,6 +67,7 @@ export default function RunPane({
   replayTo,
   plan = null,
   onClose,
+  browserBlocked,
 }: {
   org: string;
   project: string;
@@ -84,6 +85,9 @@ export default function RunPane({
    * before the next case's browser is used. */
   plan?: PlanView | null;
   onClose: () => void;
+  /** Why Open browser waits, when it does: a discovery holds the Auto Run
+   * browser, and opening one would end it. */
+  browserBlocked?: string;
 }) {
   const queryClient = useQueryClient();
 
@@ -842,7 +846,7 @@ export default function RunPane({
                   ))}
                 </Select>
               </label>
-              <Button size="sm" disabled={busy} onClick={openBrowser}>
+              <Button size="sm" disabled={busy || Boolean(browserBlocked)} title={browserBlocked} onClick={openBrowser}>
                 Open browser
               </Button>
             </div>

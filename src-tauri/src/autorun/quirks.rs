@@ -729,6 +729,29 @@ pub fn apply_run_evidence(quirks: &mut [Quirk], cases: &[CaseRecord], scripts: &
     changed
 }
 
+/// A failed case's area has its discovery map marked for another look. A
+/// case with no script or no area marks nothing; a read or write that
+/// fails is logged and goes no further.
+fn mark_failed_areas(root: &Path, org: &str, project: &str, cases: &[CaseRecord]) {
+    for case in cases.iter().filter(|c| super::failures::is_failed(c)) {
+        let area = match super::store::load_script(root, case.case_id) {
+            Ok(Some(script)) => script.area.unwrap_or_default(),
+            Ok(None) => continue,
+            Err(e) => {
+                crate::applog::warn(format!("Auto Run: case {} was not read to mark its area: {e}", case.case_id));
+                continue;
+            }
+        };
+        let area = area.trim();
+        if area.is_empty() {
+            continue;
+        }
+        if let Err(e) = super::discovery_map::mark_failed(root, org, project, area) {
+            crate::applog::warn(format!("Auto Run: the map of area {area:?} was not marked after the run: {e}"));
+        }
+    }
+}
+
 /// After a run: counts its evidence into the project's quirks file. Never
 /// fails the run - a file that cannot be read or written is logged and
 /// left as it was. Returns whether the file was written.
@@ -736,6 +759,7 @@ pub fn record_run_evidence(root: &Path, org: &str, project: &str, cases: &[CaseR
     if org.trim().is_empty() || project.trim().is_empty() || cases.is_empty() {
         return false;
     }
+    mark_failed_areas(root, org, project, cases);
     let _held = write_lock();
     let mut list = match load_quirks(root, org, project) {
         Ok(l) => l,

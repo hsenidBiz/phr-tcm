@@ -147,6 +147,9 @@ export {
   KeyRound as IconRecipe,
   // The menu paths an unattended run follows to each module's screen.
   Route as IconModulePaths,
+  // What the assistant's discovery has mapped of the live app, area by
+  // area (Auto Run's Setup card) - a map, since what it opens is one.
+  Map as IconDiscoveryMap,
   // A project's Test files: the documents scripts and API templates upload
   // into the application (Auto Run's Setup card, the API Templates tab).
   Files as IconTestFiles,

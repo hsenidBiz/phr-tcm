@@ -950,6 +950,8 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
   );
   const disabledTools = (seen as { disabledTools: string[] }).disabledTools;
   expect([...disabledTools].sort()).toEqual([
+    "discover_autorun_action",
+    "end_autorun_discovery",
     "get_accounts",
     "get_autorun_failures",
     "get_autorun_guide",
@@ -961,8 +963,10 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     "record_autorun_quirk",
     "replay_autorun_to_step",
     "retire_autorun_quirk",
+    "save_autorun_area",
     "save_autorun_script",
     "set_autorun_order",
+    "start_autorun_discovery",
     "try_autorun_action",
   ]);
 });
