@@ -112,7 +112,7 @@ test("a running run's pill names its click, and the click opens the run window",
 });
 
 test("discovery with no run reads Discovering, in accent, as text that says what ends it", () => {
-  const note = "Discovery is using the Auto Run browser. It ends from End discovery on Auto Run's Discovery card.";
+  const note = "Discovery is using the Auto Run browser. End it from End discovery on the Discovery row in Auto Run's Setup panel.";
   expect(runPillView(null, true)).toEqual({ text: "Discovering", action: note, tone: "accent" });
   expect(runPillView(runIn({ phase: "setup", open: true }), true)?.text).toBe("Discovering");
   // A run the store holds still shows as itself.

@@ -3,7 +3,7 @@ import { cn } from "../lib/cn";
 import { DISCOVERY_BUSY, useDiscoveryActiveNow } from "../lib/discoveryActive";
 
 /** What the Discovering pill says about itself. */
-export const DISCOVERING_NOTE = `${DISCOVERY_BUSY}. It ends from End discovery on Auto Run's Discovery card.`;
+export const DISCOVERING_NOTE = `${DISCOVERY_BUSY}. End it from End discovery on the Discovery row in Auto Run's Setup panel.`;
 
 /** What the pill says, what a click on it does, and its colour, for a run
  * in each state. Null while there is no run to show (none, or one still on
