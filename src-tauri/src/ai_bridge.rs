@@ -2218,9 +2218,13 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
             Err(why) => why,
             Ok(out) if !out.ok => out.detail,
             Ok(out) => {
-                *p.discovery =
-                    Some(crate::commands::autorun::DiscoveryState { area: named(area), account: Some(key.to_string()) });
-                let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref());
+                let area =
+                    named(area).map(|a| crate::autorun::discovery_map::canonical_area(root, organization, project, &a));
+                *p.discovery = Some(crate::commands::autorun::DiscoveryState { area, account: Some(key.to_string()) });
+                // The landing page is filed, but does not mark the area
+                // explored: nothing of the area itself has been seen yet.
+                let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref())
+                    .map(|at| Sighting { discovering: false, ..at });
                 let (status, page) = read_page(p.driver, crate::browser::snapshot::DEFAULT_LIMIT, at.as_ref()).await;
                 let (path, _) = current_page(p.driver).await;
                 let mut answer = serde_json::json!({
@@ -2267,7 +2271,7 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
         return (409, NO_DISCOVERY.to_string());
     };
     if let Some(moved) = named(area) {
-        state.area = Some(moved);
+        state.area = Some(crate::autorun::discovery_map::canonical_area(root, organization, project, &moved));
     }
     let area_name = state.area.clone();
     let d = p.driver;
@@ -2349,6 +2353,16 @@ pub fn end_discovery_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, Stri
         return (200, "the discovery is over and its browser is closed".to_string());
     }
     (200, "no discovery is going".to_string())
+}
+
+/// Refused while a discovery holds the browser in `slot`: a replay, or the
+/// person's Open browser, would otherwise take the discovery's browser
+/// over. The sentence names `end_autorun_discovery`.
+pub fn refuse_while_discovering<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Result<(), String> {
+    if slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
+        return Err(crate::commands::autorun::busy_browser_sentence(true).to_string());
+    }
+    Ok(())
 }
 
 /// Close whatever browser `slot` holds - a discovery ends with it. Whether

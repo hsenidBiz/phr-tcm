@@ -111,10 +111,17 @@ pub async fn auto_run_open_browser(app: tauri::AppHandle, browser_name: String) 
     if crate::commands::autorun_replay::replay_is_running() {
         return Err(UNATTENDED_GOING.to_string());
     }
+    // A discovery's browser is never replaced: heard before a replay is
+    // stopped, and again under the lock. No replay goes beside a discovery
+    // (`replay_supervised` refuses), so the lock is free to take.
+    if auto_run_discovery_active() {
+        return Err(busy_browser_sentence(true).to_string());
+    }
     // A replay going in the browser this replaces ends first: it is heard
     // without the session's lock, which the replay holds.
     crate::autorun::replay_to::stop();
     let mut slot = SESSION.lock().await;
+    crate::ai_bridge::refuse_while_discovering(&mut slot)?;
     let opened = open_into(root(&app), &mut slot, Browser::from_name(&browser_name)).await;
     // A discovery this replaced is over, whether or not the new one opened.
     publish_discovery(&slot);
@@ -191,6 +198,18 @@ pub(crate) async fn end_discovery() -> (u16, String) {
     let answer = crate::ai_bridge::end_discovery_in(&mut slot);
     publish_discovery(&slot);
     answer
+}
+
+/// End Discovery on Auto Run's Setup card: ends the discovery under way the
+/// way the assistant's `end_autorun_discovery` does, closing its browser,
+/// and says so to the window. A browser the person opened is left alone,
+/// and with no discovery going this does nothing. Nothing is lost: the map
+/// keeps what was seen.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_end_discovery() -> Result<(), String> {
+    end_discovery().await;
+    Ok(())
 }
 
 /// Whether a discovery holds the Auto Run browser, as last published. Kept
@@ -308,11 +327,20 @@ pub fn auto_run_forget_map_area(
     crate::autorun::discovery_map::forget_area(&root(&app)?, &organization, &project, &area)
 }
 
+/// Reset map in the Discovery window, offered when the map cannot be read:
+/// the damaged file is moved aside (never deleted) and discovery starts an
+/// empty map. Hands back where it was moved, project-relative.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_reset_map(app: tauri::AppHandle, organization: String, project: String) -> Result<Option<String>, String> {
+    crate::autorun::discovery_map::reset_map(&root(&app)?, &organization, &project, crate::autorun::sessions::now_ms())
+}
+
 /// Said when something wants the browser a session holds. A discovery's
 /// names the assistant's own way out.
 pub fn busy_browser_sentence(discovering: bool) -> &'static str {
     if discovering {
-        "the assistant is exploring the app in the Auto Run browser - end it with end_autorun_discovery, or close the browser, first"
+        "the assistant is exploring the app in the Auto Run browser - end it with end_autorun_discovery, or press End discovery in Auto Run, Setup, first"
     } else {
         "close the supervised browser first"
     }
@@ -616,6 +644,10 @@ pub(crate) async fn replay_supervised(
     // again for a replay the person has already stopped.
     if let Some(stopped) = replay_to::stopped_before_opening(&replay_to::CANCEL) {
         return Ok((stopped, Vec::new()));
+    }
+    // A discovery's browser is the assistant's: a replay never runs in it.
+    if let Err(why) = crate::ai_bridge::refuse_while_discovering(&mut slot) {
+        return Ok((ReplayEnd::Refused(why), Vec::new()));
     }
     let had_browser = slot.is_some();
     open_if_none(app, &mut slot).await?;

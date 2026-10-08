@@ -220,7 +220,7 @@ fn parsed(body: &str) -> Value {
 
 /// A start signs in as the named account, says where it landed (a path,
 /// never a query string), hands back the page, and files that page in the
-/// map under the discovery's area, explored by the account KEY.
+/// map under the discovery's area, without marking the area explored.
 #[tokio::test]
 async fn start_signs_in_and_returns_the_landing_page() {
     let dir = root_with_recipe_and_account();
@@ -243,8 +243,7 @@ async fn start_signs_in_and_returns_the_landing_page() {
     assert_eq!(b.account.as_deref(), Some("admin"));
 
     let area = mapped_area(dir.path(), "Leave").expect("the landing page was not recorded");
-    assert!(area.explored_at.is_some(), "a discovery's landing page stamps the area explored");
-    assert_eq!(area.account.as_deref(), Some("admin"), "the account KEY, never the login");
+    assert_eq!(area.explored_at, None, "the landing page is not the area: it marks nothing explored");
     let page = area.pages.iter().find(|p| p.path == "/hr/home/index").expect("no landing page");
     assert!(page.elements.iter().any(|e| e.name == "Save"), "{:?}", page.elements);
     let file = std::fs::read_to_string(map_path(dir.path(), ORG, PROJECT)).unwrap();
@@ -812,4 +811,114 @@ fn load_map_command_reports_stale_and_counts() {
     // No map file at all: no areas, not an error.
     let empty = TempDir::new();
     assert!(map_view(empty.path(), ORG, PROJECT, now).unwrap().areas.is_empty());
+}
+
+// ------------------------------------------ final review: areas, the browser
+
+fn recorded(dir: &std::path::Path, name: &str) {
+    put_path(
+        dir,
+        ORG,
+        PROJECT,
+        ModulePath {
+            area: name.into(),
+            module: "Leave".into(),
+            clicks: vec![css("#leave")],
+            arrived: "/hr/leave".into(),
+            recorded: "2026-10-01T00:00:00Z".into(),
+            start: String::new(),
+        },
+    )
+    .unwrap();
+}
+
+/// Finding 6: starting a discovery in an area reads the landing page, but
+/// that is not the area: it neither marks the area explored nor clears a
+/// failure since. What the discovery then sees in the area does.
+#[tokio::test]
+async fn starting_discovery_does_not_mark_an_area_explored() {
+    let dir = root_with_recipe_and_account();
+    recorded(dir.path(), "Leave");
+    v2_lib::autorun::discovery_map::mark_failed(dir.path(), ORG, PROJECT, "Leave").unwrap();
+    let (mut browser, _) = slot(signin_app(true), opened_for_discovery());
+
+    let (status, body) =
+        discover_start_in(&mut browser, dir.path(), ORG, PROJECT, "admin", Some(" leave "), &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    let state = browser.as_ref().unwrap().discovery.as_ref().unwrap();
+    assert_eq!(state.area.as_deref(), Some("Leave"), "the recorded area's own name");
+    let area = mapped_area(dir.path(), "Leave").expect("the landing page was not filed");
+    assert_eq!(area.explored_at, None, "starting marked the area explored");
+    assert!(area.failed_since, "starting cleared the failure since");
+
+    // An action in the area does.
+    let (mut browser, _) = slot(leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave"), exploring("Leave"));
+    let (status, body) = discover_action_in(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        &Action::Click { selector: "#save".into() },
+        Some("LEAVE"),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(browser.as_ref().unwrap().discovery.as_ref().unwrap().area.as_deref(), Some("Leave"));
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    assert_eq!(map.areas.len(), 1, "a second spelling made a second area: {:?}", map.areas);
+    assert!(map.areas[0].explored_at.is_some(), "what was seen in the area did not mark it explored");
+    assert!(!map.areas[0].failed_since);
+}
+
+/// Finding 3: a replay never runs inside the discovery's browser. Refused
+/// with the sentence that names `end_autorun_discovery`; the person's own
+/// browser, or none, is no reason to refuse.
+#[tokio::test]
+async fn a_replay_is_refused_while_discovery_holds_the_browser() {
+    use v2_lib::ai_bridge::refuse_while_discovering;
+    let (mut discovering, closed) = slot(FakePage::default().driver(), exploring("Leave"));
+    let why = refuse_while_discovering(&mut discovering).unwrap_err();
+    assert_eq!(why, busy_browser_sentence(true));
+    assert!(why.contains("end_autorun_discovery"), "{why}");
+    assert!(discovering.is_some() && !closed.load(Ordering::SeqCst), "the discovery's browser was touched");
+    // Opened for a discovery, still signing in: refused too.
+    let (mut opening, _) = slot(FakePage::default().driver(), opened_for_discovery());
+    assert!(refuse_while_discovering(&mut opening).is_err());
+
+    let (mut theirs, _) = slot(FakePage::default().driver(), None);
+    assert_eq!(refuse_while_discovering(&mut theirs), Ok(()));
+    let mut none: Option<FakeBrowser> = None;
+    assert_eq!(refuse_while_discovering(&mut none), Ok(()));
+
+    let source = include_str!("../../src/commands/autorun.rs");
+    let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
+    let replay = &replay[..replay.find("open_if_none(").unwrap()];
+    assert!(replay.contains("refuse_while_discovering(&mut slot)"), "replay_supervised opens without asking");
+}
+
+/// Finding 5: Open browser never replaces a discovery's browser - neither
+/// the button nor RunPane's own between-case and Continue paths, which all
+/// call `auto_run_open_browser`. It refuses with the same sentence.
+#[tokio::test]
+async fn open_browser_is_refused_while_discovery_holds_the_browser() {
+    let source = include_str!("../../src/commands/autorun.rs");
+    let open = &source[source.find("pub async fn auto_run_open_browser").unwrap()..];
+    let open = &open[..open.find("open_into(").unwrap()];
+    assert!(open.contains("auto_run_discovery_active()"), "Open browser does not ask before stopping a replay");
+    assert!(open.contains("refuse_while_discovering(&mut slot)?"), "Open browser does not ask under the lock");
+    assert!(busy_browser_sentence(true).contains("End discovery"), "{}", busy_browser_sentence(true));
+}
+
+/// Finding 4: End discovery ends the discovery the way
+/// `/autorun-discover-end` does, and is fine with nothing to end.
+#[tokio::test]
+async fn the_end_discovery_command_ends_like_the_route() {
+    let _g = crate::serial::autorun();
+    for _ in 0..2 {
+        assert_eq!(v2_lib::commands::autorun::auto_run_end_discovery().await, Ok(()));
+    }
+    assert!(!v2_lib::commands::autorun::auto_run_discovery_active());
+    let source = include_str!("../../src/commands/autorun.rs");
+    let cmd = &source[source.find("pub async fn auto_run_end_discovery").unwrap()..];
+    assert!(cmd[..cmd.find('}').unwrap()].contains("end_discovery().await"), "not the route's own ending");
 }

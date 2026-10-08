@@ -75,15 +75,82 @@ fn write_lock() -> &'static Mutex<()> {
     &L
 }
 
-pub fn load_map(root: &Path, org: &str, project: &str) -> Result<DiscoveryMap, String> {
+/// The map's file as the person can find it under the Auto Run folder:
+/// `projects/<slug>-map.json`. A refusal names this, never a full path,
+/// which would carry the person's user folder.
+pub fn map_file_name(org: &str, project: &str) -> String {
+    format!("projects/{}-map.json", project_slug(org, project))
+}
+
+/// Why the map could not be loaded: its file holds something that is not a
+/// map (`Damaged`), or the file could not be read at all.
+enum MapError {
+    Damaged(String),
+    Unreadable(String),
+}
+
+fn read_map(root: &Path, org: &str, project: &str) -> Result<DiscoveryMap, MapError> {
     match std::fs::read_to_string(map_path(root, org, project)) {
         Ok(s) => {
             let s = s.strip_prefix('\u{feff}').unwrap_or(&s);
-            serde_json::from_str(s).map_err(|e| format!("the discovery map could not be read: {e}"))
+            serde_json::from_str(s).map_err(|e| MapError::Damaged(e.to_string()))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(DiscoveryMap::default()),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(MapError::Unreadable(e.to_string())),
     }
+}
+
+pub fn load_map(root: &Path, org: &str, project: &str) -> Result<DiscoveryMap, String> {
+    read_map(root, org, project).map_err(|e| {
+        let file = map_file_name(org, project);
+        match e {
+            MapError::Damaged(why) => format!(
+                "The discovery map {file} is damaged and could not be read ({why}). Reset map in Auto Run, Setup, Discovery moves it aside and starts an empty one."
+            ),
+            MapError::Unreadable(why) => format!("The discovery map {file} could not be read: {why}"),
+        }
+    })
+}
+
+/// Move a damaged map aside, as `<slug>-map.corrupt-<now>.json` beside it,
+/// so discovery starts an empty one: the person's way out of a file nothing
+/// can read. It is never deleted. Hands back the name it was moved to
+/// (project-relative), or `None` when there was no file. A map that reads
+/// is refused: Forget map clears an area of a healthy one.
+pub fn reset_map(root: &Path, org: &str, project: &str, now: u64) -> Result<Option<String>, String> {
+    let _guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let from = map_path(root, org, project);
+    if !from.exists() {
+        return Ok(None);
+    }
+    if read_map(root, org, project).is_ok() {
+        return Err("The discovery map can be read, so there is nothing to reset. Forget map clears one area.".to_string());
+    }
+    let aside = format!("{}-map.corrupt-{now}.json", project_slug(org, project));
+    std::fs::rename(&from, from.with_file_name(&aside))
+        .map_err(|e| format!("The discovery map {} could not be moved aside: {e}", map_file_name(org, project)))?;
+    crate::applog::info(format!("Discovery map: a damaged map was moved aside as projects/{aside}"));
+    Ok(Some(format!("projects/{aside}")))
+}
+
+/// The one form an area name is compared in: case and runs of spaces
+/// folded, as the recorded areas are (`nav::module_key`). `""` is the
+/// unattributed bucket.
+pub fn area_key(name: &str) -> String {
+    super::nav::module_key(name)
+}
+
+/// The name an area is filed under: the recorded area's own name when one
+/// is named like `name` (`nav::find_area`), else `name` trimmed.
+pub fn canonical_area(root: &Path, org: &str, project: &str, name: &str) -> String {
+    let name = name.trim();
+    if name.is_empty() {
+        return String::new();
+    }
+    super::nav::load_nav(root, org, project)
+        .ok()
+        .and_then(|nav| super::nav::find_area(&nav, name).map(|m| m.name().to_string()))
+        .unwrap_or_else(|| name.to_string())
 }
 
 /// Load, change and write back under the lock.
@@ -99,11 +166,14 @@ fn update(root: &Path, org: &str, project: &str, change: impl FnOnce(&mut Discov
     crate::ai_tools::atomic_write(&path, &text)
 }
 
+/// The map's entry for `area`, compared by `area_key`. A new entry is filed
+/// under `area` as given, which callers make canonical (`canonical_area`).
 fn area_mut<'a>(map: &'a mut DiscoveryMap, area: &str) -> &'a mut AreaMap {
-    if let Some(i) = map.areas.iter().position(|a| a.area == area) {
+    let key = area_key(area);
+    if let Some(i) = map.areas.iter().position(|a| area_key(&a.area) == key) {
         return &mut map.areas[i];
     }
-    map.areas.push(AreaMap { area: area.to_string(), ..AreaMap::default() });
+    map.areas.push(AreaMap { area: area.trim().to_string(), ..AreaMap::default() });
     map.areas.last_mut().expect("just pushed")
 }
 
@@ -163,9 +233,12 @@ pub fn record_seen(
     now: u64,
 ) -> Result<(), String> {
     let path = path_only(page_path);
+    let area = canonical_area(root, org, project, area.unwrap_or(""));
     update(root, org, project, |map| {
-        let a = area_mut(map, area.unwrap_or(""));
-        if discovering {
+        let a = area_mut(map, &area);
+        // Only what a discovery sees in a named area marks that area
+        // explored: the bucket for no area is never explored.
+        if discovering && !area.is_empty() {
             a.explored_at = Some(now);
             a.failed_since = false;
             a.account = account.map(str::to_string);
@@ -203,8 +276,9 @@ pub fn record_matched(
     _now: u64,
 ) -> Result<(), String> {
     let path = path_only(page_path);
+    let area = canonical_area(root, org, project, area.unwrap_or(""));
     update(root, org, project, |map| {
-        let a = area_mut(map, area.unwrap_or(""));
+        let a = area_mut(map, &area);
         let page = page_mut(a, &path, "");
         for link in target.links() {
             let Some(key) = link.seen_key() else { continue };
@@ -227,12 +301,14 @@ pub fn record_matched(
 
 pub fn record_write(root: &Path, org: &str, project: &str, area: &str, w: WriteEntry) -> Result<(), String> {
     let w = WriteEntry { path: path_only(&w.path), ..w };
-    update(root, org, project, |map| area_mut(map, area).writes.push(w))
+    let area = canonical_area(root, org, project, area);
+    update(root, org, project, |map| area_mut(map, &area).writes.push(w))
 }
 
 pub fn record_outcome(root: &Path, org: &str, project: &str, area: &str, line: &str) -> Result<(), String> {
+    let area = canonical_area(root, org, project, area);
     update(root, org, project, |map| {
-        let a = area_mut(map, area);
+        let a = area_mut(map, &area);
         a.outcomes.push(line.to_string());
         if a.outcomes.len() > MAX_OUTCOMES {
             let drop = a.outcomes.len() - MAX_OUTCOMES;
@@ -242,11 +318,13 @@ pub fn record_outcome(root: &Path, org: &str, project: &str, area: &str, line: &
 }
 
 pub fn mark_failed(root: &Path, org: &str, project: &str, area: &str) -> Result<(), String> {
-    update(root, org, project, |map| area_mut(map, area).failed_since = true)
+    let area = canonical_area(root, org, project, area);
+    update(root, org, project, |map| area_mut(map, &area).failed_since = true)
 }
 
 pub fn forget_area(root: &Path, org: &str, project: &str, area: &str) -> Result<(), String> {
-    update(root, org, project, |map| map.areas.retain(|a| a.area != area))
+    let key = area_key(area);
+    update(root, org, project, |map| map.areas.retain(|a| area_key(&a.area) != key))
 }
 
 /// Never explored, failed since, or explored more than 30 days ago.
@@ -272,9 +350,13 @@ pub fn stale_reason(a: &AreaMap, now: u64) -> Option<&'static str> {
 
 /// Every key seen in the named areas and in the unattributed bucket.
 pub fn seen_keys(map: &DiscoveryMap, areas: &[&str]) -> HashSet<SeenKey> {
+    let wanted: Vec<String> = areas.iter().map(|a| area_key(a)).collect();
     map.areas
         .iter()
-        .filter(|a| a.area.is_empty() || areas.contains(&a.area.as_str()))
+        .filter(|a| {
+            let key = area_key(&a.area);
+            key.is_empty() || wanted.contains(&key)
+        })
         .flat_map(|a| a.pages.iter())
         .flat_map(|p| p.elements.iter())
         .flat_map(|e| {
@@ -295,7 +377,8 @@ pub fn seen_paths(map: &DiscoveryMap) -> HashSet<String> {
 pub fn explore_section(areas: &[&str], map: &DiscoveryMap, now: u64) -> String {
     let mut lines = String::new();
     for name in areas {
-        let reason = match map.areas.iter().find(|a| a.area == *name) {
+        let key = area_key(name);
+        let reason = match map.areas.iter().find(|a| area_key(&a.area) == key) {
             None => "no map yet",
             Some(a) => match stale_reason(a, now) {
                 Some(why) => why,

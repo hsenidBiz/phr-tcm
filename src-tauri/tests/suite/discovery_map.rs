@@ -68,7 +68,7 @@ fn missing_map_is_empty_and_corrupt_map_says_so() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, "{ not json").unwrap();
     let err = load_map(dir.path(), "Acme", "Web").unwrap_err();
-    assert!(err.starts_with("the discovery map could not be read: "), "{err}");
+    assert!(err.starts_with("The discovery map projects/") && err.contains("is damaged and could not be read"), "{err}");
 }
 
 #[test]
@@ -320,4 +320,131 @@ fn a_case_without_an_area_marks_nothing() {
     saved_script(dir.path(), 8, Some("  "));
     record_run_evidence(dir.path(), "Acme", "Web", &[run_case(7, "Failed"), run_case(8, "Failed"), run_case(9, "Failed")], 10);
     assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty());
+}
+
+// ---------------------------------------- final review: area names, damage
+
+/// Records an area named `name` under module `module` in the project's
+/// areas file, as the Areas dialog does.
+fn recorded_area(root: &std::path::Path, name: &str, module: &str) {
+    v2_lib::autorun::nav::put_path(
+        root,
+        "Acme",
+        "Web",
+        v2_lib::autorun::nav::ModulePath {
+            area: name.to_string(),
+            module: module.to_string(),
+            clicks: vec![Target::One(LocatorStep {
+                role: Some("link".into()),
+                name: Some(name.to_string()),
+                ..LocatorStep::default()
+            })],
+            arrived: "/hr/leave".to_string(),
+            recorded: "2026-10-08T10:00:00Z".to_string(),
+            start: String::new(),
+        },
+    )
+    .unwrap();
+}
+
+/// Finding 2: what a discovery in "leave" saw counts for a script that
+/// names "Leave", and is filed under the recorded area's own name. With
+/// no area recorded, the names still compare ignoring case and spaces.
+#[test]
+#[allow(non_snake_case)]
+fn discovering_leave_counts_for_a_script_naming_Leave() {
+    let dir = tempfile::tempdir().unwrap();
+    recorded_area(dir.path(), "Leave", "HR");
+    record_seen(dir.path(), "Acme", "Web", Some(" leave "), "/hr/leave", "", &[line("button", "Apply")], Some("hr1"), true, 1000)
+        .unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas.iter().map(|a| a.area.as_str()).collect::<Vec<_>>(), ["Leave"]);
+    assert!(seen_keys(&map, &["Leave"]).contains(&role_key("button", "apply")));
+
+    let bare = tempfile::tempdir().unwrap();
+    record_seen(bare.path(), "Acme", "Web", Some("leave"), "/hr/leave", "", &[line("button", "Apply")], None, true, 1000).unwrap();
+    record_matched(bare.path(), "Acme", "Web", Some("LEAVE"), "/hr/leave", &Target::One(LocatorStep {
+        role: Some("button".into()),
+        name: Some("Cancel".into()),
+        ..LocatorStep::default()
+    }), 1000)
+    .unwrap();
+    let map = load_map(bare.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas.len(), 1, "one area, however it was spelled: {:?}", map.areas);
+    let keys = seen_keys(&map, &["Leave"]);
+    assert!(keys.contains(&role_key("button", "apply")) && keys.contains(&role_key("button", "cancel")));
+    // The script names "Leave"; the map says "leave": still explored.
+    let section = v2_lib::autorun::discovery_map::explore_section(&["Leave"], &map, 1000);
+    assert_eq!(section, "", "a fresh map under another case was listed to explore: {section}");
+    forget_area(bare.path(), "Acme", "Web", "LEAVE").unwrap();
+    assert!(load_map(bare.path(), "Acme", "Web").unwrap().areas.is_empty(), "Forget map missed the area");
+}
+
+/// Finding 2: a failed run marks the recorded area stale even when the
+/// script spells it in another case, and makes no second area.
+#[test]
+fn a_failed_run_marks_the_area_stale_whatever_its_case() {
+    let dir = tempfile::tempdir().unwrap();
+    recorded_area(dir.path(), "Leave", "HR");
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], Some("hr1"), true, 5)
+        .unwrap();
+    saved_script(dir.path(), 7, Some("leave"));
+    record_run_evidence(dir.path(), "Acme", "Web", &[run_case(7, "Failed")], 10);
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas.len(), 1, "{:?}", map.areas);
+    assert!(map.areas[0].failed_since, "Leave stayed fresh after its script failed");
+    assert!(is_stale(&map.areas[0], 10));
+
+    // With no area recorded, an existing entry is still found by its key.
+    let bare = tempfile::tempdir().unwrap();
+    record_seen(bare.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], None, true, 5).unwrap();
+    mark_failed(bare.path(), "Acme", "Web", "LEAVE ").unwrap();
+    let map = load_map(bare.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas.len(), 1, "{:?}", map.areas);
+    assert!(map.areas[0].failed_since);
+}
+
+/// Finding 6: only what a discovery sees in a named area marks it
+/// explored; the bucket for no area never is.
+#[test]
+fn a_discovery_with_no_area_marks_nothing_explored() {
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(dir.path(), "Acme", "Web", None, "/", "", &[line("link", "Home")], Some("hr1"), true, 5).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas[0].area, "");
+    assert_eq!(map.areas[0].explored_at, None);
+}
+
+/// Finding 9: a damaged map names its file by its project-relative name,
+/// never a full path. Reset map moves it aside - never deleting it - and
+/// discovery starts an empty one; a map that reads is not reset.
+#[test]
+fn a_damaged_map_names_its_file_and_reset_map_moves_it_aside() {
+    use v2_lib::autorun::discovery_map::{map_file_name, reset_map};
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(reset_map(dir.path(), "Acme", "Web", 1).unwrap(), None, "no file, nothing to move");
+
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], None, true, 5).unwrap();
+    let refused = reset_map(dir.path(), "Acme", "Web", 1).unwrap_err();
+    assert!(refused.contains("Forget map"), "{refused}");
+    assert_eq!(load_map(dir.path(), "Acme", "Web").unwrap().areas.len(), 1, "a readable map was reset");
+
+    let path = map_path(dir.path(), "Acme", "Web");
+    std::fs::write(&path, "{ not a map").unwrap();
+    let file = map_file_name("Acme", "Web");
+    assert!(file.starts_with("projects/") && file.ends_with("-map.json"), "{file}");
+    let why = load_map(dir.path(), "Acme", "Web").unwrap_err();
+    assert!(why.contains(&file), "the refusal does not name the file: {why}");
+    assert!(why.contains("Reset map"), "the refusal gives no way out: {why}");
+    let full = dir.path().to_string_lossy().to_string();
+    assert!(!why.contains(&full), "a full path reached the sentence: {why}");
+    assert!(forget_area(dir.path(), "Acme", "Web", "Leave").is_err(), "a damaged map is never overwritten silently");
+
+    let aside = reset_map(dir.path(), "Acme", "Web", 1234).unwrap().expect("the file was moved");
+    assert!(aside.starts_with("projects/") && aside.ends_with("-map.corrupt-1234.json"), "{aside}");
+    assert_eq!(std::fs::read_to_string(dir.path().join(&aside)).unwrap(), "{ not a map", "the damaged file was not kept");
+    assert!(!path.exists());
+    assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty());
+    record_seen(dir.path(), "Acme", "Web", Some("Leave"), "/hr/leave", "", &[line("button", "Apply")], None, true, 5).unwrap();
+    assert_eq!(load_map(dir.path(), "Acme", "Web").unwrap().areas.len(), 1, "saves work again after the reset");
 }

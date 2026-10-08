@@ -370,6 +370,20 @@ export const commands = {
 	 */
 	autoRunForgetMapArea: (organization: string, project: string, area: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_forget_map_area", { organization, project, area })),
 	/**
+	 *  Reset map in the Discovery window, offered when the map cannot be read:
+	 *  the damaged file is moved aside (never deleted) and discovery starts an
+	 *  empty map. Hands back where it was moved, project-relative.
+	 */
+	autoRunResetMap: (organization: string, project: string) => typedError<string | null, string>(__TAURI_INVOKE("auto_run_reset_map", { organization, project })),
+	/**
+	 *  End Discovery on Auto Run's Setup card: ends the discovery under way the
+	 *  way the assistant's `end_autorun_discovery` does, closing its browser,
+	 *  and says so to the window. A browser the person opened is left alone,
+	 *  and with no discovery going this does nothing. Nothing is lost: the map
+	 *  keeps what was seen.
+	 */
+	autoRunEndDiscovery: () => typedError<null, string>(__TAURI_INVOKE("auto_run_end_discovery")),
+	/**
 	 *  Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised
 	 *  browser and stop before `step` (`autorun::replay_to`), for the person's
 	 *  Replay to step button. The browser open is used; with none, the one last

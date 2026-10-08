@@ -385,7 +385,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "description": "Open the app's own Auto Run browser and sign in as a saved account, so you can explore the live application before you write a script. The app replays the recorded sign-in and types the password; you never see it. Answers the landing page as get_autorun_page shows it, and its address path. Refused while a run, a replay or a person's browser holds the Auto Run browser; a failed sign-in closes the browser and says why, so report it rather than trying again. Every locator you will put in a script must be seen on the live app first: a save refuses any locator the app has not seen. Never read the application's code to write scripts. Call end_autorun_discovery when you are done.",
             "inputSchema": schema(serde_json::json!({
                 "account": { "type": "string", "description": "The KEY of the saved account to sign in as, from get_accounts. Never a username or a password." },
-                "area": { "type": "string", "description": "Optional: the recorded area you are exploring, by its name; what you see is filed under it." },
+                "area": { "type": "string", "description": "The recorded area you are exploring, by its name: pass it whenever the case's area is listed in the guide. What you see is filed under it; with none, it is filed under no area." },
                 "browser": { "type": "string", "enum": ["edge", "chrome"], "description": "Optional: which browser to open. The one last used, when left out." },
             }), &["account"]),
         },

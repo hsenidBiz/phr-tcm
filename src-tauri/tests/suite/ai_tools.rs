@@ -1695,3 +1695,29 @@ fn heal_explores_a_stale_area_first_and_setup_names_discover() {
     let setup = COMMANDS.iter().find(|c| c.stem == "setup").unwrap().body.join(" ");
     assert!(setup.contains("/tcm:discover"), "{setup}");
 }
+
+/// Final review, finding 1: a discovery that names no area files
+/// everything in the bucket for no area. `/tcm:discover` and `/tcm:heal`
+/// both say to pass `area` to `start_autorun_discovery`, how to reach a
+/// listed area (click its menu path with `discover_autorun_action`), and to
+/// pass `area` when moving to another one; discover also says to save an
+/// unlisted screen with `save_autorun_area` as soon as it is found.
+#[test]
+fn discover_and_heal_say_to_pass_the_area_to_discovery() {
+    for stem in ["discover", "heal"] {
+        let c = COMMANDS.iter().find(|c| c.stem == stem).unwrap();
+        let flat = c.body.join("\n").split_whitespace().collect::<Vec<_>>().join(" ");
+        for said in ["`start_autorun_discovery`", "`area`", "menu path", "passing `area`"] {
+            let said = if stem == "discover" && said == "passing `area`" { "pass `area`" } else { said };
+            assert!(flat.contains(said), "/tcm:{stem} never says {said:?}: {flat}");
+        }
+        assert!(
+            flat.contains("`area` on `discover_autorun_action`"),
+            "/tcm:{stem} never says to pass `area` when moving: {flat}"
+        );
+    }
+    let discover = COMMANDS.iter().find(|c| c.stem == "discover").unwrap().body.join(" ");
+    let flat = discover.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("pass `area` with its name"), "{flat}");
+    assert!(flat.contains("call `save_autorun_area` as soon as you are on it"), "{flat}");
+}

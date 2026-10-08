@@ -672,3 +672,18 @@ fn a_dropped_duplicate_area_is_logged_once_per_file() {
         .count();
     assert_eq!(count, 1);
 }
+
+/// Final review, finding 1: a discovery reaches a listed area by clicking
+/// its menu path, so each area line gives that path, click by click, and
+/// the section says to carry it out with `discover_autorun_action`.
+#[test]
+fn the_areas_section_gives_each_areas_menu_path() {
+    let text = guide_section(&pms_and_leave());
+    let menu = format!(
+        "- Leave - Leave - /hr/leave/apply - menu path: {}, then {}\n",
+        path("Leave", "/x").clicks[0].describe(),
+        path("Leave", "/x").clicks[1].describe()
+    );
+    assert!(text.contains(&menu), "missing {menu:?}: {text}");
+    assert!(text.contains("`discover_autorun_action`"), "{text}");
+}

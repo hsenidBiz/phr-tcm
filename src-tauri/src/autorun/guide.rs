@@ -1030,6 +1030,20 @@ What the app sees on a live page is kept in this project's map, area by
 area: while you explore, in the person's browser, and in replays. A save
 is checked against that map.
 
+Name the area you explore, so what you see is filed under it:
+
+- When the case's area is listed in "This project's areas", pass `area`
+  with its name to `start_autorun_discovery`. Reach it by carrying out
+  its menu path, click by click, with `discover_autorun_action`.
+- When it is not listed, find the screen through the menus and call
+  `save_autorun_area` as soon as you are on it. That names the area, and
+  what you see after it is filed under it.
+- When you move to another area, pass `area` on `discover_autorun_action`.
+
+What you see with no area named is filed under no area. Starting a
+discovery does not mark its area explored; what you see in the area
+does.
+
 Set the script's `area` to the area you explored, every time, even when
 it is the module's default area: a script with no `area` only gets credit
 for locators not tied to an area. That is the name `save_autorun_area`
@@ -1051,9 +1065,11 @@ What a save checks:
   actions inside `when_visible`, and the tab actions.
 - A `navigate` or `open_tab` address must be one discovery has visited.
 - Three kinds of locator pass without a sighting:
-  1. Text the script typed itself: a locator whose text or name holds a
-     value the script typed in an earlier step, of at least 3 characters.
-     This is the record the script just created.
+  1. Text the script typed itself: a locator whose whole text or name, of
+     at least 3 characters, appears as a whole word or phrase in a value
+     the script typed in an earlier step. This is the record the script
+     just created. Typing "Test" does not let a "Test connection" button
+     through.
   2. Text from the test case: a check (`wait_for` or an `expect_` action)
      whose text appears as a whole word or phrase in the case's own steps
      or expected results, of at least 3 characters.

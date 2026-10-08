@@ -96,7 +96,7 @@ fn a_locator_holding_text_typed_earlier_is_exempt_but_not_typed_later() {
     let earlier = script(
         Some("Ratings"),
         serde_json::json!([
-            { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "Quarterly Plan" }] },
+            { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "Quarterly Plan 2026" }] },
             { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "cell", "name": "Quarterly  plan 2026" } }] }
         ]),
     );
@@ -277,4 +277,37 @@ fn a_whole_phrase_from_the_case_exempts_a_check() {
         );
         assert_eq!(check_seen(&map, &s, &case_text, None), Ok(()), "{name}");
     }
+}
+
+/// Final review, finding 7: the typed-value exception matches the way the
+/// case exception does - the locator's whole name as whole words in what
+/// was typed - so typing "Test" into a search box does not let an unseen
+/// "Test connection" button through, nor a name that merely holds "2026".
+#[test]
+fn typing_test_does_not_exempt_test_connection() {
+    let map = map_with("Ratings", "/ratings", &[role("searchbox", "Search")]);
+    let typed = |value: &str, name: &str| {
+        script(
+            Some("Ratings"),
+            serde_json::json!([
+                { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "role": "searchbox", "name": "Search" }, "value": value }] },
+                { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "button", "name": name } }] }
+            ]),
+        )
+    };
+    assert_eq!(
+        check_seen(&map, &typed("Test", "Test connection"), &[], None),
+        Err(refusal(2, "button \"Test connection\""))
+    );
+    assert_eq!(
+        check_seen(&map, &typed("2026", "Report 2026"), &[], None),
+        Err(refusal(2, "button \"Report 2026\""))
+    );
+    // The record the script typed, by its whole name: still exempt.
+    assert_eq!(check_seen(&map, &typed("AutoTest Leave 7", "autotest  leave 7"), &[], None), Ok(()));
+    // Part of a word is not a word.
+    assert_eq!(
+        check_seen(&map, &typed("AutoTestLeave", "Leave"), &[], None),
+        Err(refusal(2, "button \"Leave\""))
+    );
 }

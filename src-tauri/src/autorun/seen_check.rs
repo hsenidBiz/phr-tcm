@@ -2,10 +2,12 @@
 //! live page (`discovery_map`), so a script is never saved against a
 //! guessed locator.
 //!
-//! Two kinds of name are allowed without a sighting: one holding text the
+//! Two kinds of name are allowed without a sighting: one whose words the
 //! script itself typed in an earlier step (a record it just created), and
 //! one a check looks for whose text the test case itself says (the
-//! expected result the step is checking for).
+//! expected result the step is checking for). Both are whole-word matches
+//! of the locator's whole name, so typing "Test" exempts no "Test
+//! connection" button.
 
 use super::discovery_map::{path_only, seen_keys, seen_paths, DiscoveryMap};
 use super::edits::Edit;
@@ -115,11 +117,16 @@ pub fn check_seen(
                             continue;
                         }
                         let own = words(&link);
-                        let typed_here = own.iter().any(|w| typed.iter().any(|t| w.contains(t.as_str())));
-                        let in_case = is_check(action)
-                            && own.iter().any(|w| {
-                                w.chars().count() >= MIN_TYPED_LEN && case_text.iter().any(|c| has_phrase(c, w))
-                            });
+                        // Both exceptions match the same way: the locator's
+                        // whole name, of at least 3 characters, as whole
+                        // words in what was typed or what the case says.
+                        let named_in = |texts: &[String]| {
+                            own.iter().any(|w| {
+                                w.chars().count() >= MIN_TYPED_LEN && texts.iter().any(|t| has_phrase(t, w))
+                            })
+                        };
+                        let typed_here = named_in(&typed);
+                        let in_case = is_check(action) && named_in(&case_text);
                         if !typed_here && !in_case {
                             return Err(refusal(step.step_number, &target.describe()));
                         }

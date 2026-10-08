@@ -2805,6 +2805,9 @@ async fn an_unreadable_map_refuses_the_save() {
     let body = case_7("#toast", "Saved").to_string();
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
-    assert!(out.starts_with("the discovery map could not be read"), "{out}");
+    let file = v2_lib::autorun::discovery_map::map_file_name("acme", "Web");
+    assert!(out.contains(&format!("The discovery map {file} is damaged")), "{out}");
+    assert!(out.contains("Reset map"), "the refusal gives the person no way out: {out}");
+    assert!(!out.contains(&dir.path().to_string_lossy().to_string()), "a full path reached the assistant: {out}");
     assert_eq!(load_script(dir.path(), 7).unwrap(), None);
 }
