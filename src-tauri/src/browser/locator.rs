@@ -39,6 +39,11 @@ pub struct LocatorStep {
     /// Zero-based pick from this step's matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nth: Option<i32>,
+    /// A component's placeholder: the caller's input of this name supplies
+    /// the whole locator step. Stands alone, and is replaced before a
+    /// script runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
 }
 
 /// What an action points at. A plain string keeps the meaning it has
@@ -118,6 +123,15 @@ fn blank(s: &Option<String>) -> bool {
 
 impl LocatorStep {
     fn validate(&self) -> Result<(), String> {
+        if self.input.is_some() {
+            if self.role.is_some() || self.text.is_some() || self.css.is_some() {
+                return Err("an input placeholder stands alone".to_string());
+            }
+            if blank(&self.input) {
+                return Err("an input placeholder needs a name".to_string());
+            }
+            return Ok(());
+        }
         if blank(&self.role) || blank(&self.name) || blank(&self.text) || blank(&self.css) {
             return Err("a locator has an empty role, name, text or css".to_string());
         }
@@ -157,6 +171,9 @@ impl LocatorStep {
     }
 
     fn describe(&self) -> String {
+        if let Some(input) = &self.input {
+            return format!("input \"{input}\"");
+        }
         let mut s = if let Some(role) = &self.role {
             match &self.name {
                 Some(name) => format!("{role} \"{name}\""),
@@ -233,6 +250,11 @@ impl Target {
                 .join(" in "),
         }
     }
+}
+
+/// Does any link of this target wait for a component input?
+pub fn has_input_placeholder(t: &Target) -> bool {
+    t.steps().iter().any(|s| s.input.is_some())
 }
 
 fn collapse(s: &str) -> String {

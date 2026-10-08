@@ -402,6 +402,7 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::WhenVisible { selector, .. } => Some(selector.describe()),
         // Each acts on the page as a whole; a key is pressed on whatever
         // has the focus.
+        Action::UseComponent { component, .. } => Some(format!("the component \"{}\"", component.trim())),
         Action::Reload => Some("the page".to_string()),
         Action::ExpireSession => Some("the session".to_string()),
         Action::ReturnToArea { .. } => Some(match action.area_named() {

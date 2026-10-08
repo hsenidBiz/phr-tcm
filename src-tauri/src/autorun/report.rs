@@ -106,6 +106,7 @@ pub fn action_words(action: &Action) -> String {
             let what: Vec<String> = then.iter().map(action_words).collect();
             format!("if {} shows up, {}", selector.describe(), what.join(", then "))
         }
+        Action::UseComponent { component, .. } => format!("run the component \"{}\"", component.trim()),
         Action::Reload => "reload the page".to_string(),
         Action::ExpireSession => "end the session".to_string(),
         Action::ReturnToArea { .. } => match action.area_named() {

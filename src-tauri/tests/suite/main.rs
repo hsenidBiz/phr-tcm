@@ -99,6 +99,7 @@ mod browser_tabs;
 mod bugreport;
 mod cache;
 mod comment_images;
+mod components;
 mod db_batch;
 mod db_credentials;
 mod db_credentials_commands;

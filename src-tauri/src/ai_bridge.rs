@@ -1846,6 +1846,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<&crate::brow
             }
         }
         Action::ExpectHidden { .. }
+        | Action::UseComponent { .. }
         | Action::ExpectNoRow { .. }
         | Action::WhenVisible { .. }
         | Action::Navigate { .. }
@@ -1956,6 +1957,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         // or the discovery map, and a query can carry a token.
         Action::Navigate { url } => crate::autorun::discovery_map::path_only(url),
         Action::CheckUrl { contains } => contains.clone(),
+        Action::UseComponent { component, .. } => component.trim().to_string(),
         Action::CheckText { .. }
         | Action::SignIn { .. }
         | Action::Reload

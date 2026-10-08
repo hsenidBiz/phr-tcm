@@ -27,6 +27,14 @@ fn ok_status() -> u16 {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {
     Navigate { url: String },
+    /// Runs a saved component with its inputs. Expanded into the
+    /// component's own steps before a script runs.
+    UseComponent {
+        component: String,
+        #[serde(default)]
+        #[specta(type = BTreeMap<String, specta_typescript::Unknown>)]
+        inputs: serde_json::Map<String, serde_json::Value>,
+    },
     Click { selector: Target },
     Fill { selector: Target, value: String },
     WaitFor { selector: Target, timeout_ms: u32 },
@@ -937,6 +945,10 @@ impl Action {
         match self {
             Action::Navigate { url } if !is_navigable(url) => Err(not_an_address("navigate", url)),
             Action::Navigate { .. } => Ok(()),
+            Action::UseComponent { component, .. } if component.trim().is_empty() => {
+                Err("use_component names no component".to_string())
+            }
+            Action::UseComponent { .. } => Ok(()),
             Action::Click { selector }
             | Action::Fill { selector, .. }
             | Action::WaitFor { selector, .. }
@@ -1180,6 +1192,7 @@ impl Action {
             | Action::ExpectSorted { table, .. }
             | Action::ExpectRowCount { table, .. } => vec![table],
             Action::Navigate { .. }
+            | Action::UseComponent { .. }
             | Action::CheckText { .. }
             | Action::CheckUrl { .. }
             | Action::SignIn { .. }
@@ -1534,6 +1547,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::ApiRequest { .. } => ActionOutcome::failed("api_request is carried out by the runner"),
         // Its `then` may hold an `upload`, which only the runner can place.
         Action::WhenVisible { .. } => ActionOutcome::failed("when_visible is carried out by the runner"),
+        Action::UseComponent { .. } => ActionOutcome::failed("components are expanded before they run"),
         Action::Reload => reload(d, timing).await,
         Action::ExpireSession => expire_session(d).await,
         Action::PressKey { key, times } => press_key(d, key, times.unwrap_or(1), timing).await,

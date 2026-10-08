@@ -45,6 +45,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_no_row",
     "expect_sorted",
     "expect_row_count",
+    "use_component",
 ];
 
 /// The guide body. Static: it documents a format, not live org data, so
@@ -127,6 +128,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_sorted", "table": ..., "column": "Joined", "order": "descending", "as": "date" }` - the column is in that order
 - `{ "kind": "expect_row_count", "table": ..., "at_least": 1 }` - the table has that many rows (`equals`, `at_least` or `at_most`)
 - `{ "kind": "drag", "from": ..., "to": ..., "position": "before" }` - pick `from` up and drop it on `to`: `before` it, `after` it, or `onto` it (the default); `within_ms` (default 10000) is optional (see "Dragging to reorder")
+- `{ "kind": "use_component", "component": "pick-date", "inputs": { "day": "5" } }` - runs a saved component with its inputs; see Components
 - `{ "kind": "expect_focused", "selector": ... }` - the focus is on this element, or on something inside it
 - `{ "kind": "expect_download", "name": "Template*.xlsx", "headers": { "exact": ["Employee No", "Name"] } }` - the file this step downloaded has that name (and, for a spreadsheet or text file, those headers, cells or text); see "Checking a downloaded file"
 - `{ "kind": "expect_tab", "name": "report" }` - wait for the tab the page opened since the previous step began, and call it `report`; `url_contains` and `within_ms` (default 10000) are optional (see "Tabs")

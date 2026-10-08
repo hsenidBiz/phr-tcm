@@ -62,6 +62,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         serde_json::from_value(serde_json::json!({ "kind": "expect_no_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_sorted", "table": "t", "column": "A", "order": "ascending" })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_row_count", "table": "t", "equals": 1 })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "use_component", "component": "c" })).unwrap(),
     ];
     let emitted: Vec<String> = samples
         .iter()
