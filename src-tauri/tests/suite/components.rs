@@ -314,3 +314,266 @@ fn a_missing_input_is_named() {
         "Pick a date needs day to be text"
     );
 }
+
+// ---- saving and removing ----
+
+use v2_lib::autorun::components::{draft_fingerprint, remove_unused, save_tried, TriedIn, CHANGE_CAP};
+use v2_lib::autorun::discovery_map::record_matched;
+
+/// "Pick a date": a target input for the field the calendar opens from, a
+/// text input for the day, and two fixed locators: the calendar and its
+/// Done button.
+fn pick_a_date() -> Component {
+    made(
+        "Pick a date",
+        json!([
+            { "name": "field", "kind": "target", "description": "the date field" },
+            { "name": "day", "kind": "text", "description": "the day of the month" }
+        ]),
+        json!([
+            { "kind": "click", "selector": { "input": "field" } },
+            { "kind": "expect_visible", "selector": { "role": "dialog", "name": "Calendar" } },
+            { "kind": "click", "selector": { "role": "gridcell", "name": "{{day}}" } },
+            { "kind": "click", "selector": { "role": "button", "name": "Done" } }
+        ]),
+    )
+}
+
+/// Files `locators` as matched on a page of `area`.
+fn seen_in(root: &std::path::Path, area: &str, locators: &[serde_json::Value]) {
+    for l in locators {
+        let t: Target = serde_json::from_value(l.clone()).unwrap();
+        record_matched(root, "o", "p", Some(area), "/leave", &t, 1).unwrap();
+    }
+}
+
+fn calendar_seen(root: &std::path::Path) {
+    seen_in(
+        root,
+        "Leave",
+        &[json!({ "role": "dialog", "name": "Calendar" }), json!({ "role": "button", "name": "Done" })],
+    );
+}
+
+/// What a discovery keeps for each of `drafts` it tried and saw work.
+fn tried(drafts: &[&Component]) -> Vec<String> {
+    drafts.iter().map(|c| draft_fingerprint(c)).collect()
+}
+
+/// A discovery in the Leave area that tried `prints`.
+fn session(prints: &[String]) -> Option<TriedIn<'_>> {
+    Some(TriedIn { area: Some("Leave"), tried: prints })
+}
+
+#[test]
+fn an_untried_component_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    calendar_seen(dir.path());
+    let c = pick_a_date();
+    // No discovery at all.
+    let err = save_tried(dir.path(), "o", "p", c.clone(), None, None, 50).unwrap_err();
+    assert!(err.contains("Try the component live in discovery first"), "{err}");
+    // A discovery that tried this one with other actions.
+    let mut other = pick_a_date();
+    other.actions.pop();
+    let prints = tried(&[&other]);
+    let err = save_tried(dir.path(), "o", "p", c.clone(), None, session(&prints), 50).unwrap_err();
+    assert!(err.contains("Try the component live in discovery first"), "{err}");
+    assert!(load_components(dir.path(), "o", "p").unwrap().components.is_empty());
+    // Tried as it is sent: saved, with when and where it was tried. Its
+    // description does not count toward what was tried.
+    let mut described = c.clone();
+    described.description = "Picks a day in the calendar".into();
+    let prints = tried(&[&c]);
+    let saved = save_tried(dir.path(), "o", "p", described, None, session(&prints), 50).unwrap();
+    assert_eq!((saved.saved.as_str(), saved.version, saved.changes, saved.cap_reached), ("Pick a date", 1, 0, false));
+    let f = load_components(dir.path(), "o", "p").unwrap();
+    let kept = find(&f, "pick a date").unwrap();
+    assert_eq!((kept.tried_at, kept.tried_area.as_str(), kept.version), (50, "Leave", 1));
+    assert_eq!(kept.description, "Picks a day in the calendar");
+}
+
+#[test]
+fn undeclared_or_unused_inputs_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    calendar_seen(dir.path());
+    let refused = |c: Component| save_tried(dir.path(), "o", "p", c, None, None, 50).unwrap_err();
+
+    let mut blank = pick_a_date();
+    blank.name = "  ".into();
+    assert_eq!(refused(blank), "A component needs a name.");
+    let mut blank = pick_a_date();
+    blank.description = " ".into();
+    assert_eq!(refused(blank), "Pick a date needs a description.");
+
+    let mut twice = pick_a_date();
+    twice.inputs.push(ComponentInput { name: " day ".into(), kind: InputKind::Text, description: "".into() });
+    assert_eq!(refused(twice), "Pick a date declares the input day more than once.");
+
+    let mut unused = pick_a_date();
+    unused.inputs.push(ComponentInput { name: "month".into(), kind: InputKind::Text, description: "".into() });
+    assert_eq!(refused(unused), "Pick a date declares the input month but never uses it.");
+
+    let mut no_text = pick_a_date();
+    no_text.inputs.retain(|i| i.name != "day");
+    assert_eq!(refused(no_text), "Pick a date uses {{day}} but declares no text input day.");
+
+    let mut no_target = pick_a_date();
+    no_target.inputs.retain(|i| i.name != "field");
+    assert_eq!(refused(no_target), "Pick a date uses {\"input\": \"field\"} but declares no target input field.");
+
+    // A text input is not a locator, and a target input is not text.
+    let mut swapped = pick_a_date();
+    for i in swapped.inputs.iter_mut() {
+        i.kind = if i.kind == InputKind::Text { InputKind::Target } else { InputKind::Text };
+    }
+    assert_eq!(refused(swapped), "Pick a date uses {{day}} but declares no text input day.");
+}
+
+#[test]
+fn sign_in_inside_a_component_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let refused = |c: Component| save_tried(dir.path(), "o", "p", c, None, None, 50).unwrap_err();
+
+    let mut signs_in = pick_a_date();
+    signs_in.actions.insert(0, Action::SignIn { account: "admin".into() });
+    assert_eq!(refused(signs_in), "A component cannot sign in: a script signs in as its account.");
+
+    // Declared or not, a username or password is never typed by a component.
+    for inputs in [json!([]), json!([{ "name": "password", "kind": "text", "description": "" }])] {
+        let c = made(
+            "Log in",
+            inputs,
+            json!([{ "kind": "fill", "selector": { "role": "textbox", "name": "Password" }, "value": "{{password}}" }]),
+        );
+        assert_eq!(refused(c), "A component cannot type a username or password: a script signs in as its account.");
+    }
+    let c = made(
+        "Who",
+        json!([{ "name": "username", "kind": "text", "description": "" }]),
+        json!([{ "kind": "check_text", "value": "Hello {{ username }}" }]),
+    );
+    assert_eq!(refused(c), "A component cannot type a username or password: a script signs in as its account.");
+
+    // Nor does it use another component, a guarded use included.
+    let nested = made(
+        "Twice",
+        json!([]),
+        json!([{ "kind": "when_visible", "selector": { "role": "dialog" }, "then": [
+            { "kind": "use_component", "component": "Pick a date", "inputs": {} }
+        ] }]),
+    );
+    assert_eq!(refused(nested), "A component cannot use another component.");
+
+    // Nor go to an address an input makes.
+    for go in [
+        json!({ "kind": "navigate", "url": "/leave/{{id}}" }),
+        json!({ "kind": "open_tab", "name": "t", "url": "https://hr.example.com/{{id}}" }),
+    ] {
+        let c = made("Go", json!([{ "name": "id", "kind": "text", "description": "" }]), json!([go]));
+        assert_eq!(refused(c), "A component's address cannot come from an input.");
+    }
+}
+
+#[test]
+fn an_unseen_fixed_locator_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let c = pick_a_date();
+    let prints = tried(&[&c]);
+    let save = |c: Component| save_tried(dir.path(), "o", "p", c, None, session(&prints), 50);
+
+    // Done was seen only in another area.
+    seen_in(dir.path(), "Leave", &[json!({ "role": "dialog", "name": "Calendar" })]);
+    seen_in(dir.path(), "Payroll", &[json!({ "role": "button", "name": "Done" })]);
+    let err = save(c.clone()).unwrap_err();
+    assert!(err.starts_with("Action 4: "), "{err}");
+    assert!(err.contains("was never seen on the live app"), "{err}");
+
+    // Seen in the area: the input's link and the {{day}} cell are exempt.
+    seen_in(dir.path(), "Leave", &[json!({ "role": "button", "name": "Done" })]);
+    save(c).unwrap();
+
+    // The fixed link of a chain an input sits in is still checked.
+    let chained = made(
+        "Pick in a frame",
+        json!([{ "name": "field", "kind": "target", "description": "" }]),
+        json!([{ "kind": "click", "selector": [{ "role": "dialog", "name": "Frame" }, { "input": "field" }] }]),
+    );
+    let prints = tried(&[&chained]);
+    let err = save_tried(dir.path(), "o", "p", chained, None, session(&prints), 50).unwrap_err();
+    assert!(err.starts_with("Action 1: ") && err.contains("was never seen on the live app"), "{err}");
+
+    // A page it goes to must have been seen too.
+    let goes = made("Go", json!([]), json!([{ "kind": "navigate", "url": "/payroll/run" }]));
+    let prints = tried(&[&goes]);
+    let err = save_tried(dir.path(), "o", "p", goes, None, session(&prints), 50).unwrap_err();
+    assert!(err.starts_with("Action 1: /payroll/run was never seen"), "{err}");
+}
+
+#[test]
+fn a_change_needs_why_and_may_not_weaken() {
+    let dir = tempfile::tempdir().unwrap();
+    calendar_seen(dir.path());
+    let first = pick_a_date();
+    let mut more = pick_a_date();
+    more.actions.push(Action::CheckText { value: "picked".into() });
+    let mut weaker = pick_a_date();
+    weaker.actions.remove(1);
+    let prints = tried(&[&first, &more, &weaker]);
+    let save = |c: Component, why: Option<&str>| save_tried(dir.path(), "o", "p", c, why, session(&prints), 50);
+
+    save(first, None).unwrap();
+    let needs_why = "Pick a date is already saved: say why it changes in \"why\".";
+    assert_eq!(save(more.clone(), None).unwrap_err(), needs_why);
+    assert_eq!(save(more.clone(), Some("  ")).unwrap_err(), needs_why);
+    let err = save(weaker, Some("the calendar check is flaky")).unwrap_err();
+    assert_eq!(err, "Pick a date had 1 checks and now has 0 - an assertion is never removed or weakened by a repair");
+    assert_eq!(find(&load_components(dir.path(), "o", "p").unwrap(), "pick a date").unwrap().version, 1);
+    save(more, Some("checks the day was picked")).unwrap();
+}
+
+#[test]
+fn a_change_bumps_version_and_counts_toward_the_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    calendar_seen(dir.path());
+    let drafts: Vec<Component> = (0..5)
+        .map(|n| {
+            let mut c = pick_a_date();
+            for _ in 0..n {
+                c.actions.push(Action::CheckText { value: "picked".into() });
+            }
+            c
+        })
+        .collect();
+    let prints = tried(&drafts.iter().collect::<Vec<_>>());
+    let mut got = Vec::new();
+    for (i, c) in drafts.into_iter().enumerate() {
+        let why = (i > 0).then_some("one more check");
+        let s = save_tried(dir.path(), "o", "p", c, why, session(&prints), 50 + i as u64).unwrap();
+        got.push((s.version, s.changes, s.cap_reached));
+    }
+    assert_eq!(CHANGE_CAP, 3);
+    // Past the cap a change still saves: the guide tells the assistant to
+    // stop and report.
+    assert_eq!(got, vec![(1, 0, false), (2, 1, false), (3, 2, false), (4, 3, true), (5, 4, true)]);
+    let kept = load_components(dir.path(), "o", "p").unwrap();
+    let kept = find(&kept, "Pick a date").unwrap();
+    assert_eq!((kept.version, kept.changes, kept.tried_at), (5, 4, 54));
+}
+
+#[test]
+fn a_component_in_use_cannot_be_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    put(dir.path(), "o", "p", component("pick-date")).unwrap();
+    put(dir.path(), "o", "p", component("unused")).unwrap();
+    save_script(dir.path(), &script(12, vec![use_it("Pick-Date")])).unwrap();
+    save_script(dir.path(), &script(5, vec![use_it("pick-date")])).unwrap();
+    assert_eq!(
+        remove_unused(dir.path(), "o", "p", "pick-date").unwrap_err(),
+        "pick-date is used by cases 5, 12: change those scripts first."
+    );
+    assert!(find(&load_components(dir.path(), "o", "p").unwrap(), "pick-date").is_some());
+    remove_unused(dir.path(), "o", "p", "UNUSED").unwrap();
+    assert!(find(&load_components(dir.path(), "o", "p").unwrap(), "unused").is_none());
+    assert_eq!(remove_unused(dir.path(), "o", "p", "unused").unwrap_err(), "unused is not saved in this project");
+}

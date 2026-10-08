@@ -300,6 +300,10 @@ pub async fn route(
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
         ("POST", "/autorun-defect") => autorun_defect(body),
+        // Components: saved only once the open discovery has tried them
+        // live, and removed only while no saved script uses them.
+        ("POST", "/autorun-component-save") => autorun_component_save(ctx, body).await,
+        ("POST", "/autorun-component-remove") => autorun_component_remove(ctx, body),
         // Auto Run's own order for a PBI. Reads the PBI's cases from Azure
         // DevOps (a read) to refuse an id the PBI is not tested by.
         ("POST", "/autorun-order") => autorun_order(ctx, client, body).await,
@@ -2749,6 +2753,76 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
     }
     let mut slot = crate::commands::autorun::supervised().lock().await;
     discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, draft.as_ref(), area.as_deref()).await
+}
+
+/// `/autorun-component-save`: a component, under every save rule
+/// (`components::save_tried`), against the open discovery: its area and
+/// the components it tried that worked. With no discovery going, nothing
+/// was tried, and the save is refused.
+async fn autorun_component_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    use crate::autorun::components::{save_tried, Component, TriedIn, TRY_IT_FIRST};
+    const SHAPE: &str = "{ \"name\": <its name>, \"description\": <what it does>, \"inputs\": [{ \"name\", \"kind\": \"text\" or \"target\", \"description\" }], \"actions\": [<script actions>], \"why\": <why it changes, for a saved one> }";
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {SHAPE}.")),
+    };
+    let draft: Component = match serde_json::from_value(v.clone()) {
+        Ok(c) => c,
+        Err(e) => return (400, format!("that is not a component: {e}. Expected {SHAPE}.")),
+    };
+    let why = match v.get("why") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(_) => return (400, "\"why\" is one sentence".to_string()),
+    };
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    // What the discovery holds, read and let go before any file is touched.
+    let (area, tried) = {
+        let mut slot = crate::commands::autorun::supervised().lock().await;
+        match slot.as_mut() {
+            Some(s) => match s.parts().discovery.as_ref() {
+                Some(d) => (Some(d.area.clone()), d.tried.clone()),
+                None => (None, Vec::new()),
+            },
+            None => (None, Vec::new()),
+        }
+    };
+    let session = area.as_ref().map(|a| TriedIn { area: a.as_deref(), tried: &tried });
+    let now = crate::autorun::sessions::now_ms();
+    match save_tried(&root, &ctx.org, &ctx.project, draft, why.as_deref(), session, now) {
+        Ok(saved) => {
+            crate::applog::info(format!("Auto Run component {} saved as version {}", saved.saved, saved.version));
+            (200, serde_json::to_string(&saved).unwrap_or_default())
+        }
+        Err(why) if why == TRY_IT_FIRST => (409, why),
+        Err(why) => (400, why),
+    }
+}
+
+/// `/autorun-component-remove`: a component no saved script uses
+/// (`components::remove_unused`). One in use stays, and the refusal names
+/// the cases that use it.
+fn autorun_component_remove(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    let name = match body_field(body, "name", "{ \"name\": <the component's name> }") {
+        Ok(serde_json::Value::String(s)) if !s.trim().is_empty() => s,
+        Ok(_) => return (400, "\"name\" is a saved component's name".to_string()),
+        Err(refused) => return refused,
+    };
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    match crate::autorun::components::remove_unused(&root, &ctx.org, &ctx.project, &name) {
+        Ok(removed) => {
+            crate::applog::info(format!("Auto Run component {removed} removed"));
+            (200, serde_json::json!({ "removed": removed }).to_string())
+        }
+        Err(why) if why == crate::autorun::components::not_saved(&name) => (404, why),
+        Err(why) => (409, why),
+    }
 }
 
 /// A discovery's `navigate` or `open_tab` to a site outside `policy`'s,

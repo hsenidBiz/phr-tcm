@@ -324,3 +324,55 @@ fn scan(
     }
     unseen
 }
+
+/// Does this link carry a `{{x}}` text placeholder anywhere?
+fn holds_text_placeholder(link: &LocatorStep) -> bool {
+    serde_json::to_string(link).is_ok_and(|s| s.contains("{{"))
+}
+
+/// A component's own locators and the pages it goes to, checked against
+/// what `map` has seen in `area` (and in any area its actions return to),
+/// in order; the first unseen one is refused, named by the component's
+/// action. Two kinds are exempt, as only a script knows them: a link a
+/// target input fills (`{"input": ...}`), and a whole locator a text input
+/// is written into (`{{x}}`). A script's save checks both as they expand.
+pub fn check_component_seen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) -> Result<(), String> {
+    let mut areas: Vec<&str> = area.into_iter().collect();
+    areas.extend(actions.iter().flat_map(Action::each).filter_map(Action::area_named));
+    let keys = seen_keys(map, &areas);
+    let paths = seen_paths(map);
+    let refused = |i: usize, what: &str| {
+        format!(
+            "Action {}: {what} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
+            i + 1
+        )
+    };
+    // Values typed by the component's earlier actions.
+    let mut typed: Vec<String> = Vec::new();
+    for (i, action) in actions.iter().enumerate() {
+        for a in action.each() {
+            if let Action::Navigate { url } | Action::OpenTab { url, .. } = a {
+                if !paths.contains(&page_path(url)) {
+                    return Err(refused(i, &path_only(url)));
+                }
+            }
+            for t in own_targets(a) {
+                let links = t.links();
+                if links.iter().any(holds_text_placeholder) {
+                    continue;
+                }
+                let check = is_check(a);
+                if links.iter().filter(|l| l.input.is_none()).any(|l| link_unseen(l, &keys, &typed, &[], check)) {
+                    return Err(refused(i, &t.describe()));
+                }
+            }
+            if let Some(v) = a.typed_value() {
+                let v = fold_name(v);
+                if v.chars().count() >= MIN_TYPED_LEN {
+                    typed.push(v);
+                }
+            }
+        }
+    }
+    Ok(())
+}

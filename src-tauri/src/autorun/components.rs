@@ -449,3 +449,195 @@ pub fn ran_actions(actions: &[Action], outcomes: &[ActionOutcome], file: &Compon
     }
     out
 }
+
+// ---- saving and removing ----
+
+/// Said when a component is saved that the open discovery has not seen
+/// work, exactly as it is sent.
+pub const TRY_IT_FIRST: &str = "Try the component live in discovery first: run a use_component of it with discover_autorun_action, sending this component as its draft, and save it once that works, unchanged.";
+
+/// The open discovery, as a component save reads it: its area, and the
+/// `draft_fingerprint`s of the components it tried that worked.
+#[derive(Debug, Clone, Copy)]
+pub struct TriedIn<'a> {
+    pub area: Option<&'a str>,
+    pub tried: &'a [String],
+}
+
+/// What a save answers.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct Saved {
+    /// The component's name.
+    pub saved: String,
+    pub version: u32,
+    pub changes: u32,
+    /// The component has been changed `CHANGE_CAP` times or more without
+    /// a person looking at it.
+    pub cap_reached: bool,
+}
+
+/// Every `{{x}}` written in `v`'s strings, by its trimmed name, read the
+/// way `fill_text` reads them.
+fn text_placeholders(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::String(s) => {
+            let mut rest = s.as_str();
+            while let Some(at) = rest.find("{{") {
+                let after = &rest[at + 2..];
+                let Some(end) = after.find("}}") else { break };
+                out.push(after[..end].trim().to_string());
+                rest = &after[end + 2..];
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|x| text_placeholders(x, out)),
+        Value::Object(map) => map.values().for_each(|x| text_placeholders(x, out)),
+        _ => {}
+    }
+}
+
+/// A name a component may never type: a script signs in as its account.
+fn is_credential(name: &str) -> bool {
+    matches!(name.to_ascii_lowercase().as_str(), "username" | "password")
+}
+
+/// The save rules a component is held to on its own, with no file, map or
+/// discovery: a name and a description; inputs declared once each, every
+/// one used and nothing used undeclared (`{{x}}` for a text input,
+/// `{"input": "x"}` for a target one); no sign-in, username or password;
+/// no other component; no address an input makes; and every action valid.
+pub fn check_component(c: &Component) -> Result<(), String> {
+    let name = c.name.trim();
+    if name.is_empty() {
+        return Err("A component needs a name.".to_string());
+    }
+    if c.description.trim().is_empty() {
+        return Err(format!("{name} needs a description."));
+    }
+    if c.actions.is_empty() {
+        return Err(format!("{name} needs at least one action."));
+    }
+
+    let mut declared: Vec<(&str, InputKind)> = Vec::new();
+    for input in &c.inputs {
+        let n = input.name.trim();
+        if n.is_empty() {
+            return Err(format!("{name} declares an input with no name."));
+        }
+        if declared.iter().any(|(d, _)| *d == n) {
+            return Err(format!("{name} declares the input {n} more than once."));
+        }
+        declared.push((n, input.kind));
+    }
+    let kind_of = |n: &str| declared.iter().find(|(d, _)| *d == n).map(|(_, k)| *k);
+    let every: Vec<&Action> = c.actions.iter().flat_map(Action::each).collect();
+
+    let mut texts: Vec<String> = Vec::new();
+    for a in &every {
+        text_placeholders(&serde_json::to_value(a).unwrap_or(Value::Null), &mut texts);
+    }
+    let mut targets: Vec<String> = Vec::new();
+    for a in &every {
+        for t in a.targets() {
+            targets.extend(t.links().into_iter().filter_map(|l| l.input.map(|i| i.trim().to_string())));
+        }
+    }
+    // A username or password is refused below, declared or not.
+    if let Some(x) = texts.iter().find(|x| !is_credential(x) && kind_of(x) != Some(InputKind::Text)) {
+        return Err(format!("{name} uses {{{{{x}}}}} but declares no text input {x}."));
+    }
+    if let Some(x) = targets.iter().find(|x| kind_of(x) != Some(InputKind::Target)) {
+        return Err(format!("{name} uses {{\"input\": \"{x}\"}} but declares no target input {x}."));
+    }
+    if let Some((x, _)) = declared.iter().find(|(d, _)| !texts.iter().chain(&targets).any(|u| u == d)) {
+        return Err(format!("{name} declares the input {x} but never uses it."));
+    }
+
+    if every.iter().any(|a| matches!(a, Action::SignIn { .. })) {
+        return Err("A component cannot sign in: a script signs in as its account.".to_string());
+    }
+    if texts.iter().any(|x| is_credential(x)) {
+        return Err("A component cannot type a username or password: a script signs in as its account.".to_string());
+    }
+    if every.iter().any(|a| matches!(a, Action::UseComponent { .. })) {
+        return Err("A component cannot use another component.".to_string());
+    }
+    if every.iter().any(|a| matches!(a, Action::Navigate { url } | Action::OpenTab { url, .. } if url.contains("{{"))) {
+        return Err("A component's address cannot come from an input.".to_string());
+    }
+    for (i, a) in c.actions.iter().enumerate() {
+        a.validate().map_err(|why| format!("{name}, action {}: {why}", i + 1))?;
+    }
+    Ok(())
+}
+
+/// Saves `draft` under every save rule, in order: `check_component`; a
+/// discovery going (`session`); its fixed locators seen in that
+/// discovery's area (`check_component_seen`); tried in that discovery
+/// exactly as it is sent; and, when a
+/// component of that name is saved already, a reason (`why`) and no check
+/// lost (`edits::weakens`), which makes it the next version and one more
+/// change toward `CHANGE_CAP`. A change past the cap still saves:
+/// `cap_reached` says a person should look at it. `now` is when it was
+/// tried, in milliseconds since the epoch.
+pub fn save_tried(
+    root: &Path,
+    org: &str,
+    project: &str,
+    draft: Component,
+    why: Option<&str>,
+    session: Option<TriedIn<'_>>,
+    now: u64,
+) -> Result<Saved, String> {
+    check_component(&draft)?;
+    // With no discovery going, nothing was tried, and there is no area to
+    // check the locators in.
+    let Some(session) = session else {
+        return Err(TRY_IT_FIRST.to_string());
+    };
+    let area = session.area.map(str::trim).filter(|a| !a.is_empty());
+    let map = super::discovery_map::load_map(root, org, project)?;
+    super::seen_check::check_component_seen(&map, area, &draft.actions)?;
+    if !session.tried.contains(&draft_fingerprint(&draft)) {
+        return Err(TRY_IT_FIRST.to_string());
+    }
+    let name = draft.name.trim().to_string();
+    let file = load_components(root, org, project)?;
+    let (version, changes) = match find(&file, &name) {
+        None => (1, 0),
+        Some(old) => {
+            if why.is_none_or(|w| w.trim().is_empty()) {
+                return Err(format!("{name} is already saved: say why it changes in \"why\"."));
+            }
+            if let Some(weaker) = super::edits::weakens(&old.actions, &draft.actions) {
+                return Err(format!("{name} {weaker}"));
+            }
+            (old.version + 1, old.changes + 1)
+        }
+    };
+    let saved = Component {
+        name: name.clone(),
+        description: draft.description.trim().to_string(),
+        tried_at: now,
+        tried_area: area.unwrap_or("").to_string(),
+        version,
+        changes,
+        ..draft
+    };
+    put(root, org, project, saved)?;
+    Ok(Saved { saved: name, version, changes, cap_reached: changes >= CHANGE_CAP })
+}
+
+/// Removes `name` unless a saved script uses it, handing back its saved
+/// name; the refusal names those scripts by case id.
+pub fn remove_unused(root: &Path, org: &str, project: &str, name: &str) -> Result<String, String> {
+    let file = load_components(root, org, project)?;
+    let c = find(&file, name).ok_or_else(|| not_saved(name))?;
+    match users_of(root, &c.name).cases.as_slice() {
+        [] => remove(root, org, project, &c.name).map(|()| c.name.clone()),
+        [one] => Err(format!("{} is used by case {one}: change that script first.", c.name)),
+        many => {
+            let ids = many.iter().map(i32::to_string).collect::<Vec<_>>().join(", ");
+            Err(format!("{} is used by cases {ids}: change those scripts first.", c.name))
+        }
+    }
+}
