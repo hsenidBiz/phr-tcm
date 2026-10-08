@@ -7,7 +7,7 @@ use common::ScriptedDriver;
 use serde_json::json;
 use v2_lib::browser::cdp::CdpError;
 use v2_lib::browser::locator::{Target, VISIBLE_JS};
-use v2_lib::browser::snapshot::{parse_nodes, probe, render, render_frames, snapshot, AxNode, FrameTree, DEFAULT_LIMIT, PROBE_SUMMARY_JS};
+use v2_lib::browser::snapshot::{parse_nodes, probe, render, render_frames, render_frames_with_lines, snapshot, AxNode, FrameTree, DEFAULT_LIMIT, PROBE_SUMMARY_JS};
 
 /// A plain, printable node with no value/ignored/disabled/focusable
 /// wrinkles - tests override the fields they care about with `..`.
@@ -22,6 +22,7 @@ fn node(id: &str, role: &str, name: &str, children: &[&str]) -> AxNode {
         focusable: false,
         disabled: false,
         backend: None,
+        required: false,
     }
 }
 
@@ -630,4 +631,71 @@ fn a_shallow_frame_with_no_tree_prints_no_deep_note() {
     let out = render_frames(&parent, &[nested("f1", "One", vec![])], DEFAULT_LIMIT);
     assert!(!out.contains("nested deeper"), "{out}");
     assert!(out.contains("\"One child\""), "{out}");
+}
+
+// --- lines as data ------------------------------------------------------
+
+/// The text is the same bytes `render_frames` gives, and every line that
+/// carries a locator has one `SnapLine`, whose locator is the one printed.
+#[test]
+fn render_with_lines_matches_the_text_render() {
+    let nodes = vec![
+        node("1", "dialog", "Add Rating Method", &["2", "3"]),
+        node("2", "button", "Add Method", &[]),
+        node("3", "textbox", "", &[]),
+    ];
+    let frames = vec![];
+    let (text, lines) = render_frames_with_lines(&nodes, &frames, DEFAULT_LIMIT);
+    assert_eq!(text, render_frames(&nodes, &frames, DEFAULT_LIMIT));
+    assert_eq!(lines.len(), 3);
+    assert_eq!(lines[1].role, "button");
+    assert_eq!(lines[1].name, "Add Method");
+    assert_eq!(lines[1].locator, serde_json::from_value::<Target>(json!({ "role": "button", "name": "Add Method" })).unwrap());
+    assert_eq!(lines[2].locator, serde_json::from_value::<Target>(json!({ "role": "textbox" })).unwrap());
+}
+
+/// A line inside an iframe carries the frame's step in front of its own.
+#[test]
+fn a_line_inside_a_frame_has_a_chain_locator() {
+    let nodes = vec![node("1", "main", "", &["2"]), node("2", "Iframe", "Pay", &[])];
+    let frames = vec![FrameTree {
+        iframe_id: "2".into(),
+        step: json!({ "role": "Iframe", "name": "Pay", "exact": true }),
+        nodes: vec![node("1", "button", "Go", &[])],
+        unreadable: None,
+        frames: vec![],
+    }];
+    let (text, lines) = render_frames_with_lines(&nodes, &frames, DEFAULT_LIMIT);
+    assert_eq!(text, render_frames(&nodes, &frames, DEFAULT_LIMIT));
+    let want: Target = serde_json::from_value(json!([{ "role": "Iframe", "name": "Pay", "exact": true }, { "role": "button", "name": "Go" }])).unwrap();
+    assert_eq!(lines.last().unwrap().locator, want);
+}
+
+#[test]
+fn a_required_textbox_is_marked() {
+    let raw = json!({ "nodes": [
+        { "nodeId": "1", "role": { "value": "textbox" }, "name": { "value": "Email" },
+          "properties": [{ "name": "required", "value": { "type": "boolean", "value": true } }] },
+        { "nodeId": "2", "role": { "value": "textbox" }, "name": { "value": "Nick" } }
+    ] });
+    let nodes = parse_nodes(&raw);
+    assert!(nodes[0].required);
+    assert!(!nodes[1].required);
+    let flagged = vec![AxNode { required: true, ..node("1", "textbox", "Email", &[]) }];
+    let (_, lines) = render_frames_with_lines(&flagged, &[], DEFAULT_LIMIT);
+    assert!(lines[0].required);
+}
+
+#[test]
+fn lines_past_the_limit_are_not_returned() {
+    let nodes = vec![
+        node("1", "form", "", &["2", "3", "4"]),
+        node("2", "button", "A", &[]),
+        node("3", "button", "B", &[]),
+        node("4", "button", "C", &[]),
+    ];
+    let (text, lines) = render_frames_with_lines(&nodes, &[], 2);
+    assert_eq!(lines.len(), 2);
+    assert_eq!(text, render_frames(&nodes, &[], 2));
+    assert_eq!(lines[1].name, "A");
 }
