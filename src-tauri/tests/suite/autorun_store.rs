@@ -1145,3 +1145,20 @@ fn an_unreadable_or_empty_order_is_no_order() {
     assert_eq!(load_order(dir.path(), 100), None);
     assert!(save_order(dir.path(), 100, &[]).is_err(), "an empty order is refused");
 }
+
+/// A script that does not read is skipped with a warning naming its file,
+/// never what is in it.
+#[test]
+fn an_unreadable_script_is_skipped_with_a_warning() {
+    let _tail = crate::serial::log_tail();
+    let dir = TempDir::new();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("scripts")).unwrap();
+    std::fs::write(root.join("scripts").join("case-41.json"), "{ secret-ish text").unwrap();
+    assert!(v2_lib::autorun::store::list_scripts(root).is_empty());
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    let warned: Vec<&String> = lines.iter().filter(|l| l.contains("case-41.json")).collect();
+    assert_eq!(warned.len(), 1, "{lines:?}");
+    assert!(!warned[0].contains("secret-ish"), "{}", warned[0]);
+    assert!(!warned[0].contains(&*root.to_string_lossy()), "{}", warned[0]);
+}

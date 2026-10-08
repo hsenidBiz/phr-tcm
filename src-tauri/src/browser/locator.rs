@@ -124,7 +124,16 @@ fn blank(s: &Option<String>) -> bool {
 impl LocatorStep {
     fn validate(&self) -> Result<(), String> {
         if self.input.is_some() {
-            if self.role.is_some() || self.text.is_some() || self.css.is_some() {
+            // The caller's locator replaces the whole link, so any other
+            // field here would be dropped without a word.
+            if self.role.is_some()
+                || self.name.is_some()
+                || self.text.is_some()
+                || self.css.is_some()
+                || self.exact
+                || self.visible.is_some()
+                || self.nth.is_some()
+            {
                 return Err("an input placeholder stands alone".to_string());
             }
             if blank(&self.input) {

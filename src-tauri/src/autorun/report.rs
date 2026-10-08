@@ -271,7 +271,7 @@ fn stopped_action(
                     .steps
                     .iter()
                     .find(|st| st.step_number == n)
-                    .map(|st| ran_actions(&st.actions, &step.outcomes, components))
+                    .map(|st| ran_actions(&st.actions, &step.outcomes, components, &step.components))
                     .unwrap_or_default();
                 match ran.get(index) {
                     Some(Ran { action: Some(a), component: Some(c) }) => format!("{c}: {}", action_words(a)),

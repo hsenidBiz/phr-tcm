@@ -387,13 +387,13 @@ fn an_untried_component_is_refused() {
     calendar_seen(dir.path());
     let c = pick_a_date();
     // No discovery at all.
-    let err = save_tried(dir.path(), "o", "p", c.clone(), None, None, 50).unwrap_err();
+    let err = save_tried(dir.path(), "o", "p", c.clone(), None, None, 50, no_users()).unwrap_err();
     assert!(err.contains("Try the component live in discovery first"), "{err}");
     // A discovery that tried this one with other actions.
     let mut other = pick_a_date();
     other.actions.pop();
     let prints = tried(&[&other]);
-    let err = save_tried(dir.path(), "o", "p", c.clone(), None, session(&prints), 50).unwrap_err();
+    let err = save_tried(dir.path(), "o", "p", c.clone(), None, session(&prints), 50, no_users()).unwrap_err();
     assert!(err.contains("Try the component live in discovery first"), "{err}");
     assert!(load_components(dir.path(), "o", "p").unwrap().components.is_empty());
     // Tried as it is sent: saved, with when and where it was tried. Its
@@ -401,7 +401,7 @@ fn an_untried_component_is_refused() {
     let mut described = c.clone();
     described.description = "Picks a day in the calendar".into();
     let prints = tried(&[&c]);
-    let saved = save_tried(dir.path(), "o", "p", described, None, session(&prints), 50).unwrap();
+    let saved = save_tried(dir.path(), "o", "p", described, None, session(&prints), 50, no_users()).unwrap();
     assert_eq!((saved.saved.as_str(), saved.version, saved.changes, saved.cap_reached), ("Pick a date", 1, 0, false));
     let f = load_components(dir.path(), "o", "p").unwrap();
     let kept = find(&f, "pick a date").unwrap();
@@ -413,7 +413,7 @@ fn an_untried_component_is_refused() {
 fn undeclared_or_unused_inputs_are_refused() {
     let dir = tempfile::tempdir().unwrap();
     calendar_seen(dir.path());
-    let refused = |c: Component| save_tried(dir.path(), "o", "p", c, None, None, 50).unwrap_err();
+    let refused = |c: Component| save_tried(dir.path(), "o", "p", c, None, None, 50, no_users()).unwrap_err();
 
     let mut blank = pick_a_date();
     blank.name = "  ".into();
@@ -449,7 +449,7 @@ fn undeclared_or_unused_inputs_are_refused() {
 #[test]
 fn sign_in_inside_a_component_is_refused() {
     let dir = tempfile::tempdir().unwrap();
-    let refused = |c: Component| save_tried(dir.path(), "o", "p", c, None, None, 50).unwrap_err();
+    let refused = |c: Component| save_tried(dir.path(), "o", "p", c, None, None, 50, no_users()).unwrap_err();
 
     let mut signs_in = pick_a_date();
     signs_in.actions.insert(0, Action::SignIn { account: "admin".into() });
@@ -496,7 +496,7 @@ fn an_unseen_fixed_locator_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let c = pick_a_date();
     let prints = tried(&[&c]);
-    let save = |c: Component| save_tried(dir.path(), "o", "p", c, None, session(&prints), 50);
+    let save = |c: Component| save_tried(dir.path(), "o", "p", c, None, session(&prints), 50, no_users());
 
     // Done was seen only in another area.
     seen_in(dir.path(), "Leave", &[json!({ "role": "dialog", "name": "Calendar" })]);
@@ -516,13 +516,13 @@ fn an_unseen_fixed_locator_is_refused() {
         json!([{ "kind": "click", "selector": [{ "role": "dialog", "name": "Frame" }, { "input": "field" }] }]),
     );
     let prints = tried(&[&chained]);
-    let err = save_tried(dir.path(), "o", "p", chained, None, session(&prints), 50).unwrap_err();
+    let err = save_tried(dir.path(), "o", "p", chained, None, session(&prints), 50, no_users()).unwrap_err();
     assert!(err.starts_with("Action 1: ") && err.contains("was never seen on the live app"), "{err}");
 
     // A page it goes to must have been seen too.
     let goes = made("Go", json!([]), json!([{ "kind": "navigate", "url": "/payroll/run" }]));
     let prints = tried(&[&goes]);
-    let err = save_tried(dir.path(), "o", "p", goes, None, session(&prints), 50).unwrap_err();
+    let err = save_tried(dir.path(), "o", "p", goes, None, session(&prints), 50, no_users()).unwrap_err();
     assert!(err.starts_with("Action 1: /payroll/run was never seen"), "{err}");
 }
 
@@ -536,7 +536,7 @@ fn a_change_needs_why_and_may_not_weaken() {
     let mut weaker = pick_a_date();
     weaker.actions.remove(1);
     let prints = tried(&[&first, &more, &weaker]);
-    let save = |c: Component, why: Option<&str>| save_tried(dir.path(), "o", "p", c, why, session(&prints), 50);
+    let save = |c: Component, why: Option<&str>| save_tried(dir.path(), "o", "p", c, why, session(&prints), 50, no_users());
 
     save(first, None).unwrap();
     let needs_why = "Pick a date is already saved: say why it changes in \"why\".";
@@ -565,7 +565,7 @@ fn a_change_bumps_version_and_counts_toward_the_cap() {
     let mut got = Vec::new();
     for (i, c) in drafts.into_iter().enumerate() {
         let why = (i > 0).then_some("one more check");
-        let s = save_tried(dir.path(), "o", "p", c, why, session(&prints), 50 + i as u64).unwrap();
+        let s = save_tried(dir.path(), "o", "p", c, why, session(&prints), 50 + i as u64, no_users()).unwrap();
         got.push((s.version, s.changes, s.cap_reached));
     }
     assert_eq!(CHANGE_CAP, 3);
@@ -603,11 +603,11 @@ fn a_fixed_link_beside_a_placeholder_link_is_checked() {
         json!([{ "kind": "click", "selector": [{ "css": "#guessed-panel" }, { "role": "gridcell", "name": "{{day}}" }] }]),
     );
     let prints = tried(&[&c]);
-    let err = save_tried(dir.path(), "o", "p", c.clone(), None, session(&prints), 50).unwrap_err();
+    let err = save_tried(dir.path(), "o", "p", c.clone(), None, session(&prints), 50, no_users()).unwrap_err();
     assert!(err.starts_with("Action 1: ") && err.contains("was never seen on the live app"), "{err}");
     // Once the panel is seen, the {{day}} cell beside it is still exempt.
     seen_in(dir.path(), "Leave", &[json!({ "css": "#guessed-panel" })]);
-    save_tried(dir.path(), "o", "p", c, None, session(&prints), 50).unwrap();
+    save_tried(dir.path(), "o", "p", c, None, session(&prints), 50, no_users()).unwrap();
 }
 
 #[test]
@@ -622,7 +622,7 @@ fn an_unclosed_placeholder_is_refused() {
                 { "kind": "click", "selector": [{ "css": "#unseen-panel" }, { "role": "gridcell", "name": stray }] }
             ]),
         );
-        let err = save_tried(dir.path(), "o", "p", c, None, None, 50).unwrap_err();
+        let err = save_tried(dir.path(), "o", "p", c, None, None, 50, no_users()).unwrap_err();
         assert_eq!(err, "A component has an unclosed {{ placeholder.", "{stray}");
     }
 }
@@ -666,4 +666,196 @@ fn load_components_command_counts_users() {
     // A damaged file is the load's refusal, which offers Reset.
     std::fs::write(components_path(dir.path(), "o", "p"), "{ not json").unwrap();
     assert!(components_view(dir.path(), "o", "p").unwrap_err().contains("Reset it in Auto Run"));
+}
+
+// ---- a change is checked against the scripts that use it ----
+
+use v2_lib::autorun::components::{UserCases, SIGN_IN_TO_CHECK_USERS};
+
+/// No script uses the component, or every user's case is at hand.
+fn no_users() -> Option<&'static UserCases> {
+    static NONE: std::sync::OnceLock<UserCases> = std::sync::OnceLock::new();
+    Some(NONE.get_or_init(UserCases::default))
+}
+
+/// "Pick a date" before the calendar cell was clicked: the day is only
+/// checked as text, so no locator of it holds `{{day}}`.
+fn pick_a_date_v1() -> Component {
+    made(
+        "Pick a date",
+        json!([
+            { "name": "field", "kind": "target", "description": "the date field" },
+            { "name": "day", "kind": "text", "description": "the day of the month" }
+        ]),
+        json!([
+            { "kind": "click", "selector": { "input": "field" } },
+            { "kind": "expect_visible", "selector": { "role": "dialog", "name": "Calendar" } },
+            { "kind": "check_text", "value": "{{day}}" },
+            { "kind": "click", "selector": { "role": "button", "name": "Done" } }
+        ]),
+    )
+}
+
+/// v1 with a click on the day's cell: a new locator built from `{{day}}`.
+fn pick_a_date_v2() -> Component {
+    let mut c = pick_a_date_v1();
+    c.actions.insert(
+        3,
+        serde_json::from_value(json!({ "kind": "click", "selector": { "role": "gridcell", "name": "{{day}}" } }))
+            .unwrap(),
+    );
+    c
+}
+
+/// Case `case_id`, in the Leave area, picking `day` at step 2.
+fn picks(case_id: i32, day: &str) -> CaseScript {
+    let mut s = script(
+        case_id,
+        vec![serde_json::from_value(json!({
+            "kind": "use_component",
+            "component": "Pick a date",
+            "inputs": { "field": { "role": "textbox", "name": "Leave start" }, "day": day }
+        }))
+        .unwrap()],
+    );
+    s.area = Some("Leave".into());
+    s
+}
+
+/// The calendar, its Done button and the Leave start field, seen in Leave.
+fn leave_form_seen(root: &std::path::Path) {
+    calendar_seen(root);
+    seen_in(root, "Leave", &[json!({ "role": "textbox", "name": "Leave start" })]);
+}
+
+/// This project's cases: `here` with their text, `elsewhere` in no case of it.
+fn cases(here: &[(i32, &[&str])], elsewhere: &[i32]) -> UserCases {
+    UserCases {
+        here: here.iter().map(|(id, t)| (*id, t.iter().map(|s| s.to_string()).collect())).collect(),
+        elsewhere: elsewhere.to_vec(),
+    }
+}
+
+#[test]
+fn a_change_that_puts_an_unseen_locator_into_a_using_script_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    leave_form_seen(dir.path());
+    let (v1, v2) = (pick_a_date_v1(), pick_a_date_v2());
+    let mut v3 = pick_a_date_v1();
+    v3.inputs.push(ComponentInput { name: "month".into(), kind: InputKind::Text, description: "".into() });
+    v3.actions.push(Action::CheckText { value: "{{month}}".into() });
+    let prints = tried(&[&v1, &v2, &v3]);
+    save_tried(dir.path(), "o", "p", v1, None, session(&prints), 50, no_users()).unwrap();
+    save_script(dir.path(), &picks(12, "15")).unwrap();
+    let users = cases(&[(12, &["Pick the start date"])], &[]);
+
+    // The cell "15" was never seen: case 12 would click a guess.
+    let err =
+        save_tried(dir.path(), "o", "p", v2, Some("click the day"), session(&prints), 60, Some(&users)).unwrap_err();
+    assert!(err.starts_with("Case 12, step 2: "), "{err}");
+    assert!(err.ends_with("was never seen on the live app; this change would break it."), "{err}");
+    assert!(err.contains("gridcell") && err.contains("15"), "{err}");
+
+    // A new input the script does not give breaks it too.
+    let err =
+        save_tried(dir.path(), "o", "p", v3, Some("check the month"), session(&prints), 60, Some(&users)).unwrap_err();
+    assert_eq!(err, "Case 12, step 2: Pick a date needs month; this change would break it.");
+    assert_eq!(find(&load_components(dir.path(), "o", "p").unwrap(), "pick a date").unwrap().version, 1);
+}
+
+#[test]
+fn a_change_that_keeps_every_using_script_seen_saves() {
+    let dir = tempfile::tempdir().unwrap();
+    leave_form_seen(dir.path());
+    let (v1, v2) = (pick_a_date_v1(), pick_a_date_v2());
+    let prints = tried(&[&v1, &v2]);
+    save_tried(dir.path(), "o", "p", v1, None, session(&prints), 50, no_users()).unwrap();
+    save_script(dir.path(), &picks(12, "15")).unwrap();
+    // Case 30 is another project's: its day is never checked here.
+    save_script(dir.path(), &picks(30, "31")).unwrap();
+    seen_in(dir.path(), "Leave", &[json!({ "role": "gridcell", "name": "15" })]);
+    let users = cases(&[(12, &[])], &[30]);
+    let saved =
+        save_tried(dir.path(), "o", "p", v2, Some("click the day"), session(&prints), 60, Some(&users)).unwrap();
+    assert_eq!((saved.version, saved.changes), (2, 1));
+}
+
+#[test]
+fn a_fresh_save_under_a_used_name_rechecks_its_users() {
+    let dir = tempfile::tempdir().unwrap();
+    leave_form_seen(dir.path());
+    // The script was saved against a component since reset or removed.
+    save_script(dir.path(), &picks(12, "15")).unwrap();
+    let v2 = pick_a_date_v2();
+    let prints = tried(&[&v2]);
+    let users = cases(&[(12, &[])], &[]);
+    let err = save_tried(dir.path(), "o", "p", v2.clone(), None, session(&prints), 50, Some(&users)).unwrap_err();
+    assert!(err.starts_with("Case 12, step 2: ") && err.ends_with("this change would break it."), "{err}");
+    assert!(load_components(dir.path(), "o", "p").unwrap().components.is_empty());
+    seen_in(dir.path(), "Leave", &[json!({ "role": "gridcell", "name": "15" })]);
+    assert_eq!(save_tried(dir.path(), "o", "p", v2, None, session(&prints), 50, Some(&users)).unwrap().version, 1);
+}
+
+#[test]
+fn a_change_with_no_cases_available_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    leave_form_seen(dir.path());
+    let (v1, v2) = (pick_a_date_v1(), pick_a_date_v2());
+    let prints = tried(&[&v1, &v2]);
+    // With no script using it, nothing needs the cases.
+    save_tried(dir.path(), "o", "p", v1, None, session(&prints), 50, None).unwrap();
+    save_script(dir.path(), &picks(12, "15")).unwrap();
+    seen_in(dir.path(), "Leave", &[json!({ "role": "gridcell", "name": "15" })]);
+    let err =
+        save_tried(dir.path(), "o", "p", v2.clone(), Some("click the day"), session(&prints), 60, None).unwrap_err();
+    assert_eq!(err, SIGN_IN_TO_CHECK_USERS);
+    assert_eq!(SIGN_IN_TO_CHECK_USERS, "Sign in so the scripts that use this component can be checked.");
+    // A user whose case was not read (it began using the component after
+    // the cases were read) is never skipped either.
+    let err =
+        save_tried(dir.path(), "o", "p", v2, Some("click the day"), session(&prints), 60, no_users()).unwrap_err();
+    assert!(err.starts_with("Case 12 "), "{err}");
+    assert_eq!(find(&load_components(dir.path(), "o", "p").unwrap(), "pick a date").unwrap().version, 1);
+}
+
+// ---- reading an old run ----
+
+use v2_lib::autorun::components::{ran_actions, ComponentUse};
+use v2_lib::browser::actions::ActionOutcome;
+
+#[test]
+fn an_old_run_of_a_changed_component_is_not_paired_with_the_new_actions() {
+    let mut now = made("Say yes", json!([]), json!([{ "kind": "click", "selector": { "role": "button", "name": "Yes" } }]));
+    now.version = 2;
+    let file = v2_lib::autorun::components::ComponentFile { components: vec![now] };
+    let step = vec![use_it("Say yes")];
+    let mut outcome = ActionOutcome::failed("not found".to_string());
+    outcome.component = Some("Say yes".into());
+    let outcomes = vec![outcome];
+
+    // Run with version 1: the action that ran is not the one there now.
+    let old = ran_actions(&step, &outcomes, &file, &[ComponentUse { name: "Say yes".into(), version: 1 }]);
+    assert_eq!(old.len(), 1);
+    assert_eq!(old[0].action, None);
+    assert_eq!(old[0].component.as_deref(), Some("Say yes"));
+
+    // Run with the version there now: paired.
+    let same = ran_actions(&step, &outcomes, &file, &[ComponentUse { name: "Say yes".into(), version: 2 }]);
+    assert!(same[0].action.is_some());
+}
+
+#[test]
+fn an_input_link_with_other_fields_is_refused() {
+    for step in [
+        LocatorStep { input: Some("x".into()), name: Some("n".into()), ..Default::default() },
+        LocatorStep { input: Some("x".into()), exact: true, ..Default::default() },
+        LocatorStep { input: Some("x".into()), visible: Some(false), ..Default::default() },
+        LocatorStep { input: Some("x".into()), nth: Some(2), ..Default::default() },
+    ] {
+        let err = Target::One(step.clone()).validate().unwrap_err();
+        assert!(err.contains("an input placeholder stands alone"), "{step:?}: {err}");
+        let chain = Target::Chain(vec![LocatorStep { css: Some("#a".into()), ..Default::default() }, step]);
+        let err = chain.validate().unwrap_err();
+        assert!(err.contains("an input placeholder stands alone"), "{err}");
+    }
 }

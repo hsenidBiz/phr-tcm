@@ -94,6 +94,18 @@ pub struct Unseen {
 }
 
 impl Unseen {
+    /// The sentence a component change is refused with for a script that
+    /// uses it, after "Case <id>, ".
+    pub fn broken_by_change(&self) -> String {
+        match &self.refused {
+            Some(why) => format!("step {}: {why}; this change would break it.", self.step),
+            None => format!(
+                "step {}: {} was never seen on the live app; this change would break it.",
+                self.step, self.locator
+            ),
+        }
+    }
+
     /// The sentence a save refuses this with.
     fn refusal(&self) -> String {
         match &self.refused {
@@ -114,7 +126,7 @@ pub fn check_seen(
     case_text: &[String],
     only_steps: Option<&[i32]>,
 ) -> Result<(), String> {
-    match scan(map, components, script, case_text, only_steps, true).into_iter().next() {
+    match scan(map, components, script, case_text, only_steps, true, None).into_iter().next() {
         Some(u) => Err(u.refusal()),
         None => Ok(()),
     }
@@ -129,7 +141,22 @@ pub fn check_seen_all(
     case_text: &[String],
     only_steps: Option<&[i32]>,
 ) -> Vec<Unseen> {
-    scan(map, components, script, case_text, only_steps, false)
+    scan(map, components, script, case_text, only_steps, false, None)
+}
+
+/// Every use of `component` in `script`, checked the way the script's
+/// save checks it, against `components` as they would be (the version
+/// being saved): each locator an input goes into, read with what the
+/// script typed before it and `case_text`, and whether the use can still
+/// be expanded at all. The script's other locators are not checked again.
+pub fn check_component_uses(
+    map: &DiscoveryMap,
+    components: &ComponentFile,
+    script: &CaseScript,
+    case_text: &[String],
+    component: &str,
+) -> Vec<Unseen> {
+    scan(map, components, script, case_text, None, false, Some(component))
 }
 
 /// Does this script use a component anywhere? Its checks need the
@@ -220,7 +247,8 @@ fn link_unseen(link: &LocatorStep, keys: &HashSet<SeenKey>, typed: &[String], ca
     !typed_here && !in_case
 }
 
-/// The failures of the check, stopping at the first when `first_only`.
+/// The failures of the check, stopping at the first when `first_only`;
+/// with `only_component`, of that component's uses alone.
 fn scan(
     map: &DiscoveryMap,
     components: &ComponentFile,
@@ -228,7 +256,9 @@ fn scan(
     case_text: &[String],
     only_steps: Option<&[i32]>,
     first_only: bool,
+    only_component: Option<&str>,
 ) -> Vec<Unseen> {
+    let only_key = only_component.map(super::nav::module_key);
     let mut unseen: Vec<Unseen> = Vec::new();
     let mut areas: Vec<String> = script.area_name().into_iter().map(str::to_string).collect();
     for step in &script.steps {
@@ -252,6 +282,15 @@ fn scan(
         let checked = only_steps.is_none_or(|only| only.contains(&step.step_number));
         if checked {
             for action in step.actions.iter().flat_map(Action::each) {
+                if let Some(k) = &only_key {
+                    let this_one = matches!(
+                        action,
+                        Action::UseComponent { component, .. } if super::nav::module_key(component) == *k
+                    );
+                    if !this_one {
+                        continue;
+                    }
+                }
                 if let Action::Navigate { url } | Action::OpenTab { url, .. } = action {
                     // Compared as the map files a page; named as written.
                     let path = path_only(url);

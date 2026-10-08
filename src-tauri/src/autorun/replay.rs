@@ -203,7 +203,7 @@ pub fn propose_with(
                 .steps
                 .iter()
                 .find(|st| st.step_number == s.step_number)
-                .map(|st| ran_actions(&st.actions, &s.outcomes, components))
+                .map(|st| ran_actions(&st.actions, &s.outcomes, components, &s.components))
                 .unwrap_or_default();
             (s.step_number, ran)
         })

@@ -302,7 +302,7 @@ pub async fn route(
         ("POST", "/autorun-defect") => autorun_defect(body),
         // Components: saved only once the open discovery has tried them
         // live, and retired only while no saved script uses them.
-        ("POST", "/autorun-component-save") => autorun_component_save(ctx, body).await,
+        ("POST", "/autorun-component-save") => autorun_component_save(ctx, client, body).await,
         ("POST", "/autorun-component-retire") => autorun_component_retire(ctx, body),
         // Auto Run's own order for a PBI. Reads the PBI's cases from Azure
         // DevOps (a read) to refuse an id the PBI is not tested by.
@@ -2763,9 +2763,16 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
 /// `/autorun-component-save`: a component, under every save rule
 /// (`components::save_tried`), against the open discovery: its area and
 /// the components it tried that worked. With no discovery going, nothing
-/// was tried, and the save is refused.
-async fn autorun_component_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    use crate::autorun::components::{save_tried, Component, TriedIn, TRY_IT_FIRST};
+/// was tried, and the save is refused. The test cases of the saved scripts
+/// that use it are read first (a read), so each of this project's is
+/// checked against the new version; when they cannot be read, a save that
+/// has users is refused.
+async fn autorun_component_save(
+    ctx: &BridgeContext,
+    client: Option<&crate::ado::AdoClient>,
+    body: &str,
+) -> (u16, String) {
+    use crate::autorun::components::{save_tried, users_of, Component, TriedIn, UserCases, SIGN_IN_TO_CHECK_USERS, TRY_IT_FIRST};
     const SHAPE: &str = "{ \"name\": <its name>, \"description\": <what it does>, \"inputs\": [{ \"name\", \"kind\": \"text\" or \"target\", \"description\" }], \"actions\": [<script actions>], \"why\": <why it changes, for a saved one> }";
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -2795,14 +2802,46 @@ async fn autorun_component_save(ctx: &BridgeContext, body: &str) -> (u16, String
             None => (None, Vec::new()),
         }
     };
+    // The scripts that use it, by case: this project's with their text,
+    // and the rest. `save_tried` reads the users again under its lock.
+    let users = users_of(&root, &draft.name).cases;
+    let cases: Option<UserCases> = if users.is_empty() {
+        Some(UserCases::default())
+    } else {
+        match client {
+            None => None,
+            Some(client) => match client.get_case_texts_with_projects(&ctx.org, &users).await {
+                Ok(found) => {
+                    let mut cases = UserCases::default();
+                    for c in found {
+                        if c.project.trim().eq_ignore_ascii_case(ctx.project.trim()) {
+                            cases.here.insert(c.id, c.text);
+                        }
+                    }
+                    cases.elsewhere = users.iter().copied().filter(|id| !cases.here.contains_key(id)).collect();
+                    Some(cases)
+                }
+                Err(_) => {
+                    // The error itself can carry the request's address; the
+                    // line names only what could not be read.
+                    crate::applog::warn(format!(
+                        "Auto Run component {}: the test cases of the scripts that use it could not be read",
+                        draft.name.trim()
+                    ));
+                    None
+                }
+            },
+        }
+    };
     let session = area.as_ref().map(|a| TriedIn { area: a.as_deref(), tried: &tried });
     let now = crate::autorun::sessions::now_ms();
-    match save_tried(&root, &ctx.org, &ctx.project, draft, why.as_deref(), session, now) {
+    match save_tried(&root, &ctx.org, &ctx.project, draft, why.as_deref(), session, now, cases.as_ref()) {
         Ok(saved) => {
             crate::applog::info(format!("Auto Run component {} saved as version {}", saved.saved, saved.version));
             (200, serde_json::to_string(&saved).unwrap_or_default())
         }
         Err(why) if why == TRY_IT_FIRST => (409, why),
+        Err(why) if why == SIGN_IN_TO_CHECK_USERS => (503, why),
         Err(why) => (400, why),
     }
 }

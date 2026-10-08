@@ -78,7 +78,7 @@ pub fn is_transient_with(case: &CaseRecord, script: Option<&CaseScript>, compone
         || {
             let ran = script
                 .and_then(|sc| sc.steps.iter().find(|s| s.step_number == n))
-                .map(|s| ran_actions(&s.actions, &step.outcomes, components))
+                .map(|s| ran_actions(&s.actions, &step.outcomes, components, &step.components))
                 .unwrap_or_default();
             ran.get(i).and_then(|r| r.action.as_ref()).is_some_and(|a| network_glitch(a, first))
         };

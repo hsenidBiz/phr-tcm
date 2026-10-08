@@ -149,7 +149,7 @@ fn missing_action_text(script: Option<&CaseScript>, index: usize) -> String {
 /// matches this case or it no longer has this step.
 fn ran_in_step(script: Option<&CaseScript>, step: &StepRecord, components: &ComponentFile) -> Vec<Ran> {
     match script.and_then(|s| s.steps.iter().find(|st| st.step_number == step.step_number)) {
-        Some(st) => ran_actions(&st.actions, &step.outcomes, components),
+        Some(st) => ran_actions(&st.actions, &step.outcomes, components, &step.components),
         None => Vec::new(),
     }
 }

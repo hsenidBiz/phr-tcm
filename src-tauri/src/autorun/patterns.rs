@@ -471,7 +471,7 @@ pub fn step_failures_with(step: &StepRecord, script: Option<&CaseScript>, compon
         return Vec::new();
     }
     let ran = match script.and_then(|s| s.steps.iter().find(|st| st.step_number == step.step_number)) {
-        Some(st) => ran_actions(&st.actions, &step.outcomes, components),
+        Some(st) => ran_actions(&st.actions, &step.outcomes, components, &step.components),
         None => Vec::new(),
     };
     step.outcomes

@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// How many times a component may be changed by an assistant before a
-/// person has to look at it.
+/// How many changes a component can have before the guide tells the
+/// assistant to stop and ask the person instead of changing it again.
 pub const CHANGE_CAP: u32 = 3;
 
 #[derive(Serialize, Deserialize, specta::Type, Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,7 +47,7 @@ pub struct Component {
     pub tried_area: String,
     #[serde(default)]
     pub version: u32,
-    /// Changes made since a person last saved it (see `CHANGE_CAP`).
+    /// How many times it has been changed so far (see `CHANGE_CAP`).
     #[serde(default)]
     pub changes: u32,
 }
@@ -222,14 +222,19 @@ fn uses(actions: &[Action], k: &str) -> bool {
 }
 
 /// The saved scripts whose steps use `name`, a use inside a `when_visible`
-/// included. Scripts that do not read are skipped.
-pub fn users_of(root: &Path, name: &str) -> Users {
+/// included, in no set order. Scripts that do not read are skipped (and
+/// logged by `store::list_scripts`).
+fn scripts_using(root: &Path, name: &str) -> Vec<super::CaseScript> {
     let k = key(name);
-    let mut cases: Vec<i32> = super::store::list_scripts(root)
+    super::store::list_scripts(root)
         .into_iter()
         .filter(|s| s.steps.iter().any(|st| uses(&st.actions, &k)))
-        .map(|s| s.case_id)
-        .collect();
+        .collect()
+}
+
+/// The saved scripts whose steps use `name`, by case id (`scripts_using`).
+pub fn users_of(root: &Path, name: &str) -> Users {
+    let mut cases: Vec<i32> = scripts_using(root, name).into_iter().map(|s| s.case_id).collect();
     cases.sort_unstable();
     Users { cases }
 }
@@ -434,10 +439,12 @@ pub struct Ran {
 /// A step's recorded `outcomes` paired with the actions that ran them: the
 /// script step's `actions` with each `use_component` expanded the way the
 /// runner expands it, from `file` as it is now. A component that is gone,
-/// or that now expands to a different number of actions than ran, leaves
-/// its outcomes named by their `component` only. A run with no component
-/// outcome pairs by position, as it always has.
-pub fn ran_actions(actions: &[Action], outcomes: &[ActionOutcome], file: &ComponentFile) -> Vec<Ran> {
+/// that is not the version the step recorded in `used`, or that now
+/// expands to a different number of actions than ran, leaves its outcomes
+/// named by their `component` only (the readers say the component changed
+/// since the run). A run with no component outcome pairs by position, as
+/// it always has.
+pub fn ran_actions(actions: &[Action], outcomes: &[ActionOutcome], file: &ComponentFile, used: &[ComponentUse]) -> Vec<Ran> {
     if outcomes.iter().all(|o| o.component.is_none()) {
         return (0..outcomes.len()).map(|i| Ran { action: actions.get(i).cloned(), component: None }).collect();
     }
@@ -462,7 +469,10 @@ pub fn ran_actions(actions: &[Action], outcomes: &[ActionOutcome], file: &Compon
         }
         let name = outcomes[j].component.clone();
         let again = matches!(script.peek(), Some(Action::UseComponent { component: next, .. }) if key(next) == k);
+        // A component whose version is not the one the step recorded is
+        // not what ran, however many actions it has now.
         let now = find(file, component)
+            .filter(|c| !used.iter().any(|u| key(&u.name) == k && u.version != c.version))
             .and_then(|c| expand(c, inputs).ok())
             .filter(|ex| !ex.is_empty() && (ex.len() == ran || (again && ex.len() < ran)));
         match now {
@@ -487,6 +497,67 @@ pub struct TriedIn<'a> {
     pub tried: &'a [String],
 }
 
+/// The test cases of the saved scripts that use a component, read from
+/// Azure DevOps before a save. Scripts are kept by case id, not by
+/// project, so the cases say which are this project's.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UserCases {
+    /// This project's cases, by id, with their text: each step's action
+    /// then its expected result.
+    pub here: BTreeMap<i32, Vec<String>>,
+    /// The cases found in no case of this project: another project's or
+    /// another organization's, or no longer there. Their scripts do not
+    /// use this project's components.
+    pub elsewhere: Vec<i32>,
+}
+
+/// Said when a component that saved scripts use is saved with no way to
+/// read their test cases: the check of those scripts is never skipped.
+pub const SIGN_IN_TO_CHECK_USERS: &str = "Sign in so the scripts that use this component can be checked.";
+
+/// Every saved script of this project that uses `name`, checked against
+/// `after` (the file with the version being saved), the way its own save
+/// was checked: each locator an input goes into, and that each use still
+/// expands. Refused with every break, one line each, case by case. A
+/// script whose case is neither here nor elsewhere in `cases` began using
+/// the component after the cases were read, and refuses the save too.
+fn check_users(
+    root: &Path,
+    map: &super::discovery_map::DiscoveryMap,
+    after: &ComponentFile,
+    name: &str,
+    cases: Option<&UserCases>,
+) -> Result<(), String> {
+    let mut users = scripts_using(root, name);
+    if users.is_empty() {
+        return Ok(());
+    }
+    let Some(cases) = cases else {
+        return Err(SIGN_IN_TO_CHECK_USERS.to_string());
+    };
+    users.sort_by_key(|s| s.case_id);
+    let mut broken: Vec<String> = Vec::new();
+    for script in &users {
+        if cases.elsewhere.contains(&script.case_id) {
+            continue;
+        }
+        let Some(text) = cases.here.get(&script.case_id) else {
+            return Err(format!(
+                "Case {} began using {name} while this was checked: save the component again.",
+                script.case_id
+            ));
+        };
+        for u in super::seen_check::check_component_uses(map, after, script, text, name) {
+            broken.push(format!("Case {}, {}", script.case_id, u.broken_by_change()));
+        }
+    }
+    if broken.is_empty() {
+        Ok(())
+    } else {
+        Err(broken.join("\n"))
+    }
+}
+
 /// What a save answers.
 #[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct Saved {
@@ -494,7 +565,7 @@ pub struct Saved {
     pub saved: String,
     pub version: u32,
     pub changes: u32,
-    /// The component has been changed `CHANGE_CAP` times or more without
+    /// The component has been changed `CHANGE_CAP` times or more: the
     /// a person looking at it.
     pub cap_reached: bool,
 }
@@ -613,12 +684,16 @@ pub fn check_component(c: &Component) -> Result<(), String> {
 /// Saves `draft` under every save rule, in order: `check_component`; a
 /// discovery going (`session`); its fixed locators seen in that
 /// discovery's area (`check_component_seen`); tried in that discovery
-/// exactly as it is sent; and, when a
+/// exactly as it is sent; when a
 /// component of that name is saved already, a reason (`why`) and no check
 /// lost (`edits::weakens`), which makes it the next version and one more
-/// change toward `CHANGE_CAP`. A change past the cap still saves:
-/// `cap_reached` says a person should look at it. `now` is when it was
-/// tried, in milliseconds since the epoch.
+/// change toward `CHANGE_CAP`; and, saved already or not, every saved
+/// script of this project that uses the name still seen as it would run
+/// (`check_users`, with `cases`, the users' test cases; `None` when they
+/// could not be read). A change past the cap still saves: `cap_reached`
+/// says the assistant should stop and ask the person. `now` is when it
+/// was tried, in milliseconds since the epoch.
+#[allow(clippy::too_many_arguments)]
 pub fn save_tried(
     root: &Path,
     org: &str,
@@ -627,6 +702,7 @@ pub fn save_tried(
     why: Option<&str>,
     session: Option<TriedIn<'_>>,
     now: u64,
+    cases: Option<&UserCases>,
 ) -> Result<Saved, String> {
     check_component(&draft)?;
     // With no discovery going, nothing was tried, and there is no area to
@@ -665,6 +741,11 @@ pub fn save_tried(
             changes,
             ..draft
         };
+        // Every script that uses the name, a fresh save's included, is
+        // checked against what it would now run.
+        let mut after = file.clone();
+        put_in(&mut after, saved.clone());
+        check_users(root, &map, &after, &name, cases)?;
         put_in(file, saved);
         Ok(Saved { saved: name.clone(), version, changes, cap_reached: changes >= CHANGE_CAP })
     })
