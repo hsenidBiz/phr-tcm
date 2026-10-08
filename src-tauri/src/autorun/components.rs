@@ -7,7 +7,6 @@
 use super::recipe::project_slug;
 use crate::browser::actions::Action;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -55,11 +54,10 @@ pub struct ComponentFile {
     pub components: Vec<Component>,
 }
 
-/// Who uses a component: saved scripts by case id, fixtures by name.
+/// Who uses a component: saved scripts, by case id.
 #[derive(Serialize, Deserialize, specta::Type, Clone, Debug, Default, PartialEq)]
 pub struct Users {
     pub cases: Vec<i32>,
-    pub fixtures: Vec<String>,
 }
 
 pub fn components_path(root: &Path, org: &str, project: &str) -> PathBuf {
@@ -177,24 +175,9 @@ fn uses(actions: &[Action], k: &str) -> bool {
         .any(|a| matches!(a, Action::UseComponent { component, .. } if key(component) == k))
 }
 
-/// Does any object in this JSON look like a `use_component` action naming `k`?
-/// Fixtures are read as raw JSON: they hold API steps rather than browser
-/// actions today, and this finds a use wherever a fixture comes to write one.
-fn json_uses(v: &Value, k: &str) -> bool {
-    match v {
-        Value::Object(m) => {
-            (m.get("kind").and_then(Value::as_str) == Some("use_component")
-                && m.get("component").and_then(Value::as_str).is_some_and(|c| key(c) == k))
-                || m.values().any(|x| json_uses(x, k))
-        }
-        Value::Array(a) => a.iter().any(|x| json_uses(x, k)),
-        _ => false,
-    }
-}
-
-/// The saved scripts and fixtures whose steps use `name`, a use inside a
-/// `when_visible` included. Files that do not read are skipped.
-pub fn users_of(root: &Path, org: &str, project: &str, name: &str) -> Users {
+/// The saved scripts whose steps use `name`, a use inside a `when_visible`
+/// included. Scripts that do not read are skipped.
+pub fn users_of(root: &Path, name: &str) -> Users {
     let k = key(name);
     let mut cases: Vec<i32> = super::store::list_scripts(root)
         .into_iter()
@@ -202,22 +185,5 @@ pub fn users_of(root: &Path, org: &str, project: &str, name: &str) -> Users {
         .map(|s| s.case_id)
         .collect();
     cases.sort_unstable();
-    let mut fixtures = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(crate::api_templates::fixture_store::fixtures_dir(root, org, project)) {
-        for e in entries.flatten() {
-            let path = e.path();
-            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !fname.ends_with(".json") || fname.ends_with(".runs.json") {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
-            let Ok(v) = serde_json::from_str::<Value>(text.strip_prefix('\u{feff}').unwrap_or(&text)) else { continue };
-            if json_uses(&v, &k) {
-                let n = v.get("name").and_then(Value::as_str).filter(|n| !n.is_empty());
-                fixtures.push(n.unwrap_or(fname.trim_end_matches(".json")).to_string());
-            }
-        }
-    }
-    fixtures.sort();
-    Users { cases, fixtures }
+    Users { cases }
 }

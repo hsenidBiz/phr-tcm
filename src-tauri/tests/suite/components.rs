@@ -178,7 +178,7 @@ fn put_without_change_does_not_rewrite() {
 }
 
 #[test]
-fn users_of_lists_scripts_and_fixtures() {
+fn users_of_lists_the_scripts_that_use_it() {
     let dir = tempfile::tempdir().unwrap();
     let guarded = Action::WhenVisible {
         selector: Target::One(LocatorStep { role: Some("dialog".into()), ..Default::default() }),
@@ -189,18 +189,8 @@ fn users_of_lists_scripts_and_fixtures() {
     save_script(dir.path(), &script(5, vec![guarded])).unwrap();
     save_script(dir.path(), &script(9, vec![use_it("something else")])).unwrap();
     save_script(dir.path(), &script(3, vec![])).unwrap();
-    let fx = v2_lib::api_templates::fixture_store::fixtures_dir(dir.path(), "o", "p");
-    std::fs::create_dir_all(&fx).unwrap();
-    std::fs::write(
-        fx.join("f1.json"),
-        json!({"id": "f1", "name": "Make a cycle", "steps": [{"kind": "use_component", "component": "PICK-DATE", "inputs": {}}]}).to_string(),
-    )
-    .unwrap();
-    std::fs::write(fx.join("f2.json"), json!({"id": "f2", "name": "Unrelated", "steps": []}).to_string()).unwrap();
-    std::fs::write(fx.join("f1.runs.json"), "[]").unwrap();
-    let u = users_of(dir.path(), "o", "p", "pick-date");
+    let u = users_of(dir.path(), "pick-date");
     assert_eq!(u.cases, vec![5, 12]);
-    assert_eq!(u.fixtures, vec!["Make a cycle".to_string()]);
-    let none = users_of(dir.path(), "o", "p", "never used");
-    assert!(none.cases.is_empty() && none.fixtures.is_empty());
+    let none = users_of(dir.path(), "never used");
+    assert!(none.cases.is_empty());
 }
