@@ -453,6 +453,8 @@ fn a_missing_or_wrong_kind_input_is_refused() {
         (serde_json::json!({ "field": field }), "Step 3: Pick a date needs day"),
         (serde_json::json!({ "day": "5" }), "Step 3: Pick a date needs field"),
         (serde_json::json!({ "field": "#day", "day": "5" }), "Step 3: Pick a date needs field to be a locator"),
+        (serde_json::json!({ "field": { "nope": 1 }, "day": "5" }), "Step 3: Pick a date needs field to be a locator"),
+        (serde_json::json!({ "field": { "input": "field" }, "day": "5" }), "Step 3: Pick a date needs field to be a locator"),
         (serde_json::json!({ "field": field, "day": { "css": "#x" } }), "Step 3: Pick a date needs day to be text"),
     ] {
         assert_eq!(check_seen(&map, &have, &with(inputs.clone()), &[], None), Err(why.to_string()), "{inputs}");
@@ -556,5 +558,84 @@ fn a_typed_value_exempts_a_target_input_that_contains_it() {
     assert_eq!(
         check_seen(&map, &have, &not_typed, &[], None),
         Err(refusal(1, "row \"AutoTest Leave 9 Pending\""))
+    );
+}
+
+/// "Open a request": clicks the row its text input names, then a fixed
+/// Edit button the component was checked for when it was saved.
+fn open_a_request() -> serde_json::Value {
+    serde_json::json!({
+        "name": "Open a request", "description": "d", "version": 1,
+        "inputs": [{ "name": "who", "kind": "text", "description": "" }],
+        "actions": [
+            { "kind": "click", "selector": { "role": "row", "name": "{{who}}" } },
+            { "kind": "click", "selector": { "role": "button", "name": "Edit" } }
+        ]
+    })
+}
+
+/// A text input put into a component's locator is checked like any
+/// locator the script names: the case may name it only for a check.
+#[test]
+fn a_text_input_inside_a_fixed_locator_is_seen_checked() {
+    let map = map_with("Leave", "/leave", &[role("row", "Alpha")]);
+    let have = components(serde_json::json!([
+        open_a_request(),
+        {
+            "name": "See a request", "description": "d", "version": 1,
+            "inputs": [{ "name": "who", "kind": "text", "description": "" }],
+            "actions": [{ "kind": "expect_visible", "selector": { "role": "row", "name": "{{who}}" } }]
+        }
+    ]));
+    let with = |name: &str, who: &str| {
+        script(Some("Leave"), serde_json::json!([use_component(1, name, serde_json::json!({ "who": who }))]))
+    };
+    assert_eq!(check_seen(&map, &have, &with("Open a request", "Alpha"), &[], None), Ok(()));
+    assert_eq!(
+        check_seen(&map, &have, &with("Open a request", "Beta"), &[], None),
+        Err(refusal(1, "row \"Beta\""))
+    );
+    let case_text = vec!["The request from Beta shows".to_string()];
+    assert_eq!(check_seen(&map, &have, &with("See a request", "Beta"), &case_text, None), Ok(()));
+    assert_eq!(
+        check_seen(&map, &have, &with("Open a request", "Beta"), &case_text, None),
+        Err(refusal(1, "row \"Beta\""))
+    );
+}
+
+/// A value typed earlier, by the script or earlier in the same
+/// component, exempts a locator a text input was put into.
+#[test]
+fn a_text_input_inside_a_fixed_locator_typed_earlier_is_exempt() {
+    let map = map_with("Leave", "/leave", &[role("textbox", "Name")]);
+    let have = components(serde_json::json!([
+        open_a_request(),
+        {
+            "name": "Add and open", "description": "d", "version": 1,
+            "inputs": [{ "name": "who", "kind": "text", "description": "" }],
+            "actions": [
+                { "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "{{who}}" },
+                { "kind": "click", "selector": { "role": "row", "name": "{{who}} Pending" } }
+            ]
+        }
+    ]));
+    let in_component =
+        script(Some("Leave"), serde_json::json!([use_component(1, "Add and open", serde_json::json!({ "who": "AutoTest Leave 3" }))]));
+    assert_eq!(check_seen(&map, &have, &in_component, &[], None), Ok(()));
+    let by_script = script(
+        Some("Leave"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [
+                { "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "AutoTest Leave 4" }
+            ] },
+            use_component(2, "Open a request", serde_json::json!({ "who": "AutoTest Leave 4 Pending" }))
+        ]),
+    );
+    assert_eq!(check_seen(&map, &have, &by_script, &[], None), Ok(()));
+    let not_typed =
+        script(Some("Leave"), serde_json::json!([use_component(1, "Open a request", serde_json::json!({ "who": "AutoTest Leave 4 Pending" }))]));
+    assert_eq!(
+        check_seen(&map, &have, &not_typed, &[], None),
+        Err(refusal(1, "row \"AutoTest Leave 4 Pending\""))
     );
 }

@@ -11,11 +11,12 @@
 //! typed value shorter than 3 characters exempts nothing.
 //!
 //! A step that uses a component must name one the project has and give it
-//! every input, each of its kind. The locators the script passes as its
-//! target inputs are checked like any other; the component's own are not,
-//! as they were checked when the component was saved.
+//! every input, each of its kind. Every locator of the component an input
+//! goes into (a target input, or a text input written into a locator) is
+//! checked like any other, as it runs; the component's fixed locators are
+//! not, as they were checked when the component was saved.
 
-use super::components::{expand, find, not_saved, Component, ComponentFile, InputKind};
+use super::components::{expand, find, not_saved, Component, ComponentFile};
 use super::discovery_map::{page_path, path_only, seen_keys, seen_paths, DiscoveryMap};
 use super::edits::Edit;
 use super::CaseScript;
@@ -151,19 +152,42 @@ fn own_targets(action: &Action) -> Vec<&Target> {
     }
 }
 
-/// Does `c` only look for its target input `name`: is every action that
-/// uses it a check? An input none of its actions uses is not a check.
-fn input_is_checked(c: &Component, name: &str) -> bool {
-    let mut used = false;
-    for a in c.actions.iter().flat_map(Action::each) {
-        if own_targets(a).iter().any(|t| t.links().iter().any(|l| l.input.as_deref().map(str::trim) == Some(name))) {
-            if !is_check(a) {
-                return false;
+/// A locator a component's inputs went into, as it runs: the links an
+/// input put there (a fixed link it already had is not re-checked; that
+/// was done when the component was saved), whether its action is a check,
+/// and what the component typed before it.
+struct InputLocator {
+    target: Target,
+    links: Vec<LocatorStep>,
+    check: bool,
+    typed_before: Vec<String>,
+}
+
+/// Every locator of `c` an input changed, from its `expanded` actions
+/// (`expand`'s, which pairs one for one with `c.actions`): a target
+/// input's locator, or a fixed one a text input was written into.
+fn input_locators(c: &Component, expanded: &[Action]) -> Vec<InputLocator> {
+    let mut out = Vec::new();
+    let mut typed_before: Vec<String> = Vec::new();
+    for (written, ran) in c.actions.iter().zip(expanded) {
+        for (w, r) in written.each().into_iter().zip(ran.each()) {
+            for (wt, rt) in own_targets(w).into_iter().zip(own_targets(r)) {
+                if wt == rt {
+                    continue;
+                }
+                let fixed = wt.links();
+                let links: Vec<LocatorStep> = rt.links().into_iter().filter(|l| !fixed.contains(l)).collect();
+                out.push(InputLocator { target: rt.clone(), links, check: is_check(r), typed_before: typed_before.clone() });
             }
-            used = true;
+            if let Some(v) = r.typed_value() {
+                let v = fold_name(v);
+                if v.chars().count() >= MIN_TYPED_LEN {
+                    typed_before.push(v);
+                }
+            }
         }
     }
-    used
+    out
 }
 
 /// The actions a `use_component` the project can expand runs as, for what
@@ -238,17 +262,25 @@ fn scan(
                         }
                     }
                 }
-                // The locators the script names, each with whether it is
-                // only looked for: the action's own, or a component's
-                // target inputs.
-                let mut named: Vec<(Target, bool)> =
-                    own_targets(action).into_iter().map(|t| (t.clone(), is_check(action))).collect();
+                // The locators the script names: the action's own, each
+                // with whether it is only looked for and what was typed
+                // before it; or every locator of a component its inputs
+                // went into.
+                let mut named: Vec<InputLocator> = own_targets(action)
+                    .into_iter()
+                    .map(|t| InputLocator {
+                        target: t.clone(),
+                        links: t.links(),
+                        check: is_check(action),
+                        typed_before: Vec::new(),
+                    })
+                    .collect();
                 if let Action::UseComponent { component, inputs } = action {
                     let used = find(components, component)
                         .ok_or_else(|| not_saved(component))
-                        .and_then(|c| expand(c, inputs).map(|_| c));
-                    let c = match used {
-                        Ok(c) => c,
+                        .and_then(|c| expand(c, inputs).map(|ex| (c, ex)));
+                    let (c, expanded) = match used {
+                        Ok(used) => used,
                         Err(why) => {
                             unseen.push(Unseen {
                                 step: step.step_number,
@@ -261,19 +293,14 @@ fn scan(
                             continue;
                         }
                     };
-                    for input in c.inputs.iter().filter(|i| i.kind == InputKind::Target) {
-                        let name = input.name.trim();
-                        // `expand` has read every target input as a locator.
-                        if let Some(t) = inputs.get(name).and_then(|v| serde_json::from_value::<Target>(v.clone()).ok()) {
-                            named.push((t, input_is_checked(c, name)));
-                        }
-                    }
+                    named.extend(input_locators(c, &expanded));
                 }
-                for (target, check) in named {
+                for n in named {
+                    let typed: Vec<String> = typed.iter().cloned().chain(n.typed_before).collect();
                     // One line per target, however many of its links are
                     // unseen.
-                    if target.links().iter().any(|l| link_unseen(l, &keys, &typed, &case_text, check)) {
-                        unseen.push(Unseen { step: step.step_number, locator: target.describe(), refused: None });
+                    if n.links.iter().any(|l| link_unseen(l, &keys, &typed, &case_text, n.check)) {
+                        unseen.push(Unseen { step: step.step_number, locator: n.target.describe(), refused: None });
                         if first_only {
                             return unseen;
                         }
