@@ -1934,7 +1934,8 @@ pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> Strin
 }
 
 /// An action in a few words: its kind and what it points at, as
-/// `describe_try` says it - never a `fill`'s value or a query string.
+/// `describe_try` says it - never a `fill`'s value, a host or a query
+/// string. What the log and the discovery map keep of an action.
 pub fn describe_action(action: &crate::browser::actions::Action) -> String {
     use crate::browser::actions::Action;
     let kind = serde_json::to_value(action)
@@ -1942,7 +1943,9 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         .and_then(|v| v["kind"].as_str().map(str::to_string))
         .unwrap_or_default();
     let what = match action {
-        Action::Navigate { url } => url.clone(),
+        // Its path only: a host and a query string never reach a log line
+        // or the discovery map, and a query can carry a token.
+        Action::Navigate { url } => crate::autorun::discovery_map::path_only(url),
         Action::CheckUrl { contains } => contains.clone(),
         Action::CheckText { .. }
         | Action::SignIn { .. }

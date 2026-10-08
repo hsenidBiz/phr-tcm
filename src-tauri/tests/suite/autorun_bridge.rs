@@ -1421,7 +1421,7 @@ fn describe_try_names_the_kind_the_target_and_whether_it_worked() {
     let navigate = Action::Navigate { url: "https://app.example/ratings".to_string() };
     assert_eq!(
         describe_try(&navigate, true),
-        "AI tried navigate https://app.example/ratings in the supervised browser: ok"
+        "AI tried navigate /ratings in the supervised browser: ok"
     );
 
     let click = Action::Click { selector: serde_json::from_value(serde_json::json!({ "role": "button", "name": "Save" })).unwrap() };

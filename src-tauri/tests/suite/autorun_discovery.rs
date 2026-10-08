@@ -504,3 +504,29 @@ async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
 
     assert!(discovery_sighting(dir.path(), ORG, "  ", Some(&state), None, None).is_none(), "no project, nowhere to file");
 }
+
+/// A navigate's address is kept by its path only: neither its host nor its
+/// query string reaches the map - not the write log's step, not the
+/// outcome line.
+#[tokio::test]
+async fn a_navigate_action_never_puts_a_host_or_query_in_the_map_or_its_outcome() {
+    let dir = root_with_recipe_and_account();
+    let mut d = leave_page("Page.navigate", "https://hr.example.internal/x/y?token=abc");
+    d.on_call_events.push(("Page.navigate".into(), sent("1", "POST", "https://hr.example.internal/x/track?token=abc")));
+    d.on_every_call_events.push((
+        "Page.navigate".into(),
+        Event { method: "Page.lifecycleEvent".into(), params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }) },
+    ));
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let go = Action::Navigate { url: "https://hr.example.internal/x/y?token=abc".into() };
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &go, None).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["ok"], true, "{body}");
+
+    let area = mapped_area(dir.path(), "Leave").unwrap();
+    assert_eq!(area.writes.len(), 1, "{:?}", area.writes);
+    assert!(!area.outcomes.is_empty(), "no outcome was recorded");
+    let file = std::fs::read_to_string(map_path(dir.path(), ORG, PROJECT)).unwrap();
+    assert!(!file.contains("token"), "a query string reached the map: {file}");
+    assert!(!file.contains("hr.example.internal"), "a host reached the map: {file}");
+}
