@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.2",
+    date: "2026-10-10",
+    items: [
+      "API template runs on the same account within two minutes of each other reuse one signed-in browser, so the second run skips the sign-in and finishes in seconds. The browser closes on its own after two idle minutes, and gives way to anything else that needs the account.",
+      "Your assistant makes fewer mistakes with Auto Run: it is told exactly where each screenshot is, saves scripts that open a setup or fixture draft by its id, and is no longer refused for a checked box, a filter, its own uploaded file, a picked date or a dash written differently. When a step is refused it is told the closest thing it did see.",
+      "Saving an area during discovery always checks it from a freshly loaded home page, so a menu left closed no longer refuses it.",
+    ],
+  },
+  {
     version: "2.1.3-beta.1",
     date: "2026-10-09",
     items: [
