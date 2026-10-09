@@ -39,6 +39,9 @@ struct World {
     refuse_contexts: bool,
     /// A connection fails as reqwest says it, address and all.
     refuse_connect: bool,
+    /// Each browser starts with its own blank page, as a launched Edge
+    /// does, and reports it to `Target.getTargets`.
+    launch_page: bool,
     next: u32,
 }
 
@@ -88,6 +91,10 @@ impl Transport for FakeSocket {
                 json!({ "targetId": target })
             }
             "Target.attachToTarget" => json!({ "sessionId": format!("S-{}", v["params"]["targetId"].as_str().unwrap()) }),
+            "Target.getTargets" if w.launch_page => json!({ "targetInfos": [
+                { "targetId": format!("T-blank-{}", self.browser), "type": "page", "url": "about:blank",
+                  "attached": false, "browserContextId": "default" }
+            ] }),
             "Runtime.evaluate" if v["params"]["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.callFunctionOn" => json!({ "result": { "value": true } }),
             _ => json!({}),
@@ -447,6 +454,31 @@ async fn a_refused_context_falls_back_to_a_browser_per_case() {
     }
     drop(b);
     assert_eq!(world.lock().unwrap().closes, 2, "nothing left to close at the end");
+}
+
+/// A browser of its own per case drives the blank page the browser
+/// started with, as a connection to a launched browser always did. A new
+/// page beside it would leave that one open, to be taken for a tab the
+/// case opened.
+#[tokio::test]
+async fn a_browser_per_case_drives_the_page_it_started_with() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers(dir.path());
+    {
+        let mut w = world.lock().unwrap();
+        w.refuse_contexts = true;
+        w.launch_page = true;
+    }
+    let run = run(&mut b, dir.path(), &[1, 2]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", run.cases);
+    let w = world.lock().unwrap();
+    assert!(w.sent("Target.createTarget").is_empty(), "no second page: {:?}", w.sent("Target.createTarget"));
+    let driven: Vec<(usize, String)> = w
+        .sent("Target.attachToTarget")
+        .iter()
+        .map(|(b, f)| (*b, f["params"]["targetId"].as_str().unwrap().to_string()))
+        .collect();
+    assert_eq!(driven, vec![(1, "T-blank-1".to_string()), (2, "T-blank-2".to_string())]);
 }
 
 /// A browser whose DevTools port answers but whose socket never finishes

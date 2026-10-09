@@ -873,10 +873,25 @@ impl<T: Transport> Cdp<T> {
         self.drive_first_page(&target, "about:blank").await
     }
 
-    /// On the browser's own socket: a blank page in the browser's default
-    /// context, driven as `main` (`drive_first_page`). For a browser that
-    /// will not make contexts, where each case has a browser of its own.
+    /// On the browser's own socket: the page the browser started with,
+    /// driven as `main` (`drive_first_page`), as `connect` drives it; a
+    /// blank page made in the default context only when there is none. For
+    /// a browser that will not make contexts, where each case has a
+    /// browser of its own. Making a page beside the one it started with
+    /// would leave that one open, and the auto-attach would take it for a
+    /// tab the case opened.
     pub async fn drive_new_page(&mut self) -> Result<(), CdpError> {
+        let listed = self.call_on(None, "Target.getTargets", serde_json::json!({}), CALL_TIMEOUT).await?;
+        let started_with = listed["targetInfos"].as_array().and_then(|all| {
+            all.iter().find(|t| t["type"] == "page" && !t["attached"].as_bool().unwrap_or(false))
+        });
+        if let Some(page) = started_with {
+            let target = page["targetId"].as_str().unwrap_or("").to_string();
+            let url = page["url"].as_str().unwrap_or("").to_string();
+            if !target.is_empty() {
+                return self.drive_first_page(&target, &url).await;
+            }
+        }
         let page =
             self.call_on(None, "Target.createTarget", serde_json::json!({ "url": "about:blank" }), CALL_TIMEOUT).await?;
         let target = page["targetId"].as_str().unwrap_or("").to_string();
