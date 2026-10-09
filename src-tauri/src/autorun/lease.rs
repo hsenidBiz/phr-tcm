@@ -24,6 +24,11 @@
 //! returns early with an error, is stopped (its future dropped) or panics
 //! lets its account go as its stack unwinds.
 //!
+//! Every take by anything other than an API template run bumps the
+//! account's generation (`generation`): a template browser kept signed in
+//! between runs (`api_templates::held`) is never reused once something
+//! else has taken its account.
+//!
 //! The key is an account key, never a login. Nothing here logs a login or
 //! a password: the log lines name the account key only.
 
@@ -82,6 +87,9 @@ struct Entry {
 }
 
 type Table = HashMap<(String, String), Entry>;
+
+/// Per (environment id, account key): see `generation`.
+type Generations = HashMap<(String, String), u64>;
 
 static NEXT_TICKET: AtomicU64 = AtomicU64::new(1);
 
@@ -156,8 +164,26 @@ fn take(env: &str, key: &str, holder: &Holder) -> Result<Lease, (&'static str, b
         return Err((e.holder.seen_by(holder), e.holder.ends_on_its_own()));
     }
     let ticket = NEXT_TICKET.fetch_add(1, Ordering::SeqCst);
+    if *holder != Holder::Template {
+        *generations().entry(at.clone()).or_insert(0) += 1;
+    }
     t.insert(at, Entry { ticket, holder: holder.clone() });
     Ok(Lease { env: env.to_string(), key: key.to_string(), ticket })
+}
+
+/// How many times anything other than an API template run has taken the
+/// account `key` in `env` (0 for one never taken). A held template browser
+/// (`api_templates::held`) records this when it signs in: a different
+/// number later means something else signed the account in since, which
+/// ended the held browser's session.
+fn generations() -> MutexGuard<'static, Generations> {
+    static GENERATIONS: OnceLock<Mutex<Generations>> = OnceLock::new();
+    GENERATIONS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The account `key` in `env`'s generation (`generations`). Only looks.
+pub fn generation(env: &str, key: &str) -> u64 {
+    generations().get(&(env.to_string(), key.to_string())).copied().unwrap_or(0)
 }
 
 /// Whether anyone holds the account `key` in `env` right now. Only looks.

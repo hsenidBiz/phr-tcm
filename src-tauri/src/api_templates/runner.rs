@@ -673,8 +673,9 @@ pub(crate) fn stopped_before_sign_in(req: &RunRequest, browser: bool, why: Strin
 
 /// What one sign-in leaves for every template run after it in the same
 /// browser: the recipe and account it signed in with, the origin, and how
-/// the sign-in went (each template's token-page record says so).
-pub(crate) struct Session {
+/// the sign-in went (each template's token-page record says so). Kept with
+/// its browser between runs by `held`.
+pub struct Session {
     recipe: SignInRecipe,
     account: Account,
     origin: String,
@@ -682,6 +683,12 @@ pub(crate) struct Session {
 }
 
 impl Session {
+    /// What a sign-in as `account` with `recipe` at `origin` left, with the
+    /// records of how it went.
+    pub fn new(recipe: SignInRecipe, account: Account, origin: String, sign_ins: Vec<Value>) -> Self {
+        Session { recipe, account, origin, sign_ins }
+    }
+
     fn ctx<'a>(&self, root: &'a Path, req: &'a RunRequest, timing: &'a Timing) -> Ctx<'a> {
         Ctx {
             root,
