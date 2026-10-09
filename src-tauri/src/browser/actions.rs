@@ -1859,6 +1859,23 @@ pub async fn shows_up<D: Driver>(
     Ok(seen.ok)
 }
 
+/// Is `target` showing right now? One look, no waiting - how the prompts a
+/// signed-in page may show are watched together (`autorun::signin`), and
+/// how a sign-in prompt is checked once the login form is already up.
+/// `Ok(None)` is a look the browser did not finish in time: no answer
+/// either way, for the caller's own deadline to weigh. `Err` is the
+/// browser failing outright, as the outcome to report. A page that
+/// refused mid-navigation is between two documents: not showing.
+pub async fn shown_now<D: Driver>(d: &mut D, target: &Target) -> Result<Option<bool>, ActionOutcome> {
+    page::release(d).await;
+    match expect::look(d, target, &Check::Shown).await {
+        Ok(found) => Ok(Some(found.is_ok())),
+        Err(e) if e.is_transient() => Ok(Some(false)),
+        Err(CdpError::Timeout { .. }) => Ok(None),
+        Err(e) => Err(harness(e)),
+    }
+}
+
 /// `this` is the element. Is it a file input, and may it be used?
 pub const FILE_INPUT_JS: &str = r#"function() {
   return {

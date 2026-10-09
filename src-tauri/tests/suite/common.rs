@@ -5,7 +5,7 @@
 use serde_json::{json, Value};
 use std::cell::Cell;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use v2_lib::autorun::accounts::Account;
@@ -84,6 +84,11 @@ pub struct ScriptedDriver {
     /// The run's page errors, fed every event this driver emits after a
     /// call, as `Cdp` feeds its own.
     pub page_errors: PageErrorBook,
+    /// A fake clock: when set, `idle` adds its wait here, in ms, and
+    /// returns at once instead of sleeping - how a test says "the page
+    /// shows this 3 s in" without spending 3 s, and reads back how long a
+    /// wait loop idled.
+    pub idle_clock: Option<Arc<AtomicU64>>,
 }
 
 /// A small model of a browser's tabs for `ScriptedDriver`: `main`, the
@@ -154,6 +159,7 @@ impl ScriptedDriver {
             book: DialogBook::default(),
             dialogs_on_call: vec![],
             page_errors: PageErrorBook::default(),
+            idle_clock: None,
         }
     }
 
@@ -273,6 +279,16 @@ impl Driver for ScriptedDriver {
 
     fn forget_events(&mut self) {
         self.events.clear();
+    }
+
+    async fn idle(&mut self, wait: Duration) {
+        match &self.idle_clock {
+            Some(clock) => {
+                clock.fetch_add(wait.as_millis() as u64, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+            }
+            None => tokio::time::sleep(wait).await,
+        }
     }
 
     fn take_dialogs(&mut self) -> Vec<String> {

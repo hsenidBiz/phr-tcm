@@ -61,6 +61,7 @@ mod autorun_page_errors;
 mod autorun_patterns;
 mod autorun_plan;
 mod autorun_preconditions;
+mod autorun_prompt_race;
 mod autorun_publish;
 mod autorun_quirks;
 mod discovery_map;

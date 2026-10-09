@@ -5,14 +5,19 @@
 //! happens, no text that leaves here contains the password.
 
 use super::accounts::{find_account, Account};
-use super::recipe::{for_account, load_effective_recipe, RecipeStep, SignInRecipe};
+use super::recipe::{for_account, load_effective_recipe, RecipeStep, SignInRecipe, WhenVisible};
 use super::sessions::{forget_session, load_fresh_session, now_ms, save_session};
-use crate::browser::actions::{execute_in, shows_up, Action, ActionOutcome, Policy};
+use super::timing::{FRESH_LOGIN_WINDOW_MS, PROMPT_WINDOW_MS};
+use crate::browser::actions::{
+    execute_in, harness_timeout, shown_now, shows_up, Action, ActionOutcome, Policy, WHEN_VISIBLE_FLOOR_MS,
+};
 use crate::browser::cdp::{CdpError, Driver};
 use crate::browser::expect::{expect, Check};
+use crate::browser::locator::Target;
 use crate::browser::session;
 use crate::browser::timing::Timing;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct SignInOutcome {
@@ -234,9 +239,12 @@ async fn sign_in_held<D: Driver>(
                 let seen = marker.as_ref().is_some_and(|m| m.ok);
                 session::unseed(d, &ids).await;
                 if seen {
-                    // The recipe's own steps are skipped here; these are not.
+                    // The recipe's own steps are skipped here; these are
+                    // not. The page was signed in before it loaded, so its
+                    // prompts come with the marker: the short window.
+                    let prompts = Prompts::Together { window_ms: PROMPT_WINDOW_MS };
                     if let Err((n, why, harness_failure)) =
-                        run_steps(d, &mut run, &recipe.after_sign_in, timing, &policy).await
+                        run_steps(d, &mut run, &recipe.after_sign_in, prompts, timing, &policy).await
                     {
                         return run.done(
                             false,
@@ -289,7 +297,8 @@ async fn sign_in_held<D: Driver>(
         return run.done(false, format!("{PAGE_DID_NOT_OPEN}{why}"), false, harness_failure);
     }
     let steps = for_account(&recipe.steps, account);
-    if let Err((n, why, harness_failure)) = run_steps(d, &mut run, &steps, timing, &policy).await {
+    let prompts = Prompts::SignIn { login_field: login_field(&steps) };
+    if let Err((n, why, harness_failure)) = run_steps(d, &mut run, &steps, prompts, timing, &policy).await {
         return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, harness_failure);
     }
 
@@ -308,7 +317,10 @@ async fn sign_in_held<D: Driver>(
         );
     }
 
-    let after = run_steps(d, &mut run, &recipe.after_sign_in, timing, &policy).await;
+    // A fresh login: PeoplesHR's "another active session" modal can come a
+    // moment after the shell does, so the longer window.
+    let prompts = Prompts::Together { window_ms: FRESH_LOGIN_WINDOW_MS };
+    let after = run_steps(d, &mut run, &recipe.after_sign_in, prompts, timing, &policy).await;
 
     // Saving is a convenience for next time. Failing to save is not a
     // failure to sign in. Captured AFTER after_sign_in, so a saved session
@@ -333,8 +345,9 @@ async fn sign_in_held<D: Driver>(
 /// application (`nav::go_home`), and a reload can undo what these steps
 /// did: PeoplesHR draws its menu closed on every load (2026-09-30). No
 /// account, because `after_sign_in` holds no login - a placeholder there
-/// is refused - so there is no password to hide. `Err` is the step number,
-/// why it stopped, and whether the browser was the cause.
+/// is refused - so there is no password to hide. Its prompts get the short
+/// window: the page was signed in before it loaded. `Err` is the step
+/// number, why it stopped, and whether the browser was the cause.
 pub async fn run_after_sign_in<D: Driver>(
     d: &mut D,
     steps: &[RecipeStep],
@@ -342,52 +355,212 @@ pub async fn run_after_sign_in<D: Driver>(
     policy: &Policy,
 ) -> Result<(), (usize, String, bool)> {
     let mut run = Run { account: None, steps: vec![], appeared: vec![] };
-    run_steps(d, &mut run, steps, timing, policy).await
+    let prompts = Prompts::Together { window_ms: PROMPT_WINDOW_MS };
+    run_steps(d, &mut run, steps, prompts, timing, policy).await
+}
+
+/// How a run of recipe steps treats its optional (`when_visible`) steps.
+#[derive(Clone, Copy)]
+enum Prompts<'a> {
+    /// The sign-in's own steps. While the login field is already showing
+    /// the page has loaded, so a prompt is looked for once, not waited for.
+    /// Otherwise (no login field, or the form is gone) it is waited for up
+    /// to its own `within_ms`, as written.
+    SignIn { login_field: Option<&'a Target> },
+    /// `after_sign_in`: each run of consecutive prompts is watched together
+    /// in one window of this many ms (`watch_together`).
+    Together { window_ms: u64 },
+}
+
+/// The sign-in's login field: the first thing its steps fill in.
+fn login_field(steps: &[RecipeStep]) -> Option<&Target> {
+    steps.iter().find_map(|s| match s {
+        RecipeStep::Do(Action::Fill { selector, .. }) => Some(selector),
+        _ => None,
+    })
 }
 
 /// Recipe steps in order, each outcome kept. `Err` is the step number,
 /// why it stopped, and whether the browser (not the page) was the cause.
 /// Shared by the recipe's own steps and `after_sign_in`, so a
-/// `when_visible` reads the same wherever it is written.
+/// `when_visible` reads the same wherever it is written; `prompts` says
+/// how long one is watched for.
 async fn run_steps<D: Driver>(
     d: &mut D,
     run: &mut Run<'_>,
     steps: &[RecipeStep],
+    prompts: Prompts<'_>,
     timing: &Timing,
     policy: &Policy,
 ) -> Result<(), (usize, String, bool)> {
-    for (i, step) in steps.iter().enumerate() {
+    let mut i = 0;
+    while i < steps.len() {
         let n = i + 1;
-        let actions: Vec<&Action> = match step {
-            RecipeStep::Do(a) => vec![a],
-            RecipeStep::WhenVisible(w) => {
-                let shown = match shows_up(d, &w.selector, w.within_ms, timing).await {
+        match (&steps[i], prompts) {
+            (RecipeStep::Do(a), _) => {
+                run_action(d, run, n, a, timing, policy).await?;
+                i += 1;
+            }
+            (RecipeStep::WhenVisible(_), Prompts::Together { window_ms }) => {
+                let end = steps[i..]
+                    .iter()
+                    .position(|s| !matches!(s, RecipeStep::WhenVisible(_)))
+                    .map_or(steps.len(), |k| i + k);
+                let group: Vec<(usize, &WhenVisible)> = steps[i..end]
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(k, s)| match s {
+                        RecipeStep::WhenVisible(w) => Some((i + k + 1, w)),
+                        RecipeStep::Do(_) => None,
+                    })
+                    .collect();
+                watch_together(d, run, &group, window_ms, timing, policy).await?;
+                i = end;
+            }
+            (RecipeStep::WhenVisible(w), Prompts::SignIn { login_field }) => {
+                let shown = match sign_in_prompt_shown(d, w, login_field, timing).await {
                     Ok(shown) => shown,
-                    Err(silent) => {
-                        let why = silent.detail.clone();
-                        run.keep(silent);
-                        return Err((n, why, true));
-                    }
+                    Err(silent) => return Err(silent_at(run, n, silent)),
                 };
-                if !shown {
-                    run.keep(ActionOutcome::passed(format!(
-                        "step {n}: {} did not appear, carried on",
-                        w.selector.describe()
-                    )));
-                    continue;
+                if shown {
+                    let seen = run.hide(&w.selector.describe());
+                    run.appeared.push(seen);
+                    for action in &w.then {
+                        run_action(d, run, n, action, timing, policy).await?;
+                    }
+                } else {
+                    carried_past(run, n, w);
                 }
-                let seen = run.hide(&w.selector.describe());
-                run.appeared.push(seen);
-                w.then.iter().collect()
+                i += 1;
             }
-        };
-        for action in actions {
-            if !run.keep(execute_in(d, action, timing, policy).await) {
-                let last = run.steps.last();
-                let why = last.map(|s| s.detail.clone()).unwrap_or_default();
-                let harness_failure = last.is_some_and(|s| s.harness);
-                return Err((n, why, harness_failure));
+        }
+    }
+    Ok(())
+}
+
+/// One action of step `n`, its outcome kept.
+async fn run_action<D: Driver>(
+    d: &mut D,
+    run: &mut Run<'_>,
+    n: usize,
+    action: &Action,
+    timing: &Timing,
+    policy: &Policy,
+) -> Result<(), (usize, String, bool)> {
+    if run.keep(execute_in(d, action, timing, policy).await) {
+        return Ok(());
+    }
+    let last = run.steps.last();
+    let why = last.map(|s| s.detail.clone()).unwrap_or_default();
+    let harness_failure = last.is_some_and(|s| s.harness);
+    Err((n, why, harness_failure))
+}
+
+/// Step `n` stopped because the browser did not answer a look for its
+/// prompt: `silent` is kept, and the browser is the cause.
+fn silent_at(run: &mut Run<'_>, n: usize, silent: ActionOutcome) -> (usize, String, bool) {
+    let why = silent.detail.clone();
+    run.keep(silent);
+    (n, why, true)
+}
+
+fn carried_past(run: &mut Run<'_>, n: usize, w: &WhenVisible) {
+    run.keep(ActionOutcome::passed(format!("step {n}: {} did not appear, carried on", w.selector.describe())));
+}
+
+/// Is a sign-in step's prompt there? Looked for once when the login field
+/// is already showing - the page has loaded - and waited for up to its own
+/// `within_ms` otherwise.
+async fn sign_in_prompt_shown<D: Driver>(
+    d: &mut D,
+    w: &WhenVisible,
+    login_field: Option<&Target>,
+    timing: &Timing,
+) -> Result<bool, ActionOutcome> {
+    if let Some(field) = login_field {
+        if shown_now(d, field).await? == Some(true) {
+            if let Some(shown) = shown_now(d, &w.selector).await? {
+                return Ok(shown);
             }
+        }
+    }
+    shows_up(d, &w.selector, w.within_ms, timing).await
+}
+
+/// Watch a run of consecutive prompts together, for one window. Each look
+/// takes in every prompt not yet handled, and a prompt that shows has its
+/// `then` run there and then, once - in recipe order when several show at
+/// the same look. The watch ends as soon as every prompt has been handled,
+/// or when the window does. The window is `window_ms`, never longer than
+/// the group's longest `within_ms` and never shorter than
+/// `WHEN_VISIBLE_FLOOR_MS`. A prompt that never showed is carried past, as
+/// a single `when_visible` is.
+async fn watch_together<D: Driver>(
+    d: &mut D,
+    run: &mut Run<'_>,
+    group: &[(usize, &WhenVisible)],
+    window_ms: u64,
+    timing: &Timing,
+    policy: &Policy,
+) -> Result<(), (usize, String, bool)> {
+    let longest = group.iter().map(|(_, w)| u64::from(w.within_ms)).max().unwrap_or(0);
+    let window = window_ms.min(longest).max(u64::from(WHEN_VISIBLE_FLOOR_MS));
+    let deadline = Instant::now() + Duration::from_millis(window);
+    let mut idled = 0u64;
+    let mut handled = vec![false; group.len()];
+    // Whether any look completed: a window that ends without one is the
+    // browser not answering, not a page with nothing to show.
+    let mut looked = false;
+    loop {
+        let mut showing = vec![];
+        d.set_deadline(Some(deadline));
+        for (k, (n, w)) in group.iter().enumerate() {
+            if handled[k] {
+                continue;
+            }
+            match shown_now(d, &w.selector).await {
+                Ok(Some(shown)) => {
+                    looked = true;
+                    if shown {
+                        showing.push(k);
+                    }
+                }
+                Ok(None) => {}
+                Err(silent) => {
+                    d.set_deadline(None);
+                    return Err(silent_at(run, *n, silent));
+                }
+            }
+        }
+        d.set_deadline(None);
+        for k in showing {
+            handled[k] = true;
+            let (n, w) = group[k];
+            let seen = run.hide(&w.selector.describe());
+            run.appeared.push(seen);
+            for action in &w.then {
+                run_action(d, run, n, action, timing, policy).await?;
+            }
+        }
+        if handled.iter().all(|h| *h) {
+            return Ok(());
+        }
+        // The clock, or the idles alone, whichever says so first. In a
+        // real browser an idle takes the time it says, so the clock always
+        // gets there first; a test's fake clock idles without sleeping.
+        if Instant::now() >= deadline || idled >= window {
+            break;
+        }
+        d.idle(Duration::from_millis(timing.poll_ms)).await;
+        idled += timing.poll_ms;
+    }
+    if !looked {
+        let (n, w) = group[0];
+        return Err(silent_at(run, n, harness_timeout(window, &w.selector.describe())));
+    }
+    for (k, (n, w)) in group.iter().enumerate() {
+        if !handled[k] {
+            carried_past(run, *n, w);
         }
     }
     Ok(())
