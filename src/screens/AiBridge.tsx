@@ -11,6 +11,7 @@ import EnvironmentsDialog, { RECIPE_ADDRESS } from "../components/EnvironmentsDi
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { cn } from "../lib/cn";
+import { siteName } from "../lib/siteName";
 import {
   forgetDbConfig,
   forgetRemovedDb,
@@ -755,7 +756,7 @@ export default function AiBridge() {
           </label>
           <div className="flex items-center justify-between gap-2">
             <span className="min-w-0 truncate text-xs text-muted">
-              {activeEnv && (activeEnv.start_url || RECIPE_ADDRESS)}
+              {activeEnv && siteName(activeEnv.start_url || RECIPE_ADDRESS)}
             </span>
             <Button size="sm" variant="outline" onClick={() => setManagingEnvs(true)}>
               <IconEdit aria-hidden />

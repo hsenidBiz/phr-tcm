@@ -1502,7 +1502,7 @@ test("choosing an environment switches it and the database card shows its databa
   );
   await waitFor(() => expect(localStorage.getItem("tcm-v2-db-selected")).toBe("qa-read"));
   expect(await screen.findByText("Signs in as sgqa01db01_readonly")).toBeInTheDocument();
-  expect(within(envCard()).getByText("https://qa.example.internal/")).toBeInTheDocument();
+  expect(within(envCard()).getByText("qa.example.internal")).toBeInTheDocument();
 });
 
 test("an environment whose database is gone still switches, sets no database and says so", async () => {
@@ -1707,4 +1707,24 @@ test("the switch is described by its tool's explanation", async () => {
   await screen.findByText("Tools an assistant may use");
   const tags = MCP_TOOLS.find((t) => t.label === "Project tags")!;
   expect(screen.getByRole("switch", { name: "Project tags" })).toHaveAccessibleDescription(tags.summary);
+});
+
+test("the Environment card shows an address that cannot be read as it was typed", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  envMocks([{ ...ENV_DEFAULT, start_url: "not an address" }, ENV_QA, ENV_GONE]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByRole("combobox", { name: "Environment" });
+  expect(await within(envCard()).findByText("not an address")).toBeInTheDocument();
+});
+
+test("the Environment card shows only the site name of the full address", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  envMocks([
+    { ...ENV_DEFAULT, start_url: "https://hrmmainslqaautom.phrsandbox.dev:8443/hr/home/index?x=1" },
+    ENV_QA,
+    ENV_GONE,
+  ]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByRole("combobox", { name: "Environment" });
+  expect(await within(envCard()).findByText("hrmmainslqaautom.phrsandbox.dev")).toBeInTheDocument();
 });
