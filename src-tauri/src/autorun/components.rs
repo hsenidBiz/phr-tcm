@@ -79,6 +79,16 @@ fn write_lock() -> &'static Mutex<()> {
     &L
 }
 
+/// Runs `f` holding the lock every component save holds. A script save
+/// that checks against the components wraps the load, the check and its
+/// write in this, so a component save (which re-checks the scripts that
+/// use it) cannot run in between and miss the new script. `f` must not
+/// save a component itself: the lock is not reentrant.
+pub fn with_components_locked<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = write_lock().lock().unwrap_or_else(|e| e.into_inner());
+    f()
+}
+
 enum ReadError {
     Damaged,
     Unreadable(String),

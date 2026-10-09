@@ -818,6 +818,53 @@ fn a_change_with_no_cases_available_is_refused() {
     assert_eq!(find(&load_components(dir.path(), "o", "p").unwrap(), "pick a date").unwrap().version, 1);
 }
 
+use v2_lib::autorun::components::with_components_locked;
+
+/// A script save checks against the components and writes under the
+/// components lock, as the save route and Import scripts do. A component
+/// save that starts meanwhile cannot finish until the script is down, so
+/// it lists that script as a user and is refused when it would break it.
+#[test]
+fn a_component_saved_mid_script_save_cannot_skip_the_check() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    leave_form_seen(&root);
+    let (v1, v2) = (pick_a_date_v1(), pick_a_date_v2());
+    let prints = tried(&[&v1, &v2]);
+    save_tried(&root, "o", "p", v1, None, session(&prints), 50, no_users()).unwrap();
+    let (started, done) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+
+    let component_save = with_components_locked(|| {
+        // The script save has read the components (v1) and checked case 12
+        // against them; now a component save starts.
+        assert_eq!(find(&load_components(&root, "o", "p").unwrap(), "pick a date").unwrap().version, 1);
+        let handle = {
+            let (root, prints, started, done) = (root.clone(), prints.clone(), started.clone(), done.clone());
+            std::thread::spawn(move || {
+                started.store(true, Ordering::SeqCst);
+                let users = cases(&[(12, &["Pick the start date"])], &[]);
+                let out = save_tried(&root, "o", "p", v2, Some("click the day"), session(&prints), 60, Some(&users));
+                done.store(true, Ordering::SeqCst);
+                out
+            })
+        };
+        while !started.load(Ordering::SeqCst) {
+            std::thread::yield_now();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!done.load(Ordering::SeqCst), "the component save finished while a script save held the lock");
+        save_script(&root, &picks(12, "15")).unwrap();
+        handle
+    });
+
+    // It saw case 12, whose cell "15" was never seen: refused, v1 stays.
+    let err = component_save.join().unwrap().unwrap_err();
+    assert!(err.starts_with("Case 12, step 2: ") && err.ends_with("this change would break it."), "{err}");
+    assert_eq!(find(&load_components(&root, "o", "p").unwrap(), "pick a date").unwrap().version, 1);
+}
+
 // ---- reading an old run ----
 
 use v2_lib::autorun::components::{ran_actions, ComponentUse};

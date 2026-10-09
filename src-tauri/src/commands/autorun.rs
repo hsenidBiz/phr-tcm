@@ -1407,8 +1407,17 @@ fn import_scripts(
             sc.no_save = true;
         }
     }
-    check_imported_seen(root, organization, project, &scripts, cases)?;
-    store::save_scripts_atomically(root, &scripts).map_err(|e| e.to_string())?;
+    // With a component in use, the check and the write hold the components
+    // lock, so a component save cannot slip between them.
+    let check_and_save = || -> Result<(), String> {
+        check_imported_seen(root, organization, project, &scripts, cases)?;
+        store::save_scripts_atomically(root, &scripts).map_err(|e| e.to_string())
+    };
+    if scripts.iter().any(crate::autorun::seen_check::uses_components) {
+        crate::autorun::components::with_components_locked(check_and_save)?;
+    } else {
+        check_and_save()?;
+    }
     let ids: Vec<i32> = scripts.iter().map(|sc| sc.case_id).collect();
     crate::applog::info(format!("Imported {} auto-run script(s)", ids.len()));
     Ok(ids)

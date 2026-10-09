@@ -4321,50 +4321,55 @@ async fn save_autorun_scripts(
 
     // Gate 3: every locator a new or changed step names was seen on the
     // live app (`seen_check`), so no script is saved against a guess.
-    if !seen_scope.is_empty() {
-        let map = match crate::autorun::discovery_map::load_map(&root, &ctx.org, &ctx.project) {
-            Ok(m) => m,
-            Err(e) => return (400, e),
-        };
-        // Read only when a checked script uses a component, so a damaged
-        // file never holds up a save that does not need it.
-        let uses_components = seen_scope.iter().any(|(case_id, _)| {
-            prepared
-                .iter()
-                .any(|s| s.case_id == *case_id && crate::autorun::seen_check::uses_components(s))
-        });
-        let components = if uses_components {
-            match crate::autorun::components::load_components(&root, &ctx.org, &ctx.project) {
-                Ok(c) => c,
-                Err(e) => return (400, e),
-            }
-        } else {
-            crate::autorun::components::ComponentFile::default()
-        };
-        for (case_id, only) in &seen_scope {
-            let (Some(script), Some(case)) = (
-                prepared.iter().find(|s| s.case_id == *case_id),
-                cases.iter().find(|c| c.id == *case_id),
-            ) else {
-                return (400, format!("case {case_id} could not be checked against the live app, so it was not saved"));
+    // The components are read only when a checked script uses one, so a
+    // damaged file never holds up a save that does not need it.
+    let uses_components = seen_scope.iter().any(|(case_id, _)| {
+        prepared
+            .iter()
+            .any(|s| s.case_id == *case_id && crate::autorun::seen_check::uses_components(s))
+    });
+    let check_and_save = || -> Result<(), (u16, String)> {
+        if !seen_scope.is_empty() {
+            let map = crate::autorun::discovery_map::load_map(&root, &ctx.org, &ctx.project).map_err(|e| (400, e))?;
+            let components = if uses_components {
+                crate::autorun::components::load_components(&root, &ctx.org, &ctx.project).map_err(|e| (400, e))?
+            } else {
+                crate::autorun::components::ComponentFile::default()
             };
-            let case_text: Vec<String> =
-                case.steps.iter().flat_map(|s| [s.action.clone(), s.expected.clone()]).collect();
-            if let Err(why) =
+            for (case_id, only) in &seen_scope {
+                let (Some(script), Some(case)) = (
+                    prepared.iter().find(|s| s.case_id == *case_id),
+                    cases.iter().find(|c| c.id == *case_id),
+                ) else {
+                    return Err((
+                        400,
+                        format!("case {case_id} could not be checked against the live app, so it was not saved"),
+                    ));
+                };
+                let case_text: Vec<String> =
+                    case.steps.iter().flat_map(|s| [s.action.clone(), s.expected.clone()]).collect();
                 crate::autorun::seen_check::check_seen(&map, &components, script, &case_text, only.as_deref())
-            {
-                return (400, why);
+                    .map_err(|why| (400, why))?;
             }
         }
-    }
-
-    // Everything has passed; now the disk.
-    match crate::autorun::store::save_scripts_atomically(&root, &prepared) {
-        Ok(()) => {}
-        Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => return (400, e),
-        Err(crate::autorun::store::SaveScriptsError::Io(e)) => {
-            return (500, format!("could not save the bundle: {e}"))
+        // Everything has passed; now the disk.
+        match crate::autorun::store::save_scripts_atomically(&root, &prepared) {
+            Ok(()) => Ok(()),
+            Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => Err((400, e)),
+            Err(crate::autorun::store::SaveScriptsError::Io(e)) => Err((500, format!("could not save the bundle: {e}"))),
         }
+    };
+    // With a component in use, the components load, the check and the
+    // write hold the components lock, so a component save (which re-checks
+    // the scripts that use it) cannot slip between them. Nothing in here
+    // awaits or saves a component.
+    let checked = if uses_components {
+        crate::autorun::components::with_components_locked(check_and_save)
+    } else {
+        check_and_save()
+    };
+    if let Err(refused) = checked {
+        return refused;
     }
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
 
