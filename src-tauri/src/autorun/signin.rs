@@ -504,8 +504,8 @@ fn shared_window(group: &[(usize, &WhenVisible)], window_ms: u64) -> u64 {
 /// a few polls (120 ms at the default 40), and no more, so a prompt that
 /// something else is sitting on does not hold up the others. It is never
 /// too short to see the element: the wait always finishes the look it has
-/// started, a look sees whether the element holds still by itself (two
-/// animation frames inside one probe), and no call in it is given less
+/// started, a look sees whether the element holds still by itself (at
+/// least 2 frames and 50 ms inside one probe), and no call in it is given less
 /// than `cdp::MIN_CALL_TIMEOUT`.
 fn attempt_timing(timing: &Timing) -> Timing {
     Timing { action_ms: timing.poll_ms * 3, ..timing.clone() }

@@ -583,8 +583,8 @@ fn settling_page(probes: Vec<Value>) -> (ScriptedDriver, Arc<std::sync::Mutex<Ve
     (d, seen)
 }
 
-/// The page itself says whether the element held still across two
-/// animation frames. An element still moving is looked at again, and the
+/// The page itself says whether the element held still across at least
+/// 2 frames and 50 ms. An element still moving is looked at again, and the
 /// click waits until a look finds it settled.
 #[tokio::test]
 async fn a_moving_element_is_not_clicked_until_it_settles() {

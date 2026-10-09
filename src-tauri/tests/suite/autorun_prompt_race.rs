@@ -99,7 +99,7 @@ struct Page {
     /// A prompt that stops matching at this fake-clock time.
     gone: Vec<(&'static str, u64)>,
     /// A prompt still sliding in until this fake-clock time: the probe
-    /// sees it move between its two frames.
+    /// sees it move within its watch (at least 2 frames and 50 ms).
     settling: Vec<(&'static str, u64)>,
     /// From the first readiness probe of a prompt, the browser answers no
     /// probe for this long (real time): a page whose main thread is busy.

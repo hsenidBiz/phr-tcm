@@ -418,7 +418,7 @@ impl Driver for ScriptedDriver {
 
 /// The actionability probe's answer for an element that is fully ready:
 /// visible, onscreen, enabled, editable, unobstructed, and holding still
-/// across the two animation frames the probe watches it for.
+/// across the at least 2 frames and 50 ms the probe watches it for.
 pub fn ready_probe() -> Value {
     json!({
         "visible": true, "onscreen": true, "enabled": true, "editable": true,

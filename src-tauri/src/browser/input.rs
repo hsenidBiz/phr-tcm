@@ -259,7 +259,7 @@ pub const DISABLED: &str = "is disabled";
 pub const NOT_EDITABLE: &str = "cannot be typed into";
 /// Followed by what is in the way (`tag#id.class`, or "another element").
 pub const COVERED_BY: &str = "is covered by ";
-/// It moved between the two animation frames of every look.
+/// It moved within the watch of every look (at least 2 frames and 50 ms).
 pub const STILL_MOVING: &str = "is still moving";
 /// The tail of [`matched_many`].
 pub const MATCHED_MANY_TAIL: &str = " elements - narrow it, or add nth";
@@ -322,7 +322,7 @@ async fn look<D: Driver>(d: &mut D, target: &Target, need_editable: bool) -> Res
     }
     // Everything the flags alone can say is fine, so the one thing left
     // is whether it is still moving, which the probe itself watched for
-    // across two animation frames.
+    // across at least 2 frames and 50 ms.
     if !p["stable"].as_bool().unwrap_or(false) {
         return Ok(Look::NotYet(STILL_MOVING.to_string()));
     }
