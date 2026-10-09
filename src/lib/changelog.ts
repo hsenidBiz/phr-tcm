@@ -27,6 +27,24 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.2",
+    date: "2026-10-09",
+    items: [
+      "Auto Run can carry on in the background: press Run in background (or Escape) and keep using the app. A pill in the title bar shows how far the run has got, turns amber when a reset is needed, and opens the review when it finishes.",
+      "Your assistant can now discover the site itself before writing Auto Run scripts: it opens the browser, signs in and explores the screens, and the app keeps a map of what it saw. A script is only saved when every element it uses was seen on the live site.",
+      "Your assistant can map the menus of the modules you name in one go, saving every screen as an area without filling in or saving anything. Areas you recorded are left as they are, and Last menu mapping in the Discovery window shows what the latest mapping found.",
+      "Auto Run's Setup has a Discovery row: see what has been explored, which areas need another look, the save requests discovery made, and end a discovery from there.",
+      "Auto Run components: steps for a common control, such as picking a date or confirming a dialog, are worked out once and reused by every script, so fixing one fixes them all. They are listed under Components in Auto Run's Setup.",
+      "Imported Auto Run scripts are checked against the live site the same way as scripts your assistant saves.",
+      "Auto Run runs faster: sign-in pop-ups are watched together in one short window, an unattended run keeps one browser with a fresh session for each case, and waits and clicks check the page more quickly. The run report shows how long each case spent on each part.",
+      "The Queue can be grouped by area: turn on Group by area to see cases under nested, foldable groups with counts. View in browser shows the same groups.",
+      "Queue cases are now selected by clicking them, as in Update Test Cases: Ctrl-click to add or remove one, Shift-click for a range, and the arrow keys to move between them.",
+      "On Import Test Cases, a new case that its file changed shows what changed on its row, until you dismiss the change report.",
+      "On the AI Bridge tab, each tool's explanation sits behind an information icon, and the environment shows just its site name.",
+      "Uploading to a PBI no longer warns that no test suite could be made when the app goes on to make it the other way, and Share for review explains why Azure DevOps refused to attach the draft.",
+    ],
+  },
+  {
     version: "2.1.2-beta.2",
     date: "2026-10-09",
     items: [
