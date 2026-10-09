@@ -2302,3 +2302,28 @@ async fn a_refused_locator_with_a_placeholder_is_never_probed() {
     assert_eq!(probed, Some(Vec::new()));
     assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty());
 }
+
+/// A script save is checked in each script's own area, and a sighting is
+/// filed under the discovery's: with any script on another area (or on
+/// none while the discovery has one), nothing reaches the page and nothing
+/// is recorded. The same area, written in another case or spacing, is
+/// checked as usual.
+#[tokio::test]
+async fn a_refused_script_save_on_another_area_records_nothing() {
+    use v2_lib::ai_bridge::record_refused_for_scripts_in;
+    let pager = [Target::from("#pager-2")];
+
+    let dir = TempDir::new();
+    for areas in [vec![Some("Ratings")], vec![Some("Cycles"), Some("Ratings")], vec![None]] {
+        let (mut browser, _) = slot(untouched_page(), exploring("Cycles"));
+        let probed = record_refused_for_scripts_in(&mut browser, dir.path(), ORG, PROJECT, &areas, &pager).await;
+        assert_eq!(probed, None, "{areas:?}");
+    }
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty());
+
+    let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));
+    let areas = [Some("Cycles"), Some("  cycles ")];
+    let probed = record_refused_for_scripts_in(&mut browser, dir.path(), ORG, PROJECT, &areas, &pager).await;
+    assert_eq!(probed, Some(vec!["#pager-2".to_string()]));
+    assert!(mapped_area(dir.path(), "Cycles").is_some(), "nothing was recorded");
+}

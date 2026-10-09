@@ -1880,12 +1880,32 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<&crate::brow
     }
 }
 
-/// How many elements a probe's answer says matched (`"matches: N ..."`).
-fn probe_matches(text: &str) -> usize {
-    text.strip_prefix("matches: ")
+/// A probe's answer read back (`snapshot::probe`): how many elements
+/// matched (`"matches: N ..."`), and whether the first one listed is
+/// visible (its line is `<tag> "<text>" visible at ...`).
+struct ProbeAnswer {
+    matches: usize,
+    first_visible: bool,
+}
+
+fn read_probe_answer(text: &str) -> ProbeAnswer {
+    let matches = text
+        .strip_prefix("matches: ")
         .map(|rest| rest.chars().take_while(char::is_ascii_digit).collect::<String>())
         .and_then(|n| n.parse().ok())
-        .unwrap_or(0)
+        .unwrap_or(0);
+    // After the text's closing quote, which the text itself cannot follow.
+    let first_visible = text
+        .lines()
+        .nth(1)
+        .and_then(|line| line.rfind('"').map(|i| &line[i + 1..]))
+        .is_some_and(|rest| rest.starts_with(" visible "));
+    ProbeAnswer { matches, first_visible }
+}
+
+/// How many elements a probe's answer says matched.
+fn probe_matches(text: &str) -> usize {
+    read_probe_answer(text).matches
 }
 
 /// What a locator matches on the page, as the probe answers it; a locator
@@ -1907,14 +1927,10 @@ pub async fn probe_page<D: crate::browser::cdp::Driver>(
 }
 
 /// Does a probe's answer say it matched exactly one element, and that one
-/// visible (`"matches: 1"`, then `<tag> "<text>" visible at ...`)?
+/// visible?
 fn one_visible_match(text: &str) -> bool {
-    probe_matches(text) == 1
-        && text
-            .lines()
-            .nth(1)
-            .and_then(|line| line.rfind('"').map(|i| &line[i + 1..]))
-            .is_some_and(|rest| rest.starts_with(" visible "))
+    let answer = read_probe_answer(text);
+    answer.matches == 1 && answer.first_visible
 }
 
 /// Can a locator be probed as it is written: no placeholder (`{{...}}`)
@@ -1973,19 +1989,41 @@ pub async fn record_refused_in<B: DiscoveryBrowser>(
     Some(recorded)
 }
 
-/// [`record_refused_in`] in the supervised browser, holding its lock as
-/// `probe_autorun_locator` does. `None` when an unattended run has the
-/// browser, or no discovery is going.
+/// [`record_refused_in`] for a script save, whose check reads each script's
+/// own area: only when every one of `script_areas` is the discovery's
+/// current area (trimmed, blank as none, compared as `nav::module_key`
+/// compares names). Otherwise a sighting would be filed where the check
+/// does not look, so nothing is probed and the answer is `None`.
+pub async fn record_refused_for_scripts_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    script_areas: &[Option<&str>],
+    targets: &[crate::browser::locator::Target],
+) -> Option<Vec<String>> {
+    let key = |a: Option<&str>| a.map(str::trim).filter(|a| !a.is_empty()).map(crate::autorun::nav::module_key);
+    let here = key(slot.as_mut()?.parts().discovery.as_ref()?.area.as_deref());
+    if script_areas.iter().any(|a| key(*a) != here) {
+        return None;
+    }
+    record_refused_in(slot, root, organization, project, targets).await
+}
+
+/// [`record_refused_for_scripts_in`] in the supervised browser, holding its
+/// lock as `probe_autorun_locator` does. `None` when an unattended run has
+/// the browser, no discovery is going, or it is on another area.
 async fn record_refused_on_page(
     ctx: &BridgeContext,
     root: &std::path::Path,
+    script_areas: &[Option<&str>],
     targets: &[crate::browser::locator::Target],
 ) -> Option<Vec<String>> {
     if unattended_run_is_using_the_browser().is_some() {
         return None;
     }
     let mut slot = crate::commands::autorun::supervised().lock().await;
-    record_refused_in(&mut slot, root, &ctx.org, &ctx.project, targets).await
+    record_refused_for_scripts_in(&mut slot, root, &ctx.org, &ctx.project, script_areas, targets).await
 }
 
 /// A save's own answer, after the line that says what a refusal checked on
@@ -4826,8 +4864,14 @@ async fn save_autorun_scripts(
             }
             Some(all)
         });
+        // Each checked script's own area: a sighting is recorded under the
+        // discovery's area, so it can only count when that is theirs.
+        let areas: Vec<Option<&str>> = seen_scope
+            .iter()
+            .map(|(case_id, _)| prepared.iter().find(|s| s.case_id == *case_id).and_then(|s| s.area_name()))
+            .collect();
         if let Some(targets) = targets.filter(|t| !t.is_empty()) {
-            if let Some(found) = record_refused_on_page(ctx, &root, &targets).await {
+            if let Some(found) = record_refused_on_page(ctx, &root, &areas, &targets).await {
                 if !found.is_empty() {
                     checked = check_and_save_locked();
                 }
