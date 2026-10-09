@@ -718,17 +718,30 @@ impl Cdp<WsTransport> {
     }
 
     /// Open the browser's own socket and drive nothing yet: the caller
-    /// makes the page it drives (`drive_new_context`).
+    /// makes the page it drives (`drive_new_context`). A browser that is
+    /// running but does not answer is given up on after
+    /// `ado::HTTP_CONNECT_TIMEOUT`, so a wedged browser kept for a whole run
+    /// cannot stall the next case's start.
     pub async fn connect_browser(port: u16) -> Result<Cdp<WsTransport>, String> {
-        let version = Self::ask(port, "version").await?;
-        let ws = version["webSocketDebuggerUrl"]
-            .as_str()
-            .ok_or_else(|| "the browser did not say where its DevTools socket is".to_string())?
-            .to_string();
-        let (socket, _) = tokio_tungstenite::connect_async(&ws)
+        Self::connect_browser_within(port, crate::ado::HTTP_CONNECT_TIMEOUT).await
+    }
+
+    /// `connect_browser`, giving up after `limit`.
+    pub async fn connect_browser_within(port: u16, limit: Duration) -> Result<Cdp<WsTransport>, String> {
+        let connecting = async {
+            let version = Self::ask(port, "version").await?;
+            let ws = version["webSocketDebuggerUrl"]
+                .as_str()
+                .ok_or_else(|| "the browser did not say where its DevTools socket is".to_string())?
+                .to_string();
+            let (socket, _) = tokio_tungstenite::connect_async(&ws)
+                .await
+                .map_err(|e| format!("could not open the DevTools socket: {e}"))?;
+            Ok(Cdp::over(WsTransport { socket }))
+        };
+        tokio::time::timeout(limit, connecting)
             .await
-            .map_err(|e| format!("could not open the DevTools socket: {e}"))?;
-        Ok(Cdp::over(WsTransport { socket }))
+            .unwrap_or_else(|_| Err(format!("the DevTools socket did not open within {}ms", limit.as_millis())))
     }
 
     /// Does a browser answer on this DevTools port yet?
@@ -850,6 +863,22 @@ impl<T: Transport> Cdp<T> {
                 CALL_TIMEOUT,
             )
             .await?;
+        let target = page["targetId"].as_str().unwrap_or("").to_string();
+        if target.is_empty() {
+            return Err(CdpError::Protocol {
+                method: "Target.createTarget".to_string(),
+                message: "no page came back".to_string(),
+            });
+        }
+        self.drive_first_page(&target, "about:blank").await
+    }
+
+    /// On the browser's own socket: a blank page in the browser's default
+    /// context, driven as `main` (`drive_first_page`). For a browser that
+    /// will not make contexts, where each case has a browser of its own.
+    pub async fn drive_new_page(&mut self) -> Result<(), CdpError> {
+        let page =
+            self.call_on(None, "Target.createTarget", serde_json::json!({ "url": "about:blank" }), CALL_TIMEOUT).await?;
         let target = page["targetId"].as_str().unwrap_or("").to_string();
         if target.is_empty() {
             return Err(CdpError::Protocol {
@@ -1474,11 +1503,10 @@ impl<T: Transport> Cdp<T> {
         let waiting = p["waitingForDebugger"].as_bool().unwrap_or(false);
         let known = self.tabs.iter().any(|t| t.target_id == target || t.session_id == session);
         // A page in another context is another case's, or the browser's
-        // own default context's: let run, and let go.
-        let foreign = self
-            .context
-            .as_deref()
-            .is_some_and(|c| info["browserContextId"].as_str().is_some_and(|b| b != c));
+        // own default context's: let run, and let go. One that does not
+        // say its context is not known to be this case's, so it is let go
+        // too (fail closed).
+        let foreign = self.context.as_deref().is_some_and(|c| info["browserContextId"].as_str() != Some(c));
         if !page || known || foreign {
             if waiting {
                 self.queue(&session, "Runtime.runIfWaitingForDebugger", serde_json::json!({}), None);

@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use v2_lib::autorun::one_browser::{Launcher, OneBrowser};
+use v2_lib::autorun::one_browser::{Launcher, OneBrowser, NO_FRESH_PAGE};
 use v2_lib::autorun::replay::{run_selection, Browsers};
 use v2_lib::autorun::sessions::now_ms;
 use v2_lib::autorun::{store, CaseScript, LocalRun};
@@ -35,6 +35,10 @@ struct World {
     die_on: Option<(usize, String)>,
     /// The context each page was made in.
     target_context: HashMap<String, String>,
+    /// Contexts are refused, as a policy can switch them off.
+    refuse_contexts: bool,
+    /// A connection fails as reqwest says it, address and all.
+    refuse_connect: bool,
     next: u32,
 }
 
@@ -70,6 +74,10 @@ impl Transport for FakeSocket {
             w.die_on = None;
             w.dead.push(self.browser);
             return Err("the socket closed".to_string());
+        }
+        if w.refuse_contexts && method == "Target.createBrowserContext" {
+            self.incoming.push_back(json!({ "id": id, "error": { "code": -32000, "message": "Failed to create browser context." } }).to_string());
+            return Ok(());
         }
         let result = match method.as_str() {
             "Target.createBrowserContext" => json!({ "browserContextId": w.id("C") }),
@@ -130,9 +138,14 @@ impl Launcher for FakeLauncher {
     }
 
     async fn connect(&mut self, p: &FakeProcess) -> Result<Cdp<FakeSocket>, String> {
-        if self.world.lock().unwrap().dead.contains(&p.browser) {
+        let w = self.world.lock().unwrap();
+        if w.refuse_connect {
+            return Err(format!("error sending request for url (http://127.0.0.1:9{}/json/version)", p.browser));
+        }
+        if w.dead.contains(&p.browser) {
             return Err("the browser did not answer".to_string());
         }
+        drop(w);
         Ok(Cdp::over(FakeSocket { browser: p.browser, world: Arc::clone(&self.world), incoming: VecDeque::new() }))
     }
 
@@ -358,4 +371,94 @@ async fn a_saved_session_is_loaded_into_each_new_context() {
         })
         .collect();
     assert_eq!(set, sessions, "the cookies went into each case's own context, on its own page");
+}
+
+#[tokio::test]
+async fn a_browser_that_will_not_open_reports_no_url() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers(dir.path());
+    world.lock().unwrap().refuse_connect = true;
+    let run = run(&mut b, dir.path(), &[1]).await;
+    let case = &run.cases[0];
+    assert_eq!(case.proposed, "Blocked", "{case:?}");
+    assert!(case.reason.contains(NO_FRESH_PAGE), "{}", case.reason);
+    assert!(!case.reason.contains("http://") && !case.reason.contains("127.0.0.1"), "{}", case.reason);
+    let w = world.lock().unwrap();
+    assert_eq!(w.launches, 1, "a fresh browser that fails is not started again");
+    assert_eq!(w.closes, 1, "and it is not left running");
+}
+
+#[tokio::test]
+async fn a_page_that_does_not_say_its_context_is_never_the_cases() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers(dir.path());
+    let mut d = b.open().await.unwrap();
+    d.transport_mut().incoming.push_back(
+        json!({ "method": "Target.attachedToTarget", "params": {
+            "sessionId": "S-unsaid", "waitingForDebugger": true,
+            "targetInfo": { "targetId": "T-unsaid", "type": "page", "url": "https://hr.example/pop" }
+        } })
+        .to_string(),
+    );
+    d.pump(Duration::from_millis(50)).await;
+    assert_eq!(d.tabs().len(), 1, "only the case's own page");
+    let w = world.lock().unwrap();
+    assert!(w.sent("Target.detachFromTarget").iter().any(|(_, f)| f["params"]["sessionId"] == "S-unsaid"));
+    assert!(w.sent("Runtime.runIfWaitingForDebugger").iter().any(|(_, f)| f["sessionId"] == "S-unsaid"));
+}
+
+#[tokio::test]
+async fn a_refused_context_falls_back_to_a_browser_per_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers(dir.path());
+    world.lock().unwrap().refuse_contexts = true;
+    let run = run(&mut b, dir.path(), &[1, 2]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", run.cases);
+    {
+        let w = world.lock().unwrap();
+        assert_eq!(w.sent("Target.createBrowserContext").len(), 1, "asked once, never again");
+        assert!(w.sent("Target.disposeBrowserContext").is_empty());
+        assert_eq!(w.launches, 2, "a browser per case");
+        assert_eq!(w.closes, 2, "each closed with its case");
+        let pages = w.sent("Target.createTarget");
+        assert_eq!(pages.len(), 2);
+        assert!(pages.iter().all(|(_, f)| f["params"].get("browserContextId").is_none()), "{pages:?}");
+        assert_eq!(pages[0].0, 1);
+        assert_eq!(pages[1].0, 2);
+    }
+    drop(b);
+    assert_eq!(world.lock().unwrap().closes, 2, "nothing left to close at the end");
+}
+
+/// A browser whose DevTools port answers but whose socket never finishes
+/// its handshake is given up on, not waited on forever.
+#[tokio::test]
+async fn a_socket_that_never_opens_is_given_up_on() {
+    use std::io::{Read, Write};
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let ws_port = socket.local_addr().unwrap().port();
+    let http = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = http.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let (mut s, _) = http.accept().unwrap();
+        let mut buf = [0u8; 2048];
+        let _ = s.read(&mut buf);
+        let body = format!(r#"{{"webSocketDebuggerUrl":"ws://127.0.0.1:{ws_port}/devtools/browser/x"}}"#);
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = s.write_all(reply.as_bytes());
+    });
+    // Accepted, and never answered.
+    std::thread::spawn(move || {
+        let held = socket.accept();
+        std::thread::sleep(Duration::from_secs(5));
+        drop(held);
+    });
+    let began = std::time::Instant::now();
+    let got = Cdp::connect_browser_within(port, Duration::from_millis(300)).await;
+    let err = got.err().expect("a socket that never opened must be an error");
+    assert!(err.contains("did not open within"), "{err}");
+    assert!(began.elapsed() < Duration::from_secs(3), "{:?}", began.elapsed());
 }
