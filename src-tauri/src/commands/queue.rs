@@ -136,7 +136,9 @@ pub async fn share_queue(
     let link = ado::AdoClient::new(token)
         .share_draft(&organization, &project, pbi_id, &json)
         .await
-        .map_err(|e| e.to_string())?;
+        // `share_draft` puts a refusal in words (no URL, no raw body), and
+        // `to_string()` of that is the bare "http 400" a person cannot act on.
+        .map_err(|e| e.user_text())?;
     crate::applog::info(format!(
         "Shared a draft of {} case(s) for review on PBI #{pbi_id}",
         queue.len()

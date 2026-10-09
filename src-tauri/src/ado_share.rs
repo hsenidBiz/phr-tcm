@@ -83,6 +83,62 @@ pub fn draft_file_name(pbi_id: i32, json: &str) -> String {
     format!("tcm-draft-review-{pbi_id}-{hash}.json")
 }
 
+/// Whether a rejected PATCH is Azure DevOps saying the relation is on the
+/// work item already (`RelationAlreadyExistsException`, "Relation already
+/// exists").
+pub fn relation_already_exists(body: &str) -> bool {
+    let b = body.to_ascii_lowercase();
+    b.contains("relationalreadyexists") || b.contains("relation already exists")
+}
+
+/// The field a work-item rule error names - its NAME and nothing else. The
+/// message reads "TF401320: Rule Error for field Acceptance Criteria. Error
+/// code: ..."; the body's `RuleValidationErrors` carry the reference name
+/// as a fallback. Only a plain name is accepted, so a value, a path or a
+/// URL can never ride along into what the person sees.
+pub fn rule_field(body: &str) -> Option<String> {
+    use std::sync::LazyLock;
+    static NAMED: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r#"(?i)rule error for field\s+'?([^.'"\r\n]{1,80}?)'?\s*\."#).unwrap()
+    });
+    let plain = |name: &str| {
+        let name = name.trim();
+        (!name.is_empty()
+            && name.chars().count() <= 80
+            && name.chars().all(|c| c.is_alphanumeric() || matches!(c, ' ' | '.' | '_' | '-')))
+        .then(|| name.to_string())
+    };
+    if let Some(name) = NAMED.captures(body).and_then(|c| plain(&c[1])) {
+        return Some(name);
+    }
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    v["customProperties"]["RuleValidationErrors"]
+        .as_array()?
+        .iter()
+        .find_map(|e| e["fieldReferenceName"].as_str().and_then(plain))
+}
+
+/// A share request Azure DevOps refused, as a sentence. What it actually
+/// said is already in the log (the transport writes it beside the status),
+/// so the sentence points there and carries no URL, no value and no raw
+/// body - at most the name of the field a rule tripped on.
+pub fn refused_in_words(e: AdoError, step: &str, pbi_id: i32) -> AdoError {
+    match e {
+        AdoError::Http { status, body } => {
+            let sentence = match rule_field(&body) {
+                Some(field) => format!(
+                    "Azure DevOps would not {step} PBI #{pbi_id}: a rule on its {field} field is not met. Fix that field on the PBI in Azure DevOps, then share again. Settings → Logs has what it said."
+                ),
+                None => format!(
+                    "Azure DevOps would not {step} PBI #{pbi_id} (it answered {status}). Settings → Logs has what it said."
+                ),
+            };
+            AdoError::Http { status, body: sentence }
+        }
+        other => other,
+    }
+}
+
 impl AdoClient {
     /// Uploads the draft JSON and attaches it to the PBI - unless an
     /// identical draft (same content hash in the filename) is already
@@ -103,7 +159,10 @@ impl AdoClient {
             "{}/{}/{}/_apis/wit/workitems/{}?$expand=relations&api-version=7.1",
             self.base_url, org, project, pbi_id
         );
-        let wi = self.get_json(wi_url).await?;
+        let wi = self
+            .get_json(wi_url)
+            .await
+            .map_err(|e| refused_in_words(e, "read", pbi_id))?;
         let existing = wi["relations"]
             .as_array()
             .into_iter()
@@ -134,7 +193,10 @@ impl AdoClient {
             project,
             urlencoding::encode(&file_name)
         );
-        let created = self.post_octet(upload_url, json.to_string()).await?;
+        let created = self
+            .post_octet(upload_url, json.to_string())
+            .await
+            .map_err(|e| refused_in_words(e, "take the draft for", pbi_id))?;
         let id = created["id"].as_str().unwrap_or_default().to_string();
         let url = created["url"].as_str().unwrap_or_default().to_string();
         if id.is_empty() || url.is_empty() {
@@ -161,8 +223,18 @@ impl AdoClient {
                 }
             }
         }]);
-        self.send_json_patch(reqwest::Method::PATCH, patch_url, &patch)
-            .await?;
+        match self.send_json_patch(reqwest::Method::PATCH, patch_url, &patch).await {
+            Ok(_) => {}
+            // The relation is on the PBI already - a retry after a reply
+            // that never arrived, or a second press. The draft IS attached,
+            // which is all this PATCH was for, so the link stands.
+            Err(AdoError::Http { status: 400, body }) if relation_already_exists(&body) => {
+                crate::applog::info(format!(
+                    "Share: the draft was already attached to PBI #{pbi_id} (Azure DevOps said the relation exists) - counted as shared"
+                ));
+            }
+            Err(e) => return Err(refused_in_words(e, "attach the draft to", pbi_id)),
+        }
 
         Ok(build_share_link(&ShareRef {
             org: org.to_string(),

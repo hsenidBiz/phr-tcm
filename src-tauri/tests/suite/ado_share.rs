@@ -329,3 +329,113 @@ fn share_links_round_trip_and_reject_garbage() {
         assert!(parse_share_link(bad).is_err(), "{bad} should be rejected");
     }
 }
+
+/// A share whose upload lands and whose relation PATCH is refused, with
+/// `patch` as Azure DevOps' answer. The PBI carries no draft yet.
+async fn share_refused_with(pbi: i32, patch: ResponseTemplate) -> (MockServer, AdoClient) {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/acme/Web/_apis/wit/workitems/{pbi}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": pbi, "rev": 1, "relations": []
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/acme/Web/_apis/wit/attachments"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "id": "abcd1234-0000-1111-2222-333344445555",
+            "url": "https://dev.azure.com/acme/_apis/wit/attachments/abcd1234-0000-1111-2222-333344445555"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path(format!("/acme/Web/_apis/wit/workitems/{pbi}")))
+        .respond_with(patch)
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    (server, client)
+}
+
+/// The 2026-10-09 share: the PATCH answered 400 and the log said only
+/// that. Now what Azure DevOps said sits beside the status line, capped
+/// and with nothing credential-shaped in it.
+#[tokio::test]
+async fn a_rejected_write_logs_azure_devops_reason() {
+    let _log = crate::serial::log_tail();
+    let pbi = 977_101;
+    let long_tail = "x".repeat(2000);
+    let body = serde_json::json!({
+        "message": format!("TF401320: Rule Error for field Acceptance Criteria. Error code: Required. Bearer abcdefghijklmnop0123 {long_tail}"),
+        "typeKey": "RuleValidationException",
+    })
+    .to_string();
+    let (_server, client) =
+        share_refused_with(pbi, ResponseTemplate::new(400).set_body_string(body)).await;
+    assert!(client.share_draft("acme", "Web", pbi, "{}").await.is_err());
+
+    let lines = v2_lib::applog::recent(500);
+    let said = lines
+        .iter()
+        .find(|l| l.level == "warn" && l.message.contains(&format!("workitems/{pbi}")) && l.message.contains("said:"))
+        .unwrap_or_else(|| panic!("no reason logged for the 400: {:?}", lines.iter().rev().take(5).collect::<Vec<_>>()));
+    assert!(said.message.contains("-> 400 said:"), "{}", said.message);
+    assert!(said.message.contains("TF401320: Rule Error for field Acceptance Criteria"), "{}", said.message);
+    assert!(!said.message.contains("abcdefghijklmnop0123"), "a credential-shaped run is taken out: {}", said.message);
+    let reason = said.message.split("said: ").nth(1).unwrap();
+    assert!(reason.chars().count() <= 500, "capped at about 500 characters, got {}", reason.chars().count());
+}
+
+/// Azure DevOps refuses to add a relation the work item already has. The
+/// draft IS attached, which is all the PATCH was for: the share succeeds
+/// with the link to it.
+#[tokio::test]
+async fn a_relation_that_already_exists_counts_as_shared() {
+    let pbi = 977_102;
+    let body = serde_json::json!({
+        "message": "Relation already exists.",
+        "typeName": "Microsoft.TeamFoundation.WorkItemTracking.Server.RelationAlreadyExistsException, Microsoft.TeamFoundation.WorkItemTracking.Server",
+        "typeKey": "RelationAlreadyExistsException",
+    })
+    .to_string();
+    let (_server, client) =
+        share_refused_with(pbi, ResponseTemplate::new(400).set_body_string(body)).await;
+    let link = client.share_draft("acme", "Web", pbi, "{}").await.unwrap();
+    assert_eq!(link, format!("tcm-share:acme/Web/{pbi}/abcd1234-0000-1111-2222-333344445555"));
+}
+
+/// Any other refusal reaches the person as a sentence: the PBI, the field
+/// a rule named (its name only), and where the detail is - no URL, no
+/// value, no raw body, no bare "http 400".
+#[tokio::test]
+async fn another_rejection_shows_a_clear_sentence_without_a_url() {
+    let pbi = 977_103;
+    let body = serde_json::json!({
+        "message": "TF401320: Rule Error for field Acceptance Criteria. Error code: Required, HasValues, InvalidEmpty. See https://dev.azure.com/acme/Web/_workitems/edit/977103?secret=1",
+        "customProperties": {"RuleValidationErrors": [{
+            "fieldReferenceName": "Microsoft.VSTS.Common.AcceptanceCriteria",
+            "errorMessage": "value 'private note' is not allowed",
+        }]},
+    })
+    .to_string();
+    let (_server, client) =
+        share_refused_with(pbi, ResponseTemplate::new(400).set_body_string(body)).await;
+    let shown = client.share_draft("acme", "Web", pbi, "{}").await.unwrap_err().user_text();
+    assert!(shown.contains(&format!("PBI #{pbi}")), "{shown}");
+    assert!(shown.contains("Acceptance Criteria"), "the field is named: {shown}");
+    assert!(shown.contains("Settings → Logs"), "{shown}");
+    for leak in ["://", "dev.azure.com", "?", "private note", "TF401320", "http 400", "{"] {
+        assert!(!shown.contains(leak), "{leak:?} must not reach the person: {shown}");
+    }
+
+    // A 400 with no rule in it still reads as a sentence.
+    let (_server, client) = share_refused_with(
+        977_104,
+        ResponseTemplate::new(400).set_body_string(r#"{"message":"Something else at https://x.example/y"}"#),
+    )
+    .await;
+    let shown = client.share_draft("acme", "Web", 977_104, "{}").await.unwrap_err().user_text();
+    assert!(shown.starts_with("Azure DevOps would not attach the draft to PBI #977104"), "{shown}");
+    assert!(!shown.contains("://") && !shown.contains("Something else"), "{shown}");
+}
