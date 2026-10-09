@@ -9,7 +9,7 @@
 
 use super::nav::module_key;
 use super::recipe::project_slug;
-use crate::commands::autorun::{MappingOutcome, MappingRun};
+use crate::commands::autorun::{MappingOutcome, MappingRun, MappingScreen};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -80,11 +80,15 @@ pub fn save_summary(root: &Path, org: &str, project: &str, summary: &MappingSumm
 /// `run` as a summary. A screen met more than once, in one list or in
 /// several (names compared by `module_key`), appears once: in the list of
 /// its last outcome (`MappingRun::outcomes`), with that list's last entry
-/// for it. Every name and reason has its addresses taken out.
+/// for it. A screen not reached that another outcome, before or after it,
+/// saved under another name (`saved_elsewhere`) is in no list. Every name
+/// and reason has its addresses taken out.
 pub fn summarize(run: &MappingRun) -> MappingSummary {
     let mut last: HashMap<String, MappingOutcome> = HashMap::new();
-    for (name, outcome) in &run.outcomes {
+    let mut at: HashMap<String, usize> = HashMap::new();
+    for (i, (name, outcome, _)) in run.outcomes.iter().enumerate() {
         last.insert(module_key(name), *outcome);
+        at.insert(module_key(name), i);
     }
     // A name the run's lists hold but its outcomes never named: the last
     // list it is in, in the order a screen's outcomes can come.
@@ -100,6 +104,11 @@ pub fn summarize(run: &MappingRun) -> MappingSummary {
     run.unchanged.iter().for_each(|n| fall(n, MappingOutcome::Unchanged));
     run.unreached.iter().for_each(|(n, _)| fall(n, MappingOutcome::Unreached));
     last.extend(fallback);
+    for (key, i) in at {
+        if last.get(&key) == Some(&MappingOutcome::Unreached) && saved_elsewhere(&run.outcomes, i) {
+            last.remove(&key);
+        }
+    }
 
     let clean = |s: &str| without_addresses(s.trim());
     MappingSummary {
@@ -117,6 +126,26 @@ pub fn summarize(run: &MappingRun) -> MappingSummary {
             .collect(),
         blocked_writes: run.blocked_writes,
     }
+}
+
+/// Whether the screen outcome `i` could not reach was saved - added,
+/// updated or found unchanged - by an outcome under another name, before
+/// or after it in the run: one that arrived on the same address path, or,
+/// when `i` has no address path, one with the same menu path. Nothing
+/// known about `i` matches nothing. A save under the same name earlier in
+/// the run does not count: then the screen's last outcome is that it was
+/// not reached.
+fn saved_elsewhere(outcomes: &[(String, MappingOutcome, Option<MappingScreen>)], i: usize) -> bool {
+    let Some((name, _, Some(missed))) = outcomes.get(i) else { return false };
+    let key = module_key(name);
+    outcomes.iter().filter(|(other, _, _)| module_key(other) != key).any(|(_, outcome, screen)| {
+        let saved = matches!(outcome, MappingOutcome::Added | MappingOutcome::Updated | MappingOutcome::Unchanged);
+        saved
+            && screen.as_ref().is_some_and(|s| match &missed.arrived {
+                Some(arrived) => s.arrived.as_ref() == Some(arrived),
+                None => !missed.menu.is_empty() && s.menu == missed.menu,
+            })
+    })
 }
 
 /// The entries of `items` whose name's last outcome is `outcome`, each

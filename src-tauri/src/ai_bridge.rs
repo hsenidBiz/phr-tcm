@@ -1880,12 +1880,32 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<&crate::brow
     }
 }
 
-/// How many elements a probe's answer says matched (`"matches: N ..."`).
-fn probe_matches(text: &str) -> usize {
-    text.strip_prefix("matches: ")
+/// A probe's answer read back (`snapshot::probe`): how many elements
+/// matched (`"matches: N ..."`), and whether the first one listed is
+/// visible (its line is `<tag> "<text>" visible at ...`).
+struct ProbeAnswer {
+    matches: usize,
+    first_visible: bool,
+}
+
+fn read_probe_answer(text: &str) -> ProbeAnswer {
+    let matches = text
+        .strip_prefix("matches: ")
         .map(|rest| rest.chars().take_while(char::is_ascii_digit).collect::<String>())
         .and_then(|n| n.parse().ok())
-        .unwrap_or(0)
+        .unwrap_or(0);
+    // After the text's closing quote, which the text itself cannot follow.
+    let first_visible = text
+        .lines()
+        .nth(1)
+        .and_then(|line| line.rfind('"').map(|i| &line[i + 1..]))
+        .is_some_and(|rest| rest.starts_with(" visible "));
+    ProbeAnswer { matches, first_visible }
+}
+
+/// How many elements a probe's answer says matched.
+fn probe_matches(text: &str) -> usize {
+    read_probe_answer(text).matches
 }
 
 /// What a locator matches on the page, as the probe answers it; a locator
@@ -1904,6 +1924,124 @@ pub async fn probe_page<D: crate::browser::cdp::Driver>(
         record_matched_targets(at, &path, &[target]);
     }
     (200, text)
+}
+
+/// Does a probe's answer say it matched exactly one element, and that one
+/// visible?
+fn one_visible_match(text: &str) -> bool {
+    let answer = read_probe_answer(text);
+    answer.matches == 1 && answer.first_visible
+}
+
+/// Can a locator be probed as it is written: no placeholder (`{{...}}`)
+/// and no link left for a component's target input?
+fn probeable(target: &crate::browser::locator::Target) -> bool {
+    let no_placeholder = serde_json::to_string(target).is_ok_and(|json| !json.contains("{{"));
+    no_placeholder && target.links().iter().all(|l| l.input.is_none())
+}
+
+/// What a save refused only for unseen locators does while a discovery is
+/// open: each refused locator in `targets` that can be probed as written
+/// is probed on the discovery browser's current page, as
+/// `probe_autorun_locator` probes it (it never clicks or types), and one
+/// that matches exactly one visible element is recorded under the
+/// discovery's current area. Hands back the locators recorded, as each
+/// describes itself; `None` when no discovery is going, and then nothing
+/// is probed.
+pub async fn record_refused_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    targets: &[crate::browser::locator::Target],
+) -> Option<Vec<String>> {
+    let browser = slot.as_mut()?;
+    let p = browser.parts();
+    let state = p.discovery.as_ref()?;
+    let at = discovery_sighting(root, organization, project, Some(state), None, p.signed_in.as_deref());
+    let mut probed: Vec<String> = Vec::new();
+    let mut recorded: Vec<String> = Vec::new();
+    // Counted, never named, in the log: a locator is the assistant's
+    // writing and can hold an address.
+    let mut unchecked = 0usize;
+    for target in targets.iter().filter(|t| probeable(t)) {
+        let described = target.describe();
+        if probed.contains(&described) {
+            continue;
+        }
+        probed.push(described.clone());
+        let Ok(text) = crate::browser::snapshot::probe(p.driver, target).await else {
+            unchecked += 1;
+            continue;
+        };
+        if !one_visible_match(&text) {
+            continue;
+        }
+        if let Some(at) = at.as_ref() {
+            let (path, _) = current_page(p.driver).await;
+            record_matched_targets(at, &path, &[target]);
+        }
+        recorded.push(described);
+    }
+    if unchecked > 0 {
+        crate::applog::warn(format!("Auto Run save: {unchecked} refused locator(s) could not be checked on the page"));
+    }
+    if !recorded.is_empty() {
+        crate::applog::info(format!(
+            "Auto Run save: recorded {} of {} refused locator(s) on the current page",
+            recorded.len(),
+            targets.len()
+        ));
+    }
+    Some(recorded)
+}
+
+/// [`record_refused_in`] for a script save, whose check reads each script's
+/// own area: only when every one of `script_areas` is the discovery's
+/// current area (trimmed, blank as none, compared as `nav::module_key`
+/// compares names). Otherwise a sighting would be filed where the check
+/// does not look, so nothing is probed and the answer is `None`.
+pub async fn record_refused_for_scripts_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    script_areas: &[Option<&str>],
+    targets: &[crate::browser::locator::Target],
+) -> Option<Vec<String>> {
+    let key = |a: Option<&str>| a.map(str::trim).filter(|a| !a.is_empty()).map(crate::autorun::nav::module_key);
+    let here = key(slot.as_mut()?.parts().discovery.as_ref()?.area.as_deref());
+    if script_areas.iter().any(|a| key(*a) != here) {
+        return None;
+    }
+    record_refused_in(slot, root, organization, project, targets).await
+}
+
+/// [`record_refused_for_scripts_in`] in the supervised browser, holding its
+/// lock as `probe_autorun_locator` does. `None` when an unattended run has
+/// the browser, no discovery is going, or it is on another area.
+async fn record_refused_on_page(
+    ctx: &BridgeContext,
+    root: &std::path::Path,
+    script_areas: &[Option<&str>],
+    targets: &[crate::browser::locator::Target],
+) -> Option<Vec<String>> {
+    if unattended_run_is_using_the_browser().is_some() {
+        return None;
+    }
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    record_refused_for_scripts_in(&mut slot, root, &ctx.org, &ctx.project, script_areas, targets).await
+}
+
+/// A save's own answer, after the line that says what a refusal checked on
+/// the page recorded.
+pub fn after_recording(recorded: &[String], (status, text): (u16, String)) -> (u16, String) {
+    let line = if recorded.is_empty() {
+        "Recorded on the current page: nothing - no refused locator matched exactly one visible element.".to_string()
+    } else {
+        format!("Recorded on the current page: {}.", recorded.join(", "))
+    };
+    (status, format!("{line}\n{text}"))
 }
 
 /// One named field out of a small JSON body, or a refusal that says what
@@ -2453,7 +2591,7 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
         answer["page_unavailable"] = serde_json::json!(page);
     }
     if let Some(shot) = &outcome.screenshot {
-        answer["picture"] = serde_json::json!(shot);
+        answer["picture"] = serde_json::json!(crate::autorun::store::shot_path(root, shot).display().to_string());
     }
     (200, answer.to_string())
 }
@@ -2757,8 +2895,16 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
         }
         Some(found) if mapping => {
             let kept = found.name().to_string();
+            // Located where the person's area is, so it can stand for an
+            // unreached entry of the same screen under another name.
+            let arrived = found.arrived.trim();
+            let screen = crate::commands::autorun::MappingScreen {
+                arrived: (!arrived.is_empty()).then(|| arrived.to_string()),
+                menu: nav::menu_path(&found.clicks),
+            };
             if let Some(run) = p.discovery.as_mut().and_then(|s| s.mapping.as_mut()) {
                 run.record_unchanged(kept.clone());
+                run.locate_last(screen);
             }
             return (409, person_area_kept(&kept));
         }
@@ -2788,8 +2934,14 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     if arrived.is_empty() {
         return (409, "the page would not say where it is - read the page and try again".to_string());
     }
+    // Where the screen is, for a mapping run's summary, however this ends.
+    let screen = crate::commands::autorun::MappingScreen { arrived: Some(arrived.clone()), menu: nav::menu_path(&clicks) };
+    // The check starts from a fresh home page, never from where the page
+    // stands: PeoplesHR's menu remembers whether a person left it open, so
+    // the clicks would otherwise depend on it (spec 2026-10-09, mapped
+    // areas). `load_home` runs `after_sign_in` once, on the fresh load.
     let home = nav::Home::of(&recipe);
-    let mut went = nav::go_home(d, &home, timing).await;
+    let mut went = nav::load_home(d, &home, timing).await;
     let signed_in = went.ok
         && crate::browser::expect::expect(
             d,
@@ -2802,7 +2954,10 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
         .ok;
     if !signed_in {
         // The saved session has gone: sign in again as the discovery's
-        // account, then start from home as a recording does.
+        // account. A sign-in ends on a fresh, signed-in page with
+        // `after_sign_in` run, so that is the start: loading home again
+        // would run it a second time, and a toggle run twice closes the
+        // menu it opened.
         let Some(key) = account else {
             return (409, "the discovery has no account to sign in again with - start it again".to_string());
         };
@@ -2813,7 +2968,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             Ok(out) if !out.ok => return (409, out.detail),
             Ok(_) => {}
         }
-        went = nav::go_home(d, &home, timing).await;
+        went = crate::browser::actions::ActionOutcome::passed("signed in again");
     }
     let reached = if went.ok {
         let start = match crate::browser::page::eval_value(d, "location.href").await {
@@ -2847,6 +3002,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             };
             if let Some(run) = p.discovery.as_mut().and_then(|s| s.mapping.as_mut()) {
                 run.record_unreached(name, &reason);
+                run.locate_last(screen);
             }
             return (409, format!("The clicks did not arrive: {reason}. The page showed: {showed}"));
         }
@@ -2857,6 +3013,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
         if let Some(state) = p.discovery.as_mut() {
             if let Some(run) = state.mapping.as_mut() {
                 run.record_unchanged(kept.clone());
+                run.locate_last(screen);
             }
         }
         stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept).await;
@@ -2874,6 +3031,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 Some(old) => run.record_updated(old.name().to_string(), nav::menu_path(&old.clicks), new_menu),
                 None => run.record_added(name.clone()),
             }
+            run.locate_last(screen);
         }
     }
     let kept = match &existing {
@@ -3036,7 +3194,7 @@ async fn autorun_component_save(
     client: Option<&crate::ado::AdoClient>,
     body: &str,
 ) -> (u16, String) {
-    use crate::autorun::components::{save_tried, users_of, Component, TriedIn, UserCases, SIGN_IN_TO_CHECK_USERS, TRY_IT_FIRST};
+    use crate::autorun::components::{users_of, Component, UserCases};
     const SHAPE: &str = "{ \"name\": <its name>, \"description\": <what it does>, \"inputs\": [{ \"name\", \"kind\": \"text\" or \"target\", \"description\" }], \"actions\": [<script actions>], \"why\": <why it changes, for a saved one> }";
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -3054,17 +3212,6 @@ async fn autorun_component_save(
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
-    };
-    // What the discovery holds, read and let go before any file is touched.
-    let (area, tried) = {
-        let mut slot = crate::commands::autorun::supervised().lock().await;
-        match slot.as_mut() {
-            Some(s) => match s.parts().discovery.as_ref() {
-                Some(d) => (Some(d.area.clone()), d.tried.clone()),
-                None => (None, Vec::new()),
-            },
-            None => (None, Vec::new()),
-        }
     };
     // The scripts that use it, by case: this project's with their text,
     // and the rest. `save_tried` reads the users again under its lock.
@@ -3097,9 +3244,80 @@ async fn autorun_component_save(
             },
         }
     };
-    let session = area.as_ref().map(|a| TriedIn { area: a.as_deref(), tried: &tried });
     let now = crate::autorun::sessions::now_ms();
-    match save_tried(&root, &ctx.org, &ctx.project, draft, why.as_deref(), session, now, cases.as_ref()) {
+    if unattended_run_is_using_the_browser().is_some() {
+        // No discovery can be going while an unattended run has the
+        // browser, so the save is refused for that, as it always was.
+        let mut none: Option<crate::commands::autorun::Session> = None;
+        return save_component_in(&mut none, &root, &ctx.org, &ctx.project, draft, why.as_deref(), now, cases.as_ref())
+            .await;
+    }
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    save_component_in(&mut slot, &root, &ctx.org, &ctx.project, draft, why.as_deref(), now, cases.as_ref()).await
+}
+
+/// A component save (`components::save_tried`) against the discovery going
+/// in `slot`: its area and the components it tried that worked. Refused
+/// only because some of its own locators were never seen, while that
+/// discovery is open, the refused locators are checked on the discovery's
+/// current page first (`record_refused_in`), and the save is tried once
+/// more; the answer then says what was recorded.
+#[allow(clippy::too_many_arguments)]
+pub async fn save_component_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    draft: crate::autorun::components::Component,
+    why: Option<&str>,
+    now: u64,
+    cases: Option<&crate::autorun::components::UserCases>,
+) -> (u16, String) {
+    use crate::autorun::components::{save_tried, TriedIn};
+    let held = |slot: &mut Option<B>| match slot.as_mut() {
+        Some(b) => b.parts().discovery.as_ref().map(|d| (d.area.clone(), d.tried.clone())),
+        None => None,
+    };
+    let save = |held: &Option<(Option<String>, Vec<String>)>, draft: crate::autorun::components::Component| {
+        let session = held.as_ref().map(|(area, tried)| TriedIn { area: area.as_deref(), tried });
+        save_tried(root, organization, project, draft, why, session, now, cases)
+    };
+    let first = held(slot);
+    let saved = save(&first, draft.clone());
+    let Err(refused) = &saved else {
+        return component_answer(saved);
+    };
+    // Refused by the check of its own locators, for nothing but locators
+    // never seen: what that check alone says, recomputed here.
+    let Some((area, _)) = first.as_ref() else {
+        return component_answer(saved);
+    };
+    let area = area.as_deref().map(str::trim).filter(|a| !a.is_empty());
+    let targets = crate::autorun::discovery_map::load_map(root, organization, project).ok().and_then(|map| {
+        let own = crate::autorun::seen_check::check_component_seen(&map, area, &draft.actions);
+        if own.as_ref().err() != Some(refused) {
+            return None;
+        }
+        crate::autorun::seen_check::unseen_component_targets(&map, area, &draft.actions)
+    });
+    let Some(targets) = targets.filter(|t| !t.is_empty()) else {
+        return component_answer(saved);
+    };
+    let Some(recorded) = record_refused_in(slot, root, organization, project, &targets).await else {
+        return component_answer(saved);
+    };
+    if recorded.is_empty() {
+        return after_recording(&recorded, component_answer(saved));
+    }
+    let again = save(&held(slot), draft.clone());
+    after_recording(&recorded, component_answer(again))
+}
+
+/// A component save's answer: the saved name, version and changes as
+/// JSON, or the refusal with its status.
+fn component_answer(saved: Result<crate::autorun::components::Saved, String>) -> (u16, String) {
+    use crate::autorun::components::{SIGN_IN_TO_CHECK_USERS, TRY_IT_FIRST};
+    match saved {
         Ok(saved) => {
             crate::applog::info(format!("Auto Run component {} saved as version {}", saved.saved, saved.version));
             (200, serde_json::to_string(&saved).unwrap_or_default())
@@ -3378,7 +3596,7 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
     };
     let mut text = format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
     if let Some(shot) = &outcome.screenshot {
-        text.push_str(&format!(" (picture: {shot})"));
+        text.push_str(&format!(" (picture: {})", crate::autorun::store::shot_path(root, shot).display()));
     }
     (200, text)
 }
@@ -3523,7 +3741,7 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
     // expands. A file that does not read leaves those actions named by
     // their component only.
     let components = crate::autorun::components::load_components(&root, &ctx.org, &ctx.project).unwrap_or_default();
-    (200, crate::autorun::failures::describe_failures_with(&run, &scripts, &components))
+    (200, crate::autorun::failures::describe_failures_in(Some(&root), &run, &scripts, &components))
 }
 
 /// Record something learned about the application, attributed, so the
@@ -4594,48 +4812,94 @@ async fn save_autorun_scripts(
             .iter()
             .any(|s| s.case_id == *case_id && crate::autorun::seen_check::uses_components(s))
     });
-    let check_and_save = || -> Result<(), (u16, String)> {
+    let check_and_save = || -> Result<(), SaveRefusal> {
         if !seen_scope.is_empty() {
-            let map = crate::autorun::discovery_map::load_map(&root, &ctx.org, &ctx.project).map_err(|e| (400, e))?;
-            let components = if uses_components {
-                crate::autorun::components::load_components(&root, &ctx.org, &ctx.project).map_err(|e| (400, e))?
-            } else {
-                crate::autorun::components::ComponentFile::default()
-            };
+            let (map, components, files) =
+                seen_check_inputs(&root, ctx, uses_components).map_err(|e| SaveRefusal::Other(400, e))?;
             for (case_id, only) in &seen_scope {
                 let (Some(script), Some(case)) = (
                     prepared.iter().find(|s| s.case_id == *case_id),
                     cases.iter().find(|c| c.id == *case_id),
                 ) else {
-                    return Err((
+                    return Err(SaveRefusal::Other(
                         400,
                         format!("case {case_id} could not be checked against the live app, so it was not saved"),
                     ));
                 };
-                let case_text: Vec<String> =
-                    case.steps.iter().flat_map(|s| [s.action.clone(), s.expected.clone()]).collect();
-                crate::autorun::seen_check::check_seen(&map, &components, script, &case_text, only.as_deref())
-                    .map_err(|why| (400, why))?;
+                crate::autorun::seen_check::check_seen_with_files(
+                    &map,
+                    &components,
+                    script,
+                    &case_step_text(case),
+                    only.as_deref(),
+                    &files,
+                )
+                .map_err(SaveRefusal::Unseen)?;
             }
         }
         // Everything has passed; now the disk.
         match crate::autorun::store::save_scripts_atomically(&root, &prepared) {
             Ok(()) => Ok(()),
-            Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => Err((400, e)),
-            Err(crate::autorun::store::SaveScriptsError::Io(e)) => Err((500, format!("could not save the bundle: {e}"))),
+            Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => Err(SaveRefusal::Other(400, e)),
+            Err(crate::autorun::store::SaveScriptsError::Io(e)) => {
+                Err(SaveRefusal::Other(500, format!("could not save the bundle: {e}")))
+            }
         }
     };
     // With a component in use, the components load, the check and the
     // write hold the components lock, so a component save (which re-checks
     // the scripts that use it) cannot slip between them. Nothing in here
     // awaits or saves a component.
-    let checked = if uses_components {
-        crate::autorun::components::with_components_locked(check_and_save)
-    } else {
-        check_and_save()
+    let check_and_save_locked = || {
+        if uses_components {
+            crate::autorun::components::with_components_locked(check_and_save)
+        } else {
+            check_and_save()
+        }
+    };
+    let mut checked = check_and_save_locked();
+    // Refused only for locators never seen, while a discovery is open: the
+    // refused ones are checked on the discovery's current page, the ones
+    // there are recorded, and the save is checked once more.
+    let mut recorded: Option<Vec<String>> = None;
+    if matches!(checked, Err(SaveRefusal::Unseen(_))) {
+        let targets = seen_check_inputs(&root, ctx, uses_components).ok().and_then(|(map, components, files)| {
+            let mut all: Vec<crate::browser::locator::Target> = Vec::new();
+            for (case_id, only) in &seen_scope {
+                let script = prepared.iter().find(|s| s.case_id == *case_id)?;
+                let case = cases.iter().find(|c| c.id == *case_id)?;
+                all.extend(crate::autorun::seen_check::unseen_targets(
+                    &map,
+                    &components,
+                    script,
+                    &case_step_text(case),
+                    only.as_deref(),
+                    &files,
+                )?);
+            }
+            Some(all)
+        });
+        // Each checked script's own area: a sighting is recorded under the
+        // discovery's area, so it can only count when that is theirs.
+        let areas: Vec<Option<&str>> = seen_scope
+            .iter()
+            .map(|(case_id, _)| prepared.iter().find(|s| s.case_id == *case_id).and_then(|s| s.area_name()))
+            .collect();
+        if let Some(targets) = targets.filter(|t| !t.is_empty()) {
+            if let Some(found) = record_refused_on_page(ctx, &root, &areas, &targets).await {
+                if !found.is_empty() {
+                    checked = check_and_save_locked();
+                }
+                recorded = Some(found);
+            }
+        }
+    }
+    let answer = |said: (u16, String)| match &recorded {
+        Some(found) => after_recording(found, said),
+        None => said,
     };
     if let Err(refused) = checked {
-        return refused;
+        return answer(refused.said());
     }
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
 
@@ -4691,7 +4955,55 @@ async fn save_autorun_scripts(
             Err(why) => report.push(format!("quirk not recorded: {why}")),
         }
     }
-    (200, report.join("\n"))
+    answer((200, report.join("\n")))
+}
+
+/// Why a script save's last gate refused it: a locator never seen on the
+/// live app (`Unseen`, the check's own sentence), or anything else.
+enum SaveRefusal {
+    Unseen(String),
+    Other(u16, String),
+}
+
+impl SaveRefusal {
+    fn said(self) -> (u16, String) {
+        match self {
+            SaveRefusal::Unseen(why) => (400, why),
+            SaveRefusal::Other(status, why) => (status, why),
+        }
+    }
+}
+
+/// A test case's step actions and expected results, as the seen check
+/// reads them.
+fn case_step_text(case: &crate::ado::TestCaseFull) -> Vec<String> {
+    case.steps.iter().flat_map(|s| [s.action.clone(), s.expected.clone()]).collect()
+}
+
+/// What a script save's seen check reads: the discovery map, the project's
+/// components (only when a checked script uses one, so a damaged file
+/// never holds up a save that does not need it) and its Test files, so the
+/// size the app shows for one a script uploads passes as the script's own
+/// data.
+fn seen_check_inputs(
+    root: &std::path::Path,
+    ctx: &BridgeContext,
+    uses_components: bool,
+) -> Result<
+    (crate::autorun::discovery_map::DiscoveryMap, crate::autorun::components::ComponentFile, Vec<crate::test_files::TestFile>),
+    String,
+> {
+    let map = crate::autorun::discovery_map::load_map(root, &ctx.org, &ctx.project)?;
+    let components = if uses_components {
+        crate::autorun::components::load_components(root, &ctx.org, &ctx.project)?
+    } else {
+        crate::autorun::components::ComponentFile::default()
+    };
+    let files = crate::test_files::list(&crate::test_files::folder(root, &ctx.org, &ctx.project)).unwrap_or_else(|e| {
+        crate::applog::warn(format!("Auto Run save: the Test files could not be listed: {e}"));
+        Vec::new()
+    });
+    Ok((map, components, files))
 }
 
 /// Reorganise a draft into a run sheet: navigation spelled out as steps,

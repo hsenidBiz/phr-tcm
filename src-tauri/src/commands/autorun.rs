@@ -82,8 +82,9 @@ pub struct MappingRun {
     /// How many saves the page tried that the guard stopped.
     pub blocked_writes: u32,
     /// Every outcome, in the order it came: a screen met more than once is
-    /// summarized by its last (`mapping_summary::summarize`).
-    pub outcomes: Vec<(String, MappingOutcome)>,
+    /// summarized by its last (`mapping_summary::summarize`). The third
+    /// part is where that screen is, when the save said (`locate_last`).
+    pub outcomes: Vec<(String, MappingOutcome, Option<MappingScreen>)>,
     /// Where the run's summary is kept, set once it has signed in. A run
     /// that never signed in mapped nothing, and keeps no summary.
     pub place: Option<MappingPlace>,
@@ -98,6 +99,16 @@ pub enum MappingOutcome {
     Unreached,
 }
 
+/// Where a screen a mapping run met is: the address path its clicks
+/// arrive on (or had to, for one not reached), when it is known, and its
+/// menu path in words (`nav::menu_path`). Two outcomes with the same
+/// `arrived` are the same screen whatever they were named.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MappingScreen {
+    pub arrived: Option<String>,
+    pub menu: String,
+}
+
 /// The Auto Run folder and project a mapping run's summary is saved under.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MappingPlace {
@@ -109,27 +120,35 @@ pub struct MappingPlace {
 impl MappingRun {
     /// A screen the run added.
     pub fn record_added(&mut self, name: String) {
-        self.outcomes.push((name.clone(), MappingOutcome::Added));
+        self.outcomes.push((name.clone(), MappingOutcome::Added, None));
         self.added.push(name);
     }
 
     /// A screen whose menu path the run changed from `old` to `new`.
     pub fn record_updated(&mut self, name: String, old: String, new: String) {
-        self.outcomes.push((name.clone(), MappingOutcome::Updated));
+        self.outcomes.push((name.clone(), MappingOutcome::Updated, None));
         self.updated.push((name, old, new));
     }
 
     /// A screen the run found where it was, or a person's it left alone.
     pub fn record_unchanged(&mut self, name: String) {
-        self.outcomes.push((name.clone(), MappingOutcome::Unchanged));
+        self.outcomes.push((name.clone(), MappingOutcome::Unchanged, None));
         self.unchanged.push(name);
     }
 
     /// A screen the run could not reach. The reason is kept with its
     /// addresses taken out (`mapping_summary::without_addresses`).
     pub fn record_unreached(&mut self, name: String, reason: &str) {
-        self.outcomes.push((name.clone(), MappingOutcome::Unreached));
+        self.outcomes.push((name.clone(), MappingOutcome::Unreached, None));
         self.unreached.push((name, crate::autorun::mapping_summary::without_addresses(reason)));
+    }
+
+    /// Where the screen the last outcome named is. With no outcome yet
+    /// there is nothing to place, and nothing happens.
+    pub fn locate_last(&mut self, screen: MappingScreen) {
+        if let Some(last) = self.outcomes.last_mut() {
+            last.2 = Some(screen);
+        }
     }
 
     /// A run over `modules` (trimmed, blanks left out) starting now.
@@ -1551,16 +1570,25 @@ fn check_imported_seen(
     } else {
         crate::autorun::components::ComponentFile::default()
     };
+    // The Test files, so the size the app shows for one a script uploads
+    // passes as the script's own data.
+    let files = crate::test_files::list(&crate::test_files::folder(root, organization, project)).unwrap_or_else(|e| {
+        crate::applog::warn(format!("Import scripts: the Test files could not be listed: {e}"));
+        Vec::new()
+    });
     let mut lines: Vec<String> = Vec::new();
     for sc in scripts {
         let Some(text) = cases.get(&sc.case_id) else {
             lines.push(format!("Case {}: Azure DevOps has no test case with this id.", sc.case_id));
             continue;
         };
-        for u in crate::autorun::seen_check::check_seen_all(&map, &components, sc, text, None) {
-            lines.push(match &u.refused {
-                Some(why) => format!("Case {}, step {}: {why}.", sc.case_id, u.step),
-                None => format!("Case {}, step {}: {} was never seen on the live app.", sc.case_id, u.step, u.locator),
+        for (u, hint) in crate::autorun::seen_check::check_seen_all_hinted(&map, &components, sc, text, None, &files) {
+            lines.push(match (&u.refused, hint) {
+                (Some(why), _) => format!("Case {}, step {}: {why}.", sc.case_id, u.step),
+                (None, Some(hint)) => {
+                    format!("Case {}, step {}: {} was never seen on the live app; {hint}", sc.case_id, u.step, u.locator)
+                }
+                (None, None) => format!("Case {}, step {}: {} was never seen on the live app.", sc.case_id, u.step, u.locator),
             });
         }
     }

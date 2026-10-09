@@ -160,7 +160,7 @@ fn ran_in_step(script: Option<&CaseScript>, step: &StepRecord, components: &Comp
 /// skipped because an earlier action in the SAME step already failed. A
 /// step that saved files then names them (`push_downloads`). An action a
 /// component ran names the component.
-fn describe_step(step: &StepRecord, script: Option<&CaseScript>, components: &ComponentFile, out: &mut Vec<String>) {
+fn describe_step(step: &StepRecord, script: Option<&CaseScript>, components: &ComponentFile, root: Option<&Path>, out: &mut Vec<String>) {
     if step.step_number == SIGN_IN_STEP {
         if let Some(o) = step.outcomes.last() {
             if !o.ok {
@@ -212,7 +212,12 @@ fn describe_step(step: &StepRecord, script: Option<&CaseScript>, components: &Co
         }
         out.push(format!("  page said: {}", outcome.detail));
         if let Some(shot) = &outcome.screenshot {
-            out.push(format!("  picture: {shot}"));
+            // The full path when the store is known: a bare name sends an
+            // assistant searching the disk for the file.
+            match root {
+                Some(root) => out.push(format!("  picture: {}", store::shot_path(root, shot).display())),
+                None => out.push(format!("  picture: {shot}")),
+            }
         }
     }
     push_downloads(step, out);
@@ -229,7 +234,7 @@ fn push_downloads(step: &StepRecord, out: &mut Vec<String>) {
 /// One failed case's whole block: header, account and repair count when
 /// known, the stop reason when there is one, every failed or skipped
 /// step, and the person's own note last.
-fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, components: &ComponentFile) -> String {
+fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, components: &ComponentFile, root: Option<&Path>) -> String {
     let mut lines: Vec<String> = Vec::new();
 
     // A supervised run never fills in `proposed` - only a person's own
@@ -262,7 +267,7 @@ fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, c
     }
 
     for step in &case.steps {
-        describe_step(step, script, components, &mut lines);
+        describe_step(step, script, components, root, &mut lines);
     }
 
     if !case.note.is_empty() {
@@ -284,11 +289,17 @@ pub fn describe_failures(run: &LocalRun, scripts: &[CaseScript]) -> String {
 /// component ran is shown as it expands from them. Without them it is
 /// named by its component only.
 pub fn describe_failures_with(run: &LocalRun, scripts: &[CaseScript], components: &ComponentFile) -> String {
+    describe_failures_in(None, run, scripts, components)
+}
+
+/// [`describe_failures_with`], naming each picture by its full path under
+/// the store `root`'s shots folder when one is given, never just its name.
+pub fn describe_failures_in(root: Option<&Path>, run: &LocalRun, scripts: &[CaseScript], components: &ComponentFile) -> String {
     let blocks: Vec<String> = run
         .cases
         .iter()
         .filter(|c| is_failed(c))
-        .map(|c| describe_case(&run.id, c, scripts.iter().find(|s| s.case_id == c.case_id), components))
+        .map(|c| describe_case(&run.id, c, scripts.iter().find(|s| s.case_id == c.case_id), components, root))
         .collect();
 
     if blocks.is_empty() {

@@ -992,6 +992,13 @@ browser (see "Discovering the app"):
   without it: a case marked `no_save` is tried with its saves stopped,
   as in a run.
 
+A failed action, a try and `get_autorun_failures` may point at a picture
+of the page. The answer gives its full path, a file in the store's `shots`
+folder: open it directly with the file reader. Never search the disk for a
+picture, by its name or otherwise - a search of the drive can run for
+minutes and stall the work. Prefer `get_autorun_page` (give it a `limit`)
+or `probe_autorun_locator`, which answer in text and need no picture.
+
 The person opens their browser and signs in - you cannot do either in
 it, except through a replay to a failing step (see "Repairing a script
 that failed"), which the app opens and signs in for. To explore on your
@@ -1155,6 +1162,13 @@ the visible dialog or closing a message. When "This project's components"
 lists one that fits, use it instead of repeating its actions. Nothing
 forces you to use one.
 
+Try a component with `use_component` and `draft` before
+`save_autorun_component`, then save it unchanged from the draft that
+worked. Probe its final locators exactly as written immediately before
+saving. A save refused during the discovery only because some of its
+locators were never seen checks them on the current page once, on its
+own, as a script save does (see "Saving it").
+
 Make it during discovery:
 
 1. Work the widget out with `discover_autorun_action` as usual.
@@ -1265,6 +1279,33 @@ objectives group" (expected: "The group is listed"):
 ]
 
 ## Saving it
+
+Before every save:
+
+- Probe every final locator with `probe_autorun_locator`, exactly as it is
+  written in the script, immediately before saving. A locator changed
+  after its last probe is a guess.
+- A step is either `unchecked` (no checks at all, and the reason) or
+  checked, never both. A step marked `unchecked` that also checks
+  something is refused.
+- Check a state with `expect_attribute` on the element you saw (`checked`,
+  `aria-checked` or `disabled`), not by adding a state to its selector.
+- A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
+  text (`{ "text": "Draft {{setup.cycle_name}} Pending" }`), in a quoted
+  attribute value (`div[data-cycle-id="{{setup.cycle_id}}"]`), or next to
+  fixed text in an id or class (`#cycle-{{setup.cycle_id}}`). Anything
+  else is refused: `{{prefix}}` and `{{now:...}}`, a whole id or class
+  (`#{{setup.x}}`), and any other place in a selector. The save accepts it
+  when something seen there fits around it; the value's shape is checked
+  once the run has filled it in. When such a locator is still refused,
+  open the fixture's draft by its unique name instead.
+- A save refused during a discovery only because some locators were never
+  seen checks those locators on the discovery's current page once, on its
+  own: each one found there exactly once, and visible, is recorded, and
+  the save is checked again. The answer then starts with
+  `Recorded on the current page:` and the locators it recorded. A locator
+  holding a placeholder is not checked this way, and nothing is clicked or
+  typed.
 
 `save_autorun_script` does NOT take the steps array on its own - it takes
 a LIST of scripts, one entry per case, so a whole PBI can be saved in one
