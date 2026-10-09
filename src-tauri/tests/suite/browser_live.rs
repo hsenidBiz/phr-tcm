@@ -858,6 +858,11 @@ impl App {
                         Some(_) => respond(&mut stream, "", LEAVE_PAGE),
                         None => respond(&mut stream, "", LOGIN_PAGE),
                     }
+                } else if first.starts_with("GET /exports ") {
+                    // The export page, served from the app's own origin so
+                    // a run's allowlist lets a case go there.
+                    let page = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/autorun-download.html");
+                    respond(&mut stream, "", &std::fs::read_to_string(page).unwrap_or_default());
                 } else if first.starts_with("GET /broken ") {
                     match user {
                         Some(_) => respond(&mut stream, "", BROKEN_PAGE),
@@ -2822,4 +2827,214 @@ async fn a_replay_to_step_3_leaves_the_page_where_step_2_left_it() {
     .await
     .unwrap();
     assert_eq!(state, json!(["/leave", false, "Back on Monday", ""]), "the page is not where step 2 left it");
+}
+
+// ------------------------------------- one browser, a context per case
+
+/// The real `OneBrowser`, started the way the command starts it: a
+/// background Edge, asked until it answers, a connection to the browser
+/// itself per case. Counts launches and closes, and says the port so the
+/// test can look at the browser from outside.
+struct LiveLauncher {
+    launches: Arc<AtomicUsize>,
+    closes: Arc<AtomicUsize>,
+    port: Arc<std::sync::Mutex<Option<u16>>>,
+}
+
+impl v2_lib::autorun::one_browser::Launcher for LiveLauncher {
+    type Process = LaunchedBrowser;
+    type T = v2_lib::browser::cdp::WsTransport;
+
+    async fn launch(&mut self) -> Result<LaunchedBrowser, String> {
+        let extra = background_args();
+        let mut browser = launch_with(Browser::Edge, &extra)?;
+        self.launches.fetch_add(1, Ordering::SeqCst);
+        let mut last = String::new();
+        for _ in 0..60 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            match Cdp::answers(browser.port).await {
+                Ok(()) => {
+                    *self.port.lock().unwrap() = Some(browser.port);
+                    return Ok(browser);
+                }
+                Err(e) => last = e,
+            }
+        }
+        let _ = browser.child.kill();
+        let _ = browser.child.wait();
+        remove_profile_dir(&browser.profile_dir);
+        Err(last)
+    }
+
+    async fn connect(&mut self, p: &LaunchedBrowser) -> Result<Cdp, String> {
+        Cdp::connect_browser(p.port).await
+    }
+
+    fn alive(&mut self, p: &mut LaunchedBrowser) -> bool {
+        matches!(p.child.try_wait(), Ok(None))
+    }
+
+    fn close(&mut self, mut p: LaunchedBrowser) {
+        let _ = p.child.kill();
+        let _ = p.child.wait();
+        remove_profile_dir(&p.profile_dir);
+        self.closes.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// What one case's connection saw, read as the run handed it out and
+/// took it back.
+#[derive(Debug, Default)]
+struct CaseSeen {
+    context: Option<String>,
+    tabs_at_start: usize,
+    tabs_at_end: usize,
+    downloads: usize,
+}
+
+/// `OneBrowser` with eyes: each case's context, tabs and downloads are
+/// read on the way past. While the second case runs, another connection
+/// makes a page in a context of its own, which the case must never adopt.
+struct WatchedOneBrowser {
+    inner: v2_lib::autorun::one_browser::OneBrowser<LiveLauncher>,
+    port: Arc<std::sync::Mutex<Option<u16>>>,
+    seen: Vec<CaseSeen>,
+    stranger: Option<Cdp>,
+}
+
+impl Browsers for WatchedOneBrowser {
+    type D = Cdp;
+    async fn open(&mut self) -> Result<Cdp, String> {
+        let mut d = self.inner.open().await?;
+        if !self.seen.is_empty() && self.stranger.is_none() {
+            let port = self.port.lock().unwrap().expect("the browser was launched");
+            let mut stranger = Cdp::connect_browser(port).await?;
+            stranger.drive_new_context().await.map_err(|e| e.to_string())?;
+            self.stranger = Some(stranger);
+        }
+        // Long enough for every page the browser attaches (its own first
+        // page, and the stranger's) to reach this connection.
+        d.pump(Duration::from_millis(500)).await;
+        self.seen.push(CaseSeen {
+            context: d.browser_context().map(str::to_string),
+            tabs_at_start: d.tabs().len(),
+            ..CaseSeen::default()
+        });
+        Ok(d)
+    }
+    async fn close(&mut self, d: Cdp) {
+        if let Some(seen) = self.seen.last_mut() {
+            seen.tabs_at_end = d.tabs().len();
+            seen.downloads = d.all_downloads().len();
+        }
+        self.inner.close(d).await;
+    }
+}
+
+/// Two cases through the real `OneBrowser` and a real Edge: one browser
+/// for both, a context per case, disposed after it. Case 1 signs in (the
+/// server sets an HttpOnly cookie) and downloads a file; case 2 signs in
+/// as nobody and must meet the login form, so case 1's cookie did not
+/// reach it. Each case has only its own page, though the browser's first
+/// page and another context's page are attached to its connection.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn one_browser_gives_each_case_a_context_of_its_own() {
+    let app = App::start();
+    let root = tempfile::tempdir().unwrap();
+    save_recipe(root.path(), "acme", "Web", &recipe_for(&app)).unwrap();
+    save_accounts(root.path(), &[kim()]).unwrap();
+    let exports = format!("{}/exports", app.base());
+    let case1 = case_script(
+        1,
+        Some("kim"),
+        json!([
+            { "step_number": 1, "actions": [
+                { "kind": "navigate", "url": exports },
+                { "kind": "click", "selector": { "css": "#csv" } },
+                { "kind": "expect_download", "name": "report.csv" }
+            ]}
+        ]),
+    );
+    let case2 = case_script(
+        2,
+        None,
+        json!([
+            { "step_number": 1, "actions": [
+                { "kind": "navigate", "url": format!("{}/leave", app.base()) },
+                { "kind": "expect_visible", "selector": { "css": "input[type=password]" } }
+            ]}
+        ]),
+    );
+    store::save_scripts_atomically(root.path(), &[case1, case2]).unwrap();
+
+    let launches = Arc::new(AtomicUsize::new(0));
+    let closes = Arc::new(AtomicUsize::new(0));
+    let port = Arc::new(std::sync::Mutex::new(None));
+    let launcher = LiveLauncher { launches: launches.clone(), closes: closes.clone(), port: port.clone() };
+    let mut browsers = WatchedOneBrowser {
+        inner: v2_lib::autorun::one_browser::OneBrowser::new(launcher),
+        port: port.clone(),
+        seen: vec![],
+        stranger: None,
+    };
+    let mut run = new_run(42);
+    let cases = vec![(1, "signs in and downloads".to_string()), (2, "signs in as nobody".to_string())];
+    let cancel = AtomicBool::new(false);
+    let res = run_selection(&mut browsers, root.path(), "acme", "Web", &mut run, &cases, &timing(), &cancel, &mut |_| {}).await;
+    assert!(res.is_ok(), "{res:?}");
+    assert_eq!(run.cases.len(), 2);
+    let (rec1, rec2) = (&run.cases[0], &run.cases[1]);
+    assert_eq!(rec1.proposed, "Passed", "{} / {:?}", rec1.reason, rec1.steps);
+    assert_eq!(rec2.proposed, "Passed", "case 1's cookie reached case 2: {} / {:?}", rec2.reason, rec2.steps);
+
+    // One browser for both cases, still open until the run lets it go.
+    assert_eq!(launches.load(Ordering::SeqCst), 1, "one launch for the run");
+    assert_eq!(closes.load(Ordering::SeqCst), 0, "the browser stays between cases");
+
+    // A context per case, each with only its own page, start to end.
+    let seen = &browsers.seen;
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    let contexts: Vec<String> = seen.iter().map(|s| s.context.clone().expect("each case has a context")).collect();
+    assert_ne!(contexts[0], contexts[1], "{seen:?}");
+    assert!(
+        seen.iter().all(|s| s.tabs_at_start == 1 && s.tabs_at_end == 1),
+        "a page of another context was adopted: {seen:?}"
+    );
+
+    // Case 1's download reached case 1's connection, and landed in the
+    // run's own folder; case 2 heard of none.
+    assert_eq!(seen[0].downloads, 1, "{seen:?}");
+    assert_eq!(seen[1].downloads, 0, "{seen:?}");
+    let landed = store::downloads_dir(root.path(), &run.id).join("report.csv");
+    assert_eq!(std::fs::read_to_string(&landed).unwrap(), "Employee No,Name\r\nE001,Ada\r\n");
+
+    // Each context was disposed when its case ended; the stranger's is
+    // still there, so the listing is a real one.
+    let port = port.lock().unwrap().expect("the browser was launched");
+    let mut outside = Cdp::connect_browser(port).await.expect("the browser is still running");
+    let listed = outside.call("Target.getBrowserContexts", json!({})).await.expect("contexts listed");
+    let live: Vec<String> = listed["browserContextIds"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|c| c.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    let stranger_context = browsers.stranger.as_ref().and_then(|s| s.browser_context().map(str::to_string));
+    assert!(stranger_context.as_ref().is_some_and(|c| live.contains(c)), "{live:?}");
+    for c in &contexts {
+        assert!(!live.contains(c), "case context {c} was not disposed: {live:?}");
+    }
+    if let Some(mut s) = browsers.stranger.take() {
+        let _ = s.dispose_context().await;
+    }
+    drop(outside);
+
+    // Each case's open and close were timed.
+    for rec in [rec1, rec2] {
+        let p = rec.phases.as_ref().unwrap_or_else(|| panic!("case {} has no phases", rec.case_id));
+        assert!(p.open_ms > 0, "case {}: {p:?}", rec.case_id);
+        assert!(p.open_ms + p.close_ms <= p.total_ms, "case {}: {p:?}", rec.case_id);
+    }
+
+    drop(browsers);
+    assert_eq!(closes.load(Ordering::SeqCst), 1, "closed once, at the end of the run");
 }
