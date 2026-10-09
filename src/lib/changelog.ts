@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.1",
+    date: "2026-10-09",
+    items: [
+      "Auto Run can export a PBI's passing scripts to your clone of the team's Playwright repo: choose Export to Playwright from the PBI's menu, pick the clone folder, check where each area's tests go, preview, then write. Nothing is run, committed or pushed in the clone.",
+    ],
+  },
+  {
     version: "2.1.2",
     date: "2026-10-09",
     items: [
