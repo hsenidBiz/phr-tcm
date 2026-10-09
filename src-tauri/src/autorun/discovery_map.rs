@@ -426,23 +426,54 @@ pub fn stale_reason(a: &AreaMap, now: u64) -> Option<&'static str> {
     }
 }
 
-/// Every key seen in the named areas and in the unattributed bucket.
-pub fn seen_keys(map: &DiscoveryMap, areas: &[&str]) -> HashSet<SeenKey> {
+/// The elements seen in the named areas and in the unattributed bucket, in
+/// map order.
+fn elements_in<'a>(map: &'a DiscoveryMap, areas: &[&str]) -> impl Iterator<Item = &'a SeenElement> {
     let wanted: Vec<String> = areas.iter().map(|a| area_key(a)).collect();
     map.areas
         .iter()
-        .filter(|a| {
+        .filter(move |a| {
             let key = area_key(&a.area);
             key.is_empty() || wanted.contains(&key)
         })
         .flat_map(|a| a.pages.iter())
         .flat_map(|p| p.elements.iter())
+}
+
+/// Every key seen in the named areas and in the unattributed bucket.
+pub fn seen_keys(map: &DiscoveryMap, areas: &[&str]) -> HashSet<SeenKey> {
+    elements_in(map, areas)
         .flat_map(|e| {
             let mut keys: Vec<SeenKey> = e.locator.links().iter().filter_map(LocatorStep::seen_key).collect();
             keys.push(e.key.clone());
             keys
         })
         .collect()
+}
+
+/// Every link seen in the named areas and in the unattributed bucket, as
+/// it was written when seen, in map order: what the seen check compares a
+/// name with beyond its exact key (`seen_keys`), and where it takes the
+/// closest seen locator from. An element whose key is none of its links
+/// (an older map) adds a link made from the key.
+pub fn seen_links(map: &DiscoveryMap, areas: &[&str]) -> Vec<LocatorStep> {
+    let mut out = Vec::new();
+    for e in elements_in(map, areas) {
+        let links = e.locator.links();
+        if !links.iter().any(|l| l.seen_key().as_ref() == Some(&e.key)) {
+            out.push(match &e.key {
+                SeenKey::Role { role, name } => LocatorStep {
+                    role: Some(if e.role.is_empty() { role.clone() } else { e.role.clone() }),
+                    name: Some(if e.name.is_empty() { name.clone() } else { e.name.clone() }),
+                    ..LocatorStep::default()
+                },
+                SeenKey::Text(t) => LocatorStep { text: Some(t.clone()), ..LocatorStep::default() },
+                SeenKey::Css(c) => LocatorStep { css: Some(c.clone()), ..LocatorStep::default() },
+            });
+        }
+        out.extend(links);
+    }
+    out
 }
 
 /// Every page path the map holds, as `page_path` files it: a page an

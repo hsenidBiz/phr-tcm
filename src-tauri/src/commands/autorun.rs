@@ -1570,16 +1570,25 @@ fn check_imported_seen(
     } else {
         crate::autorun::components::ComponentFile::default()
     };
+    // The Test files, so the size the app shows for one a script uploads
+    // passes as the script's own data.
+    let files = crate::test_files::list(&crate::test_files::folder(root, organization, project)).unwrap_or_else(|e| {
+        crate::applog::warn(format!("Import scripts: the Test files could not be listed: {e}"));
+        Vec::new()
+    });
     let mut lines: Vec<String> = Vec::new();
     for sc in scripts {
         let Some(text) = cases.get(&sc.case_id) else {
             lines.push(format!("Case {}: Azure DevOps has no test case with this id.", sc.case_id));
             continue;
         };
-        for u in crate::autorun::seen_check::check_seen_all(&map, &components, sc, text, None) {
-            lines.push(match &u.refused {
-                Some(why) => format!("Case {}, step {}: {why}.", sc.case_id, u.step),
-                None => format!("Case {}, step {}: {} was never seen on the live app.", sc.case_id, u.step, u.locator),
+        for (u, hint) in crate::autorun::seen_check::check_seen_all_hinted(&map, &components, sc, text, None, &files) {
+            lines.push(match (&u.refused, hint) {
+                (Some(why), _) => format!("Case {}, step {}: {why}.", sc.case_id, u.step),
+                (None, Some(hint)) => {
+                    format!("Case {}, step {}: {} was never seen on the live app; {hint}", sc.case_id, u.step, u.locator)
+                }
+                (None, None) => format!("Case {}, step {}: {} was never seen on the live app.", sc.case_id, u.step, u.locator),
             });
         }
     }

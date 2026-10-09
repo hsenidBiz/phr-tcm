@@ -351,8 +351,13 @@ pub fn expand(c: &Component, inputs: &serde_json::Map<String, Value>) -> Result<
                     _ => return Err(format!("{} to be text", needs(c, name))),
                 };
                 // Put into a locator, "{{day}}" would leave it reading as
-                // the component wrote it, past the seen check.
-                if s.contains("{{") || s.contains("}}") {
+                // the component wrote it, past the seen check. A data
+                // placeholder ("{{setup.cycle_id}}") is the script's: the
+                // run fills it in before the component expands, the save
+                // checks the locator it makes by its shape, and the run
+                // checks the value it took
+                // (`seen_check::check_resolved_inputs`).
+                if (s.contains("{{") || s.contains("}}")) && !super::seen_check::only_data_placeholders(&s) {
                     return Err(format!("{} got a placeholder as {name}", c.name));
                 }
                 text.insert(name, s);

@@ -4614,6 +4614,13 @@ async fn save_autorun_scripts(
             } else {
                 crate::autorun::components::ComponentFile::default()
             };
+            // The Test files, so the size the app shows for one a script
+            // uploads passes as the script's own data.
+            let files = crate::test_files::list(&crate::test_files::folder(&root, &ctx.org, &ctx.project))
+                .unwrap_or_else(|e| {
+                    crate::applog::warn(format!("Auto Run save: the Test files could not be listed: {e}"));
+                    Vec::new()
+                });
             for (case_id, only) in &seen_scope {
                 let (Some(script), Some(case)) = (
                     prepared.iter().find(|s| s.case_id == *case_id),
@@ -4626,8 +4633,15 @@ async fn save_autorun_scripts(
                 };
                 let case_text: Vec<String> =
                     case.steps.iter().flat_map(|s| [s.action.clone(), s.expected.clone()]).collect();
-                crate::autorun::seen_check::check_seen(&map, &components, script, &case_text, only.as_deref())
-                    .map_err(|why| (400, why))?;
+                crate::autorun::seen_check::check_seen_with_files(
+                    &map,
+                    &components,
+                    script,
+                    &case_text,
+                    only.as_deref(),
+                    &files,
+                )
+                .map_err(|why| (400, why))?;
             }
         }
         // Everything has passed; now the disk.
