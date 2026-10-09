@@ -240,7 +240,7 @@ test("the_discovery_dialog_shows_the_last_mapping", async () => {
       .map((li) => li.textContent);
   expect(lines("Added")).toEqual(["Leave Apply"]);
   expect(lines("Updated")).toEqual([
-    "Payroll Run: Payroll, then Run → Payroll, then Monthly, then Run",
+    "Payroll Run: was Payroll, then Run, now Payroll, then Monthly, then Run",
     "Payslips: Same menu path, arrived on a different page",
   ]);
   expect(lines("Could not reach")).toEqual(["Leave Report: click 2 was not found"]);

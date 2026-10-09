@@ -2684,6 +2684,33 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
     answer
 }
 
+/// Where a discovery stands once the area `kept` is saved or found as it
+/// was. An ordinary discovery goes on to explore that area, so it becomes
+/// current. A mapping run files the screen it arrived on under `kept` now,
+/// then stands in no area: the pages it reads on its way to the next screen
+/// belong to none of the screens it saved.
+async fn stand_in_saved_area<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    discovery: &mut Option<crate::commands::autorun::DiscoveryState>,
+    signed_in: Option<&str>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    kept: String,
+) {
+    let Some(state) = discovery.as_mut() else { return };
+    let mapping = state.mapping.is_some();
+    state.area = Some(kept);
+    if !mapping {
+        return;
+    }
+    let at = discovery_sighting(root, organization, project, discovery.as_ref(), None, signed_in);
+    let _ = read_page(d, crate::browser::snapshot::DEFAULT_LIMIT, at.as_ref()).await;
+    if let Some(state) = discovery.as_mut() {
+        state.area = None;
+    }
+}
+
 /// `discover_area_in`, before the blocked saves are counted.
 #[allow(clippy::too_many_arguments)]
 async fn save_discovered_area<B: DiscoveryBrowser>(
@@ -2829,8 +2856,8 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             if let Some(run) = state.mapping.as_mut() {
                 run.record_unchanged(kept.clone());
             }
-            state.area = Some(kept);
         }
+        stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept).await;
         crate::applog::info("Auto Run mapping run found an area unchanged");
         return (200, serde_json::json!({ "saved": false, "unchanged": true, "arrived": at }).to_string());
     }
@@ -2846,11 +2873,12 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 None => run.record_added(name.clone()),
             }
         }
-        state.area = Some(match &existing {
-            Some(old) => old.name().to_string(),
-            None => name,
-        });
     }
+    let kept = match &existing {
+        Some(old) => old.name().to_string(),
+        None => name,
+    };
+    stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept).await;
     crate::applog::info(format!("Auto Run discovery saved an area ({saved} clicks)"));
     (200, serde_json::json!({ "saved": true, "arrived": at }).to_string())
 }

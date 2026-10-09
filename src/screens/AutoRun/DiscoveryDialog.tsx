@@ -95,7 +95,7 @@ function LastMapping({ summary }: { summary: MappingSummary }) {
         lines={summary.updated.map((u) =>
           u.old_path === u.new_path
             ? `${u.name}: Same menu path, arrived on a different page`
-            : `${u.name}: ${u.old_path} → ${u.new_path}`,
+            : `${u.name}: was ${u.old_path}, now ${u.new_path}`,
         )}
       />
       <MappingList title="Unchanged" lines={summary.unchanged} />

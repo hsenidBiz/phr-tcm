@@ -757,7 +757,9 @@ async fn a_navigate_action_never_puts_a_host_or_query_in_the_map_or_its_outcome(
 /// A small menu-driven application. `#go` signs in (landing on
 /// `/hr/home/index`), `#leave` opens `/hr/leave` and `#apply` opens
 /// `/hr/leave/apply`; `#marker` shows only while signed in, and `#missing`
-/// is never on the page. Its address always carries a query string.
+/// is never on the page. `#menu` opens `/hr/menu`, which alone holds a
+/// Payroll button, and `#balance` opens `/hr/leave/balance`, which alone
+/// holds an Approve button. Its address always carries a query string.
 fn menu_app(signed_in: bool, at: &str) -> ScriptedDriver {
     let path = Arc::new(Mutex::new(at.to_string()));
     let signed = Arc::new(AtomicBool::new(signed_in));
@@ -777,14 +779,26 @@ fn menu_app(signed_in: bool, at: &str) -> ScriptedDriver {
             "Runtime.evaluate" => {
                 json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } })
             }
-            "Accessibility.getFullAXTree" => json!({ "nodes": [
-                { "nodeId": "1", "ignored": false, "role": { "value": "form" }, "name": { "value": "Leave" },
-                  "childIds": ["2", "3"] },
-                { "nodeId": "2", "ignored": false, "role": { "value": "textbox" }, "name": { "value": "Name" },
-                  "childIds": [] },
-                { "nodeId": "3", "ignored": false, "role": { "value": "button" }, "name": { "value": "Save" },
-                  "childIds": [] }
-            ] }),
+            "Accessibility.getFullAXTree" => {
+                let own = match path.lock().unwrap().as_str() {
+                    "/hr/menu" => Some("Payroll"),
+                    "/hr/leave/balance" => Some("Approve"),
+                    _ => None,
+                };
+                let mut nodes = vec![
+                    json!({ "nodeId": "1", "ignored": false, "role": { "value": "form" }, "name": { "value": "Leave" },
+                      "childIds": if own.is_some() { json!(["2", "3", "4"]) } else { json!(["2", "3"]) } }),
+                    json!({ "nodeId": "2", "ignored": false, "role": { "value": "textbox" }, "name": { "value": "Name" },
+                      "childIds": [] }),
+                    json!({ "nodeId": "3", "ignored": false, "role": { "value": "button" }, "name": { "value": "Save" },
+                      "childIds": [] }),
+                ];
+                if let Some(own) = own {
+                    nodes.push(json!({ "nodeId": "4", "ignored": false, "role": { "value": "button" },
+                      "name": { "value": own }, "childIds": [] }));
+                }
+                json!({ "nodes": nodes })
+            }
             "Network.getAllCookies" => json!({ "cookies": [] }),
             "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": ready_probe() } }),
             "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
@@ -814,6 +828,8 @@ fn menu_app(signed_in: bool, at: &str) -> ScriptedDriver {
                     }
                     "#leave" => Some("/hr/leave"),
                     "#apply" => Some("/hr/leave/apply"),
+                    "#menu" => Some("/hr/menu"),
+                    "#balance" => Some("/hr/leave/balance"),
                     _ => None,
                 };
                 if let Some(to) = to {
@@ -1181,6 +1197,173 @@ async fn a_mapping_screen_that_is_not_reached_is_unreached() {
     assert!(run.unreached[0].1.starts_with("click 2"), "{run:?}");
     assert!(!run.unreached[0].1.contains("t0p-secret"), "{run:?}");
     assert!(run.added.is_empty(), "{run:?}");
+}
+
+/// An update asked for in another case keeps the name as it was stored.
+#[tokio::test]
+async fn an_update_named_in_another_case_keeps_the_stored_name() {
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Mapping, vec![css("#apply")], "/hr/leave/apply")).unwrap();
+    let mut browser = mapping_browser();
+
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "leave apply", "Leave", clicks.clone(), &quick())
+            .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["saved"], true, "{body}");
+
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    assert_eq!(nav.modules.len(), 1, "{:?}", nav.modules);
+    assert_eq!(nav.modules[0].area, "Leave Apply");
+    assert_eq!(nav.modules[0].clicks, clicks);
+    let run = the_run(&browser);
+    assert_eq!(run.updated.len(), 1, "{run:?}");
+    assert_eq!(run.updated[0].0, "Leave Apply");
+}
+
+/// A save the page sends while an area save replays its clicks is stopped
+/// and counted on the run as soon as the save answers, not at the end.
+#[tokio::test]
+async fn a_save_stopped_on_an_area_saves_trip_is_counted_at_once() {
+    use v2_lib::browser::cdp::Driver;
+    let dir = root_with_recipe_and_account();
+    let mut browser = mapping_browser();
+    {
+        let d = &mut browser.as_mut().unwrap().d;
+        d.guard_saves(&[]).await.unwrap();
+        d.saves_on_call.push((
+            "Input.dispatchMouseEvent".into(),
+            "POST".into(),
+            "https://hr.example.internal/api/SaveLastVisited?id=1".into(),
+        ));
+    }
+
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["saved"], true, "{body}");
+    let b = browser.as_ref().unwrap();
+    assert!(b.d.saves_on_call.is_empty(), "the trip never sent its save");
+    assert!(b.d.saves_stopped.is_empty(), "the stopped save was left to carry over");
+    assert_eq!(the_run(&browser).blocked_writes, 1);
+}
+
+/// What `area`'s map holds on `page`, by name.
+fn seen_on(root: &std::path::Path, area: &str, page: &str) -> Vec<String> {
+    mapped_area(root, area)
+        .and_then(|a| a.pages.into_iter().find(|p| p.path == page))
+        .map(|p| p.elements.into_iter().map(|e| e.name).collect())
+        .unwrap_or_default()
+}
+
+/// Every name `area`'s map holds, on any page.
+fn seen_in(root: &std::path::Path, area: &str) -> Vec<String> {
+    mapped_area(root, area)
+        .map(|a| a.pages.into_iter().flat_map(|p| p.elements).map(|e| e.name).collect())
+        .unwrap_or_default()
+}
+
+/// Marks `area` explored at `at` in the map file, as an earlier read would.
+fn stamp_explored(root: &std::path::Path, area: &str, at: u64) {
+    let path = map_path(root, ORG, PROJECT);
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let entry = v["areas"].as_array_mut().unwrap().iter_mut().find(|a| a["area"] == area).expect("no such area");
+    entry["explored_at"] = json!(at);
+    std::fs::write(&path, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+}
+
+/// A mapping run files each screen's elements under that screen: a saved
+/// screen's own page under it, and what the run reads on its way to the
+/// next screen under no area, which neither stamps nor feeds the screen
+/// saved before.
+#[tokio::test]
+async fn a_mapping_run_files_each_screens_elements_under_that_screen() {
+    let dir = root_with_recipe_and_account();
+    let started =
+        Some(DiscoveryState { area: None, account: Some("admin".into()), started_at: 1, tried: Vec::new(), mapping: None });
+    let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), mapping(started, &["Leave"]));
+    browser.as_mut().unwrap().account = Some("admin".into());
+
+    let (status, body) = discover_area_in(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        "Leave Apply",
+        "Leave",
+        vec![css("#leave"), css("#apply")],
+        &quick(),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["saved"], true, "{body}");
+    let own = seen_on(dir.path(), "Leave Apply", "/hr/leave/apply");
+    assert!(own.contains(&"Name".to_string()) && own.contains(&"Save".to_string()), "{own:?}");
+    assert_eq!(browser.as_ref().unwrap().discovery.as_ref().unwrap().area, None, "the run stayed in the saved area");
+    stamp_explored(dir.path(), "Leave Apply", 5);
+
+    // The walk to the next screen: the menu, then the screen itself.
+    for go in ["#menu", "#balance"] {
+        let step = Action::Click { selector: go.into() };
+        let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &step, None, None).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(parsed(&body)["ok"], true, "{body}");
+    }
+    let (status, body) = discover_area_in(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        "Leave Balance",
+        "Leave",
+        vec![css("#leave"), css("#balance")],
+        &quick(),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["saved"], true, "{body}");
+
+    let a = mapped_area(dir.path(), "Leave Apply").unwrap();
+    let in_a = seen_in(dir.path(), "Leave Apply");
+    assert!(!in_a.contains(&"Payroll".to_string()), "the walk's menu was filed under the screen before: {in_a:?}");
+    assert!(!in_a.contains(&"Approve".to_string()), "the next screen was filed under the one before: {in_a:?}");
+    assert_eq!(a.explored_at, Some(5), "the walk stamped the screen saved before as explored");
+    let in_b = seen_on(dir.path(), "Leave Balance", "/hr/leave/balance");
+    assert!(in_b.contains(&"Approve".to_string()), "the screen's own page was not filed under it: {in_b:?}");
+    assert!(mapped_area(dir.path(), "Leave Balance").unwrap().explored_at.is_some());
+    assert!(seen_on(dir.path(), "", "/hr/menu").contains(&"Payroll".to_string()), "the walk was not filed under no area");
+    assert_eq!(browser.as_ref().unwrap().discovery.as_ref().unwrap().area, None);
+}
+
+/// An ordinary discovery goes on to explore the area it saved: what it
+/// reads next is filed under that area.
+#[tokio::test]
+async fn an_ordinary_discovery_files_its_next_reads_under_the_saved_area() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
+    browser.as_mut().unwrap().account = Some("admin".into());
+
+    let (status, body) = discover_area_in(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        "Leave Apply",
+        "Leave",
+        vec![css("#leave"), css("#apply")],
+        &quick(),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(browser.as_ref().unwrap().discovery.as_ref().unwrap().area.as_deref(), Some("Leave Apply"));
+
+    let step = Action::Click { selector: "#menu".into() };
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &step, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(seen_on(dir.path(), "Leave Apply", "/hr/menu").contains(&"Payroll".to_string()), "{body}");
+    assert!(seen_on(dir.path(), "", "/hr/menu").is_empty(), "an ordinary discovery's read went under no area");
 }
 
 /// No discovery, no saving: not with no browser, not in the person's own
