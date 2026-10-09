@@ -122,7 +122,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
                 downloads: vec![],
                 tab: None,
                 dialog: None,
-                components: Vec::new(),
+                components: Vec::new(), duration_ms: None,
             }],
             proposed: String::new(),
             reason: String::new(),
@@ -130,7 +130,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
             account: None,
             retried: None,
             notice: None,
-            page_errors_seen: 0,
+            page_errors_seen: 0, phases: None,
         }],
         mode: String::new(),
         published: None,
@@ -445,14 +445,14 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
             title: "t".into(),
             verdict: "".into(),
             note: "".into(),
-            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot_a.clone()), downloads: vec![], tab: None, dialog: None, components: Vec::new() }],
+            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot_a.clone()), downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }],
             proposed: "".into(),
             reason: "".into(),
             duration_ms: None,
             account: None,
             retried: None,
             notice: None,
-            page_errors_seen: 0,
+            page_errors_seen: 0, phases: None,
         }],
         environment: None,
         resets: vec![],
@@ -668,14 +668,14 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
             title: "t".into(),
             verdict: "".into(),
             note: "".into(),
-            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot.clone()), downloads: vec![], tab: None, dialog: None, components: Vec::new() }],
+            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot.clone()), downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }],
             proposed: "".into(),
             reason: "".into(),
             duration_ms: None,
             account: None,
             retried: None,
             notice: None,
-            page_errors_seen: 0,
+            page_errors_seen: 0, phases: None,
         }],
         environment: None,
         resets: vec![],
@@ -1161,4 +1161,18 @@ fn an_unreadable_script_is_skipped_with_a_warning() {
     assert_eq!(warned.len(), 1, "{lines:?}");
     assert!(!warned[0].contains("secret-ish"), "{}", warned[0]);
     assert!(!warned[0].contains(&*root.to_string_lossy()), "{}", warned[0]);
+}
+
+#[test]
+fn a_run_without_phase_timings_still_loads() {
+    let old: v2_lib::autorun::CaseRecord = serde_json::from_value(serde_json::json!({
+        "case_id": 7, "title": "old", "verdict": "", "note": "",
+        "steps": [{ "step_number": 1, "outcomes": [] }]
+    }))
+    .unwrap();
+    assert_eq!(old.phases, None);
+    assert_eq!(old.steps[0].duration_ms, None);
+    // And a record without timings writes none back.
+    let json = serde_json::to_string(&old).unwrap();
+    assert!(!json.contains("phases") && !json.contains("duration_ms"), "{json}");
 }

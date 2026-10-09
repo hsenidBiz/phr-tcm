@@ -648,3 +648,19 @@ fn the_report_reads_the_components_of_its_own_project() {
         "{html}"
     );
 }
+
+#[test]
+fn the_report_shows_how_long_a_case_and_its_steps_took() {
+    let run: LocalRun = serde_json::from_value(serde_json::json!({
+        "id": "run-1", "pbi_id": 1, "started_at": "1786000200000", "mode": "unattended",
+        "cases": [{
+            "case_id": 301, "title": "Timed", "verdict": "", "note": "", "proposed": "Passed",
+            "phases": { "open_ms": 1100, "sign_in_ms": 12400, "area_ms": 3000, "steps_ms": 23900, "close_ms": 800, "total_ms": 41200 },
+            "steps": [{ "step_number": 1, "outcomes": [{ "ok": true, "detail": "clicked" }], "duration_ms": 2300 }]
+        }]
+    }))
+    .unwrap();
+    let html = build(&run, &[], "x", &|_: &str| false);
+    assert!(html.contains("Took 41.2 s: open 1.1, sign-in 12.4, area 3.0, steps 23.9, close 0.8"), "{html}");
+    assert!(html.contains("2.3 s"), "{html}");
+}

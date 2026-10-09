@@ -26,14 +26,14 @@ fn failed_case(case_id: i32, step_number: i32, detail: &str) -> CaseRecord {
         title: format!("case {case_id}"),
         verdict: String::new(),
         note: String::new(),
-        steps: vec![StepRecord { step_number, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }],
+        steps: vec![StepRecord { step_number, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }],
         proposed: "Failed".into(),
         reason: format!("step {step_number}: {detail}"),
         duration_ms: None,
         account: None,
         retried: None,
         notice: None,
-        page_errors_seen: 0,
+        page_errors_seen: 0, phases: None,
     }
 }
 
@@ -201,7 +201,7 @@ fn a_failure_in_one_case_only_is_no_pattern() {
         downloads: vec![],
         tab: None,
         dialog: None,
-        components: Vec::new(),
+        components: Vec::new(), duration_ms: None,
     });
     let mut s = script(11, 2, click("Save"));
     s.steps.push(StepScript { step_number: 3, actions: vec![click("Save")], unchecked: None });

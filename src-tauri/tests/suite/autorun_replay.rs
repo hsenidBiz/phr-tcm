@@ -610,7 +610,7 @@ fn propose_blames_the_browser_before_the_page() {
     let ordinary_fail = ActionOutcome::failed("nope");
     let mut harness_fail = ActionOutcome::failed("gone");
     harness_fail.harness = true;
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ordinary_fail, harness_fail], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ordinary_fail, harness_fail], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }];
     let p = propose(&case, &steps, None, false);
     assert_eq!(p.verdict, "Blocked");
 }
@@ -859,7 +859,7 @@ async fn a_failed_trip_logs_what_the_page_was_doing_and_says_where() {
     assert!(is_setup_problem(&rec.reason), "still read as the trip that failed");
 
     let logged: Vec<String> = v2_lib::applog::recent(6000).into_iter().map(|l| l.message).collect();
-    let mine: Vec<&String> = logged.iter().filter(|l| l.starts_with("unattended run, case 4711")).collect();
+    let mine: Vec<&String> = logged.iter().filter(|l| l.starts_with("unattended run, case 4711") && !l.contains(": Took ")).collect();
     // The first try's page goes to the log before the reload clears it,
     // then the second try's, as a failed trip always logged it.
     assert_eq!(mine.len(), 6, "{mine:?}");
@@ -904,7 +904,7 @@ async fn a_failed_trip_with_nothing_in_the_page_log_logs_nothing_and_keeps_its_s
         .await
         .unwrap();
     assert!(!run.cases[0].reason.contains(PAGE_LOG_NOTE.trim()), "{}", run.cases[0].reason);
-    assert!(!v2_lib::applog::recent(6000).iter().any(|l| l.message.starts_with("unattended run, case 4712")));
+    assert!(!v2_lib::applog::recent(6000).iter().any(|l| l.message.starts_with("unattended run, case 4712") && !l.message.contains(": Took ")));
 }
 
 #[tokio::test]
@@ -1412,7 +1412,7 @@ fn a_failed_navigate_whose_appended_dialog_reads_like_an_unreached_module_is_fai
     let detail = format!(
         "https://app.example/x did not finish loading within 1ms (the page showed alert: {LOOKALIKE} and it was accepted)"
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
 }
@@ -1428,7 +1428,7 @@ fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_sti
         "https://app.example/x did not finish loading within 1ms (the page showed alert: {} and it was accepted)",
         no_address(1)
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
 }
@@ -1440,7 +1440,7 @@ fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_sti
 fn a_check_text_whose_value_is_the_address_sentence_itself_is_failed() {
     let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": no_address(1) }] }]));
     let detail = format!("page does NOT contain {}", no_address(1));
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
     assert_eq!(p.reason, format!("step 1: {detail}"));
@@ -1463,7 +1463,7 @@ fn only_a_sign_in_whose_trip_back_failed_is_blocked_by_those_words() {
         downloads: vec![],
         tab: None,
         dialog: None,
-        components: Vec::new(),
+        components: Vec::new(), duration_ms: None,
     }];
     let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
         { "kind": "sign_in", "account": "admin" }, { "kind": "check_text", "value": "yes" }
@@ -1488,7 +1488,7 @@ fn a_failed_sign_in_whose_dialog_looks_like_a_failed_trip_back_is_not_blocked_by
     let detail = format!(
         "sign-in stopped at step 1: waited 1ms for the page (the page showed alert: x{lookalike} and it was accepted)"
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }];
     let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
         { "kind": "sign_in", "account": "admin" }
     ] }]));
@@ -1522,7 +1522,7 @@ async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
     assert_eq!(app.log.lock().unwrap().iter().filter(|l| *l == "click Leave").count(), 2, "one more go, then no more");
     assert_eq!(outcomes[1].detail, "not run: the module screen was not reached after the sign-in");
     assert!(!app.log.lock().unwrap().iter().any(|l| l.starts_with("check")));
-    let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }];
+    let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }];
     let p = propose(&signs_in, &steps, Some(true), false);
     assert_eq!(p.verdict, "Blocked", "{}", p.reason);
     assert!(p.reason.starts_with(UNREACHED_PREFIX), "{}", p.reason);
@@ -1604,7 +1604,7 @@ async fn a_run_counts_quirk_evidence_for_the_cases_it_ran_and_no_others() {
         "case_id": 2, "title": "case 2", "verdict": "", "note": "", "steps": []
     }))
     .unwrap();
-    earlier.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() });
+    earlier.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None });
     run.cases.push(earlier);
 
     let mut browsers = FakeBrowsers {
@@ -2178,8 +2178,66 @@ fn a_refusal_inside_a_component_is_blocked_not_failed() {
         downloads: vec![],
         tab: None,
         dialog: None,
-        components: Vec::new(),
+        components: Vec::new(), duration_ms: None,
     }];
     let p = propose_with(&sc, &steps, None, false, &file);
     assert_eq!((p.verdict, p.reason.as_str()), ("Blocked", no_address(1).as_str()));
+}
+
+#[tokio::test]
+async fn a_case_record_carries_its_phase_timings() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &passing_script(1)).unwrap();
+    let mut browsers = FakeBrowsers { queue: [Some(common::FakePage::default().driver())].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-x");
+    let cases = vec![(1, "case 1".to_string())];
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |_| {}).await.unwrap();
+
+    let p = run.cases[0].phases.as_ref().expect("a case that ran carries its phase timings");
+    // A case with no account and no route has no sign-in and no area trip.
+    assert_eq!((p.sign_in_ms, p.area_ms), (0, 0));
+    // Total spans open to close, so it holds every part.
+    assert!(p.total_ms >= p.open_ms + p.sign_in_ms + p.area_ms + p.steps_ms + p.close_ms, "{p:?}");
+}
+
+#[tokio::test]
+async fn a_signed_in_case_times_its_sign_in_inside_its_total() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
+    save_accounts(root, &[common::account()]).unwrap();
+    store::save_script(root, &script(1, Some("admin"), serde_json::json!([]))).unwrap();
+    let (d, _state) = common::stateful_app(false, None);
+    let mut browsers = FakeBrowsers { queue: [Some(d)].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "case 1".to_string())], &quick(), &cancel, &mut |_| {}).await.unwrap();
+
+    let rec = &run.cases[0];
+    let p = rec.phases.as_ref().unwrap();
+    assert!(rec.steps[0].duration_ms.is_some(), "the sign-in step is timed");
+    assert!(p.total_ms >= p.sign_in_ms, "{p:?}");
+}
+
+#[tokio::test]
+async fn steps_carry_their_duration() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let two = script(1, None, serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "no" }] },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": "yes" }] }
+    ]));
+    store::save_script(root, &two).unwrap();
+    let mut browsers = FakeBrowsers { queue: [Some(checking_driver())].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "case 1".to_string())], &quick(), &cancel, &mut |_| {}).await.unwrap();
+
+    let steps = &run.cases[0].steps;
+    assert!(steps[0].duration_ms.is_some(), "a step that ran is timed");
+    assert_eq!(steps[1].duration_ms, None, "a step that did not run has no duration");
+    let sum: u64 = steps.iter().filter_map(|s| s.duration_ms).sum();
+    assert!(run.cases[0].phases.as_ref().unwrap().steps_ms >= sum);
 }

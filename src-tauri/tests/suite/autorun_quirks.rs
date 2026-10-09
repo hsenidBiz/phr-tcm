@@ -397,7 +397,7 @@ fn save_button() -> Action {
 }
 
 fn step(n: i32, outcomes: Vec<ActionOutcome>) -> StepRecord {
-    StepRecord { step_number: n, outcomes, screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }
+    StepRecord { step_number: n, outcomes, screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }
 }
 
 fn case(case_id: i32, steps: Vec<StepRecord>) -> CaseRecord {
@@ -413,7 +413,7 @@ fn case(case_id: i32, steps: Vec<StepRecord>) -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
-        page_errors_seen: 0,
+        page_errors_seen: 0, phases: None,
     }
 }
 
