@@ -4,13 +4,15 @@
 // sent while it was explored. Forget map takes an area's map away (behind a
 // confirm), so the area is explored again before new saves there. A map
 // that cannot be read offers Reset map, which moves the damaged file aside
-// (never deleting it) so discovery starts an empty one. Opened
-// from Auto Run's Setup card; the map itself is Rust's
-// (`autorun/discovery_map.rs`).
+// (never deleting it) so discovery starts an empty one. Below the areas,
+// the last menu mapping run: when it ran, the modules, what it added,
+// updated, found unchanged and could not reach, and the saves it blocked.
+// Opened from Auto Run's Setup card; the map and the summary are Rust's
+// (`autorun/discovery_map.rs`, `autorun/mapping_summary.rs`).
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
-import { commands, type MapView } from "../../bindings";
+import { commands, type MappingSummary, type MapView } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
@@ -46,6 +48,63 @@ export function discoverySummary(map: MapView | undefined): string | null {
   return `${plural(explored.length, "area")} explored, ${stale} stale`;
 }
 
+/** The project's last menu mapping run, `null` when none has ended. */
+export function useMappingSummary(org: string, project: string) {
+  return useQuery({
+    queryKey: ["autorun-mapping-summary", org, project],
+    queryFn: async () => (await unwrapStr(commands.autoRunLoadMappingSummary(org, project))) ?? null,
+    enabled: Boolean(org && project),
+    retry: false,
+  });
+}
+
+/** One list of the last mapping, folded away; "none" when empty. */
+function MappingList({ title, lines }: { title: string; lines: string[] }) {
+  if (lines.length === 0) return <p className="text-xs text-muted">{title}: none</p>;
+  return (
+    <details className="text-xs text-muted">
+      <summary className="cursor-pointer select-none text-muted hover:text-text">
+        {title} ({lines.length})
+      </summary>
+      <ul aria-label={title} className="mt-1 space-y-0.5 pl-4">
+        {lines.map((line, i) => (
+          <li key={`${i}-${line}`} className="break-words text-text">
+            {line}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+/** The last mapping run: when, over which modules, and each list. */
+function LastMapping({ summary }: { summary: MappingSummary }) {
+  const headingId = useId();
+  const ran = summary.ran_at != null ? new Date(summary.ran_at).toLocaleDateString() : null;
+  return (
+    <section aria-labelledby={headingId} className="space-y-1 border-t border-border/60 pt-2">
+      <h3 id={headingId} className="text-xs font-semibold text-text">
+        Last menu mapping
+      </h3>
+      <p className="text-xs text-muted">
+        {ran ? `Ran ${ran}` : "Ran"} over {summary.modules.join(", ")}
+      </p>
+      <MappingList title="Added" lines={summary.added} />
+      <MappingList
+        title="Updated"
+        lines={summary.updated.map((u) =>
+          u.old_path === u.new_path
+            ? `${u.name}: Same menu path, arrived on a different page`
+            : `${u.name}: ${u.old_path} → ${u.new_path}`,
+        )}
+      />
+      <MappingList title="Unchanged" lines={summary.unchanged} />
+      <MappingList title="Could not reach" lines={summary.unreached.map((u) => `${u.name}: ${u.reason}`)} />
+      <p className="text-xs text-muted">{plural(summary.blocked_writes, "save request")} blocked</p>
+    </section>
+  );
+}
+
 /** The name an area is shown under; what belongs to no area has none. */
 const shownName = (area: string) => area || "Not in an area";
 
@@ -61,6 +120,7 @@ export default function DiscoveryDialog({
   const headingId = useId();
   const qc = useQueryClient();
   const map = useDiscoveryMap(org, project);
+  const mapping = useMappingSummary(org, project);
   // The area whose Forget map is waiting for its confirm.
   const [forgetting, setForgetting] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -199,6 +259,9 @@ export default function DiscoveryDialog({
           })}
         </ul>
       )}
+
+      {mapping.data && <LastMapping summary={mapping.data} />}
+      {mapping.isError && <p className="text-xs text-danger">{mapping.error.message}</p>}
 
       {problem && <p className="text-xs text-danger">{problem}</p>}
 

@@ -196,6 +196,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_close_browser,
             autorun::auto_run_discovery_active,
             autorun::auto_run_load_map,
+            autorun::auto_run_load_mapping_summary,
             autorun::auto_run_forget_map_area,
             autorun::auto_run_reset_map,
             autorun::auto_run_load_components,

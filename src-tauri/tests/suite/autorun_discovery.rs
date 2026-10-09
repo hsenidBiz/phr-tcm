@@ -28,7 +28,8 @@ use v2_lib::browser::cdp::Event;
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::{Target, VISIBLE_JS};
 use v2_lib::browser::snapshot::DEFAULT_LIMIT;
-use v2_lib::commands::autorun::{busy_browser_sentence, DiscoveryState, MappingRun};
+use v2_lib::autorun::mapping_summary::{load_summary, summarize, summary_path, MappingSummary};
+use v2_lib::commands::autorun::{busy_browser_sentence, DiscoveryState, MappingPlace, MappingRun};
 
 const ORG: &str = "acme";
 const PROJECT: &str = "Web";
@@ -1528,4 +1529,174 @@ async fn the_route_takes_a_draft_only_for_a_use_component() {
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-action", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(out.contains("not a component"), "{out}");
+}
+
+// ------------------------------------------- a mapping run's summary
+
+/// A mapping run over Leave, signed in as `admin`, standing on
+/// `/hr/leave/apply`, whose summary is kept under `root`.
+fn mapping_browser_in(root: &std::path::Path) -> (Option<FakeBrowser>, Arc<AtomicBool>) {
+    let (mut browser, closed) = slot(menu_app(true, "/hr/leave/apply"), mapping(exploring("Leave"), &["Leave"]));
+    let b = browser.as_mut().unwrap();
+    b.account = Some("admin".into());
+    b.discovery.as_mut().unwrap().mapping.as_mut().unwrap().place =
+        Some(MappingPlace { root: root.to_path_buf(), organization: ORG.into(), project: PROJECT.into() });
+    (browser, closed)
+}
+
+/// Ending a mapping run keeps its summary under the project, answers with
+/// it, logs one line of counts and names, and closes the browser. A save
+/// the guard blocked after the last action is still counted.
+#[tokio::test]
+async fn ending_a_mapping_run_saves_and_returns_its_summary() {
+    let _log = crate::serial::log_tail();
+    let dir = root_with_recipe_and_account();
+    let (mut browser, closed) = mapping_browser_in(dir.path());
+    let started = the_run(&browser).started_at;
+
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    let (status, _) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Payroll", "Payroll", vec![css("#missing")], &quick())
+            .await;
+    assert_eq!(status, 409);
+    // The page tries a save after the last action: nothing drains it but the end.
+    browser.as_mut().unwrap().d.saves_stopped.push(("POST".into(), "/api/SaveLastVisited".into()));
+
+    assert_eq!(load_summary(dir.path(), ORG, PROJECT), Ok(None), "kept before the run ended");
+    let (status, body) = end_discovery_in(&mut browser);
+    assert_eq!(status, 200, "{body}");
+    assert!(closed.load(Ordering::SeqCst), "the browser was left open");
+    assert!(browser.is_none());
+
+    let answered: MappingSummary = serde_json::from_value(parsed(&body)["summary"].clone()).expect("no summary");
+    assert_eq!(answered.ran_at, started);
+    assert_eq!(answered.modules, vec!["Leave".to_string()]);
+    assert_eq!(answered.added, vec!["Leave Apply".to_string()]);
+    assert!(answered.updated.is_empty() && answered.unchanged.is_empty(), "{answered:?}");
+    assert_eq!(answered.unreached.len(), 1, "{answered:?}");
+    assert_eq!(answered.unreached[0].name, "Payroll");
+    assert!(answered.unreached[0].reason.starts_with("click 1"), "{answered:?}");
+    assert_eq!(answered.blocked_writes, 1, "the save blocked after the last action was lost");
+    assert_eq!(load_summary(dir.path(), ORG, PROJECT), Ok(Some(answered.clone())));
+    let slug = v2_lib::autorun::recipe::project_slug(ORG, PROJECT);
+    assert!(summary_path(dir.path(), ORG, PROJECT).ends_with(format!("projects/{slug}-mapping.json")));
+
+    let lines: Vec<String> = v2_lib::applog::recent(500).into_iter().map(|l| l.message).collect();
+    let ended = lines.iter().rev().find(|l| l.contains("mapping run ended")).expect("no line for the run");
+    assert_eq!(
+        ended,
+        "Auto Run mapping run ended: 1 added (Leave Apply), 0 updated (none), 0 unchanged (none), 1 not reached (Payroll), 1 saves blocked",
+        "a reason or path was logged"
+    );
+
+    // Ending again keeps that summary and answers as before.
+    let (status, body) = end_discovery_in(&mut browser);
+    assert_eq!((status, body.as_str()), (200, "no discovery is going"));
+    assert_eq!(load_summary(dir.path(), ORG, PROJECT), Ok(Some(answered)));
+
+    // An ordinary discovery keeps none, and answers in words.
+    let other = root_with_recipe_and_account();
+    let (mut browser, _) = slot(menu_app(true, "/hr/leave"), exploring("Leave"));
+    let (status, body) = end_discovery_in(&mut browser);
+    assert_eq!((status, body.as_str()), (200, "the discovery is over and its browser is closed"));
+    assert_eq!(load_summary(other.path(), ORG, PROJECT), Ok(None));
+}
+
+/// A mapping run ended any other way - Close browser here - keeps its
+/// summary too, written whole, and the one after replaces it.
+#[tokio::test]
+async fn a_mapping_run_closed_mid_way_keeps_its_summary() {
+    let _log = crate::serial::log_tail();
+    let dir = root_with_recipe_and_account();
+    let (mut browser, closed) = mapping_browser_in(dir.path());
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    browser.as_mut().unwrap().d.saves_stopped.push(("PUT".into(), "/api/x".into()));
+
+    assert!(close_browser_in(&mut browser));
+    assert!(closed.load(Ordering::SeqCst));
+    let kept = load_summary(dir.path(), ORG, PROJECT).unwrap().expect("closing lost the summary");
+    assert_eq!(kept.added, vec!["Leave Apply".to_string()]);
+    assert_eq!(kept.blocked_writes, 1);
+    let folder = summary_path(dir.path(), ORG, PROJECT).parent().unwrap().to_path_buf();
+    let leftovers: Vec<String> = std::fs::read_dir(&folder)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .filter(|n| n.contains("tcm-tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "a half-written file was left: {leftovers:?}");
+
+    // The next run, closed with nothing done, replaces it.
+    let (mut browser, _) = mapping_browser_in(dir.path());
+    assert!(close_browser_in(&mut browser));
+    let kept = load_summary(dir.path(), ORG, PROJECT).unwrap().unwrap();
+    assert!(kept.added.is_empty() && kept.blocked_writes == 0, "{kept:?}");
+}
+
+/// A screen met more than once is in one list only: the list of its last
+/// outcome, names compared as area names are.
+#[test]
+fn the_summary_keeps_each_screens_last_outcome() {
+    let mut run = MappingRun::new(&["Leave".to_string()]);
+    run.record_added("Leave Apply".into());
+    run.record_unchanged(" leave  APPLY".into());
+    run.record_updated("Payroll".into(), "Payroll".into(), "Pay, then Payroll".into());
+    run.record_unreached("Payroll".into(), "click 1 was not found");
+    run.record_unchanged("Claims".into());
+    run.record_unchanged("claims".into());
+    run.record_unreached("Reports".into(), "click 2 was not found");
+    run.record_added("Reports".into());
+
+    let s = summarize(&run);
+    assert_eq!(s.added, vec!["Reports".to_string()]);
+    assert!(s.updated.is_empty(), "{s:?}");
+    assert_eq!(s.unchanged, vec!["leave  APPLY".to_string(), "claims".to_string()]);
+    assert_eq!(s.unreached.len(), 1, "{s:?}");
+    assert_eq!((s.unreached[0].name.as_str(), s.unreached[0].reason.as_str()), ("Payroll", "click 1 was not found"));
+}
+
+/// Nothing the summary keeps, answers or logs holds a host, a query string
+/// or an address: not a replay's reason, and not a failure while going home
+/// that named the address it was opening.
+#[tokio::test]
+async fn the_summary_names_no_address() {
+    let _log = crate::serial::log_tail();
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = mapping_browser_in(dir.path());
+    let (status, _) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Payroll", "Payroll", vec![css("#missing")], &quick())
+            .await;
+    assert_eq!(status, 409);
+    {
+        let run = browser.as_mut().unwrap().discovery.as_mut().unwrap().mapping.as_mut().unwrap();
+        run.record_unreached(
+            "Leave Apply".into(),
+            "home: could not open \"https://hr.example.internal/hr/home?token=t0p-secret#top\" (timed out)",
+        );
+        assert!(!run.unreached[1].1.contains("t0p-secret"), "stored with its address: {run:?}");
+        // Set straight on the list, past `record_unreached`: cleaned on the way out.
+        run.unreached.push(("Claims".into(), "went to http://hr.example.internal:8080/claims?id=5 instead".into()));
+        run.record_updated("Reports".into(), "Reports".into(), "Reports, then /hr/reports?x=t0p-secret".into());
+    }
+    let (status, body) = end_discovery_in(&mut browser);
+    assert_eq!(status, 200, "{body}");
+
+    let file = std::fs::read_to_string(summary_path(dir.path(), ORG, PROJECT)).unwrap();
+    let lines: Vec<String> = v2_lib::applog::recent(500).into_iter().map(|l| l.message).collect();
+    let logged = lines.iter().filter(|l| l.contains("mapping run")).cloned().collect::<Vec<_>>().join("\n");
+    for text in [&file, &body, &logged] {
+        for leak in ["hr.example.internal", "t0p-secret", "://", "?", "#top", "8080"] {
+            assert!(!text.contains(leak), "{leak} in {text}");
+        }
+    }
+    let kept = load_summary(dir.path(), ORG, PROJECT).unwrap().unwrap();
+    let reason = |name: &str| kept.unreached.iter().find(|u| u.name == name).unwrap().reason.clone();
+    assert_eq!(reason("Leave Apply"), "home: could not open \"/hr/home\" (timed out)");
+    assert_eq!(reason("Claims"), "went to /claims instead");
+    assert_eq!(kept.updated[0].new_path, "Reports, then /hr/reports");
 }

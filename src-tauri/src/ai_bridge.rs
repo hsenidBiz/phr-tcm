@@ -2238,7 +2238,17 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                 let started_at =
                     p.discovery.as_ref().map_or_else(crate::autorun::sessions::now_ms, |s| s.started_at);
                 let tried = p.discovery.as_mut().map(|s| std::mem::take(&mut s.tried)).unwrap_or_default();
-                let mapping = p.discovery.as_mut().and_then(|s| s.mapping.take());
+                // A mapping run's summary is kept under the project it signed in to.
+                let mapping = p.discovery.as_mut().and_then(|s| s.mapping.take()).map(|run| {
+                    crate::commands::autorun::MappingRun {
+                        place: Some(crate::commands::autorun::MappingPlace {
+                            root: root.to_path_buf(),
+                            organization: organization.to_string(),
+                            project: project.to_string(),
+                        }),
+                        ..run
+                    }
+                });
                 let is_mapping = mapping.is_some();
                 *p.discovery = Some(crate::commands::autorun::DiscoveryState {
                     area,
@@ -2554,15 +2564,47 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
 /// End the discovery in `slot`: its browser is closed. A browser the
 /// person opened is left as it is, and with nothing to end this is still
 /// an answer, not an error - ending twice is fine.
+///
+/// A mapping run's summary is kept first (`finish_mapping`), and the
+/// answer is `{detail, summary}`.
 pub fn end_discovery_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
     if slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
+        let summary = finish_mapping(slot);
         if let Some(browser) = slot.take() {
             browser.close();
         }
         crate::applog::info("Auto Run discovery ended; its browser is closed");
-        return (200, "the discovery is over and its browser is closed".to_string());
+        const ENDED: &str = "the discovery is over and its browser is closed";
+        return match summary {
+            Some(summary) => (200, serde_json::json!({ "detail": ENDED, "summary": summary }).to_string()),
+            None => (200, ENDED.to_string()),
+        };
     }
     (200, "no discovery is going".to_string())
+}
+
+/// Close out the mapping run in `slot`, if one is going, however it ends:
+/// the end route, End discovery, Close browser, or the app exiting with
+/// it open (a browser that died ends one of those ways). The saves its
+/// guard blocked since the last action are counted first, then its summary
+/// (`mapping_summary::summarize`) is kept under its project, replacing the
+/// last, and logged as one line of counts and names. The run is taken off
+/// the discovery, so closing it twice keeps one summary. `None` with no
+/// mapping run going.
+pub fn finish_mapping<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Option<crate::autorun::mapping_summary::MappingSummary> {
+    use crate::autorun::mapping_summary::{log_line, save_summary, summarize};
+    let browser = slot.as_mut()?;
+    let p = browser.parts();
+    count_blocked_writes(p.driver, p.discovery.as_mut(), &[]);
+    let run = p.discovery.as_mut()?.mapping.take()?;
+    let summary = summarize(&run);
+    if let Some(place) = &run.place {
+        if let Err(why) = save_summary(&place.root, &place.organization, &place.project, &summary) {
+            crate::applog::warn(format!("Auto Run mapping run: its summary could not be kept: {why}"));
+        }
+    }
+    crate::applog::info(log_line(&summary));
+    Some(summary)
 }
 
 /// Refused while a discovery holds the browser in `slot`: a replay, or the
@@ -2578,6 +2620,7 @@ pub fn refuse_while_discovering<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Re
 /// Close whatever browser `slot` holds - a discovery ends with it. Whether
 /// there was one.
 pub fn close_browser_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
+    finish_mapping(slot);
     match slot.take() {
         Some(browser) => {
             browser.close();
@@ -2619,8 +2662,31 @@ fn person_area_kept(name: &str) -> String {
 /// where it arrives changed (`{saved: false, unchanged: true}` and no
 /// write otherwise); clicks that do not arrive are counted unreached.
 /// Outside one, every area saved is the person's.
+///
+/// The saves the guard blocked on the replay's trip are counted on the run
+/// whatever the answer (`count_blocked_writes`).
 #[allow(clippy::too_many_arguments)]
 pub async fn discover_area_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    name: &str,
+    module: &str,
+    clicks: Vec<crate::browser::locator::Target>,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    let answer = save_discovered_area(slot, root, organization, project, name, module, clicks, timing).await;
+    if let Some(browser) = slot.as_mut() {
+        let p = browser.parts();
+        count_blocked_writes(p.driver, p.discovery.as_mut(), &[]);
+    }
+    answer
+}
+
+/// `discover_area_in`, before the blocked saves are counted.
+#[allow(clippy::too_many_arguments)]
+async fn save_discovered_area<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
     root: &std::path::Path,
     organization: &str,
@@ -2663,7 +2729,7 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
         Some(found) if mapping => {
             let kept = found.name().to_string();
             if let Some(run) = p.discovery.as_mut().and_then(|s| s.mapping.as_mut()) {
-                run.unchanged.push(kept.clone());
+                run.record_unchanged(kept.clone());
             }
             return (409, person_area_kept(&kept));
         }
@@ -2751,7 +2817,7 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
                 "nothing - the page could not be read".to_string()
             };
             if let Some(run) = p.discovery.as_mut().and_then(|s| s.mapping.as_mut()) {
-                run.unreached.push((name, reason.clone()));
+                run.record_unreached(name, &reason);
             }
             return (409, format!("The clicks did not arrive: {reason}. The page showed: {showed}"));
         }
@@ -2761,7 +2827,7 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
         let kept = old.name().to_string();
         if let Some(state) = p.discovery.as_mut() {
             if let Some(run) = state.mapping.as_mut() {
-                run.unchanged.push(kept.clone());
+                run.record_unchanged(kept.clone());
             }
             state.area = Some(kept);
         }
@@ -2776,8 +2842,8 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
     if let Some(state) = p.discovery.as_mut() {
         if let Some(run) = state.mapping.as_mut() {
             match &existing {
-                Some(old) => run.updated.push((old.name().to_string(), nav::menu_path(&old.clicks), new_menu)),
-                None => run.added.push(name.clone()),
+                Some(old) => run.record_updated(old.name().to_string(), nav::menu_path(&old.clicks), new_menu),
+                None => run.record_added(name.clone()),
             }
         }
         state.area = Some(match &existing {
