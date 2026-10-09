@@ -39,17 +39,28 @@ pub struct Ready {
     pub y: f64,
 }
 
-/// `this` is the element. A synchronous, single measurement, on purpose:
-/// one measurement per look keeps the probe a single cheap round trip,
-/// and lets Rust judge whether the element is holding still by comparing
-/// the `rect` this returns ACROSS looks, a `poll_ms` apart - a decision
-/// that needs more than one look anyway, so nothing is gained by waiting
-/// for a second measurement inside the page. That also sidesteps timer
-/// throttling: a minimised or occluded window can throttle `setTimeout`
-/// (and `requestAnimationFrame` no better), which would make such a wait
-/// take a second or more. `launch.rs` passes the switches that turn that
-/// throttling off for a browser this app starts, but a browser the person
-/// attached some other way could still throttle. The click point is the
+/// `this` is the element. Argument: `settle`.
+///
+/// Without `settle` it is one synchronous measurement (the re-check
+/// `click` makes the instant before it acts). With it, an element whose
+/// flags already say it is usable is measured, watched on every animation
+/// frame, and measured again, and `stable` says whether its `rect` held:
+/// whether it is still moving is decided inside ONE round trip, the way
+/// Playwright decides it, instead of across two looks a `poll_ms` apart.
+///
+/// The watch lasts at least two frames AND at least 50 ms, and ends at
+/// the first frame that sees it move. Two frames alone are not enough:
+/// a page that moves things from a timer moves them in steps, and the
+/// live fixture's `#mover` (a step every 40 ms) was seen standing still
+/// across two frames and clicked (`browser_live`, 2026-10-09). 50 ms
+/// catches anything that takes a step at least every 50 ms.
+///
+/// A page that paints no frames (a minimised or occluded window, which
+/// can also throttle timers) would never call `requestAnimationFrame`
+/// back, so a 100 ms timer ends the wait instead. `launch.rs` passes the
+/// switches that turn that throttling off for a browser this app starts;
+/// a browser the person attached some other way could still throttle,
+/// and then one look takes longer, not forever. The click point is the
 /// middle of the part of the rect actually inside the viewport - and inside
 /// every enclosing frame's visible box, so a button half hidden by a
 /// frame's edge is clicked in its visible half - and is only hit-tested
@@ -61,72 +72,110 @@ pub struct Ready {
 /// where only the element around them is (PeoplesHR's "Performance
 /// Management System", 2026-10-01). A block element has one box, the same
 /// as its bounding box, so for it nothing changes. `rect` stays the
-/// bounding box, which is what the holding-still comparison reads.
-pub const PROBE_JS: &str = r#"function() {
-  this.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
-  const b = this.getBoundingClientRect();
-  const drawn = Array.from(this.getClientRects()).find((c) =>
-    c.width > 0 && c.height > 0 && c.right > 0 && c.left < innerWidth && c.bottom > 0 && c.top < innerHeight);
-  const a = drawn || b;
-  const l = Math.max(a.left, 0), r = Math.min(a.right, innerWidth), t = Math.max(a.top, 0), bt = Math.min(a.bottom, innerHeight);
-  const onscreen = r > l && bt > t;
-  // Inside a same-origin frame everything here is measured in the frame.
-  // Walk out to the top window: shift the box by each frame's place on its
-  // page (plus its border and padding), and clip it to each frame's visible
-  // box. `out` keeps each enclosing page with the offset from this frame's
-  // coordinates to that page's, for the cover checks below.
-  let w = window, ox = 0, oy = 0;
-  let cl = l, cr = r, ct = t, cb = bt;
-  const out = [];
-  while (w.frameElement) {
-    const fe = w.frameElement, fr = fe.getBoundingClientRect(), pw = w.parent;
-    // The frame's viewport starts inside its border AND its padding.
-    const cs = pw.getComputedStyle(fe);
-    const dx = fr.left + fe.clientLeft + (parseFloat(cs.paddingLeft) || 0);
-    const dy = fr.top + fe.clientTop + (parseFloat(cs.paddingTop) || 0);
-    ox += dx; oy += dy;
-    cl = Math.max(cl + dx, fr.left, 0); cr = Math.min(cr + dx, fr.right, pw.innerWidth);
-    ct = Math.max(ct + dy, fr.top, 0); cb = Math.min(cb + dy, fr.bottom, pw.innerHeight);
-    out.push({ fe, pw, ox, oy });
-    w = pw;
-  }
-  const allOnscreen = onscreen && cr > cl && cb > ct;
-  // The point is the middle of what is LEFT once every frame has clipped
-  // the box, so a button half hidden by a frame's edge is aimed at in its
-  // visible half. `lx`/`ly` is that point in this frame's own coordinates.
-  const lx = allOnscreen ? (cl + cr) / 2 - ox : (l + r) / 2;
-  const ly = allOnscreen ? (ct + cb) / 2 - oy : (t + bt) / 2;
-  const top = onscreen ? document.elementFromPoint(lx, ly) : null;
-  const label = top && top.closest ? top.closest('label') : null;
-  // Words that let a click through (pointer-events: none) to the row around
-  // them: the row is what the point belongs to, and what a person's click on
-  // those words reaches - it is not covering them. Only an ancestor counts;
-  // anything else there really is in the way.
-  const through = !!top && top !== this && top.contains(this) && getComputedStyle(this).pointerEvents === 'none';
-  const hit = onscreen && !!top && (top === this || this.contains(top) || through || (label && label.control === this));
-  const say = (e) => !e ? 'another element' : e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') +
-    (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
-  const editable =
-    (this instanceof HTMLInputElement && !this.readOnly &&
-      !/^(checkbox|radio|file|button|submit|reset|image|hidden)$/.test(this.type)) ||
-    (this instanceof HTMLTextAreaElement && !this.readOnly) ||
-    this instanceof HTMLSelectElement || this.isContentEditable;
-  // Each enclosing page must have that frame on top at the point - an
-  // overlay on the page over the frame covers the element too.
-  let outer = null;
-  for (const o of out) {
-    const there = o.pw.document.elementFromPoint(lx + o.ox, ly + o.oy);
-    if (!there || (there !== o.fe && !o.fe.contains(there))) { outer = there || false; break; }
-  }
-  const allHit = hit && allOnscreen && outer === null;
-  return {
-    visible: this.checkVisibility({ visibilityProperty: true }) && b.width > 0 && b.height > 0,
-    enabled: !this.disabled && this.getAttribute('aria-disabled') !== 'true' && !this.closest('fieldset[disabled]'),
-    editable: !!editable,
-    onscreen: allOnscreen, hit: allHit, x: lx + ox, y: ly + oy,
-    rect: [b.left + ox, b.top + oy, b.width, b.height],
-    covered_by: !allOnscreen || allHit ? '' : (outer !== null ? say(outer || null) : say(top)),
+/// bounding box, which is what the holding-still comparison reads. The
+/// second measurement does not scroll: re-centring the element would hide
+/// the very movement it is looking for.
+pub const PROBE_JS: &str = r#"async function(settle) {
+  const measure = (scroll) => {
+    if (scroll) this.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    const b = this.getBoundingClientRect();
+    const drawn = Array.from(this.getClientRects()).find((c) =>
+      c.width > 0 && c.height > 0 && c.right > 0 && c.left < innerWidth && c.bottom > 0 && c.top < innerHeight);
+    const a = drawn || b;
+    const l = Math.max(a.left, 0), r = Math.min(a.right, innerWidth), t = Math.max(a.top, 0), bt = Math.min(a.bottom, innerHeight);
+    const onscreen = r > l && bt > t;
+    // Inside a same-origin frame everything here is measured in the frame.
+    // Walk out to the top window: shift the box by each frame's place on its
+    // page (plus its border and padding), and clip it to each frame's visible
+    // box. `out` keeps each enclosing page with the offset from this frame's
+    // coordinates to that page's, for the cover checks below.
+    let w = window, ox = 0, oy = 0;
+    let cl = l, cr = r, ct = t, cb = bt;
+    const out = [];
+    while (w.frameElement) {
+      const fe = w.frameElement, fr = fe.getBoundingClientRect(), pw = w.parent;
+      // The frame's viewport starts inside its border AND its padding.
+      const cs = pw.getComputedStyle(fe);
+      const dx = fr.left + fe.clientLeft + (parseFloat(cs.paddingLeft) || 0);
+      const dy = fr.top + fe.clientTop + (parseFloat(cs.paddingTop) || 0);
+      ox += dx; oy += dy;
+      cl = Math.max(cl + dx, fr.left, 0); cr = Math.min(cr + dx, fr.right, pw.innerWidth);
+      ct = Math.max(ct + dy, fr.top, 0); cb = Math.min(cb + dy, fr.bottom, pw.innerHeight);
+      out.push({ fe, pw, ox, oy });
+      w = pw;
+    }
+    const allOnscreen = onscreen && cr > cl && cb > ct;
+    // The point is the middle of what is LEFT once every frame has clipped
+    // the box, so a button half hidden by a frame's edge is aimed at in its
+    // visible half. `lx`/`ly` is that point in this frame's own coordinates.
+    const lx = allOnscreen ? (cl + cr) / 2 - ox : (l + r) / 2;
+    const ly = allOnscreen ? (ct + cb) / 2 - oy : (t + bt) / 2;
+    const top = onscreen ? document.elementFromPoint(lx, ly) : null;
+    const label = top && top.closest ? top.closest('label') : null;
+    // Words that let a click through (pointer-events: none) to the row around
+    // them: the row is what the point belongs to, and what a person's click on
+    // those words reaches - it is not covering them. Only an ancestor counts;
+    // anything else there really is in the way.
+    const through = !!top && top !== this && top.contains(this) && getComputedStyle(this).pointerEvents === 'none';
+    const hit = onscreen && !!top && (top === this || this.contains(top) || through || (label && label.control === this));
+    const say = (e) => !e ? 'another element' : e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') +
+      (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
+    const editable =
+      (this instanceof HTMLInputElement && !this.readOnly &&
+        !/^(checkbox|radio|file|button|submit|reset|image|hidden)$/.test(this.type)) ||
+      (this instanceof HTMLTextAreaElement && !this.readOnly) ||
+      this instanceof HTMLSelectElement || this.isContentEditable;
+    // Each enclosing page must have that frame on top at the point - an
+    // overlay on the page over the frame covers the element too.
+    let outer = null;
+    for (const o of out) {
+      const there = o.pw.document.elementFromPoint(lx + o.ox, ly + o.oy);
+      if (!there || (there !== o.fe && !o.fe.contains(there))) { outer = there || false; break; }
+    }
+    const allHit = hit && allOnscreen && outer === null;
+    return {
+      visible: this.checkVisibility({ visibilityProperty: true }) && b.width > 0 && b.height > 0,
+      enabled: !this.disabled && this.getAttribute('aria-disabled') !== 'true' && !this.closest('fieldset[disabled]'),
+      editable: !!editable,
+      onscreen: allOnscreen, hit: allHit, x: lx + ox, y: ly + oy,
+      rect: [b.left + ox, b.top + oy, b.width, b.height],
+      covered_by: !allOnscreen || allHit ? '' : (outer !== null ? say(outer || null) : say(top)),
+    };
   };
+  const first = measure(true);
+  // Only an element the flags already call usable is worth watching
+  // across frames: anything else is reported for its flags, not its motion.
+  if (!settle || !first.visible || !first.onscreen || !first.enabled || !first.hit) {
+    first.stable = false;
+    return first;
+  }
+  // Watched on every frame for at least two frames and 50 ms, and no
+  // longer than the first frame it moves on. A page that paints no frames
+  // (a hidden tab) never calls back, so a timer ends the watch instead and
+  // the second measurement still comes 100 ms after the first.
+  const box = () => { const r = this.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; };
+  const same = (p, q) => p.every((v, i) => v === q[i]);
+  const from = box(), start = performance.now();
+  let moved = false, over = false;
+  await new Promise((done) => {
+    const late = setTimeout(() => { over = true; done(); }, 100);
+    let frames = 0;
+    const tick = () => {
+      if (over) return;
+      frames += 1;
+      moved = !same(box(), from);
+      if (moved || (frames >= 2 && performance.now() - start >= 50)) {
+        clearTimeout(late);
+        done();
+      } else {
+        requestAnimationFrame(tick);
+      }
+    };
+    requestAnimationFrame(tick);
+  });
+  const second = measure(false);
+  second.stable = !moved && same(second.rect, first.rect);
+  return second;
 }"#;
 
 /// `this` is the element. Argument: the value.
@@ -210,11 +259,11 @@ pub const DISABLED: &str = "is disabled";
 pub const NOT_EDITABLE: &str = "cannot be typed into";
 /// Followed by what is in the way (`tag#id.class`, or "another element").
 pub const COVERED_BY: &str = "is covered by ";
-/// It never held still for two looks in a row.
+/// It moved between the two animation frames of every look.
 pub const STILL_MOVING: &str = "is still moving";
 /// The tail of [`matched_many`].
 pub const MATCHED_MANY_TAIL: &str = " elements - narrow it, or add nth";
-/// Followed by the reason the second look found.
+/// Followed by the reason the re-check just before the click found.
 pub const MOVED_BEFORE_CLICK: &str = "moved or was covered just before the click: ";
 /// A fill whose field gave the focus away.
 pub const LOST_FOCUS: &str = "lost focus before it could be typed into";
@@ -252,49 +301,30 @@ fn reason(p: &Value, need_editable: bool) -> Option<String> {
     }
 }
 
-fn read_rect(p: &Value) -> [f64; 4] {
-    let at = |i: usize| p["rect"][i].as_f64().unwrap_or(0.0);
-    [at(0), at(1), at(2), at(3)]
-}
-
 enum Look {
     Ready(Ready),
-    /// `rect` is `Some` only when this look was otherwise ready and is
-    /// being held back purely for not yet matching the previous look's
-    /// rect - the one case where the next look must remember it.
-    NotYet { why: String, rect: Option<[f64; 4]> },
+    NotYet(String),
 }
 
-async fn look<D: Driver>(
-    d: &mut D,
-    target: &Target,
-    need_editable: bool,
-    prev_rect: Option<[f64; 4]>,
-) -> Result<Look, CdpError> {
+async fn look<D: Driver>(d: &mut D, target: &Target, need_editable: bool) -> Result<Look, CdpError> {
     let found = resolve_explained(d, target).await?;
     let handles = found.handles;
     if handles.is_empty() {
-        let why = found.unreachable_frame.unwrap_or_else(|| NOT_FOUND.to_string());
-        return Ok(Look::NotYet { why, rect: None });
+        return Ok(Look::NotYet(found.unreachable_frame.unwrap_or_else(|| NOT_FOUND.to_string())));
     }
     if handles.len() > 1 && !target.is_legacy() {
-        return Ok(Look::NotYet {
-            why: matched_many(handles.len()),
-            rect: None,
-        });
+        return Ok(Look::NotYet(matched_many(handles.len())));
     }
     let handle = handles.into_iter().next().expect("checked non-empty");
-    let p = page::call_value(d, &handle, PROBE_JS, &[]).await?;
+    let p = page::call_value(d, &handle, PROBE_JS, &[json!(true)]).await?;
     if let Some(why) = reason(&p, need_editable) {
-        return Ok(Look::NotYet { why, rect: None });
+        return Ok(Look::NotYet(why));
     }
     // Everything the flags alone can say is fine, so the one thing left
-    // to check is whether it is still moving: it must be seen holding the
-    // same rect across two polls, one `poll_ms` apart, before it counts
-    // as ready.
-    let rect = read_rect(&p);
-    if Some(rect) != prev_rect {
-        return Ok(Look::NotYet { why: STILL_MOVING.to_string(), rect: Some(rect) });
+    // is whether it is still moving, which the probe itself watched for
+    // across two animation frames.
+    if !p["stable"].as_bool().unwrap_or(false) {
+        return Ok(Look::NotYet(STILL_MOVING.to_string()));
     }
     Ok(Look::Ready(Ready {
         handle,
@@ -338,22 +368,19 @@ async fn keep_looking<D: Driver>(
     // to become usable is not the same failure as a browser that has
     // stopped answering, and the two must not be reported the same way.
     let mut looked = false;
-    let mut prev_rect: Option<[f64; 4]> = None;
     let mut last = STILL_LOOKING.to_string();
     loop {
         page::release(d).await;
-        match look(d, target, need_editable, prev_rect).await {
+        match look(d, target, need_editable).await {
             Ok(Look::Ready(r)) => return Ok(r),
-            Ok(Look::NotYet { why, rect }) => {
+            Ok(Look::NotYet(why)) => {
                 looked = true;
-                prev_rect = rect;
                 last = why;
             }
             // The page refusing mid-navigation is the page answering, just
             // between two documents - it counts as a completed look.
             Err(e) if e.is_transient() => {
                 looked = true;
-                prev_rect = None;
                 last = e.to_string();
             }
             // No new information about the page: the browser did not

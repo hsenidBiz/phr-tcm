@@ -98,6 +98,9 @@ struct Page {
     covers: Vec<(&'static str, &'static str)>,
     /// A prompt that stops matching at this fake-clock time.
     gone: Vec<(&'static str, u64)>,
+    /// A prompt still sliding in until this fake-clock time: the probe
+    /// sees it move between its two frames.
+    settling: Vec<(&'static str, u64)>,
     /// From the first readiness probe of a prompt, the browser answers no
     /// probe for this long (real time): a page whose main thread is busy.
     busy: Option<std::time::Duration>,
@@ -111,6 +114,7 @@ fn page_app(page: Page) -> (ScriptedDriver, PromptApp) {
     let covers: Vec<(String, String)> = page.covers.iter().map(|(o, u)| (o.to_string(), u.to_string())).collect();
     let gone: Vec<(String, u64)> = page.gone.iter().map(|(c, at)| (c.to_string(), *at)).collect();
     let busy = page.busy;
+    let settling: Vec<(String, u64)> = page.settling.iter().map(|(c, at)| (c.to_string(), *at)).collect();
     let mut busy_since: Option<std::time::Instant> = None;
     let showing = move |css: &str, clock: &AtomicU64, clicked: &Mutex<Vec<String>>| -> bool {
         let now = clock.load(Ordering::SeqCst);
@@ -143,10 +147,12 @@ fn page_app(page: Page) -> (ScriptedDriver, PromptApp) {
                     }
                 }
                 let over = covers.iter().find(|(o, u)| *u == css && showing(o, &clock, &clicked)).map(|(o, _)| o.clone());
+                let now = clock.load(Ordering::SeqCst);
+                let stable = !settling.iter().any(|(c, until)| *c == css && now < *until);
                 json!({ "result": { "value": {
                     "visible": true, "onscreen": true, "enabled": true, "editable": true,
                     "hit": over.is_none(), "covered_by": over.unwrap_or_default(),
-                    "x": 5.0, "y": 5.0, "rect": [0.0, 0.0, 10.0, 10.0]
+                    "x": 5.0, "y": 5.0, "rect": [0.0, 0.0, 10.0, 10.0], "stable": stable
                 } } })
             }
             "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
@@ -307,13 +313,18 @@ async fn a_late_modal_covering_the_sidebar_is_handled_and_the_sidebar_clicked_af
 }
 
 /// The cookie bar lands over the menu toggle while the toggle's click is
-/// waiting for it to be usable: the bar is dismissed first, then the
-/// toggle clicked.
+/// waiting for it to be usable (it is still sliding in): the bar is
+/// dismissed first, then the toggle clicked.
 #[tokio::test]
 async fn a_cookie_bar_covering_the_menu_toggle_is_handled_first() {
     let dir = tempfile::tempdir().unwrap();
     with_saved_session(dir.path());
-    let (mut d, app) = covering_app(&[("#sidebar", 0), ("#cookie", 5)], &[("#cookie", "#sidebar")]);
+    let (mut d, app) = page_app(Page {
+        prompts: vec![("#sidebar", 0), ("#cookie", 5)],
+        covers: vec![("#cookie", "#sidebar")],
+        settling: vec![("#sidebar", 20)],
+        ..Page::default()
+    });
     let out = sign_in(&mut d, dir.path(), &prompt_recipe(form()), &account(), &quick()).await;
     assert!(out.ok, "{}", out.detail);
     assert_eq!(app.clicked(), vec!["#cookie", "#sidebar"]);

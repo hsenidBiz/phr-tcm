@@ -31,7 +31,7 @@ impl Default for Timing {
             action_ms: 15_000,
             expect_ms: 10_000,
             nav_ms: 30_000,
-            poll_ms: 100,
+            poll_ms: 40,
             highlight_ms: 350,
             lease_wait_ms: crate::autorun::lease::WAIT.as_millis() as u64,
         }

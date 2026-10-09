@@ -417,13 +417,13 @@ impl Driver for ScriptedDriver {
 }
 
 /// The actionability probe's answer for an element that is fully ready:
-/// visible, onscreen, enabled, editable, unobstructed, and (since a
-/// `FakePage`'s single static answer repeats) holding still across the
-/// two looks `wait_ready` needs to call it ready.
+/// visible, onscreen, enabled, editable, unobstructed, and holding still
+/// across the two animation frames the probe watches it for.
 pub fn ready_probe() -> Value {
     json!({
         "visible": true, "onscreen": true, "enabled": true, "editable": true,
-        "hit": true, "x": 10.0, "y": 20.0, "covered_by": "", "rect": [0.0, 0.0, 80.0, 24.0]
+        "hit": true, "x": 10.0, "y": 20.0, "covered_by": "", "rect": [0.0, 0.0, 80.0, 24.0],
+        "stable": true
     })
 }
 
@@ -617,7 +617,7 @@ pub fn stateful_app(cookie_is_good: bool, broken_selector: Option<&'static str>)
         (state.signed_in.clone(), state.typed_password.clone(), state.restored.clone(), state.clicks.clone());
     let mut last_selector = String::new();
     let ready = json!({ "visible": true, "onscreen": true, "enabled": true, "editable": true, "hit": true,
-        "x": 5.0, "y": 5.0, "covered_by": "", "rect": [0.0, 0.0, 10.0, 10.0] });
+        "x": 5.0, "y": 5.0, "covered_by": "", "rect": [0.0, 0.0, 10.0, 10.0], "stable": true });
     let mut d = ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         Ok(match method {
