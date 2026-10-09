@@ -603,14 +603,16 @@ async fn on_the_starting_page<D: Driver>(d: &mut D, route: &Route) -> bool {
     }
 }
 
-/// The page's address, when it is on the origin of the route's home (one
-/// read of `location.href`). None for any other origin, a page with none
-/// (`about:blank`) or one that does not answer.
+/// The page's address, when it is on one of the application's origins: the
+/// home page's, or one the recipe allows (one read of `location.href`).
+/// None for any other origin, a page with none (`about:blank`) or one that
+/// does not answer.
 async fn page_on_home_origin<D: Driver>(d: &mut D, route: &Route) -> Option<String> {
     let v = page::eval_value(d, "location.href").await.ok()?;
     let href = v.as_str().unwrap_or("");
     let origin = origin_of(href)?;
-    (Some(origin) == origin_of(&route.home.start_url)).then(|| href.to_string())
+    let ours = Some(&origin) == origin_of(&route.home.start_url).as_ref() || route.home.origins.contains(&origin);
+    ours.then(|| href.to_string())
 }
 
 /// A trip to the route's module. Ok carries the address path it reached.
