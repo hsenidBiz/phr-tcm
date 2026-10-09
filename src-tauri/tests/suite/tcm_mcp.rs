@@ -1289,7 +1289,7 @@ fn the_discovery_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
         (
             "start_autorun_discovery",
             "/autorun-discover-start",
-            serde_json::json!({ "account": "admin", "area": "Leave Apply", "browser": "edge" }),
+            serde_json::json!({ "account": "admin", "area": "Leave Apply", "browser": "edge", "mapping": true, "modules": ["Leave"] }),
             serde_json::json!(["account"]),
         ),
         (
@@ -1307,6 +1307,25 @@ fn the_discovery_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
         ("end_autorun_discovery", "/autorun-discover-end", serde_json::json!({}), serde_json::json!([])),
     ];
     rides_with_the_auto_run_tools(&tools);
+}
+
+/// Starting a discovery documents the mapping run: a boolean `mapping` and a
+/// list of `modules`, neither required.
+#[test]
+fn start_autorun_discovery_documents_mapping_and_modules() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let list: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tool = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "start_autorun_discovery")
+        .expect("start_autorun_discovery is listed");
+    let props = &tool["inputSchema"]["properties"];
+    assert_eq!(props["mapping"]["type"], "boolean", "{props}");
+    assert_eq!(props["modules"]["type"], "array", "{props}");
+    assert_eq!(props["modules"]["items"]["type"], "string", "{props}");
+    assert_eq!(tool["inputSchema"]["required"], serde_json::json!(["account"]));
 }
 
 /// Each tool is gated like `probe_autorun_locator`, refused the right way

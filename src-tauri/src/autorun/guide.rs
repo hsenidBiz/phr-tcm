@@ -1046,6 +1046,23 @@ What you see with no area named is filed under no area. Starting a
 discovery does not mark its area explored; what you see in the area
 does.
 
+### Mapping the menus
+
+`/tcm:map-menus` maps whole modules ahead of time. Pass `mapping` as true
+and name the `modules` to `start_autorun_discovery`; a mapping run needs
+at least one. It is read-only: every save the page attempts is blocked and
+counted, never a failed step, and the action's answer says how many were
+blocked with `blocked`. It saves only its own areas with
+`save_autorun_area`: a new name is saved as made by mapping, an earlier
+mapping area is updated when its clicks or arrival changed (and answered
+`unchanged` when they did not, which is a success), and an area a person
+made is refused and left as it is. A run saves at most 150 screens; end it
+and start another for the rest. `end_autorun_discovery` answers a summary
+of what was added, updated, unchanged, unreached and blocked, which the
+person sees under "Last menu mapping" in the Discovery dialog. A later
+`/tcm:discover` uses the areas mapping made, listed in "This project's
+areas".
+
 Set the script's `area` to the area you explored, every time, even when
 it is the module's default area: a script with no `area` only gets credit
 for locators not tied to an area. That is the name `save_autorun_area`
