@@ -208,6 +208,18 @@ export const importFile: Screen = {
       does: "Sorts the queue to follow the specification document, so a reviewer can read both side by side.",
     },
     {
+      id: "group-by-area",
+      shot: QUEUE,
+      group: "the-queue",
+      locate: { role: "switch", name: "Group by area" },
+      name: "Group by area",
+      does:
+        "Shows the queue under a heading for each area, one level for each part of the area's path, in the order the cases come. " +
+        "Each heading counts the cases under it, folds away, and has a box that ticks all of them; cases with no area sit under **Ungrouped**, last. " +
+        "Only the view changes: the cases are still uploaded in queue order, and **View in browser** groups its page the same way.",
+      tips: ["The switch and the groups you fold are remembered on this computer."],
+    },
+    {
       id: "select-all",
       shot: QUEUE,
       group: "queued-cases",
