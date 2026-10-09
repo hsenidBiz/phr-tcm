@@ -3,6 +3,7 @@
 //!
 //! NOTHING here calls Azure DevOps.
 
+use crate::api_templates::held::{HeldBrowser, Keeps};
 use crate::autorun::one_browser::{Launcher, OneBrowser};
 use crate::autorun::plan::Reset;
 use crate::autorun::replay::{self, Browsers, CaseToRun};
@@ -181,6 +182,47 @@ impl Browsers for RealBrowsers {
         if let Some(b) = self.current.take() {
             super::autorun::close_browser(b);
         }
+    }
+}
+
+/// A browser kept signed in between API template runs
+/// (`api_templates::held`): the connection with the process it drives, so
+/// it outlives the `RealBrowsers` that opened it.
+pub(crate) struct KeptBrowser {
+    cdp: Cdp,
+    browser: LaunchedBrowser,
+}
+
+impl HeldBrowser for KeptBrowser {
+    fn close(self) {
+        drop(self.cdp);
+        super::autorun::close_browser(self.browser);
+    }
+}
+
+impl Keeps for RealBrowsers {
+    type Kept = KeptBrowser;
+
+    /// Takes the process out of `current`, so dropping this value no
+    /// longer ends it. One that has already ended stays to be closed.
+    fn keep(&mut self, d: Cdp) -> Result<KeptBrowser, Cdp> {
+        let alive = self.current.as_mut().is_some_and(|b| matches!(b.child.try_wait(), Ok(None)));
+        match self.current.take() {
+            Some(browser) if alive => Ok(KeptBrowser { cdp: d, browser }),
+            other => {
+                self.current = other;
+                Err(d)
+            }
+        }
+    }
+
+    /// Puts the process back in `current`: from here on `close`, or a
+    /// panic dropping this value, ends it like one this value opened.
+    fn adopt(&mut self, kept: KeptBrowser) -> Cdp {
+        if let Some(old) = self.current.replace(kept.browser) {
+            super::autorun::close_browser(old);
+        }
+        kept.cdp
     }
 }
 

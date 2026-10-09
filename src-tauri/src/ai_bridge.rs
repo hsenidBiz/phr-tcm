@@ -821,7 +821,7 @@ const RUN_SHAPE: &str = "{ \"id\": \"<template id>\", \"account\": \"<account ke
 /// afterwards. The route arm with the browser factory (`open`) and the
 /// flow database (`open_db`, asked for only by a template on a flow)
 /// handed in, so a test reaches all of it but a real browser and server.
-pub async fn api_template_prove<B: crate::autorun::replay::Browsers, D: crate::api_templates::gate::StageDb>(
+pub async fn api_template_prove<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
     ctx: &BridgeContext,
     body: &str,
     open: impl FnOnce(crate::browser::launch::Browser) -> B,
@@ -880,7 +880,7 @@ pub async fn api_template_prove<B: crate::autorun::replay::Browsers, D: crate::a
 /// or the failing step and what had been created. As
 /// `api_template_prove`, with the browser factory and the flow database
 /// handed in.
-pub async fn api_template_run<B: crate::autorun::replay::Browsers, D: crate::api_templates::gate::StageDb>(
+pub async fn api_template_run<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
     ctx: &BridgeContext,
     body: &str,
     open: impl FnOnce(crate::browser::launch::Browser) -> B,
@@ -947,7 +947,7 @@ fn one_short_line(text: &str) -> String {
 /// `open_db` is called at most once, and never for a template on no flow:
 /// those run exactly as they did before flows existed, database or not.
 #[allow(clippy::too_many_arguments)]
-async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate::api_templates::gate::StageDb>(
+async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate::api_templates::gate::StageDb>(
     ctx: &BridgeContext,
     root: &std::path::Path,
     req: crate::api_templates::runner::RunRequest,
@@ -1020,6 +1020,8 @@ async fn run_api_template_request<B: crate::autorun::replay::Browsers, D: crate:
 
     let mut browsers = open(which);
     let report = run_template(&mut browsers, root, &req, timing).await;
+    // A browser the run kept signed in (`api_templates::held`) was taken
+    // out of `browsers` first, so this ends only one it did not keep.
     drop(browsers);
     // Every step passed, so the entry is gone from the application, whether
     // or not the template is saved below.

@@ -687,7 +687,12 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
 /// already closed - so waiting here for the recorder to be let go is what
 /// makes "the browser is gone" true for the caller, not just "a cancel was
 /// asked for".
+///
+/// The browsers API template runs kept signed in (`api_templates::held`)
+/// go too, closed off the async threads alongside the rest, so the
+/// caller's bound covers them.
 pub async fn close_autorun_browsers() {
+    let held = tauri::async_runtime::spawn_blocking(crate::api_templates::held::close_all);
     let _ = crate::commands::autorun_record::auto_run_record_cancel().await;
     while crate::commands::autorun_record::recording_is_going() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
@@ -701,6 +706,8 @@ pub async fn close_autorun_browsers() {
         close_session(s);
         crate::applog::info("Auto-run browser closed as the app exits");
     }
+    drop(slot);
+    let _ = held.await;
 }
 
 /// What a supervised step answers: one outcome per action, the tab the

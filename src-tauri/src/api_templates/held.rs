@@ -2,10 +2,18 @@
 //! per (environment id, account key), process-wide, so the next run as that
 //! account can skip the launch and the sign-in.
 //!
-//! The store only keeps entries. It never opens, drives or closes a
-//! browser. Every entry it hands back - a stale one from `take`, a replaced
-//! one from `put`, the ones `expired` and `drain_all` drain - is the
-//! caller's to close.
+//! The store itself (`take`, `put`, `expired`, `drain_all`) only keeps
+//! entries. It never opens, drives or closes a browser: every entry it
+//! hands back - a stale one from `take`, a replaced one from `put`, the
+//! ones `expired` and `drain_all` drain - is the caller's to close. The
+//! helpers built on it (`keep`, `sweep`, `close_all`) close what they take
+//! out, through the driver's own `HeldBrowser::close`.
+//!
+//! A run keeps its browser with `keep`. The first `keep` of a driver type
+//! starts that type's idle sweep (`SWEEP_EVERY`) and enrols it in
+//! `close_all`, which the app's exit, an environment change and signing out
+//! call. An entry a run has taken out is not in the store, so neither the
+//! sweep nor `close_all` can close a browser while a run uses it.
 //!
 //! **A held driver owns its browser process.** In the app,
 //! `RealBrowsers::open` hands out only the `Cdp` connection: the Edge
@@ -42,6 +50,7 @@
 
 use super::runner::Session;
 use crate::applog;
+use crate::autorun::replay::Browsers;
 use crate::autorun::accounts::Account;
 use crate::autorun::lease;
 use crate::autorun::recipe::SignInRecipe;
@@ -210,4 +219,107 @@ fn drain<D: Send + 'static>(due: impl Fn(&(TypeId, String, String), &Slot) -> Op
             open::<D>(slot)
         })
         .collect()
+}
+
+/// How often the idle sweep looks for held browsers to close.
+pub const SWEEP_EVERY: Duration = Duration::from_secs(10);
+
+/// A browser that can be held: it owns its browser process, so it outlives
+/// the `Browsers` that opened it, and it ends that process itself.
+pub trait HeldBrowser: Send + 'static {
+    /// Ends the browser. Never panics: a close that fails is logged and
+    /// forgotten.
+    fn close(self);
+}
+
+/// `Browsers` whose browser can be kept after a run, for the next run as
+/// the same account to reuse.
+pub trait Keeps: Browsers {
+    /// What is kept: the connection with the browser process it drives.
+    type Kept: HeldBrowser;
+    /// Takes the browser `d` drives out of this value, process and all, so
+    /// dropping this value no longer ends it. `Err(d)` when it is not kept:
+    /// this kind keeps nothing, or its process has already ended. The
+    /// caller then closes `d` with `Browsers::close`, as before.
+    fn keep(&mut self, d: Self::D) -> Result<Self::Kept, Self::D>;
+    /// A kept browser taken back for a run. From here on it is this
+    /// value's own: its `close`, or dropping it, ends the process.
+    fn adopt(&mut self, kept: Self::Kept) -> Self::D;
+}
+
+/// The `Kept` of `Browsers` that never keep a browser: nothing of this
+/// type exists, so nothing is ever put or found.
+pub enum NotKept {}
+
+impl HeldBrowser for NotKept {
+    fn close(self) {
+        match self {}
+    }
+}
+
+/// Keeps `entry` for the account `key` in `env` (`put`) and closes the
+/// entry it replaced. The first `keep` of a driver type starts its sweep
+/// and enrols it in `close_all`.
+pub fn keep<K: HeldBrowser>(env: &str, key: &str, entry: HeldEntry<K>) {
+    enrol::<K>();
+    if let Some(old) = put(env, key, entry) {
+        old.driver.close();
+    }
+}
+
+/// Closes every `K` entry `expired_at(now)` drains: idle past `HELD_IDLE`,
+/// or given way. Never one a run has taken out: it is not in the store.
+pub fn sweep_at<K: HeldBrowser>(now: Instant) {
+    for e in expired_at::<K>(now) {
+        e.driver.close();
+    }
+}
+
+/// `sweep_at`, now.
+pub fn sweep<K: HeldBrowser>() {
+    sweep_at::<K>(Instant::now());
+}
+
+/// Closes every held browser of every driver type ever kept: the app
+/// quits, the active environment changes or the person signs out.
+pub fn close_all() {
+    // Copied out first: a close is never made under the lock.
+    let closers: Vec<fn()> = kinds().iter().map(|(_, close)| *close).collect();
+    for close in closers {
+        close();
+    }
+}
+
+fn close_every<K: HeldBrowser>() {
+    for e in drain_all::<K>() {
+        e.driver.close();
+    }
+}
+
+/// Each driver type kept so far, with how to close all of its entries.
+fn kinds() -> MutexGuard<'static, Vec<(TypeId, fn())>> {
+    static KINDS: Mutex<Vec<(TypeId, fn())>> = Mutex::new(Vec::new());
+    KINDS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Enrols `K` in `close_all` and starts its sweep, once per type: one task
+/// for the life of the app, every `SWEEP_EVERY`. The close itself runs off
+/// the async threads, since ending a browser process waits for it to go.
+fn enrol<K: HeldBrowser>() {
+    let ty = TypeId::of::<K>();
+    {
+        let mut k = kinds();
+        if k.iter().any(|(t, _)| *t == ty) {
+            return;
+        }
+        k.push((ty, close_every::<K>));
+    }
+    tauri::async_runtime::spawn(async {
+        loop {
+            tokio::time::sleep(SWEEP_EVERY).await;
+            // A sweep that panicked is reported by its handle and the next
+            // one runs as usual.
+            let _ = tauri::async_runtime::spawn_blocking(sweep::<K>).await;
+        }
+    });
 }
