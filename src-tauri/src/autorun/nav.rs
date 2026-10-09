@@ -12,6 +12,7 @@
 
 use super::accounts::Account;
 use super::recipe::{origin_of, project_slug, RecipeStep, SignInRecipe};
+use super::timing::QUICK_TRY_MS;
 use super::CaseScript;
 use crate::browser::actions::{execute_in, failed_by, Action, ActionOutcome, Policy};
 use crate::browser::cdp::Driver;
@@ -607,9 +608,41 @@ async fn on_the_starting_page<D: Driver>(d: &mut D, route: &Route) -> bool {
     }
 }
 
+/// A trip to the route's module. Ok carries the address path it reached.
+///
+/// Anywhere but right after a sign-in, it first tries the path's clicks
+/// from wherever the page already is: a module screen usually shows the
+/// menu, and going home costs a page load, the signed-in check and
+/// `after_sign_in`. A click is skipped when the click after it can
+/// already be made, so a toggle never closes a menu that is open. Each of
+/// those clicks, and the arrival check after them, gets `QUICK_TRY_MS` at
+/// most. If any of it fails, the trip says so once in the log and goes
+/// the old way (`the_old_way`), whose failure is the one reported.
+///
+/// Right after a sign-in it goes the old way at once, as it always did.
+pub async fn go_to_module<D: Driver>(
+    d: &mut D,
+    route: &Route,
+    from: TripFrom,
+    timing: &Timing,
+) -> Result<String, PathFailure> {
+    if from == TripFrom::Elsewhere {
+        let quick = Timing {
+            action_ms: timing.action_ms.min(QUICK_TRY_MS),
+            nav_ms: timing.nav_ms.min(QUICK_TRY_MS),
+            ..timing.clone()
+        };
+        if let Ok(at) = click_path(d, route, &quick, Skip::WhenNextIsReady).await {
+            return Ok(at);
+        }
+        crate::applog::info(format!("went home and tried {} again", route.path.name()));
+    }
+    the_old_way(d, route, from, timing).await
+}
+
 /// Home, then each recorded click with the runner's own click (so each
 /// must find exactly one visible element), then wait up to `nav_ms` for
-/// the address path to equal `arrived`. Ok carries the path it reached.
+/// the address path to equal `arrived`.
 ///
 /// Right after a sign-in that left the browser on the page the recording
 /// began on, there is no going home: that would reload the application -
@@ -617,7 +650,7 @@ async fn on_the_starting_page<D: Driver>(d: &mut D, route: &Route) -> bool {
 /// the same page and run after_sign_in a second time (PeoplesHR,
 /// 2026-10-01). Anywhere else it goes home, since an address that reads
 /// like home can still be showing a module screen.
-pub async fn go_to_module<D: Driver>(
+async fn the_old_way<D: Driver>(
     d: &mut D,
     route: &Route,
     from: TripFrom,
@@ -631,8 +664,32 @@ pub async fn go_to_module<D: Driver>(
     if !home.ok {
         return Err(PathFailure { at: Where::Home, reason: home.detail, harness: home.harness });
     }
+    click_path(d, route, timing, Skip::Never).await
+}
+
+/// Whether `click_path` may leave a click out.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Skip {
+    Never,
+    /// Leave a click out when the click after it can be made right now:
+    /// the menu it would open is already open, and a toggle clicked again
+    /// would close it. The last click is never left out.
+    WhenNextIsReady,
+}
+
+/// Each of the path's clicks from where the page is, then wait up to
+/// `nav_ms` for the address path to equal `arrived`.
+async fn click_path<D: Driver>(d: &mut D, route: &Route, timing: &Timing, skip: Skip) -> Result<String, PathFailure> {
     let policy = Policy::only(route.home.origins.clone());
-    for (i, click) in route.path.clicks.iter().enumerate() {
+    let clicks = &route.path.clicks;
+    for (i, click) in clicks.iter().enumerate() {
+        if skip == Skip::WhenNextIsReady {
+            if let Some(next) = clicks.get(i + 1) {
+                if crate::browser::input::clickable_now(d, next).await {
+                    continue;
+                }
+            }
+        }
         let out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &policy).await;
         if !out.ok {
             return Err(PathFailure {
@@ -642,8 +699,8 @@ pub async fn go_to_module<D: Driver>(
             });
         }
     }
-    let at = match route.path.clicks.last() {
-        Some(c) => Where::Click { n: route.path.clicks.len(), locator: c.describe() },
+    let at = match clicks.last() {
+        Some(c) => Where::Click { n: clicks.len(), locator: c.describe() },
         None => Where::Home,
     };
     let deadline = Instant::now() + Duration::from_millis(timing.nav_ms);

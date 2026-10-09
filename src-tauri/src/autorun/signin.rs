@@ -7,7 +7,7 @@
 use super::accounts::{find_account, Account};
 use super::recipe::{for_account, load_effective_recipe, RecipeStep, SignInRecipe, WhenVisible};
 use super::sessions::{forget_session, load_fresh_session, now_ms, save_session};
-use super::timing::{FRESH_LOGIN_WINDOW_MS, PROMPT_WINDOW_MS};
+use super::timing::{FRESH_LOGIN_WINDOW_MS, HOME_PROMPT_WINDOW_MS, PROMPT_WINDOW_MS};
 use crate::browser::actions::{
     execute_in, harness_timeout, shown_now, shows_up, Action, ActionOutcome, Policy, WHEN_VISIBLE_FLOOR_MS,
 };
@@ -346,9 +346,11 @@ async fn sign_in_held<D: Driver>(
 /// application (`nav::go_home`), and a reload can undo what these steps
 /// did: PeoplesHR draws its menu closed on every load (2026-09-30). No
 /// account, because `after_sign_in` holds no login - a placeholder there
-/// is refused - so there is no password to hide. Its prompts get the short
-/// window: the page was signed in before it loaded. `Err` is the step
-/// number, why it stopped, and whether the browser was the cause.
+/// is refused - so there is no password to hide. Its prompts get the home
+/// window (`HOME_PROMPT_WINDOW_MS`): the page was signed in before it
+/// loaded, and the late session modal only follows a fresh login. `Err`
+/// is the step number, why it stopped, and whether the browser was the
+/// cause.
 pub async fn run_after_sign_in<D: Driver>(
     d: &mut D,
     steps: &[RecipeStep],
@@ -356,7 +358,7 @@ pub async fn run_after_sign_in<D: Driver>(
     policy: &Policy,
 ) -> Result<(), (usize, String, bool)> {
     let mut run = Run { account: None, steps: vec![], appeared: vec![] };
-    let prompts = Prompts::Together { window_ms: PROMPT_WINDOW_MS };
+    let prompts = Prompts::Together { window_ms: HOME_PROMPT_WINDOW_MS };
     run_steps(d, &mut run, steps, prompts, timing, policy).await
 }
 

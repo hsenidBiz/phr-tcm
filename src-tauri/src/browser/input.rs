@@ -333,6 +333,14 @@ async fn look<D: Driver>(d: &mut D, target: &Target, need_editable: bool) -> Res
     }))
 }
 
+/// Could `target` be clicked right now? The readiness rule a click waits
+/// for (`wait_ready`), in one look with no waiting. A look that fails for
+/// any reason is "no".
+pub async fn clickable_now<D: Driver>(d: &mut D, target: &Target) -> bool {
+    page::release(d).await;
+    matches!(look(d, target, false).await, Ok(Look::Ready(_)))
+}
+
 /// What a wait loop says it last saw when its budget ran out inside a
 /// call rather than between two of them.
 pub(crate) const STILL_LOOKING: &str = "was still being checked when the time ran out";

@@ -5,12 +5,17 @@ use crate::common;
 
 use serde_json::json;
 use v2_lib::autorun::nav::{
-    check_areas, check_no_addresses, find_area, find_path, go_home, guide_section, is_setup_problem, load_nav, module_key,
-    nav_path, no_address, no_default_area, no_path, path_of, put_path, remove_path, route_for, same_page, save_nav, set_direct_urls, view,
-    MadeBy, ModulePath, NavFile, PathFailure, Where, NO_ACCOUNT, NO_MODULE,
+    check_areas, check_no_addresses, find_area, find_path, go_home, go_to_module, guide_section, is_setup_problem, load_nav,
+    module_key, nav_path, no_address, no_default_area, no_path, path_of, put_path, remove_path, route_for, same_page, save_nav,
+    set_direct_urls, view, MadeBy, ModulePath, NavFile, PathFailure, Route, TripFrom, Where, NO_ACCOUNT, NO_MODULE,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use v2_lib::autorun::recipe::project_slug;
+use v2_lib::browser::actions::HIGHLIGHT_JS;
 use v2_lib::browser::cdp::{CdpError, Event};
+use v2_lib::browser::input::{HAS_FOCUS_JS, PROBE_JS};
+use v2_lib::browser::locator::VISIBLE_JS;
 
 fn path(module: &str, arrived: &str) -> ModulePath {
     serde_json::from_value(json!({
@@ -328,17 +333,16 @@ fn leave_path() -> ModulePath {
 /// after a sign-in is a fresh page load - and a fresh load draws the menu
 /// closed again, undoing what `after_sign_in` had just opened. The module
 /// path's first click then found its menu entry hidden. Going home by
-/// address must leave the page the way `after_sign_in` promises.
+/// address must leave the page the way `after_sign_in` promises. The trip
+/// starts on a screen whose menu is closed, so the try from where the page
+/// is cannot click the path, and the trip goes home.
 #[tokio::test]
 async fn going_home_by_address_runs_after_sign_in_again_before_the_first_click() {
-    let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
-    let route = v2_lib::autorun::nav::Route::new(&login_home_recipe("/hr/security/login"), leave_path());
-    let out = v2_lib::autorun::nav::go_to_module(&mut d, &route, v2_lib::autorun::nav::TripFrom::Elsewhere, &common::quick()).await;
+    let (mut d, app) = sidebar_app("/hr/payroll", false, false);
+    let route = Route::new(&login_home_recipe("/hr/security/login"), leave_path());
+    let out = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await;
     assert_eq!(out, Ok("/hr/leave".to_string()));
-    assert_eq!(
-        *app.log.lock().unwrap(),
-        vec!["navigate /hr/security/login".to_string(), "click #toggle".to_string(), "click Leave".to_string()]
-    );
+    assert_eq!(app.log(), vec!["navigate /hr/security/login", "click #toggle", "click Leave"]);
 }
 
 /// The same from the recording's side: `go_home` on its own, as a recording
@@ -363,6 +367,184 @@ async fn already_home_does_not_run_after_sign_in_again() {
     let out = v2_lib::autorun::nav::go_to_module(&mut d, &route, v2_lib::autorun::nav::TripFrom::Elsewhere, &common::quick()).await;
     assert_eq!(out, Ok("/hr/leave".to_string()));
     assert_eq!(*app.log.lock().unwrap(), vec!["click Leave".to_string()]);
+}
+
+// ---- A trip from where the page is -----------------------------------------
+
+/// What `sidebar_app` saw, in order: `navigate <path>`, `click <name or
+/// css>`.
+struct Sidebar {
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+impl Sidebar {
+    fn log(&self) -> Vec<String> {
+        self.log.lock().unwrap().clone()
+    }
+}
+
+/// PeoplesHR's left menu: `#toggle` flips it open and closed, and a page
+/// load draws it closed. Its one entry, link "Leave", shows only while the
+/// menu is open and lands on /hr/leave. While `covered` (a modal, a
+/// full-screen grid) nothing on the page can be clicked; a page load
+/// clears it. `#toggle:not(.active)` is found only while the menu is
+/// closed, as the built-in recipe's `after_sign_in` asks. `#marker` is
+/// always there.
+fn sidebar_app(at: &str, open: bool, covered: bool) -> (common::ScriptedDriver, Sidebar) {
+    let log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let open = Arc::new(AtomicBool::new(open));
+    let covered = Arc::new(AtomicBool::new(covered));
+    let path = Arc::new(Mutex::new(at.to_string()));
+    let app = Sidebar { log: log.clone() };
+    let mut last_css = String::new();
+    let mut last_probed = String::new();
+    let mut d = common::ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        let object = params["objectId"].as_str().unwrap_or("").to_string();
+        let shows = |o: &str| !o.starts_with("ax-") || open.load(Ordering::SeqCst);
+        Ok(match method {
+            "Page.navigate" => {
+                let p = path_of(params["url"].as_str().unwrap_or(""));
+                log.lock().unwrap().push(format!("navigate {p}"));
+                *path.lock().unwrap() = p;
+                open.store(false, Ordering::SeqCst);
+                covered.store(false, Ordering::SeqCst);
+                json!({ "frameId": "F", "loaderId": "L" })
+            }
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.evaluate" if params["expression"] == "location.href" => {
+                json!({ "result": { "value": format!("https://hr.example.internal{}", path.lock().unwrap()) } })
+            }
+            "Runtime.evaluate" => json!({ "result": { "value": null } }),
+            "Accessibility.queryAXTree" if params["role"] == "link" => json!({ "nodes": [
+                { "nodeId": "n0", "role": { "value": "link" }, "name": { "value": "Leave" }, "backendDOMNodeId": 100 }
+            ] }),
+            "Accessibility.queryAXTree" => json!({ "nodes": [] }),
+            "DOM.resolveNode" => json!({ "object": { "objectId": format!("ax-{}", params["backendNodeId"]) } }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => {
+                last_probed = object.clone();
+                let hit = !covered.load(Ordering::SeqCst);
+                let mut p = common::ready_probe();
+                p["visible"] = json!(shows(&object));
+                p["hit"] = json!(hit);
+                p["covered_by"] = json!(if hit { "" } else { "div.modal" });
+                json!({ "result": { "value": p } })
+            }
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => json!({ "result": { "value": shows(&object) } }),
+            "Runtime.callFunctionOn" if f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" => {
+                if let Some(sel) = params["arguments"][0]["value"].as_str() {
+                    last_css = sel.to_string();
+                }
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => {
+                let there = last_css != "#toggle:not(.active)" || !open.load(Ordering::SeqCst);
+                let base = last_css.split(':').next().unwrap_or("").to_string();
+                json!({ "result": if there {
+                    vec![json!({ "name": "0", "value": { "objectId": format!("css:{base}") } })]
+                } else {
+                    vec![]
+                } })
+            }
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                if last_probed == "css:#toggle" {
+                    log.lock().unwrap().push("click #toggle".to_string());
+                    open.store(!open.load(Ordering::SeqCst), Ordering::SeqCst);
+                } else if last_probed == "ax-100" {
+                    log.lock().unwrap().push("click Leave".to_string());
+                    *path.lock().unwrap() = "/hr/leave".to_string();
+                }
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    d.on_every_call_events.push((
+        "Page.navigate".into(),
+        Event { method: "Page.lifecycleEvent".into(), params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }) },
+    ));
+    (d, app)
+}
+
+/// A path that opens the menu with its toggle and then clicks Leave: the
+/// shape that closes an open menu if its toggle is clicked regardless.
+fn toggle_then_leave(start: &str) -> ModulePath {
+    serde_json::from_value(json!({
+        "module": "Leave",
+        "clicks": [ { "css": "#toggle" }, { "role": "link", "name": "Leave", "exact": true } ],
+        "arrived": "/hr/leave",
+        "start": start,
+        "recorded": "2026-10-09T10:00:00Z"
+    }))
+    .unwrap()
+}
+
+/// Spec A: a trip that starts on a module screen with the menu open clicks
+/// the path from there. No page load: the home page, its signed-in check
+/// and `after_sign_in` are never paid for.
+#[tokio::test]
+async fn a_trip_from_inside_the_app_does_not_reload_home() {
+    let (mut d, app) = sidebar_app("/hr/payroll", true, false);
+    let route = Route::new(&login_home_recipe("/hr/security/login"), leave_path());
+    let out = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(d.calls_to("Page.navigate").len(), 0, "the trip reloaded home");
+    assert_eq!(app.log(), vec!["click Leave"]);
+}
+
+/// Review focus 1: the toggle flips, so clicking it on a menu that is
+/// already open would close it. With Leave already showing, the toggle is
+/// skipped; with the menu closed, it is clicked.
+#[tokio::test]
+async fn an_open_menu_keeps_its_toggle_unclicked() {
+    let route = Route::new(&login_home_recipe("/hr/security/login"), toggle_then_leave(""));
+
+    let (mut d, app) = sidebar_app("/hr/payroll", true, false);
+    let out = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["click Leave"], "the toggle closed an open menu");
+
+    let (mut d, app) = sidebar_app("/hr/payroll", false, false);
+    let out = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["click #toggle", "click Leave"], "a closed menu is opened");
+}
+
+/// Review focus 2: a screen whose menu is covered (a modal, a full-screen
+/// grid) cannot be clicked from. The trip gives up on the quick try, says
+/// so once in the log, goes home the old way and arrives.
+#[tokio::test]
+async fn a_covered_menu_falls_back_to_home_and_arrives() {
+    let _tail = crate::serial::log_tail();
+    let (mut d, app) = sidebar_app("/hr/payroll", true, true);
+    let route = Route::new(&login_home_recipe("/hr/security/login"), leave_path());
+    let out = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["navigate /hr/security/login", "click #toggle", "click Leave"]);
+    let lines: Vec<_> = v2_lib::applog::recent(400).into_iter().filter(|l| l.message.contains("went home and tried")).collect();
+    let last = lines.last().expect("the fallback was logged");
+    assert_eq!(last.level, "info");
+    assert_eq!(last.message, "went home and tried Leave again");
+}
+
+/// Spec A, what stays the same: right after a sign-in the trip keeps
+/// today's rule. On the path's own first page it clicks the whole path as
+/// recorded (no skipping); anywhere else it goes home first, even when the
+/// path could have been clicked from where the page is.
+#[tokio::test]
+async fn the_first_trip_after_sign_in_is_unchanged() {
+    let route = Route::new(&login_home_recipe("/hr/security/login"), toggle_then_leave("/hr/home/index"));
+    let (mut d, app) = sidebar_app("/hr/home/index", false, false);
+    let out = go_to_module(&mut d, &route, TripFrom::SignIn, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["click #toggle", "click Leave"]);
+
+    let route = Route::new(&login_home_recipe("/hr/security/login"), leave_path());
+    let (mut d, app) = sidebar_app("/hr/payroll", true, false);
+    let out = go_to_module(&mut d, &route, TripFrom::SignIn, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["navigate /hr/security/login", "click #toggle", "click Leave"]);
 }
 
 // ---- Areas ---------------------------------------------------------------
