@@ -7,7 +7,9 @@
 // CAPTURE_QUEUE): a new case with a comment and reviewer notes, an update
 // of #5002 whose title changed, and a new case titled like #5001, which the
 // duplicate check stops. Each row's Edit and Remove buttons are named for
-// their case ("Edit <title>", "Remove <title> from the queue").
+// their case ("Edit <title>", "Remove <title> from the queue"). A row itself
+// is named by its title and then its badges ("<title> NEW"), so routes find
+// it with a nameRe anchored on the title.
 //
 // Watched files, specs, general comments, change reports and Recent JSON
 // Imports only appear after a real file has been imported from disk, which
@@ -63,8 +65,8 @@ export const importFile: Screen = {
       id: SELECTED,
       route: [
         { nav: "Import Test Cases" },
-        { click: { role: "row", name: FIRST } },
-        { ctrlClick: { role: "row", name: THIRD } },
+        { click: { role: "row", nameRe: `^${FIRST} ` } },
+        { ctrlClick: { role: "row", nameRe: `^${THIRD} ` } },
       ],
       alt: "Two queued cases selected, with the bulk actions",
     },
@@ -72,8 +74,8 @@ export const importFile: Screen = {
       id: BULK,
       route: [
         { nav: "Import Test Cases" },
-        { click: { role: "row", name: FIRST } },
-        { ctrlClick: { role: "row", name: THIRD } },
+        { click: { role: "row", nameRe: `^${FIRST} ` } },
+        { ctrlClick: { role: "row", nameRe: `^${THIRD} ` } },
         { click: { role: "button", name: "Bulk edit" } },
         { waitFor: { role: "button", nameRe: "^Apply to \\d+$" } },
       ],
@@ -83,8 +85,8 @@ export const importFile: Screen = {
       id: RENAME,
       route: [
         { nav: "Import Test Cases" },
-        { click: { role: "row", name: FIRST } },
-        { ctrlClick: { role: "row", name: THIRD } },
+        { click: { role: "row", nameRe: `^${FIRST} ` } },
+        { ctrlClick: { role: "row", nameRe: `^${THIRD} ` } },
         { click: { role: "button", nameRe: "^Rename \\d+$" } },
         { waitFor: { role: "textbox", name: "Find" } },
       ],
@@ -104,8 +106,8 @@ export const importFile: Screen = {
       id: RESULTS,
       route: [
         { nav: "Import Test Cases" },
-        { click: { role: "row", name: FIRST } },
-        { ctrlClick: { role: "row", name: THIRD } },
+        { click: { role: "row", nameRe: `^${FIRST} ` } },
+        { ctrlClick: { role: "row", nameRe: `^${THIRD} ` } },
         { click: { role: "button", name: "Remove 2" } },
         { click: { role: "button", nameRe: "^Review \\d+ test cases?$" } },
         { click: { role: "button", nameRe: "^Confirm & update" } },
@@ -215,7 +217,8 @@ export const importFile: Screen = {
       name: "Group by area",
       does:
         "Shows the queue under a heading for each area, one level for each part of the area's path, in the order the cases come. " +
-        "Each heading counts the cases under it: click its name to select them all (again to clear), or its arrow to fold it. Cases with no area sit under **No area**, last. " +
+        "Each heading counts the cases under it. Click its name or its arrow to fold it; tick its box to select every case under it, nested included (a dash means some are). " +
+        "Cases with no area sit under **No area**, in italics, last. " +
         "Only the view changes: the cases are still uploaded in queue order, and **View in browser** groups its page the same way.",
       tips: ["The switch and the groups you fold are remembered on this computer."],
     },
@@ -231,13 +234,14 @@ export const importFile: Screen = {
       id: "row-select",
       shot: QUEUE,
       group: "queued-cases",
-      locate: { role: "row", name: FIRST },
+      locate: { role: "row", nameRe: `^${FIRST} ` },
       name: "A queued case",
       does:
         "One row per case. Click it to select it; click it again to clear. [[Ctrl]]+click adds or removes one case, [[Shift]]+click selects a range. " +
         "Its buttons and links do their own job and leave the selection alone.",
       tips: [
-        "A row reached with [[Tab]] is selected with [[Space]], with [[Ctrl]] or [[Shift]] held just as for a click.",
+        "The queue is one [[Tab]] stop: [[Up]] and [[Down]] move between cases, [[Home]] and [[End]] jump to the first and last, [[Space]] selects, [[Ctrl]]+[[Space]] adds or removes one, and [[Shift]]+[[Down]] or [[Shift]]+[[Up]] extends the selection.",
+        "Double-clicking a word or dragging across the text to copy it leaves the selection as it was.",
         "When the queue is grouped by area, a [[Shift]]+click range runs over the cases on screen and skips folded groups.",
       ],
     },
