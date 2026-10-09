@@ -7,7 +7,7 @@ use serde_json::json;
 use v2_lib::autorun::nav::{
     check_areas, check_no_addresses, find_area, find_path, go_home, guide_section, is_setup_problem, load_nav, module_key,
     nav_path, no_address, no_default_area, no_path, path_of, put_path, remove_path, route_for, same_page, save_nav, set_direct_urls, view,
-    ModulePath, NavFile, PathFailure, Where, NO_ACCOUNT, NO_MODULE,
+    MadeBy, ModulePath, NavFile, PathFailure, Where, NO_ACCOUNT, NO_MODULE,
 };
 use v2_lib::autorun::recipe::project_slug;
 use v2_lib::browser::cdp::{CdpError, Event};
@@ -402,6 +402,32 @@ fn an_old_paths_file_reads_as_areas_named_after_modules() {
     assert_eq!(route_for(&nav, None, Some("Leave"), Some("hr.admin")).unwrap().map(|p| p.arrived.as_str()), Some("/hr/leave"));
     // Saving it again writes the areas down; it reads back the same.
     save_nav(dir.path(), "Acme", "Web", &nav).unwrap();
+    assert_eq!(load_nav(dir.path(), "Acme", "Web").unwrap(), nav);
+}
+
+/// Spec 2026-10-09 section 2: a file written before areas said who made
+/// them reads every area as a person's, so no mapping run touches it, and
+/// a save writes it down in words.
+#[test]
+fn an_old_area_loads_as_made_by_a_person() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("projects")).unwrap();
+    let old = json!({ "modules": [
+        { "area": "Leave Apply", "module": "Leave", "clicks": [{ "role": "link", "name": "Leave" }],
+          "arrived": "/hr/leave", "recorded": "2026-09-24T10:00:00Z" },
+        { "area": "Payroll Run", "module": "Payroll", "clicks": [{ "role": "link", "name": "Payroll" }],
+          "arrived": "/hr/payroll", "recorded": "2026-09-24T10:00:00Z", "made_by": "mapping" }
+    ] });
+    std::fs::write(nav_path(dir.path(), "Acme", "Web"), old.to_string()).unwrap();
+    let nav = load_nav(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(find_area(&nav, "Leave Apply").unwrap().made_by, MadeBy::Person);
+    assert_eq!(find_area(&nav, "Payroll Run").unwrap().made_by, MadeBy::Mapping);
+
+    save_nav(dir.path(), "Acme", "Web", &nav).unwrap();
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(nav_path(dir.path(), "Acme", "Web")).unwrap()).unwrap();
+    assert_eq!(file["modules"][0]["made_by"], "person");
+    assert_eq!(file["modules"][1]["made_by"], "mapping");
     assert_eq!(load_nav(dir.path(), "Acme", "Web").unwrap(), nav);
 }
 

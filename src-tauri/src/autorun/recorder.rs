@@ -518,6 +518,8 @@ pub fn finish(module: &str, area: &str, captured: Captured, recorded: &str) -> R
                 // Known to the command that prepared the recording, which
                 // fills it in.
                 start: String::new(),
+                // Recorded in Areas: the person's own.
+                made_by: nav::MadeBy::Person,
             })
         }
     }

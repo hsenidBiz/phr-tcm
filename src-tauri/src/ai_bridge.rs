@@ -2590,6 +2590,17 @@ pub fn close_browser_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
 /// How many lines of the page a refused area hands back.
 const AREA_PAGE_LINES: usize = 40;
 
+/// How many areas one mapping run may save, added and updated together.
+pub const MAPPING_CAP: usize = 150;
+
+/// Said to a mapping run's save past `MAPPING_CAP`.
+pub const MAPPING_CAP_REACHED: &str = "This mapping run has saved 150 screens; end it and start another for the rest.";
+
+/// Said to a mapping run's save of a name a person's area already has.
+fn person_area_kept(name: &str) -> String {
+    format!("An area named '{name}' was recorded by a person, so this mapping run leaves it as it is")
+}
+
 /// Save the clicks a discovery found as an area named `name` under the
 /// test-case Module `module`, once a replay of them from home has arrived
 /// where the browser stands now: `{saved, arrived}`, and the discovery
@@ -2599,6 +2610,15 @@ const AREA_PAGE_LINES: usize = 40;
 /// do not arrive save nothing, and the refusal says where they stopped and
 /// what the page showed. A name already taken is refused before the
 /// browser is touched: the person replaces an area, never the assistant.
+///
+/// In a mapping run (spec 2026-10-09 section 2) the area is saved as the
+/// run's own (`MadeBy::Mapping`), and every save is counted on the run:
+/// past `MAPPING_CAP` saves it is refused before the browser is touched; a
+/// name a person's area has is refused and counted unchanged; a name the
+/// run's own area has is replayed and saved again only when its clicks or
+/// where it arrives changed (`{saved: false, unchanged: true}` and no
+/// write otherwise); clicks that do not arrive are counted unreached.
+/// Outside one, every area saved is the person's.
 #[allow(clippy::too_many_arguments)]
 pub async fn discover_area_in<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
@@ -2622,18 +2642,43 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
     if name.is_empty() || module.is_empty() || clicks.is_empty() {
         return (400, "an area needs a name, the module it belongs to and at least one click".to_string());
     }
+    let saved_this_run = state.mapping.as_ref().map(|run| run.added.len() + run.updated.len());
+    if saved_this_run.is_some_and(|n| n >= MAPPING_CAP) {
+        return (409, MAPPING_CAP_REACHED.to_string());
+    }
+    let mapping = saved_this_run.is_some();
     let navfile = match nav::load_nav(root, organization, project) {
         Ok(n) => n,
         Err(why) => return (409, why),
     };
-    if nav::find_area(&navfile, &name).is_some() {
-        return (
-            409,
-            format!(
-                "An area named '{name}' already exists; pick another name or ask the person to replace it in Auto Run"
-            ),
-        );
-    }
+    // The run's own area of this name, which this save may update.
+    let existing = match nav::find_area(&navfile, &name) {
+        None => None,
+        Some(found) if mapping && found.made_by == nav::MadeBy::Mapping => {
+            if let Err(why) = nav::check_area_free(&navfile, &name, &module) {
+                return (409, why);
+            }
+            Some(found.clone())
+        }
+        Some(found) if mapping => {
+            let kept = found.name().to_string();
+            if let Some(run) = p.discovery.as_mut().and_then(|s| s.mapping.as_mut()) {
+                run.unchanged.push(kept.clone());
+            }
+            return (409, person_area_kept(&kept));
+        }
+        Some(_) => {
+            return (
+                409,
+                format!(
+                    "An area named '{name}' already exists; pick another name or ask the person to replace it in Auto Run"
+                ),
+            )
+        }
+    };
+    let Some(state) = p.discovery.as_ref() else {
+        return (409, NO_DISCOVERY.to_string());
+    };
     let recipe = match crate::autorun::recipe::load_effective_recipe(root, organization, project) {
         Ok(r) => r,
         Err(why) => return (409, why),
@@ -2681,12 +2726,14 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
             Err(_) => String::new(),
         };
         let path = nav::ModulePath {
-            area: name.clone(),
+            // An update keeps the area's name as it was saved.
+            area: existing.as_ref().map_or_else(|| name.clone(), |old| old.name().to_string()),
             module,
             clicks,
             arrived,
             recorded: crate::commands::autorun_record::now_iso(),
             start,
+            made_by: if mapping { nav::MadeBy::Mapping } else { nav::MadeBy::Person },
         };
         let route = nav::Route::new(&recipe, path);
         nav::go_to_module(d, &route, nav::TripFrom::SignIn, timing).await.map(|at| (at, route.path))
@@ -2696,21 +2743,47 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
     let (at, path) = match reached {
         Ok(found) => found,
         Err(failure) => {
+            let reason = failure.for_dialog();
             let (status, page) = read_page(d, crate::browser::snapshot::DEFAULT_LIMIT, None).await;
             let showed = if status == 200 {
                 page.lines().take(AREA_PAGE_LINES).collect::<Vec<_>>().join("\n")
             } else {
                 "nothing - the page could not be read".to_string()
             };
-            return (409, format!("The clicks did not arrive: {}. The page showed: {showed}", failure.for_dialog()));
+            if let Some(run) = p.discovery.as_mut().and_then(|s| s.mapping.as_mut()) {
+                run.unreached.push((name, reason.clone()));
+            }
+            return (409, format!("The clicks did not arrive: {reason}. The page showed: {showed}"));
         }
     };
+    // The run's own area, found where it was: nothing to write.
+    if let Some(old) = existing.as_ref().filter(|old| old.clicks == path.clicks && old.arrived == path.arrived) {
+        let kept = old.name().to_string();
+        if let Some(state) = p.discovery.as_mut() {
+            if let Some(run) = state.mapping.as_mut() {
+                run.unchanged.push(kept.clone());
+            }
+            state.area = Some(kept);
+        }
+        crate::applog::info("Auto Run mapping run found an area unchanged");
+        return (200, serde_json::json!({ "saved": false, "unchanged": true, "arrived": at }).to_string());
+    }
     let saved = path.clicks.len();
+    let new_menu = nav::menu_path(&path.clicks);
     if let Err(why) = nav::put_path(root, organization, project, path) {
         return (409, why);
     }
     if let Some(state) = p.discovery.as_mut() {
-        state.area = Some(name);
+        if let Some(run) = state.mapping.as_mut() {
+            match &existing {
+                Some(old) => run.updated.push((old.name().to_string(), nav::menu_path(&old.clicks), new_menu)),
+                None => run.added.push(name.clone()),
+            }
+        }
+        state.area = Some(match &existing {
+            Some(old) => old.name().to_string(),
+            None => name,
+        });
     }
     crate::applog::info(format!("Auto Run discovery saved an area ({saved} clicks)"));
     (200, serde_json::json!({ "saved": true, "arrived": at }).to_string())

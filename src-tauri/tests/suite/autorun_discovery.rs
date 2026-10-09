@@ -20,7 +20,7 @@ use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::components::{draft_fingerprint, put, Component};
 use v2_lib::autorun::discovery_map::{load_map, map_path, AreaMap};
 use v2_lib::autorun::lease::Held;
-use v2_lib::autorun::nav::{find_area, load_nav, put_path, ModulePath};
+use v2_lib::autorun::nav::{find_area, load_nav, nav_path, put_path, MadeBy, ModulePath};
 use v2_lib::autorun::recipe::{save_recipe, SignInRecipe};
 use v2_lib::autorun::store::set_root;
 use v2_lib::browser::actions::{Action, CHECK_TEXT_JS, HIGHLIGHT_JS};
@@ -917,6 +917,7 @@ async fn an_existing_area_name_is_refused() {
         arrived: "/hr/leave".into(),
         recorded: "2026-10-01T00:00:00Z".into(),
         start: String::new(),
+        made_by: MadeBy::Person,
     };
     put_path(dir.path(), ORG, PROJECT, existing.clone()).unwrap();
     let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
@@ -932,6 +933,253 @@ async fn an_existing_area_name_is_refused() {
     assert!(browser.as_ref().unwrap().d.calls_to("Page.navigate").is_empty(), "the browser was touched");
     let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
     assert_eq!(find_area(&nav, "Leave Apply"), Some(&existing), "the existing area was changed");
+}
+
+// ------------------------------------------- saving in a mapping run
+
+/// A mapping run over Leave, signed in as `admin`, standing on
+/// `/hr/leave/apply`.
+fn mapping_browser() -> Option<FakeBrowser> {
+    let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), mapping(exploring("Leave"), &["Leave"]));
+    browser.as_mut().unwrap().account = Some("admin".into());
+    browser
+}
+
+fn the_run(browser: &Option<FakeBrowser>) -> &MappingRun {
+    browser.as_ref().unwrap().discovery.as_ref().unwrap().mapping.as_ref().unwrap()
+}
+
+/// An area already in the file: Leave Apply, under Leave.
+fn leave_apply(made_by: MadeBy, clicks: Vec<Target>, arrived: &str) -> ModulePath {
+    ModulePath {
+        area: "Leave Apply".into(),
+        module: "Leave".into(),
+        clicks,
+        arrived: arrived.into(),
+        recorded: "2026-10-01T00:00:00Z".into(),
+        start: "/".into(),
+        made_by,
+    }
+}
+
+/// The areas file's bytes and when it was last written.
+fn file_state(root: &std::path::Path) -> (Vec<u8>, std::time::SystemTime) {
+    let path = nav_path(root, ORG, PROJECT);
+    (std::fs::read(&path).unwrap(), std::fs::metadata(&path).unwrap().modified().unwrap())
+}
+
+/// A screen a mapping run reaches is saved as the run's own, and counted
+/// as added. The file says so in words.
+#[tokio::test]
+async fn a_mapping_save_is_made_by_mapping() {
+    let dir = root_with_recipe_and_account();
+    let mut browser = mapping_browser();
+
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["saved"], true, "{body}");
+
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    assert_eq!(find_area(&nav, "Leave Apply").unwrap().made_by, MadeBy::Mapping);
+    let file = std::fs::read_to_string(nav_path(dir.path(), ORG, PROJECT)).unwrap();
+    assert!(file.contains("\"made_by\": \"mapping\""), "{file}");
+    let run = the_run(&browser);
+    assert_eq!(run.added, vec!["Leave Apply".to_string()]);
+    assert!(run.updated.is_empty() && run.unchanged.is_empty() && run.unreached.is_empty(), "{run:?}");
+}
+
+/// An ordinary discovery's save is the person's: they asked for it.
+#[tokio::test]
+async fn an_ordinary_discovery_save_is_made_by_a_person() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), exploring("Leave"));
+    browser.as_mut().unwrap().account = Some("admin".into());
+
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    assert_eq!(find_area(&nav, "Leave Apply").unwrap().made_by, MadeBy::Person);
+}
+
+/// The run's own area, reached by other clicks now, is saved again with
+/// them and counted as updated, with its old and new menu path in words.
+#[tokio::test]
+async fn a_mapping_area_whose_path_changed_is_updated() {
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Mapping, vec![css("#apply")], "/hr/leave/apply")).unwrap();
+    let mut browser = mapping_browser();
+
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks.clone(), &quick())
+            .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["saved"], true, "{body}");
+
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    assert_eq!(nav.modules.len(), 1, "{:?}", nav.modules);
+    let saved = find_area(&nav, "Leave Apply").unwrap();
+    assert_eq!(saved.clicks, clicks);
+    assert_eq!(saved.made_by, MadeBy::Mapping);
+    let run = the_run(&browser);
+    assert_eq!(
+        run.updated,
+        vec![(
+            "Leave Apply".to_string(),
+            v2_lib::autorun::nav::menu_path(&[css("#apply")]),
+            v2_lib::autorun::nav::menu_path(&clicks),
+        )]
+    );
+    assert_ne!(run.updated[0].1, run.updated[0].2);
+    assert!(!run.updated[0].2.contains("/hr/"), "a path held an address: {run:?}");
+    assert!(run.added.is_empty() && run.unchanged.is_empty(), "{run:?}");
+}
+
+/// The same screen mapped twice is saved once: the second time it is
+/// unchanged, the file is not written and nothing is duplicated.
+#[tokio::test]
+async fn mapping_the_same_screen_twice_is_unchanged() {
+    let dir = root_with_recipe_and_account();
+    let mut browser = mapping_browser();
+    let clicks = vec![css("#leave"), css("#apply")];
+
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks.clone(), &quick())
+            .await;
+    assert_eq!(status, 200, "{body}");
+    let before = file_state(dir.path());
+
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["saved"], false, "{body}");
+    assert_eq!(v["unchanged"], true, "{body}");
+    assert_eq!(file_state(dir.path()), before, "the areas file was written again");
+
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    assert_eq!(nav.modules.len(), 1, "{:?}", nav.modules);
+    let run = the_run(&browser);
+    assert_eq!(run.added, vec!["Leave Apply".to_string()]);
+    assert_eq!(run.unchanged, vec!["Leave Apply".to_string()]);
+    assert!(run.updated.is_empty(), "{run:?}");
+}
+
+/// A person's area is refused before the browser is touched, counted as
+/// unchanged and left exactly as it is.
+#[tokio::test]
+async fn a_person_area_is_never_changed_by_mapping() {
+    let dir = root_with_recipe_and_account();
+    let theirs = leave_apply(MadeBy::Person, vec![css("#apply")], "/hr/leave/apply");
+    put_path(dir.path(), ORG, PROJECT, theirs.clone()).unwrap();
+    let before = file_state(dir.path());
+    let mut browser = mapping_browser();
+
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, out) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "leave apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 409, "{out}");
+    assert_eq!(
+        out,
+        "An area named 'Leave Apply' was recorded by a person, so this mapping run leaves it as it is"
+    );
+    assert!(browser.as_ref().unwrap().d.calls_to("Page.navigate").is_empty(), "the browser was touched");
+    assert_eq!(file_state(dir.path()), before, "the areas file was written");
+    assert_eq!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply"), Some(&theirs));
+    let run = the_run(&browser);
+    assert_eq!(run.unchanged, vec!["Leave Apply".to_string()]);
+    assert!(run.added.is_empty() && run.updated.is_empty(), "{run:?}");
+}
+
+/// A screen named like an area already there, in another case and with
+/// other spacing, is that area, not a second one.
+#[tokio::test]
+async fn a_screen_named_like_an_existing_area_matches_it() {
+    let dir = root_with_recipe_and_account();
+    let clicks = vec![css("#leave"), css("#apply")];
+    put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Mapping, clicks.clone(), "/hr/leave/apply")).unwrap();
+    let before = file_state(dir.path());
+    let mut browser = mapping_browser();
+
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "  leave \u{a0}  APPLY ", "Leave", clicks, &quick())
+            .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["unchanged"], true, "{body}");
+    assert_eq!(file_state(dir.path()), before, "the areas file was written");
+    let nav = load_nav(dir.path(), ORG, PROJECT).unwrap();
+    assert_eq!(nav.modules.len(), 1, "{:?}", nav.modules);
+    assert_eq!(nav.modules[0].area, "Leave Apply");
+    let run = the_run(&browser);
+    assert_eq!(run.unchanged, vec!["Leave Apply".to_string()], "{run:?}");
+    assert!(run.added.is_empty() && run.updated.is_empty(), "{run:?}");
+}
+
+/// With 150 screens saved in this run, added and updated together, the
+/// next is refused before the browser is touched, and nothing is saved.
+#[tokio::test]
+async fn the_cap_refuses_the_151st_screen() {
+    let dir = root_with_recipe_and_account();
+    let mut browser = mapping_browser();
+    {
+        let run = browser.as_mut().unwrap().discovery.as_mut().unwrap().mapping.as_mut().unwrap();
+        run.added = (0..100).map(|i| format!("Screen {i}")).collect();
+        run.updated = (0..50).map(|i| (format!("Moved {i}"), "a".to_string(), "b".to_string())).collect();
+        run.unchanged = (0..30).map(|i| format!("Same {i}")).collect();
+    }
+
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, out) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 409, "{out}");
+    assert_eq!(out, "This mapping run has saved 150 screens; end it and start another for the rest.");
+    assert!(browser.as_ref().unwrap().d.calls_to("Page.navigate").is_empty(), "the browser was touched");
+    assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply").is_none());
+    let run = the_run(&browser);
+    assert_eq!((run.added.len(), run.updated.len(), run.unchanged.len()), (100, 50, 30));
+}
+
+/// Unchanged screens do not count toward the cap: 149 saved and any
+/// number unchanged still saves one more.
+#[tokio::test]
+async fn the_cap_counts_only_saved_screens() {
+    let dir = root_with_recipe_and_account();
+    let mut browser = mapping_browser();
+    {
+        let run = browser.as_mut().unwrap().discovery.as_mut().unwrap().mapping.as_mut().unwrap();
+        run.added = (0..149).map(|i| format!("Screen {i}")).collect();
+        run.unchanged = (0..30).map(|i| format!("Same {i}")).collect();
+    }
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(the_run(&browser).added.len(), 150);
+}
+
+/// A screen the replay does not reach is refused as in any discovery,
+/// saves nothing, and is counted as unreached with the reason.
+#[tokio::test]
+async fn a_mapping_screen_that_is_not_reached_is_unreached() {
+    let dir = root_with_recipe_and_account();
+    let mut browser = mapping_browser();
+
+    let clicks = vec![css("#leave"), css("#missing")];
+    let (status, out) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.starts_with("The clicks did not arrive: click 2"), "{out}");
+    assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply").is_none());
+    let run = the_run(&browser);
+    assert_eq!(run.unreached.len(), 1, "{run:?}");
+    assert_eq!(run.unreached[0].0, "Leave Apply");
+    assert!(run.unreached[0].1.starts_with("click 2"), "{run:?}");
+    assert!(!run.unreached[0].1.contains("t0p-secret"), "{run:?}");
+    assert!(run.added.is_empty(), "{run:?}");
 }
 
 /// No discovery, no saving: not with no browser, not in the person's own
@@ -1047,6 +1295,7 @@ fn recorded(dir: &std::path::Path, name: &str) {
             arrived: "/hr/leave".into(),
             recorded: "2026-10-01T00:00:00Z".into(),
             start: String::new(),
+            made_by: MadeBy::Person,
         },
     )
     .unwrap();
