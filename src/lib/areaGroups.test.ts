@@ -61,3 +61,11 @@ test("visibleOrder follows the groups and leaves out folded ones", () => {
   expect(visibleOrder(tree, new Set(["a / b"]))).toEqual([2, 3, 1]);
   expect(visibleOrder(tree, new Set(["a", ""]))).toEqual([3]);
 });
+
+test("visibleOrder keeps the row being edited, which a folded group still shows, in its place", () => {
+  const tree = buildAreaGroups(cases("A / B", "", "A", "C", "A / B"));
+  expect(visibleOrder(tree, new Set(["a"]), 4)).toEqual([4, 3, 1]);
+  expect(visibleOrder(tree, new Set(["a / b"]), 0)).toEqual([2, 0, 3, 1]);
+  // Not folded away: no change, and never twice.
+  expect(visibleOrder(tree, new Set(), 4)).toEqual([2, 0, 4, 3, 1]);
+});

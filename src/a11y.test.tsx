@@ -13,7 +13,7 @@
  */
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import axe from "axe-core";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ReactElement } from "react";
@@ -37,12 +37,18 @@ afterEach(() => {
   localStorage.clear();
 });
 
-async function expectAccessible(ui: ReactElement) {
+/** `before` runs once the screen has settled, for a test that has to put
+ * the screen into a state (a selection, a fold) before it is audited. */
+async function expectAccessible(ui: ReactElement, before?: () => void) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const { container } = render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
   // Let initial queries settle so the real content (not just skeletons)
   // is what gets audited.
   await new Promise((r) => setTimeout(r, 50));
+  if (before) {
+    before();
+    await new Promise((r) => setTimeout(r, 50));
+  }
   const results = await axe.run(container, {
     rules: { "color-contrast": { enabled: false } }, // jsdom cannot paint
   });
@@ -134,8 +140,24 @@ test("the Queue, grouped by area with a case selected, is accessible", async () 
     automation_status: "Not Automated", module_value: "", preconditions: "",
     update_id: null, spec_order: null, tester_order: null,
   });
-  const queue = [tc("Create an event", "Events / Create"), tc("List events", "Events"), tc("Sign in", "")];
+  const queue = [
+    tc("Create an event", "Events / Create"),
+    tc("List events", "Events"),
+    tc("Sign in", ""),
+    tc("Sign out", ""),
+  ];
   await expectAccessible(
     <QueueSection org="acme" project="Web" pbiId={42} queue={queue} setQueue={() => {}} />,
+    () => {
+      // A row selected by clicking it, a whole group by its tick box (the
+      // parent then shows the mixed state), and a folded group that holds
+      // part of the selection.
+      fireEvent.click(screen.getByRole("row", { name: /^Sign in / }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select all in Events / Create" }));
+      fireEvent.click(screen.getByRole("button", { name: "Collapse area No area" }));
+      expect(screen.getByRole("row", { name: /^Create an event / })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("checkbox", { name: "Select all in Events" })).toHaveAttribute("aria-checked", "mixed");
+      expect(screen.getByText("1 selected")).toBeInTheDocument();
+    },
   );
 });

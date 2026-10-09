@@ -492,7 +492,7 @@ test("bulk remove updates the queue AND the owning .json file", async () => {
     onWatchPatched: (path, fields) => patched.push({ path, stamp: fields.stamp }),
   });
 
-  fireEvent.click(screen.getByRole("row", { name: "From file A" }));
+  fireEvent.click(screen.getByRole("row", { name: /^From file A / }));
   fireEvent.click(screen.getByRole("button", { name: /Remove 1/ }));
 
   // The queue lost the case; the file was rewritten WITHOUT it but keeps
@@ -539,7 +539,7 @@ test("bulk edit applies to the selection and leaves unselected rows alone", asyn
     onWatchPatched: () => {},
   });
 
-  fireEvent.click(screen.getByRole("row", { name: "Picked" }));
+  fireEvent.click(screen.getByRole("row", { name: /^Picked / }));
   fireEvent.click(screen.getByRole("button", { name: /Bulk edit/ }));
 
   expect(await screen.findByText(/Bulk edit 1 queued draft/)).toBeInTheDocument();
@@ -580,7 +580,7 @@ test("power rename scoped to the selection writes the file back", async () => {
     onWatchPatched: () => {},
   });
 
-  fireEvent.click(screen.getByRole("row", { name: "Old name" }));
+  fireEvent.click(screen.getByRole("row", { name: /^Old name / }));
   // The bulk bar's rename button carries the count - proof of the scoping.
   fireEvent.click(screen.getByRole("button", { name: /^Rename 1/ }));
   const dialog = await screen.findByText(/1 selected draft/);

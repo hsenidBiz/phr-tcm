@@ -6,8 +6,9 @@
  *
  * Also how Queue cases are SELECTED, grouped or not: by clicking the row
  * itself, the way Update Test Cases works - a click selects one case,
- * Ctrl/Cmd toggles, Shift takes the range on screen, a group heading
- * takes its whole group - with no tick boxes on the rows.
+ * Ctrl/Cmd toggles, Shift takes the range on screen, a group's tick box
+ * takes its whole group and its name folds it - with no tick boxes on the
+ * rows. The rows are a grid with one Tab stop and arrow-key movement.
  */
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -85,6 +86,10 @@ function renderQueue(initial: TestCase[] = QUEUE) {
   );
 }
 
+/** A row's title: the first part of its name (the rest is its status). */
+const titleOf = (r: Element) =>
+  document.getElementById(r.getAttribute("aria-labelledby")!.split(" ")[0])!.textContent;
+
 /** Row titles and group headings, top to bottom, as the user reads them. */
 function reading(): string[] {
   const out: string[] = [];
@@ -93,19 +98,22 @@ function reading(): string[] {
     const el = n as HTMLElement;
     const label = el.getAttribute("aria-label") ?? "";
     if (/^(Collapse|Expand) area /.test(label)) out.push(`# ${label.replace(/^(Collapse|Expand) area /, "")}`);
-    if (el.getAttribute("role") === "row") out.push(label);
+    if (el.getAttribute("role") === "row") out.push(titleOf(el)!);
   }
   return out;
 }
 
 const groupSwitch = () => screen.getByRole("switch", { name: "Group by area" });
-const row = (title: string) => screen.getByRole("row", { name: title });
+const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** A row by its title: its name is the title, then what its badges say. */
+const row = (title: string) => screen.getByRole("row", { name: new RegExp(`^${escape(title)}( |$)`) });
 /** The titles of the selected rows, in the order they are on screen. */
 const picked = () =>
   screen
     .queryAllByRole("row")
     .filter((r) => r.getAttribute("aria-selected") === "true")
-    .map((r) => r.getAttribute("aria-label"));
+    .map(titleOf);
+const groupBox = (path: string) => screen.getByRole("checkbox", { name: `Select all in ${path}` });
 const grouped = () => localStorage.setItem("tcm-v2-queue-group", "on");
 
 test("off by default: the Queue is flat, in queue order, with no group headings", () => {
@@ -153,11 +161,11 @@ test("grouped: nested headings in queue order, case and spaces folded, counts ne
     "Loose case",
   ]);
   // Each heading's count includes its nested cases.
-  expect(screen.getByText("Zeta (2)")).toBeInTheDocument();
-  expect(screen.getByText("Events (2)")).toBeInTheDocument();
-  expect(screen.getByText("Create (2)")).toBeInTheDocument();
-  expect(screen.getByText("Form (1)")).toBeInTheDocument();
-  expect(screen.getByText("No area (1)")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Zeta (2)" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Events (2)" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Create (2)" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Form (1)" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "No area (1)" })).toBeInTheDocument();
 });
 
 test("a real area named Ungrouped is its own group, apart from the cases with no area", () => {
@@ -175,14 +183,16 @@ test("a folded group hides its cases and nested groups, and stays folded after a
   unmount();
   renderQueue();
   expect(screen.getByRole("button", { name: "Expand area Events" })).toBeInTheDocument();
-  expect(screen.queryByRole("row", { name: "Form" })).toBeNull();
+  expect(screen.queryByRole("row", { name: /^Form / })).toBeNull();
 });
 
-test("no tick boxes on the rows or the group headings; the bar's Select all stays", () => {
+test("no tick boxes on the rows; one on each group heading, and the bar's Select all", () => {
   grouped();
   renderQueue();
-  expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+  for (const r of screen.getAllByRole("row")) expect(within(r).queryByRole("checkbox")).toBeNull();
+  expect(screen.getAllByRole("checkbox").map((c) => c.getAttribute("aria-checked"))).toHaveLength(1 + 6);
   expect(screen.getByRole("checkbox", { name: "Select all queued cases" })).toBeInTheDocument();
+  expect(groupBox("Events / Create / Form")).toBeInTheDocument();
   // The rows sit in grids that say more than one row can be selected.
   const grids = screen.getAllByRole("grid");
   expect(grids.length).toBeGreaterThan(0);
@@ -210,7 +220,7 @@ test("ctrl_click_toggles_and_shift_click_selects_the_visible_range", async () =>
   renderQueue();
   fireEvent.click(screen.getByRole("button", { name: "Collapse area Events / Create / Form" }));
   // On screen: Zeta one, Zeta two, Create, (Form folded), Alpha one, Loose case.
-  await waitFor(() => expect(screen.queryByRole("row", { name: "Form" })).toBeNull());
+  await waitFor(() => expect(screen.queryByRole("row", { name: /^Form / })).toBeNull());
 
   fireEvent.click(row("Zeta two"));
   fireEvent.click(row("Alpha one"), { shiftKey: true });
@@ -268,34 +278,53 @@ test("clicking_a_rows_buttons_does_not_change_the_selection", async () => {
   expect(picked()).toEqual(["Zeta one"]);
 });
 
-test("clicking_a_group_heading_selects_its_cases", () => {
+test("the_group_tick_box_selects_its_cases", () => {
   grouped();
   renderQueue();
-  const events = screen.getByRole("button", { name: "Events (2)" });
-  fireEvent.click(events);
+  fireEvent.click(groupBox("Events"));
   expect(picked()).toEqual(["Create", "Form"]);
-  expect(events).toHaveAttribute("aria-pressed", "true");
+  expect(groupBox("Events")).toHaveAttribute("aria-checked", "true");
+  expect(groupBox("Events / Create / Form")).toHaveAttribute("aria-checked", "true");
   expect(screen.getByText("2 of 6 selected")).toBeInTheDocument();
 
-  // Partly selected says so; a click then takes the rest.
+  // Partly selected shows the mixed state; a click then takes the rest.
   fireEvent.click(row("Form"), { ctrlKey: true });
-  expect(events).toHaveAttribute("aria-pressed", "mixed");
-  fireEvent.click(events);
+  expect(groupBox("Events")).toHaveAttribute("aria-checked", "mixed");
+  expect(groupBox("Events / Create / Form")).toHaveAttribute("aria-checked", "false");
+  fireEvent.click(groupBox("Events"));
   expect(picked()).toEqual(["Create", "Form"]);
   // Again clears the group, and leaves other cases alone.
   fireEvent.click(row("Zeta one"), { ctrlKey: true });
-  fireEvent.click(events);
+  fireEvent.click(groupBox("Events"));
   expect(picked()).toEqual(["Zeta one"]);
+});
 
-  // The chevron folds; it never selects.
-  fireEvent.click(screen.getByRole("button", { name: "Collapse area Events" }));
+test("clicking_a_group_name_folds_it", () => {
+  grouped();
+  renderQueue();
+  fireEvent.click(row("Zeta one"));
+  fireEvent.click(screen.getByRole("button", { name: "Events (2)" }));
+  expect(screen.getByRole("button", { name: "Expand area Events" })).toBeInTheDocument();
+  expect(screen.queryByRole("row", { name: /^Create / })).toBeNull();
+  // Folding never selects.
   expect(picked()).toEqual(["Zeta one"]);
+  fireEvent.click(screen.getByRole("button", { name: "Events (2)" }));
+  expect(row("Create")).toBeInTheDocument();
+});
+
+test("the bucket for cases with no area reads apart from a real area called No area", () => {
+  grouped();
+  renderQueue([tc("Real", "No area"), tc("Loose case", "")]);
+  const [real, bucket] = screen.getAllByText("No area");
+  expect(real).not.toHaveClass("italic");
+  expect(real).not.toHaveAttribute("title");
+  expect(bucket).toHaveClass("italic", "text-muted");
+  expect(bucket).toHaveAttribute("title", "Cases with no area");
 });
 
 test("space_selects_the_focused_row", () => {
   renderQueue();
   const zeta = row("Zeta one");
-  expect(zeta).toHaveAttribute("tabindex", "0");
   zeta.focus();
   fireEvent.keyDown(zeta, { key: " " });
   expect(picked()).toEqual(["Zeta one"]);
@@ -305,6 +334,99 @@ test("space_selects_the_focused_row", () => {
   expect(picked()).toEqual(["Zeta one", "Alpha one"]);
   fireEvent.keyDown(row("Create"), { key: "Enter" });
   expect(picked()).toEqual(["Create"]);
+});
+
+test("only_one_row_is_a_tab_stop", () => {
+  renderQueue();
+  const stops = () => screen.getAllByRole("row").filter((r) => r.getAttribute("tabindex") === "0").map(titleOf);
+  for (const r of screen.getAllByRole("row")) expect(["0", "-1"]).toContain(r.getAttribute("tabindex"));
+  expect(stops()).toEqual(["Loose case"]);
+  // Focus moving into a row, by Tab, click or arrow, makes it the stop.
+  fireEvent.focus(row("Alpha one"));
+  expect(stops()).toEqual(["Alpha one"]);
+});
+
+test("arrow_keys_move_between_rows_in_visible_order", async () => {
+  grouped();
+  renderQueue();
+  fireEvent.click(screen.getByRole("button", { name: "Collapse area Events / Create / Form" }));
+  await waitFor(() => expect(screen.queryByRole("row", { name: /^Form / })).toBeNull());
+  // On screen: Zeta one, Zeta two, Create, (Form folded), Alpha one, Loose case.
+  row("Zeta two").focus();
+  fireEvent.keyDown(row("Zeta two"), { key: "ArrowDown" });
+  expect(document.activeElement).toBe(row("Create"));
+  fireEvent.keyDown(row("Create"), { key: "ArrowDown" });
+  expect(document.activeElement).toBe(row("Alpha one"));
+  fireEvent.keyDown(row("Alpha one"), { key: "ArrowUp" });
+  expect(document.activeElement).toBe(row("Create"));
+  fireEvent.keyDown(row("Create"), { key: "End" });
+  expect(document.activeElement).toBe(row("Loose case"));
+  fireEvent.keyDown(row("Loose case"), { key: "ArrowDown" });
+  expect(document.activeElement).toBe(row("Loose case"));
+  fireEvent.keyDown(row("Loose case"), { key: "Home" });
+  expect(document.activeElement).toBe(row("Zeta one"));
+  expect(row("Zeta one")).toHaveAttribute("tabindex", "0");
+  // Moving never selects; Space does, and Ctrl+Space toggles.
+  expect(picked()).toEqual([]);
+  fireEvent.keyDown(row("Zeta one"), { key: " " });
+  fireEvent.keyDown(row("Zeta one"), { key: "ArrowDown" });
+  fireEvent.keyDown(row("Zeta two"), { key: " ", ctrlKey: true });
+  expect(picked()).toEqual(["Zeta one", "Zeta two"]);
+});
+
+test("shift_arrow_extends_the_selection", () => {
+  renderQueue();
+  row("Zeta one").focus();
+  fireEvent.keyDown(row("Zeta one"), { key: " " });
+  fireEvent.keyDown(row("Zeta one"), { key: "ArrowDown", shiftKey: true });
+  expect(picked()).toEqual(["Zeta one", "Form"]);
+  fireEvent.keyDown(row("Form"), { key: "ArrowDown", shiftKey: true });
+  expect(picked()).toEqual(["Zeta one", "Form", "Alpha one"]);
+  // Back up: the range shrinks towards the anchor.
+  fireEvent.keyDown(row("Alpha one"), { key: "ArrowUp", shiftKey: true });
+  expect(picked()).toEqual(["Zeta one", "Form"]);
+  expect(document.activeElement).toBe(row("Form"));
+});
+
+test("a double-click or a drag across a row's text leaves the selection alone", () => {
+  renderQueue();
+  fireEvent.click(row("Zeta one"));
+  fireEvent.click(row("Form"), { ctrlKey: true });
+  // The second click of a double-click (picking a word).
+  fireEvent.click(row("Form"), { detail: 2 });
+  expect(picked()).toEqual(["Zeta one", "Form"]);
+  // A click that ends a drag across the title, with text now selected.
+  const title = document.getElementById(row("Alpha one").getAttribute("aria-labelledby")!.split(" ")[0])!;
+  const range = document.createRange();
+  range.selectNodeContents(title);
+  window.getSelection()!.removeAllRanges();
+  window.getSelection()!.addRange(range);
+  fireEvent.click(row("Alpha one"));
+  expect(picked()).toEqual(["Zeta one", "Form"]);
+  window.getSelection()!.removeAllRanges();
+  fireEvent.click(row("Alpha one"));
+  expect(picked()).toEqual(["Alpha one"]);
+});
+
+test("a row's name carries its status as well as its title", () => {
+  renderQueue([{ ...tc("Changed", "A"), update_id: 5002 }, tc("Brand new", "A")]);
+  expect(screen.getByRole("row", { name: "Changed UPDATE #5002" })).toBeInTheDocument();
+  expect(screen.getByRole("row", { name: "Brand new NEW" })).toBeInTheDocument();
+});
+
+test("a Shift-click range reaches the row being edited inside a folded group", async () => {
+  grouped();
+  renderQueue();
+  fireEvent.click(screen.getByRole("button", { name: "Edit Form" }));
+  await screen.findByRole("button", { name: "Save to queue" });
+  fireEvent.click(screen.getByRole("button", { name: "Collapse area Events" }));
+  // Events is folded, but the row being edited is still drawn there.
+  expect(row("Form")).toBeInTheDocument();
+  fireEvent.click(row("Zeta two"));
+  fireEvent.click(row("Form"), { shiftKey: true });
+  expect(picked()).toEqual(["Zeta two", "Form"]);
+  fireEvent.click(row("Alpha one"), { shiftKey: true });
+  expect(picked()).toEqual(["Zeta two", "Form", "Alpha one"]);
 });
 
 test("Collapse all counts only what is open on screen, not inside a folded group", async () => {

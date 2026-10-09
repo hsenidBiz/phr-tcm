@@ -729,9 +729,16 @@ pub fn export_queue_page_in(
 /// it folds with no script at all; the page's script only keeps the fold
 /// across a live refresh and hides a section its search emptied.
 fn push_area_group(parts: &mut Vec<String>, g: &super::area_groups::AreaGroup, blocks: &[String], level: usize) {
+    // The bucket for cases with no area (key "") is set apart from a real
+    // area that happens to share its name: in italics, with a tooltip.
+    let name_attrs = if g.key.is_empty() {
+        "class='tc-group-name tc-no-area' title='Cases with no area'"
+    } else {
+        "class='tc-group-name'"
+    };
     parts.push(format!(
         "<details class='tc-group' open data-area='{}' data-level='{level}'><summary>\
-         <span class='tc-group-name'>{}</span> <span class='tc-group-count'>({})</span></summary>\
+         <span {name_attrs}>{}</span> <span class='tc-group-count'>({})</span></summary>\
          <div class='tc-group-body'>",
         esc_attr(&g.key),
         esc(&g.name),

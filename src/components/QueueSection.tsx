@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../lib/toast";
 import ActionDock from "./ActionDock";
@@ -1284,9 +1284,26 @@ export default function QueueSection({
   // anchor is: toggleSelect has to stay stable for the memoised rows.
   const areaGroups = useMemo(() => (areaGrouped ? buildAreaGroups(queue) : null), [areaGrouped, queue]);
   const shownOrder = useRef<number[] | null>(null);
+  // Every row on screen, top to bottom, grouped or flat: what the arrow
+  // keys walk. The row being edited counts even inside a folded group,
+  // because it is still drawn there.
+  const rowsOnScreen = useMemo(
+    () => (areaGroups ? visibleOrder(areaGroups, foldedAreas, editingIdx) : queue.map((_, i) => i)),
+    [areaGroups, foldedAreas, editingIdx, queue],
+  );
+  const rowOrder = useRef<number[]>([]);
   useEffect(() => {
-    shownOrder.current = areaGroups ? visibleOrder(areaGroups, foldedAreas) : null;
-  }, [areaGroups, foldedAreas]);
+    shownOrder.current = areaGroups ? rowsOnScreen : null;
+    rowOrder.current = rowsOnScreen;
+  }, [areaGroups, rowsOnScreen]);
+
+  // The grid's one Tab stop (a roving tabindex): the row focus was last in,
+  // while it is on screen, else the first row. The arrow keys move it.
+  const rowIds = useId();
+  const [focusRow, setFocusRow] = useState<number | null>(null);
+  useEffect(() => setFocusRow(null), [queue.length]);
+  const tabRow = focusRow != null && rowsOnScreen.includes(focusRow) ? focusRow : (rowsOnScreen[0] ?? null);
+  const onRowFocus = useCallback((i: number) => setFocusRow(i), []);
 
   // Selection works the way Update Test Cases' does: a click selects that
   // one case (and clears it if it was the only one), Ctrl/Cmd toggles one,
@@ -1323,6 +1340,31 @@ export default function QueueSection({
     }
     selAnchor.current = i;
   }, []);
+
+  // Up and Down move to the row above or below in the order on screen
+  // (folded groups skipped), Home and End to the first and last. With
+  // Shift held the selection runs from the anchor to the row reached.
+  const onNavigate = useCallback(
+    (i: number, key: "ArrowUp" | "ArrowDown" | "Home" | "End", extend: boolean) => {
+      const order = rowOrder.current;
+      const at = order.indexOf(i);
+      if (order.length === 0) return;
+      const to =
+        key === "Home"
+          ? 0
+          : key === "End"
+            ? order.length - 1
+            : Math.min(order.length - 1, Math.max(0, (at < 0 ? 0 : at) + (key === "ArrowDown" ? 1 : -1)));
+      const next = order[to];
+      if (extend) {
+        if (selAnchor.current == null) selAnchor.current = i;
+        toggleSelect(next, { range: true, toggle: false });
+      }
+      setFocusRow(next);
+      document.getElementById(`${rowIds}-${next}-row`)?.focus();
+    },
+    [toggleSelect, rowIds],
+  );
 
   /** Write bulk changes back into the files the cases came from, so the
    * file says what the queue says - otherwise the next external save of
@@ -1594,8 +1636,8 @@ export default function QueueSection({
   // What Collapse all would fold that the user can SEE: steps and diffs
   // open on rows inside a folded group are not counted (the row being
   // edited always shows, folded or not), plus the editor itself.
-  const onScreen = areaGroups ? new Set(visibleOrder(areaGroups, foldedAreas)) : null;
-  const shown = (i: number) => !onScreen || onScreen.has(i) || i === editingIdx;
+  const onScreen = new Set(rowsOnScreen);
+  const shown = (i: number) => onScreen.has(i);
   const openOnScreen =
     [...expandedSteps].filter(shown).length + [...expandedDiffs].filter(shown).length + (editingIdx != null ? 1 : 0);
 
@@ -1628,6 +1670,10 @@ export default function QueueSection({
         diffFailed={diffFailed}
         busy={submit.isPending}
         onToggleSelect={toggleSelect}
+        idBase={rowIds}
+        tabStop={tabRow === i}
+        onNavigate={onNavigate}
+        onRowFocus={onRowFocus}
         onToggleSteps={toggleSteps}
         onToggleDiff={toggleDiff}
         onToggleEdit={toggleEdit}
@@ -1654,8 +1700,9 @@ export default function QueueSection({
     const rows = g.indices.filter(keep);
     const kids = away ? g.children.filter((c) => editingIdx != null && groupIndices(c).includes(editingIdx)) : g.children;
     const picked = all.filter((i) => selected.has(i)).length;
-    // The heading's name selects the whole group, nested included, and a
-    // second click clears it - Update Test Cases' heading click.
+    // The group's tick box selects every case in it, nested included, and
+    // clears them when they are all selected - Update Test Cases' group
+    // tick box (its toggleGroup).
     const pickGroup = () => {
       setSelected((s) => {
         const next = new Set(s);
@@ -1681,16 +1728,30 @@ export default function QueueSection({
           >
             {folded ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
           </button>
-          {/* The name selects every case in the group; the chevron folds. */}
+          {/* As on Update Test Cases: the tick box selects the group, and
+              the name folds it, same as the chevron. */}
+          <Checkbox
+            ariaLabel={`Select all in ${g.path}`}
+            checked={all.length > 0 && picked === all.length}
+            indeterminate={picked > 0 && picked < all.length}
+            onCheckedChange={pickGroup}
+          />
           <button
             type="button"
             className="group flex items-center gap-2"
-            aria-pressed={picked === 0 ? false : picked === all.length ? true : "mixed"}
-            title="Select every case in this group (click again to clear)"
-            onClick={pickGroup}
+            title={folded ? "Expand group" : "Collapse group"}
+            onClick={() => toggleFoldedArea(g.key)}
           >
             <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
-              {g.name} ({g.count})
+              {/* The bucket for cases with no area, in italics, so a real
+                  area that happens to be called "No area" reads apart. */}
+              <span
+                className={g.key === "" ? "italic text-muted" : undefined}
+                title={g.key === "" ? "Cases with no area" : undefined}
+              >
+                {g.name}
+              </span>{" "}
+              ({g.count})
             </span>
           </button>
           {/* A folded group says how much of the selection it hides. */}

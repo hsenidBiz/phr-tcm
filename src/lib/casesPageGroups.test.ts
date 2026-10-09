@@ -101,6 +101,22 @@ test("a section the reader folds during a search stays folded as they keep typin
   expect(group("events").open).toBe(false);
 });
 
+test("a section that was open when the search began, folded by the reader, stays folded on the next keystroke", () => {
+  expect(group("events").open).toBe(true);
+  search("create");
+  group("events").removeAttribute("open");
+  search("create an");
+  expect(group("events").open).toBe(false);
+  search("create an event");
+  expect(group("events").open).toBe(false);
+  // Clearing the search ends it: a section it did not open is left as the
+  // reader left it, and the next search may open it again.
+  search("");
+  expect(group("events").open).toBe(false);
+  search("create");
+  expect(group("events").open).toBe(true);
+});
+
 test("re-applying the same query, as a live refresh does, opens nothing", () => {
   search("sign");
   group("").removeAttribute("open");

@@ -136,21 +136,26 @@
   // When the QUERY changes, a folded section holding a match opens, or the
   // count would name cases nobody can see. Only then: not when the filter
   // is re-applied for another reason (a match switch, a live refresh), and
-  // never a section the reader folded again during this search - a section
-  // the search opened that is now shut was shut by them. Clearing the
-  // search folds back what the search opened. Kept outside wireSearch, by
-  // section key, so a live refresh (which re-wires the search) keeps it.
+  // never a section the reader folds while the search is on - any section
+  // that was open at the last sync and is shut now was shut by them, so it
+  // stays shut for the rest of the search, whoever opened it. Clearing the
+  // search ends it and folds back what the search opened. Kept outside
+  // wireSearch, by section key, so a live refresh (which re-wires the
+  // search) keeps it.
   var lastQuery = '';
+  var wasOpen = {};
   var searchOpened = {};
   var readerFolded = {};
   function syncGroups(query) {
     var groups = Array.prototype.slice.call(document.querySelectorAll('details.tc-group'));
+    var keyOf = function (g) { return g.getAttribute('data-area') || ''; };
+    var searching = lastQuery !== '';
     var changed = query !== lastQuery;
     lastQuery = query;
     groups.forEach(function (g) {
       g.classList.toggle('hidden', !g.querySelector('.case:not(.hidden)'));
-      var key = g.getAttribute('data-area') || '';
-      if (searchOpened[key] && !g.hasAttribute('open')) {
+      var key = keyOf(g);
+      if (searching && wasOpen[key] && !g.hasAttribute('open')) {
         delete searchOpened[key];
         readerFolded[key] = true;
       }
@@ -158,19 +163,22 @@
     if (!query) {
       if (changed) {
         groups.forEach(function (g) {
-          if (searchOpened[g.getAttribute('data-area') || '']) g.removeAttribute('open');
+          if (searchOpened[keyOf(g)]) g.removeAttribute('open');
         });
       }
       searchOpened = {};
       readerFolded = {};
-      return;
+    } else if (changed) {
+      groups.forEach(function (g) {
+        var key = keyOf(g);
+        if (g.hasAttribute('open') || readerFolded[key] || g.classList.contains('hidden')) return;
+        g.setAttribute('open', '');
+        searchOpened[key] = true;
+      });
     }
-    if (!changed) return;
+    wasOpen = {};
     groups.forEach(function (g) {
-      var key = g.getAttribute('data-area') || '';
-      if (g.hasAttribute('open') || readerFolded[key] || g.classList.contains('hidden')) return;
-      g.setAttribute('open', '');
-      searchOpened[key] = true;
+      if (g.hasAttribute('open')) wasOpen[keyOf(g)] = true;
     });
   }
 

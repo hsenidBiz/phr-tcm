@@ -58,6 +58,18 @@ fn a_real_area_named_ungrouped_stays_apart_from_the_no_area_bucket() {
     assert_eq!(tree.iter().map(|g| g.key.as_str()).collect::<Vec<_>>(), vec!["ungrouped", ""]);
 }
 
+/// A real area called "No area" and the bucket for cases with none read
+/// differently on the page: the bucket is marked, the real one is not.
+#[test]
+fn a_real_area_named_no_area_is_told_apart_from_the_bucket_on_the_page() {
+    let queue = cases(&["No area", ""]);
+    let html = page(&queue, "no-area", PageLayout::ByArea);
+    assert!(html.contains("data-area='no area' data-level='0'><summary><span class='tc-group-name'>No area</span>"), "{html}");
+    assert!(html.contains(
+        "data-area='' data-level='0'><summary><span class='tc-group-name tc-no-area' title='Cases with no area'>No area</span>"
+    ), "{html}");
+}
+
 /// An area is the user's own text: in the grouped page its name is escaped
 /// as markup and its key as a single-quoted attribute value.
 #[test]
@@ -111,7 +123,9 @@ fn the_grouped_page_nests_sections_in_queue_order_with_no_area_last() {
          <div class='tc-group-body'>"
     ), "{html}");
     assert!(html.contains("data-area='events / create / form' data-level='2'"), "{html}");
-    assert!(html.contains("<span class='tc-group-name'>No area</span> <span class='tc-group-count'>(1)</span>"), "{html}");
+    assert!(html.contains(
+        "<span class='tc-group-name tc-no-area' title='Cases with no area'>No area</span> <span class='tc-group-count'>(1)</span>"
+    ), "{html}");
 
     // Sections and cases read top to bottom in queue order, No area last;
     // each case keeps its queue position as its number and its key.

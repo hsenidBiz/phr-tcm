@@ -436,3 +436,5 @@ body.spec-off #tc-specs { display: none; }
 .tc-group-count { color: var(--faint); font-weight: 400; }
 .tc-group-body { padding-left: 18px; }
 @media print { .tc-group > summary::before { content: none; } }
+/* The bucket for cases with no area, apart from a real area of that name. */
+.tc-no-area { font-style: italic; color: var(--muted); }

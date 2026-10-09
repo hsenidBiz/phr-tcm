@@ -92,9 +92,19 @@ export function groupIndices(group: AreaGroup): number[] {
 }
 
 /** The queue indices on screen, top to bottom, when the groups whose keys
- * are in `folded` are folded away - what a Shift-click range runs over. */
-export function visibleOrder(groups: readonly AreaGroup[], folded: ReadonlySet<string>): number[] {
+ * are in `folded` are folded away - what a Shift-click range and the arrow
+ * keys run over. `editing` is the row being edited: a folded group still
+ * shows it (folding never hides an open editor), so it stays in its place. */
+export function visibleOrder(
+  groups: readonly AreaGroup[],
+  folded: ReadonlySet<string>,
+  editing: number | null = null,
+): number[] {
   return groups.flatMap((g) =>
-    folded.has(g.key) ? [] : [...g.indices, ...visibleOrder(g.children, folded)],
+    folded.has(g.key)
+      ? editing != null && groupIndices(g).includes(editing)
+        ? [editing]
+        : []
+      : [...g.indices, ...visibleOrder(g.children, folded, editing)],
   );
 }

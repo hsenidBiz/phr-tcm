@@ -53,6 +53,17 @@ export type QueueRowProps = {
    * takes the cases from the anchor to this one, `toggle` (Ctrl/Cmd) adds
    * or removes just this one or, with `range`, adds the range. */
   onToggleSelect: (index: number, how: { range: boolean; toggle: boolean }) => void;
+  /** Base for this row's element ids (the section's useId), so its name can
+   * point at its own title and badges. */
+  idBase: string;
+  /** The one row of the grid in the Tab order (a roving tabindex): the rest
+   * are reached with the arrow keys. */
+  tabStop: boolean;
+  /** An arrow key, Home or End on the row: move to another row, Shift to
+   * extend the selection on the way. */
+  onNavigate: (index: number, key: "ArrowUp" | "ArrowDown" | "Home" | "End", extend: boolean) => void;
+  /** Focus arrived in this row (on it or on one of its buttons). */
+  onRowFocus: (index: number) => void;
   onToggleSteps: (index: number) => void;
   onToggleDiff: (index: number) => void;
   onToggleEdit: (index: number) => void;
@@ -109,6 +120,10 @@ export function QueueRowInner({
   diffFailed,
   busy,
   onToggleSelect,
+  idBase,
+  tabStop,
+  onNavigate,
+  onRowFocus,
   onToggleSteps,
   onToggleDiff,
   onToggleEdit,
@@ -118,18 +133,38 @@ export function QueueRowInner({
 }: QueueRowProps) {
   // A NEW row only: an UPDATE row keeps its Azure DevOps diff and nothing else.
   const showFileDiff = fileChange != null && tc.update_id == null;
+  // The row's name is its title and then its status - what the badges and
+  // warnings say - so a screen reader hears more than the title alone.
+  const id = (part: string) => `${idBase}-${i}-${part}`;
+  const status = [
+    "title",
+    "op",
+    uploaded && "uploaded",
+    held && "held",
+    failed && "failed",
+    diff?.noop && "noop",
+    reviewing && (problem || duplicate) && "review",
+  ].filter((part): part is string => Boolean(part));
   return (
     // Selected by clicking the row itself, as on Update Test Cases: a row
-    // (a div: a list item cannot take the role) of a grid that allows several selected rows, focusable, with Space
-    // or Enter doing what a click does. Its buttons, links and fields keep
-    // their clicks (OWN_CLICKS).
+    // (a div: a list item cannot take the role) of a grid that allows
+    // several selected rows. One row is in the Tab order; the arrow keys
+    // move between rows, and Space or Enter does what a click does. Its
+    // buttons, links and fields keep their clicks (OWN_CLICKS).
     <div
       role="row"
+      id={id("row")}
       aria-selected={isSelected}
-      aria-label={tc.title}
-      tabIndex={0}
+      aria-labelledby={status.map(id).join(" ")}
+      tabIndex={tabStop ? 0 : -1}
+      onFocus={() => onRowFocus(i)}
       onClick={(e) => {
         if (!onRowItself(e)) return;
+        // A double-click to pick a word, or a drag across the text, is
+        // reading or copying - not choosing cases.
+        if (e.detail > 1) return;
+        const text = window.getSelection();
+        if (text && !text.isCollapsed) return;
         onToggleSelect(i, { range: e.shiftKey, toggle: e.ctrlKey || e.metaKey });
       }}
       // A Shift-click would otherwise also drag a text selection across
@@ -138,7 +173,13 @@ export function QueueRowInner({
         if (e.shiftKey && onRowItself(e)) e.preventDefault();
       }}
       onKeyDown={(e) => {
-        if (e.target !== e.currentTarget || (e.key !== " " && e.key !== "Enter")) return;
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "Home" || e.key === "End") {
+          e.preventDefault();
+          onNavigate(i, e.key, e.shiftKey);
+          return;
+        }
+        if (e.key !== " " && e.key !== "Enter") return;
         e.preventDefault();
         onToggleSelect(i, { range: e.shiftKey, toggle: e.ctrlKey || e.metaKey });
       }}
@@ -179,22 +220,32 @@ export function QueueRowInner({
             {stepsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
           {tc.update_id != null ? (
-            <Badge className="bg-warning/20 text-warning">UPDATE #{tc.update_id}</Badge>
+            <Badge id={id("op")} className="bg-warning/20 text-warning">UPDATE #{tc.update_id}</Badge>
           ) : (
-            <Badge className="bg-success/20 text-success">NEW</Badge>
+            <Badge id={id("op")} className="bg-success/20 text-success">NEW</Badge>
           )}
-          {uploaded && <Badge className="bg-success/20 text-success">UPLOADED</Badge>}
-          {tc.title}
+          {uploaded && (
+            <Badge id={id("uploaded")} className="bg-success/20 text-success">
+              UPLOADED
+            </Badge>
+          )}
+          <span id={id("title")}>{tc.title}</span>
+          {/* A failed row says so in colour only; this says it in words. */}
+          {failed && (
+            <span id={id("failed")} className="sr-only">
+              Upload failed
+            </span>
+          )}
           <span className="text-xs text-faint">{tc.steps.length} steps</span>
           {held && (
-            <span className="text-xs text-warning">
+            <span id={id("held")} className="text-xs text-warning">
               {ambiguous
                 ? "More than one test case with this title exists in Azure DevOps - check there before uploading again."
                 : "Outcome unknown - check before uploading again"}
             </span>
           )}
           {diff?.noop && (
-            <Badge className="bg-warning/20 text-warning">no-op — nothing will change</Badge>
+            <Badge id={id("noop")} className="bg-warning/20 text-warning">no-op — nothing will change</Badge>
           )}
           {diff && !diff.noop && (
             <button className="text-xs text-accent hover:underline" onClick={() => onToggleDiff(i)}>
@@ -212,9 +263,15 @@ export function QueueRowInner({
             </button>
           )}
           {diffFailed && <span className="text-xs text-faint">diff unavailable</span>}
-          {reviewing && problem && <span className="text-xs text-danger">{problem}</span>}
+          {reviewing && problem && (
+            <span id={id("review")} className="text-xs text-danger">
+              {problem}
+            </span>
+          )}
           {reviewing && !problem && duplicate && (
-            <span className="text-xs text-warning">{duplicate}</span>
+            <span id={id("review")} className="text-xs text-warning">
+              {duplicate}
+            </span>
           )}
         </span>
         <span className="flex shrink-0 items-center gap-3">
