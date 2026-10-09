@@ -1275,11 +1275,13 @@ fn open_a_closed_menu() -> Value {
 }
 
 /// What `sidebar_app` saw, in order (`navigate <path>`, `click <css>`),
-/// where its page is, and whether its menu is open.
+/// where its page is, whether its menu is open, and whether it is signed
+/// in (`#marker` shows only then; `#go` signs it in).
 struct Sidebar {
     log: Arc<Mutex<Vec<String>>>,
     path: Arc<Mutex<String>>,
     open: Arc<AtomicBool>,
+    signed: Arc<AtomicBool>,
 }
 
 /// An application with a left menu that remembers whether it is open, the
@@ -1293,8 +1295,9 @@ fn sidebar_app(open: bool, at: &str, screen: &'static str) -> (ScriptedDriver, S
         log: Arc::new(Mutex::new(vec![])),
         path: Arc::new(Mutex::new(at.to_string())),
         open: Arc::new(AtomicBool::new(open)),
+        signed: Arc::new(AtomicBool::new(true)),
     };
-    let (log, path, menu) = (app.log.clone(), app.path.clone(), app.open.clone());
+    let (log, path, menu, signed) = (app.log.clone(), app.path.clone(), app.open.clone(), app.signed.clone());
     let mut last_css = String::new();
     let mut d = ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
@@ -1336,6 +1339,7 @@ fn sidebar_app(open: bool, at: &str, screen: &'static str) -> (ScriptedDriver, S
                     "#toggle:not(.active)" => !open,
                     "#talent" | "#wizard" => open,
                     "#missing" => false,
+                    "#marker" => signed.load(Ordering::SeqCst),
                     _ => true,
                 };
                 json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": "el" } })] } else { vec![] } })
@@ -1343,6 +1347,7 @@ fn sidebar_app(open: bool, at: &str, screen: &'static str) -> (ScriptedDriver, S
             "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
                 log.lock().unwrap().push(format!("click {last_css}"));
                 match last_css.as_str() {
+                    "#go" => signed.store(true, Ordering::SeqCst),
                     "#toggle" => {
                         menu.fetch_xor(true, Ordering::SeqCst);
                     }
@@ -1387,6 +1392,29 @@ async fn an_area_check_starts_from_home_with_the_menu_open_once() {
     assert_eq!(log[..4], ["navigate /hr/home/index", "click #toggle", "click #talent", "click #wizard"], "{log:?}");
     assert_eq!(log.iter().filter(|l| *l == "click #toggle").count(), 1, "{log:?}");
     assert_eq!(log.iter().filter(|l| l.starts_with("navigate")).count(), 1, "{log:?}");
+    assert!(app.open.load(Ordering::SeqCst));
+}
+
+/// A session that has gone is signed in again, and that sign-in is the
+/// check's start: it already ran `after_sign_in`, so the page is not
+/// loaded again to run it a second time. A plain toggle proves it ran once.
+#[tokio::test]
+async fn an_area_check_that_signs_in_again_opens_the_menu_once() {
+    let dir = root_with_after_sign_in(json!([ { "kind": "click", "selector": { "css": "#toggle" } } ]));
+    let (d, app) = sidebar_app(false, "/talent/wizard", "/talent/wizard");
+    app.signed.store(false, Ordering::SeqCst);
+    let mut browser = talent_run(d);
+
+    let clicks = vec![css("#talent"), css("#wizard")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Definition Wizard", "Talent", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["arrived"], "/talent/wizard", "{body}");
+    let log = app.log.lock().unwrap().clone();
+    assert!(log.contains(&"click #go".to_string()), "it did not sign in again: {log:?}");
+    assert_eq!(log.iter().filter(|l| *l == "click #toggle").count(), 1, "{log:?}");
+    let after_go = log.iter().position(|l| l == "click #go").unwrap();
+    assert_eq!(log[after_go..], ["click #go", "click #toggle", "click #talent", "click #wizard"], "{log:?}");
     assert!(app.open.load(Ordering::SeqCst));
 }
 

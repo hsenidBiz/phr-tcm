@@ -2808,7 +2808,10 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
         .ok;
     if !signed_in {
         // The saved session has gone: sign in again as the discovery's
-        // account, then start from home as a recording does.
+        // account. A sign-in ends on a fresh, signed-in page with
+        // `after_sign_in` run, so that is the start: loading home again
+        // would run it a second time, and a toggle run twice closes the
+        // menu it opened.
         let Some(key) = account else {
             return (409, "the discovery has no account to sign in again with - start it again".to_string());
         };
@@ -2819,7 +2822,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             Ok(out) if !out.ok => return (409, out.detail),
             Ok(_) => {}
         }
-        went = nav::load_home(d, &home, timing).await;
+        went = crate::browser::actions::ActionOutcome::passed("signed in again");
     }
     let reached = if went.ok {
         let start = match crate::browser::page::eval_value(d, "location.href").await {
