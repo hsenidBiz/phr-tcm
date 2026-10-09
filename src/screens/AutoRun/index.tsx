@@ -48,6 +48,7 @@ import { Modal } from "../../components/ui/modal";
 import CaseCard from "./CaseCard";
 import CaseSearch, { matchesSearch } from "./CaseSearch";
 import ExecutionOrderDialog from "./ExecutionOrderDialog";
+import PlaywrightExportDialog from "./PlaywrightExportDialog";
 import ResetNeededPanel from "./ResetNeededPanel";
 import { fetchPlan } from "./plan";
 import PastRuns from "./PastRuns";
@@ -319,6 +320,8 @@ export default function AutoRun({
   };
   /** The Execution order dialog, with the cases it orders. */
   const [orderingOpen, setOrderingOpen] = useState(false);
+  /** The Export to Playwright dialog. */
+  const [exportOpen, setExportOpen] = useState(false);
   /** The run id under review, or null while no review dialog is open. An
    * unattended run opens straight into this once it finishes - see the
    * review request below. */
@@ -776,6 +779,12 @@ export default function AutoRun({
                           onSelect: () => setOrderingOpen(true),
                         },
                         {
+                          label: "Export to Playwright",
+                          description: "Copy the passing scripts into your clone of the Playwright repo.",
+                          disabled: !rows.some((_, i) => hasScript(i)),
+                          onSelect: () => setExportOpen(true),
+                        },
+                        {
                           label: "Clear scripts",
                           danger: true,
                           disabled: !rows.some((_, i) => hasScript(i)),
@@ -957,6 +966,17 @@ export default function AutoRun({
             : rows.filter((_, i) => hasScript(i))
           ).map((c) => ({ id: c.id, title: c.title }))}
           onClose={() => setOrderingOpen(false)}
+        />
+      )}
+
+      {exportOpen && (
+        <PlaywrightExportDialog
+          org={org}
+          project={project}
+          pbiId={pbi.id}
+          caseIds={rows.map((c) => c.id)}
+          modules={rows.map((c): [number, string] => [c.id, c.module_value])}
+          onClose={() => setExportOpen(false)}
         />
       )}
 

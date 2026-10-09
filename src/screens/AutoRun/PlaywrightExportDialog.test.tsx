@@ -1,0 +1,218 @@
+// Export to Playwright: the clone folder, the area and account mappings, the
+// cases that can and cannot go, and what the summary says after a write.
+
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, expect, test, vi } from "vitest";
+import PlaywrightExportDialog from "./PlaywrightExportDialog";
+
+const pick = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: pick, save: vi.fn() }));
+afterEach(() => {
+  clearMocks();
+  vi.clearAllMocks();
+});
+
+const PREVIEW = {
+  environment: "env1",
+  clone_ok: true,
+  clone_problem: null,
+  user_keys: ["REPO_ADMIN", "REPO_EMP"],
+  areas: ["Definition Wizard"],
+  accounts: ["hr.admin"],
+  map: { areas: {}, accounts: { other: { x: "Y" } } },
+  suggested: {},
+  cases: [
+    { case_id: 10, title: "Create a cycle", exportable: true, reason: null, seg: "sl/admin/pm/wizard", user_key: "REPO_ADMIN", add_user_command: null },
+    { case_id: 11, title: "Open the report", exportable: false, reason: "its newest run did not pass", seg: null, user_key: null, add_user_command: null },
+    {
+      case_id: 12,
+      title: "Approve the plan",
+      exportable: false,
+      reason: "the account kim has no user in the clone",
+      seg: null,
+      user_key: null,
+      add_user_command: "npm run add-user -- kim <password>",
+    },
+  ],
+};
+
+type Call = { cmd: string; args: Record<string, unknown> };
+
+function mount(handlers: Record<string, (args: Record<string, unknown>) => unknown> = {}, preview: unknown = PREVIEW) {
+  const calls: Call[] = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (handlers[cmd]) return handlers[cmd]((args ?? {}) as Record<string, unknown>);
+    if (cmd === "pw_export_preview") return preview;
+    if (cmd === "get_app_settings") return { playwright_clone: "C:/repo" };
+    return null;
+  });
+  const onClose = vi.fn();
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <PlaywrightExportDialog
+        org="acme"
+        project="Web"
+        pbiId={7}
+        caseIds={[10, 11, 12]}
+        modules={[[10, "Definition Wizard"], [11, ""], [12, "Performance"]]}
+        onClose={onClose}
+      />
+    </QueryClientProvider>,
+  );
+  return { calls, onClose };
+}
+
+test("lists_reasons_and_only_ticks_exportable", async () => {
+  mount();
+  const ok = await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  expect(ok).toHaveAttribute("aria-checked", "true");
+  expect(screen.queryByRole("checkbox", { name: /Open the report/ })).not.toBeInTheDocument();
+  expect(screen.getByText("its newest run did not pass")).toBeInTheDocument();
+  expect(screen.getByText("npm run add-user -- kim <password>")).toBeInTheDocument();
+  expect(screen.getByText("C:/repo")).toBeInTheDocument();
+});
+
+test("choosing_a_clone_saves_it", async () => {
+  pick.mockResolvedValue("D:/work/clone");
+  const { calls } = mount({ set_playwright_clone: () => ({ playwright_clone: "D:/work/clone" }) });
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  fireEvent.click(screen.getByRole("button", { name: "Choose…" }));
+  await waitFor(() => expect(calls.find((c) => c.cmd === "set_playwright_clone")?.args).toEqual({ path: "D:/work/clone" }));
+  expect(pick).toHaveBeenCalledWith({ directory: true });
+  expect(await screen.findByText("D:/work/clone")).toBeInTheDocument();
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_preview").length).toBeGreaterThan(1));
+});
+
+test("saving_a_mapping_sends_the_map", async () => {
+  const { calls } = mount();
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  fireEvent.change(screen.getByLabelText("Module for Definition Wizard"), { target: { value: "pm" } });
+  fireEvent.change(screen.getByLabelText("Feature for Definition Wizard"), { target: { value: "wizard" } });
+  fireEvent.click(screen.getByRole("combobox", { name: "Side for Definition Wizard" }));
+  fireEvent.click(await screen.findByRole("option", { name: "self" }));
+  fireEvent.click(screen.getByRole("combobox", { name: "User for hr.admin" }));
+  fireEvent.click(await screen.findByRole("option", { name: "REPO_EMP" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
+  await waitFor(() => expect(calls.find((c) => c.cmd === "pw_export_save_map")).toBeTruthy());
+  expect(calls.find((c) => c.cmd === "pw_export_save_map")?.args).toEqual({
+    organization: "acme",
+    project: "Web",
+    map: {
+      areas: { "Definition Wizard": { side: "self", module: "pm", feature: "wizard" } },
+      accounts: { other: { x: "Y" }, env1: { "hr.admin": "REPO_EMP" } },
+    },
+  });
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_preview").length).toBeGreaterThan(1));
+});
+
+test("export_sends_the_ticked_ids_and_shows_the_summary", async () => {
+  const { calls } = mount({
+    pw_export_write: () => ({
+      files: ["suites/sl/admin/pm/wizard/raw/a.spec.ts", "suites/sl/admin/pm/wizard/test-cases/wizard.md"],
+      cases: [[10, "suites/sl/admin/pm/wizard/raw/a.spec.ts"]],
+      user_keys: [[10, "REPO_ADMIN"]],
+      missing_navigation: ["pm/wizard"],
+    }),
+  });
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  expect(await screen.findByText("suites/sl/admin/pm/wizard/test-cases/wizard.md")).toBeInTheDocument();
+  const write = calls.find((c) => c.cmd === "pw_export_write")!;
+  expect(write.args).toMatchObject({ organization: "acme", project: "Web", caseIds: [10] });
+  // The same Modules the preview was given, so the write picks the same areas.
+  const modules = [[10, "Definition Wizard"], [11, ""], [12, "Performance"]];
+  expect(write.args.modules).toEqual(modules);
+  expect(calls.find((c) => c.cmd === "pw_export_preview")?.args.modules).toEqual(modules);
+  expect(screen.getByText("#10 → suites/sl/admin/pm/wizard/raw/a.spec.ts - run as REPO_ADMIN")).toBeInTheDocument();
+  expect(screen.getByText("pm/wizard")).toBeInTheDocument();
+  expect(screen.getByText(/test-refactorer/)).toBeInTheDocument();
+  expect(screen.getByText(/lint:tests -- --require-specs/)).toBeInTheDocument();
+  expect(screen.getByText(/replaces that case's whole section/)).toBeInTheDocument();
+});
+
+test("a_refused_export_shows_the_reason_and_writes_nothing_else", async () => {
+  mount({
+    pw_export_write: () => {
+      throw new Error("case 10 cannot be exported: its area is not mapped");
+    },
+  });
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  expect(await screen.findByText("case 10 cannot be exported: its area is not mapped")).toBeInTheDocument();
+  expect(screen.queryByText(/test-refactorer/)).not.toBeInTheDocument();
+});
+
+test("Export is disabled when the clone is not ok or nothing is ticked", async () => {
+  mount({}, { ...PREVIEW, clone_ok: false, clone_problem: "that folder is not the repo" });
+  expect(await screen.findByText("that folder is not the repo")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+});
+
+test("unsaved mapping edits disable Export and say to save first", async () => {
+  mount();
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("combobox", { name: "User for hr.admin" }));
+  fireEvent.click(await screen.findByRole("option", { name: "REPO_EMP" }));
+  expect(screen.getByText("Save the mappings first")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+});
+
+test("a half-filled or blanked saved area row blocks the save", async () => {
+  const saved = { ...PREVIEW, map: { areas: { "Definition Wizard": { side: "admin", module: "pm", feature: "wizard" } }, accounts: {} } };
+  const { calls } = mount({}, saved);
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  fireEvent.change(screen.getByLabelText("Feature for Definition Wizard"), { target: { value: "" } });
+  expect(screen.getByText("needs module and feature")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save mappings" })).toBeDisabled();
+  expect(calls.some((c) => c.cmd === "pw_export_save_map")).toBe(false);
+});
+
+test("a failed refresh after a write keeps the summary and is shown separately", async () => {
+  let previews = 0;
+  mount({
+    pw_export_preview: () => {
+      if (++previews > 1) throw new Error("preview broke");
+      return PREVIEW;
+    },
+    pw_export_write: () => ({ files: ["a/b.md"], cases: [[10, "a/raw.spec.ts"]], user_keys: [], missing_navigation: [] }),
+  });
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  expect(await screen.findByText("a/b.md")).toBeInTheDocument();
+  expect(await screen.findByText(/could not be refreshed: preview broke/)).toBeInTheDocument();
+});
+
+test("an_unplaced_area_is_filled_with_the_suggestion_and_must_be_saved_first", async () => {
+  const suggested = {
+    ...PREVIEW,
+    areas: ["Definition Wizard", "Goal Setting"],
+    map: { areas: { "Definition Wizard": { side: "admin", module: "pm", feature: "wizard" } }, accounts: {} },
+    suggested: { "Goal Setting": { side: "admin", module: "performance", feature: "goal-setting" } },
+  };
+  const { calls } = mount({}, suggested);
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  // The saved row keeps what is saved; the unplaced one shows the guess.
+  expect(screen.getByLabelText("Feature for Definition Wizard")).toHaveValue("wizard");
+  expect(screen.getByLabelText("Module for Goal Setting")).toHaveValue("performance");
+  expect(screen.getByLabelText("Feature for Goal Setting")).toHaveValue("goal-setting");
+  // A guess is not a mapping until the person saves it.
+  expect(screen.getByText("Save the mappings first")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
+  await waitFor(() => expect(calls.find((c) => c.cmd === "pw_export_save_map")).toBeTruthy());
+  expect((calls.find((c) => c.cmd === "pw_export_save_map")?.args.map as { areas: unknown }).areas).toEqual({
+    "Definition Wizard": { side: "admin", module: "pm", feature: "wizard" },
+    "Goal Setting": { side: "admin", module: "performance", feature: "goal-setting" },
+  });
+});
+
+test("a_saved_user_the_clone_no_longer_has_is_shown_with_a_hint", async () => {
+  mount({}, { ...PREVIEW, map: { areas: {}, accounts: { env1: { "hr.admin": "GONE_KEY" } } } });
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  expect(screen.getByText("GONE_KEY is not in this clone's users.json")).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "User for hr.admin" })).toHaveTextContent("GONE_KEY");
+});

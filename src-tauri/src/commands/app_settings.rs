@@ -19,6 +19,16 @@ pub fn set_close_to_tray(on: bool) -> Result<AppSettings, String> {
     })
 }
 
+/// The folder of the Playwright automation clone scripts export into.
+#[tauri::command]
+#[specta::specta]
+pub fn set_playwright_clone(path: String) -> Result<AppSettings, String> {
+    app_settings::update(|s| s.playwright_clone = path.trim().to_string()).map_err(|e| {
+        crate::applog::warn(format!("saving the Playwright clone setting failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })
+}
+
 /// Whether the app is registered to start at sign-in. Read from the
 /// registry each time, so the switch always shows the truth.
 #[tauri::command]

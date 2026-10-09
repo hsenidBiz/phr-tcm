@@ -1,0 +1,150 @@
+// spec: suites/sl/admin/m/f/test-cases/f.md
+// seed: suites/_generated/seed.spec.ts
+
+import { test, expect } from '@playwright/test';
+
+test.describe('F', () => {
+  test('Kitchen sink - every exportable action', async ({ page }) => {
+    let cur = page;
+    const readText = (e: Element) => (function (this: HTMLElement) {
+      const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+      if (this instanceof HTMLSelectElement) return norm(this.selectedOptions[0] ? this.selectedOptions[0].label : '');
+      if (this instanceof HTMLInputElement || this instanceof HTMLTextAreaElement) return norm(this.value);
+      return norm(this.innerText);
+    }).call(e as HTMLElement);
+    const opened: (typeof page)[] = [];
+    const claimed = new Set<typeof page>();
+    page.context().on('page', p => { opened.push(p); });
+    const nextTab = async (from: number, timeout: number) => {
+      const end = Date.now() + timeout;
+      for (;;) {
+        const fresh = opened.slice(from).filter(p => !claimed.has(p));
+        if (fresh.length > 0) {
+          const p = fresh[fresh.length - 1];
+          claimed.add(p);
+          return p;
+        }
+        if (Date.now() >= end) {
+          throw new Error(`No new tab opened within ${timeout} ms`);
+        }
+        await page.waitForTimeout(100);
+      }
+    };
+    let tab_help_tab: typeof page;
+    let tab_second: typeof page;
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/hr\/home\/index/);
+    if (await cur.locator('.bootbox.modal.show .modal-footer button').filter({ visible: true }).first().waitFor({ timeout: 4000 }).then(() => true, () => false)) {
+      await cur.locator('.bootbox.modal.show .modal-footer button').filter({ visible: true }).first().click();
+    }
+    if (await cur.locator('#sidebar-toggle-menu:not(.active)').filter({ visible: true }).first().waitFor({ timeout: 5000 }).then(() => true, () => false)) {
+      await cur.locator('#sidebar-toggle-menu').filter({ visible: true }).first().click();
+    }
+    await cur.locator('a.area').filter({ visible: true }).first().click();
+
+    // 1. Open the page.
+    const mark1 = opened.length;
+    await cur.goto('/hr/x?y=1#z');
+    await cur.goto('https://sso.example/login');
+    await cur.getByRole('button', { name: 'Save', exact: true }).filter({ visible: true }).first().click();
+    await cur.locator('input[name=\'q\']').filter({ visible: true }).first().fill('it\'s `x` ${y}\nline 2');
+    await cur.locator('#spinner').first().waitFor({ state: 'attached', timeout: 3000 });
+    await cur.locator('iframe#body').filter({ visible: true }).contentFrame().getByText('Ready', { exact: true }).filter({ visible: true }).first().waitFor({ timeout: 4000 });
+
+    // 2. Check what it shows.
+    // Not checked: A person checks the colour.
+    const mark2 = opened.length;
+    await expect(cur.locator('body')).toContainText('Welcome', { ignoreCase: true, useInnerText: true });
+    await expect(cur).toHaveURL(new RegExp('\\/hr\\/x\\?y=1'));
+    await expect(cur.locator('#a').first()).toBeVisible({ timeout: 1000 });
+    await expect(cur.locator('.toast').filter({ visible: true }).first()).toBeHidden({ timeout: 10000 });
+    await expect.poll(() => cur.locator('select#level').filter({ visible: true }).first().evaluate(readText), { timeout: 2000 }).toBe('Senior Expert');
+    await expect.poll(() => cur.locator('textarea#notes').filter({ visible: true }).first().evaluate(readText), { timeout: 10000 }).toContain('draft');
+    await expect(cur.locator('tr.row').filter({ visible: true })).toHaveCount(3, { timeout: 10000 });
+    await expect(cur.locator('#save').filter({ visible: true }).nth(1)).toHaveAttribute('aria-disabled', 'false', { timeout: 10000 });
+    await expect(cur.locator('#name').first().and(cur.locator(':focus-within'))).toHaveCount(1, { timeout: 500 });
+
+    // 3.
+    const mark3 = opened.length;
+    const resp3_0 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/save') && r.request().method() === 'POST', { timeout: 8000 });
+    resp3_0.catch(() => {});
+    const resp3_1 = cur.waitForResponse(r => r.url().toLowerCase().includes('/api/list'), { timeout: 10000 });
+    resp3_1.catch(() => {});
+    if (await cur.getByRole('dialog', { name: 'Confirm' }).filter({ visible: true }).first().waitFor({ timeout: 1500 }).then(() => true, () => false)) {
+      await cur.getByRole('button', { name: 'OK' }).filter({ visible: true }).first().click();
+    }
+    const r3_0 = await resp3_0;
+    expect(r3_0.status()).toBe(200);
+    expect(await r3_0.json()).toMatchObject({ 'ok': true, 'ids': [1, 2] });
+    const r3_1 = await resp3_1;
+    expect(r3_1.status()).toBe(200);
+    const a3_0 = await cur.request.get('/api/items', { params: { 'page': '1' }, maxRedirects: 0 });
+    expect(a3_0.status()).toBe(200);
+    expect(await a3_0.json()).toMatchObject({ 'count': 2 });
+    const a3_1 = await cur.request.get('/api/ping', { maxRedirects: 0 });
+    expect(a3_1.status()).toBe(200);
+
+    // 4. Move the cards.
+    const mark4 = opened.length;
+    await cur.reload();
+    await cur.context().clearCookies();
+    await cur.goto('/');
+    await expect(cur).toHaveURL(/\/hr\/home\/index/);
+    if (await cur.locator('.bootbox.modal.show .modal-footer button').filter({ visible: true }).first().waitFor({ timeout: 4000 }).then(() => true, () => false)) {
+      await cur.locator('.bootbox.modal.show .modal-footer button').filter({ visible: true }).first().click();
+    }
+    if (await cur.locator('#sidebar-toggle-menu:not(.active)').filter({ visible: true }).first().waitFor({ timeout: 5000 }).then(() => true, () => false)) {
+      await cur.locator('#sidebar-toggle-menu').filter({ visible: true }).first().click();
+    }
+    await cur.locator('a.area').filter({ visible: true }).first().click();
+    await cur.goto('/');
+    await expect(cur).toHaveURL(/\/hr\/home\/index/);
+    if (await cur.locator('.bootbox.modal.show .modal-footer button').filter({ visible: true }).first().waitFor({ timeout: 4000 }).then(() => true, () => false)) {
+      await cur.locator('.bootbox.modal.show .modal-footer button').filter({ visible: true }).first().click();
+    }
+    if (await cur.locator('#sidebar-toggle-menu:not(.active)').filter({ visible: true }).first().waitFor({ timeout: 5000 }).then(() => true, () => false)) {
+      await cur.locator('#sidebar-toggle-menu').filter({ visible: true }).first().click();
+    }
+    await cur.locator('a.goals').filter({ visible: true }).first().click();
+    await cur.getByRole('link', { name: 'Goal Setting' }).filter({ visible: true }).first().click();
+    await cur.keyboard.press('Shift+Tab');
+    await cur.keyboard.press('Tab');
+    await cur.keyboard.press('Tab');
+    await cur.keyboard.press('Tab');
+    await cur.locator('#card-1').first().dragTo(cur.locator('#lane-2').first());
+    await cur.locator('#card-2').first().dragTo(cur.locator('#lane-3').first());
+
+    // 5.
+    const mark5 = opened.length;
+    const dl5_0 = cur.waitForEvent('download', { timeout: 30000 });
+    dl5_0.catch(() => {});
+    const dl5_1 = cur.waitForEvent('download', { timeout: 9000 });
+    dl5_1.catch(() => {});
+    await cur.getByText('Export').filter({ visible: true }).first().click();
+    const d5_0 = await dl5_0;
+    expect(d5_0.suggestedFilename()).toMatch(new RegExp('^report.*\\.xlsx$', 'i'));
+    if (await cur.locator('#export-pdf').first().waitFor({ timeout: 2000 }).then(() => true, () => false)) {
+      await cur.locator('#export-pdf').first().click();
+      const d5_1 = await dl5_1;
+      expect(d5_1.suggestedFilename()).toMatch(new RegExp('^summary\\.pdf$', 'i'));
+    }
+
+    // 6.
+    const mark6 = opened.length;
+    await cur.locator('#help').first().click();
+    tab_help_tab = await nextTab(mark5, 5000);
+    await expect(tab_help_tab).toHaveURL(new RegExp('\\/help'));
+    cur = tab_help_tab;
+    await cur.locator('text=Contents').last().click();
+    await tab_help_tab.close();
+    if (cur === tab_help_tab) { cur = page; }
+    tab_second = await cur.context().newPage();
+    await tab_second.goto('/hr/second');
+    claimed.add(tab_second);
+    cur = tab_second;
+    cur = page;
+    await cur.locator('#close-second').first().click();
+    await tab_second.waitForEvent('close', { timeout: 3000 });
+    if (cur === tab_second) { cur = page; }
+  });
+});

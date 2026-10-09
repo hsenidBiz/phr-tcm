@@ -1234,6 +1234,22 @@ export const commands = {
 	getAppSettings: () => __TAURI_INVOKE<AppSettings>("get_app_settings"),
 	/**  Whether closing the main window keeps the app running in the tray. */
 	setCloseToTray: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_close_to_tray", { on })),
+	/**  The folder of the Playwright automation clone scripts export into. */
+	setPlaywrightClone: (path: string) => typedError<AppSettings, string>(__TAURI_INVOKE("set_playwright_clone", { path })),
+	/**  Which of `case_ids` can be exported, and why not for the rest. */
+	pwExportPreview: (organization: string, project: string, caseIds: number[], modules: ([number, string])[]) => typedError<Preview, string>(__TAURI_INVOKE("pw_export_preview", { organization, project, caseIds, modules })),
+	/**
+	 *  Keeps the area placements and account choices. One bad placement refuses
+	 *  the whole map and nothing is saved.
+	 */
+	pwExportSaveMap: (organization: string, project: string, map: ExportMap) => typedError<null, string>(__TAURI_INVOKE("pw_export_save_map", { organization, project, map })),
+	/**
+	 *  Writes the cases into the clone. Reads each case's title, steps, state
+	 *  and paths from Azure DevOps first (read-only). `modules` is each case's
+	 *  Module as the screen has it - the same the preview was given, so the
+	 *  write picks the same areas the preview showed.
+	 */
+	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, moduleRef, preconditionsRef })),
 	/**
 	 *  Whether a start at sign-in stays hidden in the tray (on) or opens the
 	 *  window (off). Read at start-up, so the Windows startup entry itself never
@@ -1918,6 +1934,11 @@ export type AppSettings = {
 	 *  (`crate::saved_session`). Off: every launch signs in in the browser.
 	 */
 	stay_signed_in?: boolean,
+	/**
+	 *  Folder of the PHR-PLAYWRIGHT-AUTOMATION clone Auto Run scripts export
+	 *  into. Empty until the person picks one.
+	 */
+	playwright_clone?: string,
 };
 
 /**  One area of the discovery map, as the Discovery card shows it. */
@@ -3002,6 +3023,26 @@ export type Expect = {
 	json?: unknown | null,
 };
 
+/**
+ *  A project's export choices. `accounts[env_id][tcm_account_key]` is the
+ *  clone's user key.
+ */
+export type ExportMap = {
+	areas?: { [key in string]: Placement },
+	accounts?: { [key in string]: { [key in string]: string } },
+};
+
+export type ExportResult = {
+	/**  Relative to the clone, forward slashes. */
+	files: string[],
+	/**  Case id and the raw spec file it is in. */
+	cases: ([number, string])[],
+	/**  Case id and the clone's user key its raw spec is run as (the seed's user). */
+	user_keys: ([number, string])[],
+	/**  `<module>/<feature>` pairs the clone's navigation.json lacks. */
+	missing_navigation: string[],
+};
+
 export type ExportSummary = {
 	path: string,
 	keys: number,
@@ -3608,6 +3649,13 @@ export type PdfSpec_Serialize = {
  */
 export type Phrases = string | string[];
 
+/**  Where one area's specs live: `sl/<side>/<module>/<feature>`. */
+export type Placement = {
+	side: string,
+	module: string,
+	feature: string,
+};
+
 /**
  *  Emitted by submit_queue when the PBI had NO area-matched test plan and
  *  one was created on the fly, before the upload proceeds - the frontend
@@ -3836,6 +3884,34 @@ export type Precondition_Serialize = {
 	 *  sentence when the precondition is not met.
 	 */
 	why?: string | null,
+};
+
+export type Preview = {
+	/**  The active environment id: the key the dialog edits in `map.accounts`. */
+	environment: string,
+	clone_ok: boolean,
+	clone_problem: string | null,
+	user_keys: string[],
+	areas: string[],
+	accounts: string[],
+	map: ExportMap,
+	/**
+	 *  A first guess, from its name (`Placement::suggest`), for each area
+	 *  that one of the listed cases starts in and that is not placed yet;
+	 *  the person confirms it by saving.
+	 */
+	suggested: { [key in string]: Placement },
+	cases: PreviewCase[],
+};
+
+export type PreviewCase = {
+	case_id: number,
+	title: string,
+	exportable: boolean,
+	reason: string | null,
+	seg: string | null,
+	user_key: string | null,
+	add_user_command: string | null,
 };
 
 export type Project = {

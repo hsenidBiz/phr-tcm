@@ -1,0 +1,48 @@
+// spec: suites/sl/admin/m/f/test-cases/f.md
+// seed: suites/_generated/seed.spec.ts
+
+import { test, expect } from '@playwright/test';
+
+test.describe('F', () => {
+  test('A case', async ({ page }) => {
+    let cur = page;
+    const opened: (typeof page)[] = [];
+    const claimed = new Set<typeof page>();
+    page.context().on('page', p => { opened.push(p); });
+    const nextTab = async (from: number, timeout: number) => {
+      const end = Date.now() + timeout;
+      for (;;) {
+        const fresh = opened.slice(from).filter(p => !claimed.has(p));
+        if (fresh.length > 0) {
+          const p = fresh[fresh.length - 1];
+          claimed.add(p);
+          return p;
+        }
+        if (Date.now() >= end) {
+          throw new Error(`No new tab opened within ${timeout} ms`);
+        }
+        await page.waitForTimeout(100);
+      }
+    };
+    let tab_report: typeof page;
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/hr\/home\/index/);
+    if (await cur.locator('.bootbox.modal.show .modal-footer button').filter({ visible: true }).first().waitFor({ timeout: 4000 }).then(() => true, () => false)) {
+      await cur.locator('.bootbox.modal.show .modal-footer button').filter({ visible: true }).first().click();
+    }
+    if (await cur.locator('#sidebar-toggle-menu:not(.active)').filter({ visible: true }).first().waitFor({ timeout: 5000 }).then(() => true, () => false)) {
+      await cur.locator('#sidebar-toggle-menu').filter({ visible: true }).first().click();
+    }
+    await cur.locator('a.area').filter({ visible: true }).first().click();
+
+    // 1.
+    const mark1 = opened.length;
+    tab_report = await cur.context().newPage();
+    await tab_report.goto('/hr/report');
+    claimed.add(tab_report);
+    cur = tab_report;
+    await expect(cur.locator('#chart').first()).toBeVisible({ timeout: 10000 });
+    await tab_report.close();
+    if (cur === tab_report) { cur = page; }
+  });
+});

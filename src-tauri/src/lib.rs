@@ -44,6 +44,7 @@ pub mod model;
 pub mod note_server;
 pub mod optimize;
 pub mod pipelines;
+pub mod pw_export;
 pub mod report;
 pub mod run_order;
 pub mod saved_session;
@@ -75,7 +76,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, discovery, environments, guide, misc, prs, queue, run_order, runs,
+        autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, discovery, environments, guide, misc, prs, pw_export, queue, run_order, runs,
         test_files, testplan, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
@@ -320,6 +321,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             guide::guide_download,
             app_settings::get_app_settings,
             app_settings::set_close_to_tray,
+            app_settings::set_playwright_clone,
+            pw_export::pw_export_preview,
+            pw_export::pw_export_save_map,
+            pw_export::pw_export_write,
             app_settings::set_start_minimized,
             app_settings::get_autostart,
             app_settings::set_autostart,

@@ -1,0 +1,686 @@
+//! Playwright export: one Auto Run script as a raw spec.
+
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use v2_lib::autorun::recipe::RecipeStep;
+use v2_lib::autorun::CaseScript;
+use v2_lib::browser::locator::Target;
+use v2_lib::pw_export::translate::{check, raw_spec, RawSpecInput};
+
+fn origins() -> Vec<String> {
+    vec!["https://app.example".into(), "https://sso.example".into()]
+}
+
+fn lf(s: &str) -> String {
+    s.replace("\r\n", "\n")
+}
+
+fn target(v: Value) -> Target {
+    serde_json::from_value(v).unwrap()
+}
+
+fn after_sign_in() -> Vec<RecipeStep> {
+    serde_json::from_value(json!([
+        {
+            "kind": "when_visible",
+            "selector": { "css": ".bootbox.modal.show .modal-footer button" },
+            "within_ms": 4000,
+            "then": [{ "kind": "click", "selector": { "css": ".bootbox.modal.show .modal-footer button" } }]
+        },
+        {
+            "kind": "when_visible",
+            "selector": { "css": "#sidebar-toggle-menu:not(.active)" },
+            "within_ms": 5000,
+            "then": [{ "kind": "click", "selector": { "css": "#sidebar-toggle-menu" } }]
+        }
+    ]))
+    .unwrap()
+}
+
+fn script(steps: Value) -> CaseScript {
+    serde_json::from_value(json!({ "case_id": 1, "title": "A case", "steps": steps })).unwrap()
+}
+
+struct Fx {
+    script: CaseScript,
+    signin: Vec<RecipeStep>,
+    area: Vec<Target>,
+    by_name: BTreeMap<String, Vec<Target>>,
+    texts: BTreeMap<i32, String>,
+}
+
+impl Fx {
+    fn new(script: CaseScript) -> Fx {
+        Fx {
+            script,
+            signin: vec![],
+            area: vec![target(json!({ "css": "a.area" }))],
+            by_name: BTreeMap::new(),
+            texts: BTreeMap::new(),
+        }
+    }
+    fn run(&self) -> Result<String, String> {
+        raw_spec(&RawSpecInput {
+            script: &self.script,
+            md_path: "suites/sl/admin/m/f/test-cases/f.md".into(),
+            feature_title: "F".into(),
+            after_sign_in: &self.signin,
+            area_clicks: &self.area,
+            area_clicks_by_name: &self.by_name,
+            step_texts: &self.texts,
+            origins: &origins(),
+        })
+        .map_err(|e| e.0)
+    }
+}
+
+fn one_step(actions: Value) -> Fx {
+    Fx::new(script(json!([{ "step_number": 1, "actions": actions }])))
+}
+
+#[test]
+fn a_sibling_script_becomes_the_golden_raw_spec() {
+    let script: CaseScript = serde_json::from_str(include_str!("../fixtures/pw_export/script-135560.json")).unwrap();
+    let texts: BTreeMap<String, String> =
+        serde_json::from_value(json!({
+            "1": "Open \"Performance Management\", go to \"Setup & Configuration\" and select \"Definition Wizard\".",
+            "2": "If the landing page shows, make sure the \"Goals / KPIs\" and \"Competencies\" cards are both selected and click \"Continue to Configuration\".",
+            "3": "Make sure at least one rating method is listed and click \"Save & Continue\".",
+            "4": "On the \"Performance-based\" card, click \"Activate\", then click \"Activate\" in the \"Activate Template\" dialog.",
+            "5": "Click \"Add Level\". Copy the two lines Senior and Expert from a text editor and paste them into the \"Level name\" field of the new row.",
+            "6": "Click the \"Confirm edit\" check icon, then click \"Use Custom Levels\"."
+        }))
+        .unwrap();
+    let texts: BTreeMap<i32, String> = texts.into_iter().map(|(k, v)| (k.parse().unwrap(), v)).collect();
+    let signin = after_sign_in();
+    let area = vec![target(json!({ "css": "a[href*='DefinitionWizard']" }))];
+    let by_name = BTreeMap::new();
+    let got = raw_spec(&RawSpecInput {
+        script: &script,
+        md_path: "suites/sl/admin/performance/definition-wizard/test-cases/definition-wizard.md".into(),
+        feature_title: "Definition Wizard".into(),
+        after_sign_in: &signin,
+        area_clicks: &area,
+        area_clicks_by_name: &by_name,
+        step_texts: &texts,
+        origins: &origins(),
+    })
+    .unwrap();
+    golden("raw-135560.spec.ts.golden", &got);
+}
+
+#[test]
+fn a_response_is_armed_before_the_click_and_awaited_after() {
+    let got = one_step(json!([
+        { "kind": "click", "selector": "#save" },
+        { "kind": "expect_response", "method": "post", "url_contains": "API/Save", "status": 201,
+          "json": { "ok": true, "n": 2, "who": "it's", "tags": ["a", "b"] } }
+    ]))
+    .run()
+    .unwrap();
+    let arm = got.find("const resp1_0 = cur.waitForResponse(r => r.url().toLowerCase().includes('api/save') && r.request().method() === 'POST', { timeout: 10000 });").expect("armed");
+    let click = got.find("await cur.locator('#save').first().click();").unwrap();
+    let wait = got.find("const r1_0 = await resp1_0;").expect("awaited");
+    assert!(arm < click && click < wait, "{got}");
+    assert!(got.contains("expect(r1_0.status()).toBe(201);"));
+    assert!(got.contains(
+        "expect(await r1_0.json()).toMatchObject({ 'ok': true, 'n': 2, 'who': 'it\\'s', 'tags': ['a', 'b'] });"
+    ), "{got}");
+}
+
+#[test]
+fn a_list_of_objects_in_a_json_check_is_refused() {
+    let why = one_step(json!([
+        { "kind": "expect_response", "url_contains": "x", "json": { "rows": [{ "a": 1 }] } }
+    ]))
+    .run()
+    .unwrap_err();
+    assert!(why.contains("list of objects"), "{why}");
+    let why = one_step(json!([
+        { "kind": "api_request", "path": "/x", "expect": { "json": [{ "a": 1 }] } }
+    ]))
+    .run()
+    .unwrap_err();
+    assert!(why.contains("list of objects"), "{why}");
+}
+
+#[test]
+fn an_api_request_sends_its_query_and_checks_the_answer() {
+    let got = one_step(json!([
+        { "kind": "api_request", "path": "/api/x", "query": { "q": "1" }, "expect": { "status": 200, "json": { "a": "b" } } }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("const a1_0 = await cur.request.get('/api/x', { params: { 'q': '1' }, maxRedirects: 0 });"), "{got}");
+    assert!(got.contains("expect(a1_0.status()).toBe(200);"));
+    assert!(got.contains("expect(await a1_0.json()).toMatchObject({ 'a': 'b' });"));
+}
+
+#[test]
+fn when_visible_waits_then_acts_inside_an_if() {
+    let got = one_step(json!([
+        { "kind": "when_visible", "selector": "#banner", "then": [{ "kind": "click", "selector": "#banner .x" }] },
+        { "kind": "when_visible", "selector": "text=Hello", "within_ms": 500,
+          "then": [{ "kind": "click", "selector": "text=Hello" }] }
+    ]))
+    .run()
+    .unwrap();
+    assert!(
+        got.contains(
+            "    if (await cur.locator('#banner').first().waitFor({ timeout: 2000 }).then(() => true, () => false)) {\n      await cur.locator('#banner .x').first().click();\n    }\n"
+        ),
+        "{got}"
+    );
+    // A Legacy text= selector already ends in .last(); no .first() after it.
+    assert!(got.contains("await cur.locator('text=Hello').last().waitFor({ timeout: 500 })"), "{got}");
+    assert!(!got.contains(".last().first()"));
+}
+
+#[test]
+fn first_goes_on_single_element_locators_but_not_on_nth_or_counts() {
+    let got = one_step(json!([
+        { "kind": "click", "selector": { "role": "button", "name": "Save", "nth": 1 } },
+        { "kind": "expect_count", "selector": "li", "equals": 3, "timeout_ms": 900 },
+        { "kind": "expect_attribute", "selector": [{ "css": "#a" }, { "role": "textbox" }], "name": "title", "equals": "x" },
+        { "kind": "expect_hidden", "selector": "#gone", "timeout_ms": 100 },
+        { "kind": "expect_focused", "selector": "#f" }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("getByRole('button', { name: 'Save' }).filter({ visible: true }).nth(1).click();"), "{got}");
+    assert!(got.contains("await expect(cur.locator('li')).toHaveCount(3, { timeout: 900 });"), "{got}");
+    assert!(got.contains(".getByRole('textbox').filter({ visible: true }).first()).toHaveAttribute('title', 'x', { timeout: 10000 });"), "{got}");
+    assert!(got.contains("await expect(cur.locator('#gone').first()).toBeHidden({ timeout: 100 });"), "{got}");
+    assert!(got.contains("await expect(cur.locator('#f').first().and(cur.locator(':focus-within'))).toHaveCount(1, { timeout: 10000 });"), "{got}");
+}
+
+#[test]
+fn tab_switching_moves_cur() {
+    let got = one_step(json!([
+        { "kind": "click", "selector": "#open" },
+        { "kind": "expect_tab", "name": "help-tab", "url_contains": "a.b?c" },
+        { "kind": "switch_tab", "name": "help-tab" },
+        { "kind": "click", "selector": "#inside" },
+        { "kind": "close_tab", "name": "help-tab" },
+        { "kind": "open_tab", "name": "t2", "url": "/path?x=1" },
+        { "kind": "switch_tab", "name": "main" },
+        { "kind": "expect_tab_closed", "name": "t2", "within_ms": 3000 }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("    let tab_help_tab: typeof page;\n"), "{got}");
+    assert!(got.contains("const mark1 = opened.length;"), "{got}");
+    assert!(got.contains("tab_help_tab = await nextTab(mark1, 10000);"), "{got}");
+    assert!(got.contains("claimed.add(tab_t2);"), "{got}");
+    assert!(got.contains("await expect(tab_help_tab).toHaveURL(new RegExp('a\\\\.b\\\\?c'));"), "{got}");
+    assert!(got.contains("cur = tab_help_tab;\n    await cur.locator('#inside').first().click();"), "{got}");
+    assert!(got.contains("await tab_help_tab.close();\n    if (cur === tab_help_tab) { cur = page; }"), "{got}");
+    assert!(got.contains("tab_t2 = await cur.context().newPage();\n    await tab_t2.goto('/path?x=1');\n    claimed.add(tab_t2);\n    cur = tab_t2;"), "{got}");
+    assert!(got.contains("cur = page;\n    await tab_t2.waitForEvent('close', { timeout: 3000 });"), "{got}");
+}
+
+#[test]
+fn return_to_area_replays_the_named_area() {
+    let mut fx = one_step(json!([
+        { "kind": "return_to_area" },
+        { "kind": "return_to_area", "area": "Other" }
+    ]));
+    fx.signin = after_sign_in();
+    fx.by_name.insert("Other".into(), vec![target(json!({ "css": "a.other" }))]);
+    let got = fx.run().unwrap();
+    assert_eq!(got.matches("await cur.goto('/');").count(), 2, "{got}");
+    let own = got.find("    // 1.").unwrap();
+    let tail = &got[own..];
+    assert!(tail.find("a.area").unwrap() < tail.find("a.other").unwrap(), "{got}");
+    assert!(tail.contains("#sidebar-toggle-menu"), "the recipe's after_sign_in runs again");
+
+    let mut fx = one_step(json!([{ "kind": "return_to_area", "area": "Nowhere" }]));
+    fx.signin = vec![];
+    let why = fx.run().unwrap_err();
+    assert!(why.contains("Nowhere"), "{why}");
+}
+
+#[test]
+fn press_key_times_three_presses_three_times() {
+    let got = one_step(json!([
+        { "kind": "press_key", "key": "Shift+Tab", "times": 3 },
+        { "kind": "press_key", "key": "Ctrl+ArrowUp" },
+        { "kind": "press_key", "key": "Space" }
+    ]))
+    .run()
+    .unwrap();
+    assert_eq!(got.matches("await cur.keyboard.press('Shift+Tab');").count(), 3, "{got}");
+    assert!(got.contains("await cur.keyboard.press('Control+ArrowUp');"));
+    assert!(got.contains("await cur.keyboard.press('Space');"));
+}
+
+#[test]
+fn text_url_download_and_session_actions() {
+    let got = one_step(json!([
+        { "kind": "check_text", "value": "it's `x` ${y}" },
+        { "kind": "check_url", "contains": "/a.b?c=(1)" },
+        { "kind": "reload" },
+        { "kind": "expire_session" },
+        { "kind": "click", "selector": "#dl" },
+        { "kind": "expect_download", "name": "Report_*.xlsx" }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("await expect(cur.locator('body')).toContainText('it\\'s `x` ${y}', { ignoreCase: true, useInnerText: true });"), "{got}");
+    assert!(got.contains("await expect(cur).toHaveURL(new RegExp('\\\\/a\\\\.b\\\\?c=\\\\(1\\\\)'));"), "{got}");
+    assert!(got.contains("await cur.reload();"));
+    assert!(got.contains("await cur.context().clearCookies();"));
+    let arm = got.find("const dl1_0 = cur.waitForEvent('download', { timeout: 30000 });").unwrap();
+    assert!(arm < got.find("#dl").unwrap());
+    assert!(got.contains("expect(d1_0.suggestedFilename()).toMatch(new RegExp('^Report_.*\\\\.xlsx$', 'i'));"), "{got}");
+}
+
+#[test]
+fn drag_onto_translates_and_before_after_do_not() {
+    let got = one_step(json!([{ "kind": "drag", "from": "#a", "to": "#b", "position": "onto" }])).run().unwrap();
+    assert!(got.contains("await cur.locator('#a').first().dragTo(cur.locator('#b').first());"), "{got}");
+    for pos in ["before", "after"] {
+        let why = one_step(json!([{ "kind": "drag", "from": "#a", "to": "#b", "position": pos }])).run().unwrap_err();
+        assert!(why.contains("drag"), "{why}");
+    }
+}
+
+#[test]
+fn the_header_comes_first_and_a_missing_text_leaves_the_number_alone() {
+    let mut fx = Fx::new(script(json!([
+        { "step_number": 7, "actions": [], "unchecked": "line one\nline two" },
+        { "step_number": 8, "actions": [] }
+    ])));
+    fx.texts.insert(7, "first\nsecond".into());
+    let got = fx.run().unwrap();
+    assert!(got.starts_with(
+        "// spec: suites/sl/admin/m/f/test-cases/f.md\n// seed: suites/_generated/seed.spec.ts\n\nimport { test, expect } from '@playwright/test';\n\ntest.describe('F', () => {\n  test('A case', async ({ page }) => {\n    let cur = page;\n    await page.goto('/');\n"
+    ), "{got}");
+    assert!(got.contains("    // 7. first second\n    // Not checked: line one line two\n"), "{got}");
+    assert!(got.contains("\n    // 8.\n"), "{got}");
+    assert!(got.ends_with("  });\n});\n"));
+    assert!(!got.contains("fixme") && !got.contains("skip"));
+}
+
+#[test]
+fn each_unexportable_kind_says_why() {
+    let table: Vec<(&str, Value)> = vec![
+        ("upload", json!({ "kind": "upload", "selector": "#f", "file": "a.xlsx" })),
+        ("sign_in", json!({ "kind": "sign_in", "account": "x" })),
+        ("expect_dialog", json!({ "kind": "expect_dialog", "answer": "accept" })),
+        ("expect_download", json!({ "kind": "expect_download", "name": "a.xlsx", "sheet": "S" })),
+        ("expect_download", json!({ "kind": "expect_download", "name": "a.xlsx", "contains_text": ["x"] })),
+        ("expect_row", json!({ "kind": "expect_row", "table": "#t", "cells": { "A": "b" } })),
+        ("expect_no_row", json!({ "kind": "expect_no_row", "table": "#t", "cells": { "A": "b" } })),
+        ("expect_sorted", json!({ "kind": "expect_sorted", "table": "#t", "column": "A", "order": "ascending" })),
+        ("expect_row_count", json!({ "kind": "expect_row_count", "table": "#t", "equals": 1 })),
+    ];
+    for (kind, action) in table {
+        let s = script(json!([{ "step_number": 1, "actions": [action.clone()] }]));
+        let why = check(&s, &origins()).unwrap_err().0;
+        assert!(why.contains(kind), "{kind}: {why}");
+        let why = one_step(json!([action])).run().unwrap_err();
+        assert!(why.contains(kind), "{kind}: {why}");
+    }
+    // Inside a when_visible too.
+    let s = script(json!([{ "step_number": 1, "actions": [
+        { "kind": "when_visible", "selector": "#a", "then": [{ "kind": "upload", "selector": "#f", "file": "a" }] }
+    ]}]));
+    assert!(check(&s, &origins()).unwrap_err().0.contains("upload"));
+}
+
+#[test]
+fn a_tab_opened_by_the_previous_step_is_claimed_by_the_next() {
+    let fx = Fx::new(script(json!([
+        { "step_number": 4, "actions": [{ "kind": "click", "selector": "#open" }] },
+        { "step_number": 5, "actions": [{ "kind": "expect_tab", "name": "a" }] }
+    ])));
+    let got = fx.run().unwrap();
+    assert!(got.contains("page.context().on('page', p => { opened.push(p); });"), "{got}");
+    assert!(got.contains("const mark4 = opened.length;"), "{got}");
+    assert!(got.contains("const mark5 = opened.length;"), "{got}");
+    assert!(got.contains("tab_a = await nextTab(mark4, 10000);"), "counts from the previous step: {got}");
+    assert!(got.contains("claimed.add(p);"));
+    assert!(!got.contains("waitForEvent('page'"));
+}
+
+#[test]
+fn two_expect_tabs_in_one_step_claim_distinct_pages_in_the_helper() {
+    let got = one_step(json!([
+        { "kind": "expect_tab", "name": "a" },
+        { "kind": "expect_tab", "name": "b", "within_ms": 2000 }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("tab_a = await nextTab(mark1, 10000);\n    tab_b = await nextTab(mark1, 2000);"), "{got}");
+    // The helper marks what it hands out as claimed and skips claimed pages.
+    assert!(got.contains("filter(p => !claimed.has(p))"), "{got}");
+}
+
+#[test]
+fn when_visible_on_a_hidden_selector_looks_for_a_visible_match_with_the_floor() {
+    let got = one_step(json!([
+        { "kind": "when_visible", "selector": { "css": "#x", "visible": false }, "within_ms": 100,
+          "then": [{ "kind": "click", "selector": "#x" }] },
+        { "kind": "wait_for", "selector": { "css": "#x", "visible": false }, "timeout_ms": 900 }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("if (await cur.locator('#x').filter({ visible: true }).first().waitFor({ timeout: 500 })"), "{got}");
+    assert!(got.contains("cur.locator('#x').first().waitFor({ state: 'attached', timeout: 900 });"), "{got}");
+}
+
+#[test]
+fn an_api_request_does_not_follow_redirects() {
+    let got = one_step(json!([
+        { "kind": "api_request", "path": "/a" },
+        { "kind": "api_request", "path": "/b", "query": { "q": "1" } }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("cur.request.get('/a', { maxRedirects: 0 })"), "{got}");
+    assert!(got.contains("{ params: { 'q': '1' }, maxRedirects: 0 }"), "{got}");
+}
+
+#[test]
+fn keys_are_read_the_way_the_app_reads_them() {
+    let got = one_step(json!([
+        { "kind": "press_key", "key": "ctrl+Enter" },
+        { "kind": "press_key", "key": "Shift + Tab" },
+        { "kind": "press_key", "key": "shift+ctrl+End" }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("press('Control+Enter')"), "{got}");
+    assert!(got.contains("press('Shift+Tab')"), "{got}");
+    assert!(got.contains("press('Control+Shift+End')"), "{got}");
+    let why = one_step(json!([{ "kind": "press_key", "key": "Hyper+Q" }])).run().unwrap_err();
+    assert!(why.contains("press_key"), "{why}");
+}
+
+#[test]
+fn a_blank_area_name_replays_the_own_area_and_response_text_is_trimmed() {
+    let got = one_step(json!([
+        { "kind": "return_to_area", "area": "  " },
+        { "kind": "expect_response", "method": " post ", "url_contains": " Save " }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("await cur.locator('a.area')"), "{got}");
+    assert!(got.contains("includes('save') && r.request().method() === 'POST'"), "{got}");
+}
+
+#[test]
+fn text_and_focus_checks_follow_the_app() {
+    let got = one_step(json!([
+        { "kind": "check_text", "value": "x" },
+        { "kind": "expect_focused", "selector": "#f", "timeout_ms": 50 }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("{ ignoreCase: true, useInnerText: true }"), "{got}");
+    assert!(
+        got.contains("await expect(cur.locator('#f').first().and(cur.locator(':focus-within'))).toHaveCount(1, { timeout: 50 });"),
+        "{got}"
+    );
+}
+
+#[test]
+fn same_site_addresses_export_as_paths() {
+    let got = one_step(json!([
+        { "kind": "navigate", "url": " /hr/x?y=1 " },
+        { "kind": "navigate", "url": "https://app.example/hr/a?b=2#c" },
+        { "kind": "navigate", "url": "HTTPS://App.Example" },
+        { "kind": "navigate", "url": "https://app.example?q=1" },
+        { "kind": "navigate", "url": "https://sso.example/login?r=1" },
+        { "kind": "open_tab", "name": "t", "url": "https://app.example/p?x=1" }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("await cur.goto('/hr/x?y=1');"), "{got}");
+    assert!(got.contains("await cur.goto('/hr/a?b=2#c');"), "{got}");
+    assert!(got.contains("await cur.goto('/');"), "{got}");
+    assert!(got.contains("await cur.goto('/?q=1');"), "{got}");
+    assert!(got.contains("await cur.goto('https://sso.example/login?r=1');"), "another allowed origin stays whole: {got}");
+    assert!(got.contains("await tab_t.goto('/p?x=1');"), "{got}");
+}
+
+#[test]
+fn other_addresses_are_refused_by_check_and_by_the_spec() {
+    for url in ["https://other.example/x", "file:///c:/x.html", "//host/x", "x/y", "ftp://app.example/x"] {
+        let why = one_step(json!([{ "kind": "navigate", "url": url }])).run().unwrap_err();
+        assert!(why.contains("navigate"), "{url}: {why}");
+        let why = one_step(json!([{ "kind": "open_tab", "name": "t", "url": url }])).run().unwrap_err();
+        assert!(why.contains("open_tab"), "{url}: {why}");
+        let s = script(json!([{ "step_number": 1, "actions": [{ "kind": "navigate", "url": url }] }]));
+        assert!(check(&s, &origins()).is_err(), "{url}");
+    }
+}
+
+#[test]
+fn text_checks_read_the_element_the_way_auto_run_does() {
+    let got = one_step(json!([
+        { "kind": "expect_text", "selector": "#name", "equals": "  Senior \n  Expert ", "timeout_ms": 900 },
+        { "kind": "expect_contains_text", "selector": "#list", "value": "Step\t2" }
+    ]))
+    .run()
+    .unwrap();
+    // Whitespace collapsed on the wanted side too, compared whole or as a part, case kept.
+    assert!(
+        got.contains("await expect.poll(() => cur.locator('#name').first().evaluate(readText), { timeout: 900 }).toBe('Senior Expert');"),
+        "{got}"
+    );
+    assert!(got.contains("await expect.poll(() => cur.locator('#list').first().evaluate(readText), { timeout: 10000 }).toContain('Step 2');"), "{got}");
+    assert!(!got.contains("toHaveText") && !got.contains("toContainText"), "{got}");
+    // The reader is declared once, before the steps.
+    assert_eq!(got.matches("const readText = ").count(), 1, "{got}");
+    assert!(got.find("const readText = ").unwrap() < got.find("// 1.").unwrap(), "{got}");
+}
+
+#[test]
+fn the_exported_text_reader_is_the_apps_own() {
+    use v2_lib::browser::expect::READ_TEXT_JS;
+    use v2_lib::pw_export::translate::read_text_ts;
+    let ts = read_text_ts(0).join("\n");
+    // Undo the two TypeScript additions and the constant comes back word for word.
+    let back = ts
+        .replacen("const readText = (e: Element) => (function (this: HTMLElement) {", "function() {", 1)
+        .replacen("}).call(e as HTMLElement);", "}", 1);
+    assert_eq!(back, READ_TEXT_JS.replace("\r\n", "\n"));
+    // A spec with no text check carries no reader.
+    let got = one_step(json!([{ "kind": "click", "selector": "#a" }])).run().unwrap();
+    assert!(!got.contains("readText"), "{got}");
+}
+
+#[test]
+fn a_text_check_in_the_recipe_also_declares_the_reader() {
+    let mut fx = one_step(json!([{ "kind": "click", "selector": "#a" }]));
+    fx.signin = serde_json::from_value(json!([{ "kind": "expect_text", "selector": "#who", "equals": "Me" }])).unwrap();
+    let got = fx.run().unwrap();
+    assert!(got.contains("const readText = "), "{got}");
+}
+
+#[test]
+fn open_tab_alone_still_declares_what_it_marks_claimed() {
+    let got = one_step(json!([{ "kind": "open_tab", "name": "t2", "url": "/x" }])).run().unwrap();
+    assert!(got.contains("claimed.add(tab_t2);"), "{got}");
+    assert!(got.contains("const claimed = new Set<typeof page>();"), "{got}");
+    assert!(got.find("const claimed").unwrap() < got.find("claimed.add(tab_t2)").unwrap(), "{got}");
+}
+
+#[test]
+fn tabs_named_in_the_recipe_are_declared_and_collected() {
+    let mut fx = one_step(json!([{ "kind": "switch_tab", "name": "main" }]));
+    fx.signin = serde_json::from_value(json!([
+        { "kind": "click", "selector": "#help" },
+        { "kind": "expect_tab", "name": "help" },
+        { "kind": "close_tab", "name": "help" }
+    ]))
+    .unwrap();
+    let got = fx.run().unwrap();
+    assert!(got.contains("    let tab_help: typeof page;\n"), "{got}");
+    assert!(got.contains("const opened: (typeof page)[] = [];"), "{got}");
+    assert!(got.find("let tab_help").unwrap() < got.find("tab_help = await nextTab(").unwrap(), "{got}");
+}
+
+#[test]
+fn a_single_value_json_expectation_is_refused_with_its_own_sentence() {
+    for v in [json!(5), json!("ok"), json!(true)] {
+        let s = script(json!([{ "step_number": 1, "actions": [{ "kind": "expect_response", "url_contains": "x", "json": v }] }]));
+        let e = check(&s, &origins()).unwrap_err().0;
+        assert!(e.contains("single value") && e.contains("toMatchObject"), "{e}");
+        let s = script(json!([{ "step_number": 1, "actions": [{ "kind": "api_request", "path": "/api/x", "expect": { "status": 200, "json": v } }] }]));
+        assert!(check(&s, &origins()).unwrap_err().0.starts_with("api_request json that is a single value"));
+    }
+    // An object or a list at the top still exports.
+    let got = one_step(json!([{ "kind": "expect_response", "url_contains": "x", "json": [1, 2] }])).run().unwrap();
+    assert!(got.contains("toMatchObject([1, 2])"), "{got}");
+}
+
+/// Compares `got` with a golden file under `tests/fixtures/pw_export/`, or
+/// rewrites the file when PW_EXPORT_BLESS is set (then read the diff).
+/// `src/lib/pwExportGolden.test.ts` type-checks every golden, so each one
+/// must stay what the translator writes today.
+fn golden(name: &str, got: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw_export").join(name);
+    if std::env::var_os("PW_EXPORT_BLESS").is_some() {
+        std::fs::write(&path, got).unwrap();
+    }
+    let want = lf(&std::fs::read_to_string(&path).unwrap_or_default());
+    assert_eq!(got, want, "{name} is stale - rerun with PW_EXPORT_BLESS=1 and review the diff");
+}
+
+#[test]
+fn every_exportable_kind_becomes_the_kitchen_sink_golden() {
+    let s: CaseScript = serde_json::from_value(json!({
+        "case_id": 900,
+        "title": "Kitchen sink - every exportable action",
+        "steps": [
+            { "step_number": 1, "actions": [
+                { "kind": "navigate", "url": "https://app.example/hr/x?y=1#z" },
+                { "kind": "navigate", "url": "https://sso.example/login" },
+                { "kind": "click", "selector": { "role": "button", "name": "Save", "exact": true } },
+                { "kind": "fill", "selector": { "css": "input[name='q']" }, "value": "it's `x` ${y}\nline 2" },
+                { "kind": "wait_for", "selector": { "css": "#spinner", "visible": false }, "timeout_ms": 3000 },
+                { "kind": "wait_for", "selector": [{ "css": "iframe#body" }, { "text": "Ready", "exact": true }], "timeout_ms": 4000 }
+            ] },
+            { "step_number": 2, "unchecked": "A person checks the colour.", "actions": [
+                { "kind": "check_text", "value": "Welcome" },
+                { "kind": "check_url", "contains": "/hr/x?y=1" },
+                { "kind": "expect_visible", "selector": "#a", "timeout_ms": 1000 },
+                { "kind": "expect_hidden", "selector": { "css": ".toast" } },
+                { "kind": "expect_text", "selector": { "css": "select#level" }, "equals": "Senior   Expert", "timeout_ms": 2000 },
+                { "kind": "expect_contains_text", "selector": { "css": "textarea#notes" }, "value": "draft" },
+                { "kind": "expect_count", "selector": { "css": "tr.row" }, "equals": 3 },
+                { "kind": "expect_attribute", "selector": { "css": "#save", "nth": 1 }, "name": "aria-disabled", "equals": "false" },
+                { "kind": "expect_focused", "selector": "#name", "timeout_ms": 500 }
+            ] },
+            { "step_number": 3, "actions": [
+                { "kind": "when_visible", "selector": { "role": "dialog", "name": "Confirm" }, "within_ms": 1500,
+                  "then": [{ "kind": "click", "selector": { "role": "button", "name": "OK" } }] },
+                { "kind": "expect_response", "method": "post", "url_contains": "/api/Save", "status": 200, "json": { "ok": true, "ids": [1, 2] }, "timeout_ms": 8000 },
+                { "kind": "expect_response", "url_contains": "/api/list" },
+                { "kind": "api_request", "path": "/api/items", "query": { "page": "1" }, "expect": { "status": 200, "json": { "count": 2 } } },
+                { "kind": "api_request", "path": "/api/ping" }
+            ] },
+            { "step_number": 4, "actions": [
+                { "kind": "reload" },
+                { "kind": "expire_session" },
+                { "kind": "return_to_area" },
+                { "kind": "return_to_area", "area": "Goal Setting" },
+                { "kind": "press_key", "key": "shift+Tab" },
+                { "kind": "press_key", "key": "Tab", "times": 3 },
+                { "kind": "drag", "from": "#card-1", "to": "#lane-2" },
+                { "kind": "drag", "from": "#card-2", "to": "#lane-3", "position": "onto" }
+            ] },
+            { "step_number": 5, "actions": [
+                { "kind": "click", "selector": { "text": "Export" } },
+                { "kind": "expect_download", "name": "report*.xlsx" },
+                { "kind": "when_visible", "selector": "#export-pdf",
+                  "then": [{ "kind": "click", "selector": "#export-pdf" }, { "kind": "expect_download", "name": "summary.pdf", "within_ms": 9000 }] }
+            ] },
+            { "step_number": 6, "actions": [
+                { "kind": "click", "selector": "#help" },
+                { "kind": "expect_tab", "name": "help-tab", "url_contains": "/help", "within_ms": 5000 },
+                { "kind": "switch_tab", "name": "help-tab" },
+                { "kind": "click", "selector": "text=Contents" },
+                { "kind": "close_tab", "name": "help-tab" },
+                { "kind": "open_tab", "name": "second", "url": "/hr/second" },
+                { "kind": "switch_tab", "name": "main" },
+                { "kind": "click", "selector": "#close-second" },
+                { "kind": "expect_tab_closed", "name": "second", "within_ms": 3000 }
+            ] }
+        ]
+    }))
+    .unwrap();
+    let mut fx = Fx::new(s);
+    fx.signin = after_sign_in();
+    fx.by_name.insert("Goal Setting".into(), vec![target(json!({ "css": "a.goals" })), target(json!({ "role": "link", "name": "Goal Setting" }))]);
+    fx.texts = [(1, "Open the page."), (2, "Check what it shows."), (4, "Move the cards.")]
+        .into_iter()
+        .map(|(n, t)| (n, t.to_string()))
+        .collect();
+    golden("kitchen-sink.spec.ts.golden", &fx.run().unwrap());
+}
+
+#[test]
+fn open_tab_with_no_expect_tab_becomes_its_golden() {
+    let mut fx = one_step(json!([
+        { "kind": "open_tab", "name": "report", "url": "/hr/report" },
+        { "kind": "expect_visible", "selector": "#chart" },
+        { "kind": "close_tab", "name": "report" }
+    ]));
+    fx.signin = after_sign_in();
+    golden("open-tab-only.spec.ts.golden", &fx.run().unwrap());
+}
+
+#[test]
+fn an_armed_wait_never_rejects_unhandled_when_its_guard_is_skipped() {
+    let got = one_step(json!([
+        { "kind": "when_visible", "selector": "#export", "then": [
+            { "kind": "click", "selector": "#export" },
+            { "kind": "expect_download", "name": "a.xlsx" },
+            { "kind": "expect_response", "url_contains": "/api/x" }
+        ] }
+    ]))
+    .run()
+    .unwrap();
+    // Handled at once, beside the arming, before the guard...
+    let dl = got.find("const dl1_0 = ").unwrap();
+    let dl_settled = got.find("dl1_0.catch(() => {});").unwrap();
+    let resp_settled = got.find("resp1_0.catch(() => {});").unwrap();
+    let guard = got.find("if (await cur.locator('#export')").unwrap();
+    assert!(dl < dl_settled && dl_settled < guard && resp_settled < guard, "{got}");
+    // ...while the check inside still awaits the wait itself, which rejects.
+    assert!(got.contains("      const d1_0 = await dl1_0;\n"), "{got}");
+    assert!(got.contains("      const r1_0 = await resp1_0;\n"), "{got}");
+}
+
+#[test]
+fn an_expectation_with_no_timeout_waits_as_long_as_auto_run_does() {
+    let ms = v2_lib::browser::timing::Timing::default().expect_ms;
+    let got = one_step(json!([
+        { "kind": "expect_visible", "selector": "#a" },
+        { "kind": "expect_hidden", "selector": "#b" },
+        { "kind": "expect_text", "selector": "#c", "equals": "x" },
+        { "kind": "expect_contains_text", "selector": "#d", "value": "y" },
+        { "kind": "expect_count", "selector": "li", "equals": 2 },
+        { "kind": "expect_attribute", "selector": "#e", "name": "n", "equals": "v" },
+        { "kind": "expect_focused", "selector": "#f" },
+        { "kind": "expect_response", "url_contains": "/api" },
+        { "kind": "expect_visible", "selector": "#own", "timeout_ms": 1234 }
+    ]))
+    .run()
+    .unwrap();
+    let default = format!("{{ timeout: {ms} }}");
+    // Seven expect lines, the text polls and the response wait: all the app's default.
+    assert_eq!(got.matches(&default).count(), 8, "{got}");
+    assert!(got.contains("toBeVisible({ timeout: 1234 })"), "{got}");
+    // Nothing falls back to Playwright's own 5 s.
+    for l in got.lines().filter(|l| l.contains("await expect(") || l.contains("expect.poll(") || l.contains("waitForResponse(")) {
+        if l.contains("toHaveURL(") {
+            continue;
+        }
+        assert!(l.contains("timeout: "), "no timeout on: {l}");
+    }
+}

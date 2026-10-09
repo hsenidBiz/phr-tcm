@@ -49,6 +49,16 @@ pub struct TestCaseSummary {
     pub automation_status: String,
 }
 
+/// A test case's state and where it sits, for the Playwright export's
+/// Metadata table.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct CaseMeta {
+    pub id: i32,
+    pub state: String,
+    pub area_path: String,
+    pub iteration_path: String,
+}
+
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct FieldRef {
     pub name: String,
