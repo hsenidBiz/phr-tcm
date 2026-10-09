@@ -63,17 +63,17 @@ export const importFile: Screen = {
       id: SELECTED,
       route: [
         { nav: "Import Test Cases" },
-        { click: { role: "checkbox", name: `Select ${FIRST}` } },
-        { click: { role: "checkbox", name: `Select ${THIRD}` } },
+        { click: { role: "row", name: FIRST } },
+        { ctrlClick: { role: "row", name: THIRD } },
       ],
-      alt: "Two queued cases ticked, with the bulk actions",
+      alt: "Two queued cases selected, with the bulk actions",
     },
     {
       id: BULK,
       route: [
         { nav: "Import Test Cases" },
-        { click: { role: "checkbox", name: `Select ${FIRST}` } },
-        { click: { role: "checkbox", name: `Select ${THIRD}` } },
+        { click: { role: "row", name: FIRST } },
+        { ctrlClick: { role: "row", name: THIRD } },
         { click: { role: "button", name: "Bulk edit" } },
         { waitFor: { role: "button", nameRe: "^Apply to \\d+$" } },
       ],
@@ -83,12 +83,12 @@ export const importFile: Screen = {
       id: RENAME,
       route: [
         { nav: "Import Test Cases" },
-        { click: { role: "checkbox", name: `Select ${FIRST}` } },
-        { click: { role: "checkbox", name: `Select ${THIRD}` } },
+        { click: { role: "row", name: FIRST } },
+        { ctrlClick: { role: "row", name: THIRD } },
         { click: { role: "button", nameRe: "^Rename \\d+$" } },
         { waitFor: { role: "textbox", name: "Find" } },
       ],
-      alt: "The rename window for two ticked queued cases",
+      alt: "The rename window for two selected queued cases",
     },
     {
       id: REVIEW,
@@ -104,8 +104,8 @@ export const importFile: Screen = {
       id: RESULTS,
       route: [
         { nav: "Import Test Cases" },
-        { click: { role: "checkbox", name: `Select ${FIRST}` } },
-        { click: { role: "checkbox", name: `Select ${THIRD}` } },
+        { click: { role: "row", name: FIRST } },
+        { ctrlClick: { role: "row", name: THIRD } },
         { click: { role: "button", name: "Remove 2" } },
         { click: { role: "button", nameRe: "^Review \\d+ test cases?$" } },
         { click: { role: "button", nameRe: "^Confirm & update" } },
@@ -119,7 +119,7 @@ export const importFile: Screen = {
     { id: "the-queue", title: "The queue", summary: "Everything waiting to be uploaded, with what you can do to all of it." },
     { id: "queued-cases", title: "A queued case", summary: "Each row is one case: open it to see its steps, or to see what an update will change." },
     { id: "edit-case", title: "Edit a queued case", summary: "Change a case in the queue before it is uploaded." },
-    { id: "many-at-once", title: "Change many cases at once", summary: "Tick cases to edit, rename or remove them together." },
+    { id: "many-at-once", title: "Change many cases at once", summary: "Select cases to edit, rename or remove them together." },
     { id: "upload", title: "Review and upload", summary: "A last look at every case, then the upload and its results." },
   ],
   controls: [
@@ -215,7 +215,7 @@ export const importFile: Screen = {
       name: "Group by area",
       does:
         "Shows the queue under a heading for each area, one level for each part of the area's path, in the order the cases come. " +
-        "Each heading counts the cases under it, folds away, and has a box that ticks all of them; cases with no area sit under **Ungrouped**, last. " +
+        "Each heading counts the cases under it: click its name to select them all (again to clear), or its arrow to fold it. Cases with no area sit under **No area**, last. " +
         "Only the view changes: the cases are still uploaded in queue order, and **View in browser** groups its page the same way.",
       tips: ["The switch and the groups you fold are remembered on this computer."],
     },
@@ -225,16 +225,21 @@ export const importFile: Screen = {
       group: "queued-cases",
       locate: { role: "checkbox", name: "Select all queued cases" },
       name: "Select cases for bulk actions",
-      does: "Ticks every case, ready for a bulk action.",
+      does: "Selects every case, ready for a bulk action.",
     },
     {
       id: "row-select",
       shot: QUEUE,
       group: "queued-cases",
-      locate: { role: "checkbox", name: `Select ${FIRST}` },
+      locate: { role: "row", name: FIRST },
       name: "A queued case",
       does:
-        "One row per case. Its box ticks it for a bulk action; hold [[Shift]] and click another box to tick everything in between.",
+        "One row per case. Click it to select it; click it again to clear. [[Ctrl]]+click adds or removes one case, [[Shift]]+click selects a range. " +
+        "Its buttons and links do their own job and leave the selection alone.",
+      tips: [
+        "A row reached with [[Tab]] is selected with [[Space]], with [[Ctrl]] or [[Shift]] held just as for a click.",
+        "When the queue is grouped by area, a [[Shift]]+click range runs over the cases on screen and skips folded groups.",
+      ],
     },
     {
       id: "expand-steps",
@@ -435,7 +440,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { text: "2 of 3 selected" },
       name: "Selected",
-      does: "How many cases are ticked.",
+      does: "How many cases are selected.",
     },
     {
       id: "bulk-edit",
@@ -443,7 +448,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "button", name: "Bulk edit" },
       name: "Bulk edit",
-      does: "Changes the automation status, module, tags or preconditions of every ticked case at once.",
+      does: "Changes the automation status, module, tags or preconditions of every selected case at once.",
     },
     {
       id: "rename-selected",
@@ -451,7 +456,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "button", name: "Rename 2" },
       name: "Rename",
-      does: "Opens the rename window for the ticked cases only.",
+      does: "Opens the rename window for the selected cases only.",
     },
     {
       id: "remove-selected",
@@ -459,7 +464,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "button", name: "Remove 2" },
       name: "Remove",
-      does: "Takes the ticked cases out of the queue.",
+      does: "Takes the selected cases out of the queue.",
     },
     {
       id: "bulk-status",
@@ -467,7 +472,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "combobox", name: "Automation status" },
       name: "Automation status",
-      does: "Leave it unchanged, or set every ticked case to **Not Automated** or **Planned**.",
+      does: "Leave it unchanged, or set every selected case to **Not Automated** or **Planned**.",
     },
     {
       id: "bulk-module",

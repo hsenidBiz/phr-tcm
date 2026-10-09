@@ -125,6 +125,16 @@ describe("runStep", () => {
     ]);
   });
 
+  test("ctrlClick clicks with Ctrl (Cmd on a Mac) held", async () => {
+    const { root, calls } = recorder();
+    await runStep({ page: root, openRunner: async () => null }, { ctrlClick: { role: "row", name: "Two" } });
+    expect(calls).toEqual([
+      ["getByRole", "row", { name: "Two", exact: true }],
+      ["getByRole().filter", { visible: true }],
+      ["getByRole().filter().click", { modifiers: ["ControlOrMeta"] }],
+    ]);
+  });
+
   test("activate sends the click to the element itself", async () => {
     const { root, calls } = recorder();
     await runStep({ page: root, openRunner: async () => null }, { activate: { css: "#map-list button" } });

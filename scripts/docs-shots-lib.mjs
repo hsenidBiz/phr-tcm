@@ -297,6 +297,9 @@ export async function runStep(ctx, step) {
   const { page } = ctx;
   if ("nav" in step) await navLocator(page, step.nav).click();
   else if ("click" in step) await visibleOnly(locatorFor(page, step.click)).click();
+  // Ctrl (Cmd on a Mac) held: adds one more item to a selection, the way a
+  // person picks several rows of a list.
+  else if ("ctrlClick" in step) await visibleOnly(locatorFor(page, step.ctrlClick)).click({ modifiers: ["ControlOrMeta"] });
   // No pointer: the element is reached the way a keyboard reaches it, so a
   // canvas drawn over it cannot take the click.
   else if ("activate" in step) await locatorFor(page, step.activate).first().dispatchEvent("click");
