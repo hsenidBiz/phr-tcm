@@ -217,10 +217,12 @@ use v2_lib::api_templates::runner::{run_template_within, RunReport, REUSED, RUN_
 use v2_lib::api_templates::ApiTemplate;
 use v2_lib::autorun::replay::Browsers;
 
-/// A kept fake page; closing it only counts.
+/// A kept fake page; closing it only counts. `kind` stands for Edge or
+/// Chrome.
 pub(crate) struct KeptApp {
     pub(crate) app: App,
     pub(crate) closed: Arc<AtomicUsize>,
+    pub(crate) kind: &'static str,
 }
 
 impl HeldBrowser for KeptApp {
@@ -231,17 +233,32 @@ impl HeldBrowser for KeptApp {
 
 /// Hands out prepared pages and keeps whatever a run leaves alive. `closed`
 /// counts its own closes; `kept_closed` the closes of pages it kept, made
-/// later by the store's helpers.
+/// later by the store's helpers; `kept_closed_at_open` what that count was
+/// at each `open`. `kind` is the browser it opens (Edge unless told).
 struct Keeping {
     next: VecDeque<App>,
     opened: usize,
     closed: usize,
     kept_closed: Arc<AtomicUsize>,
+    kept_closed_at_open: Vec<usize>,
+    kind: &'static str,
 }
 
 impl Keeping {
     fn new(pages: Vec<App>, kept_closed: &Arc<AtomicUsize>) -> Self {
-        Keeping { next: pages.into(), opened: 0, closed: 0, kept_closed: kept_closed.clone() }
+        Keeping {
+            next: pages.into(),
+            opened: 0,
+            closed: 0,
+            kept_closed: kept_closed.clone(),
+            kept_closed_at_open: Vec::new(),
+            kind: "edge",
+        }
+    }
+
+    fn of_kind(mut self, kind: &'static str) -> Self {
+        self.kind = kind;
+        self
     }
 }
 
@@ -252,6 +269,7 @@ impl Browsers for Keeping {
     /// (`browser_gone`, on the script the pages share) is over.
     async fn open(&mut self) -> Result<App, String> {
         self.opened += 1;
+        self.kept_closed_at_open.push(self.kept_closed.load(Ordering::SeqCst));
         let page = self.next.pop_front().ok_or_else(|| "no browser left".to_string())?;
         page.script.lock().unwrap().browser_gone = false;
         Ok(page)
@@ -266,16 +284,21 @@ impl Keeps for Keeping {
     type Kept = KeptApp;
 
     fn keep(&mut self, d: App) -> Result<KeptApp, App> {
-        Ok(KeptApp { app: d, closed: self.kept_closed.clone() })
+        Ok(KeptApp { app: d, closed: self.kept_closed.clone(), kind: self.kind })
     }
 
-    /// A kept page whose browser has gone is handed back, as `RealBrowsers`
-    /// hands back one whose process has ended.
+    /// A kept page whose browser has gone, or of another kind, is handed
+    /// back, as `RealBrowsers` hands back one whose process has ended or
+    /// that is the other browser.
     fn adopt(&mut self, kept: KeptApp) -> Result<App, KeptApp> {
-        if kept.app.script.lock().unwrap().browser_gone {
+        if !self.same_kind(&kept) || kept.app.script.lock().unwrap().browser_gone {
             return Err(kept);
         }
         Ok(kept.app)
+    }
+
+    fn same_kind(&self, kept: &KeptApp) -> bool {
+        kept.kind == self.kind
     }
 }
 
@@ -556,16 +579,7 @@ async fn quitting_changing_environment_or_signing_out_closes_the_held_browser() 
     let qa = saved.environments.iter().find(|e| e.name == "QA").unwrap().id.clone();
     let store = v2_lib::db::credentials::MemoryStore::default();
     v2_lib::commands::environments::set_active_with(root, &store, &qa).await.unwrap();
-    // The switch closes it off the async threads without waiting.
-    let gone = async {
-        while closed() < 3 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    };
-    assert!(
-        tokio::time::timeout(Duration::from_secs(5), gone).await.is_ok(),
-        "changing environment left the held browser open"
-    );
+    assert_eq!(closed(), 3, "changing environment left the held browser open");
     assert!(held_pages().is_empty());
 }
 
@@ -659,4 +673,74 @@ async fn a_run_whose_request_was_sent_to_another_page_keeps_nothing() {
     assert_eq!(b.opened, 1, "a fresh browser is not opened again");
     assert_eq!(b.closed, 1, "a browser whose session ended is closed");
     assert!(held_pages().is_empty(), "and never kept");
+}
+
+#[tokio::test]
+async fn a_browser_kept_as_edge_is_not_reused_by_a_run_that_asked_for_chrome() {
+    let _act = crate::serial::activity_log();
+    let (_h, _l, _c) = (crate::serial::held_browsers(), crate::serial::account_leases(), Clean);
+    let mut r = rig(twice(ok_answers()), None);
+    let kept_closed = Arc::new(AtomicUsize::new(0));
+    let mut edge = Keeping::new(vec![first_page(&mut r)], &kept_closed);
+    assert!(run(&r, &mut edge, template()).await.ok);
+
+    let (page, clicks) = fresh_page(&r);
+    let mut chrome = Keeping::new(vec![page], &kept_closed).of_kind("chrome");
+    let report = run(&r, &mut chrome, template()).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!(chrome.opened, 1, "the run that asked for Chrome ran in the kept Edge");
+    assert_eq!(chrome.kept_closed_at_open, vec![1], "the kept Edge was not closed before Chrome opened");
+    assert_eq!(clicks.load(Ordering::SeqCst), 1, "Chrome signs in once");
+    let kinds: Vec<_> = held::drain_all::<KeptApp>().into_iter().map(|e| e.driver.kind).collect();
+    assert_eq!(kinds, vec!["chrome"], "Chrome is kept in its place");
+}
+
+#[tokio::test]
+async fn a_case_taking_the_account_closes_the_held_browser_before_it_signs_in() {
+    let _act = crate::serial::activity_log();
+    let (_h, _l, _c) = (crate::serial::held_browsers(), crate::serial::account_leases(), Clean);
+    let mut r = rig(ok_answers(), None);
+    let kept_closed = Arc::new(AtomicUsize::new(0));
+    let mut b = Keeping::new(vec![first_page(&mut r)], &kept_closed);
+    assert!(run(&r, &mut b, template()).await.ok);
+
+    let account = request(template(), prove()).account;
+    let mut case = lease::Held::new(Holder::Case { run: "run-held".into() }, Duration::ZERO);
+    case.hold(r.root.path(), &account).await.expect("the case takes the account");
+    assert_eq!(kept_closed.load(Ordering::SeqCst), 1, "the held browser was left for the next sweep");
+    assert!(held_pages().is_empty());
+}
+
+/// Once the app is exiting (`held::shut`), a run that ends keeps nothing:
+/// its browser is closed at once. The latch is never cleared, so this runs
+/// in a copy of the test binary of its own, as `updater` does, and never
+/// reaches another test's keep.
+#[test]
+fn a_run_that_ends_after_the_app_began_exiting_keeps_nothing() {
+    const IN_CHILD: &str = "TCM_TEST_HELD_SHUT_CHILD";
+    const NAME: &str = "template_held::a_run_that_ends_after_the_app_began_exiting_keeps_nothing";
+    if std::env::var_os(IN_CHILD).is_none() {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([NAME, "--exact", "--test-threads=1", "--nocapture"])
+            .env(IN_CHILD, "1")
+            .output()
+            .expect("start a copy of the test binary");
+        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success(), "the check failed in its own process:\n{said}");
+        // A renamed test would filter to nothing and "pass" having run no
+        // check at all.
+        assert!(said.contains("1 passed"), "the child ran no check - is NAME still this test's path?\n{said}");
+        return;
+    }
+
+    tauri::async_runtime::block_on(async {
+        let mut r = rig(ok_answers(), None);
+        let kept_closed = Arc::new(AtomicUsize::new(0));
+        let mut b = Keeping::new(vec![first_page(&mut r)], &kept_closed);
+        held::shut();
+        let report = run(&r, &mut b, template()).await;
+        assert!(report.ok, "{report:?}");
+        assert_eq!(kept_closed.load(Ordering::SeqCst), 1, "a run ending at exit kept its browser");
+        assert!(held_pages().is_empty(), "nothing is left in the store for no one to close");
+    });
 }

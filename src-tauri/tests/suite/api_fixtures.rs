@@ -747,7 +747,7 @@ mod running {
             "https://hr.example.internal".into(),
             Vec::new(),
         );
-        let kept = crate::template_held::KeptApp { app: r.another_page(), closed: kept_closed.clone() };
+        let kept = crate::template_held::KeptApp { app: r.another_page(), closed: kept_closed.clone(), kind: "edge" };
         let generation = v2_lib::autorun::lease::generation(&env, "admin");
         held::keep(&env, "admin", HeldEntry { driver: kept, session, fingerprint: 0, generation, page: None });
 
@@ -767,6 +767,7 @@ mod running {
     #[tokio::test]
     async fn two_steps_pass_a_value_between_them_in_one_signed_in_browser() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut r = rig_with(vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))], &f, &[make_cycle(), add_suite()]);
         let report = run(&mut r, &f).await;
@@ -821,6 +822,7 @@ mod running {
     #[tokio::test]
     async fn a_failed_step_stops_the_run_records_what_was_made_and_keeps_the_outputs() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut r = rig_with(vec![the_cycle(), answer(500, json!({ "error": "no" }))], &f, &[make_cycle(), add_suite()]);
         let before = FixtureRun {
@@ -862,6 +864,7 @@ mod running {
     #[tokio::test]
     async fn what_a_failed_step_captured_is_still_recorded() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let mut t = make_cycle();
         t.steps.push(
             serde_json::from_value(json!({
@@ -884,6 +887,7 @@ mod running {
     #[tokio::test]
     async fn an_entry_whose_id_was_never_captured_is_skipped() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut r = rig_with(vec![answer(500, json!({}))], &f, &[make_cycle(), add_suite()]);
         let report = run(&mut r, &f).await;
@@ -897,6 +901,7 @@ mod running {
     #[tokio::test]
     async fn a_name_without_the_prefix_is_recorded_with_a_warning() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut r = rig_with(
             vec![answer(200, json!({ "cycleId": 275, "cycleName": "Hand made cycle" })), answer(200, json!({ "suiteId": 9 }))],
@@ -921,6 +926,7 @@ mod running {
     async fn the_prefix_ignores_case_and_a_nameless_thing_is_warned_about() {
         use v2_lib::api_templates::fixture_run::no_name_warning;
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut r = rig_with(
             vec![answer(200, json!({ "cycleId": 276, "cycleName": "autotest lower case" })), answer(200, json!({ "suiteId": 9 }))],
@@ -949,6 +955,7 @@ mod running {
     #[tokio::test]
     async fn a_creates_entry_from_a_step_that_no_longer_creates_is_refused_at_run_time() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut reader = make_cycle();
         reader.effect = v2_lib::api_templates::Effect::Edit;
@@ -968,6 +975,7 @@ mod running {
     #[tokio::test]
     async fn a_step_that_now_deletes_is_refused_before_anything_opens() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut r = rig_with(vec![], &f, &[make_cycle(), add_suite()]);
         let mut deleting = add_suite();
@@ -990,6 +998,7 @@ mod running {
     #[tokio::test]
     async fn a_flow_removed_after_saving_is_refused_before_any_browser() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let flow: v2_lib::api_templates::flow::Flow = serde_json::from_value(json!({
             "id": "cycle-flow", "title": "Performance cycle wizard", "module": "PMS",
             "subject": { "name": "cycleId", "type": "number" },
@@ -1038,6 +1047,7 @@ mod running {
     #[tokio::test]
     async fn a_step_that_times_out_stops_the_run_and_leaves_nothing_held() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let _leases = crate::serial::account_leases();
         let f = fixture();
         let mut r = rig_with(vec![the_cycle()], &f, &[make_cycle(), add_suite()]);
@@ -1070,6 +1080,7 @@ mod running {
     #[tokio::test]
     async fn a_failed_sign_in_stops_the_run_and_leaves_nothing_held() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let _leases = crate::serial::account_leases();
         let f = fixture();
         let mut r = rig_broken(vec![], Some("#go"), &f, &[make_cycle(), add_suite()]);
@@ -1088,6 +1099,7 @@ mod running {
     #[tokio::test]
     async fn a_refused_lease_stops_the_run_before_any_browser() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let _leases = crate::serial::account_leases();
         let f = fixture();
         let mut r = rig_with(vec![], &f, &[make_cycle(), add_suite()]);
@@ -1187,6 +1199,7 @@ mod running {
         let _root = crate::serial::autorun();
         let _slot = crate::serial::api_template_run();
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let Rig { browsers, root, .. } =
             rig_with(vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))], &f, &[make_cycle(), add_suite()]);

@@ -394,8 +394,11 @@ fn ms_since_launch() -> u128 {
 }
 
 /// Auto Run's browsers go with the app (`close_autorun_browsers`). Bounded,
-/// so a browser that will not die cannot hold the app's exit.
+/// so a browser that will not die cannot hold the app's exit. A template
+/// run still going keeps no browser from here on (`held::shut`): it would
+/// outlive the app, with nothing left to close it.
 fn close_autorun_on_exit() {
+    api_templates::held::shut();
     tauri::async_runtime::block_on(async {
         let closing = commands::autorun::close_autorun_browsers();
         if tokio::time::timeout(std::time::Duration::from_secs(3), closing).await.is_err() {

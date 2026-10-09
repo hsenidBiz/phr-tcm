@@ -276,12 +276,20 @@ impl Held {
     /// kept when this browser already holds it, otherwise taken - waiting as
     /// this holder waits - in place of the one held before. `Err` is the
     /// sentence: nothing may sign in, and what was held stays held.
+    ///
+    /// A browser a single template run kept signed in as the account
+    /// (`api_templates::held`) gives way once the lease is taken, closed
+    /// before this returns: this sign-in would end its session anyway, and
+    /// one browser process per account is the most there should be.
     pub async fn hold(&mut self, root: &Path, key: &str) -> Result<(), String> {
         let env = crate::environments::active_id(root)?;
         if self.lease.as_ref().is_some_and(|l| l.env == env && l.key == key) {
             return Ok(());
         }
         self.lease = Some(acquire(&env, key, self.holder.clone(), self.wait).await?);
+        let key = key.to_string();
+        // Off the async threads: ending a browser process waits for it to go.
+        let _ = tauri::async_runtime::spawn_blocking(move || crate::api_templates::held::give_way(&env, &key)).await;
         Ok(())
     }
 }

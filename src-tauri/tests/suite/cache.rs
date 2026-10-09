@@ -290,6 +290,7 @@ const NOT_CACHES: &[(&str, &str, &str)] = &[
 /// directly or through a `type` alias declared in the same file (an alias
 /// of an alias too): (line number, static name).
 fn static_maps(text: &str) -> Vec<(usize, String)> {
+    const VISIBILITY: [&str; 3] = ["pub(crate) ", "pub(super) ", "pub "];
     let lines: Vec<&str> = text.lines().collect();
     let idents = |s: &str| -> Vec<String> {
         s.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).map(String::from).collect()
@@ -298,7 +299,7 @@ fn static_maps(text: &str) -> Vec<(usize, String)> {
     let mut aliases: Vec<(String, String)> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         let t = line.trim_start();
-        let t = t.strip_prefix("pub(crate) ").or_else(|| t.strip_prefix("pub ")).unwrap_or(t);
+        let t = VISIBILITY.iter().find_map(|p| t.strip_prefix(p)).unwrap_or(t);
         let Some(rest) = t.strip_prefix("type ") else { continue };
         let Some((name, body)) = rest.split_once('=') else { continue };
         let name = name.split('<').next().unwrap_or("").trim().to_string();
@@ -306,10 +307,14 @@ fn static_maps(text: &str) -> Vec<(usize, String)> {
         aliases.push((name, decl.split(';').next().unwrap_or("").to_string()));
     }
     let mut maps: Vec<String> = vec!["HashMap".into(), "BTreeMap".into()];
+    // An identifier that contains a map's name is that map under another
+    // crate's name (`FxHashMap`, `AHashMap`); case counts, so `HASHMAPPED`
+    // is not one.
+    let names_a_map = |maps: &[String], w: &str| maps.iter().any(|m| w.contains(m.as_str()));
     loop {
         let before = maps.len();
         for (name, body) in &aliases {
-            if !maps.contains(name) && idents(body).iter().any(|w| maps.contains(w)) {
+            if !maps.contains(name) && idents(body).iter().any(|w| names_a_map(&maps, w)) {
                 maps.push(name.clone());
             }
         }
@@ -320,12 +325,13 @@ fn static_maps(text: &str) -> Vec<(usize, String)> {
     let mut found = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         let t = line.trim_start();
-        let Some(rest) = t.strip_prefix("static ").or_else(|| t.strip_prefix("pub static ")) else { continue };
+        let t = VISIBILITY.iter().find_map(|p| t.strip_prefix(p)).unwrap_or(t);
+        let Some(rest) = t.strip_prefix("static ") else { continue };
         // A static's type can wrap onto following lines: read on to the
         // terminating `;`.
         let decl = lines[i..lines.len().min(i + 6)].join(" ");
         let decl_type = decl.split(';').next().unwrap_or("");
-        if idents(decl_type).iter().any(|w| maps.contains(w)) {
+        if idents(decl_type).iter().any(|w| names_a_map(&maps, w)) {
             let name = rest.trim_start_matches("mut ").split(':').next().unwrap_or("").trim().to_string();
             found.push((i + 1, name));
         }
@@ -379,7 +385,8 @@ fn no_module_keeps_a_private_cache_map() {
 }
 
 /// The scanner itself: a map in a static is found whether it is named
-/// outright, behind an alias, or behind an alias of an alias; a static
+/// outright, under another crate's name, behind an alias, or behind an
+/// alias of an alias, and whatever the static's visibility; a static
 /// without one is not.
 #[test]
 fn the_cache_tripwire_sees_a_map_behind_an_alias() {
@@ -397,6 +404,13 @@ fn f() {
 type Outer = Inner<u8>;
 pub static OUTER: Mutex<Option<Outer>> = Mutex::new(None);";
     assert_eq!(static_maps(twice), vec![(4, "OUTER".to_string())]);
+
+    let other_crate = "static F: Mutex<FxHashMap<u8, u8>> = Mutex::new(FxHashMap::default());";
+    assert_eq!(static_maps(other_crate), vec![(1, "F".to_string())]);
+
+    let scoped = "pub(crate) static C: Mutex<Option<HashMap<u8, u8>>> = Mutex::new(None);
+pub(super) static S: Mutex<Option<BTreeMap<u8, u8>>> = Mutex::new(None);";
+    assert_eq!(static_maps(scoped), vec![(1, "C".to_string()), (2, "S".to_string())]);
 
     let wrapped = "static WRAPPED: OnceLock<
     Mutex<HashMap<u8, u8>>,

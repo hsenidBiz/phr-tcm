@@ -191,6 +191,8 @@ impl Browsers for RealBrowsers {
 pub(crate) struct KeptBrowser {
     cdp: Cdp,
     browser: LaunchedBrowser,
+    /// Edge or Chrome: reused only by a run that asked for the same.
+    which: Browser,
 }
 
 impl HeldBrowser for KeptBrowser {
@@ -208,7 +210,7 @@ impl Keeps for RealBrowsers {
     fn keep(&mut self, d: Cdp) -> Result<KeptBrowser, Cdp> {
         let alive = self.current.as_mut().is_some_and(|b| matches!(b.child.try_wait(), Ok(None)));
         match self.current.take() {
-            Some(browser) if alive => Ok(KeptBrowser { cdp: d, browser }),
+            Some(browser) if alive => Ok(KeptBrowser { cdp: d, browser, which: self.which }),
             other => {
                 self.current = other;
                 Err(d)
@@ -218,15 +220,20 @@ impl Keeps for RealBrowsers {
 
     /// Puts the process back in `current`: from here on `close`, or a
     /// panic dropping this value, ends it like one this value opened. One
-    /// whose process has ended while kept is handed back to be closed.
+    /// whose process has ended while kept, or another kind of browser than
+    /// this value opens, is handed back to be closed.
     fn adopt(&mut self, mut kept: KeptBrowser) -> Result<Cdp, KeptBrowser> {
-        if !matches!(kept.browser.child.try_wait(), Ok(None)) {
+        if !self.same_kind(&kept) || !matches!(kept.browser.child.try_wait(), Ok(None)) {
             return Err(kept);
         }
         if let Some(old) = self.current.replace(kept.browser) {
             super::autorun::close_browser(old);
         }
         Ok(kept.cdp)
+    }
+
+    fn same_kind(&self, kept: &KeptBrowser) -> bool {
+        kept.which == self.which
     }
 }
 

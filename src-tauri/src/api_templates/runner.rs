@@ -624,7 +624,8 @@ pub async fn run_template<B: Keeps>(browsers: &mut B, root: &Path, req: &RunRequ
 /// path, or every retry, without waiting for them. The sentence a timeout
 /// reports still says three minutes.
 ///
-/// A kept browser whose process has ended is closed and never reused. A
+/// A kept browser whose process has ended, or that is not the kind of
+/// browser (Edge or Chrome) `browsers` opens, is closed and never reused. A
 /// reused browser whose session has ended by the run's first request (an
 /// empty 400, a redirect, or the token page sent elsewhere) is closed, and
 /// the run starts again once in a fresh browser that signs in, within the
@@ -654,9 +655,17 @@ pub async fn run_template_within<B: Keeps>(
     if let Some(fingerprint) = fingerprint {
         match held::take::<B::Kept>(&env, key, fingerprint) {
             Taken::Reuse(entry) => match browsers.adopt(entry.driver) {
-                Err(dead) => {
-                    applog::info(format!("held browser: the browser kept for {key} had ended - opening a new one"));
-                    dead.close();
+                Err(unfit) => {
+                    if browsers.same_kind(&unfit) {
+                        applog::info(format!("held browser: the browser kept for {key} had ended - opening a new one"));
+                    } else {
+                        applog::info(format!(
+                            "held browser: the browser kept for {key} is another kind than this run asked for - opening a new one"
+                        ));
+                    }
+                    // Closed before the new one opens: one browser per
+                    // account at most.
+                    unfit.close();
                 }
                 Ok(mut d) => {
                     let until = Instant::now() + limit;

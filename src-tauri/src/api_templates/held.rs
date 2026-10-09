@@ -12,9 +12,12 @@
 //! A run keeps its browser with `keep`. The first `keep` of a driver type
 //! starts that type's idle sweep (`SWEEP_EVERY`) and enrols it in
 //! `close_all`, which the app's exit, an environment change and signing out
-//! call, and in `give_way`, which a fixture or a cleanup calls for its
-//! account before it opens its own browser. An entry a run has taken out is not in the store, so neither the
-//! sweep nor `close_all` can close a browser while a run uses it.
+//! call, and in `give_way`, which a fixture, a cleanup or any other holder
+//! of the account (`lease::Held::hold`) calls for it before it opens its
+//! own browser. An entry a run has taken out is not in the store, so
+//! neither the sweep nor `close_all` can close a browser while a run uses
+//! it. Once the app is exiting (`shut`), `keep` closes what it is handed
+//! instead of keeping it: nothing would close it after `close_all`.
 //!
 //! **A held driver owns its browser process.** In the app,
 //! `RealBrowsers::open` hands out only the `Cdp` connection: the Edge
@@ -42,10 +45,11 @@
 //! run that kept it ended.
 //!
 //! The driver type is the caller's: the browser process with its CDP
-//! connection in the app, a fake in the tests. Rust has no generic statics, so one map holds every
-//! entry as `Box<dyn Any + Send>`, keyed by the driver's `TypeId` as well as
-//! (environment, account): each driver type sees only its own entries, and
-//! the downcast back to `HeldEntry<D>` cannot meet another type.
+//! connection in the app, a fake in the tests. Rust has no generic statics,
+//! so one map holds every entry as `Box<dyn Any + Send>`, keyed by the
+//! driver's `TypeId` as well as (environment, account): each driver type
+//! sees only its own entries, and the downcast back to `HeldEntry<D>`
+//! cannot meet another type.
 //!
 //! Log lines name the account key only. A fingerprint is never logged.
 
@@ -59,6 +63,7 @@ use std::any::{Any, TypeId};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -170,10 +175,26 @@ pub fn put<D: Send + 'static>(env: &str, key: &str, entry: HeldEntry<D>) -> Opti
 
 /// `put`, as if now were `now`.
 pub fn put_at<D: Send + 'static>(env: &str, key: &str, entry: HeldEntry<D>, now: Instant) -> Option<HeldEntry<D>> {
-    let slot = Slot { deadline: now + HELD_IDLE, key: key.to_string(), generation: entry.generation, entry: Box::new(entry) };
-    let replaced = store().insert(at::<D>(env, key), slot);
+    let replaced = store().insert(at::<D>(env, key), slot(key, entry, now));
     applog::info(format!("held browser: kept signed in as {key}"));
     replaced.and_then(open::<D>)
+}
+
+fn slot<D: Send + 'static>(key: &str, entry: HeldEntry<D>, now: Instant) -> Slot {
+    Slot { deadline: now + HELD_IDLE, key: key.to_string(), generation: entry.generation, entry: Box::new(entry) }
+}
+
+/// Set once the app is exiting (`shut`), and never cleared.
+static SHUT: AtomicBool = AtomicBool::new(false);
+
+/// The app is exiting: from now on `keep` closes the browser it is handed
+/// instead of keeping it. The exit path calls this before `close_all`, so a
+/// run still in flight that ends after `close_all` has drained the store
+/// cannot leave a browser nothing will close. Only the app's exit calls it:
+/// signing out and an environment change go on keeping browsers after
+/// their `close_all`.
+pub fn shut() {
+    SHUT.store(true, Ordering::SeqCst);
 }
 
 /// Takes out every entry to be closed: one whose idle time has run out,
@@ -245,9 +266,13 @@ pub trait Keeps: Browsers {
     fn keep(&mut self, d: Self::D) -> Result<Self::Kept, Self::D>;
     /// A kept browser taken back for a run. From here on it is this
     /// value's own: its `close`, or dropping it, ends the process.
-    /// `Err(kept)` when its process has ended while it was kept: it is
-    /// never reused, and the caller closes it.
+    /// `Err(kept)` when its process has ended while it was kept, or when
+    /// it is not this value's kind of browser (`same_kind`): it is never
+    /// reused, and the caller closes it.
     fn adopt(&mut self, kept: Self::Kept) -> Result<Self::D, Self::Kept>;
+    /// Whether `kept` is the kind of browser this value opens (Edge or
+    /// Chrome): a run that asked for one never runs in the other.
+    fn same_kind(&self, kept: &Self::Kept) -> bool;
 }
 
 /// The `Kept` of `Browsers` that never keep a browser: nothing of this
@@ -262,11 +287,32 @@ impl HeldBrowser for NotKept {
 
 /// Keeps `entry` for the account `key` in `env` (`put`) and closes the
 /// entry it replaced. The first `keep` of a driver type starts its sweep
-/// and enrols it in `close_all`.
+/// and enrols it in `close_all`. Once the app is exiting (`shut`) it
+/// closes `entry` instead.
 pub fn keep<K: HeldBrowser>(env: &str, key: &str, entry: HeldEntry<K>) {
     enrol::<K>();
-    if let Some(old) = put(env, key, entry) {
-        old.driver.close();
+    // The latch is read under the store's lock: `shut` is set before
+    // `close_all` takes that lock to drain, so an entry put before the
+    // drain is drained, and one put after it sees the latch.
+    let kept = {
+        let mut s = store();
+        if SHUT.load(Ordering::SeqCst) {
+            Err(entry)
+        } else {
+            Ok(s.insert(at::<K>(env, key), slot(key, entry, Instant::now())))
+        }
+    };
+    match kept {
+        Err(entry) => {
+            applog::info(format!("held browser: the app is exiting, {key} not kept"));
+            entry.driver.close();
+        }
+        Ok(replaced) => {
+            applog::info(format!("held browser: kept signed in as {key}"));
+            if let Some(old) = replaced.and_then(open::<K>) {
+                old.driver.close();
+            }
+        }
     }
 }
 

@@ -191,6 +191,10 @@ impl Keeps for FakeBrowsers {
     fn adopt(&mut self, kept: NotKept) -> Result<App, NotKept> {
         match kept {}
     }
+
+    fn same_kind(&self, kept: &NotKept) -> bool {
+        match *kept {}
+    }
 }
 
 pub(crate) struct Rig {
