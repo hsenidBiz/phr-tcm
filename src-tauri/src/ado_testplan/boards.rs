@@ -65,6 +65,26 @@ pub struct BoardsOutcome {
     pub team_id: String,
 }
 
+/// The PBI ends this upload with no requirement suite: the documented
+/// route refused (`sentence`), and the Boards route failed or could not be
+/// taken (`why`, for the log; `None` when nothing landed to add). Logs the
+/// warning and returns the reason the person is shown. This is the ONE
+/// place the no-suite warning is written, so it cannot appear while the
+/// second route might still make the suite.
+pub fn no_suite_reported(pbi_id: i32, sentence: &str, why: Option<&str>) -> String {
+    crate::applog::warn(format!("no requirement suite for #{pbi_id}: {sentence}"));
+    match why {
+        Some(why) => {
+            crate::applog::warn(why.to_string());
+            // The first sentence stands word for word - it is still the
+            // true reason - with one line saying the second route did not
+            // work either. What exactly went wrong is a job for the log.
+            format!("{sentence} The Boards route did not work either - Settings, Logs has what it said.")
+        }
+        None => sentence.to_string(),
+    }
+}
+
 /// What the development-build probe says back after taking the route
 /// once by hand (design §4.5).
 ///
@@ -350,6 +370,33 @@ impl AdoClient {
             })?;
         let suite = data["testSuiteId"].as_i64().map(|s| s as i32).filter(|s| *s > 0);
         Ok((plan, suite))
+    }
+
+    /// The Boards route for an upload whose documented suite create was
+    /// refused (`sentence` is that refusal, as the person would read it),
+    /// run once the cases exist. A suite made here is the end of it:
+    /// nothing is warned and nothing is shown, because the cases DID land
+    /// in a suite. Only when this route fails too is the no-suite warning
+    /// logged, and the returned `Err` is the reason to show.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn boards_after_refusal(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+        case_ids: &[i32],
+        sentence: &str,
+    ) -> Result<BoardsOutcome, String> {
+        self.boards_fallback(org, project, pbi_id, area_path, 0, case_ids)
+            .await
+            .map_err(|e| {
+                no_suite_reported(
+                    pbi_id,
+                    sentence,
+                    Some(&format!("the Boards route did not create a suite for #{pbi_id} either: {e}")),
+                )
+            })
     }
 
     /// The whole fallback: resolve the two ids, take the route, then find

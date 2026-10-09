@@ -842,17 +842,23 @@ pub async fn submit_queue(
                             ado::AdoError::Forbidden => "you don't have permission to create test suites in this project's plans".to_string(),
                             other => format!("{other}"),
                         };
-                        crate::applog::warn(format!("no requirement suite for #{pbi_id}: {reason}"));
                         // A 403 here is the access level, not the request:
                         // the same account creates the suite fine from
                         // Boards, so there is a second route worth taking.
                         // It adds EXISTING work items to a suite, so it
                         // needs ids this upload has not created yet - which
                         // is why the sentence waits for the batch instead
-                        // of going to the screen now.
+                        // of going to the screen now. Not a warning either,
+                        // yet: the Boards route usually makes the suite,
+                        // and "no requirement suite" is only true - and
+                        // only logged (`no_suite_reported`) - if it fails too.
                         if matches!(&e, ado::AdoError::Http { status: 403, .. }) {
+                            crate::applog::info(format!(
+                                "regular suite route refused for area {area}; the Boards route will be used after the cases are created"
+                            ));
                             suite_pending = Some(reason);
                         } else {
+                            crate::applog::warn(format!("no requirement suite for #{pbi_id}: {reason}"));
                             let _ = crate::events::SuiteNotCreated { reason }.emit(&app);
                         }
                     }
@@ -1032,24 +1038,27 @@ pub async fn submit_queue(
             // Nothing landed, so there is nothing to put in a suite and no
             // route to try. The refusal is the whole story, as it was
             // before this fallback existed.
-            let _ = crate::events::SuiteNotCreated { reason: sentence }.emit(&app);
+            let reason = crate::ado_testplan::boards::no_suite_reported(pbi_id, &sentence, None);
+            let _ = crate::events::SuiteNotCreated { reason }.emit(&app);
         } else {
             // The log line is decided here, where what actually happened is
             // still known: a route that answered and a route that was never
-            // reached send the next reader to different places.
+            // reached send the next reader to different places. Either
+            // failure comes back as the reason to show, already logged.
             let attempt = match get_fresh_token(&app).await {
                 Ok(token) => {
                     let client = ado::AdoClient::new(token);
                     client
-                        .boards_fallback(&organization, &project, pbi_id, &pbi_area, 0, &ids)
+                        .boards_after_refusal(&organization, &project, pbi_id, &pbi_area, &ids, &sentence)
                         .await
                         .map(|out| (client.base_url.clone(), out))
-                        .map_err(|e| {
-                            format!("the Boards route did not create a suite for #{pbi_id} either: {e}")
-                        })
                 }
-                Err(e) => Err(format!(
-                    "the Boards route was not tried for #{pbi_id}: the access token could not be refreshed ({e})"
+                Err(e) => Err(crate::ado_testplan::boards::no_suite_reported(
+                    pbi_id,
+                    &sentence,
+                    Some(&format!(
+                        "the Boards route was not tried for #{pbi_id}: the access token could not be refreshed ({e})"
+                    )),
                 )),
             };
             match attempt {
@@ -1063,19 +1072,9 @@ pub async fn submit_queue(
                     resolved_suite = Some(out.suite);
                 }
                 // Tried once and never again: a fallback that retries is a
-                // fallback nobody can diagnose. The first sentence stands
-                // word for word - it is still the true reason - with one
-                // line saying the second route did not work either. What
-                // exactly went wrong is a job for the log, not for someone
-                // who only wanted their cases in a suite.
-                Err(why) => {
-                    crate::applog::warn(why);
-                    let _ = crate::events::SuiteNotCreated {
-                        reason: format!(
-                            "{sentence} The Boards route did not work either - Settings, Logs has what it said."
-                        ),
-                    }
-                    .emit(&app);
+                // fallback nobody can diagnose.
+                Err(reason) => {
+                    let _ = crate::events::SuiteNotCreated { reason }.emit(&app);
                 }
             }
         }

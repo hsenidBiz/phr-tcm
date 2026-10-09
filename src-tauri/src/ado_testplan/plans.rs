@@ -440,10 +440,26 @@ impl AdoClient {
         // DIFFERENT area is still worth asking. Anything but a 403 propagates
         // unchanged, so the caller keeps telling 401 and 429 apart from the rest.
         let mut forbidden: Vec<(String, String, String, usize)> = vec![]; // (plan label, area key, area as named, skipped)
+        //
+        // A refusal is also REMEMBERED per area for a week (2026-10-09): an
+        // account without the access level was refused on every upload, and
+        // the Boards route made the suite every time after. A remembered
+        // area is not asked at all - it counts as refused, and the caller
+        // takes the Boards route. Reading suites above is unaffected, so a
+        // suite that exists is still found and used.
+        let mut forbidden: Vec<(String, String, String, usize)> = vec![]; // (plan label, area key, area as named, skipped)
         for p in candidates {
-            let area = p.area_path.trim().to_lowercase().replace('/', "\\");
+            let area = super::area_key(&p.area_path);
             if let Some(f) = forbidden.iter_mut().find(|(_, a, _, _)| *a == area) {
                 f.3 += 1;
+                continue;
+            }
+            if super::area_refused(&self.base_url, org, project, &p.area_path) {
+                crate::applog::debug(format!(
+                    "suite create for area '{}' was refused within the last week - not asked again",
+                    p.area_path.trim()
+                ));
+                forbidden.push((format!("'{}' (id {})", p.name, p.id), area, p.area_path.trim().to_string(), 0));
                 continue;
             }
             let plan = if p.root_suite_id.is_some() {
@@ -452,12 +468,22 @@ impl AdoClient {
                 self.get_test_plan(org, project, p.id).await?
             };
             match self.suite_under(org, project, &plan, pbi_id, false).await {
-                Ok(ensured) => return Ok(ensured),
+                Ok(ensured) => {
+                    super::forget_area_refused(&self.base_url, org, project, &plan.area_path);
+                    return Ok(ensured);
+                }
                 Err(AdoError::Forbidden) => {
-                    crate::applog::warn(format!(
+                    crate::applog::debug(format!(
                         "no permission to create a suite in test plan '{}' (id {}) for area '{}' - skipping the other plans for that area",
                         plan.name, plan.id, plan.area_path
                     ));
+                    super::remember_area_refused(
+                        &self.base_url,
+                        org,
+                        project,
+                        &plan.area_path,
+                        crate::cache::now_ms(),
+                    );
                     forbidden.push((format!("'{}' (id {})", plan.name, plan.id), area, plan.area_path.trim().to_string(), 0));
                 }
                 Err(e) => return Err(e),
