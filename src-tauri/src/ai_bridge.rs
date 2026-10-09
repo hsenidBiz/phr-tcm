@@ -1961,18 +1961,18 @@ pub async fn record_refused_in<B: DiscoveryBrowser>(
     let at = discovery_sighting(root, organization, project, Some(state), None, p.signed_in.as_deref());
     let mut probed: Vec<String> = Vec::new();
     let mut recorded: Vec<String> = Vec::new();
+    // Counted, never named, in the log: a locator is the assistant's
+    // writing and can hold an address.
+    let mut unchecked = 0usize;
     for target in targets.iter().filter(|t| probeable(t)) {
         let described = target.describe();
         if probed.contains(&described) {
             continue;
         }
         probed.push(described.clone());
-        let text = match crate::browser::snapshot::probe(p.driver, target).await {
-            Ok(text) => text,
-            Err(e) => {
-                crate::applog::warn(format!("Auto Run save: {described} could not be checked on the page: {e}"));
-                continue;
-            }
+        let Ok(text) = crate::browser::snapshot::probe(p.driver, target).await else {
+            unchecked += 1;
+            continue;
         };
         if !one_visible_match(&text) {
             continue;
@@ -1983,8 +1983,15 @@ pub async fn record_refused_in<B: DiscoveryBrowser>(
         }
         recorded.push(described);
     }
+    if unchecked > 0 {
+        crate::applog::warn(format!("Auto Run save: {unchecked} refused locator(s) could not be checked on the page"));
+    }
     if !recorded.is_empty() {
-        crate::applog::info(format!("Auto Run save: recorded on the current page: {}", recorded.join(", ")));
+        crate::applog::info(format!(
+            "Auto Run save: recorded {} of {} refused locator(s) on the current page",
+            recorded.len(),
+            targets.len()
+        ));
     }
     Some(recorded)
 }
@@ -2888,8 +2895,16 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
         }
         Some(found) if mapping => {
             let kept = found.name().to_string();
+            // Located where the person's area is, so it can stand for an
+            // unreached entry of the same screen under another name.
+            let arrived = found.arrived.trim();
+            let screen = crate::commands::autorun::MappingScreen {
+                arrived: (!arrived.is_empty()).then(|| arrived.to_string()),
+                menu: nav::menu_path(&found.clicks),
+            };
             if let Some(run) = p.discovery.as_mut().and_then(|s| s.mapping.as_mut()) {
                 run.record_unchanged(kept.clone());
+                run.locate_last(screen);
             }
             return (409, person_area_kept(&kept));
         }

@@ -1290,12 +1290,15 @@ Before every save:
   something is refused.
 - Check a state with `expect_attribute` on the element you saw (`checked`,
   `aria-checked` or `disabled`), not by adding a state to its selector.
-- A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a quoted
-  attribute value (`div[data-cycle-id="{{setup.cycle_id}}"]`) or next to
-  fixed text in an id or class (`#cycle-{{setup.cycle_id}}`). It is
-  accepted when a value of that shape was seen, and checked again once the
-  run has filled it in. When such a locator is still refused, open the
-  fixture's draft by its unique name instead.
+- A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
+  text (`{ "text": "Draft {{setup.cycle_name}} Pending" }`), in a quoted
+  attribute value (`div[data-cycle-id="{{setup.cycle_id}}"]`), or next to
+  fixed text in an id or class (`#cycle-{{setup.cycle_id}}`). Anything
+  else is refused: `{{prefix}}` and `{{now:...}}`, a whole id or class
+  (`#{{setup.x}}`), and any other place in a selector. The save accepts it
+  when something seen there fits around it; the value's shape is checked
+  once the run has filled it in. When such a locator is still refused,
+  open the fixture's draft by its unique name instead.
 - A save refused during a discovery only because some locators were never
   seen checks those locators on the discovery's current page once, on its
   own: each one found there exactly once, and visible, is recorded, and

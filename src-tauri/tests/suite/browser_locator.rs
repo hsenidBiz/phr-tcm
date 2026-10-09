@@ -134,6 +134,71 @@ fn names_match_loosely_unless_exact_is_asked_for() {
     assert!(!name_matches("Save", "Save changes", false));
 }
 
+/// The save reads an em dash, an en dash and a hyphen as one dash, with no
+/// space beside it; the runner must read names the same way, or a script
+/// the save accepted fails "not found" on every run. Case is untouched:
+/// `exact` still tells capitals apart.
+#[test]
+fn names_match_across_dash_forms() {
+    let em = "Step 1 of 9 \u{2014} Cycle Setup";
+    for page in ["Step 1 of 9 \u{2013} Cycle Setup", "Step 1 of 9 - Cycle Setup", "Step 1 of 9-Cycle Setup", "Step 1 of 9\u{2014} Cycle Setup"] {
+        assert!(name_matches(page, em, true), "{page}");
+        assert!(name_matches(page, "step 1 of 9 \u{2013} cycle", false), "{page}");
+    }
+    assert!(!name_matches("Step 1 of 9 \u{2013} Cycle Setup", "step 1 of 9 \u{2014} cycle setup", true), "exact keeps case");
+    assert!(!name_matches("Step 1 of 9 \u{2013} Cycle Setup", "Step 1 of 8 \u{2014} Cycle Setup", true));
+    assert!(!name_matches("Step 1 of 9 Cycle Setup", em, true), "a missing dash is not a dash");
+}
+
+/// Through the resolver: an em-dash role name finds the en-dash and the
+/// hyphen node the page names, and only those.
+#[tokio::test]
+async fn an_em_dash_role_name_resolves_against_other_dash_forms() {
+    let mut d = ScriptedDriver::new(|method, params| match method {
+        "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+        "Accessibility.queryAXTree" => Ok(json!({ "nodes": [
+            { "ignored": false, "name": { "value": "Step 1 of 9 \u{2013} Cycle Setup" }, "backendDOMNodeId": 7 },
+            { "ignored": false, "name": { "value": "Step 1 of 9 - Cycle Setup" },        "backendDOMNodeId": 8 },
+            { "ignored": false, "name": { "value": "Step 1 of 9 Cycle Setup" },          "backendDOMNodeId": 9 }
+        ] })),
+        "DOM.resolveNode" => Ok(json!({ "object": { "objectId": format!("el-{}", params["backendNodeId"]) } })),
+        "Runtime.callFunctionOn" => {
+            assert_eq!(params["functionDeclaration"], VISIBLE_JS);
+            Ok(json!({ "result": { "value": true } }))
+        }
+        other => panic!("unexpected {other}"),
+    });
+    let t: Target = serde_json::from_value(json!({
+        "role": "progressbar", "name": "Step 1 of 9 \u{2014} Cycle Setup", "exact": true
+    }))
+    .unwrap();
+    assert_eq!(resolve(&mut d, &t).await.unwrap(), vec!["el-7".to_string(), "el-8".to_string()]);
+}
+
+/// A text locator is matched in the page by `TEXT_JS`, whose `norm()`
+/// (the quick textContent pass included) folds dashes as `name_matches`
+/// does. The fake cannot run it, so this pins that the saved text reaches
+/// it untouched and that the fold is in it; `browser_live` runs it.
+#[tokio::test]
+async fn an_em_dash_text_reaches_the_page_rule_that_folds_dashes() {
+    use v2_lib::browser::locator::TEXT_JS;
+    assert!(TEXT_JS.contains(r"replace(/[\u2014\u2013]/g, '-')"), "TEXT_JS must fold an em and an en dash");
+    assert!(TEXT_JS.contains("replace(/ ?- ?/g, '-')"), "TEXT_JS must drop a space beside a hyphen");
+    assert!(TEXT_JS.contains("norm(e.textContent)"), "the quick pass goes through norm()");
+    let mut d = ScriptedDriver::new(|method, params| match method {
+        "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+        "Runtime.callFunctionOn" => {
+            assert_eq!(params["functionDeclaration"], TEXT_JS);
+            assert_eq!(params["arguments"][0]["value"], "Step 2 of 9 \u{2014} Eval Rules");
+            Ok(json!({ "result": { "objectId": "arr" } }))
+        }
+        "Runtime.getProperties" => Ok(json!({ "result": [{ "name": "0", "value": { "objectId": "p-1" } }] })),
+        other => panic!("unexpected {other}"),
+    });
+    let t: Target = serde_json::from_value(json!({ "text": "Step 2 of 9 \u{2014} Eval Rules" })).unwrap();
+    assert_eq!(resolve(&mut d, &t).await.unwrap(), vec!["p-1".to_string()]);
+}
+
 /// The role path: Chrome computes role and name; this app matches the
 /// name, turns each node into a handle, and drops the ones nobody can see.
 #[tokio::test]

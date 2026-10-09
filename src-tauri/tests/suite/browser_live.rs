@@ -160,6 +160,36 @@ async fn a_role_locator_ignores_the_hidden_twin_and_really_clicks() {
     must(run(&mut live, json!({ "kind": "expect_text", "selector": "#count", "equals": "clicked 1" })).await);
 }
 
+/// A name or a text saved with an em dash finds the page's en dash and
+/// hyphen, through the real accessibility tree and the real `TEXT_JS`.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_saved_em_dash_finds_the_pages_en_dash_and_hyphen() {
+    let mut live = open().await;
+    let add = r#"(() => {
+      const bar = document.createElement('div');
+      bar.setAttribute('role', 'progressbar');
+      bar.setAttribute('aria-label', 'Step 1 of 9 \u2013 Cycle Setup');
+      bar.style.cssText = 'width:40px;height:10px';
+      const hyphen = document.createElement('p');
+      hyphen.textContent = 'Step 2 of 9 - Eval Rules';
+      const en = document.createElement('p');
+      en.textContent = 'Step 3 of 9 \u2013 Close';
+      document.body.append(bar, hyphen, en);
+      return true;
+    })()"#;
+    page::eval_value(&mut live.cdp, add).await.expect("could not add the dash elements");
+    for (locator, what) in [
+        (json!({ "role": "progressbar", "name": "Step 1 of 9 \u{2014} Cycle Setup", "exact": true }), "role name, en dash"),
+        (json!({ "text": "Step 2 of 9 \u{2014} Eval Rules", "exact": true }), "text, hyphen"),
+        (json!({ "text": "Step 3 of 9 \u{2014} Close", "exact": true }), "text, en dash"),
+        (json!({ "text": "step 3 of 9 - close" }), "text, contains"),
+    ] {
+        let handles = resolve(&mut live.cdp, &action_target(locator)).await.expect("resolve failed");
+        assert_eq!(handles.len(), 1, "{what}");
+    }
+}
+
 #[tokio::test]
 #[ignore = "starts a real headless Edge"]
 async fn a_click_waits_out_disabled_and_covered() {

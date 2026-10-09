@@ -266,13 +266,18 @@ pub fn has_input_placeholder(t: &Target) -> bool {
     t.steps().iter().any(|s| s.input.is_some())
 }
 
+/// A name as the runner compares it: whitespace collapsed, an em dash or
+/// an en dash read as a hyphen, and no space beside a hyphen. The save
+/// check folds names the same way (`seen_match::norm_name`), so a name it
+/// accepts is one this finds.
 fn collapse(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    let dashed: String = s.chars().map(|c| if matches!(c, '\u{2014}' | '\u{2013}') { '-' } else { c }).collect();
+    dashed.split_whitespace().collect::<Vec<_>>().join(" ").replace(" -", "-").replace("- ", "-")
 }
 
-/// Whitespace is collapsed on both sides first: accessible names arrive
-/// with stray spaces. Then contains (case-insensitive), or equal when
-/// `exact`.
+/// Both sides are folded first (`collapse`): accessible names arrive with
+/// stray spaces, and a page may write a dash in any of its forms. Then
+/// contains (case-insensitive), or equal when `exact`.
 pub fn name_matches(got: &str, want: &str, exact: bool) -> bool {
     let (got, want) = (collapse(got), collapse(want));
     if exact {
@@ -295,8 +300,11 @@ pub const CSS_JS: &str = r#"function(sel, visibleOnly) {
 /// `this` is the root. Arguments: text, exact, visibleOnly. The DEEPEST
 /// element carrying the text wins: the control itself, not the panel it
 /// sits in. textContent is a cheap first pass before the costly innerText.
+/// Both go through `norm()`, which folds a text the way `name_matches`
+/// folds a name: whitespace collapsed, an em or en dash a hyphen, and no
+/// space beside a hyphen.
 pub const TEXT_JS: &str = r#"function(want, exact, visibleOnly) {
-  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const norm = (s) => (s || '').replace(/[\u2014\u2013]/g, '-').replace(/\s+/g, ' ').trim().replace(/ ?- ?/g, '-');
   const needle = norm(want);
   const lower = needle.toLowerCase();
   const isButtonInput = (e) => e instanceof HTMLInputElement && /^(button|submit|reset)$/.test(e.type);

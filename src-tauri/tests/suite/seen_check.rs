@@ -783,7 +783,7 @@ fn a_component_input_placeholder_is_checked_at_run_time() {
     assert_eq!(run("10071"), Ok(()));
     let gave = |id: &str| {
         format!(
-            "Step 1: Edit cycle by id: its input id gave button[aria-label^=\"Edit\"] in div[data-cycle-id=\"{id}\"], which does not fit what was seen on the live app"
+            "Step 1: Edit cycle by id: its input id gave button[aria-label^=\"Edit\"] in div[data-cycle-id=\"{id}\"], which does not fit what was seen on the live app. Explore that screen again with discovery, or check the value the setup or fixture gives."
         )
     };
     assert_eq!(run("draft-7"), Err(gave("draft-7")));
@@ -805,7 +805,7 @@ fn a_component_input_placeholder_is_checked_at_run_time() {
     assert_eq!(check_resolved_inputs(&map, &have, &["Cycles"], &saved.steps, &card("div[data-cycle-id=\"9\"]").steps), Ok(()));
     assert_eq!(
         check_resolved_inputs(&map, &have, &["Cycles"], &saved.steps, &card("div[data-cycle-id=\"x9\"]").steps),
-        Err("Step 1: Open a card: its input card gave div[data-cycle-id=\"x9\"], which does not fit what was seen on the live app".to_string())
+        Err("Step 1: Open a card: its input card gave div[data-cycle-id=\"x9\"], which does not fit what was seen on the live app. Explore that screen again with discovery, or check the value the setup or fixture gives.".to_string())
     );
     // A use with no placeholder in its inputs has nothing to check.
     assert!(!has_placeholder_inputs(&with(serde_json::json!({ "id": "10066" })).steps));
@@ -1151,7 +1151,7 @@ fn a_placeholder_in_a_scripts_own_locator_is_checked_when_filled() {
     assert_eq!(run(&saved, &filled("10071")), Ok(()));
     let blocked = |id: &str| {
         format!(
-            "Step 1: button[aria-label^=\"Edit\"] in div[data-cycle-id=\"{id}\"], as filled in, does not fit what was seen on the live app"
+            "Step 1: button[aria-label^=\"Edit\"] in div[data-cycle-id=\"{id}\"], as filled in, does not fit what was seen on the live app. Explore that screen again with discovery, or check the value the setup or fixture gives."
         )
     };
     assert_eq!(run(&saved, &filled("draft-7")), Err(blocked("draft-7")));
@@ -1165,7 +1165,7 @@ fn a_placeholder_in_a_scripts_own_locator_is_checked_when_filled() {
     assert_eq!(run(&saved_not, &not_this("10071")), Ok(()));
     assert_eq!(
         run(&saved_not, &not_this("x7")),
-        Err("Step 1: .phr-mc-card:not([data-cycle-id=\"x7\"]), as filled in, does not fit what was seen on the live app".to_string())
+        Err("Step 1: .phr-mc-card:not([data-cycle-id=\"x7\"]), as filled in, does not fit what was seen on the live app. Explore that screen again with discovery, or check the value the setup or fixture gives.".to_string())
     );
     // In a name.
     let named = |n: &str| one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": n }))]));
@@ -1173,7 +1173,7 @@ fn a_placeholder_in_a_scripts_own_locator_is_checked_when_filled() {
     assert_eq!(run(&saved_name, &named("Edit Cycle 40")), Ok(()));
     assert_eq!(
         run(&saved_name, &named("Edit Cycle forty")),
-        Err("Step 1: button \"Edit Cycle forty\", as filled in, does not fit what was seen on the live app".to_string())
+        Err("Step 1: button \"Edit Cycle forty\", as filled in, does not fit what was seen on the live app. Explore that screen again with discovery, or check the value the setup or fixture gives.".to_string())
     );
     // A locator with no placeholder has nothing to check.
     let plain = one_step("Cycles", serde_json::json!([click(edit_in_card("10066"))]));
@@ -1200,7 +1200,7 @@ fn a_placeholder_inside_an_id_or_class_keeps_the_seen_tokens_shape() {
     for filled in ["#c10071 .x", "#cdraft-7", "#c10071.x", "#c10071#y"] {
         assert_eq!(
             run(filled),
-            Err(format!("Step 1: {filled}, as filled in, does not fit what was seen on the live app")),
+            Err(format!("Step 1: {filled}, as filled in, does not fit what was seen on the live app. Explore that screen again with discovery, or check the value the setup or fixture gives.")),
             "{filled}"
         );
     }
@@ -1210,7 +1210,7 @@ fn a_placeholder_inside_an_id_or_class_keeps_the_seen_tokens_shape() {
     assert_eq!(run(".row-beta_2"), Ok(()));
     assert_eq!(
         run(".row-beta > .x"),
-        Err("Step 1: .row-beta > .x, as filled in, does not fit what was seen on the live app".to_string())
+        Err("Step 1: .row-beta > .x, as filled in, does not fit what was seen on the live app. Explore that screen again with discovery, or check the value the setup or fixture gives.".to_string())
     );
 }
 
@@ -1272,7 +1272,7 @@ fn a_filled_value_cannot_break_out_of_its_quotes() {
     for filled in ["[x=\"a\\\\\"]", "[x=\"a\\\"b\"]", "[x=\"a\nb\"]"] {
         assert_eq!(
             run(filled),
-            Err(format!("Step 1: {filled}, as filled in, does not fit what was seen on the live app")),
+            Err(format!("Step 1: {filled}, as filled in, does not fit what was seen on the live app. Explore that screen again with discovery, or check the value the setup or fixture gives.")),
             "{filled}"
         );
     }
@@ -1338,4 +1338,88 @@ fn unseen_component_targets_name_its_unseen_locators_or_none_when_a_page_is_refu
     ]))
     .unwrap();
     assert_eq!(unseen_component_targets(&map, Some("Ratings"), &away), None);
+}
+
+// ---- the script's own data, at save and at run time ----
+
+/// A check of a text holding a placeholder that only the case's text
+/// would let through is refused at save: the run has no case text to let
+/// it through again, so it would be Blocked on every run.
+#[test]
+fn a_placeholder_link_passed_only_by_the_case_text_is_refused_at_save() {
+    let map = map_with("Cycles", "/cycles", &[role("button", "Save")]);
+    let expect = one_step(
+        "Cycles",
+        serde_json::json!([{ "kind": "expect_visible", "selector": { "text": "Draft {{setup.cycle_name}} Pending" } }]),
+    );
+    let case_text = vec!["Draft {{setup.cycle_name}} Pending is listed".to_string()];
+    assert_eq!(
+        check_seen(&map, &none(), &expect, &case_text, None),
+        Err(refusal(1, "text \"Draft {{setup.cycle_name}} Pending\""))
+    );
+    // Without a placeholder the case's text still exempts a check.
+    let plain = one_step("Cycles", serde_json::json!([{ "kind": "expect_visible", "selector": { "text": "Draft cycle Pending" } }]));
+    assert_eq!(check_seen(&map, &none(), &plain, &["Draft cycle Pending is listed".to_string()], None), Ok(()));
+}
+
+/// A link the save let through as the script's own data runs: the value
+/// typed earlier, filled in, is in the filled link; an uploaded Test file
+/// is too. What the run left unfilled, or a value nobody typed, still
+/// Blocks.
+#[test]
+fn a_placeholder_link_that_is_the_scripts_own_data_passes_at_run_time() {
+    use v2_lib::autorun::seen_check::check_resolved_inputs_with;
+    use v2_lib::test_files::TestFile;
+    let map = map_with("Cycles", "/cycles", &[css("#name"), role("button", "Attach")]);
+    let steps = |name: &str, shown: &str| {
+        script(
+            Some("Cycles"),
+            serde_json::json!([
+                { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "css": "#name" }, "value": name }] },
+                { "step_number": 2, "actions": [{ "kind": "expect_visible", "selector": { "text": shown } }] }
+            ]),
+        )
+    };
+    let saved = steps("{{setup.cycle_name}}", "Draft {{setup.cycle_name}} Pending");
+    assert_eq!(check_seen(&map, &none(), &saved, &[], None), Ok(()));
+    let run = |filled: &CaseScript| check_resolved_inputs_with(&map, &none(), &["Cycles"], &[], &saved.steps, &filled.steps, &[]);
+    assert_eq!(run(&steps("AUTOTEST cycle", "Draft AUTOTEST cycle Pending")), Ok(()));
+    // The earlier step can also come in as `before`, the way a supervised
+    // step is checked on its own.
+    assert_eq!(
+        check_resolved_inputs_with(
+            &map,
+            &none(),
+            &["Cycles"],
+            &steps("AUTOTEST cycle", "x").steps[..1],
+            &saved.steps[1..],
+            &steps("AUTOTEST cycle", "Draft AUTOTEST cycle Pending").steps[1..],
+            &[]
+        ),
+        Ok(())
+    );
+    // Without it, nothing typed exempts the link.
+    assert!(check_resolved_inputs(&map, &none(), &["Cycles"], &saved.steps[1..], &steps("AUTOTEST cycle", "Draft AUTOTEST cycle Pending").steps[1..])
+        .unwrap_err()
+        .starts_with("Step 2: text \"Draft AUTOTEST cycle Pending\", as filled in, does not fit"));
+    // A value the run left unfilled is never the script's own.
+    assert!(run(&steps("{{setup.cycle_name}}", "Draft {{setup.cycle_name}} Pending")).is_err());
+
+    // An uploaded Test file, named by a placeholder in the file and the row.
+    let files = vec![TestFile { name: "policy.docx".to_string(), size: 245_760, modified: String::new() }];
+    let upload = |file: &str, row: &str| {
+        script(
+            Some("Cycles"),
+            serde_json::json!([{ "step_number": 1, "actions": [
+                { "kind": "upload", "selector": { "role": "button", "name": "Attach" }, "file": file },
+                { "kind": "expect_visible", "selector": { "role": "row", "name": row } }
+            ] }]),
+        )
+    };
+    let saved = upload("{{setup.file}}", "{{setup.file}} attached");
+    let run = |filled: &CaseScript, files: &[TestFile]| {
+        check_resolved_inputs_with(&map, &none(), &["Cycles"], &[], &saved.steps, &filled.steps, files)
+    };
+    assert_eq!(run(&upload("policy.docx", "policy.docx attached"), &files), Ok(()));
+    assert!(run(&upload("policy.docx", "policy.docx attached"), &[]).is_err(), "not one of the project's Test files");
 }

@@ -1110,6 +1110,10 @@ async fn a_person_area_is_never_changed_by_mapping() {
     let run = the_run(&browser);
     assert_eq!(run.unchanged, vec!["Leave Apply".to_string()]);
     assert!(run.added.is_empty() && run.updated.is_empty(), "{run:?}");
+    // Located by where the person's area arrives, so it can stand for an
+    // unreached entry of the same screen.
+    let located = run.outcomes.last().and_then(|o| o.2.clone()).expect("the kept area was not located");
+    assert_eq!(located.arrived.as_deref(), Some("/hr/leave/apply"));
 }
 
 /// A screen named like an area already there, in another case and with
@@ -1509,6 +1513,34 @@ fn an_unreached_screen_with_no_address_matches_a_later_save_by_its_clicks() {
     let s = summarize(&run);
     let names: Vec<&str> = s.unreached.iter().map(|u| u.name.as_str()).collect();
     assert_eq!(names, ["Review", "Unplaced"], "{s:?}");
+}
+
+/// A screen not reached that was saved EARLIER in the run under another
+/// name leaves the summary too, and so does one a person's kept area
+/// (found by where it arrives) stands for. The same name saved earlier
+/// and then not reached stays listed: that is its last outcome.
+#[test]
+fn an_unreached_screen_saved_earlier_under_another_name_leaves_the_summary() {
+    let at = |path: &str| MappingScreen { arrived: Some(path.into()), menu: String::new() };
+    let mut run = MappingRun::new(&["Talent".to_string()]);
+    run.record_added("Definition Wizard".into());
+    run.locate_last(at("/talent/wizard"));
+    run.record_unchanged("Leave Apply".into());
+    run.locate_last(at("/hr/leave/apply"));
+    run.record_unreached("Talent Wizard".into(), "click 2 was not found");
+    run.locate_last(at("/talent/wizard"));
+    run.record_unreached("Apply for Leave".into(), "click 1 was not found");
+    run.locate_last(at("/hr/leave/apply"));
+    run.record_added("Review".into());
+    run.locate_last(at("/talent/review"));
+    run.record_unreached("Review".into(), "click 1 was not found");
+    run.locate_last(at("/talent/review"));
+
+    let s = summarize(&run);
+    assert_eq!(s.added, vec!["Definition Wizard".to_string()]);
+    assert_eq!(s.unchanged, vec!["Leave Apply".to_string()]);
+    let names: Vec<&str> = s.unreached.iter().map(|u| u.name.as_str()).collect();
+    assert_eq!(names, ["Review"], "{s:?}");
 }
 
 /// What `area`'s map holds on `page`, by name.
@@ -2002,6 +2034,14 @@ async fn ending_a_mapping_run_saves_and_returns_its_summary() {
     let (status, body) =
         discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
     assert_eq!(status, 200, "{body}");
+    // The assistant goes to the Payroll screen before saving it: standing
+    // on Leave Apply, the save would claim that screen, which the run has
+    // saved already.
+    {
+        use v2_lib::browser::cdp::Driver;
+        let d = &mut browser.as_mut().unwrap().d;
+        d.call("Page.navigate", json!({ "url": "https://hr.example.internal/hr/menu" })).await.unwrap();
+    }
     let (status, _) =
         discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Payroll", "Payroll", vec![css("#missing")], &quick())
             .await;
@@ -2326,4 +2366,35 @@ async fn a_refused_script_save_on_another_area_records_nothing() {
     let probed = record_refused_for_scripts_in(&mut browser, dir.path(), ORG, PROJECT, &areas, &pager).await;
     assert_eq!(probed, Some(vec!["#pager-2".to_string()]));
     assert!(mapped_area(dir.path(), "Cycles").is_some(), "nothing was recorded");
+}
+
+/// The log says how many refused locators were recorded or could not be
+/// checked, never which: a locator is the assistant's writing and can hold
+/// an address with a query string.
+#[tokio::test]
+async fn a_refused_locator_is_counted_in_the_log_never_written_out() {
+    use v2_lib::browser::cdp::CdpError;
+    let _log = crate::serial::log_tail();
+    let link: Target =
+        serde_json::from_value(json!({ "css": "a[href=\"https://hr.example.internal/hr/cycles?secret=7\"]" })).unwrap();
+    let ours = |lines: &[String]| -> Vec<String> {
+        lines.iter().filter(|l| l.starts_with("Auto Run save:")).cloned().collect()
+    };
+    let dir = TempDir::new();
+    let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));
+    let probed = record_refused_in(&mut browser, dir.path(), ORG, PROJECT, std::slice::from_ref(&link)).await;
+    assert_eq!(probed.map(|p| p.len()), Some(1));
+
+    let broken = ScriptedDriver::new(|method, _| Err(CdpError::Protocol { method: method.to_string(), message: "boom".into() }));
+    let (mut browser, _) = slot(broken, exploring("Cycles"));
+    let probed = record_refused_in(&mut browser, dir.path(), ORG, PROJECT, std::slice::from_ref(&link)).await;
+    assert_eq!(probed, Some(Vec::new()));
+
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    let said = ours(&lines);
+    assert!(said.iter().any(|l| l.contains("recorded 1 of 1 refused locator(s)")), "{said:?}");
+    assert!(said.iter().any(|l| l.contains("1 refused locator(s) could not be checked")), "{said:?}");
+    for l in &said {
+        assert!(!l.contains("hr.example.internal") && !l.contains("secret") && !l.contains("a[href"), "{l}");
+    }
 }

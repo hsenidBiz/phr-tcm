@@ -35,7 +35,11 @@
 //!   never fills them in, so they stay literal and are refused. Once the
 //!   run has filled a placeholder in, the locator is checked again
 //!   (`check_resolved_inputs`): each value must have the shape of the seen
-//!   value it stands for, all digits where that was all digits.
+//!   value it stands for, all digits where that was all digits. A filled
+//!   link that is the script's own data, read from the filled steps as the
+//!   save reads the saved ones, passes there too. The case's text is not
+//!   known at run time, so at save it never lets a link holding a
+//!   placeholder through on its own.
 //! - A css selector's `:checked`, `:disabled`, `:enabled` and `:focus` on
 //!   an element it names are left out before it is compared; one that
 //!   starts the selector or follows a space or a combinator stands for an
@@ -489,7 +493,7 @@ struct Own<'a> {
 }
 
 /// Is `link` the script's own data: a value typed earlier, a name the case
-/// says (a check only), a Test file it uploaded or that file's size, or a
+/// says (a check only, of a link with no data placeholder), a Test file it uploaded or that file's size, or a
 /// date-picker day that is a date it picked or typed?
 fn exempt(link: &LocatorStep, own: &Own) -> bool {
     let own_words = words(link);
@@ -498,8 +502,12 @@ fn exempt(link: &LocatorStep, own: &Own) -> bool {
     // inside the locator's text or name: the record the script created.
     let typed_here = has(own.typed);
     // The locator's whole name, of at least 3 characters, as whole words in
-    // what the case says.
+    // what the case says. Never for a link holding a data placeholder: the
+    // run checks such a link again once filled in, without the case's text
+    // (`check_resolved_inputs_with`), so it would pass here and be Blocked
+    // there.
     let in_case = own.check
+        && !link_holds_placeholder(link)
         && own_words
             .iter()
             .any(|w| w.chars().count() >= MIN_TYPED_LEN && own.case_text.iter().any(|t| has_phrase(t, w)));
@@ -755,12 +763,7 @@ fn input_locators(c: &Component, expanded: &[Action]) -> Vec<InputLocator> {
                 let links: Vec<LocatorStep> = rt.links().into_iter().filter(|l| !fixed.contains(l)).collect();
                 out.push(InputLocator { target: rt.clone(), links, check: is_check(r), typed_before: typed_before.clone() });
             }
-            if let Some(v) = r.typed_value() {
-                let v = fold_name(v);
-                if v.chars().count() >= MIN_TYPED_LEN {
-                    typed_before.push(v);
-                }
-            }
+            push_typed(&mut typed_before, r);
         }
     }
     out
@@ -815,20 +818,11 @@ fn scan(
     let seen = Sightings::new(map, &areas);
     let paths = seen_paths(map);
     let case_text: Vec<String> = case_text.iter().map(|t| fold_name(t)).collect();
-    // Values typed by the steps before the one being checked.
-    let mut typed: Vec<String> = Vec::new();
-    // The text inputs the steps before it gave components.
-    let mut picked_before: Vec<String> = Vec::new();
-    // The files uploaded by this step and the ones before it, a
-    // component's uploads included.
-    let mut uploaded: Vec<String> = Vec::new();
+    let mut so_far = SoFar::default();
 
     for step in &script.steps {
-        for action in step.actions.iter().flat_map(Action::each) {
-            let ran = as_run(components, action);
-            uploaded.extend(uploads(std::iter::once(action).chain(ran.iter().flat_map(Action::each))));
-        }
-        let own = own_test_files(&uploaded, files);
+        so_far.uploads_of(components, step);
+        let own = own_test_files(&so_far.uploaded, files);
         let (own_files, sizes) = (exempting(&own), shown_sizes(&own));
         let checked = only_steps.is_none_or(|only| only.contains(&step.step_number));
         if checked {
@@ -892,9 +886,8 @@ fn scan(
                 // A date this action picks: one of its own component inputs.
                 let picked_here = text_inputs(action);
                 for n in named {
-                    let typed: Vec<String> = typed.iter().cloned().chain(n.typed_before).collect();
-                    let dates: Vec<Date> =
-                        typed.iter().chain(&picked_before).chain(&picked_here).filter_map(|v| parse_date(v)).collect();
+                    let typed: Vec<String> = so_far.typed.iter().cloned().chain(n.typed_before).collect();
+                    let dates = so_far.dates(&typed, &picked_here);
                     let own = Own {
                         typed: &typed,
                         case_text: &case_text,
@@ -919,22 +912,63 @@ fn scan(
                 }
             }
         }
+        so_far.typed_by(components, step);
+    }
+    unseen
+}
+
+/// The script's own data its steps have given so far, read the same way at
+/// save (`scan`) and at run time (`check_resolved_inputs_with`).
+#[derive(Default)]
+struct SoFar {
+    /// Values typed by the steps before the one being checked, folded,
+    /// each at least `MIN_TYPED_LEN`.
+    typed: Vec<String>,
+    /// The text inputs the steps before it gave components.
+    picked: Vec<String>,
+    /// The files uploaded by this step and the ones before it, a
+    /// component's uploads included.
+    uploaded: Vec<String>,
+}
+
+impl SoFar {
+    /// Adds what `step` uploads: a file is the script's own from the step
+    /// that uploads it.
+    fn uploads_of(&mut self, components: &ComponentFile, step: &StepScript) {
         for action in step.actions.iter().flat_map(Action::each) {
-            picked_before.extend(text_inputs(action));
-            // A component types what its actions type, its text inputs
-            // put in.
+            let ran = as_run(components, action);
+            self.uploaded.extend(uploads(std::iter::once(action).chain(ran.iter().flat_map(Action::each))));
+        }
+    }
+
+    /// Adds what `step` typed and picked, for the steps after it. A
+    /// component types what its actions type, its text inputs put in.
+    fn typed_by(&mut self, components: &ComponentFile, step: &StepScript) {
+        for action in step.actions.iter().flat_map(Action::each) {
+            self.picked.extend(text_inputs(action));
             let ran = as_run(components, action);
             for a in std::iter::once(action).chain(ran.iter().flat_map(Action::each)) {
-                if let Some(v) = a.typed_value() {
-                    let v = fold_name(v);
-                    if v.chars().count() >= MIN_TYPED_LEN {
-                        typed.push(v);
-                    }
-                }
+                push_typed(&mut self.typed, a);
             }
         }
     }
-    unseen
+
+    /// The dates among `typed`, the text inputs picked before, and
+    /// `picked_here` (the checked action's own).
+    fn dates(&self, typed: &[String], picked_here: &[String]) -> Vec<Date> {
+        typed.iter().chain(&self.picked).chain(picked_here).filter_map(|v| parse_date(v)).collect()
+    }
+}
+
+/// Adds the value `action` types to `typed`, folded, when it is long
+/// enough to exempt anything.
+fn push_typed(typed: &mut Vec<String>, action: &Action) {
+    if let Some(v) = action.typed_value() {
+        let v = fold_name(v);
+        if v.chars().count() >= MIN_TYPED_LEN {
+            typed.push(v);
+        }
+    }
 }
 
 /// Is this link left to the script: a target input's place, or one that
@@ -1011,12 +1045,7 @@ fn component_unseen(
                     }
                 }
             }
-            if let Some(v) = a.typed_value() {
-                let v = fold_name(v);
-                if v.chars().count() >= MIN_TYPED_LEN {
-                    typed.push(v);
-                }
-            }
+            push_typed(&mut typed, a);
         }
     }
     out
@@ -1063,7 +1092,8 @@ pub fn has_data_placeholders(steps: &[StepScript]) -> bool {
 /// matches, every value a placeholder took the shape of the seen value it
 /// stands for there (all digits where that was); a placeholder the run
 /// left unfilled fails. The failure names the step, and for a component
-/// the component and its input.
+/// the component and its input. With no earlier steps and no Test files
+/// known: [`check_resolved_inputs_with`].
 pub fn check_resolved_inputs(
     map: &DiscoveryMap,
     components: &ComponentFile,
@@ -1071,19 +1101,55 @@ pub fn check_resolved_inputs(
     saved: &[StepScript],
     filled: &[StepScript],
 ) -> Result<(), String> {
+    check_resolved_inputs_with(map, components, areas, &[], saved, filled, &[])
+}
+
+/// [`check_resolved_inputs`], knowing the steps that ran before `filled`
+/// (`before`, as filled in) and the project's Test files (`files`). A
+/// filled link the save would have let through as the script's own data
+/// passes here too, read from the filled steps the way the save reads the
+/// saved ones: a value typed earlier or put into a component's text input,
+/// a Test file uploaded by then or its size, a date picked or typed, or a
+/// `dd/mm/yyyy` day inside a seen date picker. The case's own text is not
+/// known here; the save never lets it alone pass a link holding a
+/// placeholder.
+pub fn check_resolved_inputs_with(
+    map: &DiscoveryMap,
+    components: &ComponentFile,
+    areas: &[&str],
+    before: &[StepScript],
+    saved: &[StepScript],
+    filled: &[StepScript],
+    files: &[TestFile],
+) -> Result<(), String> {
     let seen = Sightings::new(map, areas);
+    let mut so_far = SoFar::default();
+    for s in before {
+        so_far.uploads_of(components, s);
+        so_far.typed_by(components, s);
+    }
     for (ss, fs) in saved.iter().zip(filled) {
         let step = ss.step_number;
+        so_far.uploads_of(components, fs);
+        let own = own_test_files(&so_far.uploaded, files);
+        let (own_files, sizes) = (exempting(&own), shown_sizes(&own));
         for (sa, fa) in ss.actions.iter().flat_map(Action::each).zip(fs.actions.iter().flat_map(Action::each)) {
+            let picked_here = text_inputs(fa);
+            // Is this filled link, in its filled chain, the script's own
+            // data, with `typed` the values typed before it?
+            let own_data = |link: &LocatorStep, chain: &[LocatorStep], typed: &[String], check: bool| {
+                let dates = so_far.dates(typed, &picked_here);
+                let own = Own { typed, case_text: &[], check, files: &own_files, sizes: &sizes, dates: &dates };
+                !link_holds_placeholder(link) && (exempt(link, &own) || in_seen_date_picker(link, chain, &seen))
+            };
             for (st, ft) in own_targets(sa).into_iter().zip(own_targets(fa)) {
-                let off = st
-                    .links()
-                    .iter()
-                    .zip(ft.links())
-                    .any(|(sl, fl)| link_holds_placeholder(sl) && !seen.fills(sl, &fl));
+                let chain = ft.links();
+                let off = st.links().iter().zip(&chain).any(|(sl, fl)| {
+                    link_holds_placeholder(sl) && !own_data(fl, &chain, &so_far.typed, is_check(fa)) && !seen.fills(sl, fl)
+                });
                 if off {
                     return Err(format!(
-                        "Step {step}: {}, as filled in, does not fit what was seen on the live app",
+                        "Step {step}: {}, as filled in, does not fit what was seen on the live app. {RUN_TIME_FIX}",
                         ft.describe()
                     ));
                 }
@@ -1104,24 +1170,33 @@ pub fn check_resolved_inputs(
                 let mut marked = filled_in.clone();
                 marked.insert(name.clone(), v.clone());
                 let as_saved = expand(c, &marked).map_err(at_step)?;
+                // What the steps before typed, then what the component's
+                // own actions typed before each of its locators.
+                let mut typed = so_far.typed.clone();
                 for (m, r) in as_saved.iter().flat_map(Action::each).zip(ran.iter().flat_map(Action::each)) {
                     for (mt, rt) in own_targets(m).into_iter().zip(own_targets(r)) {
-                        let fed = mt.links().iter().zip(rt.links()).any(|(ml, rl)| {
-                            let changed = *ml != rl || link_holds_placeholder(&rl);
-                            changed && !seen.fills(ml, &rl)
+                        let chain = rt.links();
+                        let fed = mt.links().iter().zip(&chain).any(|(ml, rl)| {
+                            let changed = ml != rl || link_holds_placeholder(rl);
+                            changed && !own_data(rl, &chain, &typed, is_check(r)) && !seen.fills(ml, rl)
                         });
                         if fed {
                             return Err(format!(
-                                "Step {step}: {}: its input {} gave {}, which does not fit what was seen on the live app",
+                                "Step {step}: {}: its input {} gave {}, which does not fit what was seen on the live app. {RUN_TIME_FIX}",
                                 c.name,
                                 name.trim(),
                                 rt.describe()
                             ));
                         }
                     }
+                    push_typed(&mut typed, r);
                 }
             }
         }
+        so_far.typed_by(components, fs);
     }
     Ok(())
 }
+
+/// What a person can do about a run-time Blocked of a filled locator.
+const RUN_TIME_FIX: &str = "Explore that screen again with discovery, or check the value the setup or fixture gives.";

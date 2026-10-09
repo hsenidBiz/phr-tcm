@@ -589,13 +589,70 @@ async fn a_setup_value_filled_into_a_locator_must_fit_what_was_seen() {
         if blocked {
             assert_eq!(
                 got,
-                Err("Step 1: div[data-cycle-id=\"draft-7\"], as filled in, does not fit what was seen on the live app".to_string())
+                Err("Step 1: div[data-cycle-id=\"draft-7\"], as filled in, does not fit what was seen on the live app. Explore that screen again with discovery, or check the value the setup or fixture gives.".to_string())
             );
         } else {
             let steps = got.expect("a digits id fits");
             assert_eq!(serde_json::to_value(&steps).unwrap()[0]["actions"][0]["selector"]["css"], json!("div[data-cycle-id=\"10071\"]"));
         }
     }
+}
+
+/// A setup value the script types, then looks for inside a longer text,
+/// is the script's own data at save and at run time alike: the case runs
+/// unblocked, unattended and one supervised step at a time.
+#[tokio::test]
+async fn a_setup_value_typed_then_looked_for_runs_unblocked() {
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    let mut r = setup_rig(vec![the_cycle()]);
+    let root = r.root.path().to_path_buf();
+    let mut f = fixture("own");
+    f.outputs.insert("cycle_name".into(), "{{steps.1.cycleName}}".into());
+    fixture_store::save(&root, ORG, PROJECT, &f).unwrap();
+    let mut sc = script(
+        41,
+        Some("own"),
+        json!([
+            { "step_number": 1, "actions": [{ "kind": "fill", "selector": { "css": "#name" }, "value": "{{setup.cycle_name}}" }] },
+            { "step_number": 2, "actions": [
+                { "kind": "expect_visible", "selector": { "text": "Draft {{setup.cycle_name}} Pending" } }
+            ] }
+        ]),
+    );
+    sc.area = Some("Leave".into());
+    store::save_script(&root, &sc).unwrap();
+    seen_on_leave(&root, "#name");
+    // It saves: the text holds the value step 1 typed.
+    let map = v2_lib::autorun::discovery_map::load_map(&root, ORG, PROJECT).unwrap();
+    let components = v2_lib::autorun::components::load_components(&root, ORG, PROJECT).unwrap();
+    assert_eq!(v2_lib::autorun::seen_check::check_seen(&map, &components, &sc, &[], None), Ok(()));
+    approve(&root, &sc);
+
+    let prepared = prepare_case_within(
+        &mut r.browsers,
+        &root,
+        ORG,
+        PROJECT,
+        &sc,
+        &quick(),
+        &NO_STOP,
+        |_| std::future::ready(()),
+        RUN_LIMIT,
+        &QUICK_PAUSES,
+        CLOCK,
+    )
+    .await
+    .expect("the typed value is the script's own data when filled in too");
+    let steps = serde_json::to_value(&prepared.script.steps).unwrap();
+    assert_eq!(steps[1]["actions"][0]["selector"]["text"], json!("Draft AUTOTEST cycle Pending"));
+
+    // One supervised step at a time: step 2 alone, with step 1 filled in
+    // from what the start gave.
+    setup::remember(41, prepared.setup_outputs.clone());
+    let step = setup::resolve_step(&root, ORG, PROJECT, 41, &sc.steps[1]).expect("step 2 runs on its own too");
+    assert_eq!(serde_json::to_value(&step).unwrap()["actions"][0]["selector"]["text"], json!("Draft AUTOTEST cycle Pending"));
+    setup::forget(41);
 }
 
 // ---- approvals ----------------------------------------------------------------

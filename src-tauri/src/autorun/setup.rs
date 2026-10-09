@@ -465,7 +465,7 @@ where
     }
 
     let resolved = resolve(script, &fixtures, &setup_outputs)?;
-    check_filled_inputs(root, org, project, script.area_name(), &script.steps, &script.steps, &resolved.steps)?;
+    check_filled_inputs(root, org, project, script.area_name(), &script.steps, &[], &script.steps, &resolved.steps)?;
     Ok(Prepared { script: resolved, setup_outputs })
 }
 
@@ -474,15 +474,19 @@ where
 /// input gives (`seen_check::check_resolved_inputs`): `saved` as saved,
 /// `filled` with
 /// the run's values in, checked in the areas of `area` and `area_steps`
-/// (the script's own, and those its steps return to). The map and the
-/// components are read only when a saved step holds such a locator. `Err`
-/// is the Blocked sentence, naming the step.
+/// (the script's own, and those its steps return to). `before` are the
+/// steps that ran before `filled`, filled in: what they typed, picked and
+/// uploaded is the script's own data, as at save. The map, the components
+/// and the project's Test files are read only when a saved step holds such
+/// a locator. `Err` is the Blocked sentence, naming the step.
+#[allow(clippy::too_many_arguments)]
 fn check_filled_inputs(
     root: &Path,
     org: &str,
     project: &str,
     area: Option<&str>,
     area_steps: &[StepScript],
+    before: &[StepScript],
     saved: &[StepScript],
     filled: &[StepScript],
 ) -> Result<(), String> {
@@ -494,7 +498,10 @@ fn check_filled_inputs(
     let components = super::components::load_components(root, org, project)?;
     let areas = seen_check::script_areas(&components, area, area_steps);
     let areas: Vec<&str> = areas.iter().map(String::as_str).collect();
-    seen_check::check_resolved_inputs(&map, &components, &areas, saved, filled)
+    // One that cannot be read is logged by `list` and reads as none: then
+    // no file name or size is the script's own.
+    let files = crate::test_files::list(&crate::test_files::folder(root, org, project)).unwrap_or_default();
+    seen_check::check_resolved_inputs_with(&map, &components, &areas, before, saved, filled, &files)
 }
 
 /// Keeps what case `case_id`'s setup gave at its supervised start (or its
@@ -527,14 +534,7 @@ pub fn resolve_step(root: &Path, org: &str, project: &str, case_id: i32, step: &
     let filled = if refs(one).is_empty() {
         step.clone()
     } else {
-        let fixtures = fixture_values(root, org, project, one);
-        let mut vars = fixture_vars(&fixtures);
-        if let Some(given) = remembered(case_id) {
-            for (output, v) in given {
-                vars.insert(format!("setup.{output}"), v.clone());
-            }
-        }
-        let steps = substitute_steps(one, &vars)?;
+        let (steps, fixtures) = fill_supervised(root, org, project, case_id, one)?;
         if let Some(why) = leftover(&steps, &fixtures, Some(start_again)) {
             return Err(why);
         }
@@ -545,9 +545,34 @@ pub fn resolve_step(root: &Path, org: &str, project: &str, case_id: i32, step: &
         let saved = super::store::load_script(root, case_id).ok().flatten();
         let area = saved.as_ref().and_then(|s| s.area_name());
         let area_steps = saved.as_ref().map_or(one, |s| s.steps.as_slice());
-        check_filled_inputs(root, org, project, area, area_steps, one, std::slice::from_ref(&filled))?;
+        // The steps before this one, filled in the same way, for what they
+        // typed, picked and uploaded; as saved where a value is missing.
+        let earlier: Vec<StepScript> =
+            area_steps.iter().filter(|s| s.step_number < step.step_number).cloned().collect();
+        let before = fill_supervised(root, org, project, case_id, &earlier).map_or(earlier, |(steps, _)| steps);
+        check_filled_inputs(root, org, project, area, area_steps, &before, one, std::slice::from_ref(&filled))?;
     }
     Ok(filled)
+}
+
+/// `steps` with shared fixtures' current outputs and what case `case_id`'s
+/// setup gave at its supervised start (`remember`) put in, and the
+/// fixtures they name. A value still missing is left as written.
+fn fill_supervised(
+    root: &Path,
+    org: &str,
+    project: &str,
+    case_id: i32,
+    steps: &[StepScript],
+) -> Result<(Vec<StepScript>, BTreeMap<String, FixtureValues>), String> {
+    let fixtures = fixture_values(root, org, project, steps);
+    let mut vars = fixture_vars(&fixtures);
+    if let Some(given) = remembered(case_id) {
+        for (output, v) in given {
+            vars.insert(format!("setup.{output}"), v.clone());
+        }
+    }
+    Ok((substitute_steps(steps, &vars)?, fixtures))
 }
 
 /// Said when a setup is asked to run where no browser is given for it.
