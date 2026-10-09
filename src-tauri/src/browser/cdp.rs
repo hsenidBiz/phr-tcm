@@ -322,6 +322,9 @@ const MAX_CLOSED_NAMES: usize = 16;
 const TAB_LOOK: Duration = Duration::from_millis(100);
 /// How long the end of a case waits for the browser to close one tab.
 const CLOSE_LIMIT: Duration = Duration::from_secs(2);
+/// How long the end of a case waits for the browser to dispose of its
+/// context (`dispose_context`).
+const DISPOSE_LIMIT: Duration = Duration::from_secs(5);
 /// How many network marks are remembered (`net_mark`).
 const MAX_NET_MARKS: usize = 16;
 
@@ -658,6 +661,10 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// The page errors every tab met since the runner last took them
     /// (`page_errors`). One for the whole run, like `book`.
     page_errors: super::page_errors::PageErrorBook,
+    /// The browser context this connection made for its case
+    /// (`drive_new_context`), until it is disposed (`dispose_context`).
+    /// While set, a page in any other context is never one of its tabs.
+    context: Option<String>,
 }
 
 /// A browser's downloads: the folder they land in, and every download in
@@ -698,11 +705,6 @@ impl Cdp<WsTransport> {
     /// (`drive_first_page`). The page is the first one `/json/list` names,
     /// as it always was.
     pub async fn connect(port: u16) -> Result<Cdp<WsTransport>, String> {
-        let version = Self::ask(port, "version").await?;
-        let ws = version["webSocketDebuggerUrl"]
-            .as_str()
-            .ok_or_else(|| "the browser did not say where its DevTools socket is".to_string())?
-            .to_string();
         let tabs = Self::ask(port, "list").await?;
         let page = tabs
             .as_array()
@@ -710,12 +712,28 @@ impl Cdp<WsTransport> {
             .ok_or_else(|| "the browser reported no page to drive".to_string())?;
         let target = page["id"].as_str().unwrap_or("").to_string();
         let url = page["url"].as_str().unwrap_or("").to_string();
+        let mut cdp = Self::connect_browser(port).await?;
+        cdp.drive_first_page(&target, &url).await.map_err(|e| e.to_string())?;
+        Ok(cdp)
+    }
+
+    /// Open the browser's own socket and drive nothing yet: the caller
+    /// makes the page it drives (`drive_new_context`).
+    pub async fn connect_browser(port: u16) -> Result<Cdp<WsTransport>, String> {
+        let version = Self::ask(port, "version").await?;
+        let ws = version["webSocketDebuggerUrl"]
+            .as_str()
+            .ok_or_else(|| "the browser did not say where its DevTools socket is".to_string())?
+            .to_string();
         let (socket, _) = tokio_tungstenite::connect_async(&ws)
             .await
             .map_err(|e| format!("could not open the DevTools socket: {e}"))?;
-        let mut cdp = Cdp::over(WsTransport { socket });
-        cdp.drive_first_page(&target, &url).await.map_err(|e| e.to_string())?;
-        Ok(cdp)
+        Ok(Cdp::over(WsTransport { socket }))
+    }
+
+    /// Does a browser answer on this DevTools port yet?
+    pub async fn answers(port: u16) -> Result<(), String> {
+        Self::ask(port, "version").await.map(|_| ())
     }
 
     async fn ask(port: u16, what: &str) -> Result<serde_json::Value, String> {
@@ -759,6 +777,7 @@ impl<T: Transport> Cdp<T> {
             setup: HashMap::new(),
             book: super::dialogs::DialogBook::default(),
             page_errors: super::page_errors::PageErrorBook::default(),
+            context: None,
         }
     }
 
@@ -801,6 +820,62 @@ impl<T: Transport> Cdp<T> {
         )
         .await?;
         Ok(())
+    }
+
+    /// On the browser's own socket: a browser context of this connection's
+    /// own, which starts with no cookies and no storage as a fresh profile
+    /// does; a blank page in it; and that page driven as `main`
+    /// (`drive_first_page`). From then on a page in any other context is
+    /// never one of this connection's tabs (`on_attached`), and downloads
+    /// are asked of this context (`enable_downloads`). The context stays
+    /// until `dispose_context`: after a failure partway the caller closes
+    /// the browser, and the context with it.
+    pub async fn drive_new_context(&mut self) -> Result<(), CdpError> {
+        let made = self
+            .call_on(None, "Target.createBrowserContext", serde_json::json!({ "disposeOnDetach": false }), CALL_TIMEOUT)
+            .await?;
+        let context = made["browserContextId"].as_str().unwrap_or("").to_string();
+        if context.is_empty() {
+            return Err(CdpError::Protocol {
+                method: "Target.createBrowserContext".to_string(),
+                message: "no context came back".to_string(),
+            });
+        }
+        self.context = Some(context.clone());
+        let page = self
+            .call_on(
+                None,
+                "Target.createTarget",
+                serde_json::json!({ "url": "about:blank", "browserContextId": context }),
+                CALL_TIMEOUT,
+            )
+            .await?;
+        let target = page["targetId"].as_str().unwrap_or("").to_string();
+        if target.is_empty() {
+            return Err(CdpError::Protocol {
+                method: "Target.createTarget".to_string(),
+                message: "no page came back".to_string(),
+            });
+        }
+        self.drive_first_page(&target, "about:blank").await
+    }
+
+    /// The context `drive_new_context` made, until it is disposed.
+    pub fn browser_context(&self) -> Option<&str> {
+        self.context.as_deref()
+    }
+
+    /// Close this connection's context, and every page in it, with its
+    /// cookies and storage. Nothing to do for a connection that made none.
+    /// An `Err` means the browser could not be asked or did not answer in
+    /// time: it may be gone, and is not to be trusted with another case.
+    pub async fn dispose_context(&mut self) -> Result<(), CdpError> {
+        let Some(context) = self.context.take() else {
+            return Ok(());
+        };
+        self.call_on(None, "Target.disposeBrowserContext", serde_json::json!({ "browserContextId": context }), DISPOSE_LIMIT)
+            .await
+            .map(|_| ())
     }
 
     /// Every tab still open, `main` first.
@@ -1059,14 +1134,13 @@ impl<T: Transport> Cdp<T> {
         })?;
         let path = dir.to_string_lossy().into_owned();
         let limit = self.limit_now();
-        let asked = self
-            .call_on(
-                None,
-                "Browser.setDownloadBehavior",
-                serde_json::json!({ "behavior": "allowAndName", "downloadPath": path, "eventsEnabled": true }),
-                limit,
-            )
-            .await;
+        let mut params = serde_json::json!({ "behavior": "allowAndName", "downloadPath": path, "eventsEnabled": true });
+        // A connection with a context of its own asks for that context:
+        // left out, the browser's default context is the one asked.
+        if let Some(context) = &self.context {
+            params["browserContextId"] = serde_json::json!(context);
+        }
+        let asked = self.call_on(None, "Browser.setDownloadBehavior", params, limit).await;
         match asked {
             Ok(_) => self.downloads_per_page = false,
             Err(CdpError::Protocol { .. }) => {
@@ -1399,7 +1473,13 @@ impl<T: Transport> Cdp<T> {
         let page = info["type"].as_str() == Some("page");
         let waiting = p["waitingForDebugger"].as_bool().unwrap_or(false);
         let known = self.tabs.iter().any(|t| t.target_id == target || t.session_id == session);
-        if !page || known {
+        // A page in another context is another case's, or the browser's
+        // own default context's: let run, and let go.
+        let foreign = self
+            .context
+            .as_deref()
+            .is_some_and(|c| info["browserContextId"].as_str().is_some_and(|b| b != c));
+        if !page || known || foreign {
             if waiting {
                 self.queue(&session, "Runtime.runIfWaitingForDebugger", serde_json::json!({}), None);
             }

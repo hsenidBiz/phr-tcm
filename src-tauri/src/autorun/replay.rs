@@ -92,8 +92,9 @@ fn who(case_id: i32) -> String {
     format!("unattended run, case {case_id}")
 }
 
-/// Where a fresh browser per case comes from. The command gives real ones;
-/// the tests give fakes.
+/// Where each case's fresh browser comes from: for an unattended run, a
+/// fresh context in the run's one browser (`one_browser`). The tests give
+/// fakes.
 pub trait Browsers {
     type D: Driver;
     fn open(&mut self) -> impl std::future::Future<Output = Result<Self::D, String>>;

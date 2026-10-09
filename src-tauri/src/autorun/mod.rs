@@ -21,6 +21,7 @@ pub mod guide;
 pub mod lease;
 pub mod marks;
 pub mod nav;
+pub mod one_browser;
 pub mod page_errors;
 pub mod patterns;
 pub mod plan;

@@ -809,7 +809,8 @@ export const commands = {
 	 *  signs in every case, over the account a script names (null leaves each
 	 *  script to its own); it must be a key in the Accounts list, or the run
 	 *  does not start. `retry_transient` runs a case whose failure looked
-	 *  transient once more, in a fresh browser (`autorun::transient`).
+	 *  transient once more, in a fresh browser context (`autorun::transient`).
+	 *  The run keeps one browser, with a context per case (`one_browser`).
 	 *  `db_read_access` is the AI Bridge tab's Database Read Access switch:
 	 *  while it is off no precondition is checked (`autorun::preconditions`).
 	 */

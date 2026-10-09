@@ -3,11 +3,12 @@
 //!
 //! NOTHING here calls Azure DevOps.
 
+use crate::autorun::one_browser::{Launcher, OneBrowser};
 use crate::autorun::plan::Reset;
 use crate::autorun::replay::{self, Browsers, CaseToRun};
 use crate::autorun::reset_wait::{self, AppGate};
 use crate::autorun::{sessions, store, LocalRun};
-use crate::browser::cdp::Cdp;
+use crate::browser::cdp::{Cdp, WsTransport};
 use crate::browser::launch::{background_args, launch_with, Browser, LaunchedBrowser};
 use crate::browser::timing::Timing;
 use crate::events::ReplayProgress;
@@ -71,8 +72,12 @@ pub struct ReplayCase {
     pub module: Option<String>,
 }
 
-/// Start a browser and wait until its DevTools port answers. Shared by the
-/// unattended run (one per case) and the module recorder.
+/// What a person reads when a browser started and never answered.
+const NEVER_ANSWERED: &str =
+    "it started but never answered - try again, and see Settings, Logs if it keeps happening";
+
+/// Start a browser and wait until its DevTools port answers. Used by the
+/// module recorder and by `RealBrowsers`.
 pub(crate) async fn open_real(which: Browser, visible: bool) -> Result<(Cdp, LaunchedBrowser), String> {
     let extra = background_args();
     let browser = launch_with(which, if visible { &[] } else { &extra })?;
@@ -91,12 +96,60 @@ pub(crate) async fn open_real(which: Browser, visible: bool) -> Result<(Cdp, Lau
     // The connection error names the local DevTools address, which is
     // nothing a person can act on: it goes to the log instead.
     crate::applog::warn(format!("Auto-run browser never answered: {last}"));
-    Err("it started but never answered - try again, and see Settings, Logs if it keeps happening".to_string())
+    Err(NEVER_ANSWERED.to_string())
 }
 
-/// The `Browsers` the command hands to `replay::run_cases`: a fresh
-/// real browser per case, headless unless the person asked to watch. The
-/// API template runner opens its one browser through this too.
+/// How an unattended run starts its one browser (`OneBrowser`): headless
+/// unless the person asked to watch, with a throwaway profile that is
+/// deleted when the browser is closed.
+pub(crate) struct RealLauncher {
+    which: Browser,
+    watch: bool,
+}
+
+impl Launcher for RealLauncher {
+    type Process = LaunchedBrowser;
+    type T = WsTransport;
+
+    async fn launch(&mut self) -> Result<LaunchedBrowser, String> {
+        let extra = background_args();
+        let browser = launch_with(self.which, if self.watch { &[] } else { &extra })?;
+        // Asked until it answers, as `open_real` does.
+        let mut last = String::new();
+        for _ in 0..60 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            match Cdp::answers(browser.port).await {
+                Ok(()) => return Ok(browser),
+                Err(e) => last = e,
+            }
+        }
+        super::autorun::close_browser(browser);
+        crate::applog::warn(format!("Auto-run browser never answered: {last}"));
+        Err(NEVER_ANSWERED.to_string())
+    }
+
+    async fn connect(&mut self, p: &LaunchedBrowser) -> Result<Cdp<WsTransport>, String> {
+        Cdp::connect_browser(p.port).await
+    }
+
+    fn alive(&mut self, p: &mut LaunchedBrowser) -> bool {
+        matches!(p.child.try_wait(), Ok(None))
+    }
+
+    fn close(&mut self, p: LaunchedBrowser) {
+        super::autorun::close_browser(p);
+    }
+}
+
+/// The `Browsers` an unattended run hands to `replay::run_cases`: one real
+/// browser for the run, a fresh context per case.
+pub(crate) fn run_browsers(which: Browser, watch: bool) -> OneBrowser<RealLauncher> {
+    OneBrowser::new(RealLauncher { which, watch })
+}
+
+/// A fresh real browser per `open`, headless unless asked to watch. The API
+/// template runner and a supervised case's setup open their browser
+/// through this.
 pub(crate) struct RealBrowsers {
     which: Browser,
     watch: bool,
@@ -147,7 +200,8 @@ impl Drop for RealBrowsers {
 /// signs in every case, over the account a script names (null leaves each
 /// script to its own); it must be a key in the Accounts list, or the run
 /// does not start. `retry_transient` runs a case whose failure looked
-/// transient once more, in a fresh browser (`autorun::transient`).
+/// transient once more, in a fresh browser context (`autorun::transient`).
+/// The run keeps one browser, with a context per case (`one_browser`).
 /// `db_read_access` is the AI Bridge tab's Database Read Access switch:
 /// while it is off no precondition is checked (`autorun::preconditions`).
 #[tauri::command]
@@ -201,7 +255,7 @@ pub async fn auto_run_replay(
     // taken on the webview's word.
     let (list, resets) = planned_cases(&root, pbi_id, &sent);
     let timing = replay_timing(watch);
-    let mut browsers = RealBrowsers::new(Browser::from_name(&browser_name), watch);
+    let mut browsers = run_browsers(Browser::from_name(&browser_name), watch);
     // Where the cases' preconditions are asked: nowhere while Database
     // Read Access is off, otherwise the active environment's database,
     // resolved once for the run. A case without preconditions never looks

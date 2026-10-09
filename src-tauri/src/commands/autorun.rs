@@ -526,8 +526,9 @@ async fn open_into(root: Result<PathBuf, String>, slot: &mut Option<Session>, wh
 
 /// Kill the process and drop its throwaway profile. Shared with
 /// `autorun_replay`, whose `RealBrowsers` closes one of these after every
-/// case (and on the way out of a failed open) so a background browser can
-/// never outlive the run that started it. It waits for the process to be
+/// `open`, and whose unattended run closes its one browser when the run
+/// ends or the browser dies (and on the way out of a failed open), so a
+/// background browser can never outlive the run that started it. It waits for the process to be
 /// gone first: a browser still shutting down holds files in its profile,
 /// and removing the folder under it fails.
 pub(crate) fn close_browser(mut browser: LaunchedBrowser) {

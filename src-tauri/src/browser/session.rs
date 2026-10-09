@@ -1,6 +1,6 @@
 //! A signed-in browser, written down and put back.
 //!
-//! Every Auto Run case starts from a fresh, throwaway profile, so that one
+//! Every Auto Run case starts from a fresh profile or browser context, so that one
 //! case can never pass only because another signed in. Signing in through
 //! the page for every case would make that honesty slow. A saved session
 //! keeps both: the profile is still fresh, and the cookies and local
