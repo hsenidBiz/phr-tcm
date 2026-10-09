@@ -531,8 +531,11 @@ struct Watched {
 /// One go at a showing prompt's remaining `then` actions, each with the
 /// short attempt budget. `Ok(true)` when all are done; `Ok(false)` when one
 /// was in the way of something (kept in `blocked`, not as a step) and the
-/// prompt waits for the next look. Any other page failure is given the
-/// full action budget, as an action outside the watch would be.
+/// prompt waits for the next look, as it does when the prompt no longer
+/// matches after a failed attempt. Any other failure is given the full
+/// action budget, as an action outside the watch would be - a harness one
+/// included: a page busy for longer than one short attempt is not the
+/// browser gone silent, and the full try says so itself if it is.
 async fn attempt_prompt<D: Driver>(
     d: &mut D,
     run: &mut Run<'_>,
@@ -551,10 +554,12 @@ async fn attempt_prompt<D: Driver>(
         }
         if out.ok {
             run.keep(out);
-        } else if out.harness {
-            let why = run.hide(&out.detail);
-            run.keep(out);
-            return Err((n, why, true));
+        } else if shown_now(d, &w.selector).await.map_err(|silent| silent_at(run, n, silent))? == Some(false) {
+            // The prompt went away between the look and the attempt: it
+            // waits for the next look like a covered one, and the window's
+            // end carries it past if it stays gone.
+            state.blocked = Some(out);
+            return Ok(false);
         } else {
             run_action(d, run, n, action, timing, policy).await?;
         }
@@ -643,8 +648,21 @@ async fn watch_together<D: Driver>(
             continue;
         }
         if state.blocked.take().is_some() {
-            // Still in the way when the window closed: the last try is an
-            // ordinary action's, with its full wait and its own failure.
+            // Still in the way when the window closed. If it no longer
+            // matches, the page put it away itself: nothing left to do.
+            match shown_now(d, &w.selector).await {
+                Ok(Some(false)) => {
+                    run.keep(ActionOutcome::passed(format!(
+                        "step {n}: {} went away before it could be used, carried on",
+                        w.selector.describe()
+                    )));
+                    continue;
+                }
+                Ok(_) => {}
+                Err(silent) => return Err(silent_at(run, *n, silent)),
+            }
+            // Otherwise the last try is an ordinary action's, with its
+            // full wait and its own failure.
             for action in &w.then[state.done..] {
                 run_action(d, run, *n, action, timing, policy).await?;
             }

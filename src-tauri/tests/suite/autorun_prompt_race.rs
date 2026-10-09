@@ -21,7 +21,7 @@ use v2_lib::autorun::recipe::SignInRecipe;
 use v2_lib::autorun::sessions::{now_ms, save_session};
 use v2_lib::autorun::signin::sign_in;
 use v2_lib::autorun::timing::{FRESH_LOGIN_WINDOW_MS, PROMPT_WINDOW_MS};
-use v2_lib::browser::cdp::Event;
+use v2_lib::browser::cdp::{CdpError, Event};
 use v2_lib::browser::input::{HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
 use v2_lib::browser::session::SavedSession;
@@ -85,13 +85,38 @@ fn prompt_app(prompts: &[(&'static str, u64)]) -> (ScriptedDriver, PromptApp) {
 /// pair says that while `over` shows, `under` is covered - drawn and
 /// visible, but a click there would land on `over`.
 fn covering_app(prompts: &[(&'static str, u64)], covers: &[(&'static str, &'static str)]) -> (ScriptedDriver, PromptApp) {
+    page_app(Page { prompts: prompts.to_vec(), covers: covers.to_vec(), ..Page::default() })
+}
+
+/// What the fake page does, beyond its always-there form and marker.
+#[derive(Default)]
+struct Page {
+    /// Each prompt's css and the fake-clock time it shows from, until
+    /// clicked.
+    prompts: Vec<(&'static str, u64)>,
+    /// `(over, under)`: while `over` shows, `under` is covered.
+    covers: Vec<(&'static str, &'static str)>,
+    /// A prompt that stops matching at this fake-clock time.
+    gone: Vec<(&'static str, u64)>,
+    /// From the first readiness probe of a prompt, the browser answers no
+    /// probe for this long (real time): a page whose main thread is busy.
+    busy: Option<std::time::Duration>,
+}
+
+fn page_app(page: Page) -> (ScriptedDriver, PromptApp) {
     let clock = Arc::new(AtomicU64::new(0));
     let clicked = Arc::new(Mutex::new(Vec::<String>::new()));
     let app = PromptApp { clock: clock.clone(), clicked: clicked.clone() };
-    let prompts: Vec<(String, u64)> = prompts.iter().map(|(c, at)| (c.to_string(), *at)).collect();
-    let covers: Vec<(String, String)> = covers.iter().map(|(o, u)| (o.to_string(), u.to_string())).collect();
+    let prompts: Vec<(String, u64)> = page.prompts.iter().map(|(c, at)| (c.to_string(), *at)).collect();
+    let covers: Vec<(String, String)> = page.covers.iter().map(|(o, u)| (o.to_string(), u.to_string())).collect();
+    let gone: Vec<(String, u64)> = page.gone.iter().map(|(c, at)| (c.to_string(), *at)).collect();
+    let busy = page.busy;
+    let mut busy_since: Option<std::time::Instant> = None;
     let showing = move |css: &str, clock: &AtomicU64, clicked: &Mutex<Vec<String>>| -> bool {
         let now = clock.load(Ordering::SeqCst);
+        if gone.iter().any(|(c, at)| c == css && now >= *at) {
+            return false;
+        }
         match prompts.iter().find(|(c, _)| c == css) {
             Some((c, at)) => now >= *at && !clicked.lock().unwrap().contains(c),
             None => ["#user", "#pass", "#go", "#marker"].contains(&css),
@@ -109,6 +134,14 @@ fn covering_app(prompts: &[(&'static str, u64)], covers: &[(&'static str, &'stat
             "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
             "Runtime.callFunctionOn" if f == PROBE_JS => {
                 let css = params["objectId"].as_str().unwrap_or("").trim_start_matches("el:").to_string();
+                if let Some(busy) = busy {
+                    if !["#user", "#pass", "#go"].contains(&css.as_str()) {
+                        let since = *busy_since.get_or_insert_with(std::time::Instant::now);
+                        if since.elapsed() < busy {
+                            return Err(CdpError::Timeout { what: method.to_string(), ms: 250 });
+                        }
+                    }
+                }
                 let over = covers.iter().find(|(o, u)| *u == css && showing(o, &clock, &clicked)).map(|(o, _)| o.clone());
                 json!({ "result": { "value": {
                     "visible": true, "onscreen": true, "enabled": true, "editable": true,
@@ -310,4 +343,46 @@ async fn a_recorded_recipe_never_gets_a_shorter_window_than_before() {
     assert!(out.ok && !out.used_saved_session, "{}", out.detail);
     assert_eq!(app.clicked(), vec!["#go", "#modal"], "the modal at 1.5 s was dismissed");
     assert!(app.now() <= 2000 + MARGIN_MS, "never longer than the old waits together: {} ms", app.now());
+}
+
+/// The page's main thread is busy when the menu toggle shows: for 150 ms
+/// the browser answers no readiness probe, longer than one short attempt
+/// inside the watch. That is not the browser gone silent: the toggle gets
+/// an ordinary action's full wait, and is clicked once the page answers.
+#[tokio::test]
+async fn a_busy_page_during_a_short_attempt_is_not_a_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    with_saved_session(dir.path());
+    let (mut d, app) = page_app(Page {
+        prompts: vec![("#sidebar", 0)],
+        busy: Some(std::time::Duration::from_millis(150)),
+        ..Page::default()
+    });
+    // Short attempts get 3 polls (30 ms); the full budget is 1000 ms.
+    let patient = Timing { action_ms: 1000, ..quick() };
+    let out = sign_in(&mut d, dir.path(), &prompt_recipe(form()), &account(), &patient).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(app.clicked(), vec!["#sidebar"]);
+    assert!(out.steps.iter().all(|s| s.ok), "{:?}", out.steps);
+}
+
+/// The toggle is covered by something no prompt dismisses, and then goes
+/// away (the page redrew it open). When the window ends it no longer
+/// matches, so it is carried past - not given a final full-length try at
+/// an element that is not there.
+#[tokio::test]
+async fn a_blocked_prompt_that_stopped_matching_is_not_retried_after_the_window() {
+    let dir = tempfile::tempdir().unwrap();
+    with_saved_session(dir.path());
+    let (mut d, app) = page_app(Page {
+        prompts: vec![("#sidebar", 0), ("#overlay", 0)],
+        covers: vec![("#overlay", "#sidebar")],
+        gone: vec![("#sidebar", 500)],
+        ..Page::default()
+    });
+    let out = sign_in(&mut d, dir.path(), &prompt_recipe(form()), &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(app.clicked().is_empty(), "{:?}", app.clicked());
+    let last = out.steps.last().unwrap();
+    assert!(last.ok && last.detail.contains("#sidebar went away") && last.detail.contains("carried on"), "{:?}", out.steps);
 }
