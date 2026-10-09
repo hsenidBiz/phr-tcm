@@ -56,6 +56,7 @@ import {
   subscribeAiScope,
 } from "../lib/aiScope";
 import {
+  IconAbout,
   IconAdd,
   IconCancel,
   IconConfirm,
@@ -670,6 +671,7 @@ export default function AiBridge() {
                 <Switch
                   checked={on}
                   ariaLabel={row.label}
+                  ariaDescribedBy={`ai-tool-about-${row.key}`}
                   onCheckedChange={() => {
                     const next = toggleRow(disabled, row.names);
                     setDisabled(next);
@@ -681,7 +683,19 @@ export default function AiBridge() {
                   <span className={cn("text-sm font-medium", on ? "text-text" : "text-faint")}>
                     {row.label}
                   </span>
-                  <span className="block text-[11px] text-muted">{row.summary}</span>
+                  {/* The explanation sits behind the info button's tooltip;
+                      this hidden copy is what the switch is described by. */}
+                  <span id={`ai-tool-about-${row.key}`} className="sr-only">
+                    {row.summary}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`About ${row.label}`}
+                    title={row.summary}
+                    className="ml-1 inline-flex align-middle text-muted hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  >
+                    <IconAbout aria-hidden className="size-3.5" />
+                  </button>
                 </span>
               </li>
             );

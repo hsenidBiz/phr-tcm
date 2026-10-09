@@ -14,12 +14,14 @@ export function Switch({
   checked,
   onCheckedChange,
   ariaLabel,
+  ariaDescribedBy,
   disabled = false,
   className,
 }: {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   ariaLabel?: string;
+  ariaDescribedBy?: string;
   disabled?: boolean;
   className?: string;
 }) {
@@ -32,6 +34,7 @@ export function Switch({
       role="switch"
       aria-checked={checked}
       aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
       disabled={disabled}
       className={cn(
         "t-toggle relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full border transition-colors",
