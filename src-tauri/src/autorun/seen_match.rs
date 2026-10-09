@@ -147,10 +147,12 @@ pub(crate) fn without_placeholders(s: &str) -> String {
 }
 
 /// Can a value a run filled into a css selector stay inside the value it
-/// was put in: no quote, backslash, `]`, comma or whitespace, any of which
-/// could close the value or the bracket and start another selector?
+/// was put in? Only a quote, a backslash or a line break can end a quoted
+/// value early, so those are refused. A space, a comma or a `]` inside the
+/// quotes is part of the value (`[data-name="Annual Review"]`). A value put
+/// into an id or a class is held to its token's characters by `fit`.
 pub(crate) fn safe_filled(v: &str) -> bool {
-    !v.chars().any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '\\' | ']' | ','))
+    !v.chars().any(|c| c.is_control() || matches!(c, '"' | '\'' | '\\'))
 }
 
 /// A css selector cut at each data placeholder inside a quoted attribute

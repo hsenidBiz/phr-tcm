@@ -1264,7 +1264,12 @@ fn a_filled_value_cannot_break_out_of_its_quotes() {
     assert_eq!(check_seen(&map, &none(), &saved, &[], None), Ok(()));
     let run = |filled: &str| check_resolved_inputs(&map, &none(), &["Cycles"], &saved.steps, &at(filled).steps);
     assert_eq!(run("[x=\"ok-1\"]"), Ok(()));
-    for filled in ["[x=\"a], .evil, [y=\"]", "[x=\"a b\"]", "[x=\"a\\\\\"]", "[x=\"a,b\"]"] {
+    // Inside real quotes a space, a comma or a `]` is part of the value:
+    // the whole of `a], .evil, [y=` is one attribute value, not a list.
+    for filled in ["[x=\"a b\"]", "[x=\"a,b\"]", "[x=\"a], .evil, [y=\"]"] {
+        assert_eq!(run(filled), Ok(()), "{filled}");
+    }
+    for filled in ["[x=\"a\\\\\"]", "[x=\"a\\\"b\"]", "[x=\"a\nb\"]"] {
         assert_eq!(
             run(filled),
             Err(format!("Step 1: {filled}, as filled in, does not fit what was seen on the live app")),
