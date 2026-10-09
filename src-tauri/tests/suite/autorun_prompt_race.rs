@@ -104,6 +104,12 @@ struct Page {
     /// From the first readiness probe of a prompt, the browser answers no
     /// probe for this long (real time): a page whose main thread is busy.
     busy: Option<std::time::Duration>,
+    /// From its own first readiness probe, the browser answers no probe of
+    /// this prompt for this long (real time); every other element answers.
+    stuck: Vec<(&'static str, std::time::Duration)>,
+    /// Until this fake-clock time the browser finishes no look for any
+    /// prompt: the page is busy before anything can be seen.
+    looks_busy_until: Option<u64>,
 }
 
 fn page_app(page: Page) -> (ScriptedDriver, PromptApp) {
@@ -114,6 +120,9 @@ fn page_app(page: Page) -> (ScriptedDriver, PromptApp) {
     let covers: Vec<(String, String)> = page.covers.iter().map(|(o, u)| (o.to_string(), u.to_string())).collect();
     let gone: Vec<(String, u64)> = page.gone.iter().map(|(c, at)| (c.to_string(), *at)).collect();
     let busy = page.busy;
+    let stuck: Vec<(String, std::time::Duration)> = page.stuck.iter().map(|(c, d)| (c.to_string(), *d)).collect();
+    let mut stuck_since: std::collections::HashMap<String, std::time::Instant> = std::collections::HashMap::new();
+    let looks_busy_until = page.looks_busy_until;
     let settling: Vec<(String, u64)> = page.settling.iter().map(|(c, at)| (c.to_string(), *at)).collect();
     let mut busy_since: Option<std::time::Instant> = None;
     let showing = move |css: &str, clock: &AtomicU64, clicked: &Mutex<Vec<String>>| -> bool {
@@ -146,6 +155,12 @@ fn page_app(page: Page) -> (ScriptedDriver, PromptApp) {
                         }
                     }
                 }
+                if let Some((_, how_long)) = stuck.iter().find(|(c, _)| *c == css) {
+                    let since = *stuck_since.entry(css.clone()).or_insert_with(std::time::Instant::now);
+                    if since.elapsed() < *how_long {
+                        return Err(CdpError::Timeout { what: method.to_string(), ms: 250 });
+                    }
+                }
                 let over = covers.iter().find(|(o, u)| *u == css && showing(o, &clock, &clicked)).map(|(o, _)| o.clone());
                 let now = clock.load(Ordering::SeqCst);
                 let stable = !settling.iter().any(|(c, until)| *c == css && now < *until);
@@ -157,6 +172,11 @@ fn page_app(page: Page) -> (ScriptedDriver, PromptApp) {
             }
             "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
+                let css = params["arguments"][0]["value"].as_str().unwrap();
+                let form = ["#user", "#pass", "#go", "#marker"].contains(&css);
+                if !form && looks_busy_until.is_some_and(|until| clock.load(Ordering::SeqCst) < until) {
+                    return Err(CdpError::Timeout { what: method.to_string(), ms: 250 });
+                }
                 last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
                 json!({ "result": { "objectId": "arr" } })
             }
@@ -396,4 +416,72 @@ async fn a_blocked_prompt_that_stopped_matching_is_not_retried_after_the_window(
     assert!(app.clicked().is_empty(), "{:?}", app.clicked());
     let last = out.steps.last().unwrap();
     assert!(last.ok && last.detail.contains("#sidebar went away") && last.detail.contains("carried on"), "{:?}", out.steps);
+}
+
+/// A prompt with two actions: the first closes it, the second fails. That
+/// is the second action's failure, not the prompt going away by itself:
+/// the sign-in says so, and is not recorded as passed.
+#[tokio::test]
+async fn a_prompt_whose_second_action_fails_after_the_first_closed_it_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    with_saved_session(dir.path());
+    let r: SignInRecipe = serde_json::from_value(json!({
+        "start_url": "https://hr.example.internal/",
+        "steps": form(),
+        "after_sign_in": [
+            { "kind": "when_visible", "selector": { "css": "#cookie" }, "within_ms": 4000,
+              "then": [
+                  { "kind": "click", "selector": { "css": "#cookie" } },
+                  { "kind": "click", "selector": { "css": "#confirm" } }
+              ] }
+        ],
+        "signed_in": { "css": "#marker" }
+    }))
+    .unwrap();
+    let (mut d, app) = prompt_app(&[("#cookie", 0)]);
+    let out = sign_in(&mut d, dir.path(), &r, &account(), &quick()).await;
+    assert_eq!(app.clicked(), vec!["#cookie"]);
+    assert!(!out.ok, "the second action failed, yet the sign-in passed: {:?}", out.steps);
+    assert!(out.detail.contains("#confirm"), "{}", out.detail);
+    assert!(!out.steps.iter().any(|s| s.detail.contains("went away")), "{:?}", out.steps);
+}
+
+/// The menu toggle's probe times out on a short attempt (the browser is
+/// slow to answer for that one element). That is not escalated at once to
+/// a full action's wait, which would hold up every other prompt: the
+/// cookie bar arriving meanwhile is dismissed first, and the toggle is
+/// clicked once it answers.
+#[tokio::test]
+async fn a_short_attempt_timeout_does_not_hold_up_other_prompts() {
+    let dir = tempfile::tempdir().unwrap();
+    with_saved_session(dir.path());
+    let (mut d, app) = page_app(Page {
+        prompts: vec![("#sidebar", 0), ("#cookie", 100)],
+        stuck: vec![("#sidebar", std::time::Duration::from_millis(300))],
+        ..Page::default()
+    });
+    let patient = Timing { action_ms: 1000, ..quick() };
+    let out = sign_in(&mut d, dir.path(), &prompt_recipe(form()), &account(), &patient).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(app.clicked(), vec!["#cookie", "#sidebar"]);
+    assert!(out.steps.iter().all(|s| s.ok), "{:?}", out.steps);
+}
+
+/// The page is busy for longer than the whole window: no look finishes
+/// until after it. That is not the browser gone silent while a look can
+/// still finish within an ordinary action's wait: the watch keeps looking,
+/// and the toggle is clicked once the page answers.
+#[tokio::test]
+async fn a_page_busy_longer_than_the_window_is_not_silence() {
+    let dir = tempfile::tempdir().unwrap();
+    with_saved_session(dir.path());
+    let (mut d, app) = page_app(Page {
+        prompts: vec![("#sidebar", 0)],
+        looks_busy_until: Some(PROMPT_WINDOW_MS + 500),
+        ..Page::default()
+    });
+    let patient = Timing { action_ms: 5000, ..quick() };
+    let out = sign_in(&mut d, dir.path(), &prompt_recipe(form()), &account(), &patient).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(app.clicked(), vec!["#sidebar"]);
 }

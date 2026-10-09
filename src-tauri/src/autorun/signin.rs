@@ -533,12 +533,16 @@ struct Watched {
 
 /// One go at a showing prompt's remaining `then` actions, each with the
 /// short attempt budget. `Ok(true)` when all are done; `Ok(false)` when one
-/// was in the way of something (kept in `blocked`, not as a step) and the
-/// prompt waits for the next look, as it does when the prompt no longer
-/// matches after a failed attempt. Any other failure is given the full
-/// action budget, as an action outside the watch would be - a harness one
-/// included: a page busy for longer than one short attempt is not the
-/// browser gone silent, and the full try says so itself if it is.
+/// waits for the next look (kept in `blocked`, not as a step): something
+/// was in the way of it; or the browser did not answer within the short
+/// budget, which a page busy for longer than one short attempt does and
+/// which must not hold up the other prompts for a full action's wait (a
+/// browser truly gone fails the next look, and one still blocked when the
+/// window ends gets one full try there); or the prompt no longer matches
+/// after its first action failed. Any other failure is given the full
+/// action budget, as an action outside the watch would be. So is a later
+/// action's failure after an earlier one of the same prompt put it away:
+/// that is the action failing, not the prompt going away by itself.
 async fn attempt_prompt<D: Driver>(
     d: &mut D,
     run: &mut Run<'_>,
@@ -551,13 +555,15 @@ async fn attempt_prompt<D: Driver>(
     let short = attempt_timing(timing);
     while let Some(action) = w.then.get(state.done) {
         let out = execute_in(d, action, &short, policy).await;
-        if in_the_way(&out) {
+        if in_the_way(&out) || (!out.ok && out.harness) {
             state.blocked = Some(out);
             return Ok(false);
         }
         if out.ok {
             run.keep(out);
-        } else if shown_now(d, &w.selector).await.map_err(|silent| silent_at(run, n, silent))? == Some(false) {
+        } else if state.done == 0
+            && shown_now(d, &w.selector).await.map_err(|silent| silent_at(run, n, silent))? == Some(false)
+        {
             // The prompt went away between the look and the attempt: it
             // waits for the next look like a covered one, and the window's
             // end carries it past if it stays gone.
@@ -582,7 +588,9 @@ async fn attempt_prompt<D: Driver>(
 /// watch ends as soon as every prompt has been handled, or when the
 /// window does. A prompt still in the way at the end gets one last try
 /// with the full action budget; one that never showed is carried past, as
-/// a single `when_visible` is.
+/// a single `when_visible` is. A page so busy that no look finishes within
+/// the window is looked at for up to an ordinary action's wait before it
+/// is called the browser gone silent.
 async fn watch_together<D: Driver>(
     d: &mut D,
     run: &mut Run<'_>,
@@ -593,6 +601,10 @@ async fn watch_together<D: Driver>(
 ) -> Result<(), (usize, String, bool)> {
     let window = shared_window(group, window_ms);
     let deadline = Instant::now() + Duration::from_millis(window);
+    // How long a window in which no look finishes is kept looking at: a
+    // busy page, not a silent browser, until an ordinary action's wait.
+    let silence = window.max(timing.action_ms);
+    let silent_end = Instant::now() + Duration::from_millis(silence);
     let mut idled = 0u64;
     let mut states: Vec<Watched> = group.iter().map(|_| Watched::default()).collect();
     // Whether any look completed: a window that ends without one is the
@@ -600,7 +612,7 @@ async fn watch_together<D: Driver>(
     let mut looked = false;
     loop {
         let mut showing = vec![];
-        d.set_deadline(Some(deadline));
+        d.set_deadline(Some(if looked { deadline } else { silent_end }));
         for (k, (n, w)) in group.iter().enumerate() {
             if states[k].handled {
                 continue;
@@ -635,7 +647,9 @@ async fn watch_together<D: Driver>(
         // The clock, or the idles alone, whichever says so first. In a
         // real browser an idle takes the time it says, so the clock always
         // gets there first; a test's fake clock idles without sleeping.
-        if Instant::now() >= deadline || idled >= window {
+        let window_over = Instant::now() >= deadline || idled >= window;
+        let silence_over = Instant::now() >= silent_end || idled >= silence;
+        if window_over && (looked || silence_over) {
             break;
         }
         d.idle(Duration::from_millis(timing.poll_ms)).await;
@@ -643,7 +657,7 @@ async fn watch_together<D: Driver>(
     }
     if !looked {
         let (n, w) = group[0];
-        return Err(silent_at(run, n, harness_timeout(window, &w.selector.describe())));
+        return Err(silent_at(run, n, harness_timeout(silence, &w.selector.describe())));
     }
     for (k, (n, w)) in group.iter().enumerate() {
         let state = &mut states[k];
@@ -651,18 +665,22 @@ async fn watch_together<D: Driver>(
             continue;
         }
         if state.blocked.take().is_some() {
-            // Still in the way when the window closed. If it no longer
-            // matches, the page put it away itself: nothing left to do.
-            match shown_now(d, &w.selector).await {
-                Ok(Some(false)) => {
-                    run.keep(ActionOutcome::passed(format!(
-                        "step {n}: {} went away before it could be used, carried on",
-                        w.selector.describe()
-                    )));
-                    continue;
+            // Still in the way when the window closed. If none of its
+            // actions ran and it no longer matches, the page put it away
+            // itself: nothing left to do. Once one has run, the rest are
+            // still owed.
+            if state.done == 0 {
+                match shown_now(d, &w.selector).await {
+                    Ok(Some(false)) => {
+                        run.keep(ActionOutcome::passed(format!(
+                            "step {n}: {} went away before it could be used, carried on",
+                            w.selector.describe()
+                        )));
+                        continue;
+                    }
+                    Ok(_) => {}
+                    Err(silent) => return Err(silent_at(run, *n, silent)),
                 }
-                Ok(_) => {}
-                Err(silent) => return Err(silent_at(run, *n, silent)),
             }
             // Otherwise the last try is an ordinary action's, with its
             // full wait and its own failure.
