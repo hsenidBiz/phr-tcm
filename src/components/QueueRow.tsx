@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
-import { memo } from "react";
+import { memo, type KeyboardEvent, type MouseEvent } from "react";
 import type { TestCase } from "../bindings";
 import { diffSummary, retypedLines, type CaseDiff } from "../lib/caseDiff";
 import { cn } from "../lib/cn";
@@ -8,7 +8,6 @@ import CaseStepsTable from "./CaseStepsTable";
 import QueueCaseEditor from "./QueueCaseEditor";
 import CaseChangeDetail from "./CaseChangeDetail";
 import { Badge } from "./ui/badge";
-import { Checkbox } from "./ui/checkbox";
 import { Collapse } from "./ui/collapse";
 
 export type QueueRowProps = {
@@ -50,7 +49,10 @@ export type QueueRowProps = {
   diffFailed: boolean;
   /** A submit is running - Edit and Remove are disabled meanwhile. */
   busy: boolean;
-  onToggleSelect: (index: number, shift: boolean) => void;
+  /** Select this row the way Update Test Cases does: `range` (Shift)
+   * takes the cases from the anchor to this one, `toggle` (Ctrl/Cmd) adds
+   * or removes just this one or, with `range`, adds the range. */
+  onToggleSelect: (index: number, how: { range: boolean; toggle: boolean }) => void;
   onToggleSteps: (index: number) => void;
   onToggleDiff: (index: number) => void;
   onToggleEdit: (index: number) => void;
@@ -58,6 +60,23 @@ export type QueueRowProps = {
   onSave: (index: number, next: TestCase) => void;
   onCancelEdit: () => void;
 };
+
+/** What inside a row keeps a click for itself: its buttons and links, any
+ * field, and the parts marked `data-row-ignore` (the open editor and the
+ * steps and change panels, which are there to be read and copied). */
+const OWN_CLICKS =
+  "button, a, input, textarea, select, label, [role='button'], [role='combobox'], [role='listbox'], [role='option'], [role='switch'], [role='checkbox'], [contenteditable='true'], [data-row-ignore]";
+
+/** True when the event is aimed at the row itself, not at something in it
+ * with a job of its own. A click that bubbled out of a portal (a dropdown
+ * or dialog the editor opened) is not inside the row's DOM at all. */
+function onRowItself(e: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>): boolean {
+  const row = e.currentTarget;
+  const target = e.target as Element;
+  if (!(target instanceof Element) || !row.contains(target)) return false;
+  const own = target.closest(OWN_CLICKS);
+  return !own || !row.contains(own);
+}
 
 /** One queued case. Pure - no hooks - so the memoised export below is the
  * whole story: a row re-renders only when one of ITS props changes.
@@ -100,17 +119,42 @@ export function QueueRowInner({
   // A NEW row only: an UPDATE row keeps its Azure DevOps diff and nothing else.
   const showFileDiff = fileChange != null && tc.update_id == null;
   return (
-    <li
+    // Selected by clicking the row itself, as on Update Test Cases: a row
+    // (a div: a list item cannot take the role) of a grid that allows several selected rows, focusable, with Space
+    // or Enter doing what a click does. Its buttons, links and fields keep
+    // their clicks (OWN_CLICKS).
+    <div
+      role="row"
+      aria-selected={isSelected}
+      aria-label={tc.title}
+      tabIndex={0}
+      onClick={(e) => {
+        if (!onRowItself(e)) return;
+        onToggleSelect(i, { range: e.shiftKey, toggle: e.ctrlKey || e.metaKey });
+      }}
+      // A Shift-click would otherwise also drag a text selection across
+      // every row between the two clicks.
+      onMouseDown={(e) => {
+        if (e.shiftKey && onRowItself(e)) e.preventDefault();
+      }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget || (e.key !== " " && e.key !== "Enter")) return;
+        e.preventDefault();
+        onToggleSelect(i, { range: e.shiftKey, toggle: e.ctrlKey || e.metaKey });
+      }}
       className={cn(
         // The open editor hosts a non-portaled Combobox dropdown that must
         // paint past the row's box - content-visibility's paint containment
         // would clip it, so drop cv-row while this row is being edited.
         !editing && "cv-row",
-        "rounded-md border text-sm transition-colors",
-        // Ranked above the file-sync colours on purpose: a row that
-        // failed to upload needs a decision now, and that outranks
-        // where its text last came from.
-        held
+        "cursor-pointer rounded-md border text-sm transition-colors",
+        // Selected first, with Update Test Cases' accent border and tint:
+        // the rows being acted on have to be findable at a glance. Then a
+        // row that failed to upload, which needs a decision now and
+        // outranks where its text last came from.
+        isSelected
+          ? "border-accent bg-accent-soft"
+          : held
           ? "border-warning/60 bg-warning/5"
           : failed
             ? "border-danger/60 bg-danger/5"
@@ -120,23 +164,12 @@ export function QueueRowInner({
                 ? "border-warning/50 bg-warning/5"
                 : uploaded
                   ? "border-success/40"
-                  : "border-border",
+                  : "border-border hover:border-border-strong",
       )}
     >
+      <div role="gridcell">
       <div className="flex items-center justify-between gap-3 px-3 py-1.5">
         <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-text">
-          {/* Capture-phase wrapper: the checkbox's own click never
-              fires, so shift-ranges can be read off the event. */}
-          <span
-            className="inline-flex"
-            onClickCapture={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onToggleSelect(i, e.shiftKey);
-            }}
-          >
-            <Checkbox ariaLabel={`Select ${tc.title}`} checked={isSelected} onCheckedChange={() => {}} />
-          </span>
           <button
             aria-label={stepsOpen ? `Collapse steps of ${tc.title}` : `Expand steps of ${tc.title}`}
             title={stepsOpen ? "Hide steps" : "Check the steps before submitting"}
@@ -213,16 +246,18 @@ export function QueueRowInner({
         </p>
       )}
       {editing && (
-        <QueueCaseEditor
-          original={tc}
-          org={org}
-          project={project}
-          onSave={(next) => onSave(i, next)}
-          onCancel={onCancelEdit}
-        />
+        <div data-row-ignore className="cursor-auto">
+          <QueueCaseEditor
+            original={tc}
+            org={org}
+            project={project}
+            onSave={(next) => onSave(i, next)}
+            onCancel={onCancelEdit}
+          />
+        </div>
       )}
       <Collapse open={stepsOpen}>
-        <div className="border-t border-border">
+        <div data-row-ignore className="cursor-auto border-t border-border">
           {/* Shared with the watched-file change report, which
               needed the same "read the case start to finish"
               view - see CaseStepsTable. */}
@@ -231,7 +266,7 @@ export function QueueRowInner({
       </Collapse>
       <Collapse open={Boolean(diff && !diff.noop && diffOpen)}>
       {diff && !diff.noop && (
-        <div className="space-y-1 border-t border-border px-3 py-2 text-xs">
+        <div data-row-ignore className="cursor-auto space-y-1 border-t border-border px-3 py-2 text-xs">
           <CaseChangeDetail fields={diff.fields} steps={diff.steps.detail} org={org} />
           {/* A step-type repair has no text change to draw, so it is
               said in words - without this, a case whose only change is
@@ -255,12 +290,13 @@ export function QueueRowInner({
       </Collapse>
       <Collapse open={Boolean(showFileDiff && diffOpen)}>
         {showFileDiff && (
-          <div className="space-y-1 border-t border-border px-3 py-2 text-xs">
+          <div data-row-ignore className="cursor-auto space-y-1 border-t border-border px-3 py-2 text-xs">
             <CaseChangeDetail fields={fileChange.fields} steps={fileChange.steps} org={org} />
           </div>
         )}
       </Collapse>
-    </li>
+      </div>
+    </div>
   );
 }
 

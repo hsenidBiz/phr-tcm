@@ -225,13 +225,13 @@ test("Edit opens the inline editor and Save writes back into the queue", async (
   baseMocks();
   renderQueue([makeCase()]);
 
-  expect(screen.getByText("Login works").closest("li")!.className).toContain("cv-row");
+  expect(screen.getByText("Login works").closest("[role='row']")!.className).toContain("cv-row");
 
   fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
   const title = await screen.findByLabelText("Case title");
   // The editor's Combobox dropdown paints past the row, so an editing row
   // must drop content-visibility's paint containment.
-  expect(title.closest("li")!.className).not.toContain("cv-row");
+  expect(title.closest("[role='row']")!.className).not.toContain("cv-row");
   fireEvent.change(title, { target: { value: "Login works — edited" } });
   fireEvent.change(screen.getByLabelText("Step 1 expected"), {
     target: { value: "Dashboard shown" },
@@ -492,7 +492,7 @@ test("bulk remove updates the queue AND the owning .json file", async () => {
     onWatchPatched: (path, fields) => patched.push({ path, stamp: fields.stamp }),
   });
 
-  fireEvent.click(screen.getByRole("checkbox", { name: "Select From file A" }));
+  fireEvent.click(screen.getByRole("row", { name: "From file A" }));
   fireEvent.click(screen.getByRole("button", { name: /Remove 1/ }));
 
   // The queue lost the case; the file was rewritten WITHOUT it but keeps
@@ -539,7 +539,7 @@ test("bulk edit applies to the selection and leaves unselected rows alone", asyn
     onWatchPatched: () => {},
   });
 
-  fireEvent.click(screen.getByRole("checkbox", { name: "Select Picked" }));
+  fireEvent.click(screen.getByRole("row", { name: "Picked" }));
   fireEvent.click(screen.getByRole("button", { name: /Bulk edit/ }));
 
   expect(await screen.findByText(/Bulk edit 1 queued draft/)).toBeInTheDocument();
@@ -580,7 +580,7 @@ test("power rename scoped to the selection writes the file back", async () => {
     onWatchPatched: () => {},
   });
 
-  fireEvent.click(screen.getByRole("checkbox", { name: "Select Old name" }));
+  fireEvent.click(screen.getByRole("row", { name: "Old name" }));
   // The bulk bar's rename button carries the count - proof of the scoping.
   fireEvent.click(screen.getByRole("button", { name: /^Rename 1/ }));
   const dialog = await screen.findByText(/1 selected draft/);
@@ -1739,7 +1739,7 @@ test("removing every held row leaves the hold stored but inert - uploads are all
   renderQueue([makeCase({ title: "Brand new" }), makeCase({ title: "Other" })]);
   expect(screen.getByText("Outcome unknown - check before uploading again")).toBeInTheDocument();
 
-  const held = screen.getByText("Brand new").closest("li")!;
+  const held = screen.getByText("Brand new").closest<HTMLElement>("[role='row']")!;
   fireEvent.click(within(held).getByRole("button", { name: / from the queue$/ }));
   await waitFor(() => expect(screen.queryByText("Brand new")).not.toBeInTheDocument());
 
@@ -1970,8 +1970,8 @@ test("a comment from the browser page lands on its own row, and only for this PB
   });
   expect(await screen.findByText("Only the second")).toBeInTheDocument();
   expect(screen.getAllByText("Only the second")).toHaveLength(1);
-  // On the SECOND row: `li.rounded-md` is a queue row (ImportFile.test.tsx counts rows the same way).
-  const rows = document.querySelectorAll("li.rounded-md");
+  // On the SECOND row: `[role='row']` is a queue row (ImportFile.test.tsx counts rows the same way).
+  const rows = document.querySelectorAll("[role='row']");
   expect(rows[0].textContent).not.toContain("Only the second");
   expect(rows[1].textContent).toContain("Only the second");
 

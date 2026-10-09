@@ -1288,26 +1288,39 @@ export default function QueueSection({
     shownOrder.current = areaGroups ? visibleOrder(areaGroups, foldedAreas) : null;
   }, [areaGroups, foldedAreas]);
 
-  const toggleSelect = useCallback((i: number, shift: boolean) => {
+  // Selection works the way Update Test Cases' does: a click selects that
+  // one case (and clears it if it was the only one), Ctrl/Cmd toggles one,
+  // Shift takes the range from the anchor in the order on screen, and
+  // Ctrl+Shift adds that range. A range leaves the anchor where it was.
+  const toggleSelect = useCallback((i: number, how: { range: boolean; toggle: boolean }) => {
     const anchor = selAnchor.current;
-    const order = shownOrder.current;
-    setSelected((s) => {
-      const next = new Set(s);
-      const from = order && anchor != null ? order.indexOf(anchor) : -1;
-      const to = order ? order.indexOf(i) : -1;
-      if (shift && anchor != null && order && from >= 0 && to >= 0) {
-        const [lo, hi] = from < to ? [from, to] : [to, from];
-        for (let k = lo; k <= hi; k++) next.add(order[k]);
-      } else if (shift && anchor != null && !order) {
-        const [lo, hi] = anchor < i ? [anchor, i] : [i, anchor];
-        for (let k = lo; k <= hi; k++) next.add(k);
-      } else if (next.has(i)) {
-        next.delete(i);
+    if (how.range && anchor != null) {
+      const order = shownOrder.current;
+      let range: number[] | null = null;
+      if (order) {
+        const from = order.indexOf(anchor);
+        const to = order.indexOf(i);
+        if (from >= 0 && to >= 0) range = order.slice(Math.min(from, to), Math.max(from, to) + 1);
       } else {
-        next.add(i);
+        range = [];
+        for (let k = Math.min(anchor, i); k <= Math.max(anchor, i); k++) range.push(k);
       }
-      return next;
-    });
+      if (range) {
+        const r = range;
+        setSelected((s) => (how.toggle ? new Set([...s, ...r]) : new Set(r)));
+        return;
+      }
+    }
+    if (how.toggle) {
+      setSelected((s) => {
+        const next = new Set(s);
+        if (next.has(i)) next.delete(i);
+        else next.add(i);
+        return next;
+      });
+    } else {
+      setSelected((s) => (s.size === 1 && s.has(i) ? new Set() : new Set([i])));
+    }
     selAnchor.current = i;
   }, []);
 
@@ -1633,6 +1646,20 @@ export default function QueueSection({
     const rows = g.indices.filter(keep);
     const kids = away ? g.children.filter((c) => editingIdx != null && groupIndices(c).includes(editingIdx)) : g.children;
     const picked = all.filter((i) => selected.has(i)).length;
+    // The heading's name selects the whole group, nested included, and a
+    // second click clears it - Update Test Cases' heading click.
+    const pickGroup = () => {
+      setSelected((s) => {
+        const next = new Set(s);
+        const every = all.every((i) => s.has(i));
+        for (const i of all) {
+          if (every) next.delete(i);
+          else next.add(i);
+        }
+        return next;
+      });
+      if (all.length) selAnchor.current = all[0];
+    };
     return (
       <div key={g.key} className="space-y-1">
         <div className="flex w-full items-center gap-3 pb-1 pt-2">
@@ -1646,38 +1673,29 @@ export default function QueueSection({
           >
             {folded ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
           </button>
-          <Checkbox
-            ariaLabel={`Select all in ${g.path}`}
-            checked={picked === all.length}
-            indeterminate={picked > 0 && picked < all.length}
-            onCheckedChange={(on) =>
-              setSelected((s) => {
-                const next = new Set(s);
-                for (const i of all) {
-                  if (on) next.add(i);
-                  else next.delete(i);
-                }
-                return next;
-              })
-            }
-          />
-          {/* The name folds too, same as the chevron - clicking the name is
-              how people expect to open a group. */}
+          {/* The name selects every case in the group; the chevron folds. */}
           <button
             type="button"
             className="group flex items-center gap-2"
-            title={folded ? "Expand group" : "Collapse group"}
-            onClick={() => toggleFoldedArea(g.key)}
+            aria-pressed={picked === 0 ? false : picked === all.length ? true : "mixed"}
+            title="Select every case in this group (click again to clear)"
+            onClick={pickGroup}
           >
             <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
               {g.name} ({g.count})
             </span>
           </button>
+          {/* A folded group says how much of the selection it hides. */}
+          {folded && picked > 0 && <span className="text-xs text-accent">{picked} selected</span>}
           <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
         </div>
         <Collapse open={rows.length + kids.length > 0} animateIn={false}>
           <div className="space-y-1 pl-4">
-            {rows.length > 0 && <ul className="space-y-1">{rows.map(renderRow)}</ul>}
+            {rows.length > 0 && (
+              <div role="grid" aria-multiselectable="true" aria-label={`Cases in ${g.path}`} className="space-y-1">
+                {rows.map(renderRow)}
+              </div>
+            )}
             {kids.map((c) => renderAreaGroup(c, away))}
           </div>
         </Collapse>
@@ -1901,7 +1919,13 @@ export default function QueueSection({
         </div>
       )}
 
-      {queue.length > 0 && !areaGroups && <ul className="space-y-1">{queue.map((_, i) => renderRow(i))}</ul>}
+      {/* Click a case to select it, Ctrl+click to add or remove one,
+          Shift+click for a range - the rows are a multi-select grid. */}
+      {queue.length > 0 && !areaGroups && (
+        <div role="grid" aria-multiselectable="true" aria-label="Queued cases" className="space-y-1">
+          {queue.map((_, i) => renderRow(i))}
+        </div>
+      )}
 
       {/* Grouped by area: the same rows, under one heading per level of
           their area. Display only - each row is handed its real queue

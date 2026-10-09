@@ -70,7 +70,7 @@ test("a case whose only change is step types says which steps change, in the ope
     blankSkipped: [],
     noop: false,
   };
-  render(<ul>{QueueRowInner(props(diff))}</ul>);
+  render(<div role="grid">{QueueRowInner(props(diff))}</div>);
   expect(screen.getByText("Step types:")).toBeInTheDocument();
   expect(
     screen.getByText("Steps 1 and 3 become validation steps, because they have an Expected Result."),

@@ -22,6 +22,7 @@ import PrPanel from "./screens/PrPanel";
 import Settings from "./screens/Settings";
 import SignIn from "./screens/SignIn";
 import WorkBoard from "./screens/WorkBoard";
+import QueueSection from "./components/QueueSection";
 
 // axe walks the whole rendered tree of a real screen, which is slow by
 // nature: Settings sits around 4.5s idle and has crossed vitest's 5s
@@ -117,4 +118,24 @@ test("Work Manager board with swimlanes is accessible", async () => {
     if (cmd === "board_pr_links") return [];
   });
   await expectAccessible(<WorkBoard org="acme" project="Web" />);
+});
+
+test("the Queue, grouped by area with a case selected, is accessible", async () => {
+  // Rows are selected by clicking them: a multi-select grid of rows, each
+  // holding one cell with the row's own buttons in it.
+  localStorage.setItem("tcm-v2-queue-group", "on");
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd.startsWith("list_") || cmd.endsWith("_values") || cmd === "pbi_test_cases") return [];
+    return undefined;
+  });
+  const tc = (title: string, area: string) => ({
+    title, area, steps: [{ action: "Open page", expected: "Page shown" }], tags: "",
+    automation_status: "Not Automated", module_value: "", preconditions: "",
+    update_id: null, spec_order: null, tester_order: null,
+  });
+  const queue = [tc("Create an event", "Events / Create"), tc("List events", "Events"), tc("Sign in", "")];
+  await expectAccessible(
+    <QueueSection org="acme" project="Web" pbiId={42} queue={queue} setQueue={() => {}} />,
+  );
 });
