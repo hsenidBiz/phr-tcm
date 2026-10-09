@@ -1947,7 +1947,10 @@ export type AppSettings = {
 	/**
 	 *  Auto Run points at each element (outline and a short pause) before it
 	 *  clicks, fills or drags, in a watched run and in the supervised
-	 *  browser. Off skips both. An unwatched run never highlights.
+	 *  browser, which covers the recording sign-in replays and the AI
+	 *  bridge's discovery and try-an-action paths too
+	 *  (`Timing::supervised`). Off skips them all. An unwatched run never
+	 *  highlights.
 	 */
 	autorun_highlight?: boolean,
 };

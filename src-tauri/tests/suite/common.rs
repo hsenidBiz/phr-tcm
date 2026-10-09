@@ -493,9 +493,6 @@ impl Driver for ScriptedDriver {
         }
         answer
     }
-    fn abandon(&mut self, id: u64) {
-        self.deferred.remove(&id);
-    }
     async fn close_other_tabs(&mut self) {
         self.tabs.closed_others += 1;
         self.tabs.open.clear();

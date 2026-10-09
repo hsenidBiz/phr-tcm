@@ -1604,7 +1604,7 @@ impl<T: Transport> Cdp<T> {
             return self.send_unsent_answers().await;
         }
         let mut tab = Tab::new(session.clone(), target, None, info["url"].as_str().unwrap_or(""));
-        crate::applog::info(format!("a tab opened: {}", tab.url_without_query));
+        crate::applog::info(format!("a tab opened: {}", super::save_guard::path_of(&tab.url_without_query)));
         // Opened during a sign-in's hold: every document it loads is first
         // seen after the hold, so the sign-in's own.
         if self.hold || self.hold_pending {
@@ -2191,11 +2191,6 @@ impl<T: Transport> Cdp<T> {
         }
     }
 
-    /// Let go of a deferred call: its answer is dropped when it comes.
-    pub fn abandon(&mut self, id: u64) {
-        self.deferred.remove(&id);
-    }
-
     async fn read_reply(
         &mut self,
         id: u64,
@@ -2683,8 +2678,6 @@ pub trait Driver {
     ) -> impl Future<Output = Result<serde_json::Value, CdpError>> {
         async { Err(CdpError::Closed) }
     }
-    /// See `Cdp::abandon`.
-    fn abandon(&mut self, _id: u64) {}
 }
 
 impl<T: Transport> Driver for Cdp<T> {
@@ -2789,9 +2782,6 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     async fn collect(&mut self, id: u64, method: &str, limit: Duration) -> Result<serde_json::Value, CdpError> {
         Cdp::collect(self, id, method, limit).await
-    }
-    fn abandon(&mut self, id: u64) {
-        Cdp::abandon(self, id)
     }
     async fn close_other_tabs(&mut self) {
         Cdp::close_other_tabs(self).await

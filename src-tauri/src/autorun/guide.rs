@@ -590,7 +590,7 @@ Every tab belongs to the same browser and the same signed-in session: no
 tab signs in on its own, and a second user in another tab is a job for a
 second case with that account. A no-save script's guard covers every tab.
 When a case ends, every tab but `main` is closed. A tab the page opens
-that no step expects is noted in the log (`a tab opened: <address>`) and
+that no step expects is noted in the log (`a tab opened: <path>`) and
 left open; it never fails the case on its own. A replay to step N opens
 the tabs again by running steps 1 to N-1.
 

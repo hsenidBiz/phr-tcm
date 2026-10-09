@@ -2573,3 +2573,79 @@ async fn a_save_taken_during_a_check_only_step_is_the_step_befores() {
     assert!(rec.steps[2].outcomes.iter().all(|o| o.detail == AFTER_AN_EARLIER_STEP), "{rec:?}");
     assert_eq!(rec.proposed, "Failed", "{rec:?}");
 }
+
+/// A step with no actions (a manual step) still gets a picture. A save
+/// stopped during the next step's check, while that picture is still being
+/// taken, is the manual step's: it has no outcome to fail, so the save is
+/// recorded as one and the case fails rather than passing.
+#[tokio::test]
+async fn a_save_charged_to_a_step_with_no_actions_still_fails_the_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    d.block_when = Some((
+        Box::new(|method: &str, params: &serde_json::Value| {
+            method == "Runtime.callFunctionOn" && params["functionDeclaration"] == v2_lib::browser::actions::CHECK_TEXT_JS
+        }),
+        LATE_SAVE.into(),
+    ));
+    let case = script(
+        1,
+        None,
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#one" } }] },
+            { "step_number": 2, "actions": [] },
+            { "step_number": 3, "actions": [{ "kind": "check_text", "value": "ok" }] },
+        ]),
+    );
+    let rec = run_one(&mut d, dir.path(), &case).await;
+    let details: Vec<&str> = rec.steps[1].outcomes.iter().map(|o| o.detail.as_str()).collect();
+    assert_eq!(details, vec![LATE_SAVE], "{rec:?}");
+    assert!(!rec.steps[1].outcomes[0].ok, "{rec:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
+
+/// A save read just after the last step's picture is asked for, when that
+/// step is a manual one, is still that step's and fails the case.
+#[tokio::test]
+async fn a_save_read_after_a_last_manual_steps_picture_is_asked_for_fails_the_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    let mut asked = 0;
+    d.block_when = Some((
+        Box::new(move |method: &str, _: &serde_json::Value| {
+            if method == "Page.captureScreenshot" {
+                asked += 1;
+            }
+            asked == 2
+        }),
+        LATE_SAVE.into(),
+    ));
+    let case = script(
+        1,
+        None,
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#one" } }] },
+            { "step_number": 2, "actions": [] },
+        ]),
+    );
+    let rec = run_one(&mut d, dir.path(), &case).await;
+    assert!(rec.steps[0].outcomes.iter().all(|o| o.ok), "step 1 was blamed: {rec:?}");
+    let details: Vec<&str> = rec.steps[1].outcomes.iter().map(|o| o.detail.as_str()).collect();
+    assert_eq!(details, vec![LATE_SAVE], "{rec:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
+
+/// The same save read as a last manual step's picture is finished, at the
+/// end of the case, still fails the case.
+#[tokio::test]
+async fn a_save_read_as_a_last_manual_steps_picture_is_finished_fails_the_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    d.block_on_collect = Some(LATE_SAVE.into());
+    let case = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [] }]));
+    let rec = run_one(&mut d, dir.path(), &case).await;
+    assert!(rec.steps[0].screenshot.is_some(), "{rec:?}");
+    let details: Vec<&str> = rec.steps[0].outcomes.iter().map(|o| o.detail.as_str()).collect();
+    assert_eq!(details, vec![LATE_SAVE], "{rec:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}

@@ -435,7 +435,9 @@ fn sidebar_app(at: &str, open: bool, covered: bool) -> (common::ScriptedDriver, 
             }
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.evaluate" if params["expression"] == "location.href" => {
-                json!({ "result": { "value": format!("https://hr.example.internal{}", path.lock().unwrap()) } })
+                let at = path.lock().unwrap().clone();
+                let href = if at == "about:blank" { at } else { format!("https://hr.example.internal{at}") };
+                json!({ "result": { "value": href } })
             }
             "Runtime.evaluate" => json!({ "result": { "value": null } }),
             "Accessibility.queryAXTree" if params["role"] == "link" => {
@@ -614,6 +616,37 @@ async fn a_skipped_toggle_that_was_wrong_falls_back_and_arrives() {
         .filter(|l| l.message == "went home and tried Leave again")
         .count();
     assert!(fallbacks >= 1, "the fallback was not logged");
+}
+
+/// A quick-try click that was tried and failed may still have changed the
+/// page, so the trip reloads home before the full path even on a page
+/// whose address reads home. Here the home page is covered: the toggle is
+/// tried and fails, and only a reload clears the cover.
+#[tokio::test]
+async fn a_quick_try_click_that_failed_still_reloads_home() {
+    let (mut d, app) = sidebar_app("/hr/home/index", false, true);
+    let route = Route::new(&common::menu_recipe(), toggle_then_leave(""));
+    let out = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["navigate /hr/home/index", "click #toggle", "click Leave"]);
+}
+
+/// A page on another origin than the route's home (a fresh browser's
+/// `about:blank`) has none of the path's clicks: the trip goes home at
+/// once, with no quick try looked for or waited on first.
+#[tokio::test]
+async fn a_trip_from_about_blank_makes_no_quick_try() {
+    let (mut d, app) = sidebar_app("about:blank", false, false);
+    let route = Route::new(&login_home_recipe("/hr/security/login"), leave_path());
+    let out = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["navigate /hr/security/login", "click #toggle", "click Leave"]);
+    let m = d.methods();
+    let home = m.iter().position(|x| x == "Page.navigate").expect("the trip never went home");
+    assert!(
+        !m[..home].iter().any(|x| x == "Accessibility.queryAXTree" || x == "Runtime.callFunctionOn"),
+        "a quick try looked for a click before going home: {m:?}"
+    );
 }
 
 // ---- Areas ---------------------------------------------------------------

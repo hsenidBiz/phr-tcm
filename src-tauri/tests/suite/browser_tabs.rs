@@ -357,7 +357,7 @@ async fn a_tab_opened_while_guarded_is_set_up_and_guarded_before_it_runs() {
     assert_eq!(tab.name, None);
     assert_eq!(tab.url_without_query, "https://hr.example/report");
     let lines: Vec<String> = v2_lib::applog::recent(200).into_iter().map(|l| l.message).collect();
-    assert!(lines.iter().any(|l| l == "a tab opened: https://hr.example/report"), "{lines:?}");
+    assert!(lines.iter().any(|l| l == "a tab opened: /report"), "{lines:?}");
     assert!(!lines.iter().any(|l| l.contains("hunter2")), "a query reached the log");
     // Actions still go to main.
     assert_eq!(cdp.current().map(|t| t.session_id.as_str()), Some(MAIN));
@@ -1226,7 +1226,7 @@ async fn a_tab_no_step_expects_is_logged_and_left_open() {
     cdp.step_began();
     popup(&mut cdp, "S-ad", "T-ad", "https://hr.example/whats-new?campaign=x").await;
     let lines: Vec<String> = v2_lib::applog::recent(200).into_iter().map(|l| l.message).collect();
-    assert!(lines.iter().any(|l| l == "a tab opened: https://hr.example/whats-new"), "{lines:?}");
+    assert!(lines.iter().any(|l| l == "a tab opened: /whats-new"), "{lines:?}");
     let out = execute(&mut cdp, &Action::SwitchTab { name: "main".into() }).await;
     assert!(out.ok);
     assert_eq!(cdp.tabs().len(), 2, "the tab was closed");

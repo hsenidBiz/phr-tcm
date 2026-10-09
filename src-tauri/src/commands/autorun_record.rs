@@ -395,7 +395,7 @@ pub async fn auto_run_record_start(
     lease.hold(&root, &who.key).await?;
     let which = Browser::from_name(&browser_name);
     let (mut cdp, browser) = open_browser(which, true).await?;
-    let start = prepare_to_record(&mut cdp, &root, &recipe, &who, &Timing::default(), &mut lease).await?;
+    let start = prepare_to_record(&mut cdp, &root, &recipe, &who, &Timing::supervised(), &mut lease).await?;
 
     let about = RecordingFor { organization, project, module, area, account, which, start };
     open_the_recording(claim, about, move |claim, stop, cancel| {

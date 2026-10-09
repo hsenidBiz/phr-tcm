@@ -597,15 +597,20 @@ async fn on_the_starting_page<D: Driver>(d: &mut D, route: &Route) -> bool {
     if route.path.start.is_empty() {
         return false;
     }
-    match page::eval_value(d, "location.href").await {
-        Ok(v) => {
-            let href = v.as_str().unwrap_or("");
-            origin_of(href).is_some()
-                && origin_of(href) == origin_of(&route.home.start_url)
-                && path_of(href) == route.path.start
-        }
-        Err(_) => false,
+    match page_on_home_origin(d, route).await {
+        Some(href) => path_of(&href) == route.path.start,
+        None => false,
     }
+}
+
+/// The page's address, when it is on the origin of the route's home (one
+/// read of `location.href`). None for any other origin, a page with none
+/// (`about:blank`) or one that does not answer.
+async fn page_on_home_origin<D: Driver>(d: &mut D, route: &Route) -> Option<String> {
+    let v = page::eval_value(d, "location.href").await.ok()?;
+    let href = v.as_str().unwrap_or("");
+    let origin = origin_of(href)?;
+    (Some(origin) == origin_of(&route.home.start_url)).then(|| href.to_string())
 }
 
 /// A trip to the route's module. Ok carries the address path it reached.
@@ -619,16 +624,18 @@ async fn on_the_starting_page<D: Driver>(d: &mut D, route: &Route) -> bool {
 /// most. If any of it fails, the trip says so once in the log and goes
 /// the old way, whose failure is the one reported: `the_old_way` when the
 /// quick try clicked nothing, and a reload home (`load_home`) then the
-/// full path when it clicked something.
+/// full path when it tried any click, one that failed included.
 ///
-/// Right after a sign-in it goes the old way at once, as it always did.
+/// Right after a sign-in it goes the old way at once, as it always did,
+/// and so does a page on another origin than the route's home (a fresh
+/// browser's `about:blank`, say): no click of the path is there to make.
 pub async fn go_to_module<D: Driver>(
     d: &mut D,
     route: &Route,
     from: TripFrom,
     timing: &Timing,
 ) -> Result<String, PathFailure> {
-    if from == TripFrom::Elsewhere {
+    if from == TripFrom::Elsewhere && page_on_home_origin(d, route).await.is_some() {
         let quick = Timing {
             action_ms: timing.action_ms.min(QUICK_TRY_MS),
             nav_ms: timing.nav_ms.min(QUICK_TRY_MS),
@@ -643,8 +650,8 @@ pub async fn go_to_module<D: Driver>(
         }
         crate::applog::info(format!("went home and tried {} again", route.path.name()));
         if made > 0 {
-            // The quick try changed the page (a menu opened, a screen
-            // left). `go_home` keeps a page whose address reads home, and
+            // The quick try may have changed the page (a menu opened, a
+            // screen left), even by a click that then failed. `go_home` keeps a page whose address reads home, and
             // the full path would then click a toggle on a menu already
             // open: reload, so the page is what `after_sign_in` promises.
             let home = load_home(d, &route.home, timing).await;
@@ -698,7 +705,8 @@ enum Skip {
 
 /// Each of the path's clicks from where the page is, then wait up to
 /// `nav_ms` for the address path to equal `arrived`. `made` counts the
-/// clicks that went through, whatever happens after them.
+/// clicks tried, whether or not they went through: a click that failed
+/// may still have sent its events.
 async fn click_path<D: Driver>(
     d: &mut D,
     route: &Route,
@@ -716,6 +724,7 @@ async fn click_path<D: Driver>(
                 }
             }
         }
+        *made += 1;
         let out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &policy).await;
         if !out.ok {
             return Err(PathFailure {
@@ -724,7 +733,6 @@ async fn click_path<D: Driver>(
                 harness: out.harness,
             });
         }
-        *made += 1;
     }
     let at = match clicks.last() {
         Some(c) => Where::Click { n: clicks.len(), locator: c.describe() },

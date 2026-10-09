@@ -543,11 +543,7 @@ async fn run_case_in<D: Driver>(
         // A save the page sent after the step's last action had already
         // passed (read as the picture was asked for) is still this step's.
         if let Some(sentence) = d.take_save_blocked() {
-            if outcomes.iter().all(|o| o.ok) {
-                if let Some(last) = outcomes.last_mut() {
-                    *last = ActionOutcome::failed(sentence);
-                }
-            }
+            charge_save(&mut outcomes, sentence);
         }
         if stopped_inside {
             stopped = true;
@@ -610,10 +606,20 @@ async fn run_case_in<D: Driver>(
 /// that step's last outcome, when nothing else of it failed: the same rule
 /// as a save read just after its last action.
 fn charge_late_save(step: &mut StepRecord, sentence: String) {
-    if step.outcomes.iter().all(|o| o.ok) {
-        if let Some(last) = step.outcomes.last_mut() {
-            *last = ActionOutcome::failed(sentence);
-        }
+    charge_save(&mut step.outcomes, sentence);
+}
+
+/// A save charged to a step fails its last outcome, when nothing else of it
+/// failed. A step with no actions (a manual one) has no outcome to fail, so
+/// the save is recorded as one, as a page error is: otherwise it is lost and
+/// the case could pass.
+fn charge_save(outcomes: &mut Vec<ActionOutcome>, sentence: String) {
+    if !outcomes.iter().all(|o| o.ok) {
+        return;
+    }
+    match outcomes.last_mut() {
+        Some(last) => *last = ActionOutcome::failed(sentence),
+        None => outcomes.push(ActionOutcome::failed(sentence)),
     }
 }
 
