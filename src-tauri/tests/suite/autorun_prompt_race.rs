@@ -25,6 +25,7 @@ use v2_lib::browser::cdp::Event;
 use v2_lib::browser::input::{HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
 use v2_lib::browser::session::SavedSession;
+use v2_lib::browser::timing::Timing;
 
 /// Slack on top of a window: the idles a click's readiness check and the
 /// loop's last poll add. Far below any second prompt's own window.
@@ -77,13 +78,26 @@ impl PromptApp {
 /// prompts each show from a time on the fake clock until clicked. A css
 /// the page does not know is never there.
 fn prompt_app(prompts: &[(&'static str, u64)]) -> (ScriptedDriver, PromptApp) {
+    covering_app(prompts, &[])
+}
+
+/// `prompt_app` where some prompts sit over others: each `(over, under)`
+/// pair says that while `over` shows, `under` is covered - drawn and
+/// visible, but a click there would land on `over`.
+fn covering_app(prompts: &[(&'static str, u64)], covers: &[(&'static str, &'static str)]) -> (ScriptedDriver, PromptApp) {
     let clock = Arc::new(AtomicU64::new(0));
     let clicked = Arc::new(Mutex::new(Vec::<String>::new()));
     let app = PromptApp { clock: clock.clone(), clicked: clicked.clone() };
     let prompts: Vec<(String, u64)> = prompts.iter().map(|(c, at)| (c.to_string(), *at)).collect();
+    let covers: Vec<(String, String)> = covers.iter().map(|(o, u)| (o.to_string(), u.to_string())).collect();
+    let showing = move |css: &str, clock: &AtomicU64, clicked: &Mutex<Vec<String>>| -> bool {
+        let now = clock.load(Ordering::SeqCst);
+        match prompts.iter().find(|(c, _)| c == css) {
+            Some((c, at)) => now >= *at && !clicked.lock().unwrap().contains(c),
+            None => ["#user", "#pass", "#go", "#marker"].contains(&css),
+        }
+    };
     let mut last_selector = String::new();
-    let ready = json!({ "visible": true, "onscreen": true, "enabled": true, "editable": true, "hit": true,
-        "x": 5.0, "y": 5.0, "covered_by": "", "rect": [0.0, 0.0, 10.0, 10.0] });
     let mut d = ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         Ok(match method {
@@ -93,7 +107,15 @@ fn prompt_app(prompts: &[(&'static str, u64)]) -> (ScriptedDriver, PromptApp) {
             ] }),
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
-            "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": ready } }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => {
+                let css = params["objectId"].as_str().unwrap_or("").trim_start_matches("el:").to_string();
+                let over = covers.iter().find(|(o, u)| *u == css && showing(o, &clock, &clicked)).map(|(o, _)| o.clone());
+                json!({ "result": { "value": {
+                    "visible": true, "onscreen": true, "enabled": true, "editable": true,
+                    "hit": over.is_none(), "covered_by": over.unwrap_or_default(),
+                    "x": 5.0, "y": 5.0, "rect": [0.0, 0.0, 10.0, 10.0]
+                } } })
+            }
             "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
                 last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
@@ -101,12 +123,9 @@ fn prompt_app(prompts: &[(&'static str, u64)]) -> (ScriptedDriver, PromptApp) {
             }
             "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
             "Runtime.getProperties" => {
-                let now = clock.load(Ordering::SeqCst);
-                let there = match prompts.iter().find(|(c, _)| *c == last_selector) {
-                    Some((c, at)) => now >= *at && !clicked.lock().unwrap().contains(c),
-                    None => ["#user", "#pass", "#go", "#marker"].contains(&last_selector.as_str()),
-                };
-                json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": "el" } })] } else { vec![] } })
+                let there = showing(&last_selector, &clock, &clicked);
+                let id = format!("el:{last_selector}");
+                json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": id } })] } else { vec![] } })
             }
             "Input.dispatchMouseEvent" => {
                 if params["type"] == "mouseReleased" {
@@ -153,6 +172,7 @@ async fn prompts_that_never_appear_cost_one_window_not_five() {
     let (mut d, app) = prompt_app(&[]);
     let out = sign_in(&mut d, dir.path(), &prompt_recipe(form()), &account(), &quick()).await;
     assert!(out.ok && !out.used_saved_session, "{}", out.detail);
+    assert!(app.now() >= FRESH_LOGIN_WINDOW_MS, "the fresh-login window was not watched out: {} ms", app.now());
     assert!(app.now() <= FRESH_LOGIN_WINDOW_MS + MARGIN_MS, "waited {} ms after a fresh login", app.now());
     assert!(!serde_json::to_string(&out).unwrap().contains(PASSWORD));
 }
@@ -231,4 +251,63 @@ async fn a_sign_in_prompt_is_looked_for_once_when_the_login_field_is_showing() {
     let out = sign_in(&mut d, dir.path(), &r, &account(), &quick()).await;
     assert!(out.ok, "{}", out.detail);
     assert_eq!(app.clicked(), vec!["#banner", "#go"]);
+}
+
+/// The menu toggle shows at once; the session modal comes 250 ms later
+/// and takes the click layer. With a watched run's highlight pause the
+/// toggle's click is re-checked under the modal and refused. That is not a
+/// failure of the sign-in: the modal is dismissed on a later look and the
+/// toggle clicked after it, within the window.
+#[tokio::test]
+async fn a_late_modal_covering_the_sidebar_is_handled_and_the_sidebar_clicked_after() {
+    let dir = tempfile::tempdir().unwrap();
+    with_saved_session(dir.path());
+    let (mut d, app) = covering_app(&[("#sidebar", 0), ("#modal", 250)], &[("#modal", "#sidebar")]);
+    let watched = Timing { highlight_ms: 350, ..quick() };
+    let out = sign_in(&mut d, dir.path(), &prompt_recipe(form()), &account(), &watched).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(app.clicked(), vec!["#modal", "#sidebar"]);
+    assert!(out.steps.iter().all(|s| s.ok), "a refused attempt is not a failed step: {:?}", out.steps);
+    // The cookie banner never comes, so the window runs out; on the fake
+    // clock the three highlight pauses come on top of the race's own polls.
+    assert!(app.now() <= PROMPT_WINDOW_MS + 3 * 350 + MARGIN_MS, "waited {} ms", app.now());
+}
+
+/// The cookie bar lands over the menu toggle while the toggle's click is
+/// waiting for it to be usable: the bar is dismissed first, then the
+/// toggle clicked.
+#[tokio::test]
+async fn a_cookie_bar_covering_the_menu_toggle_is_handled_first() {
+    let dir = tempfile::tempdir().unwrap();
+    with_saved_session(dir.path());
+    let (mut d, app) = covering_app(&[("#sidebar", 0), ("#cookie", 5)], &[("#cookie", "#sidebar")]);
+    let out = sign_in(&mut d, dir.path(), &prompt_recipe(form()), &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(app.clicked(), vec!["#cookie", "#sidebar"]);
+    assert!(out.steps.iter().all(|s| s.ok), "{:?}", out.steps);
+}
+
+/// A recorded recipe with short prompt windows: the old one-by-one waits
+/// watched the modal from 1000 to 2000 ms when no cookie banner came, so
+/// the shared window is never shorter than that whole span.
+#[tokio::test]
+async fn a_recorded_recipe_never_gets_a_shorter_window_than_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let r: SignInRecipe = serde_json::from_value(json!({
+        "start_url": "https://hr.example.internal/",
+        "steps": form(),
+        "after_sign_in": [
+            { "kind": "when_visible", "selector": { "css": "#cookie" }, "within_ms": 1000,
+              "then": [ { "kind": "click", "selector": { "css": "#cookie" } } ] },
+            { "kind": "when_visible", "selector": { "css": "#modal" }, "within_ms": 1000,
+              "then": [ { "kind": "click", "selector": { "css": "#modal" } } ] }
+        ],
+        "signed_in": { "css": "#marker" }
+    }))
+    .unwrap();
+    let (mut d, app) = prompt_app(&[("#modal", 1500)]);
+    let out = sign_in(&mut d, dir.path(), &r, &account(), &quick()).await;
+    assert!(out.ok && !out.used_saved_session, "{}", out.detail);
+    assert_eq!(app.clicked(), vec!["#go", "#modal"], "the modal at 1.5 s was dismissed");
+    assert!(app.now() <= 2000 + MARGIN_MS, "never longer than the old waits together: {} ms", app.now());
 }

@@ -13,6 +13,7 @@ use crate::browser::actions::{
 };
 use crate::browser::cdp::{CdpError, Driver};
 use crate::browser::expect::{expect, Check};
+use crate::browser::input::{COVERED_BY, MOVED_BEFORE_CLICK, STILL_MOVING};
 use crate::browser::locator::Target;
 use crate::browser::session;
 use crate::browser::timing::Timing;
@@ -487,13 +488,92 @@ async fn sign_in_prompt_shown<D: Driver>(
     shows_up(d, &w.selector, w.within_ms, timing).await
 }
 
-/// Watch a run of consecutive prompts together, for one window. Each look
-/// takes in every prompt not yet handled, and a prompt that shows has its
-/// `then` run there and then, once - in recipe order when several show at
-/// the same look. The watch ends as soon as every prompt has been handled,
-/// or when the window does. The window is `window_ms`, never longer than
-/// the group's longest `within_ms` and never shorter than
-/// `WHEN_VISIBLE_FLOOR_MS`. A prompt that never showed is carried past, as
+/// The window a run of consecutive prompts is watched for: `window_ms`,
+/// unless the prompts' own waits added up are shorter. One by one, each
+/// prompt was watched for its own `within_ms` (never less than
+/// `WHEN_VISIBLE_FLOOR_MS`) after the ones before it, so that sum is the
+/// latest any of them was ever looked for: a shared window that long
+/// never misses what the old waits caught, and a recipe with short waits
+/// stays short.
+fn shared_window(group: &[(usize, &WhenVisible)], window_ms: u64) -> u64 {
+    let one_by_one: u64 = group.iter().map(|(_, w)| u64::from(w.within_ms.max(WHEN_VISIBLE_FLOOR_MS))).sum();
+    window_ms.min(one_by_one)
+}
+
+/// How long one attempt at a prompt's action may take inside the window:
+/// enough for the two looks a click needs to see its element hold still,
+/// and no more, so a prompt that something else is sitting on does not
+/// hold up the others.
+fn attempt_timing(timing: &Timing) -> Timing {
+    Timing { action_ms: timing.poll_ms * 3, ..timing.clone() }
+}
+
+/// Was the action refused only because something sat over its element or
+/// moved it - another prompt arriving, which this same watch will handle?
+fn in_the_way(out: &ActionOutcome) -> bool {
+    !out.ok && !out.harness && [COVERED_BY, MOVED_BEFORE_CLICK, STILL_MOVING].iter().any(|s| out.detail.contains(s))
+}
+
+/// Where one prompt of a watched group stands.
+#[derive(Default)]
+struct Watched {
+    /// Every `then` action has been carried out.
+    handled: bool,
+    /// It has shown at least once (and is named in `appeared`).
+    seen: bool,
+    /// How many of its `then` actions are done.
+    done: usize,
+    /// The last attempt something else was in the way of, while it waits
+    /// for another look.
+    blocked: Option<ActionOutcome>,
+}
+
+/// One go at a showing prompt's remaining `then` actions, each with the
+/// short attempt budget. `Ok(true)` when all are done; `Ok(false)` when one
+/// was in the way of something (kept in `blocked`, not as a step) and the
+/// prompt waits for the next look. Any other page failure is given the
+/// full action budget, as an action outside the watch would be.
+async fn attempt_prompt<D: Driver>(
+    d: &mut D,
+    run: &mut Run<'_>,
+    n: usize,
+    w: &WhenVisible,
+    state: &mut Watched,
+    timing: &Timing,
+    policy: &Policy,
+) -> Result<bool, (usize, String, bool)> {
+    let short = attempt_timing(timing);
+    while let Some(action) = w.then.get(state.done) {
+        let out = execute_in(d, action, &short, policy).await;
+        if in_the_way(&out) {
+            state.blocked = Some(out);
+            return Ok(false);
+        }
+        if out.ok {
+            run.keep(out);
+        } else if out.harness {
+            let why = run.hide(&out.detail);
+            run.keep(out);
+            return Err((n, why, true));
+        } else {
+            run_action(d, run, n, action, timing, policy).await?;
+        }
+        state.done += 1;
+    }
+    state.blocked = None;
+    Ok(true)
+}
+
+/// Watch a run of consecutive prompts together, for one window
+/// (`shared_window`). Each look takes in every prompt not yet handled, and
+/// a prompt that shows has its `then` tried there and then, in recipe
+/// order among those showing at the same look. A prompt counts as handled
+/// only once its actions have succeeded: one that another prompt is
+/// covering (the session modal arriving over the menu toggle) is tried
+/// again on a later look, after the one on top has been dealt with. The
+/// watch ends as soon as every prompt has been handled, or when the
+/// window does. A prompt still in the way at the end gets one last try
+/// with the full action budget; one that never showed is carried past, as
 /// a single `when_visible` is.
 async fn watch_together<D: Driver>(
     d: &mut D,
@@ -503,11 +583,10 @@ async fn watch_together<D: Driver>(
     timing: &Timing,
     policy: &Policy,
 ) -> Result<(), (usize, String, bool)> {
-    let longest = group.iter().map(|(_, w)| u64::from(w.within_ms)).max().unwrap_or(0);
-    let window = window_ms.min(longest).max(u64::from(WHEN_VISIBLE_FLOOR_MS));
+    let window = shared_window(group, window_ms);
     let deadline = Instant::now() + Duration::from_millis(window);
     let mut idled = 0u64;
-    let mut handled = vec![false; group.len()];
+    let mut states: Vec<Watched> = group.iter().map(|_| Watched::default()).collect();
     // Whether any look completed: a window that ends without one is the
     // browser not answering, not a page with nothing to show.
     let mut looked = false;
@@ -515,7 +594,7 @@ async fn watch_together<D: Driver>(
         let mut showing = vec![];
         d.set_deadline(Some(deadline));
         for (k, (n, w)) in group.iter().enumerate() {
-            if handled[k] {
+            if states[k].handled {
                 continue;
             }
             match shown_now(d, &w.selector).await {
@@ -534,15 +613,15 @@ async fn watch_together<D: Driver>(
         }
         d.set_deadline(None);
         for k in showing {
-            handled[k] = true;
             let (n, w) = group[k];
-            let seen = run.hide(&w.selector.describe());
-            run.appeared.push(seen);
-            for action in &w.then {
-                run_action(d, run, n, action, timing, policy).await?;
+            if !states[k].seen {
+                states[k].seen = true;
+                let seen = run.hide(&w.selector.describe());
+                run.appeared.push(seen);
             }
+            states[k].handled = attempt_prompt(d, run, n, w, &mut states[k], timing, policy).await?;
         }
-        if handled.iter().all(|h| *h) {
+        if states.iter().all(|s| s.handled) {
             return Ok(());
         }
         // The clock, or the idles alone, whichever says so first. In a
@@ -559,7 +638,17 @@ async fn watch_together<D: Driver>(
         return Err(silent_at(run, n, harness_timeout(window, &w.selector.describe())));
     }
     for (k, (n, w)) in group.iter().enumerate() {
-        if !handled[k] {
+        let state = &mut states[k];
+        if state.handled {
+            continue;
+        }
+        if state.blocked.take().is_some() {
+            // Still in the way when the window closed: the last try is an
+            // ordinary action's, with its full wait and its own failure.
+            for action in &w.then[state.done..] {
+                run_action(d, run, *n, action, timing, policy).await?;
+            }
+        } else {
             carried_past(run, *n, w);
         }
     }
