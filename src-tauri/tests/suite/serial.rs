@@ -101,6 +101,19 @@ pub fn account_leases() -> MutexGuard<'static, ()> {
     hold(&L)
 }
 
+/// The held signed-in template browsers (`api_templates::held`): one per
+/// (environment, account), process-wide. A test that also takes or reads a
+/// lease takes this first, then `account_leases`. Also taken by every test
+/// that reaches `held::close_all` (`close_autorun_browsers`, a successful
+/// `set_active_with`) or `held::give_way` (a fixture or a cleanup run,
+/// through `account_lease`), after `autorun`, `api_template_run` and
+/// `activity_log` where it takes those: it would close another test's held
+/// browser mid-test.
+pub fn held_browsers() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}
+
 /// The machine-wide extras switch and Enable Advanced Features
 /// (`extras::set_unlocked` / `set_advanced`), and the folder `extras::init`
 /// points them at - set at most once for the whole binary.

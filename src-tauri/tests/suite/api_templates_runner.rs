@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use v2_lib::api_templates::runner::{
     claim, preflight, run_template_within, Mode, RunReport, RunRequest, FETCH_FN, RETRY_PAUSES, RUN_LIMIT, TOKEN_FN,
 };
+use v2_lib::api_templates::held::{Keeps, NotKept};
 use v2_lib::api_templates::{ApiTemplate, Proven};
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::recipe::save_recipe;
@@ -23,9 +24,9 @@ use v2_lib::browser::cdp::{CdpError, Driver, Event};
 
 pub(crate) const ORG: &str = "acme";
 pub(crate) const PROJECT: &str = "PMS";
-const TOKEN: &str = "tok-123";
+pub(crate) const TOKEN: &str = "tok-123";
 pub(crate) const PAGE: &str = "/hr/pmsv10/performancecycle?mode=create";
-const LOGIN: &str = "https://hr.example.internal/hr/security/login?ReturnUrl=%2Fhr%2Fpmsv10";
+pub(crate) const LOGIN: &str = "https://hr.example.internal/hr/security/login?ReturnUrl=%2Fhr%2Fpmsv10";
 
 /// What the page answers with, and what it was asked - shared between the
 /// driver (which the runner owns while it runs) and the test.
@@ -33,20 +34,20 @@ const LOGIN: &str = "https://hr.example.internal/hr/security/login?ReturnUrl=%2F
 pub(crate) struct Script {
     /// Answers to `location.href`, in turn; once empty, the address last
     /// navigated to.
-    hrefs: VecDeque<String>,
+    pub(crate) hrefs: VecDeque<String>,
     /// Answers to `TOKEN_FN`, in turn; once empty, `token`.
     tokens: VecDeque<Option<String>>,
     token: Option<String>,
     /// Answers to `FETCH_FN`, in turn.
-    responses: VecDeque<Value>,
+    pub(crate) responses: VecDeque<Value>,
     /// `FETCH_FN` never answers - the page is stuck.
-    hang_fetch: bool,
+    pub(crate) hang_fetch: bool,
     /// `FETCH_FN` answers this many requests, then never answers again.
     pub(crate) hang_after: Option<usize>,
     /// `Page.navigate` starts but its page never finishes loading.
     never_loads: bool,
     /// `Page.navigate` fails as a browser that has gone away does.
-    browser_gone: bool,
+    pub(crate) browser_gone: bool,
     /// The arguments of every `FETCH_FN` call, in order.
     fetched: Vec<Vec<Value>>,
     navigated: String,
@@ -66,8 +67,8 @@ pub(crate) struct Script {
 }
 
 pub(crate) struct App {
-    inner: ScriptedDriver,
-    script: Arc<Mutex<Script>>,
+    pub(crate) inner: ScriptedDriver,
+    pub(crate) script: Arc<Mutex<Script>>,
 }
 
 impl Driver for App {
@@ -178,6 +179,24 @@ impl Browsers for FakeBrowsers {
     }
 }
 
+/// Keeps nothing: every run closes its browser, as before held browsers.
+/// `template_held` has the fake that keeps.
+impl Keeps for FakeBrowsers {
+    type Kept = NotKept;
+
+    fn keep(&mut self, d: App) -> Result<NotKept, App> {
+        Err(d)
+    }
+
+    fn adopt(&mut self, kept: NotKept) -> Result<App, NotKept> {
+        match kept {}
+    }
+
+    fn same_kind(&self, kept: &NotKept) -> bool {
+        match *kept {}
+    }
+}
+
 pub(crate) struct Rig {
     pub(crate) browsers: FakeBrowsers,
     pub(crate) script: Arc<Mutex<Script>>,
@@ -223,7 +242,7 @@ pub(crate) fn rig(responses: Vec<Value>, broken: Option<&'static str>) -> Rig {
 
 /// The design doc's §4 example, plus a third step for the stop-at-first-
 /// failure test.
-fn template() -> ApiTemplate {
+pub(crate) fn template() -> ApiTemplate {
     serde_json::from_value(json!({
         "id": "pms-create-draft-cycle",
         "title": "Create a draft performance cycle",
@@ -262,13 +281,13 @@ fn three_steps() -> ApiTemplate {
     t
 }
 
-fn request(t: ApiTemplate, mode: Mode) -> RunRequest {
+pub(crate) fn request(t: ApiTemplate, mode: Mode) -> RunRequest {
     let mut values = serde_json::Map::new();
     values.insert("cycleName".into(), json!("FY27"));
     RunRequest { org: ORG.into(), project: PROJECT.into(), account: "admin".into(), values, mode, template: t }
 }
 
-fn prove() -> Mode {
+pub(crate) fn prove() -> Mode {
     Mode::Prove { replace: false, why: None }
 }
 
@@ -286,7 +305,7 @@ pub(crate) fn answer(status: u16, body: Value) -> Value {
 /// A 400 with no body: the application refused the request before any
 /// handler read it (hosted PeoplesHR does this at busy moments, and when
 /// the account's session was taken over).
-fn empty_400() -> Value {
+pub(crate) fn empty_400() -> Value {
     json!({
         "status": 400,
         "contentType": "",

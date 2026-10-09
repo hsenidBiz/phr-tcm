@@ -408,6 +408,7 @@ async fn a_saved_delete_template_with_another_value_is_refused_at_cleanup() {
     use v2_lib::api_templates::runner::{preflight, Mode, RunRequest};
     use v2_lib::api_templates::DELETE_SHAPE;
     let _act = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
     let _leases = crate::serial::account_leases();
     let (mut r, env) = cleanup_rig(vec![], &[("81", "AUTOTEST cycle", 9)]);
     let name = active(r.root.path()).name;
@@ -480,6 +481,7 @@ fn a_cleanup_must_state_the_query_it_previewed() {
 #[tokio::test]
 async fn kind_and_id_together_name_what_is_deleted() {
     let _act = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
     let _leases = crate::serial::account_leases();
     let (mut r, env) = cleanup_rig(vec![answer(200, json!({ "success": true }))], &[("42", "AUTOTEST cycle", 9)]);
     let name = active(r.root.path()).name;
@@ -547,6 +549,7 @@ fn the_preview_names_the_most_recently_proven_delete_template() {
 #[tokio::test]
 async fn the_preview_and_the_run_use_the_same_delete_template() {
     let _act = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
     let _leases = crate::serial::account_leases();
     let (mut r, _env) = cleanup_rig(vec![answer(200, json!({ "success": true }))], &[("31", "AUTOTEST one", 9)]);
     let env = active(r.root.path());
@@ -629,6 +632,7 @@ fn deleted_ids(r: &Rig) -> Vec<Value> {
 #[tokio::test]
 async fn the_run_deletes_in_order_and_records_each() {
     let _act = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
     let _leases = crate::serial::account_leases();
     let (mut r, env) = cleanup_rig(
         vec![answer(200, json!({ "success": true })), answer(200, json!({ "success": true }))],
@@ -671,6 +675,7 @@ async fn the_run_deletes_in_order_and_records_each() {
 #[tokio::test]
 async fn a_failed_delete_is_recorded_with_its_reason() {
     let _act = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
     let _leases = crate::serial::account_leases();
     let (mut r, env) = cleanup_rig(
         vec![answer(500, json!({ "error": "no" })), answer(200, json!({ "success": true }))],
@@ -699,6 +704,7 @@ async fn a_failed_delete_is_recorded_with_its_reason() {
 #[tokio::test]
 async fn stop_between_deletes_leaves_the_rest_present() {
     let _act = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
     let _leases = crate::serial::account_leases();
     let (mut r, env) = cleanup_rig(
         vec![answer(200, json!({ "success": true }))],
@@ -739,6 +745,7 @@ fn q_for(r: &Rig) -> CleanupQuery {
 #[tokio::test]
 async fn ids_outside_the_preview_are_refused_and_nothing_runs() {
     let _act = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
     let _leases = crate::serial::account_leases();
     let (mut r, env) = cleanup_rig(vec![], &[("51", "AUTOTEST old", 9), ("52", "AUTOTEST young", 1)]);
     let mut made = test_made::list(r.root.path());
@@ -909,6 +916,7 @@ async fn a_fixture_step_on_a_delete_template_is_refused() {
     use v2_lib::api_templates::fixture::{Fixture, FixtureStep};
     use v2_lib::api_templates::fixture_run::{run_fixture_within, Clock};
     let _act = crate::serial::activity_log();
+    let _held = crate::serial::held_browsers();
     let mut r = rig(vec![], None);
     let t = proven(delete_draft("remove-cycle", Some("cycle")), "2026-10-01 09:00:00", None);
     store::save(r.root.path(), ORG, PROJECT, &t).unwrap();

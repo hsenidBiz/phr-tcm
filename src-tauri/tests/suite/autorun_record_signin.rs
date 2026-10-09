@@ -587,6 +587,8 @@ async fn a_check_whose_step_finds_nothing_says_which_step_and_never_the_password
 #[tokio::test]
 async fn the_draft_is_kept_per_project_and_a_sign_in_recording_shares_the_recorders_cancel() {
     let _claims = crate::serial::autorun();
+    // Reaches `held::close_all`, which closes every held template browser.
+    let _held = crate::serial::held_browsers();
     let dir = tempfile::tempdir().unwrap();
 
     forget_draft();

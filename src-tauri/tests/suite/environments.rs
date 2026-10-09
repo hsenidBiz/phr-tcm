@@ -398,6 +398,8 @@ async fn commands_add_edit_and_remove_through_the_store() {
 async fn switching_is_refused_while_recording_or_running() {
     let _claims = crate::serial::autorun();
     let _slot = crate::serial::api_template_run();
+    // Reaches `held::close_all`, which closes every held template browser.
+    let _held = crate::serial::held_browsers();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let store = MemoryStore::default();
@@ -423,6 +425,8 @@ async fn switching_is_refused_while_recording_or_running() {
 async fn switching_is_refused_while_an_api_template_runs() {
     let _claims = crate::serial::autorun();
     let _slot = crate::serial::api_template_run();
+    // Reaches `held::close_all`, which closes every held template browser.
+    let _held = crate::serial::held_browsers();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let store = MemoryStore::default();

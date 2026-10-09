@@ -10,6 +10,10 @@
 //! a `fetch` made BY the page (`FETCH_FN`), so the browser attaches the
 //! cookies itself and nothing here ever sees one.
 //!
+//! A single run keeps its browser signed in afterwards (`held`), and the
+//! next run as the same account within two minutes reuses it, skipping the
+//! launch and the sign-in.
+//!
 //! The token is the one secret that does pass through here: it is read
 //! from the page and handed straight back to it as `FETCH_FN`'s second
 //! argument. It is never formatted into a string - not a report, not a
@@ -24,6 +28,7 @@ use super::exec::{
 use super::cookies::{case_blind_cookies, in_cookie_case, jar_cookies, lost_by_adapting};
 use super::flow::{check_stage_ref, Flow};
 use super::flow_store;
+use super::held::{self, HeldBrowser, HeldEntry, Keeps, Taken};
 use super::{check, check_values, is_safe_relative_path, ApiTemplate, Effect, Method, Step};
 use crate::activity_log::{self, Kind};
 use crate::applog;
@@ -31,7 +36,6 @@ use crate::autorun::accounts::Account;
 use crate::autorun::lease;
 use crate::autorun::nav::path_of;
 use crate::autorun::recipe::{origin_of, SignInRecipe};
-use crate::autorun::replay::Browsers;
 use crate::autorun::sessions::forget_session;
 use crate::autorun::signin::{prepare, sign_in, SignInOutcome};
 use crate::browser::actions::{execute_in, Action, Policy};
@@ -80,6 +84,8 @@ const RUN_TOO_LONG: &str = "the run took longer than 3 minutes";
 const SIGN_IN: &str = "Sign in";
 const TOKEN_PAGE: &str = "Anti-forgery token";
 const BROWSER: &str = "Browser";
+/// How a run that reused a held browser's sign-in says it signed in.
+pub const REUSED: &str = "Signed in earlier, reused";
 
 /// Reads the anti-forgery token Razor Pages writes into every form page.
 /// Called on the document; returns the token or `null`.
@@ -400,6 +406,13 @@ struct Progress {
     /// How each sign-in of this run went, for the token page's activity
     /// record - see `signed_in`.
     sign_ins: Vec<Value>,
+    /// A reused browser's session had ended by the run's first request
+    /// (`Ctx::reused`): the run stopped there, to start again signed in
+    /// afresh.
+    dropped: bool,
+    /// The run stopped because its session had ended: a request or the
+    /// token page was sent to another page. Its browser is never kept.
+    session_ended: bool,
 }
 
 impl Progress {
@@ -413,7 +426,16 @@ impl Progress {
             sent: 0,
             finished: false,
             sign_ins: vec![],
+            dropped: false,
+            session_ended: false,
         }
+    }
+
+    /// Notes a sign-in an earlier run made in this browser, in the shape
+    /// `signed_in` notes one.
+    fn reused(&mut self, id: &str, account: &str) {
+        applog::info(format!("api template {id}: signed in as \"{account}\" earlier, in a kept browser, reused"));
+        self.sign_ins.push(json!({ "via": REUSED, "appeared": [] }));
     }
 
     /// Notes how a sign-in went - from a saved session or through the
@@ -526,6 +548,10 @@ struct Ctx<'a> {
     recipe: SignInRecipe,
     account: Account,
     origin: String,
+    /// The browser was signed in by an earlier run and kept (`held`).
+    reused: bool,
+    /// The page the browser is on when the run starts, if known.
+    on_page: Option<String>,
 }
 
 impl Ctx<'_> {
@@ -582,10 +608,14 @@ fn without_hosts(text: &str) -> String {
     }
 }
 
-/// Runs `req.template` in a fresh browser from `browsers` and says what
-/// happened. The browser is closed on every path out, a timeout included.
-/// Saves nothing: see the module comment.
-pub async fn run_template<B: Browsers>(browsers: &mut B, root: &Path, req: &RunRequest, timing: &Timing) -> RunReport {
+/// Runs `req.template` signed in as its account and says what happened.
+/// The browser a run as the same account kept within the last `HELD_IDLE`
+/// is reused, sign-in and all (`held`); otherwise a fresh one opens from
+/// `browsers` and signs in. Either way it is kept afterwards for the next
+/// run, unless the run timed out, its sign-in failed or the browser
+/// stopped answering: then it is closed. Saves nothing: see the module
+/// comment.
+pub async fn run_template<B: Keeps>(browsers: &mut B, root: &Path, req: &RunRequest, timing: &Timing) -> RunReport {
     run_template_within(browsers, root, req, timing, RUN_LIMIT, &RETRY_PAUSES).await
 }
 
@@ -593,7 +623,15 @@ pub async fn run_template<B: Browsers>(browsers: &mut B, root: &Path, req: &RunR
 /// `RUN_LIMIT` and `RETRY_PAUSES` - the only way a test reaches the timeout
 /// path, or every retry, without waiting for them. The sentence a timeout
 /// reports still says three minutes.
-pub async fn run_template_within<B: Browsers>(
+///
+/// A kept browser whose process has ended, or that is not the kind of
+/// browser (Edge or Chrome) `browsers` opens, is closed and never reused. A
+/// reused browser whose session has ended by the run's first request (an
+/// empty 400, a redirect, or the token page sent elsewhere) is closed, and
+/// the run starts again once in a fresh browser that signs in, within the
+/// same `limit`. A fresh browser that meets the same fails as it always
+/// has.
+pub async fn run_template_within<B: Keeps>(
     browsers: &mut B,
     root: &Path,
     req: &RunRequest,
@@ -601,31 +639,139 @@ pub async fn run_template_within<B: Browsers>(
     limit: Duration,
     retry_pauses: &[Duration],
 ) -> RunReport {
-    let mut progress = Progress::new();
-    match account_lease(root, &req.account, timing).await {
-        Err(why) => {
-            progress.at(SIGN_IN, None);
-            progress.fail(None, why);
-        }
-        // Held for the whole run, the browser's close included, and let go
-        // on every path out of this arm: an end, an error, a timeout, a
-        // panic, or this future dropped.
-        Ok(_lease) => match browsers.open().await {
-            Err(why) => progress.fail(None, format!("the browser did not open: {why}")),
-            Ok(mut d) => {
-                // `close` sits outside the timed future on purpose: dropping
-                // that future on a timeout must not skip it.
-                let timed =
-                    tokio::time::timeout(limit, drive(&mut d, root, req, timing, retry_pauses, &mut progress)).await;
-                if timed.is_err() && progress.failed.is_none() {
-                    progress.fail(None, RUN_TOO_LONG);
+    // Held for the whole run, the browser's keep or close included, and
+    // let go on every path out: an end, an error, a timeout, a panic, or
+    // this future dropped.
+    let (env, _lease) = match template_lease(root, &req.account, timing).await {
+        Ok(x) => x,
+        Err(why) => return stopped_before_sign_in(req, false, why),
+    };
+    let key = req.account.as_str();
+    // One deadline for the run, from when its first browser is ready: a
+    // restart after a dropped session shares it, so a run never takes
+    // longer than the three minutes its timeout sentence says.
+    let mut deadline = None;
+    let fingerprint = prepare(root, &req.org, &req.project, key).ok().map(|(r, a)| held::fingerprint(&r, &a));
+    if let Some(fingerprint) = fingerprint {
+        match held::take::<B::Kept>(&env, key, fingerprint) {
+            Taken::Reuse(entry) => match browsers.adopt(entry.driver) {
+                Err(unfit) => {
+                    if browsers.same_kind(&unfit) {
+                        applog::info(format!("held browser: the browser kept for {key} had ended - opening a new one"));
+                    } else {
+                        applog::info(format!(
+                            "held browser: the browser kept for {key} is another kind than this run asked for - opening a new one"
+                        ));
+                    }
+                    // Closed before the new one opens: one browser per
+                    // account at most.
+                    unfit.close();
                 }
-                d.set_deadline(None);
-                browsers.close(d).await;
-            }
-        },
+                Ok(mut d) => {
+                    let until = Instant::now() + limit;
+                    deadline = Some(until);
+                    let reuse = Reuse { page: entry.page };
+                    let left = until.saturating_duration_since(Instant::now());
+                    let (progress, timed_out) =
+                        in_session(&mut d, root, req, timing, &entry.session, Some(reuse), left, retry_pauses).await;
+                    if !progress.dropped {
+                        return keep_or_close(browsers, d, &env, req, entry.session, progress, timed_out).await;
+                    }
+                    applog::info(format!(
+                        "held browser: the session kept for {key} had ended - signing in afresh in a new browser"
+                    ));
+                    browsers.close(d).await;
+                }
+            },
+            Taken::Close(entry) => entry.driver.close(),
+            Taken::Nothing => {}
+        }
     }
-    finish(req, progress)
+    let mut d = match browsers.open().await {
+        Ok(d) => d,
+        Err(why) => return stopped_before_sign_in(req, true, why),
+    };
+    let deadline = deadline.unwrap_or_else(|| Instant::now() + limit);
+    // A failed sign-in keeps nothing.
+    let left = deadline.saturating_duration_since(Instant::now());
+    let session = match open_session(&mut d, root, req, timing, left).await {
+        Ok(session) => session,
+        Err(report) => {
+            browsers.close(d).await;
+            return report;
+        }
+    };
+    let left = deadline.saturating_duration_since(Instant::now());
+    let (progress, timed_out) = in_session(&mut d, root, req, timing, &session, None, left, retry_pauses).await;
+    keep_or_close(browsers, d, &env, req, session, progress, timed_out).await
+}
+
+/// What a run in a kept browser knows from the run that kept it.
+struct Reuse {
+    /// The page the browser was left on.
+    page: Option<String>,
+}
+
+/// How long a kept browser may take to say where it is, after a run.
+const WHERE_LIMIT: Duration = Duration::from_secs(5);
+
+/// The report of a run that has ended in `d`, signed in as `session`, and
+/// what becomes of the browser: kept for the next run as the same account,
+/// unless the run timed out, signed in again and failed, found its session
+/// ended (a redirect away from a request or the token page), or the
+/// browser no longer answers - then it is closed.
+async fn keep_or_close<B: Keeps>(
+    browsers: &mut B,
+    mut d: B::D,
+    env: &str,
+    req: &RunRequest,
+    session: Session,
+    progress: Progress,
+    timed_out: bool,
+) -> RunReport {
+    let failed_sign_in = progress.failed.as_deref() == Some(SIGN_IN);
+    let session_ended = progress.session_ended;
+    let report = finish(req, progress);
+    if timed_out || failed_sign_in || session_ended {
+        browsers.close(d).await;
+        return report;
+    }
+    let Some(page) = where_now(&mut d).await else {
+        browsers.close(d).await;
+        return report;
+    };
+    match browsers.keep(d) {
+        Err(d) => browsers.close(d).await,
+        Ok(kept) => {
+            let entry = HeldEntry {
+                driver: kept,
+                fingerprint: session.fingerprint(),
+                // Read under this run's Template lease, which never moves
+                // it: anything else taking the account from here on does.
+                generation: lease::generation(env, &req.account),
+                session,
+                page: Some(page),
+            };
+            held::keep(env, &req.account, entry);
+        }
+    }
+    report
+}
+
+/// The path of the page `d` is on, or `None` when it does not say within
+/// `WHERE_LIMIT` - a browser that no longer answers, never kept.
+async fn where_now<D: Driver>(d: &mut D) -> Option<String> {
+    d.set_deadline(Some(Instant::now() + WHERE_LIMIT));
+    let href = eval_value(d, "location.href").await;
+    d.set_deadline(None);
+    match href {
+        Ok(Value::String(h)) if !h.is_empty() => Some(path_of(&h)),
+        Ok(_) => None,
+        Err(e) => {
+            applog::warn(format!("held browser: the browser did not say where it was after the run: {e}"));
+            None
+        }
+    }
 }
 
 /// The report of a run that has stopped or finished, and its app-log line.
@@ -651,9 +797,24 @@ fn finish(req: &RunRequest, progress: Progress) -> RunReport {
 /// signed in as it is waited for, up to `timing`'s lease wait, and then the
 /// run is refused with the sentence that says who had it. A fixture takes
 /// it once for all its steps.
+///
+/// A browser a single run kept signed in as the account (`held`) gives way
+/// first, closed before the caller opens its own: a second sign-in would
+/// end its session anyway, and one browser process per account is the
+/// most there should be.
 pub(crate) async fn account_lease(root: &Path, account: &str, timing: &Timing) -> Result<lease::Lease, String> {
+    let (env, l) = template_lease(root, account, timing).await?;
+    let key = account.to_string();
+    // Off the async threads: ending a browser process waits for it to go.
+    let _ = tauri::async_runtime::spawn_blocking(move || held::give_way(&env, &key)).await;
+    Ok(l)
+}
+
+/// `account_lease`, with the id of the active environment it was taken in.
+async fn template_lease(root: &Path, account: &str, timing: &Timing) -> Result<(String, lease::Lease), String> {
     let env = crate::environments::active_id(root)?;
-    lease::acquire(&env, account, lease::Holder::Template, timing.lease_wait()).await
+    let l = lease::acquire(&env, account, lease::Holder::Template, timing.lease_wait()).await?;
+    Ok((env, l))
 }
 
 /// The report of `req`'s template stopped before its browser signed in:
@@ -673,8 +834,9 @@ pub(crate) fn stopped_before_sign_in(req: &RunRequest, browser: bool, why: Strin
 
 /// What one sign-in leaves for every template run after it in the same
 /// browser: the recipe and account it signed in with, the origin, and how
-/// the sign-in went (each template's token-page record says so).
-pub(crate) struct Session {
+/// the sign-in went (each template's token-page record says so). Kept with
+/// its browser between runs by `held`.
+pub struct Session {
     recipe: SignInRecipe,
     account: Account,
     origin: String,
@@ -682,6 +844,12 @@ pub(crate) struct Session {
 }
 
 impl Session {
+    /// What a sign-in as `account` with `recipe` at `origin` left, with the
+    /// records of how it went.
+    pub fn new(recipe: SignInRecipe, account: Account, origin: String, sign_ins: Vec<Value>) -> Self {
+        Session { recipe, account, origin, sign_ins }
+    }
+
     fn ctx<'a>(&self, root: &'a Path, req: &'a RunRequest, timing: &'a Timing) -> Ctx<'a> {
         Ctx {
             root,
@@ -690,13 +858,20 @@ impl Session {
             recipe: self.recipe.clone(),
             account: self.account.clone(),
             origin: self.origin.clone(),
+            reused: false,
+            on_page: None,
         }
+    }
+
+    /// How a browser signed in this way is fingerprinted (`held::fingerprint`).
+    fn fingerprint(&self) -> u64 {
+        held::fingerprint(&self.recipe, &self.account)
     }
 }
 
-/// Signs in once, in a browser already open, as `req`'s account - the
-/// first half of `drive`, for a fixture whose templates then each run in
-/// that same browser (`run_in_session`). On failure, the report of `req`'s
+/// Signs in once, in a browser already open, as `req`'s account: for a
+/// single run, and for a fixture whose templates then each run in that
+/// same browser (`run_in_session`). On failure, the report of `req`'s
 /// template stopped at `Sign in`. Bounded by `limit`, like a run.
 pub(crate) async fn open_session<D: Driver>(
     d: &mut D,
@@ -721,8 +896,8 @@ pub(crate) async fn open_session<D: Driver>(
 }
 
 /// Runs `req.template` in a browser `open_session` signed in: its
-/// anti-forgery page, its token, then its steps - the second half of
-/// `drive`. `limit` bounds this one template, not whatever runs around it.
+/// anti-forgery page, its token, then its steps. `limit` bounds this one
+/// template, not whatever runs around it.
 pub(crate) async fn run_in_session<D: Driver>(
     d: &mut D,
     root: &Path,
@@ -732,30 +907,42 @@ pub(crate) async fn run_in_session<D: Driver>(
     limit: Duration,
     retry_pauses: &[Duration],
 ) -> RunReport {
-    let mut progress = Progress::new();
-    progress.sign_ins = session.sign_ins.clone();
-    let ctx = session.ctx(root, req, timing);
-    let timed = tokio::time::timeout(limit, run_signed_in(d, &ctx, retry_pauses, &mut progress)).await;
-    if timed.is_err() && progress.failed.is_none() {
-        progress.fail(None, RUN_TOO_LONG);
-    }
-    d.set_deadline(None);
+    let (progress, _) = in_session(d, root, req, timing, session, None, limit, retry_pauses).await;
     finish(req, progress)
 }
 
-/// Everything after the browser is open: sign in, fetch the token, run the
-/// steps. Stops at the first failure, recording it in `progress`.
-async fn drive<D: Driver>(
+/// `run_in_session`'s run, before its report: what it did, and whether it
+/// ran out of `limit`. With `reuse`, the session is one an earlier run
+/// signed in and kept, and the run stops at a session that has ended by
+/// its first request (`Progress::dropped`).
+#[allow(clippy::too_many_arguments)]
+async fn in_session<D: Driver>(
     d: &mut D,
     root: &Path,
     req: &RunRequest,
     timing: &Timing,
+    session: &Session,
+    reuse: Option<Reuse>,
+    limit: Duration,
     retry_pauses: &[Duration],
-    progress: &mut Progress,
-) {
-    let Some(session) = sign_in_once(d, root, req, timing, progress).await else { return };
-    let ctx = session.ctx(root, req, timing);
-    run_signed_in(d, &ctx, retry_pauses, progress).await
+) -> (Progress, bool) {
+    let mut progress = Progress::new();
+    let mut ctx = session.ctx(root, req, timing);
+    match reuse {
+        Some(r) => {
+            progress.reused(ctx.id(), &ctx.account.key);
+            ctx.reused = true;
+            ctx.on_page = r.page;
+        }
+        None => progress.sign_ins = session.sign_ins.clone(),
+    }
+    let timed = tokio::time::timeout(limit, run_signed_in(d, &ctx, retry_pauses, &mut progress)).await;
+    let timed_out = timed.is_err();
+    if timed_out && progress.failed.is_none() {
+        progress.fail(None, RUN_TOO_LONG);
+    }
+    d.set_deadline(None);
+    (progress, timed_out)
 }
 
 /// Signs in as `req`'s account, through its recipe or a saved session.
@@ -782,7 +969,7 @@ async fn sign_in_once<D: Driver>(
         );
         return None;
     };
-    let ctx = Ctx { root, req, timing, recipe, account, origin };
+    let ctx = Ctx { root, req, timing, recipe, account, origin, reused: false, on_page: None };
 
     let signed = sign_in(d, root, &ctx.recipe, &ctx.account, timing).await;
     if !signed.ok {
@@ -798,17 +985,31 @@ async fn sign_in_once<D: Driver>(
 async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Duration], progress: &mut Progress) {
     let req = ctx.req;
     progress.at(TOKEN_PAGE, None);
-    let Some((mut doc, mut token)) = token(d, ctx, progress).await else { return };
+    let Some((mut doc, mut token)) = token(d, ctx, progress, true).await else { return };
 
     // What a run left out of an optional param, its default stands in for.
     let mut vars: BTreeMap<String, Value> = crate::api_templates::with_defaults(&req.template, &req.values).into_iter().collect();
-    for step in &req.template.steps {
+    for (i, step) in req.template.steps.iter().enumerate() {
         let handler = step.query.get("handler").map(|h| exec::substitute_str(h, &vars));
         progress.at(&step.name, handler.clone());
         progress.sent += 1;
         d.set_deadline(Some(Instant::now() + step_limit(step)));
         let mut result = run_step(d, ctx, &doc, &token, step, handler.as_deref(), &mut vars, progress, 1).await;
         d.set_deadline(None);
+        // A kept browser whose very first request is refused unread, or
+        // sent to another page: its session most likely ended while it was
+        // kept (signed in somewhere else since). Nothing was saved; the run
+        // starts again, signed in afresh. A 400 with a body is the
+        // template's own answer, and a template that expects a 400 is never
+        // refused unread.
+        if ctx.reused && i == 0 && matches!(&result, Err(f) if f.unread || f.session_ended) {
+            applog::info(format!(
+                "api template {}: the first request in a kept browser was refused unread or sent to another page",
+                ctx.id()
+            ));
+            progress.dropped = true;
+            return;
+        }
         // Refused before any handler read it: nothing was saved, so it is
         // sent again - after each of `retry_pauses`, with a fresh token
         // (reading one signs in again if the session had ended).
@@ -828,7 +1029,7 @@ async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Dura
             tokio::time::sleep(*pause).await;
             progress.at(TOKEN_PAGE, None);
             // `self::` because the loop's own `token` (the string) shadows the function.
-            let Some((fresh_doc, fresh_token)) = self::token(d, ctx, progress).await else { return };
+            let Some((fresh_doc, fresh_token)) = self::token(d, ctx, progress, false).await else { return };
             (doc, token) = (fresh_doc, fresh_token);
             progress.at(&step.name, handler.clone());
             d.set_deadline(Some(Instant::now() + step_limit(step)));
@@ -851,7 +1052,10 @@ async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Dura
                 ok: true,
                 detail,
             }),
-            Err(StepFailure { status, detail, .. }) => return progress.fail(status, detail),
+            Err(StepFailure { status, detail, session_ended, .. }) => {
+                progress.session_ended = session_ended;
+                return progress.fail(status, detail);
+            }
         }
     }
     progress.finished = true;
@@ -862,7 +1066,13 @@ async fn run_signed_in<D: Driver>(d: &mut D, ctx: &Ctx<'_>, retry_pauses: &[Dura
 /// the application sends the page to its login, or - where it does not
 /// redirect (hosted PMSV10 renders `/hr/pmsv10/updatehub` for anyone) - the
 /// page opens with no token on it.
-async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> Option<(Handle, String)> {
+///
+/// `first` is the run's first look at the token page. Then a browser
+/// already on the page (`Ctx::on_page`, same path) is not sent to it again
+/// - the token is still read afresh - and a kept browser (`Ctx::reused`)
+/// sent to another page, the application's sign-in, is not signed in here:
+/// the run stops (`Progress::dropped`) to start again in a fresh browser.
+async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress, first: bool) -> Option<(Handle, String)> {
     let page = &ctx.req.template.antiforgery.page;
     if !is_safe_relative_path(page) {
         progress.fail(None, format!("the antiforgery page {page} is not a relative path on this origin"));
@@ -871,12 +1081,17 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
     let url = format!("{}{page}", ctx.origin);
     let policy = Policy::only(ctx.recipe.origins());
     let mut signed_in_again = false;
+    let mut already_there = first && ctx.on_page.as_deref().is_some_and(|p| same_path(p, page));
     loop {
-        let went = execute_in(d, &Action::Navigate { url: url.clone() }, ctx.timing, &policy).await;
-        if !went.ok {
-            applog::warn(format!("api template {}: the token page did not open: {}", ctx.id(), went.detail));
-            progress.fail(None, format!("the token page {page} did not open - see Settings, Logs"));
-            return None;
+        if std::mem::take(&mut already_there) {
+            applog::info(format!("api template {}: already on the token page, not loaded again", ctx.id()));
+        } else {
+            let went = execute_in(d, &Action::Navigate { url: url.clone() }, ctx.timing, &policy).await;
+            if !went.ok {
+                applog::warn(format!("api template {}: the token page did not open: {}", ctx.id(), went.detail));
+                progress.fail(None, format!("the token page {page} did not open - see Settings, Logs"));
+                return None;
+            }
         }
         let href = match eval_value(d, "location.href").await {
             Ok(v) => v.as_str().unwrap_or("").to_string(),
@@ -916,7 +1131,19 @@ async fn token<D: Driver>(d: &mut D, ctx: &Ctx<'_>, progress: &mut Progress) -> 
             if signed_in_again {
                 let cookies = cookies_for(d, ctx, &url).await;
                 record_token_page(ctx, &href, None, cookies, &progress.sign_ins);
+                progress.session_ended = true;
                 progress.fail(None, "the token page sent us to another page - check the template's antiforgery page");
+                return None;
+            }
+            if first && ctx.reused {
+                let cookies = cookies_for(d, ctx, &url).await;
+                record_token_page(ctx, &href, None, cookies, &progress.sign_ins);
+                applog::info(format!(
+                    "api template {}: the token page in a kept browser was sent to {}",
+                    ctx.id(),
+                    path_of(&href)
+                ));
+                progress.dropped = true;
                 return None;
             }
             "the token page was sent elsewhere"
@@ -952,15 +1179,18 @@ fn browser_failed(ctx: &Ctx<'_>, step: &Step, e: &CdpError) -> String {
 /// before any handler reads it (hosted PeoplesHR does this at busy moments
 /// and when the account's session was taken over) - so nothing was saved,
 /// and sending it again with a fresh token cannot save anything twice.
+/// `session_ended` marks a request sent to another page instead: the
+/// session most likely ended, and the browser is not kept.
 struct StepFailure {
     status: Option<u16>,
     detail: String,
     unread: bool,
+    session_ended: bool,
 }
 
 impl From<(Option<u16>, String)> for StepFailure {
     fn from((status, detail): (Option<u16>, String)) -> Self {
-        StepFailure { status, detail, unread: false }
+        StepFailure { status, detail, unread: false, session_ended: false }
     }
 }
 
@@ -1061,11 +1291,16 @@ async fn run_step<D: Driver>(
             step.name,
             path_of(final_url)
         ));
-        return Err((Some(status), "was sent to another page - the session may have ended".to_string()).into());
+        return Err(StepFailure {
+            status: Some(status),
+            detail: "was sent to another page - the session may have ended".to_string(),
+            unread: false,
+            session_ended: true,
+        });
     }
 
     if status == 400 && text.trim().is_empty() && step.expect.status != 400 {
-        return Err(StepFailure { status: Some(400), detail: REFUSED_UNREAD.to_string(), unread: true });
+        return Err(StepFailure { status: Some(400), detail: REFUSED_UNREAD.to_string(), unread: true, session_ended: false });
     }
 
     let parsed = check_expect(&step.expect, status, text).map_err(|e| {

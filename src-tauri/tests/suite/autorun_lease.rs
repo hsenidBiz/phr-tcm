@@ -722,3 +722,24 @@ async fn stop_during_a_lease_wait_stops_the_case_before_its_sign_in() {
     assert_eq!(case.proposed, "");
     assert_eq!(case.reason, "stopped before it finished");
 }
+
+/// A browser holding its account again keeps the lease it has: no new take,
+/// so the account's generation (`lease::generation`) does not move and a
+/// held template browser does not give way to it. Another account does take.
+#[tokio::test]
+async fn a_re_hold_does_not_bump_the_generation() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let env = env_of(root);
+    let mut browser = Held::supervised();
+
+    browser.hold(root, "admin").await.unwrap();
+    let once = lease::generation(&env, "admin");
+    browser.hold(root, "admin").await.unwrap();
+    assert_eq!(lease::generation(&env, "admin"), once, "a re-hold counted as a new sign-in");
+
+    let manager = lease::generation(&env, "manager");
+    browser.hold(root, "manager").await.unwrap();
+    assert_eq!(lease::generation(&env, "manager"), manager + 1);
+}

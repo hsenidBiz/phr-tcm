@@ -112,6 +112,9 @@ pub fn sign_out(app: tauri::AppHandle) -> Result<AuthStatus, String> {
     state.lock().unwrap().tokens = None;
     let vault = app.state::<SessionVault>();
     vault.choose_account.store(true, Ordering::SeqCst);
+    // Browsers API template runs kept signed in go with the person's
+    // session, closed off this thread.
+    tauri::async_runtime::spawn_blocking(crate::api_templates::held::close_all);
     crate::applog::info("Signed out");
     saved_session::forget(vault.store.as_ref()).map_err(|e| {
         crate::applog::warn(format!("Removing the kept sign-in failed: {e}"));

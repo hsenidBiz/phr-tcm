@@ -704,9 +704,70 @@ mod running {
         answer(200, json!({ "cycleId": 274, "cycleName": "AUTOTEST cycle 20261006" }))
     }
 
+    /// The rig's browsers, noting how many held browsers had been closed
+    /// when the fixture opened its own.
+    struct Watching {
+        inner: crate::api_templates_runner::FakeBrowsers,
+        kept_closed: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        closed_at_open: Option<usize>,
+    }
+
+    impl v2_lib::autorun::replay::Browsers for Watching {
+        type D = crate::api_templates_runner::App;
+
+        async fn open(&mut self) -> Result<Self::D, String> {
+            self.closed_at_open = Some(self.kept_closed.load(std::sync::atomic::Ordering::SeqCst));
+            self.inner.open().await
+        }
+
+        async fn close(&mut self, d: Self::D) {
+            self.inner.close(d).await
+        }
+    }
+
+    /// Spec "held browser" section 3: a fixture signing in as an account a
+    /// single run kept a browser for makes that browser give way, closed
+    /// before the fixture's own opens - one browser per account at most.
+    #[tokio::test]
+    async fn a_held_browser_for_the_account_is_closed_before_a_fixture_opens_its_own() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use v2_lib::api_templates::held::{self, HeldEntry};
+        use v2_lib::api_templates::runner::Session;
+        let _act = crate::serial::activity_log();
+        let _h = crate::serial::held_browsers();
+        let _l = crate::serial::account_leases();
+        let f = fixture();
+        let mut r = rig_with(vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))], &f, &[make_cycle(), add_suite()]);
+        let env = v2_lib::environments::active_id(r.root.path()).unwrap();
+        let kept_closed = Arc::new(AtomicUsize::new(0));
+        let session = Session::new(
+            crate::common::recipe(),
+            crate::common::account(),
+            "https://hr.example.internal".into(),
+            Vec::new(),
+        );
+        let kept = crate::template_held::KeptApp { app: r.another_page(), closed: kept_closed.clone(), kind: "edge" };
+        let generation = v2_lib::autorun::lease::generation(&env, "admin");
+        held::keep(&env, "admin", HeldEntry { driver: kept, session, fingerprint: 0, generation, page: None });
+
+        let inner = std::mem::replace(
+            &mut r.browsers,
+            crate::api_templates_runner::FakeBrowsers { next: None, opened: 0, closed: 0, last: None },
+        );
+        let mut watching = Watching { inner, kept_closed: kept_closed.clone(), closed_at_open: None };
+        let report = run_fixture_within(&mut watching, r.root.path(), ORG, PROJECT, &f, &quick(), RUN_LIMIT, &QUICK_PAUSES, CLOCK)
+            .await;
+        assert!(report.ok, "{report:?}");
+        assert_eq!(watching.closed_at_open, Some(1), "the held browser was still open when the fixture opened its own");
+        assert_eq!(kept_closed.load(Ordering::SeqCst), 1);
+        assert!(held::drain_all::<crate::template_held::KeptApp>().is_empty(), "the held browser stayed held");
+    }
+
     #[tokio::test]
     async fn two_steps_pass_a_value_between_them_in_one_signed_in_browser() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut r = rig_with(vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))], &f, &[make_cycle(), add_suite()]);
         let report = run(&mut r, &f).await;
@@ -761,6 +822,7 @@ mod running {
     #[tokio::test]
     async fn a_failed_step_stops_the_run_records_what_was_made_and_keeps_the_outputs() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut r = rig_with(vec![the_cycle(), answer(500, json!({ "error": "no" }))], &f, &[make_cycle(), add_suite()]);
         let before = FixtureRun {
@@ -802,6 +864,7 @@ mod running {
     #[tokio::test]
     async fn what_a_failed_step_captured_is_still_recorded() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let mut t = make_cycle();
         t.steps.push(
             serde_json::from_value(json!({
@@ -824,6 +887,7 @@ mod running {
     #[tokio::test]
     async fn an_entry_whose_id_was_never_captured_is_skipped() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut r = rig_with(vec![answer(500, json!({}))], &f, &[make_cycle(), add_suite()]);
         let report = run(&mut r, &f).await;
@@ -837,6 +901,7 @@ mod running {
     #[tokio::test]
     async fn a_name_without_the_prefix_is_recorded_with_a_warning() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut r = rig_with(
             vec![answer(200, json!({ "cycleId": 275, "cycleName": "Hand made cycle" })), answer(200, json!({ "suiteId": 9 }))],
@@ -861,6 +926,7 @@ mod running {
     async fn the_prefix_ignores_case_and_a_nameless_thing_is_warned_about() {
         use v2_lib::api_templates::fixture_run::no_name_warning;
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut r = rig_with(
             vec![answer(200, json!({ "cycleId": 276, "cycleName": "autotest lower case" })), answer(200, json!({ "suiteId": 9 }))],
@@ -889,6 +955,7 @@ mod running {
     #[tokio::test]
     async fn a_creates_entry_from_a_step_that_no_longer_creates_is_refused_at_run_time() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut reader = make_cycle();
         reader.effect = v2_lib::api_templates::Effect::Edit;
@@ -908,6 +975,7 @@ mod running {
     #[tokio::test]
     async fn a_step_that_now_deletes_is_refused_before_anything_opens() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let mut r = rig_with(vec![], &f, &[make_cycle(), add_suite()]);
         let mut deleting = add_suite();
@@ -930,6 +998,7 @@ mod running {
     #[tokio::test]
     async fn a_flow_removed_after_saving_is_refused_before_any_browser() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let flow: v2_lib::api_templates::flow::Flow = serde_json::from_value(json!({
             "id": "cycle-flow", "title": "Performance cycle wizard", "module": "PMS",
             "subject": { "name": "cycleId", "type": "number" },
@@ -978,6 +1047,7 @@ mod running {
     #[tokio::test]
     async fn a_step_that_times_out_stops_the_run_and_leaves_nothing_held() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let _leases = crate::serial::account_leases();
         let f = fixture();
         let mut r = rig_with(vec![the_cycle()], &f, &[make_cycle(), add_suite()]);
@@ -1010,6 +1080,7 @@ mod running {
     #[tokio::test]
     async fn a_failed_sign_in_stops_the_run_and_leaves_nothing_held() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let _leases = crate::serial::account_leases();
         let f = fixture();
         let mut r = rig_broken(vec![], Some("#go"), &f, &[make_cycle(), add_suite()]);
@@ -1028,6 +1099,7 @@ mod running {
     #[tokio::test]
     async fn a_refused_lease_stops_the_run_before_any_browser() {
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let _leases = crate::serial::account_leases();
         let f = fixture();
         let mut r = rig_with(vec![], &f, &[make_cycle(), add_suite()]);
@@ -1127,6 +1199,7 @@ mod running {
         let _root = crate::serial::autorun();
         let _slot = crate::serial::api_template_run();
         let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
         let f = fixture();
         let Rig { browsers, root, .. } =
             rig_with(vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))], &f, &[make_cycle(), add_suite()]);
