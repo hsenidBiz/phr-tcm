@@ -176,4 +176,6 @@ export {
   // The app's own mark, for the way BACK to the test case side - the
   // mode switch names its destination, so its icon has to as well.
   FlaskConical as IconTestCases,
+  // A small button beside a name that reveals what the thing is for.
+  Info as IconAbout,
 } from "lucide-react";

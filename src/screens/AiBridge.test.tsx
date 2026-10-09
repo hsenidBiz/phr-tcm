@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Toaster } from "../components/ui/toaster";
+import { TooltipLayer } from "../components/ui/tooltip";
+import { MCP_TOOLS } from "../lib/mcpTools";
 import AiBridge from "./AiBridge";
 import { selectedDbSnapshot, subscribeDbSettings } from "../lib/dbServer";
 
@@ -1500,7 +1502,7 @@ test("choosing an environment switches it and the database card shows its databa
   );
   await waitFor(() => expect(localStorage.getItem("tcm-v2-db-selected")).toBe("qa-read"));
   expect(await screen.findByText("Signs in as sgqa01db01_readonly")).toBeInTheDocument();
-  expect(within(envCard()).getByText("https://qa.example.internal/")).toBeInTheDocument();
+  expect(within(envCard()).getByText("qa.example.internal")).toBeInTheDocument();
 });
 
 test("an environment whose database is gone still switches, sets no database and says so", async () => {
@@ -1663,4 +1665,66 @@ test("once reconciled, a differing card choice is not forced onto the environmen
   await waitFor(() => expect(calls.some((c) => c.cmd === "env_list")).toBe(true));
   await new Promise((r) => setTimeout(r, 50));
   expect(calls.some((c) => c.cmd === "env_save")).toBe(false);
+});
+
+// ------------------------------------------------------- tool explanations
+
+function mockBridgeBasics() {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    return [];
+  });
+}
+
+test("each tool's explanation is behind its info button", async () => {
+  mockBridgeBasics();
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <AiBridge />
+      <TooltipLayer />
+    </QueryClientProvider>,
+  );
+  await screen.findByText("Tools an assistant may use");
+  const section = screen.getByText("Tools an assistant may use").closest("section")!;
+  const tags = MCP_TOOLS.find((t) => t.label === "Project tags")!;
+
+  // Not shown as a line under the name: the only copy in the DOM is the
+  // visually hidden one the switch is described by.
+  const copies = within(section).getAllByText(tags.summary);
+  expect(copies).toHaveLength(1);
+  expect(copies[0]).toHaveClass("sr-only");
+
+  const about = within(section).getByRole("button", { name: "About Project tags" });
+  fireEvent.pointerOver(about, { bubbles: true });
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(tags.summary);
+  fireEvent.pointerOut(about, { bubbles: true, relatedTarget: document.body });
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+});
+
+test("the switch is described by its tool's explanation", async () => {
+  mockBridgeBasics();
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByText("Tools an assistant may use");
+  const tags = MCP_TOOLS.find((t) => t.label === "Project tags")!;
+  expect(screen.getByRole("switch", { name: "Project tags" })).toHaveAccessibleDescription(tags.summary);
+});
+
+test("the Environment card shows an address that cannot be read as it was typed", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  envMocks([{ ...ENV_DEFAULT, start_url: "not an address" }, ENV_QA, ENV_GONE]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByRole("combobox", { name: "Environment" });
+  expect(await within(envCard()).findByText("not an address")).toBeInTheDocument();
+});
+
+test("the Environment card shows only the site name of the full address", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  envMocks([
+    { ...ENV_DEFAULT, start_url: "https://hrmmainslqaautom.phrsandbox.dev:8443/hr/home/index?x=1" },
+    ENV_QA,
+    ENV_GONE,
+  ]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByRole("combobox", { name: "Environment" });
+  expect(await within(envCard()).findByText("hrmmainslqaautom.phrsandbox.dev")).toBeInTheDocument();
 });
