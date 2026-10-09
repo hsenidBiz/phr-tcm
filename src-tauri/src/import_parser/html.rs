@@ -258,7 +258,7 @@ pub enum PageLayout {
     Flat,
     /// Under nested, foldable sections by area, the way the Queue shows
     /// them when Group by area is on (`area_groups`): sections in the
-    /// order of their first case, "Ungrouped" last. Each case block is
+    /// order of their first case, "No area" last. Each case block is
     /// the same markup either way.
     ByArea,
 }

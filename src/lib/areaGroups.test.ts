@@ -26,10 +26,16 @@ test("groups appear in the order of their first case, not A-Z", () => {
   expect(shape(tree)).toBe("Zeta(3)[0]{B(1)[2] A(1)[3]} Alpha(2)[1,4]");
 });
 
-test("cases with no area go under Ungrouped, last", () => {
+test("cases with no area go under No area, last", () => {
   const tree = buildAreaGroups(cases("", "Reports", "  /  ", "Billing"));
-  expect(shape(tree)).toBe("Reports(1)[1] Billing(1)[3] Ungrouped(2)[0,2]");
+  expect(shape(tree)).toBe("Reports(1)[1] Billing(1)[3] No area(2)[0,2]");
   expect(tree[2].key).toBe("");
+});
+
+test("a real area named Ungrouped stays apart from the No area bucket", () => {
+  const tree = buildAreaGroups(cases("Ungrouped", ""));
+  expect(shape(tree)).toBe("Ungrouped(1)[0] No area(1)[1]");
+  expect(tree.map((g) => g.key)).toEqual(["ungrouped", ""]);
 });
 
 test("segments match ignoring case and surrounding spaces; the first spelling is shown", () => {

@@ -8,7 +8,8 @@
  *
  * Order is the queue's own, not A-Z: a group appears where its first case
  * appears, cases inside a group keep queue order, and cases with no area
- * sit under "Ungrouped", last. Segments compare ignoring case and the
+ * sit under "No area", last (not "Ungrouped": a real area may be called
+ * that, and must not read as the same heading). Segments compare ignoring case and the
  * spaces around them, so "Display" and "display " are one group, shown
  * with the first spelling seen.
  *
@@ -16,7 +17,7 @@
  * (`import_parser::area_groups`), and the two are tested on the same cases.
  */
 
-export const UNGROUPED = "Ungrouped";
+export const NO_AREA = "No area";
 
 export type AreaGroup = {
   /** This level's segment, as first spelled in the queue. */
@@ -25,7 +26,7 @@ export type AreaGroup = {
   path: string;
   /** The path folded for comparison (lower case, trimmed segments). What a
    * folded group is remembered by, so a later spelling does not unfold it.
-   * Empty for "Ungrouped", which no real path can be. */
+   * Empty for "No area", which no real path can be. */
   key: string;
   /** Every case under this group, nested ones included. */
   count: number;
@@ -48,12 +49,12 @@ const fold = (segment: string) => segment.toLowerCase();
 /** The tree of areas for these cases, in queue order. */
 export function buildAreaGroups(cases: readonly { area?: string | null }[]): AreaGroup[] {
   const roots: AreaGroup[] = [];
-  let ungrouped: AreaGroup | null = null;
+  let noArea: AreaGroup | null = null;
   cases.forEach((tc, i) => {
     const segments = splitArea(tc.area ?? "");
     if (segments.length === 0) {
-      ungrouped ??= { name: UNGROUPED, path: UNGROUPED, key: "", count: 0, indices: [], children: [] };
-      ungrouped.indices.push(i);
+      noArea ??= { name: NO_AREA, path: NO_AREA, key: "", count: 0, indices: [], children: [] };
+      noArea.indices.push(i);
       return;
     }
     let siblings = roots;
@@ -77,7 +78,7 @@ export function buildAreaGroups(cases: readonly { area?: string | null }[]): Are
     }
     parent!.indices.push(i);
   });
-  const out = ungrouped ? [...roots, ungrouped] : roots;
+  const out = noArea ? [...roots, noArea] : roots;
   const tally = (g: AreaGroup): number =>
     (g.count = g.indices.length + g.children.reduce((n, c) => n + tally(c), 0));
   out.forEach(tally);

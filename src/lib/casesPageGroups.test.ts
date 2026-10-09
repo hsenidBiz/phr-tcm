@@ -32,7 +32,7 @@ function page(): string {
       ${card("d1", "Create an event")}
     </div></details>
   </div></details>
-  <details class='tc-group' open data-area='' data-level='0'><summary><span class='tc-group-name'>Ungrouped</span> <span class='tc-group-count'>(1)</span></summary><div class='tc-group-body'>
+  <details class='tc-group' open data-area='' data-level='0'><summary><span class='tc-group-name'>No area</span> <span class='tc-group-count'>(1)</span></summary><div class='tc-group-body'>
     ${card("d2", "Sign in")}
   </div></details>
 </div>`;
@@ -85,10 +85,43 @@ test("search finds cases inside nested sections and hides the sections it emptie
   expect(document.getElementById("tc-count")!.textContent).toBe("3 test cases");
 });
 
-test("a folded section holding a match opens while searching", () => {
+test("a folded section holding a match opens when the query changes", () => {
   group("events").removeAttribute("open");
   search("create an event");
   expect(group("events").open).toBe(true);
+});
+
+test("a section the reader folds during a search stays folded as they keep typing", () => {
+  group("events").removeAttribute("open");
+  search("create");
+  expect(group("events").open).toBe(true);
+  group("events").removeAttribute("open");
+  search("create an");
+  search("create an event");
+  expect(group("events").open).toBe(false);
+});
+
+test("re-applying the same query, as a live refresh does, opens nothing", () => {
+  search("sign");
+  group("").removeAttribute("open");
+  // A live refresh re-wires the search over the fresh cards with the query
+  // still in the box.
+  hooks.__tcmWireSearch();
+  expect(group("").open).toBe(false);
+  expect(document.getElementById("tc-count")!.textContent).toBe("1 of 3 shown");
+});
+
+test("clearing the search folds back only the sections the search opened", () => {
+  group("events").removeAttribute("open");
+  group("").removeAttribute("open");
+  search("create");
+  expect(group("events").open).toBe(true);
+  // The reader opens a section themselves while searching.
+  group("").setAttribute("open", "");
+  search("");
+  expect(group("events").open).toBe(false);
+  expect(group("").open).toBe(true);
+  expect(group("events / create").open).toBe(true);
 });
 
 test("Go to bookmark opens the folded sections around the marked case", () => {

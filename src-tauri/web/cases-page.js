@@ -130,14 +130,47 @@
   // A page grouped by area (the Queue's Group by area) wraps the cases in
   // nested <details class='tc-group'> sections. A section whose cases the
   // search has all hidden goes too, so the filter does not leave a column
-  // of empty headings; while a query is active, a folded section holding a
-  // match opens, or the count would name cases nobody can see. On a flat
-  // page there are no sections and this does nothing.
-  function syncGroups(searching) {
-    Array.prototype.forEach.call(document.querySelectorAll('details.tc-group'), function (g) {
-      var hit = !!g.querySelector('.case:not(.hidden)');
-      g.classList.toggle('hidden', !hit);
-      if (hit && searching) g.setAttribute('open', '');
+  // of empty headings. On a flat page there are no sections and this does
+  // nothing.
+  //
+  // When the QUERY changes, a folded section holding a match opens, or the
+  // count would name cases nobody can see. Only then: not when the filter
+  // is re-applied for another reason (a match switch, a live refresh), and
+  // never a section the reader folded again during this search - a section
+  // the search opened that is now shut was shut by them. Clearing the
+  // search folds back what the search opened. Kept outside wireSearch, by
+  // section key, so a live refresh (which re-wires the search) keeps it.
+  var lastQuery = '';
+  var searchOpened = {};
+  var readerFolded = {};
+  function syncGroups(query) {
+    var groups = Array.prototype.slice.call(document.querySelectorAll('details.tc-group'));
+    var changed = query !== lastQuery;
+    lastQuery = query;
+    groups.forEach(function (g) {
+      g.classList.toggle('hidden', !g.querySelector('.case:not(.hidden)'));
+      var key = g.getAttribute('data-area') || '';
+      if (searchOpened[key] && !g.hasAttribute('open')) {
+        delete searchOpened[key];
+        readerFolded[key] = true;
+      }
+    });
+    if (!query) {
+      if (changed) {
+        groups.forEach(function (g) {
+          if (searchOpened[g.getAttribute('data-area') || '']) g.removeAttribute('open');
+        });
+      }
+      searchOpened = {};
+      readerFolded = {};
+      return;
+    }
+    if (!changed) return;
+    groups.forEach(function (g) {
+      var key = g.getAttribute('data-area') || '';
+      if (g.hasAttribute('open') || readerFolded[key] || g.classList.contains('hidden')) return;
+      g.setAttribute('open', '');
+      searchOpened[key] = true;
     });
   }
 
@@ -224,7 +257,7 @@
         if (key === 'all') markHits(cards[i], found.mark);
         else Array.prototype.forEach.call(cards[i].querySelectorAll(FIELD_SEL[key]), function (el) { markHits(el, found.mark); });
       });
-      syncGroups(found.tests.length > 0);
+      syncGroups(found.tests.length > 0 ? input.value : '');
       count.textContent = found.tests.length
         ? shown + ' of ' + total + ' shown'
         : total + ' test case' + (total !== 1 ? 's' : '');

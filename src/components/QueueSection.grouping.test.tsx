@@ -135,7 +135,7 @@ test("the switch is remembered on this machine", () => {
   expect(localStorage.getItem("tcm-v2-queue-group")).toBe("off");
 });
 
-test("grouped: nested headings in queue order, case and spaces folded, counts nested, Ungrouped last", () => {
+test("grouped: nested headings in queue order, case and spaces folded, counts nested, No area last", () => {
   grouped();
   renderQueue();
   expect(reading()).toEqual([
@@ -149,7 +149,7 @@ test("grouped: nested headings in queue order, case and spaces folded, counts ne
     "Form",
     "# Alpha",
     "Alpha one",
-    "# Ungrouped",
+    "# No area",
     "Loose case",
   ]);
   // Each heading's count includes its nested cases.
@@ -157,7 +157,13 @@ test("grouped: nested headings in queue order, case and spaces folded, counts ne
   expect(screen.getByText("Events (2)")).toBeInTheDocument();
   expect(screen.getByText("Create (2)")).toBeInTheDocument();
   expect(screen.getByText("Form (1)")).toBeInTheDocument();
-  expect(screen.getByText("Ungrouped (1)")).toBeInTheDocument();
+  expect(screen.getByText("No area (1)")).toBeInTheDocument();
+});
+
+test("a real area named Ungrouped is its own group, apart from the cases with no area", () => {
+  grouped();
+  renderQueue([tc("Real", "Ungrouped"), tc("Loose case", "")]);
+  expect(reading()).toEqual(["# Ungrouped", "Real", "# No area", "Loose case"]);
 });
 
 test("a folded group hides its cases and nested groups, and stays folded after a remount", () => {
@@ -165,7 +171,7 @@ test("a folded group hides its cases and nested groups, and stays folded after a
   const { unmount } = renderQueue();
   fireEvent.click(screen.getByRole("button", { name: "Collapse area Events" }));
   expect(JSON.parse(localStorage.getItem("tcm-v2-queue-collapsed")!)).toEqual(["events"]);
-  expect(reading()).toEqual(["# Zeta", "Zeta one", "Zeta two", "# Events", "# Alpha", "Alpha one", "# Ungrouped", "Loose case"]);
+  expect(reading()).toEqual(["# Zeta", "Zeta one", "Zeta two", "# Events", "# Alpha", "Alpha one", "# No area", "Loose case"]);
   unmount();
   renderQueue();
   expect(screen.getByRole("button", { name: "Expand area Events" })).toBeInTheDocument();
@@ -299,6 +305,17 @@ test("space_selects_the_focused_row", () => {
   expect(picked()).toEqual(["Zeta one", "Alpha one"]);
   fireEvent.keyDown(row("Create"), { key: "Enter" });
   expect(picked()).toEqual(["Create"]);
+});
+
+test("Collapse all counts only what is open on screen, not inside a folded group", async () => {
+  grouped();
+  renderQueue();
+  fireEvent.click(screen.getByRole("button", { name: "Expand steps of Form" }));
+  expect(screen.getByRole("button", { name: /^Collapse all/ })).toHaveTextContent("Collapse all (1)");
+  fireEvent.click(screen.getByRole("button", { name: "Collapse area Events" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: /^Collapse all/ })).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "Expand area Events" }));
+  expect(screen.getByRole("button", { name: /^Collapse all/ })).toHaveTextContent("Collapse all (1)");
 });
 
 test("View in browser asks for the grouped page only while the Queue is grouped", async () => {

@@ -5,13 +5,14 @@
 //! same way and tested on the same cases. Unlike the Test map
 //! (`test_map::build_tree`, A-Z), the order is the queue's own: a group
 //! appears where its first case appears, cases inside a group keep queue
-//! order, and cases with no area sit under "Ungrouped", last. Segments
+//! order, and cases with no area sit under "No area", last (not
+//! "Ungrouped": a real area may be called that). Segments
 //! compare ignoring case and the spaces around them, so "Display" and
 //! "display " are one group, shown with the first spelling seen.
 
 use crate::model::TestCase;
 
-pub const UNGROUPED: &str = "Ungrouped";
+pub const NO_AREA: &str = "No area";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AreaGroup {
@@ -20,7 +21,7 @@ pub struct AreaGroup {
     /// The whole path, as first spelled: "Manage Events / Create".
     pub path: String,
     /// The path folded for comparison (lower case, trimmed segments).
-    /// Empty for "Ungrouped", which no real path can be.
+    /// Empty for "No area", which no real path can be.
     pub key: String,
     /// Every case under this group, nested ones included.
     pub count: usize,
@@ -53,12 +54,12 @@ impl AreaGroup {
 /// The tree of areas for these cases, in queue order.
 pub fn build(cases: &[TestCase]) -> Vec<AreaGroup> {
     let mut roots: Vec<AreaGroup> = vec![];
-    let mut ungrouped: Option<AreaGroup> = None;
+    let mut no_area: Option<AreaGroup> = None;
     for (i, tc) in cases.iter().enumerate() {
         let segments: Vec<&str> = tc.area.split('/').map(str::trim).filter(|s| !s.is_empty()).collect();
         if segments.is_empty() {
-            ungrouped
-                .get_or_insert_with(|| AreaGroup::new(UNGROUPED, UNGROUPED.to_string(), String::new()))
+            no_area
+                .get_or_insert_with(|| AreaGroup::new(NO_AREA, NO_AREA.to_string(), String::new()))
                 .indices
                 .push(i);
             continue;
@@ -89,7 +90,7 @@ pub fn build(cases: &[TestCase]) -> Vec<AreaGroup> {
             siblings = &mut node.children;
         }
     }
-    roots.extend(ungrouped);
+    roots.extend(no_area);
     for g in &mut roots {
         g.tally();
     }

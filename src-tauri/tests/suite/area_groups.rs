@@ -45,10 +45,30 @@ fn groups_appear_in_the_order_of_their_first_case_not_a_to_z() {
 }
 
 #[test]
-fn cases_with_no_area_go_under_ungrouped_last() {
+fn cases_with_no_area_go_under_no_area_last() {
     let tree = build(&cases(&["", "Reports", "  /  ", "Billing"]));
-    assert_eq!(shape(&tree), "Reports(1)[1] Billing(1)[3] Ungrouped(2)[0,2]");
+    assert_eq!(shape(&tree), "Reports(1)[1] Billing(1)[3] No area(2)[0,2]");
     assert_eq!(tree[2].key, "");
+}
+
+#[test]
+fn a_real_area_named_ungrouped_stays_apart_from_the_no_area_bucket() {
+    let tree = build(&cases(&["Ungrouped", ""]));
+    assert_eq!(shape(&tree), "Ungrouped(1)[0] No area(1)[1]");
+    assert_eq!(tree.iter().map(|g| g.key.as_str()).collect::<Vec<_>>(), vec!["ungrouped", ""]);
+}
+
+/// An area is the user's own text: in the grouped page its name is escaped
+/// as markup and its key as a single-quoted attribute value.
+#[test]
+fn an_area_with_markup_characters_is_escaped_in_the_grouped_page() {
+    let queue = cases(&["Reports <b> & Exports / O'Brien's"]);
+    let html = page(&queue, "escaped", PageLayout::ByArea);
+    assert!(html.contains("<span class='tc-group-name'>Reports &lt;b&gt; &amp; Exports</span>"), "{html}");
+    assert!(html.contains("<span class='tc-group-name'>O'Brien's</span>"), "{html}");
+    assert!(html.contains("data-area='reports &lt;b&gt; &amp; exports'"), "{html}");
+    assert!(html.contains("data-area='reports &lt;b&gt; &amp; exports / o&#39;brien&#39;s'"), "{html}");
+    assert!(!html.contains("<b> &"), "{html}");
 }
 
 #[test]
@@ -80,7 +100,7 @@ fn positions(html: &str, needles: &[&str]) -> Vec<usize> {
 }
 
 #[test]
-fn the_grouped_page_nests_sections_in_queue_order_with_ungrouped_last() {
+fn the_grouped_page_nests_sections_in_queue_order_with_no_area_last() {
     let queue = cases(&["", "Zeta", "Events / Create / Form", "Alpha", "events / Create", "zeta "]);
     let html = page(&queue, "grouped", PageLayout::ByArea);
 
@@ -91,9 +111,9 @@ fn the_grouped_page_nests_sections_in_queue_order_with_ungrouped_last() {
          <div class='tc-group-body'>"
     ), "{html}");
     assert!(html.contains("data-area='events / create / form' data-level='2'"), "{html}");
-    assert!(html.contains("<span class='tc-group-name'>Ungrouped</span> <span class='tc-group-count'>(1)</span>"), "{html}");
+    assert!(html.contains("<span class='tc-group-name'>No area</span> <span class='tc-group-count'>(1)</span>"), "{html}");
 
-    // Sections and cases read top to bottom in queue order, Ungrouped last;
+    // Sections and cases read top to bottom in queue order, No area last;
     // each case keeps its queue position as its number and its key.
     let order = positions(
         &html,

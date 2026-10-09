@@ -1591,6 +1591,14 @@ export default function QueueSection({
     });
   }, [queue, currentCases.data, prefs.moduleRef, prefs.preconditionsRef, currentCases.isError]);
 
+  // What Collapse all would fold that the user can SEE: steps and diffs
+  // open on rows inside a folded group are not counted (the row being
+  // edited always shows, folded or not), plus the editor itself.
+  const onScreen = areaGroups ? new Set(visibleOrder(areaGroups, foldedAreas)) : null;
+  const shown = (i: number) => !onScreen || onScreen.has(i) || i === editingIdx;
+  const openOnScreen =
+    [...expandedSteps].filter(shown).length + [...expandedDiffs].filter(shown).length + (editingIdx != null ? 1 : 0);
+
   /** One queued case, by its real queue index - the same row whether the
    * Queue is flat or grouped by area. */
   const renderRow = (i: number) => {
@@ -2278,7 +2286,7 @@ export default function QueueSection({
           editor). Portalled because this renders inside the screen fade,
           whose transform would make `fixed` mean the scroll region
           instead of the viewport. */}
-      {(expandedSteps.size + expandedDiffs.size > 0 || editingIdx != null) &&
+      {openOnScreen > 0 &&
         createPortal(
           /* Left offset clears the sidebar at its CURRENT width - parked at
              left-6 this would sit exactly on the sidebar's Close button. */
@@ -2297,8 +2305,7 @@ export default function QueueSection({
               }}
             >
               <IconCollapseAll aria-hidden />
-              Collapse all (
-              {expandedSteps.size + expandedDiffs.size + (editingIdx != null ? 1 : 0)})
+              Collapse all ({openOnScreen})
             </Button>
           </div>,
           document.body,
