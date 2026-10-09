@@ -9,7 +9,7 @@
 use v2_lib::autorun::store::{
     clear_order, clear_runs, clear_scripts, downloads_dir, load_order, save_order, empty_supervised_downloads, list_runs, load_run, load_script,
     load_shot, new_run_id, supervised_downloads_dir, sweep_orphan_downloads,
-    safe_shot_name, save_run, save_script, save_scripts_atomically, save_shot, save_shot_keeping,
+    safe_shot_name, save_run, save_script, save_scripts_atomically, prune_shots_to, save_shot,
     SaveScriptsError,
 };
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, PublishedRun, StepRecord, StepScript};
@@ -394,6 +394,14 @@ fn a_shot_name_cannot_leave_the_shots_folder() {
     assert!(load_shot(dir.path(), "../runs/run-1.json").is_err());
 }
 
+/// What saving a shot used to do: write it, then prune to `keep`. The
+/// prune rules are unchanged; only when they run moved.
+fn save_and_prune(root: &std::path::Path, bytes: &[u8], keep: usize) -> Result<String, String> {
+    let name = save_shot(root, bytes)?;
+    prune_shots_to(root, keep);
+    Ok(name)
+}
+
 /// Screenshots are evidence for the run in front of the person, not an
 /// archive. Only the newest are kept, so the folder (and the app's backup
 /// of it) cannot grow without limit.
@@ -402,7 +410,7 @@ fn only_the_newest_shots_are_kept() {
     let dir = tempfile::tempdir().unwrap();
     let mut names = vec![];
     for i in 0..5u8 {
-        names.push(save_shot_keeping(dir.path(), &[i], 3).unwrap());
+        names.push(save_and_prune(dir.path(), &[i], 3).unwrap());
     }
     let mut left: Vec<String> = std::fs::read_dir(dir.path().join("shots"))
         .unwrap()
@@ -420,7 +428,7 @@ fn only_the_newest_shots_are_kept() {
 #[test]
 fn saving_still_returns_the_name_even_keeping_nothing() {
     let dir = tempfile::tempdir().unwrap();
-    let name = save_shot_keeping(dir.path(), &[1, 2, 3], 0).unwrap();
+    let name = save_and_prune(dir.path(), &[1, 2, 3], 0).unwrap();
     assert!(safe_shot_name(&name), "{name}");
 }
 
@@ -433,7 +441,7 @@ fn saving_still_returns_the_name_even_keeping_nothing() {
 fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    let shot_a = save_shot_keeping(root, b"A", 2).unwrap();
+    let shot_a = save_and_prune(root, b"A", 2).unwrap();
     let mut run = LocalRun {
         id: "run-1".into(),
         pbi_id: 1,
@@ -462,7 +470,7 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
     // More new shots than `keep` - without the guard, shot A (the oldest
     // file in the folder) would be pruned away first.
     for i in 0..5u8 {
-        save_shot_keeping(root, &[i], 2).unwrap();
+        save_and_prune(root, &[i], 2).unwrap();
     }
     assert!(
         root.join("shots").join(&shot_a).is_file(),
@@ -473,7 +481,7 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
     run.published = Some(PublishedRun { run_id: 1, web_url: "https://x/run/1".into(), at: "1".into() });
     save_run(root, &run).unwrap();
     for i in 5..8u8 {
-        save_shot_keeping(root, &[i], 2).unwrap();
+        save_and_prune(root, &[i], 2).unwrap();
     }
     assert!(
         !root.join("shots").join(&shot_a).is_file(),
@@ -489,7 +497,7 @@ fn a_non_screenshot_file_in_the_shots_folder_survives_pruning() {
     std::fs::create_dir_all(dir.path().join("shots")).unwrap();
     std::fs::write(dir.path().join("shots").join("notes.txt"), b"not a screenshot").unwrap();
     for i in 0..3u8 {
-        save_shot_keeping(dir.path(), &[i], 1).unwrap();
+        save_and_prune(dir.path(), &[i], 1).unwrap();
     }
     assert!(dir.path().join("shots").join("notes.txt").is_file());
 }
@@ -656,7 +664,7 @@ fn clear_scripts_and_clear_runs_on_an_empty_root_return_zero() {
 fn clear_runs_removes_every_run_and_shot_published_or_not() {
     let dir = TempDir::new();
     let root = dir.path();
-    let shot = save_shot_keeping(root, b"A", 10).unwrap();
+    let shot = save_and_prune(root, b"A", 10).unwrap();
     let unpublished = LocalRun {
         id: "run-1".into(),
         pbi_id: 1,
@@ -712,7 +720,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
 fn clear_runs_also_removes_the_report_files_and_nothing_outside_reports() {
     let dir = TempDir::new();
     let root = dir.path();
-    let shot = save_shot_keeping(root, b"A", 10).unwrap();
+    let shot = save_and_prune(root, b"A", 10).unwrap();
     let run = LocalRun {
         id: "run-1".into(),
         pbi_id: 1,
@@ -857,7 +865,7 @@ fn clear_runs_neither_follows_nor_removes_a_file_link() {
 fn shot_exists_wants_a_regular_file_not_a_link() {
     let dir = TempDir::new();
     let root = dir.path();
-    let name = save_shot_keeping(root, b"A", 10).unwrap();
+    let name = save_and_prune(root, b"A", 10).unwrap();
     assert!(v2_lib::autorun::store::shot_exists(root, &name));
     assert!(!v2_lib::autorun::store::shot_exists(root, "shot-1-2.jpg"), "missing");
     assert!(!v2_lib::autorun::store::shot_exists(root, "../x.jpg"), "not a shot name");
@@ -880,7 +888,7 @@ fn clear_runs_finishes_every_pass_and_then_reports_a_file_it_could_not_remove() 
     use std::os::windows::fs::OpenOptionsExt;
     let dir = TempDir::new();
     let root = dir.path();
-    let shot = save_shot_keeping(root, b"A", 10).unwrap();
+    let shot = save_and_prune(root, b"A", 10).unwrap();
     save_run(
         root,
         &LocalRun {

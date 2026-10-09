@@ -1054,6 +1054,10 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
         progress(tell(&run_id, index, total, case_id, title, "done", 0, count, &proposed));
     }
 
+    // Old pictures go once, now every case is saved - after a Stop or a
+    // failed case too, since the loop above ends the same way for all.
+    store::prune_old_shots(root);
+
     // What the run says about the project's quirks: a note filed with a
     // repair is confirmed by its steps passing, or doubted by them failing
     // the same way again. Bookkeeping on text an assistant reads - it never

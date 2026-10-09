@@ -1479,7 +1479,10 @@ pub fn save_run_at(root: &std::path::Path, mut run: LocalRun) -> Result<(), Stri
     if run.environment.is_none() && matches!(store::load_run(root, &run.id), Ok(None)) {
         run.environment = crate::environments::active(root).ok().map(|e| e.name);
     }
-    store::save_run_guarded(root, &run)
+    store::save_run_guarded(root, &run)?;
+    // A supervised run saves its file once, after its pictures are taken.
+    store::prune_old_shots(root);
+    Ok(())
 }
 
 #[tauri::command]

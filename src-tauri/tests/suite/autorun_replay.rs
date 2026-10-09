@@ -2241,3 +2241,102 @@ async fn steps_carry_their_duration() {
     let sum: u64 = steps.iter().filter_map(|s| s.duration_ms).sum();
     assert!(run.cases[0].phases.as_ref().unwrap().steps_ms >= sum);
 }
+
+// ---- Screenshots are pruned once per run, not on every save ----
+
+fn shot_files(root: &Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(root.join("shots"))
+        .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect())
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
+/// `n` old pictures, older than anything a run takes now.
+fn seed_old_shots(root: &Path, n: usize) {
+    std::fs::create_dir_all(root.join("shots")).unwrap();
+    for i in 0..n {
+        std::fs::write(root.join("shots").join(format!("shot-1-{i:06}.jpg")), b"old").unwrap();
+    }
+}
+
+/// Saving a picture reads no run and drops nothing: the folder holds every
+/// one past the budget until the run ends.
+#[test]
+fn saving_a_case_does_not_read_other_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for _ in 0..1003 {
+        store::save_shot(root, b"x").unwrap();
+    }
+    assert_eq!(shot_files(root).len(), 1003, "no save pruned anything");
+}
+
+/// The run drops the oldest beyond the budget once, after its last case:
+/// while a case is still being reported the folder is untouched, and when
+/// the run returns it is down to the budget with the run's own picture kept.
+#[tokio::test]
+async fn a_run_prunes_once_at_the_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    seed_old_shots(root, 1005);
+    store::save_script(root, &one_check(None)).unwrap();
+    let mut browsers = browsers_of(vec![checking_driver()]);
+    let mut run = new_run("run-x");
+    let cases = vec![(1, "case 1".to_string())];
+    let cancel = AtomicBool::new(false);
+    let mut at_done = 0usize;
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |p| {
+        if p.phase == "done" {
+            at_done = shot_files(root).len();
+        }
+    })
+    .await
+    .unwrap();
+    assert!(at_done > 1005, "nothing was pruned while the case was saved: {at_done}");
+    let left = shot_files(root);
+    // The budget, plus this run's own pictures: the run is unpublished, so
+    // its pictures are protected and sit outside the budget.
+    let own_count = run.cases[0].steps.iter().filter(|s| s.screenshot.is_some()).count();
+    assert_eq!(left.len(), 1000 + own_count, "pruned to the budget at the end");
+    assert!(!left.contains(&"shot-1-000000.jpg".to_string()), "the oldest went");
+    let own = run.cases[0].steps[0].screenshot.as_ref().expect("the case took a picture");
+    assert!(left.contains(own), "the run's own newest picture stays");
+}
+
+/// A stopped run prunes too, and a picture an unpublished run still
+/// references survives however old it is.
+#[tokio::test]
+async fn protected_shots_survive_the_end_of_run_prune() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    seed_old_shots(root, 1005);
+    let mut earlier = new_run("run-earlier");
+    earlier.cases.push(v2_lib::autorun::CaseRecord {
+        case_id: 9,
+        title: "t".into(),
+        verdict: "".into(),
+        note: "".into(),
+        steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some("shot-1-000000.jpg".into()), downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }],
+        proposed: "".into(),
+        reason: "".into(),
+        duration_ms: None,
+        account: None,
+        retried: None,
+        notice: None,
+        page_errors_seen: 0,
+        phases: None,
+    });
+    store::save_run(root, &earlier).unwrap();
+    store::save_script(root, &one_check(None)).unwrap();
+    let mut browsers = browsers_of(vec![checking_driver()]);
+    let mut run = new_run("run-x");
+    let cases = vec![(1, "case 1".to_string())];
+    let cancel = AtomicBool::new(false);
+    cancel.store(true, Ordering::SeqCst); // Stop before the first case
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    let left = shot_files(root);
+    assert!(left.contains(&"shot-1-000000.jpg".to_string()), "protected by the unpublished run");
+    assert_eq!(left.len(), 1001, "the budget plus the one protected picture");
+    assert!(!left.contains(&"shot-1-000001.jpg".to_string()), "an unprotected old one went, even on Stop");
+}

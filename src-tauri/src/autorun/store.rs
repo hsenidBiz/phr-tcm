@@ -657,20 +657,14 @@ pub fn shot_exists(root: &Path, name: &str) -> bool {
         && std::fs::symlink_metadata(shots_dir(root).join(name)).is_ok_and(|m| m.file_type().is_file())
 }
 
-pub fn save_shot(root: &Path, bytes: &[u8]) -> Result<String, String> {
-    save_shot_keeping(root, bytes, MAX_SHOTS)
-}
-
-/// Save, then drop the oldest beyond `keep`. Names sort by time: epoch
-/// milliseconds, then a zero-padded counter for shots in the same
-/// millisecond.
+/// Write one screenshot and return its name. It does NOT prune: pruning
+/// reads and parses every run on disk, and a run takes a picture per step,
+/// so doing it here made a long run pay that cost hundreds of times. The
+/// run prunes once, when it ends (`prune_old_shots`).
 ///
-/// Once the write above has landed, the name it returns is a screenshot
-/// that genuinely exists on disk - losing track of it because pruning
-/// afterwards hit trouble (antivirus holding a lock on a just-written file
-/// is a real event on this machine) would be worse than a folder that grows
-/// a little past `keep` until the next successful prune.
-pub fn save_shot_keeping(root: &Path, bytes: &[u8], keep: usize) -> Result<String, String> {
+/// Names sort by time: epoch milliseconds, then a zero-padded counter for
+/// shots in the same millisecond.
+pub fn save_shot(root: &Path, bytes: &[u8]) -> Result<String, String> {
     let dir = shots_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let ms = std::time::SystemTime::now()
@@ -680,9 +674,21 @@ pub fn save_shot_keeping(root: &Path, bytes: &[u8], keep: usize) -> Result<Strin
     let seq = SHOT_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let name = format!("shot-{ms}-{seq:06}.jpg");
     std::fs::write(dir.join(&name), bytes).map_err(|e| e.to_string())?;
-
-    prune_shots(root, &dir, keep);
     Ok(name)
+}
+
+/// Drop the oldest screenshots beyond the newest `MAX_SHOTS`, sparing any
+/// an unpublished run still references. Called once when a run ends.
+pub fn prune_old_shots(root: &Path) {
+    prune_shots_to(root, MAX_SHOTS);
+}
+
+/// `prune_old_shots` with the budget named. Best effort: a folder that
+/// grows a little past `keep` until the next prune is better than losing
+/// track of a picture that is on disk (antivirus holding a lock on a
+/// just-written file is a real event on this machine).
+pub fn prune_shots_to(root: &Path, keep: usize) {
+    prune_shots(root, &shots_dir(root), keep);
 }
 
 /// Every shot name referenced by a run that has NOT been sent to Azure
