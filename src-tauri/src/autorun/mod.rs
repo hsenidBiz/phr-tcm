@@ -21,6 +21,7 @@ pub mod guide;
 pub mod lease;
 pub mod marks;
 pub mod nav;
+pub mod one_browser;
 pub mod page_errors;
 pub mod patterns;
 pub mod plan;
@@ -42,6 +43,7 @@ pub mod signin;
 pub mod signin_recorder;
 pub mod store;
 pub mod test_made;
+pub mod timing;
 pub mod transient;
 
 use crate::browser::actions::{Action, ActionOutcome};
@@ -241,6 +243,12 @@ pub struct StepRecord {
     /// read the same.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub components: Vec<components::ComponentUse>,
+    /// How long the step took, in milliseconds: from the moment it was asked
+    /// for to the moment its outcomes were in (its picture included). Left
+    /// out for a step that did not run and for runs from before timings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<f64>)]
+    pub duration_ms: Option<u64>,
 }
 
 /// A browser dialog a step met: its kind (`alert`, `confirm`, `prompt`,
@@ -302,6 +310,60 @@ pub struct CaseRecord {
     /// this case (`page_errors`). Written only when there were any.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub page_errors_seen: u32,
+    /// Where an unattended case's time went. Left out for a supervised case
+    /// and for runs from before timings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phases: Option<CasePhases>,
+}
+
+/// Where an unattended case's wall time went, in milliseconds. `total_ms`
+/// runs from opening the browser to giving it back; the other five are
+/// parts of it, so their sum is at most the total (the rest is bookkeeping
+/// between them). A phase the case never had (no account to sign in, no
+/// route to an area) is 0.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct CasePhases {
+    /// Opening the case's browser.
+    #[serde(default)]
+    #[specta(type = f64)]
+    pub open_ms: u64,
+    /// Signing in as the case's account.
+    #[serde(default)]
+    #[specta(type = f64)]
+    pub sign_in_ms: u64,
+    /// The trip to the module and area before step 1.
+    #[serde(default)]
+    #[specta(type = f64)]
+    pub area_ms: u64,
+    /// Every scripted step, together.
+    #[serde(default)]
+    #[specta(type = f64)]
+    pub steps_ms: u64,
+    /// Giving the browser back.
+    #[serde(default)]
+    #[specta(type = f64)]
+    pub close_ms: u64,
+    /// Open to close.
+    #[serde(default)]
+    #[specta(type = f64)]
+    pub total_ms: u64,
+}
+
+impl CasePhases {
+    /// The one line a report and the app log show for a case:
+    /// `Took 41.2 s: open 1.1, sign-in 12.4, area 3.0, steps 23.9, close 0.8`.
+    pub fn line(&self) -> String {
+        let s = |ms: u64| format!("{:.1}", ms as f64 / 1000.0);
+        format!(
+            "Took {} s: open {}, sign-in {}, area {}, steps {}, close {}",
+            s(self.total_ms),
+            s(self.open_ms),
+            s(self.sign_in_ms),
+            s(self.area_ms),
+            s(self.steps_ms),
+            s(self.close_ms)
+        )
+    }
 }
 
 /// Recorded once a run has been sent to Azure DevOps, so a stale review

@@ -918,7 +918,7 @@ mod components_in_a_step {
             downloads: vec![],
             tab: None,
             dialog: None,
-            components: used,
+            components: used, duration_ms: None,
         };
         let v = serde_json::to_value(&rec).unwrap();
         assert_eq!(v["components"], json!([{ "name": "Close the toast", "version": 2 }]));

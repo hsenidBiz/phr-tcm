@@ -526,8 +526,9 @@ async fn open_into(root: Result<PathBuf, String>, slot: &mut Option<Session>, wh
 
 /// Kill the process and drop its throwaway profile. Shared with
 /// `autorun_replay`, whose `RealBrowsers` closes one of these after every
-/// case (and on the way out of a failed open) so a background browser can
-/// never outlive the run that started it. It waits for the process to be
+/// `open`, and whose unattended run closes its one browser when the run
+/// ends or the browser dies (and on the way out of a failed open), so a
+/// background browser can never outlive the run that started it. It waits for the process to be
 /// gone first: a browser still shutting down holds files in its profile,
 /// and removing the folder under it fails.
 pub(crate) fn close_browser(mut browser: LaunchedBrowser) {
@@ -1475,10 +1476,18 @@ pub fn save_run_at(root: &std::path::Path, mut run: LocalRun) -> Result<(), Stri
     if !safe_run_id(&run.id) {
         return Err(format!("run id {:?} is not a safe filename", run.id));
     }
-    if run.environment.is_none() && matches!(store::load_run(root, &run.id), Ok(None)) {
+    let first = matches!(store::load_run(root, &run.id), Ok(None));
+    if run.environment.is_none() && first {
         run.environment = crate::environments::active(root).ok().map(|e| e.name);
     }
-    store::save_run_guarded(root, &run)
+    store::save_run_guarded(root, &run)?;
+    // A supervised run's first save comes once, after its pictures are
+    // taken: the shots folder is pruned then. A later save (the Review
+    // screen's) adds no pictures, so it does not read every run to prune.
+    if first {
+        store::prune_old_shots(root);
+    }
+    Ok(())
 }
 
 #[tauri::command]

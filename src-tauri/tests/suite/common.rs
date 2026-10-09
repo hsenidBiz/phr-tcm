@@ -5,7 +5,7 @@
 use serde_json::{json, Value};
 use std::cell::Cell;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use v2_lib::autorun::accounts::Account;
@@ -84,6 +84,11 @@ pub struct ScriptedDriver {
     /// The run's page errors, fed every event this driver emits after a
     /// call, as `Cdp` feeds its own.
     pub page_errors: PageErrorBook,
+    /// A fake clock: when set, `idle` adds its wait here, in ms, and
+    /// returns at once instead of sleeping - how a test says "the page
+    /// shows this 3 s in" without spending 3 s, and reads back how long a
+    /// wait loop idled.
+    pub idle_clock: Option<Arc<AtomicU64>>,
 }
 
 /// A small model of a browser's tabs for `ScriptedDriver`: `main`, the
@@ -154,6 +159,7 @@ impl ScriptedDriver {
             book: DialogBook::default(),
             dialogs_on_call: vec![],
             page_errors: PageErrorBook::default(),
+            idle_clock: None,
         }
     }
 
@@ -273,6 +279,16 @@ impl Driver for ScriptedDriver {
 
     fn forget_events(&mut self) {
         self.events.clear();
+    }
+
+    async fn idle(&mut self, wait: Duration) {
+        match &self.idle_clock {
+            Some(clock) => {
+                clock.fetch_add(wait.as_millis() as u64, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+            }
+            None => tokio::time::sleep(wait).await,
+        }
     }
 
     fn take_dialogs(&mut self) -> Vec<String> {
@@ -401,13 +417,13 @@ impl Driver for ScriptedDriver {
 }
 
 /// The actionability probe's answer for an element that is fully ready:
-/// visible, onscreen, enabled, editable, unobstructed, and (since a
-/// `FakePage`'s single static answer repeats) holding still across the
-/// two looks `wait_ready` needs to call it ready.
+/// visible, onscreen, enabled, editable, unobstructed, and holding still
+/// across the at least 2 frames and 50 ms the probe watches it for.
 pub fn ready_probe() -> Value {
     json!({
         "visible": true, "onscreen": true, "enabled": true, "editable": true,
-        "hit": true, "x": 10.0, "y": 20.0, "covered_by": "", "rect": [0.0, 0.0, 80.0, 24.0]
+        "hit": true, "x": 10.0, "y": 20.0, "covered_by": "", "rect": [0.0, 0.0, 80.0, 24.0],
+        "stable": true
     })
 }
 
@@ -601,7 +617,7 @@ pub fn stateful_app(cookie_is_good: bool, broken_selector: Option<&'static str>)
         (state.signed_in.clone(), state.typed_password.clone(), state.restored.clone(), state.clicks.clone());
     let mut last_selector = String::new();
     let ready = json!({ "visible": true, "onscreen": true, "enabled": true, "editable": true, "hit": true,
-        "x": 5.0, "y": 5.0, "covered_by": "", "rect": [0.0, 0.0, 10.0, 10.0] });
+        "x": 5.0, "y": 5.0, "covered_by": "", "rect": [0.0, 0.0, 10.0, 10.0], "stable": true });
     let mut d = ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         Ok(match method {

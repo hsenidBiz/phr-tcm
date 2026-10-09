@@ -34,7 +34,8 @@ fn field(kind: &'static str) -> ScriptedDriver {
 fn probe(over: Value) -> Value {
     let mut base = json!({
         "visible": true, "enabled": true, "editable": true, "onscreen": true,
-        "hit": true, "x": 40.5, "y": 12.0, "covered_by": "", "rect": [0.0, 0.0, 80.0, 24.0]
+        "hit": true, "x": 40.5, "y": 12.0, "covered_by": "", "rect": [0.0, 0.0, 80.0, 24.0],
+        "stable": true
     });
     for (k, v) in over.as_object().unwrap() {
         base[k] = v.clone();
@@ -67,15 +68,14 @@ fn css(sel: &str) -> Target {
     serde_json::from_value(json!({ "css": sel })).unwrap()
 }
 
-/// A ready element still needs to be SEEN holding still: the same rect on
-/// two consecutive looks.
+/// A ready element the probe saw holding still is ready on that one look.
 #[tokio::test]
 async fn a_ready_element_comes_back_with_where_to_click() {
-    let (mut d, asked) = page(1, vec![probe(json!({})), probe(json!({}))]);
+    let (mut d, asked) = page(1, vec![probe(json!({}))]);
     let ready = wait_ready(&mut d, &css("#go"), false, &quick()).await.ok().unwrap();
     assert_eq!(ready.handle, "el-0");
     assert_eq!((ready.x, ready.y), (40.5, 12.0));
-    assert_eq!(asked.load(Ordering::SeqCst), 2);
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
 }
 
 /// The whole point: a button that is disabled while the page loads is
@@ -88,12 +88,11 @@ async fn it_waits_for_a_disabled_element_to_become_enabled() {
             probe(json!({ "enabled": false })),
             probe(json!({ "enabled": false })),
             probe(json!({})),
-            probe(json!({})),
         ],
     );
     assert!(wait_ready(&mut d, &css("#go"), false, &quick()).await.is_ok());
-    // Two disabled looks, then two matching-rect looks once it is enabled.
-    assert_eq!(asked.load(Ordering::SeqCst), 4);
+    // Two disabled looks, then one that finds it enabled and still.
+    assert_eq!(asked.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]
@@ -133,35 +132,21 @@ async fn a_covered_element_with_no_named_cause_still_gets_a_reason() {
     }
 }
 
-/// Two consecutive looks with the SAME rect: ready on the second.
+/// An answer that does not say it held still is never taken as still.
 #[tokio::test]
-async fn readiness_needs_the_same_rect_twice_in_a_row() {
-    let rect_a = json!([0.0, 0.0, 80.0, 24.0]);
-    let (mut d, asked) =
-        page(1, vec![probe(json!({ "rect": rect_a.clone() })), probe(json!({ "rect": rect_a }))]);
-    assert!(wait_ready(&mut d, &css("#go"), false, &quick()).await.is_ok());
-    assert_eq!(asked.load(Ordering::SeqCst), 2);
+async fn a_probe_that_says_nothing_about_motion_is_not_ready() {
+    let mut raw = probe(json!({}));
+    raw.as_object_mut().unwrap().remove("stable");
+    let (mut d, _) = page(1, vec![raw]);
+    match wait_ready(&mut d, &css("#go"), false, &quick()).await {
+        Err(Blocked::Page(msg)) => assert!(msg.contains("is still moving"), "{msg}"),
+        other => panic!("expected a still-moving timeout, got {other:?}"),
+    }
 }
 
-/// Rect A, then rect B twice: ready on the third look, once B repeats.
-#[tokio::test]
-async fn a_settling_rect_change_still_reaches_ready() {
-    let rect_a = json!([0.0, 0.0, 80.0, 24.0]);
-    let rect_b = json!([5.0, 0.0, 80.0, 24.0]);
-    let (mut d, asked) = page(
-        1,
-        vec![
-            probe(json!({ "rect": rect_a })),
-            probe(json!({ "rect": rect_b.clone() })),
-            probe(json!({ "rect": rect_b })),
-        ],
-    );
-    assert!(wait_ready(&mut d, &css("#go"), false, &quick()).await.is_ok());
-    assert_eq!(asked.load(Ordering::SeqCst), 3);
-}
-
-/// A rect that never repeats within the action budget never counts as
-/// ready: the last reason reported is "still moving", not a false pass.
+/// An element that never holds still within the action budget never
+/// counts as ready: the last reason reported is "still moving", not a
+/// false pass.
 #[tokio::test]
 async fn a_never_settling_rect_times_out_as_still_moving() {
     let n = Arc::new(AtomicUsize::new(0));
@@ -171,7 +156,7 @@ async fn a_never_settling_rect_times_out_as_still_moving() {
         "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
         "Runtime.callFunctionOn" if params["functionDeclaration"] == PROBE_JS => {
             let i = c.fetch_add(1, Ordering::SeqCst) as f64;
-            Ok(json!({ "result": { "value": probe(json!({ "rect": [i, 0.0, 80.0, 24.0] })) } }))
+            Ok(json!({ "result": { "value": probe(json!({ "rect": [i, 0.0, 80.0, 24.0], "stable": false })) } }))
         }
         "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
         "Runtime.getProperties" => {
@@ -193,8 +178,7 @@ async fn typing_needs_something_that_takes_text() {
         _ => panic!("expected a page reason"),
     }
     // The same element is fine to CLICK.
-    let (mut d, _) =
-        page(1, vec![probe(json!({ "editable": false })), probe(json!({ "editable": false }))]);
+    let (mut d, _) = page(1, vec![probe(json!({ "editable": false }))]);
     assert!(wait_ready(&mut d, &css("#go"), false, &quick()).await.is_ok());
 }
 
@@ -567,4 +551,87 @@ fn the_probe_aims_at_the_middle_of_the_clipped_box() {
     assert!(PROBE_JS.contains("(cl + cr) / 2"), "{PROBE_JS}");
     assert!(PROBE_JS.contains("(ct + cb) / 2"), "{PROBE_JS}");
     assert!(PROBE_JS.contains("document.elementFromPoint(lx, ly)"), "the frame's own hit test uses the re-centred point");
+}
+
+/// A page whose probe gives `probes` in turn (repeating the last), that
+/// takes mouse events, and that records, in order, each probe's `settle`
+/// argument and each mouse event as "click".
+fn settling_page(probes: Vec<Value>) -> (ScriptedDriver, Arc<std::sync::Mutex<Vec<String>>>) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let asked = AtomicUsize::new(0);
+    let d = ScriptedDriver::new(move |method, params| match method {
+        "Runtime.releaseObjectGroup" | "Input.dispatchMouseEvent" => {
+            if method == "Input.dispatchMouseEvent" {
+                log.lock().unwrap().push("click".to_string());
+            }
+            Ok(json!({}))
+        }
+        "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == PROBE_JS => {
+            let settle = params["arguments"][0]["value"].as_bool().unwrap_or(false);
+            log.lock().unwrap().push(format!("probe settle={settle}"));
+            let i = asked.fetch_add(1, Ordering::SeqCst).min(probes.len() - 1);
+            Ok(json!({ "result": { "value": probes[i] } }))
+        }
+        "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+        "Runtime.getProperties" => {
+            Ok(json!({ "result": [ { "name": "0", "value": { "objectId": "el-0" } } ] }))
+        }
+        other => panic!("unexpected {other}"),
+    });
+    (d, seen)
+}
+
+/// The page itself says whether the element held still across at least
+/// 2 frames and 50 ms. An element still moving is looked at again, and the
+/// click waits until a look finds it settled.
+#[tokio::test]
+async fn a_moving_element_is_not_clicked_until_it_settles() {
+    let (mut d, seen) = settling_page(vec![
+        probe(json!({ "stable": false, "rect": [0.0, 0.0, 80.0, 24.0] })),
+        probe(json!({ "stable": false, "rect": [6.0, 0.0, 80.0, 24.0] })),
+        probe(json!({ "stable": true, "rect": [9.0, 0.0, 80.0, 24.0] })),
+    ]);
+    let ready = wait_ready(&mut d, &css("#go"), false, &quick()).await.ok().unwrap();
+    click(&mut d, &ready).await.unwrap();
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(
+        seen,
+        vec![
+            "probe settle=true",
+            "probe settle=true",
+            "probe settle=true",
+            // The re-probe just before the click measures once, no frames.
+            "probe settle=false",
+            "click",
+            "click",
+            "click",
+        ]
+    );
+}
+
+/// An element that is already still is ready on its first look: one
+/// probe that waits the frames in the page, not two looks a poll apart.
+#[tokio::test]
+async fn a_still_element_is_clicked_after_one_check() {
+    let (mut d, seen) = settling_page(vec![probe(json!({}))]);
+    d.idle_clock = Some(Arc::new(std::sync::atomic::AtomicU64::new(0)));
+    let ready = wait_ready(&mut d, &css("#go"), false, &quick()).await.ok().unwrap();
+    click(&mut d, &ready).await.unwrap();
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen, vec!["probe settle=true", "probe settle=false", "click", "click", "click"]);
+    assert_eq!(d.idle_clock.as_ref().unwrap().load(Ordering::SeqCst), 0, "no poll pause before the click");
+}
+
+/// Every wait shares one interval between looks, now 40 ms.
+#[tokio::test]
+async fn waits_poll_at_the_new_interval() {
+    assert_eq!(Timing::default().poll_ms, 40);
+    let (mut d, _) = settling_page(vec![probe(json!({ "stable": false })), probe(json!({}))]);
+    let clock = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    d.idle_clock = Some(clock.clone());
+    let timing = Timing { action_ms: 2_000, ..Timing::default() };
+    wait_ready(&mut d, &css("#go"), false, &timing).await.ok().unwrap();
+    assert_eq!(clock.load(Ordering::SeqCst), 40, "one look, one 40 ms pause, one look");
 }

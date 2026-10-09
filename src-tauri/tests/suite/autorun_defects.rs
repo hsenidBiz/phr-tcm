@@ -82,7 +82,7 @@ fn script(case_id: i32) -> CaseScript {
 }
 
 fn step(n: i32, outcomes: Vec<ActionOutcome>) -> StepRecord {
-    StepRecord { step_number: n, outcomes, screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }
+    StepRecord { step_number: n, outcomes, screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }
 }
 
 /// Case `case_id` as a run recorded it: steps 1 and 2 passed, step 3's
@@ -110,7 +110,7 @@ fn failed_at_3(case_id: i32) -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
-        page_errors_seen: 0,
+        page_errors_seen: 0, phases: None,
     }
 }
 

@@ -339,6 +339,11 @@ fn stopped_summary(case: &CaseRecord, script: Option<&CaseScript>, components: &
     h
 }
 
+/// Milliseconds as `2.3 s`.
+fn seconds(ms: u64) -> String {
+    format!("{:.1} s", ms as f64 / 1000.0)
+}
+
 /// Every step of a case in the order it ran: its label, each action's
 /// outcome as a line marked with a tick or a cross and the sentence the run
 /// recorded (never anything from the script), then the step's picture and
@@ -352,7 +357,9 @@ fn steps_block(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> String {
     for step in &case.steps {
         let label = step_label(step.step_number);
         h.push_str("<div class=\"step\">");
-        h.push_str(&format!("<h4>{}</h4>", esc(&label)));
+        // How long the step took, when the run timed it.
+        let took = step.duration_ms.map(|ms| format!(" <span class=\"took\">{}</span>", seconds(ms))).unwrap_or_default();
+        h.push_str(&format!("<h4>{}{took}</h4>", esc(&label)));
         if step.outcomes.is_empty() {
             h.push_str("<p class=\"note\">No actions were recorded for this step.</p>");
         } else {
@@ -448,6 +455,9 @@ fn case_section(
     if !case.note.is_empty() {
         h.push_str(&format!("<p><strong>Note:</strong> {}</p>", esc(&case.note)));
     }
+    if let Some(phases) = &case.phases {
+        h.push_str(&format!("<p class=\"took\">{}</p>", esc(&phases.line())));
+    }
     h.push_str(&downloads_line(case, size_of));
     h.push_str(&steps_block(case, exists));
     h.push_str("</details>");
@@ -501,7 +511,7 @@ h3{font-size:15px;margin:0 0 6px}dl{display:grid;grid-template-columns:max-conte
 dt{color:#59636e}dd{margin:0}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d0d7de;padding:4px 8px;text-align:left;vertical-align:top}\
 th{background:#f6f8fa}.id{font-family:Consolas,monospace;color:#59636e}.b-passed{color:#1a7f37;font-weight:600}\
 .b-failed{color:#cf222e;font-weight:600}.b-blocked{color:#9a6700;font-weight:600}.b-notrun{color:#59636e;font-weight:600}\
-.retried{color:#9a6700;font-size:12px;font-weight:600;border:1px solid #d4a72c;border-radius:10px;padding:0 6px;margin-left:6px}\
+.took{color:#59636e;font-size:12px;font-weight:400}.retried{color:#9a6700;font-size:12px;font-weight:600;border:1px solid #d4a72c;border-radius:10px;padding:0 6px;margin-left:6px}\
 .case{border:1px solid #d0d7de;border-radius:6px;padding:8px 12px;margin:0 0 12px}.case>summary{cursor:pointer;font-weight:600;font-size:15px}\
 .note{color:#59636e;font-style:italic}.reset{color:#9a6700;font-weight:600}.step{margin:10px 0 0}h4{font-size:14px;margin:0 0 4px}\
 .actions{list-style:none;margin:0 0 4px;padding:0}.actions li{margin:0 0 2px}.ok{color:#1a7f37}.bad{color:#cf222e}\

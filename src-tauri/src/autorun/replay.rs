@@ -15,7 +15,7 @@ use super::runner::{self, as_action_outcome};
 use super::lease::{Held, Holder};
 use super::{preconditions, recipe, setup, signin, transient};
 use super::plan::Reset;
-use super::{store, CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord, StepScript, RESET_CONTINUED, RESET_STOPPED};
+use super::{store, CasePhases, CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord, StepScript, RESET_CONTINUED, RESET_STOPPED};
 use crate::api_templates::gate::StageDb;
 use crate::browser::actions::{Action, ActionOutcome};
 use crate::browser::cdp::Driver;
@@ -92,8 +92,9 @@ fn who(case_id: i32) -> String {
     format!("unattended run, case {case_id}")
 }
 
-/// Where a fresh browser per case comes from. The command gives real ones;
-/// the tests give fakes.
+/// Where each case's fresh browser comes from: for an unattended run, a
+/// fresh context in the run's one browser (`one_browser`). The tests give
+/// fakes.
 pub trait Browsers {
     type D: Driver;
     fn open(&mut self) -> impl std::future::Future<Output = Result<Self::D, String>>;
@@ -139,6 +140,11 @@ pub struct CaseToRun {
     pub module: Option<String>,
 }
 
+/// Whole milliseconds of a span.
+fn ms(d: std::time::Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
 fn not_run(step: &StepScript, why: &str) -> StepRecord {
     StepRecord {
         step_number: step.step_number,
@@ -147,7 +153,7 @@ fn not_run(step: &StepScript, why: &str) -> StepRecord {
         downloads: Vec::new(),
         tab: None,
         dialog: None,
-        components: Vec::new(),
+        components: Vec::new(), duration_ms: None,
     }
 }
 
@@ -342,6 +348,7 @@ async fn run_case_in<D: Driver>(
     let mut signed_in = None;
     let mut current = None;
     let mut stopped = false;
+    let (mut sign_in_took, mut area_took) = (0u64, 0u64);
 
     // Why the rest of the case is not being run, once something decided
     // that. Checked here too, before the sign-in - a stop asked for while
@@ -398,6 +405,7 @@ async fn run_case_in<D: Driver>(
     }
     if skip.is_none() {
         if let Some(key) = account {
+            let signing_in = Instant::now();
             let out = match signin::prepare(root, organization, project, key) {
                 Err(why) => vec![ActionOutcome::failed(why)],
                 Ok((recipe, who)) => {
@@ -409,7 +417,8 @@ async fn run_case_in<D: Driver>(
             };
             let ok = out.last().is_some_and(|o| o.ok);
             signed_in = Some(ok);
-            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new(), tab: None, dialog: None, components: Vec::new() });
+            sign_in_took = ms(signing_in.elapsed());
+            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new(), tab: None, dialog: None, components: Vec::new(), duration_ms: Some(sign_in_took) });
         }
         skip = (signed_in == Some(false)).then_some(AFTER_FAILED_SIGN_IN);
     }
@@ -423,7 +432,9 @@ async fn run_case_in<D: Driver>(
             // The case's own sign-in just above, when it had one; otherwise
             // the browser comes as it was left.
             let from = if signed_in == Some(true) { nav::TripFrom::SignIn } else { nav::TripFrom::Elsewhere };
+            let reaching = Instant::now();
             let out = trip_to_module(d, root, r, from, timing, &who(script.case_id)).await;
+            area_took = ms(reaching.elapsed());
             if save_guard::is_blocked(&out.detail) {
                 skip = Some(AFTER_FAILED_STEP);
             } else if !out.ok {
@@ -436,7 +447,7 @@ async fn run_case_in<D: Driver>(
                 downloads: Vec::new(),
                 tab: None,
                 dialog: None,
-                components: Vec::new(),
+                components: Vec::new(), duration_ms: Some(area_took),
             });
         }
     }
@@ -453,6 +464,7 @@ async fn run_case_in<D: Driver>(
     // module - is no step's error.
     super::page_errors::drop_all(d);
     let mut page_errors_seen = 0u32;
+    let stepping = Instant::now();
     for step in &script.steps {
         if skip.is_none() && cancel.load(Ordering::SeqCst) {
             skip = Some(AFTER_STOP);
@@ -519,13 +531,14 @@ async fn run_case_in<D: Driver>(
         } else if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
         }
-        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new(), tab: in_run.tab, dialog: in_run.dialog, components: in_run.components });
+        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new(), tab: in_run.tab, dialog: in_run.dialog, components: in_run.components, duration_ms: Some(ms(asked_at.elapsed())) });
         page_errors_seen += in_run.page_errors_seen;
     }
 
     // The case's one wait for a download still arriving (`one_go` does not
     // wait again), then each file is put on the step it started in.
     let took = began.elapsed();
+    let steps_took = ms(stepping.elapsed());
     settle_downloads(d, cancel).await;
     if !step_began.is_empty() {
         // Every tab's: a step's file is the step's whichever tab saved it.
@@ -552,6 +565,7 @@ async fn run_case_in<D: Driver>(
         retried: None,
         notice: None,
         page_errors_seen,
+        phases: Some(CasePhases { sign_in_ms: sign_in_took, area_ms: area_took, steps_ms: steps_took, total_ms: ms(took), ..Default::default() }),
     }
 }
 
@@ -578,7 +592,7 @@ fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecor
         account: None,
         retried: None,
         notice: None,
-        page_errors_seen: 0,
+        page_errors_seen: 0, phases: None,
     }
 }
 
@@ -609,7 +623,7 @@ fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: Stri
         account: account.map(str::to_string),
         retried: None,
         notice: None,
-        page_errors_seen: 0,
+        page_errors_seen: 0, phases: None,
     }
 }
 
@@ -694,9 +708,11 @@ async fn one_go<B: Browsers>(
 ) -> Result<CaseRecord, String> {
     let (run_id, index, total, case_id, title, count) = (at.run_id, at.index, at.total, at.case_id, at.title, at.count);
     progress(tell(run_id, index, total, case_id, title, "opening", 0, count, ""));
+    let opening = Instant::now();
     match browsers.open().await {
         Err(why) => Err(why),
         Ok(mut d) => {
+            let open_ms = ms(opening.elapsed());
             // The case's downloads are kept with the run. A browser that
             // will not save them still runs the case: a step that checks a
             // download then says none came.
@@ -715,7 +731,7 @@ async fn one_go<B: Browsers>(
             // here, so an end, a stop (this future dropped) and a panic all
             // let it go too.
             let mut lease = Held::new(Holder::Case { run: run_id.to_string() }, go.timing.lease_wait());
-            let rec = run_case_as(
+            let mut rec = run_case_as(
                 &mut d,
                 go.root,
                 go.organization,
@@ -731,8 +747,18 @@ async fn one_go<B: Browsers>(
             .await;
             // `run_case_as` has already waited for a download still
             // arriving, once, so the browser closes now.
+            let closing = Instant::now();
             browsers.close(d).await;
             drop(lease);
+            let close_ms = ms(closing.elapsed());
+            // Open to close. The case's own parts are measured inside it, so
+            // a case that never got as far as its steps still says how long
+            // the browser took.
+            let phases = rec.phases.get_or_insert_with(CasePhases::default);
+            phases.open_ms = open_ms;
+            phases.close_ms = close_ms;
+            phases.total_ms = ms(opening.elapsed());
+            crate::applog::info(format!("{}: {}", who(case_id), phases.line()));
             Ok(rec)
         }
     }
@@ -1027,6 +1053,10 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
         }
         progress(tell(&run_id, index, total, case_id, title, "done", 0, count, &proposed));
     }
+
+    // Old pictures go once, now every case is saved - after a Stop or a
+    // failed case too, since the loop above ends the same way for all.
+    store::prune_old_shots(root);
 
     // What the run says about the project's quirks: a note filed with a
     // repair is confirmed by its steps passing, or doubted by them failing

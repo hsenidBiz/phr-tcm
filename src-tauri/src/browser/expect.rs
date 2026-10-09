@@ -94,7 +94,7 @@ fn only(handles: &[Handle]) -> Result<&Handle, String> {
 }
 
 /// One look. `Ok(Ok(detail))` holds; `Ok(Err(why))` does not hold yet.
-async fn look<D: Driver>(
+pub(crate) async fn look<D: Driver>(
     d: &mut D,
     target: &Target,
     check: &Check<'_>,

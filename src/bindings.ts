@@ -809,7 +809,8 @@ export const commands = {
 	 *  signs in every case, over the account a script names (null leaves each
 	 *  script to its own); it must be a key in the Accounts list, or the run
 	 *  does not start. `retry_transient` runs a case whose failure looked
-	 *  transient once more, in a fresh browser (`autorun::transient`).
+	 *  transient once more, in a fresh browser context (`autorun::transient`).
+	 *  The run keeps one browser, with a context per case (`one_browser`).
 	 *  `db_read_access` is the AI Bridge tab's Database Read Access switch:
 	 *  while it is off no precondition is checked (`autorun::preconditions`).
 	 */
@@ -2178,6 +2179,28 @@ export type CaseNoteSaved = {
 };
 
 /**
+ *  Where an unattended case's wall time went, in milliseconds. `total_ms`
+ *  runs from opening the browser to giving it back; the other five are
+ *  parts of it, so their sum is at most the total (the rest is bookkeeping
+ *  between them). A phase the case never had (no account to sign in, no
+ *  route to an area) is 0.
+ */
+export type CasePhases = {
+	/**  Opening the case's browser. */
+	open_ms?: number | null,
+	/**  Signing in as the case's account. */
+	sign_in_ms?: number | null,
+	/**  The trip to the module and area before step 1. */
+	area_ms?: number | null,
+	/**  Every scripted step, together. */
+	steps_ms?: number | null,
+	/**  Giving the browser back. */
+	close_ms?: number | null,
+	/**  Open to close. */
+	total_ms?: number | null,
+};
+
+/**
  *  One case in a run. `verdict` is the HUMAN's word - "", "Passed",
  *  "Failed", "Blocked". The machine never fills it in: the action
  *  outcomes are evidence shown to the person, not a vote. `proposed` is
@@ -2227,6 +2250,11 @@ export type CaseRecord_Deserialize = {
 	 *  this case (`page_errors`). Written only when there were any.
 	 */
 	page_errors_seen?: number,
+	/**
+	 *  Where an unattended case's time went. Left out for a supervised case
+	 *  and for runs from before timings.
+	 */
+	phases?: CasePhases | null,
 };
 
 /**
@@ -2270,6 +2298,11 @@ export type CaseRecord_Serialize = {
 	 *  this case (`page_errors`). Written only when there were any.
 	 */
 	page_errors_seen?: number,
+	/**
+	 *  Where an unattended case's time went. Left out for a supervised case
+	 *  and for runs from before timings.
+	 */
+	phases?: CasePhases | null,
 };
 
 /**
@@ -4779,6 +4812,12 @@ export type StepRecord_Deserialize = {
 	 *  read the same.
 	 */
 	components?: ComponentUse[],
+	/**
+	 *  How long the step took, in milliseconds: from the moment it was asked
+	 *  for to the moment its outcomes were in (its picture included). Left
+	 *  out for a step that did not run and for runs from before timings.
+	 */
+	duration_ms?: number | null,
 };
 
 export type StepRecord_Serialize = {
@@ -4810,6 +4849,12 @@ export type StepRecord_Serialize = {
 	 *  read the same.
 	 */
 	components?: ComponentUse[],
+	/**
+	 *  How long the step took, in milliseconds: from the moment it was asked
+	 *  for to the moment its outcomes were in (its picture included). Left
+	 *  out for a step that did not run and for runs from before timings.
+	 */
+	duration_ms?: number | null,
 };
 
 /**
