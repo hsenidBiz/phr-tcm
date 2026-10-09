@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use v2_lib::browser::cdp::CdpError;
 use v2_lib::browser::input::{
-    click, fill, wait_ready, Blocked, Ready, FOCUS_JS, HAS_FOCUS_JS, PROBE_JS,
+    click, clickable_now, fill, wait_ready, Blocked, Ready, FOCUS_JS, HAS_FOCUS_JS, PROBE_JS,
 };
 use v2_lib::browser::locator::Target;
 use v2_lib::browser::timing::Timing;
@@ -634,4 +634,23 @@ async fn waits_poll_at_the_new_interval() {
     let timing = Timing { action_ms: 2_000, ..Timing::default() };
     wait_ready(&mut d, &css("#go"), false, &timing).await.ok().unwrap();
     assert_eq!(clock.load(Ordering::SeqCst), 40, "one look, one 40 ms pause, one look");
+}
+
+/// `clickable_now` is how an Auto Run trip decides to leave a click out,
+/// so a guess is never "yes": two matches are refused even for a legacy
+/// css string, whose click still takes its first match.
+#[tokio::test]
+async fn clickable_now_refuses_two_matches_even_for_a_legacy_target() {
+    let legacy = Target::Legacy("#go".to_string());
+    let (mut d, _) = page(2, vec![probe(json!({}))]);
+    assert!(!clickable_now(&mut d, &legacy).await, "two legacy matches counted as ready");
+    let (mut d, _) = page(2, vec![probe(json!({}))]);
+    assert!(!clickable_now(&mut d, &css("#go")).await);
+    let (mut d, _) = page(1, vec![probe(json!({}))]);
+    assert!(clickable_now(&mut d, &legacy).await, "one ready match is ready");
+    let (mut d, _) = page(1, vec![probe(json!({ "hit": false, "covered_by": "div.modal" }))]);
+    assert!(!clickable_now(&mut d, &legacy).await, "a covered match is not ready");
+    // The click itself keeps the legacy rule: the first of two.
+    let (mut d, _) = page(2, vec![probe(json!({}))]);
+    assert!(wait_ready(&mut d, &legacy, false, &quick()).await.is_ok());
 }

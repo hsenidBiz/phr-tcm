@@ -356,9 +356,9 @@ async fn go_home_that_navigates_leaves_the_menu_open() {
     assert_eq!(*app.log.lock().unwrap(), vec!["navigate /hr/security/login".to_string(), "click #toggle".to_string()]);
 }
 
-/// Already home: nothing reloaded, so nothing to put back - `after_sign_in`
-/// already ran when the browser signed in, and a toggle run twice would
-/// close what it opened.
+/// A trip from the home page with the menu showing: the path is clicked
+/// from there, with no reload and no `after_sign_in` run again. Going home
+/// when already there is `go_home_on_the_home_page_neither_reloads_nor_reruns_after_sign_in`.
 #[tokio::test]
 async fn already_home_does_not_run_after_sign_in_again() {
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
@@ -369,12 +369,31 @@ async fn already_home_does_not_run_after_sign_in_again() {
     assert_eq!(*app.log.lock().unwrap(), vec!["click Leave".to_string()]);
 }
 
+/// Already home: nothing reloaded, so nothing to put back - `after_sign_in`
+/// already ran when the browser signed in, and a toggle run twice would
+/// close what it opened.
+#[tokio::test]
+async fn go_home_on_the_home_page_neither_reloads_nor_reruns_after_sign_in() {
+    let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
+    *app.path.lock().unwrap() = "/hr/home/index".to_string();
+    let home = v2_lib::autorun::nav::Home::of(&login_home_recipe("/hr/home/index"));
+    let out = go_home(&mut d, &home, &common::quick()).await;
+    assert!(out.ok, "{out:?}");
+    assert_eq!(d.calls_to("Page.navigate").len(), 0);
+    assert!(app.log.lock().unwrap().is_empty(), "{:?}", app.log.lock().unwrap());
+}
+
 // ---- A trip from where the page is -----------------------------------------
 
 /// What `sidebar_app` saw, in order: `navigate <path>`, `click <name or
-/// css>`.
+/// css>`. While `cover_on_toggle` is set, the next toggle click covers the
+/// page (a toast, a slow render) and clears it. `outside_on` is the page
+/// that also shows a link "Leave" outside the menu, a breadcrumb that
+/// lands on /hr/elsewhere; it is gone once the page leaves.
 struct Sidebar {
     log: Arc<Mutex<Vec<String>>>,
+    cover_on_toggle: Arc<AtomicBool>,
+    outside_on: Arc<Mutex<String>>,
 }
 
 impl Sidebar {
@@ -395,13 +414,16 @@ fn sidebar_app(at: &str, open: bool, covered: bool) -> (common::ScriptedDriver, 
     let open = Arc::new(AtomicBool::new(open));
     let covered = Arc::new(AtomicBool::new(covered));
     let path = Arc::new(Mutex::new(at.to_string()));
-    let app = Sidebar { log: log.clone() };
+    let cover_on_toggle = Arc::new(AtomicBool::new(false));
+    let outside_on = Arc::new(Mutex::new(String::new()));
+    let app = Sidebar { log: log.clone(), cover_on_toggle: cover_on_toggle.clone(), outside_on: outside_on.clone() };
     let mut last_css = String::new();
     let mut last_probed = String::new();
     let mut d = common::ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         let object = params["objectId"].as_str().unwrap_or("").to_string();
-        let shows = |o: &str| !o.starts_with("ax-") || open.load(Ordering::SeqCst);
+        // Only the menu's own entry hides with the menu.
+        let shows = |o: &str| o != "ax-100" || open.load(Ordering::SeqCst);
         Ok(match method {
             "Page.navigate" => {
                 let p = path_of(params["url"].as_str().unwrap_or(""));
@@ -416,9 +438,14 @@ fn sidebar_app(at: &str, open: bool, covered: bool) -> (common::ScriptedDriver, 
                 json!({ "result": { "value": format!("https://hr.example.internal{}", path.lock().unwrap()) } })
             }
             "Runtime.evaluate" => json!({ "result": { "value": null } }),
-            "Accessibility.queryAXTree" if params["role"] == "link" => json!({ "nodes": [
-                { "nodeId": "n0", "role": { "value": "link" }, "name": { "value": "Leave" }, "backendDOMNodeId": 100 }
-            ] }),
+            "Accessibility.queryAXTree" if params["role"] == "link" => {
+                let mut nodes =
+                    vec![json!({ "nodeId": "n0", "role": { "value": "link" }, "name": { "value": "Leave" }, "backendDOMNodeId": 100 })];
+                if *outside_on.lock().unwrap() == *path.lock().unwrap() {
+                    nodes.push(json!({ "nodeId": "n1", "role": { "value": "link" }, "name": { "value": "Leave" }, "backendDOMNodeId": 101 }));
+                }
+                json!({ "nodes": nodes })
+            }
             "Accessibility.queryAXTree" => json!({ "nodes": [] }),
             "DOM.resolveNode" => json!({ "object": { "objectId": format!("ax-{}", params["backendNodeId"]) } }),
             "Runtime.callFunctionOn" if f == PROBE_JS => {
@@ -451,6 +478,12 @@ fn sidebar_app(at: &str, open: bool, covered: bool) -> (common::ScriptedDriver, 
                 if last_probed == "css:#toggle" {
                     log.lock().unwrap().push("click #toggle".to_string());
                     open.store(!open.load(Ordering::SeqCst), Ordering::SeqCst);
+                    if cover_on_toggle.swap(false, Ordering::SeqCst) {
+                        covered.store(true, Ordering::SeqCst);
+                    }
+                } else if last_probed == "ax-101" {
+                    log.lock().unwrap().push("click outside Leave".to_string());
+                    *path.lock().unwrap() = "/hr/elsewhere".to_string();
                 } else if last_probed == "ax-100" {
                     log.lock().unwrap().push("click Leave".to_string());
                     *path.lock().unwrap() = "/hr/leave".to_string();
@@ -545,6 +578,42 @@ async fn the_first_trip_after_sign_in_is_unchanged() {
     let out = go_to_module(&mut d, &route, TripFrom::SignIn, &common::quick()).await;
     assert_eq!(out, Ok("/hr/leave".to_string()));
     assert_eq!(app.log(), vec!["navigate /hr/security/login", "click #toggle", "click Leave"]);
+}
+
+/// Review finding 1: on the home page with the menu closed, the quick try
+/// opens the menu and then cannot click Leave (something covers it). The
+/// page was changed, so the trip reloads home before the full path;
+/// without the reload the path's toggle would close the open menu.
+#[tokio::test]
+async fn a_quick_try_that_opened_the_menu_and_then_failed_reloads_before_the_full_path() {
+    let (mut d, app) = sidebar_app("/hr/home/index", false, false);
+    app.cover_on_toggle.store(true, Ordering::SeqCst);
+    // `menu_recipe`: home is /hr/home/index, and no `after_sign_in`.
+    let route = Route::new(&common::menu_recipe(), toggle_then_leave(""));
+    let out = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["click #toggle", "navigate /hr/home/index", "click #toggle", "click Leave"]);
+}
+
+/// The skip rule's known failure: a breadcrumb named like the menu entry
+/// makes the toggle look unneeded, and the click lands somewhere else. The
+/// arrived check catches it, and the trip reloads home and arrives,
+/// without touching the breadcrumb again.
+#[tokio::test]
+async fn a_skipped_toggle_that_was_wrong_falls_back_and_arrives() {
+    let _tail = crate::serial::log_tail();
+    let (mut d, app) = sidebar_app("/hr/payroll", false, false);
+    *app.outside_on.lock().unwrap() = "/hr/payroll".to_string();
+    let route = Route::new(&common::menu_recipe(), toggle_then_leave(""));
+    let out = go_to_module(&mut d, &route, TripFrom::Elsewhere, &common::quick()).await;
+    assert_eq!(out, Ok("/hr/leave".to_string()));
+    assert_eq!(app.log(), vec!["click outside Leave", "navigate /hr/home/index", "click #toggle", "click Leave"]);
+    assert_eq!(d.calls_to("Page.navigate").len(), 1, "one fallback, one reload");
+    let fallbacks = v2_lib::applog::recent(400)
+        .into_iter()
+        .filter(|l| l.message == "went home and tried Leave again")
+        .count();
+    assert!(fallbacks >= 1, "the fallback was not logged");
 }
 
 // ---- Areas ---------------------------------------------------------------
