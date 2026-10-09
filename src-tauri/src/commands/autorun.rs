@@ -674,6 +674,9 @@ pub async fn auto_run_step(
     // changed; a value still missing refuses the step with its sentence.
     let step = crate::autorun::setup::resolve_step(&root, &organization, &project, case_id, &step)?;
     let mut slot = SESSION.lock().await;
+    // A discovery's browser is the assistant's: a step would act behind its
+    // back, and could lift a mapping run's save guard (`guard_supervised`).
+    crate::ai_bridge::refuse_while_discovering(&mut slot)?;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     // Another case's tabs do not carry over into this one.
     // The saved script's own choices about dialogs nobody expected and the

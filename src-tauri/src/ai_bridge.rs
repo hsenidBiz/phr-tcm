@@ -2281,7 +2281,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
     if let Some(browser) = slot.take() {
         browser.close();
     }
-    crate::applog::info(format!("Auto Run discovery as {key} did not sign in; its browser is closed"));
+    crate::applog::info(format!("Auto Run discovery as {key} did not start; its browser is closed"));
     (409, failed)
 }
 
@@ -2378,6 +2378,7 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
         state.area = Some(crate::autorun::discovery_map::canonical_area(root, organization, project, &moved));
     }
     let area_name = state.area.clone();
+    let mapping = state.mapping.is_some();
     let d = p.driver;
     let runs: Vec<&crate::browser::actions::Action> = match &component {
         Some((_, actions)) => actions.iter().collect(),
@@ -2388,7 +2389,9 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     let mut after = String::new();
     for one in runs.iter().copied() {
         let ran =
-            match discover_one(d, p.signed_in, p.lease, root, organization, project, area_name.as_deref(), one).await {
+            match discover_one(d, p.signed_in, p.lease, root, organization, project, area_name.as_deref(), mapping, one)
+                .await
+            {
                 Ok(ran) => ran,
                 Err(refused) => return refused,
             };
@@ -2487,7 +2490,9 @@ fn component_to_try(
 }
 
 /// One action of a discovery, with the writes it set off logged and the
-/// line saying what it led to filed (`discover_action_in`).
+/// line saying what it led to filed (`discover_action_in`). In a mapping
+/// run (`mapping`) a save the guard stopped never fails the action: it is
+/// counted (`count_blocked_writes`), and the action keeps its own outcome.
 #[allow(clippy::too_many_arguments)]
 async fn discover_one<D: crate::browser::cdp::Driver>(
     d: &mut D,
@@ -2497,6 +2502,7 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
     organization: &str,
     project: &str,
     area_name: Option<&str>,
+    mapping: bool,
     action: &crate::browser::actions::Action,
 ) -> Result<Discovered, (u16, String)> {
     let recording = !project.trim().is_empty();
@@ -2504,7 +2510,7 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
     let before = current_page(d).await.0;
     let notes_before = status_texts(d).await;
     let mark = crate::browser::cdp::Driver::net_mark(d);
-    let tried = try_action(d, signed_in, lease, root, organization, project, 0, area_name, action).await?;
+    let tried = try_action(d, signed_in, lease, root, organization, project, 0, area_name, mapping, action).await?;
     let what = describe_action(action);
     let now = crate::autorun::sessions::now_ms();
     let mut writes = Vec::new();
@@ -3196,7 +3202,7 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
     discovery_area: Option<&str>,
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
-    let tried = try_action(d, account, lease, root, organization, project, case_id, discovery_area, action).await;
+    let tried = try_action(d, account, lease, root, organization, project, case_id, discovery_area, false, action).await;
     let outcome = match tried {
         Ok(tried) => tried.outcome,
         Err(refused) => return refused,
@@ -3217,7 +3223,8 @@ struct Tried {
 
 /// One action, carried out by the runner's own step loop as a step of one
 /// numbered 0 (`try_in_area` says why), with what it acted on filed when it
-/// worked.
+/// worked. `saves_only_counted` is a mapping run's: a stopped save never
+/// fails it (`runner::InRun::saves_only_counted`).
 #[allow(clippy::too_many_arguments)]
 async fn try_action<D: crate::browser::cdp::Driver>(
     d: &mut D,
@@ -3228,6 +3235,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     project: &str,
     case_id: i32,
     discovery_area: Option<&str>,
+    saves_only_counted: bool,
     action: &crate::browser::actions::Action,
 ) -> Result<Tried, (u16, String)> {
     use crate::autorun::runner::{area_route, area_routes, named_areas, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
@@ -3257,7 +3265,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     let matched = matched_targets(action);
     let started_on = if matched.is_empty() { String::new() } else { current_page(d).await.0 };
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
-    let mut run = InRun { areas: Some(&areas), ..Default::default() };
+    let mut run = InRun { areas: Some(&areas), saves_only_counted, ..Default::default() };
     let outcomes = match crate::autorun::runner::run_step_in_run(
         d,
         root,

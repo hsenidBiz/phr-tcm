@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use v2_lib::ai_bridge::{
     close_browser_in, discover_action_in, discover_area_in, discover_start_in, discovery_sighting, end_discovery_in,
-    read_page, route, BridgeContext, DiscoveryBrowser, DiscoveryParts, NO_DISCOVERY,
+    read_page, refuse_while_discovering, route, BridgeContext, DiscoveryBrowser, DiscoveryParts, NO_DISCOVERY,
 };
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::components::{draft_fingerprint, put, Component};
@@ -560,6 +560,8 @@ async fn a_save_the_page_sends_during_mapping_is_blocked_and_counted() {
     let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
     assert_eq!(status, 200, "{body}");
     let v = parsed(&body);
+    assert_eq!(v["ok"], true, "a stopped save failed the click that set it off: {body}");
+    assert!(!v2_lib::browser::save_guard::is_blocked(v["detail"].as_str().unwrap_or("")), "{body}");
     assert_eq!(v["blocked"], 2, "{body}");
     assert!(!body.contains("t0p-secret"), "{body}");
     let run = browser.as_ref().unwrap().discovery.as_ref().unwrap().mapping.as_ref().unwrap();
@@ -573,6 +575,7 @@ async fn a_save_the_page_sends_during_mapping_is_blocked_and_counted() {
     ));
     let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
     assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["ok"], true, "{body}");
     assert_eq!(parsed(&body)["blocked"], 1, "{body}");
     let run = browser.as_ref().unwrap().discovery.as_ref().unwrap().mapping.as_ref().unwrap();
     assert_eq!(run.blocked_writes, 3);
@@ -582,6 +585,72 @@ async fn a_save_the_page_sends_during_mapping_is_blocked_and_counted() {
         assert!(lines.iter().any(|l| l.ends_with(logged)), "{logged} was not logged: {lines:?}");
     }
     assert!(!lines.iter().any(|l| l.contains("t0p-secret") || l.contains("hr.example.internal/hr/leave")), "{lines:?}");
+}
+
+/// A save stopped outside an action (here while the page is read after
+/// one) is counted, and never fails the next action: that click still runs.
+#[tokio::test]
+async fn a_save_stopped_between_actions_never_fails_the_next_one() {
+    use v2_lib::browser::cdp::Driver;
+    let dir = root_with_recipe_and_account();
+    let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list?page=2");
+    d.guard_saves(&[]).await.unwrap();
+    d.saves_on_call.push((
+        "Accessibility.getFullAXTree".into(),
+        "POST".into(),
+        "https://hr.example.internal/api/SaveLastVisited".into(),
+    ));
+    let (mut browser, _) = slot(d, mapping(exploring("Leave"), &["Leave"]));
+    let open = Action::Click { selector: "#open".into() };
+
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &open, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["ok"], true, "{body}");
+    let b = browser.as_ref().unwrap();
+    assert!(b.d.saves_on_call.is_empty(), "the page read never sent its save");
+    let clicks_before = b.d.calls_to("Input.dispatchMouseEvent").len();
+
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &open, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], true, "the stopped save failed the next action: {body}");
+    assert!(!v2_lib::browser::save_guard::is_blocked(v["detail"].as_str().unwrap_or("")), "{body}");
+    let b = browser.as_ref().unwrap();
+    assert!(b.d.calls_to("Input.dispatchMouseEvent").len() > clicks_before, "the next click never ran");
+    assert_eq!(b.discovery.as_ref().unwrap().mapping.as_ref().unwrap().blocked_writes, 1);
+}
+
+/// A mapping run never goes unguarded: when its guard cannot go on, the
+/// start answers with the guard's own sentence and closes the browser.
+#[tokio::test]
+async fn a_mapping_run_whose_guard_cannot_go_on_closes_its_browser() {
+    let dir = root_with_recipe_and_account();
+    let nav = v2_lib::autorun::nav::nav_path(dir.path(), ORG, PROJECT);
+    std::fs::create_dir_all(nav.parent().unwrap()).unwrap();
+    std::fs::write(&nav, "not json").unwrap();
+    let (mut browser, closed) = slot(signin_app(true), mapping(opened_for_discovery(), &["Leave"]));
+    let (status, out) = discover_start_in(&mut browser, dir.path(), ORG, PROJECT, "admin", None, &quick()).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.starts_with(v2_lib::browser::save_guard::SETUP_FAILED), "{out}");
+    assert!(closed.load(Ordering::SeqCst), "the browser was left open unguarded");
+    assert!(browser.is_none(), "the discovery slot still holds the browser");
+}
+
+/// A person's Run step is refused while a discovery holds the browser: it
+/// would act behind the assistant's back, and could lift a mapping run's
+/// save guard. Refused under the session's lock, before the guard is
+/// touched, with the busy sentence.
+#[tokio::test]
+async fn a_step_is_refused_while_a_discovery_holds_the_browser() {
+    let (mut discovering, _) = slot(signin_app(true), mapping(exploring("Leave"), &["Leave"]));
+    assert_eq!(refuse_while_discovering(&mut discovering), Err(busy_browser_sentence(true).to_string()));
+    let (mut theirs, _) = slot(signin_app(true), None);
+    assert_eq!(refuse_while_discovering(&mut theirs), Ok(()));
+
+    let source = include_str!("../../src/commands/autorun.rs");
+    let step = &source[source.find("pub async fn auto_run_step").unwrap()..];
+    let step = &step[..step.find("guard_supervised(").unwrap()];
+    assert!(step.contains("refuse_while_discovering(&mut slot)?"), "a step does not refuse a discovery's browser");
 }
 
 /// An ordinary discovery is not a mapping run: no guard goes on, the

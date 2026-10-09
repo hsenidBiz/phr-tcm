@@ -262,6 +262,10 @@ pub struct InRun<'a> {
     /// Learned back: each component the step used, in order, with the
     /// version it had, for its record.
     pub components: Vec<ComponentUse>,
+    /// A save the guard stopped never fails the step: a discovery's mapping
+    /// run counts its stopped saves instead (`Driver::take_saves_stopped`).
+    /// The stopped save's sentence is still taken, so it never carries over.
+    pub saves_only_counted: bool,
 }
 
 /// The longest an `expect_download` waits in a watched run or a try, which
@@ -397,6 +401,7 @@ async fn run_expanded<D: Driver>(
     }
     let mut dialogs_read = 0usize;
     let fail_on_unexpected = run.fail_on_unexpected_dialog;
+    let saves_fail = !run.saves_only_counted;
     let mut deferred: Vec<(usize, u32)> = Vec::new();
     let mark = d.net_mark();
     let began = Instant::now();
@@ -415,7 +420,7 @@ async fn run_expanded<D: Driver>(
         }
         // A save stopped before this action began - while the page loaded,
         // or between two steps - fails the step here, before it acts.
-        if let Some(sentence) = d.take_save_blocked() {
+        if let Some(sentence) = d.take_save_blocked().filter(|_| saves_fail) {
             let mut stopped = ActionOutcome::failed(sentence);
             stopped.screenshot = picture(d, root).await;
             out.push(stopped);
@@ -558,7 +563,7 @@ async fn run_expanded<D: Driver>(
         };
         // A save the page tried while this action ran is the step's
         // failure, whatever the action itself made of the page.
-        if let Some(sentence) = d.take_save_blocked() {
+        if let Some(sentence) = d.take_save_blocked().filter(|_| saves_fail) {
             outcome = ActionOutcome::failed(sentence);
             blocked = Some(AFTER_SAVE_BLOCKED);
         }
