@@ -1713,6 +1713,11 @@ fn the_map_menus_command_walks_the_menus_and_never_submits() {
     for said in [
         "`mapping` set to true",
         "`modules`",
+        "the save answers `unchanged`",
+        "When the clicks did not arrive, skip that screen and carry on",
+        "pick a more specific name and save again",
+        "Only these stop the run",
+        "the areas list as it stood when you read the guide",
         "the admin side first and then self-service",
         "\"Module / Menu path\"",
         "Never fill in or submit anything",
