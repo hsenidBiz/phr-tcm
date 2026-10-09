@@ -27,6 +27,19 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.2-beta.2",
+    date: "2026-10-09",
+    items: [
+      "Auto Run runs faster: sign-in pop-ups are watched together in one short window instead of waited out one by one, an unattended run keeps one browser with a fresh session for each case, and waits and clicks check the page more quickly.",
+      "Each case in an unattended run now records how long it spent opening, signing in, reaching its area and on every step, shown in the run report.",
+      "The Queue can be grouped by area: turn on Group by area to see cases under nested, foldable groups with counts. View in browser shows the same groups.",
+      "Queue cases are now selected by clicking them, as in Update Test Cases: Ctrl-click to add or remove one, Shift-click for a range, and the arrow keys to move between them. A group's tick box selects every case in it.",
+      "On the AI Bridge tab, each tool's explanation sits behind an information icon, and the environment shows just its site name.",
+      "Uploading to a PBI no longer warns that no test suite could be made when the app goes on to make it the other way, and remembers which areas need that.",
+      "Share for review explains why Azure DevOps refused to attach the draft, and counts an existing link as shared.",
+    ],
+  },
+  {
     version: "2.1.2-beta.1",
     date: "2026-10-09",
     items: [
