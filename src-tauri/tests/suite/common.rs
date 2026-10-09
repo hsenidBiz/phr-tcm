@@ -96,7 +96,20 @@ pub struct ScriptedDriver {
     /// shows this 3 s in" without spending 3 s, and reads back how long a
     /// wait loop idled.
     pub idle_clock: Option<Arc<AtomicU64>>,
+    /// Answers a call sent with `send_deferred` later, as `Cdp` does: the
+    /// call is made (and recorded) when it is sent, and its collection is
+    /// recorded as `COLLECTED` followed by the method. Off: `send_deferred`
+    /// says it cannot, as every other fake.
+    pub defers: bool,
+    /// The browser goes away before a deferred answer is collected: every
+    /// `collect` is `Closed`.
+    pub dies_before_collect: bool,
+    /// The deferred answers not collected yet, by id.
+    pub deferred: std::collections::HashMap<u64, Result<serde_json::Value, CdpError>>,
 }
+
+/// How `ScriptedDriver` records collecting a deferred call's answer.
+pub const COLLECTED: &str = "collected ";
 
 /// A small model of a browser's tabs for `ScriptedDriver`: `main`, the
 /// tabs a script named, and tabs the page opened that nobody named yet.
@@ -169,6 +182,9 @@ impl ScriptedDriver {
             dialogs_on_call: vec![],
             page_errors: PageErrorBook::default(),
             idle_clock: None,
+            defers: false,
+            dies_before_collect: false,
+            deferred: std::collections::HashMap::new(),
         }
     }
 
@@ -433,6 +449,26 @@ impl Driver for ScriptedDriver {
             return Err(CdpError::Tab(tab_did_not_close(name, within)));
         }
         Err(CdpError::Tab(no_tab(name)))
+    }
+    async fn send_deferred(&mut self, method: &str, params: serde_json::Value) -> Option<Result<u64, CdpError>> {
+        if !self.defers {
+            return None;
+        }
+        let answer = self.call(method, params).await;
+        let id = self.calls.len() as u64;
+        self.deferred.insert(id, answer);
+        Some(Ok(id))
+    }
+    async fn collect(&mut self, id: u64, method: &str, _limit: Duration) -> Result<serde_json::Value, CdpError> {
+        self.calls.push((format!("{COLLECTED}{method}"), serde_json::json!({})));
+        let answer = self.deferred.remove(&id).unwrap_or(Err(CdpError::Closed));
+        if self.dies_before_collect {
+            return Err(CdpError::Closed);
+        }
+        answer
+    }
+    fn abandon(&mut self, id: u64) {
+        self.deferred.remove(&id);
     }
     async fn close_other_tabs(&mut self) {
         self.tabs.closed_others += 1;

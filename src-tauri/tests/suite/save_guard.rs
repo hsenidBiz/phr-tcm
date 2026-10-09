@@ -1291,3 +1291,30 @@ async fn a_command_waiting_on_a_parked_save_returns_at_its_limit() {
     assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
     assert!(took < Duration::from_secs(4), "the command waited {took:?}");
 }
+
+/// A step's picture is no longer waited for, so it no longer reads what
+/// the page sent after the step's last action. The cheap call made in its
+/// place does: a save the page sent then still fails that step's last
+/// outcome, read at the same point as before.
+#[tokio::test]
+async fn a_save_sent_after_the_last_action_fails_it_while_the_picture_is_still_taken() {
+    let dir = tempfile::tempdir().unwrap();
+    let page = common::FakePage::default();
+    let mut d = common::ScriptedDriver::new(move |method, params| match method {
+        "Page.captureScreenshot" => Ok(json!({ "data": "/9j/4AAQ" })),
+        _ => page.answer(method, params),
+    });
+    d.defers = true;
+    d.block_after = Some((v2_lib::autorun::runner::READ_WHAT_THE_PAGE_SENT.into(), SENTENCE.into()));
+    let script = no_save_script(json!([
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": "#save" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#next" }] }
+    ]));
+    let rec = run_case(&mut d, dir.path(), "acme", "PMS", &script, &quick(), &AtomicBool::new(false), &mut |_| {}).await;
+    let one = rec.steps.iter().find(|s| s.step_number == 1).expect("step 1 was not recorded");
+    assert_eq!(one.outcomes.last().map(|o| o.detail.as_str()), Some(SENTENCE), "{rec:?}");
+    assert!(one.screenshot.is_some(), "the step's picture was lost: {rec:?}");
+    let two = rec.steps.iter().find(|s| s.step_number == 2).expect("step 2 was not recorded");
+    assert!(two.outcomes.iter().all(|o| o.detail.starts_with("not run:")), "{rec:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}

@@ -177,7 +177,139 @@ pub(crate) async fn picture<D: Driver>(d: &mut D, root: &Path) -> Option<String>
         .await
         .ok()?
         .ok()?;
-    store::save_shot(root, &bytes).ok()
+    write_shot(root, bytes).await.ok().flatten()
+}
+
+/// Write a picture off the step loop. Its file name once written; `None`
+/// when the write failed.
+fn write_shot(root: &Path, bytes: Vec<u8>) -> tokio::task::JoinHandle<Option<String>> {
+    let root = root.to_path_buf();
+    tokio::task::spawn_blocking(move || store::save_shot(&root, &bytes).ok())
+}
+
+/// A step's own picture, of the page as its step left it, on its way to
+/// disk without holding up the next step. Asked of the browser at once;
+/// where the browser allows it (`Driver::send_deferred`) its answer is read
+/// later, and the file is always written off the step loop.
+///
+/// The next step's first action that changes the page settles it first
+/// (`settle`), so the picture never shows that action's work; a check or
+/// a read runs while it is taken. `finish` gives the file name once it is
+/// on disk, or `None` when the capture failed, timed out, or the browser
+/// went away: a record never names a file that is not there.
+pub struct Picture {
+    root: std::path::PathBuf,
+    shot: Shot,
+}
+
+enum Shot {
+    /// Asked of the browser; its answer not read yet.
+    Asked { id: u64, at: Instant },
+    /// Being written.
+    Writing(tokio::task::JoinHandle<Option<String>>),
+    /// No picture.
+    Nothing,
+}
+
+impl Picture {
+    /// Ask for a picture of the page as it is now. A browser that cannot
+    /// answer later is asked and waited for here, as before; only its
+    /// write is left to run on.
+    pub async fn take<D: Driver>(d: &mut D, root: &Path) -> Picture {
+        let limit = Duration::from_millis(SHOT_TIMEOUT_MS);
+        let shot = match d.send_deferred(page::SCREENSHOT, page::screenshot_params()).await {
+            Some(Ok(id)) => Shot::Asked { id, at: Instant::now() },
+            Some(Err(_)) => Shot::Nothing,
+            None => match tokio::time::timeout(limit, page::screenshot(d)).await {
+                Ok(Ok(bytes)) => Shot::Writing(write_shot(root, bytes)),
+                _ => Shot::Nothing,
+            },
+        };
+        Picture { root: root.to_path_buf(), shot }
+    }
+
+    /// Still waiting on the browser's answer.
+    pub fn is_outstanding(&self) -> bool {
+        matches!(self.shot, Shot::Asked { .. })
+    }
+
+    /// Read the browser's answer, when it is still to come, within what is
+    /// left of `SHOT_TIMEOUT_MS` since it was asked, and start writing it.
+    pub async fn settle<D: Driver>(&mut self, d: &mut D) {
+        let Shot::Asked { id, at } = self.shot else {
+            return;
+        };
+        let left = Duration::from_millis(SHOT_TIMEOUT_MS).saturating_sub(at.elapsed());
+        let bytes = d.collect(id, page::SCREENSHOT, left).await.and_then(|r| page::image_of(&r));
+        self.shot = match bytes {
+            Ok(bytes) => Shot::Writing(write_shot(&self.root, bytes)),
+            Err(_) => {
+                d.abandon(id);
+                Shot::Nothing
+            }
+        };
+    }
+
+    /// The picture's file name once it is written, or `None`.
+    pub async fn finish<D: Driver>(mut self, d: &mut D) -> Option<String> {
+        self.settle(d).await;
+        match self.shot {
+            Shot::Writing(h) => h.await.ok().flatten(),
+            _ => None,
+        }
+    }
+}
+
+/// The cheap call `step_picture` makes where the step's picture used to be
+/// waited for.
+pub const READ_WHAT_THE_PAGE_SENT: &str = "Target.getTargetInfo";
+
+/// One cheap round trip to the browser, made where a picture used to be
+/// waited for: the browser writes every event it sent before the call
+/// ahead of the answer, so a save the page sent after a step's last action
+/// is read here, as the picture's answer used to read it. Its answer, or a
+/// refusal, does not matter.
+async fn read_what_the_page_sent<D: Driver>(d: &mut D) {
+    let limit = Duration::from_millis(SHOT_TIMEOUT_MS);
+    let _ = d.call_within(READ_WHAT_THE_PAGE_SENT, serde_json::json!({}), limit).await;
+}
+
+/// A step's own picture (`Picture::take`), with what the page sent up to
+/// that moment read, so `Driver::take_save_blocked` sees a save the page
+/// sent after the step's last action.
+pub async fn step_picture<D: Driver>(d: &mut D, root: &Path) -> Picture {
+    let p = Picture::take(d, root).await;
+    if p.is_outstanding() {
+        read_what_the_page_sent(d).await;
+    }
+    p
+}
+
+/// Whether an action may change the page, so a picture still being taken
+/// of the step before is settled first. Checks and reads do not.
+fn changes_the_page(action: &Action) -> bool {
+    !matches!(
+        action,
+        Action::WaitFor { .. }
+            | Action::CheckText { .. }
+            | Action::CheckUrl { .. }
+            | Action::ExpectVisible { .. }
+            | Action::ExpectHidden { .. }
+            | Action::ExpectText { .. }
+            | Action::ExpectContainsText { .. }
+            | Action::ExpectCount { .. }
+            | Action::ExpectAttribute { .. }
+            | Action::ExpectResponse { .. }
+            | Action::ExpectFocused { .. }
+            | Action::ExpectDownload { .. }
+            | Action::ExpectTab { .. }
+            | Action::ExpectTabClosed { .. }
+            | Action::ExpectDialog { .. }
+            | Action::ExpectRow { .. }
+            | Action::ExpectNoRow { .. }
+            | Action::ExpectSorted { .. }
+            | Action::ExpectRowCount { .. }
+    )
 }
 
 /// Run one step's actions in order and report every outcome.
@@ -279,6 +411,9 @@ pub struct InRun<'a> {
     /// The run's recipe and areas file, read once and again only when they
     /// changed (`RunFiles`). `None` reads them afresh for this step.
     pub files: Option<&'a RunFiles>,
+    /// The step before's picture, maybe still being taken: settled before
+    /// this step's first action that changes the page.
+    pub picture: Option<&'a mut Picture>,
 }
 
 /// The longest an `expect_download` waits in a watched run or a try, which
@@ -450,6 +585,12 @@ async fn run_expanded<D: Driver>(
             blocked = Some(AFTER_SAVE_BLOCKED);
             continue;
         }
+        // The step before's picture shows the page as that step left it.
+        if changes_the_page(action) {
+            if let Some(p) = run.picture.as_deref_mut() {
+                p.settle(d).await;
+            }
+        }
         // An `expect_dialog` judges once the step's other actions are done:
         // its place is kept, and filled then.
         if matches!(action, Action::ExpectDialog { .. }) {
@@ -596,6 +737,12 @@ async fn run_expanded<D: Driver>(
             outcome.screenshot = picture(d, root).await;
         }
         out.push(outcome);
+    }
+    // Judging a dialog answers it, which changes the page.
+    if !deferred.is_empty() {
+        if let Some(p) = run.picture.as_deref_mut() {
+            p.settle(d).await;
+        }
     }
     // Each `expect_dialog`, in order, now the rest of the step has run.
     for (slot, id) in deferred {

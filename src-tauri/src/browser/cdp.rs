@@ -670,6 +670,11 @@ pub struct Cdp<T: Transport = WsTransport> {
     seeds: Vec<(String, serde_json::Value)>,
     /// The setup frames of new tabs whose answers matter, by id.
     setup: HashMap<u64, (String, SetupStep)>,
+    /// Calls sent with `send_deferred` whose answers are collected later,
+    /// by id: the session each went to, and its answer once read. Whoever
+    /// reads frames next keeps the answer here, so the socket still has one
+    /// reader. Bounded by `MAX_DEFERRED`.
+    deferred: HashMap<u64, (String, Option<Result<serde_json::Value, String>>)>,
     /// Who answers each dialog, in any tab, and the dialogs seen
     /// (`dialogs`). One for the whole run, never per tab: an
     /// `expect_dialog` claims the next dialog wherever it opens.
@@ -705,6 +710,9 @@ struct EarlyEnd {
 
 /// How many early ends are remembered.
 const MAX_EARLY_ENDS: usize = 32;
+
+/// How many deferred calls (`send_deferred`) are kept waiting at once.
+const MAX_DEFERRED: usize = 16;
 
 /// What a guarded tab does with each paused request.
 struct SaveGuard {
@@ -806,6 +814,7 @@ impl<T: Transport> Cdp<T> {
             downloads_per_page: false,
             seeds: vec![],
             setup: HashMap::new(),
+            deferred: HashMap::new(),
             book: super::dialogs::DialogBook::default(),
             page_errors: super::page_errors::PageErrorBook::default(),
             context: None,
@@ -1645,6 +1654,11 @@ impl<T: Transport> Cdp<T> {
     /// that, and is logged.
     async fn on_setup_reply(&mut self, id: u64, answer: Result<serde_json::Value, String>) -> Result<(), CdpError> {
         self.note_reply(id);
+        // A deferred call's answer, kept for `collect`.
+        if let Some((_, slot)) = self.deferred.get_mut(&id) {
+            *slot = Some(answer);
+            return Ok(());
+        }
         let Some((session, step)) = self.setup.remove(&id) else {
             return Ok(());
         };
@@ -2106,6 +2120,80 @@ impl<T: Transport> Cdp<T> {
             Ok(answer) => answer,
             Err(_) => Err(CdpError::Timeout { what: method.to_string(), ms: limit.as_millis() as u64 }),
         }
+    }
+
+    /// Send a call to the current tab without waiting for its answer, and
+    /// return its id for `collect`. Nothing is read here: the answer is
+    /// kept by whichever read comes next, a later call's or `collect`'s.
+    /// At most `MAX_DEFERRED` are kept at once; the oldest is let go.
+    pub async fn send_deferred(&mut self, method: &str, params: serde_json::Value) -> Result<u64, CdpError> {
+        let session = self.current.clone();
+        if !self.has_tab(&session) {
+            return Err(self.gone(&session));
+        }
+        self.resolve_parked().await?;
+        self.send_unsent_answers().await?;
+        let id = self.next_id;
+        self.next_id += 1;
+        if self.hold_pending && self.hold_marker.is_none() {
+            self.hold_marker = Some(id);
+        }
+        if self.deferred.len() >= MAX_DEFERRED {
+            if let Some(oldest) = self.deferred.keys().min().copied() {
+                self.deferred.remove(&oldest);
+            }
+        }
+        self.deferred.insert(id, (session.clone(), None));
+        if let Err(e) = self.transport.send(frame_in(id, method, params, &session)).await {
+            self.deferred.remove(&id);
+            return Err(CdpError::Transport(e));
+        }
+        Ok(id)
+    }
+
+    /// The answer to a call `send_deferred` sent, read for at most `limit`
+    /// from now. A tab that closed first, or a socket that went away, is
+    /// `Closed`. Either way the call is forgotten.
+    pub async fn collect(&mut self, id: u64, method: &str, limit: Duration) -> Result<serde_json::Value, CdpError> {
+        let answer = tokio::time::timeout(limit, self.read_deferred(id)).await;
+        self.deferred.remove(&id);
+        match answer {
+            Err(_) => Err(CdpError::Timeout { what: method.to_string(), ms: limit.as_millis() as u64 }),
+            Ok(Err(e)) => Err(e),
+            Ok(Ok(Err(message))) => Err(CdpError::Protocol { method: method.to_string(), message }),
+            Ok(Ok(Ok(v))) => Ok(v),
+        }
+    }
+
+    /// Read frames until the deferred call `id` has its answer.
+    async fn read_deferred(&mut self, id: u64) -> Result<Result<serde_json::Value, String>, CdpError> {
+        loop {
+            let session = match self.deferred.get_mut(&id) {
+                None => return Err(CdpError::Closed),
+                Some((session, slot)) => match slot.take() {
+                    Some(answer) => return Ok(answer),
+                    None => session.clone(),
+                },
+            };
+            if !self.has_tab(&session) {
+                return Err(CdpError::Closed);
+            }
+            let Some(raw) = self.next_frame_or_park().await? else {
+                self.resolve_parked().await?;
+                continue;
+            };
+            match classify(&raw) {
+                Incoming::Reply { id: got, answer } => self.on_setup_reply(got, answer).await?,
+                Incoming::Event { session, ev } => self.route_event(session, ev).await?,
+                Incoming::Other => {}
+            }
+            self.resolve_parked().await?;
+        }
+    }
+
+    /// Let go of a deferred call: its answer is dropped when it comes.
+    pub fn abandon(&mut self, id: u64) {
+        self.deferred.remove(&id);
     }
 
     async fn read_reply(
@@ -2577,6 +2665,26 @@ pub trait Driver {
     fn close_other_tabs(&mut self) -> impl Future<Output = ()> {
         async {}
     }
+    /// See `Cdp::send_deferred`. `None`: this driver cannot send a call
+    /// and collect its answer later, so the caller makes the call as usual.
+    fn send_deferred(
+        &mut self,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> impl Future<Output = Option<Result<u64, CdpError>>> {
+        async { None }
+    }
+    /// See `Cdp::collect`. Only ever asked for an id `send_deferred` gave.
+    fn collect(
+        &mut self,
+        _id: u64,
+        _method: &str,
+        _limit: Duration,
+    ) -> impl Future<Output = Result<serde_json::Value, CdpError>> {
+        async { Err(CdpError::Closed) }
+    }
+    /// See `Cdp::abandon`.
+    fn abandon(&mut self, _id: u64) {}
 }
 
 impl<T: Transport> Driver for Cdp<T> {
@@ -2675,6 +2783,15 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     async fn expect_tab_closed(&mut self, name: &str, within: Duration) -> Result<(), CdpError> {
         Cdp::expect_tab_closed(self, name, within).await
+    }
+    async fn send_deferred(&mut self, method: &str, params: serde_json::Value) -> Option<Result<u64, CdpError>> {
+        Some(Cdp::send_deferred(self, method, params).await)
+    }
+    async fn collect(&mut self, id: u64, method: &str, limit: Duration) -> Result<serde_json::Value, CdpError> {
+        Cdp::collect(self, id, method, limit).await
+    }
+    fn abandon(&mut self, id: u64) {
+        Cdp::abandon(self, id)
     }
     async fn close_other_tabs(&mut self) {
         Cdp::close_other_tabs(self).await

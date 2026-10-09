@@ -467,6 +467,10 @@ async fn run_case_in<D: Driver>(
     // module - is no step's error.
     super::page_errors::drop_all(d);
     let mut page_errors_seen = 0u32;
+    // Each step's picture, by its index in `steps`, still being taken or
+    // written. The next step settles the latest before it changes the
+    // page; every one is finished before the record is made.
+    let mut pictures: Vec<(usize, runner::Picture)> = Vec::new();
     let stepping = Instant::now();
     for step in &script.steps {
         if skip.is_none() && cancel.load(Ordering::SeqCst) {
@@ -492,6 +496,7 @@ async fn run_case_in<D: Driver>(
             fail_on_unexpected_dialog: script.fail_on_unexpected_dialog,
             page_errors: script.page_errors,
             ignore_page_errors: script.ignore_page_errors.clone(),
+            picture: pictures.last_mut().map(|(_, p)| p),
             ..Default::default()
         };
         let outcomes = match runner::run_step_in_run(
@@ -519,9 +524,9 @@ async fn run_case_in<D: Driver>(
         // it would have before the next step, with no picture to wait for.
         let stopped_inside = outcomes.iter().any(|o| o.detail == AFTER_STOP);
         let harness = outcomes.iter().any(|o| !o.ok && o.harness);
-        let screenshot = if harness || stopped_inside { None } else { runner::picture(d, root).await };
+        let picture = if harness || stopped_inside { None } else { Some(runner::step_picture(d, root).await) };
         // A save the page sent after the step's last action had already
-        // passed (read while the picture was taken) is still this step's.
+        // passed (read as the picture was asked for) is still this step's.
         if let Some(sentence) = d.take_save_blocked() {
             if outcomes.iter().all(|o| o.ok) {
                 if let Some(last) = outcomes.last_mut() {
@@ -535,8 +540,16 @@ async fn run_case_in<D: Driver>(
         } else if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
         }
-        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new(), tab: in_run.tab, dialog: in_run.dialog, components: in_run.components, duration_ms: Some(ms(asked_at.elapsed())) });
+        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot: None, downloads: Vec::new(), tab: in_run.tab, dialog: in_run.dialog, components: in_run.components, duration_ms: Some(ms(asked_at.elapsed())) });
         page_errors_seen += in_run.page_errors_seen;
+        if let Some(p) = picture {
+            pictures.push((steps.len() - 1, p));
+        }
+    }
+    // Every picture on disk, or none, before the record names it. A
+    // browser that went away leaves its step with none.
+    for (at, p) in pictures {
+        steps[at].screenshot = p.finish(d).await;
     }
 
     // The case's one wait for a download still arriving (`one_go` does not

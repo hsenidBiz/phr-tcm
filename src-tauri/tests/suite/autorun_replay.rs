@@ -2340,3 +2340,150 @@ async fn protected_shots_survive_the_end_of_run_prune() {
     assert_eq!(left.len(), 1001, "the budget plus the one protected picture");
     assert!(!left.contains(&"shot-1-000001.jpg".to_string()), "an unprotected old one went, even on Stop");
 }
+
+// ---- Step pictures not waited for ----------------------------------------
+
+/// A page whose pictures are asked for and collected later, as a real
+/// browser's are.
+fn deferring_page() -> common::ScriptedDriver {
+    let page = common::FakePage::default();
+    let mut d = common::ScriptedDriver::new(move |method, params| match method {
+        "Page.captureScreenshot" => Ok(serde_json::json!({ "data": "/9j/4AAQ" })),
+        _ => page.answer(method, params),
+    });
+    d.defers = true;
+    d
+}
+
+fn clicks(steps: &[&str]) -> CaseScript {
+    let steps: Vec<serde_json::Value> = steps
+        .iter()
+        .enumerate()
+        .map(|(i, css)| serde_json::json!({ "step_number": i + 1, "actions": [{ "kind": "click", "selector": { "css": css } }] }))
+        .collect();
+    script(1, None, serde_json::Value::Array(steps))
+}
+
+async fn run_one(d: &mut common::ScriptedDriver, root: &Path, case: &CaseScript) -> v2_lib::autorun::CaseRecord {
+    let cancel = AtomicBool::new(false);
+    v2_lib::autorun::replay::run_case(d, root, "Acme", "Web", case, &quick(), &cancel, &mut |_| {}).await
+}
+
+fn collected() -> String {
+    format!("{}Page.captureScreenshot", common::COLLECTED)
+}
+
+fn shots_on_disk(root: &Path) -> usize {
+    std::fs::read_dir(root.join("shots")).map(|r| r.count()).unwrap_or(0)
+}
+
+/// Review focus 4: step 1's picture is the page step 1 left. Step 2's
+/// click waits for it, so nothing of the click runs between asking for the
+/// picture and reading it.
+#[tokio::test]
+async fn the_next_click_waits_for_the_outstanding_picture() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    let rec = run_one(&mut d, dir.path(), &clicks(&["#one", "#two"])).await;
+    let m = d.methods();
+    let asked = m.iter().position(|x| x == "Page.captureScreenshot").expect("no picture was asked for");
+    let read = m.iter().position(|x| *x == collected()).expect("the picture was never read");
+    assert!(asked < read, "{m:?}");
+    assert!(
+        m[asked + 1..read].iter().all(|x| x == "Target.getTargetInfo"),
+        "step 2 acted before step 1's picture was read: {m:?}"
+    );
+    let second_click = m[read..].iter().position(|x| x == "Input.dispatchMouseEvent");
+    assert!(second_click.is_some(), "step 2 never clicked: {m:?}");
+    assert!(rec.steps.iter().all(|s| s.screenshot.is_some()), "{:?}", rec.steps);
+}
+
+/// A check is no page change: it runs while the step before's picture is
+/// still being taken, and the click after it still waits.
+#[tokio::test]
+async fn a_check_runs_while_the_picture_is_taken() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    let case = script(
+        1,
+        None,
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#one" } }] },
+            { "step_number": 2, "actions": [
+                { "kind": "check_text", "value": "ok" },
+                { "kind": "click", "selector": { "css": "#two" } }
+            ] },
+        ]),
+    );
+    let rec = run_one(&mut d, dir.path(), &case).await;
+    let m = d.methods();
+    let asked = m.iter().position(|x| x == "Page.captureScreenshot").expect("no picture was asked for");
+    let read = m.iter().position(|x| *x == collected()).expect("the picture was never read");
+    assert!(
+        m[asked + 1..read].iter().any(|x| x == "Runtime.callFunctionOn"),
+        "the check waited for the picture: {m:?}"
+    );
+    assert!(!m[asked + 1..read].iter().any(|x| x == "Input.dispatchMouseEvent"), "{m:?}");
+    assert!(m[read..].iter().any(|x| x == "Input.dispatchMouseEvent"), "{m:?}");
+    assert!(rec.steps.iter().all(|s| s.outcomes.iter().all(|o| o.ok)), "{:?}", rec.steps);
+}
+
+/// Every picture, the last step's included, is on disk when the record is
+/// made, and nothing is left asked for.
+#[tokio::test]
+async fn the_record_waits_for_every_picture() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut d = deferring_page();
+    let rec = run_one(&mut d, root, &clicks(&["#one", "#two", "#three"])).await;
+    assert_eq!(rec.steps.len(), 3);
+    for s in &rec.steps {
+        let name = s.screenshot.as_deref().unwrap_or_else(|| panic!("step {} has no picture", s.step_number));
+        assert!(store::shot_exists(root, name), "step {} names {name}, which is not on disk", s.step_number);
+    }
+    assert_eq!(shots_on_disk(root), 3);
+    assert_eq!(d.methods().iter().filter(|x| **x == collected()).count(), 3);
+    assert!(d.deferred.is_empty(), "a picture was left asked for");
+}
+
+/// Review focus 5: the browser goes away with the last step's picture
+/// still to be read. The record is saved, that step has no picture, and no
+/// file is left behind.
+#[tokio::test]
+async fn a_dead_browser_with_a_picture_outstanding_saves_a_clean_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &clicks(&["#one"])).unwrap();
+    let mut d = deferring_page();
+    d.dies_before_collect = true;
+    let mut browsers = FakeBrowsers { queue: [Some(d)].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-dead");
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "case 1".to_string())], &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    let saved = store::load_run(root, "run-dead").unwrap().expect("the run was not saved");
+    let step = saved.cases[0].steps.iter().find(|s| s.step_number == 1).expect("step 1 was not recorded");
+    assert_eq!(step.screenshot, None);
+    assert_eq!(shots_on_disk(root), 0);
+    assert!(browsers.returned[0].deferred.is_empty(), "a picture was left asked for");
+    assert_eq!(browsers.closed, 1);
+}
+
+/// A capture the browser refuses leaves its step with no picture, and the
+/// steps still run.
+#[tokio::test]
+async fn a_failed_capture_leaves_no_picture() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let page = common::FakePage::default();
+    let mut d = common::ScriptedDriver::new(move |method, params| match method {
+        "Page.captureScreenshot" => Err(CdpError::Protocol { method: method.into(), message: "busy".into() }),
+        _ => page.answer(method, params),
+    });
+    d.defers = true;
+    let rec = run_one(&mut d, root, &clicks(&["#one", "#two"])).await;
+    assert!(rec.steps.iter().all(|s| s.screenshot.is_none()), "{:?}", rec.steps);
+    assert!(rec.steps.iter().all(|s| s.outcomes.iter().all(|o| o.ok)), "{:?}", rec.steps);
+    assert_eq!(shots_on_disk(root), 0);
+}
