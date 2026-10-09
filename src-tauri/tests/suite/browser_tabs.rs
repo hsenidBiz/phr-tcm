@@ -25,6 +25,7 @@ const MAIN: &str = "S-main";
 /// - `withhold_first`: like `withhold`, for the first such command only.
 /// - `refuse_typed`: every `Fetch.enable` with typed patterns is refused,
 ///   as by a browser that does not know one of the types.
+/// - `refuse_with`: like `refuse`, answered with this message.
 ///
 /// `Target.createTarget` answers with the target `T-new`, and
 /// `Target.getTargetInfo` says main is in the browser context `C-1`.
@@ -38,6 +39,7 @@ struct FakeBrowser {
     after_reply: Vec<(String, Value)>,
     withhold_first: Vec<String>,
     refuse_typed: bool,
+    refuse_with: Vec<(String, String)>,
 }
 
 impl FakeBrowser {
@@ -52,6 +54,7 @@ impl FakeBrowser {
             after_reply: vec![],
             withhold_first: vec![],
             refuse_typed: false,
+            refuse_with: vec![],
         }
     }
 }
@@ -72,7 +75,9 @@ impl Transport for FakeBrowser {
             self.incoming.push_back(frame.to_string());
         }
         let typed = method == "Fetch.enable" && v["params"]["patterns"][0]["resourceType"].is_string();
-        let mut reply = if self.refuse.iter().any(|n| names(n, &method, &session)) || (self.refuse_typed && typed) {
+        let mut reply = if let Some((_, why)) = self.refuse_with.iter().find(|(n, _)| names(n, &method, &session)) {
+            json!({ "id": id, "error": { "code": -32000, "message": why } })
+        } else if self.refuse.iter().any(|n| names(n, &method, &session)) || (self.refuse_typed && typed) {
             json!({ "id": id, "error": { "code": -32000, "message": "refused by the test" } })
         } else if method == "Target.attachToTarget" {
             json!({ "id": id, "result": { "sessionId": MAIN } })
@@ -376,6 +381,7 @@ async fn a_guarded_tab_whose_interception_is_refused_is_held_and_fails_the_case(
 /// guarded by the catch-all before it runs, and its save is stopped.
 #[tokio::test]
 async fn a_tab_whose_typed_patterns_are_refused_is_guarded_by_the_catch_all() {
+    let _log = crate::serial::log_tail();
     let mut cdp = browser().await;
     cdp.guard_saves(&[]).await.unwrap();
     cdp.transport_mut().refuse_typed = true;
@@ -395,6 +401,48 @@ async fn a_tab_whose_typed_patterns_are_refused_is_guarded_by_the_catch_all() {
     feed(&mut cdp, [paused("S-pop", "r1", "POST", "https://hr.example/api/Save")]);
     settle(&mut cdp).await;
     assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+
+    // The catch-all took, so this browser is switched to it: a later tab
+    // is sent it at once, and the refusal was said once.
+    feed(&mut cdp, [attached("S-two", "T-two", "page", "https://hr.example/two", true)]);
+    settle(&mut cdp).await;
+    let first = cdp.transport().sent.iter().find(|f| f["sessionId"] == "S-two" && f["method"] == "Fetch.enable").cloned();
+    assert_eq!(first.map(|f| f["params"].clone()), Some(v2_lib::browser::save_guard::fetch_enable_all_params()));
+    let refused = v2_lib::browser::save_guard::TYPED_REFUSED;
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    assert_eq!(lines.iter().filter(|l| **l == format!("{refused}refused by the test")).count(), 1, "{lines:?}");
+}
+
+/// Review fix 1: a tab that closes as it is guarded ("Session with given
+/// id not found", for the typed patterns and the catch-all alike) is no
+/// refusal of the request types: a later tab still gets the typed
+/// patterns, nothing says the types were refused, and the line about the
+/// tab names its path, never its host.
+#[tokio::test]
+async fn a_closing_tabs_refusal_leaves_later_tabs_on_the_typed_patterns() {
+    let _log = crate::serial::log_tail();
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    cdp.transport_mut().refuse_with.push(("Fetch.enable@S-pop".to_string(), "Session with given id not found".to_string()));
+    feed(&mut cdp, [attached("S-pop", "T-pop", "page", "https://hr.example/pop?token=hunter2", true)]);
+    settle(&mut cdp).await;
+    assert_eq!(sent_on(&cdp, "S-pop").iter().filter(|m| *m == "Fetch.enable").count(), 2, "the catch-all was not tried");
+    assert_eq!(cdp.take_save_blocked().as_deref(), Some(TAB_HELD_UNGUARDED));
+
+    feed(&mut cdp, [attached("S-two", "T-two", "page", "https://hr.example/two", true)]);
+    settle(&mut cdp).await;
+    let first = cdp.transport().sent.iter().find(|f| f["sessionId"] == "S-two" && f["method"] == "Fetch.enable").cloned();
+    assert_eq!(first.map(|f| f["params"].clone()), Some(v2_lib::browser::save_guard::fetch_enable_params()));
+
+    let refused = v2_lib::browser::save_guard::TYPED_REFUSED;
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    assert!(!lines.iter().any(|l| l.starts_with(refused) && l.contains("Session with given id")), "{lines:?}");
+    let about: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.starts_with("Auto Run could not guard a tab the page opened") && l.contains("Session with given id"))
+        .collect();
+    assert!(!about.is_empty(), "{lines:?}");
+    assert!(about.iter().all(|l| l.ends_with(": /pop") && !l.contains("hr.example") && !l.contains("hunter2")), "{about:?}");
 }
 
 /// A tab that was already running when it was attached could not be held,
@@ -516,7 +564,8 @@ async fn a_held_tab_is_let_run_once_the_guard_is_lifted() {
 }
 
 /// Review fix 5: a tab that refuses its page log or dialog handler is
-/// still let run, and the log says which tab, without its query.
+/// still let run, and the log says which tab by its path: no host, no
+/// query.
 #[tokio::test]
 async fn a_refused_tab_setup_is_logged() {
     let _log = crate::serial::log_tail();
@@ -530,7 +579,8 @@ async fn a_refused_tab_setup_is_logged() {
         .iter()
         .find(|l| l.level == "warn" && l.message.contains("Page.enable"))
         .unwrap_or_else(|| panic!("nothing was logged: {lines:?}"));
-    assert!(warned.message.ends_with(": https://hr.example/pop"), "{}", warned.message);
+    assert!(warned.message.ends_with(": /pop"), "the page's path only: {}", warned.message);
+    assert!(!warned.message.contains("hr.example"), "a host reached the log: {}", warned.message);
     assert!(!lines.iter().any(|l| l.message.contains("hunter2")), "a query reached the log");
 }
 

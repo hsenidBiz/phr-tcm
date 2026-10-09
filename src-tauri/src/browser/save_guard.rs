@@ -89,8 +89,9 @@ pub const PAUSED_TYPES: [&str; 6] = ["Document", "XHR", "Fetch", "Ping", "EventS
 
 /// Never paused: a page only reads these, with a GET, so `is_save` would
 /// let every one through anyway. `Prefetch`, `SignedExchange` and
-/// `Preflight`, also left out, are a GET or an OPTIONS too, and a
-/// `CSPViolationReport` is never a save.
+/// `Preflight`, also left out, are a GET or an OPTIONS too, and `is_save`
+/// lets every GET, HEAD and OPTIONS through, so pausing them would only
+/// cost time. A `CSPViolationReport` is never a save.
 pub const UNPAUSED_TYPES: [&str; 7] = ["Image", "Stylesheet", "Script", "Font", "Media", "Manifest", "TextTrack"];
 
 /// What `Fetch.enable` is sent: every request of a `PAUSED_TYPES` type,

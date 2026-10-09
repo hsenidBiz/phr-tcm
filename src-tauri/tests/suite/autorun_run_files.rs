@@ -119,3 +119,28 @@ async fn an_unreadable_file_is_read_again_and_fails_each_step() {
     assert!(files.nav(root, ORG, PROJECT).is_err());
     assert_eq!(files.reads(), 2, "a failed read was kept");
 }
+
+/// The recipe runs in the active environment, so an environment whose
+/// site address changed between two steps is what the next step signs in
+/// at: `environments.json` is looked at with the recipe.
+#[tokio::test]
+async fn an_environment_changed_between_steps_is_read_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    project(root);
+    let files = RunFiles::default();
+    one_step(root, &files).await;
+    assert_eq!(files.reads(), 2);
+
+    let mut envs = v2_lib::environments::load_or_init(root, None).unwrap();
+    let active = envs.active.clone();
+    let env = envs.environments.iter_mut().find(|e| e.id == active).expect("an active environment");
+    env.start_url = "https://other.example.internal".to_string();
+    std::fs::write(root.join("environments.json"), serde_json::to_string_pretty(&envs).unwrap()).unwrap();
+
+    one_step(root, &files).await;
+    assert_eq!(files.reads(), 3, "the changed environment was not read again");
+    let recipe = files.recipe(root, ORG, PROJECT).unwrap().expect("a recipe");
+    assert_eq!(recipe.start_url, "https://other.example.internal");
+    assert_eq!(files.reads(), 3);
+}

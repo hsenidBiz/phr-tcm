@@ -357,6 +357,17 @@ async fn a_refused_interception_is_an_error_and_leaves_the_client_unguarded() {
     assert_eq!(f.len(), 3, "{f:?}");
     assert_eq!(f[2]["method"], "Fetch.enable");
     assert_eq!(f[2]["params"], fetch_enable_all_params());
+
+    // Review fix 1: a refusal the catch-all failed on too is no refusal of
+    // the request types: nothing says so, and the next guard asks for the
+    // typed patterns again.
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    assert!(!lines.iter().any(|l| *l == format!("{TYPED_REFUSED}no types")), "{lines:?}");
+    cdp.transport_mut().incoming.extend([r#"{"id":4,"result":{}}"#.to_string(), r#"{"id":5,"result":{}}"#.to_string()]);
+    cdp.guard_saves(&[]).await.unwrap();
+    let f = sent(&cdp);
+    assert_eq!(f[4]["method"], "Fetch.enable");
+    assert_eq!(f[4]["params"], fetch_enable_params());
 }
 
 /// A browser that does not know one of the request types refuses the
@@ -770,6 +781,8 @@ async fn a_guard_that_cannot_start_blocks_the_case_before_step_1() {
         vec!["Network.setBypassServiceWorker".to_string(), "Fetch.enable".to_string(), "Fetch.enable".to_string()],
         "nothing ran after the catch-all was refused too"
     );
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    assert!(!lines.iter().any(|l| *l == format!("{TYPED_REFUSED}not allowed")), "said the types were refused: {lines:?}");
     assert!(rec.steps.iter().flat_map(|s| &s.outcomes).all(|o| o.detail.starts_with("not run:")));
 }
 

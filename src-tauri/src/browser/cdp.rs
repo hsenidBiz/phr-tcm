@@ -300,6 +300,9 @@ pub struct Tab {
     /// Saves paused during a hold whose document is not known yet: answered
     /// once it is (`resolve_parked`).
     parked: Vec<Parked>,
+    /// Why its typed `Fetch.enable` was refused, while the catch-all sent in
+    /// its place is not answered yet (`on_setup_reply`).
+    typed_refusal: Option<String>,
 }
 
 /// A save paused during a hold, waiting to learn which document sent it.
@@ -512,6 +515,7 @@ impl Tab {
             request_loaders: HashMap::new(),
             request_order: VecDeque::new(),
             parked: Vec::new(),
+            typed_refusal: None,
         }
     }
 }
@@ -1041,8 +1045,9 @@ impl<T: Transport> Cdp<T> {
         }
     }
 
-    /// The browser refused the typed patterns: said once, with its reason,
-    /// and the catch-all is sent from now on.
+    /// The browser refused the typed patterns and then took the catch-all on
+    /// the same session: said once, with its reason, and the catch-all is
+    /// sent from now on.
     fn typed_were_refused(&mut self, why: &str) {
         if !self.typed_refused {
             self.typed_refused = true;
@@ -1060,10 +1065,13 @@ impl<T: Transport> Cdp<T> {
             Ok(_) => {}
             // A browser that does not know one of the types: every request
             // is paused instead. Refused too, the guard fails closed.
+            // The browser is switched to the catch-all only once it took it
+            // on the same session: a closing tab's refusal is no type's.
             Err(CdpError::Protocol { message, .. }) if typed => {
-                self.typed_were_refused(&message);
                 let limit = self.limit_now();
-                self.call_on(Some(session.to_string()), "Fetch.enable", self.fetch_params(), limit).await?;
+                let all = super::save_guard::fetch_enable_all_params();
+                self.call_on(Some(session.to_string()), "Fetch.enable", all, limit).await?;
+                self.typed_were_refused(&message);
             }
             Err(e) => return Err(e),
         }
@@ -1647,11 +1655,22 @@ impl<T: Transport> Cdp<T> {
         let unarmed = self.armed.is_none();
         // The typed patterns refused while the run is still guarded: asked
         // again with the catch-all, the tab still held until that answer.
+        // The browser is switched to the catch-all only once that answer is
+        // a yes (below).
         if let (SetupStep::Fetch { typed: true }, Err(message), false) = (step, &answer, unarmed) {
-            self.typed_were_refused(message);
-            let params = self.fetch_params();
-            self.queue(&session, "Fetch.enable", params, Some(SetupStep::Fetch { typed: false }));
+            self.tabs[i].typed_refusal = Some(message.clone());
+            let all = super::save_guard::fetch_enable_all_params();
+            self.queue(&session, "Fetch.enable", all, Some(SetupStep::Fetch { typed: false }));
             return self.send_unsent_answers().await;
+        }
+        // Taken only by the catch-all's own answer: the tab's other setup
+        // answers arrive in between.
+        if matches!(step, SetupStep::Fetch { typed: false }) {
+            if let Some(why) = self.tabs[i].typed_refusal.take() {
+                if answer.is_ok() {
+                    self.typed_were_refused(&why);
+                }
+            }
         }
         let tab = &mut self.tabs[i];
         if matches!(step, SetupStep::Fetch { .. }) {
@@ -1663,9 +1682,10 @@ impl<T: Transport> Cdp<T> {
                 SetupStep::Fetch { .. } => ("guard", "Fetch.enable"),
                 SetupStep::Watch(m) => ("watch", m),
             };
+            // The page's path only: never its host or query.
             crate::applog::warn(format!(
                 "Auto Run could not {what} a tab the page opened, {method} was refused ({message}): {}",
-                tab.url_without_query
+                super::save_guard::path_of(&tab.url_without_query)
             ));
         }
         match step {
@@ -2444,17 +2464,21 @@ pub trait Driver {
     fn set_deadline(&mut self, deadline: Option<Instant>);
     /// See `Cdp::guard_saves`. A driver with no guard of its own (a test's
     /// fake) is asked for `Fetch.enable` like any other call, so it can
-    /// answer or refuse it.
+    /// answer or refuse it. A refusal of the typed patterns is asked again
+    /// with the catch-all, and logged only once that is a yes; unlike `Cdp`
+    /// it remembers nothing, so the next guard asks for the typed patterns
+    /// again (and logs again).
     fn guard_saves(&mut self, _patterns: &[String]) -> impl Future<Output = Result<(), CdpError>> {
         async move {
             self.call("Network.setBypassServiceWorker", serde_json::json!({ "bypass": true })).await?;
-            // As `Cdp::guard_tab`: typed patterns refused, every request is
-            // paused instead; that refused too fails closed.
+            // Typed patterns refused: every request is paused instead; that
+            // refused too fails closed, and says nothing about types.
             match self.call("Fetch.enable", super::save_guard::fetch_enable_params()).await {
                 Ok(_) => Ok(()),
                 Err(CdpError::Protocol { message, .. }) => {
+                    self.call("Fetch.enable", super::save_guard::fetch_enable_all_params()).await?;
                     crate::applog::warn(format!("{}{message}", super::save_guard::TYPED_REFUSED));
-                    self.call("Fetch.enable", super::save_guard::fetch_enable_all_params()).await.map(|_| ())
+                    Ok(())
                 }
                 Err(e) => Err(e),
             }

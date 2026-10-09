@@ -51,6 +51,9 @@ impl RunFiles {
     /// `recipe::load_effective_recipe_if_any`, read again only when the
     /// recipe or the environments file changed.
     pub fn recipe(&self, root: &Path, org: &str, project: &str) -> Result<Option<SignInRecipe>, String> {
+        // Reading creates `environments.json` when it is absent
+        // (`environments::load_or_init`), so a run that starts without one
+        // reads once more at the next step, as the file is new: harmless.
         let paths = [recipe::recipe_path(root, org, project), crate::environments::file_path(root)];
         self.fresh(&self.recipe, &paths, || recipe::load_effective_recipe_if_any(root, org, project))
     }
