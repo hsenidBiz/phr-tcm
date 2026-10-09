@@ -58,6 +58,40 @@ pub struct DiscoveryState {
     /// The components tried in this discovery that worked, by
     /// `components::draft_fingerprint`. It goes with the discovery.
     pub tried: Vec<String>,
+    /// Set when this discovery is a mapping run: read only, every save the
+    /// page tries is stopped (`browser::save_guard`).
+    pub mapping: Option<MappingRun>,
+}
+
+/// A mapping run: a discovery that walks the menus of `modules` and saves
+/// nothing. Its browser's save guard is on from the sign-in to the end.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MappingRun {
+    /// The test-case Modules the run maps, as named at its start.
+    pub modules: Vec<String>,
+    /// When the run started (milliseconds since the epoch).
+    pub started_at: u64,
+    /// The areas the run added.
+    pub added: Vec<String>,
+    /// The areas whose path the run changed: (name, old path, new path).
+    pub updated: Vec<(String, String, String)>,
+    /// The areas the run found where they were.
+    pub unchanged: Vec<String>,
+    /// The areas the run could not reach: (name, reason).
+    pub unreached: Vec<(String, String)>,
+    /// How many saves the page tried that the guard stopped.
+    pub blocked_writes: u32,
+}
+
+impl MappingRun {
+    /// A run over `modules` (trimmed, blanks left out) starting now.
+    pub fn new(modules: &[String]) -> Self {
+        MappingRun {
+            modules: modules.iter().map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).collect(),
+            started_at: crate::autorun::sessions::now_ms(),
+            ..Default::default()
+        }
+    }
 }
 
 /// The supervised session, for the bridge's page routes. Whoever locks
@@ -182,7 +216,9 @@ pub(crate) fn refuse_discovery_while_busy() -> Result<(), String> {
 /// browser - a supervised browser already open included, which a
 /// discovery never replaces. The session is marked a discovery from the
 /// moment it opens; its area and account are set once the sign-in arrives.
-pub(crate) async fn open_for_discovery(browser_name: &str) -> Result<(), String> {
+/// `mapping` makes it a mapping run, whose save guard goes on once it has
+/// signed in (`ai_bridge::discover_start_in`).
+pub(crate) async fn open_for_discovery(browser_name: &str, mapping: Option<MappingRun>) -> Result<(), String> {
     refuse_discovery_while_busy()?;
     let mut slot = SESSION.lock().await;
     if let Some(open) = slot.as_ref() {
@@ -196,6 +232,7 @@ pub(crate) async fn open_for_discovery(browser_name: &str) -> Result<(), String>
             account: None,
             started_at: crate::autorun::sessions::now_ms(),
             tried: Vec::new(),
+            mapping,
         });
     }
     publish_discovery(&slot);
@@ -1010,7 +1047,7 @@ static ANSWERING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 /// commands - a person reading the page before pressing the next step -
 /// a task reads it (`keep_answering`), so the page is never held up
 /// waiting. Called with the session lock held.
-fn answer_between_commands() {
+pub(crate) fn answer_between_commands() {
     if ANSWERING.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }

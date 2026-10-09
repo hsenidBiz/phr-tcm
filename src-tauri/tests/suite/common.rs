@@ -61,6 +61,13 @@ pub struct ScriptedDriver {
     pub block_after: Option<(String, String)>,
     /// The sentence `take_save_blocked` hands over, once.
     pub save_blocked: Option<String>,
+    /// Saves the page sends when a call to the named method is made:
+    /// (on method, request method, address). Stopped only while the driver
+    /// guards saves (`is_guarding_saves`), as a guarded browser stops them;
+    /// otherwise they go through and nothing is noted.
+    pub saves_on_call: Vec<(String, String, String)>,
+    /// What `take_saves_stopped` hands over: (method, path).
+    pub saves_stopped: Vec<(String, String)>,
     /// Every folder `enable_downloads` was handed, in order.
     pub download_dirs: Vec<std::path::PathBuf>,
     /// What `downloads` reports: a test pushes the entries a real browser
@@ -152,6 +159,8 @@ impl ScriptedDriver {
             net: None,
             block_after: None,
             save_blocked: None,
+            saves_on_call: vec![],
+            saves_stopped: vec![],
             download_dirs: vec![],
             downloads: vec![],
             downloads_on_call: vec![],
@@ -210,6 +219,21 @@ impl Driver for ScriptedDriver {
         self.calls.push((method.to_string(), params.clone()));
         if self.block_after.as_ref().is_some_and(|(m, _)| m == method) {
             self.save_blocked = self.block_after.take().map(|(_, s)| s);
+        }
+        if self.is_guarding_saves() {
+            let mut saves = vec![];
+            self.saves_on_call.retain(|(m, verb, url)| {
+                if m == method {
+                    saves.push((verb.clone(), url.clone()));
+                    false
+                } else {
+                    true
+                }
+            });
+            for (verb, url) in saves {
+                self.save_blocked.get_or_insert_with(|| v2_lib::browser::save_guard::blocked(&verb, &url));
+                self.saves_stopped.push((verb, v2_lib::browser::save_guard::path_of(&url)));
+            }
         }
         let mut fired = vec![];
         self.on_call_events.retain(|(m, ev)| {
@@ -321,6 +345,10 @@ impl Driver for ScriptedDriver {
 
     fn take_save_blocked(&mut self) -> Option<String> {
         self.save_blocked.take()
+    }
+
+    fn take_saves_stopped(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.saves_stopped)
     }
 
     async fn enable_downloads(&mut self, dir: &std::path::Path) -> Result<(), CdpError> {

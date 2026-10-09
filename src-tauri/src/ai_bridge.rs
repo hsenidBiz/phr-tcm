@@ -2159,6 +2159,9 @@ pub trait DiscoveryBrowser {
 /// going.
 pub const NO_DISCOVERY: &str = "no discovery is going - start one with start_autorun_discovery";
 
+/// Said to a mapping run started with no module named.
+pub const MAPPING_NEEDS_A_MODULE: &str = "Name at least one module to map.";
+
 /// Said when the browser a discovery opened was replaced (the person
 /// pressed Open browser) before its sign-in.
 const DISCOVERY_TAKEN_OVER: &str =
@@ -2235,29 +2238,43 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                 let started_at =
                     p.discovery.as_ref().map_or_else(crate::autorun::sessions::now_ms, |s| s.started_at);
                 let tried = p.discovery.as_mut().map(|s| std::mem::take(&mut s.tried)).unwrap_or_default();
+                let mapping = p.discovery.as_mut().and_then(|s| s.mapping.take());
+                let is_mapping = mapping.is_some();
                 *p.discovery = Some(crate::commands::autorun::DiscoveryState {
                     area,
                     account: Some(key.to_string()),
                     started_at,
                     tried,
+                    mapping,
                 });
-                // The landing page is filed, but does not mark the area
-                // explored: nothing of the area itself has been seen yet.
-                let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref())
-                    .map(|at| Sighting { discovering: None, ..at });
-                let (status, page) = read_page(p.driver, crate::browser::snapshot::DEFAULT_LIMIT, at.as_ref()).await;
-                let (path, _) = current_page(p.driver).await;
-                let mut answer = serde_json::json!({
-                    "signed_in": true,
-                    "detail": out.detail,
-                    "path": path,
-                    "page": if status == 200 { page.as_str() } else { "" },
-                });
-                if status != 200 {
-                    answer["page_unavailable"] = serde_json::json!(page);
+                // A mapping run saves nothing: its guard goes on once the
+                // sign-in (which itself sends a form) has arrived, and before
+                // the page is touched again. A guard that will not go on
+                // closes the browser: a mapping run never goes unguarded.
+                if let Err(why) = guard_a_mapping_run(p.driver, is_mapping, root, organization, project).await {
+                    why
+                } else {
+                    // The landing page is filed, but does not mark the area
+                    // explored: nothing of the area itself has been seen yet.
+                    let at =
+                        discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref())
+                            .map(|at| Sighting { discovering: None, ..at });
+                    let (status, page) =
+                        read_page(p.driver, crate::browser::snapshot::DEFAULT_LIMIT, at.as_ref()).await;
+                    let (path, _) = current_page(p.driver).await;
+                    let mut answer = serde_json::json!({
+                        "signed_in": true,
+                        "detail": out.detail,
+                        "path": path,
+                        "page": if status == 200 { page.as_str() } else { "" },
+                    });
+                    if status != 200 {
+                        answer["page_unavailable"] = serde_json::json!(page);
+                    }
+                    let what = if is_mapping { "mapping run" } else { "discovery" };
+                    crate::applog::info(format!("Auto Run {what} started as {key}"));
+                    return (200, answer.to_string());
                 }
-                crate::applog::info(format!("Auto Run discovery started as {key}"));
-                return (200, answer.to_string());
             }
         }
     };
@@ -2266,6 +2283,43 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
     }
     crate::applog::info(format!("Auto Run discovery as {key} did not sign in; its browser is closed"));
     (409, failed)
+}
+
+/// Switch a mapping run's save guard on, as a Must not save case's is
+/// (`commands::autorun::guard_for_case`): the built-in save words and the
+/// project's own. Nothing to do for an ordinary discovery.
+async fn guard_a_mapping_run<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    is_mapping: bool,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+) -> Result<(), String> {
+    if !is_mapping {
+        return Ok(());
+    }
+    let nav = crate::autorun::nav::load_nav(root, organization, project)
+        .map_err(|why| crate::browser::save_guard::setup_failed(&why))?;
+    d.guard_saves(&nav.save_words).await.map_err(|e| crate::browser::save_guard::setup_failed(&e.to_string()))
+}
+
+/// The saves the guard stopped since the last time this was asked, for a
+/// mapping run: added to the run's count and logged by method and path
+/// only, with nothing an action in `ran` typed. How many, or `None` for an
+/// ordinary discovery.
+fn count_blocked_writes<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    discovery: Option<&mut crate::commands::autorun::DiscoveryState>,
+    ran: &[&crate::browser::actions::Action],
+) -> Option<usize> {
+    let run = discovery.and_then(|s| s.mapping.as_mut())?;
+    let stopped = crate::browser::cdp::Driver::take_saves_stopped(d);
+    for (method, path) in &stopped {
+        let path = ran.iter().fold(crate::autorun::discovery_map::path_only(path), |p, a| without_typed(&p, a));
+        crate::applog::warn(format!("Auto Run mapping run blocked a write: {method} {path}"));
+    }
+    run.blocked_writes = run.blocked_writes.saturating_add(u32::try_from(stopped.len()).unwrap_or(u32::MAX));
+    Some(stopped.len())
 }
 
 /// What one action a discovery ran did: its outcome, the dialog it raised,
@@ -2292,6 +2346,9 @@ struct Discovered {
 /// script step does. Its answer adds `steps: [{action, ok, detail}]`, with
 /// `ok` and `detail` the try's as a whole, and a try that worked is kept
 /// on the discovery by `components::draft_fingerprint`.
+///
+/// In a mapping run the answer adds `blocked`: how many saves the guard
+/// stopped since the last action (`count_blocked_writes`).
 pub async fn discover_action_in<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
     root: &std::path::Path,
@@ -2329,7 +2386,7 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     let (mut steps, mut writes, mut dialogs) = (Vec::new(), Vec::new(), Vec::new());
     let mut last = None;
     let mut after = String::new();
-    for one in runs {
+    for one in runs.iter().copied() {
         let ran =
             match discover_one(d, p.signed_in, p.lease, root, organization, project, area_name.as_deref(), one).await {
                 Ok(ran) => ran,
@@ -2362,6 +2419,7 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     }
     let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref());
     let (status, page) = read_page(d, crate::browser::snapshot::DEFAULT_LIMIT, at.as_ref()).await;
+    let blocked = count_blocked_writes(d, p.discovery.as_mut(), &runs);
     let mut answer = serde_json::json!({
         "ok": outcome.ok,
         "detail": outcome.detail,
@@ -2370,6 +2428,9 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
         "writes": writes,
         "page": if status == 200 { page.as_str() } else { "" },
     });
+    if let Some(n) = blocked {
+        answer["blocked"] = serde_json::json!(n);
+    }
     if component.is_some() {
         answer["steps"] = serde_json::json!(steps);
     }
@@ -2654,8 +2715,7 @@ pub async fn discover_area_in<B: DiscoveryBrowser>(
 /// anything opens, while anything else holds the browser, and for an
 /// account or recipe that is not there.
 async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    const SHAPE: &str =
-        "{ \"account\": <an account key>, \"area\": <an area name, optional>, \"browser\": \"edge\" | \"chrome\", optional }";
+    const SHAPE: &str = "{ \"account\": <an account key>, \"area\": <an area name, optional>, \"browser\": \"edge\" | \"chrome\", optional, \"mapping\": true | false, optional, \"modules\": [<a module name>], for a mapping run }";
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {SHAPE}.")),
@@ -2674,6 +2734,30 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
         }
         Some(_) => return (400, "browser is \"edge\" or \"chrome\"".to_string()),
     };
+    let mapping = match v.get("mapping") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(_) => return (400, format!("mapping is true or false. Expected {SHAPE}.")),
+    };
+    let modules: Vec<String> = match v.get("modules") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(serde_json::Value::Array(items)) => {
+            match items.iter().map(|m| m.as_str().map(str::to_string)).collect::<Option<Vec<_>>>() {
+                Some(names) => names,
+                None => return (400, format!("modules is a list of module names. Expected {SHAPE}.")),
+            }
+        }
+        Some(_) => return (400, format!("modules is a list of module names. Expected {SHAPE}.")),
+    };
+    let mapping = if mapping {
+        let run = crate::commands::autorun::MappingRun::new(&modules);
+        if run.modules.is_empty() {
+            return (400, MAPPING_NEEDS_A_MODULE.to_string());
+        }
+        Some(run)
+    } else {
+        None
+    };
     if let Err(why) = crate::commands::autorun::refuse_discovery_while_busy() {
         return (409, why);
     }
@@ -2686,7 +2770,7 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
         return (409, why);
     }
     let browser = browser.unwrap_or_else(|| crate::autorun::store::last_browser(&root));
-    if let Err(why) = crate::commands::autorun::open_for_discovery(&browser).await {
+    if let Err(why) = crate::commands::autorun::open_for_discovery(&browser, mapping).await {
         return (409, why);
     }
     let mut slot = crate::commands::autorun::supervised().lock().await;
@@ -2702,6 +2786,11 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
     .await;
     // A sign-in that failed closed the browser, and the discovery with it.
     crate::commands::autorun::publish_discovery(&slot);
+    // A mapping run's guard pauses every request: the browser is answered
+    // between the assistant's calls too.
+    if slot.as_ref().is_some_and(|s| s.cdp.is_guarding_saves()) {
+        crate::commands::autorun::answer_between_commands();
+    }
     answer
 }
 

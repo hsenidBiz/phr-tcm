@@ -28,7 +28,7 @@ use v2_lib::browser::cdp::Event;
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::{Target, VISIBLE_JS};
 use v2_lib::browser::snapshot::DEFAULT_LIMIT;
-use v2_lib::commands::autorun::{busy_browser_sentence, DiscoveryState};
+use v2_lib::commands::autorun::{busy_browser_sentence, DiscoveryState, MappingRun};
 
 const ORG: &str = "acme";
 const PROJECT: &str = "Web";
@@ -114,11 +114,23 @@ fn slot(d: ScriptedDriver, discovery: Option<DiscoveryState>) -> (Option<FakeBro
 }
 
 fn opened_for_discovery() -> Option<DiscoveryState> {
-    Some(DiscoveryState { area: None, account: None, started_at: 1, tried: Vec::new() })
+    Some(DiscoveryState { area: None, account: None, started_at: 1, tried: Vec::new(), mapping: None })
 }
 
 fn exploring(area: &str) -> Option<DiscoveryState> {
-    Some(DiscoveryState { area: Some(area.to_string()), account: Some("admin".to_string()), started_at: 1, tried: Vec::new() })
+    Some(DiscoveryState {
+        area: Some(area.to_string()),
+        account: Some("admin".to_string()),
+        started_at: 1,
+        tried: Vec::new(),
+        mapping: None,
+    })
+}
+
+/// `state`, made a mapping run over `modules`.
+fn mapping(state: Option<DiscoveryState>, modules: &[&str]) -> Option<DiscoveryState> {
+    let modules: Vec<String> = modules.iter().map(|m| m.to_string()).collect();
+    state.map(|s| DiscoveryState { mapping: Some(MappingRun::new(&modules)), ..s })
 }
 
 fn mapped_area(root: &std::path::Path, area: &str) -> Option<AreaMap> {
@@ -477,6 +489,138 @@ async fn end_is_idempotent() {
     }
 }
 
+// ---------------------------------------------------------------- mapping
+
+/// A mapping run names the modules it maps: none, or only blank names, is
+/// refused before anything opens, as is a `mapping` that is not true or
+/// false.
+#[tokio::test]
+async fn a_mapping_run_needs_a_module() {
+    for body in [
+        json!({ "account": "admin", "mapping": true }),
+        json!({ "account": "admin", "mapping": true, "modules": [] }),
+        json!({ "account": "admin", "mapping": true, "modules": ["  ", ""] }),
+    ] {
+        let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-start", &body.to_string(), "1.0.0").await;
+        assert_eq!(status, 400, "{body}: {out}");
+        assert_eq!(out, "Name at least one module to map.", "{body}");
+    }
+    let body = json!({ "account": "admin", "mapping": "yes", "modules": ["Leave"] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-start", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("mapping"), "{out}");
+    let body = json!({ "account": "admin", "mapping": true, "modules": "Leave" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-start", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("modules"), "{out}");
+}
+
+/// A mapping run signs in, then switches the save guard on before it reads
+/// the landing page. Every save the page tries after that is stopped,
+/// counted on the run and in the action's answer, and logged by method and
+/// path only.
+#[tokio::test]
+async fn a_save_the_page_sends_during_mapping_is_blocked_and_counted() {
+    use v2_lib::browser::cdp::Driver;
+    let _log = crate::serial::log_tail();
+    let dir = root_with_recipe_and_account();
+
+    let (mut browser, closed) = slot(signin_app(true), mapping(opened_for_discovery(), &["Leave", " "]));
+    let (status, body) =
+        discover_start_in(&mut browser, dir.path(), ORG, PROJECT, "admin", Some("Leave"), &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(!closed.load(Ordering::SeqCst));
+    let b = browser.as_ref().unwrap();
+    assert!(b.d.is_guarding_saves(), "the mapping run's guard is not on");
+    let methods: Vec<&str> = b.d.calls.iter().map(|(m, _)| m.as_str()).collect();
+    let guard = methods.iter().position(|m| *m == "Fetch.enable").expect("the guard never went on");
+    let sign_in = methods.iter().position(|m| *m == "Input.dispatchMouseEvent").expect("no sign-in click");
+    let landing = methods.iter().rposition(|m| *m == "Accessibility.getFullAXTree").expect("no page read");
+    assert!(sign_in < guard, "the guard went on before the sign-in: {methods:?}");
+    assert!(guard < landing, "the landing page was read before the guard went on: {methods:?}");
+    let run = b.discovery.as_ref().unwrap().mapping.as_ref().expect("the sign-in dropped the mapping run");
+    assert_eq!(run.modules, vec!["Leave".to_string()]);
+    assert_eq!(run.blocked_writes, 0);
+
+    // A click on which the page sends two saves, in a guarded mapping browser.
+    let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list?page=2");
+    d.guard_saves(&[]).await.unwrap();
+    d.saves_on_call.push((
+        "Input.dispatchMouseEvent".into(),
+        "POST".into(),
+        "https://hr.example.internal/hr/leave/save?id=5&token=t0p-secret".into(),
+    ));
+    d.saves_on_call.push((
+        "Input.dispatchMouseEvent".into(),
+        "DELETE".into(),
+        "https://hr.example.internal/hr/leave/delete/7".into(),
+    ));
+    let (mut browser, _) = slot(d, mapping(exploring("Leave"), &["Leave"]));
+    let save = Action::Click { selector: "#save".into() };
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["blocked"], 2, "{body}");
+    assert!(!body.contains("t0p-secret"), "{body}");
+    let run = browser.as_ref().unwrap().discovery.as_ref().unwrap().mapping.as_ref().unwrap();
+    assert_eq!(run.blocked_writes, 2);
+
+    // The next action adds to the run's count; its answer says its own.
+    browser.as_mut().unwrap().d.saves_on_call.push((
+        "Input.dispatchMouseEvent".into(),
+        "PUT".into(),
+        "https://hr.example.internal/hr/leave/update".into(),
+    ));
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["blocked"], 1, "{body}");
+    let run = browser.as_ref().unwrap().discovery.as_ref().unwrap().mapping.as_ref().unwrap();
+    assert_eq!(run.blocked_writes, 3);
+
+    let lines: Vec<String> = v2_lib::applog::recent(500).into_iter().map(|l| l.message).collect();
+    for logged in ["POST /hr/leave/save", "DELETE /hr/leave/delete/7", "PUT /hr/leave/update"] {
+        assert!(lines.iter().any(|l| l.ends_with(logged)), "{logged} was not logged: {lines:?}");
+    }
+    assert!(!lines.iter().any(|l| l.contains("t0p-secret") || l.contains("hr.example.internal/hr/leave")), "{lines:?}");
+}
+
+/// An ordinary discovery is not a mapping run: no guard goes on, the
+/// page's saves go through, and the answer carries no `blocked`.
+#[tokio::test]
+async fn ordinary_discovery_still_allows_saves() {
+    use v2_lib::browser::cdp::Driver;
+    let dir = root_with_recipe_and_account();
+
+    let (mut browser, _) = slot(signin_app(true), opened_for_discovery());
+    let (status, body) =
+        discover_start_in(&mut browser, dir.path(), ORG, PROJECT, "admin", Some("Leave"), &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    let b = browser.as_ref().unwrap();
+    assert!(!b.d.is_guarding_saves());
+    assert!(b.d.calls_to("Fetch.enable").is_empty(), "an ordinary discovery was guarded");
+    assert!(b.discovery.as_ref().unwrap().mapping.is_none());
+
+    let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list?page=2");
+    d.on_call_events.push((
+        "Input.dispatchMouseEvent".into(),
+        sent("1", "POST", "https://hr.example.internal/hr/leave/save?id=5"),
+    ));
+    d.saves_on_call.push((
+        "Input.dispatchMouseEvent".into(),
+        "POST".into(),
+        "https://hr.example.internal/hr/leave/save?id=5".into(),
+    ));
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let save = Action::Click { selector: "#save".into() };
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], true, "{body}");
+    assert!(v.get("blocked").is_none(), "{body}");
+    assert_eq!(v["writes"], json!([{ "method": "POST", "path": "/hr/leave/save" }]), "{body}");
+    assert!(browser.as_ref().unwrap().d.saves_stopped.is_empty(), "a save was stopped");
+}
+
 // ------------------------------------------------- what a page read files
 
 /// A page read in a browser a discovery holds stamps its area explored, by
@@ -485,7 +629,13 @@ async fn end_is_idempotent() {
 #[tokio::test]
 async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
     let dir = TempDir::new();
-    let state = DiscoveryState { area: Some("Leave".into()), account: Some("admin".into()), started_at: 1, tried: Vec::new() };
+    let state = DiscoveryState {
+        area: Some("Leave".into()),
+        account: Some("admin".into()),
+        started_at: 1,
+        tried: Vec::new(),
+        mapping: None,
+    };
     let at = discovery_sighting(dir.path(), ORG, PROJECT, Some(&state), None, Some("manager"))
         .expect("a project is chosen, so there is somewhere to file it");
     assert!(at.discovering.is_some());
