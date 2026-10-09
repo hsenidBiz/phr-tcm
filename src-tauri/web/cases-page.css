@@ -422,3 +422,17 @@ body.spec-off #tc-specs { display: none; }
                .aside { display: none; }
                .note { display: none; }
                .specs, #tc-spec { display: none; } }
+/* Grouped by area (the Queue's Group by area): nested, foldable sections in
+   queue order, each naming its area and how many cases sit under it. Each
+   level indents under the last; the cases inside are the usual cards. */
+.tc-group { margin: 0 0 6px; }
+.tc-group > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline;
+                      gap: 6px; padding: 8px 0; font-size: 14px; font-weight: 600; color: var(--muted); }
+.tc-group > summary::-webkit-details-marker { display: none; }
+.tc-group > summary::before { content: '\25be'; color: var(--faint); width: 12px; }
+.tc-group:not([open]) > summary::before { content: '\25b8'; }
+.tc-group > summary:hover { color: var(--accent); }
+.tc-group > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.tc-group-count { color: var(--faint); font-weight: 400; }
+.tc-group-body { padding-left: 18px; }
+@media print { .tc-group > summary::before { content: none; } }

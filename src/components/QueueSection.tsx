@@ -584,6 +584,8 @@ export default function QueueSection({
         // Read at click time so the page opens in the theme in front of
         // the user; it carries both schemes and its own switch.
         pagePalette(),
+        // The page groups its cases the way the Queue is showing them.
+        areaGrouped,
       );
       if (r.status === "error") throw new Error(r.error);
     },
@@ -627,6 +629,7 @@ export default function QueueSection({
             specs: w.specs ?? [],
           })),
           pagePalette(),
+          areaGrouped,
         )
         // Silent on failure: this is a background refresh of something
         // the developer is not necessarily looking at, and the report
@@ -635,9 +638,10 @@ export default function QueueSection({
     }, 800);
     return () => window.clearTimeout(t);
     // watches/pbiId are read, not depended on: a watch comment changing
-    // is not a reason to rewrite the page.
+    // is not a reason to rewrite the page. Switching Group by area is: the
+    // open page regroups to match.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue, reportOpen]);
+  }, [queue, reportOpen, areaGrouped]);
 
 
   // A comment typed in that page comes back here, so the card and the

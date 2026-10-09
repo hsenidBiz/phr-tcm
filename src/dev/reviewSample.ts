@@ -130,6 +130,7 @@ export async function writeReviewSample(dir: string): Promise<void> {
     1001,
     files,
     pagePalette(),
+    false,
   );
   if (r.status === "error") throw new Error(r.error);
 }

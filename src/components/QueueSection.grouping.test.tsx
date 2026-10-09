@@ -209,3 +209,16 @@ test("flat, a Shift-click range still runs over queue positions", () => {
   expect(screen.getByText("3 of 6 selected")).toBeInTheDocument();
   for (const t of ["Zeta one", "Form", "Alpha one"]) expect(box(`Select ${t}`)).toHaveAttribute("aria-checked", "true");
 });
+
+test("View in browser asks for the grouped page only while the Queue is grouped", async () => {
+  renderQueue();
+  fireEvent.click(screen.getByRole("button", { name: "View in browser" }));
+  await waitFor(() => expect(viewArgs).not.toBeNull());
+  expect(viewArgs!.grouped).toBe(false);
+
+  viewArgs = null;
+  fireEvent.click(groupSwitch());
+  fireEvent.click(screen.getByRole("button", { name: "View in browser" }));
+  await waitFor(() => expect(viewArgs).not.toBeNull());
+  expect(viewArgs!.grouped).toBe(true);
+});

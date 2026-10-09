@@ -35,6 +35,7 @@ mod api_templates;
 mod api_templates_runner;
 mod api_templates_share;
 mod app_settings;
+mod area_groups;
 mod applog;
 mod assigned_watch;
 mod audio;

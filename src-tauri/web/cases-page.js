@@ -127,6 +127,28 @@
     });
   }
 
+  // A page grouped by area (the Queue's Group by area) wraps the cases in
+  // nested <details class='tc-group'> sections. A section whose cases the
+  // search has all hidden goes too, so the filter does not leave a column
+  // of empty headings; while a query is active, a folded section holding a
+  // match opens, or the count would name cases nobody can see. On a flat
+  // page there are no sections and this does nothing.
+  function syncGroups(searching) {
+    Array.prototype.forEach.call(document.querySelectorAll('details.tc-group'), function (g) {
+      var hit = !!g.querySelector('.case:not(.hidden)');
+      g.classList.toggle('hidden', !hit);
+      if (hit && searching) g.setAttribute('open', '');
+    });
+  }
+
+  // Go to bookmark can reach into a section the reader has folded: every
+  // section around `el` is opened first, or there is nothing to scroll to.
+  function openGroupsAround(el) {
+    for (var g = el && el.parentElement; g; g = g.parentElement) {
+      if (g.matches && g.matches('details.tc-group')) g.setAttribute('open', '');
+    }
+  }
+
   function wireSearch() {
     var input = document.getElementById('tc-search');
     var count = document.getElementById('tc-count');
@@ -202,6 +224,7 @@
         if (key === 'all') markHits(cards[i], found.mark);
         else Array.prototype.forEach.call(cards[i].querySelectorAll(FIELD_SEL[key]), function (el) { markHits(el, found.mark); });
       });
+      syncGroups(found.tests.length > 0);
       count.textContent = found.tests.length
         ? shown + ' of ' + total + ' shown'
         : total + ' test case' + (total !== 1 ? 's' : '');
@@ -538,6 +561,7 @@
     go.dataset.wired = '1';
     go.addEventListener('click', function () {
       var card = markedCase();
+      openGroupsAround(card);
       if (card && card.scrollIntoView) card.scrollIntoView({ block: 'center', behavior: 'smooth' });
     });
   }
@@ -606,14 +630,28 @@
   function detailsKey(d) {
     return caseTitle(d.closest('.case')) + '\n' + d.className;
   }
+  // An area section (a grouped page) is keyed by its folded path, which
+  // the renderer puts on it as data-area - so a section the reader folded
+  // stays folded through a live refresh, as a case's own sections do.
+  function groupKey(d) {
+    return 'area:' + (d.getAttribute('data-area') || '');
+  }
   function openState(root) {
     var out = {};
     Array.prototype.forEach.call(root.querySelectorAll('.case details'), function (d) {
       out[detailsKey(d)] = d.hasAttribute('open');
     });
+    Array.prototype.forEach.call(root.querySelectorAll('details.tc-group'), function (d) {
+      out[groupKey(d)] = d.hasAttribute('open');
+    });
     return out;
   }
   function restoreOpen(root, state) {
+    Array.prototype.forEach.call(root.querySelectorAll('details.tc-group'), function (d) {
+      var k = groupKey(d);
+      if (!Object.prototype.hasOwnProperty.call(state, k)) return;
+      if (state[k]) d.setAttribute('open', ''); else d.removeAttribute('open');
+    });
     Array.prototype.forEach.call(root.querySelectorAll('.case details'), function (d) {
       var k = detailsKey(d);
       if (!Object.prototype.hasOwnProperty.call(state, k)) return;
