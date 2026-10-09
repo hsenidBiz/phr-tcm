@@ -1,6 +1,7 @@
 //! The save check: a script names only what the app has seen on the live
 //! page, unless the script typed it itself or the test case says it.
 
+use v2_lib::autorun::components::{Component, ComponentFile};
 use v2_lib::autorun::discovery_map::{AreaMap, DiscoveryMap, PageMap, SeenElement};
 use v2_lib::autorun::edits::Edit;
 use v2_lib::autorun::seen_check::{check_seen, check_seen_all, steps_to_check, Unseen};
@@ -46,6 +47,30 @@ fn script(area: Option<&str>, steps: serde_json::Value) -> CaseScript {
     serde_json::from_value(v).unwrap()
 }
 
+/// No components saved in the project.
+fn none() -> ComponentFile {
+    ComponentFile::default()
+}
+
+/// A project holding these components, each written as its JSON.
+fn components(list: serde_json::Value) -> ComponentFile {
+    let components: Vec<Component> = serde_json::from_value(list).expect("components");
+    ComponentFile { components }
+}
+
+/// "Edit a row": clicks the row the script names, then a fixed Edit button
+/// the component itself was checked for when it was saved.
+fn edit_a_row() -> serde_json::Value {
+    serde_json::json!({
+        "name": "Edit a row", "description": "d", "version": 1,
+        "inputs": [{ "name": "row", "kind": "target", "description": "" }],
+        "actions": [
+            { "kind": "click", "selector": { "input": "row" } },
+            { "kind": "click", "selector": { "role": "button", "name": "Edit" } }
+        ]
+    })
+}
+
 fn refusal(step: i32, describe: &str) -> String {
     format!(
         "Step {step}: {describe} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
@@ -61,7 +86,7 @@ fn a_seen_locator_passes_and_an_unseen_one_names_its_step() {
             { "kind": "click", "selector": { "role": "button", "name": "  SAVE " } }
         ]}]),
     );
-    assert_eq!(check_seen(&map, &ok, &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &ok, &[], None), Ok(()));
 
     let bad = script(
         Some("Ratings"),
@@ -70,7 +95,7 @@ fn a_seen_locator_passes_and_an_unseen_one_names_its_step() {
             { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Publish" } }] }
         ]),
     );
-    assert_eq!(check_seen(&map, &bad, &[], None), Err(refusal(2, "button \"Publish\"")));
+    assert_eq!(check_seen(&map, &none(), &bad, &[], None), Err(refusal(2, "button \"Publish\"")));
 }
 
 #[test]
@@ -84,11 +109,11 @@ fn every_link_of_a_chain_must_be_seen() {
         ]}]}]),
     );
     assert_eq!(
-        check_seen(&map, &s, &[], None),
+        check_seen(&map, &none(), &s, &[], None),
         Err(refusal(1, "button \"Add Method\" in dialog \"Add Rating Method\""))
     );
     let both = map_with("Ratings", "/ratings", &[role("button", "Add Method"), role("dialog", "Add Rating Method")]);
-    assert_eq!(check_seen(&both, &s, &[], None), Ok(()));
+    assert_eq!(check_seen(&both, &none(), &s, &[], None), Ok(()));
 }
 
 #[test]
@@ -101,7 +126,7 @@ fn a_locator_holding_text_typed_earlier_is_exempt_but_not_typed_later() {
             { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "cell", "name": "Quarterly plan 2026" } }] }
         ]),
     );
-    assert_eq!(check_seen(&map, &earlier, &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &earlier, &[], None), Ok(()));
 
     // Typed in the same step, or after: no exemption.
     let later = script(
@@ -111,7 +136,7 @@ fn a_locator_holding_text_typed_earlier_is_exempt_but_not_typed_later() {
             { "step_number": 2, "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "Quarterly Plan" }] }
         ]),
     );
-    assert_eq!(check_seen(&map, &later, &[], None), Err(refusal(1, "cell \"Quarterly plan 2026\"")));
+    assert_eq!(check_seen(&map, &none(), &later, &[], None), Err(refusal(1, "cell \"Quarterly plan 2026\"")));
 }
 
 #[test]
@@ -126,13 +151,13 @@ fn a_check_whose_text_comes_from_the_expected_result_is_exempt_but_a_click_is_no
             { "kind": "expect_row", "table": { "role": "table", "name": "Open the ratings" }, "cells": { "A": "b" } }
         ]}]),
     );
-    assert_eq!(check_seen(&map, &check, &case_text, None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &check, &case_text, None), Ok(()));
 
     let click = script(
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "click", "selector": { "text": "rating saved" } }] }]),
     );
-    assert_eq!(check_seen(&map, &click, &case_text, None), Err(refusal(1, "text \"rating saved\"")));
+    assert_eq!(check_seen(&map, &none(), &click, &case_text, None), Err(refusal(1, "text \"rating saved\"")));
 }
 
 #[test]
@@ -146,9 +171,9 @@ fn only_declared_steps_are_checked_on_a_repair() {
             { "step_number": 3, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "New" } }] }
         ]),
     );
-    assert_eq!(check_seen(&map, &s, &[], Some(&[2])), Ok(()));
-    assert_eq!(check_seen(&map, &s, &[], Some(&[2, 3])), Err(refusal(3, "button \"New\"")));
-    assert_eq!(check_seen(&map, &s, &[], None), Err(refusal(1, "button \"Old\"")));
+    assert_eq!(check_seen(&map, &none(), &s, &[], Some(&[2])), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &s, &[], Some(&[2, 3])), Err(refusal(3, "button \"New\"")));
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(refusal(1, "button \"Old\"")));
 }
 
 #[test]
@@ -158,12 +183,12 @@ fn navigate_needs_a_seen_path() {
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings?x=1#top" }] }]),
     );
-    assert_eq!(check_seen(&map, &seen, &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &seen, &[], None), Ok(()));
     let unseen = script(
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/payroll?id=9" }] }]),
     );
-    assert_eq!(check_seen(&map, &unseen, &[], None), Err(refusal(1, "/payroll")));
+    assert_eq!(check_seen(&map, &none(), &unseen, &[], None), Err(refusal(1, "/payroll")));
 }
 
 #[test]
@@ -173,15 +198,15 @@ fn areas_the_script_visits_count() {
         { "step_number": 1, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Run" } }] },
         { "step_number": 2, "actions": [{ "kind": "return_to_area", "area": "Payroll" }] }
     ]);
-    assert_eq!(check_seen(&map, &script(Some("Ratings"), steps), &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &script(Some("Ratings"), steps), &[], None), Ok(()));
 
     let not_visited = script(
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Run" } }] }]),
     );
-    assert_eq!(check_seen(&map, &not_visited, &[], None), Err(refusal(1, "button \"Run\"")));
+    assert_eq!(check_seen(&map, &none(), &not_visited, &[], None), Err(refusal(1, "button \"Run\"")));
     // The script's own area counts too.
-    assert_eq!(check_seen(&map, &script(Some("Payroll"), serde_json::json!([
+    assert_eq!(check_seen(&map, &none(), &script(Some("Payroll"), serde_json::json!([
         { "step_number": 1, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Run" } }] }
     ])), &[], None), Ok(()));
 }
@@ -193,8 +218,8 @@ fn unattributed_locators_count_for_any_area() {
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "click", "selector": { "text": "Welcome" } }] }]),
     );
-    assert_eq!(check_seen(&map, &s, &[], None), Ok(()));
-    assert_eq!(check_seen(&map, &script(None, serde_json::json!([
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &script(None, serde_json::json!([
         { "step_number": 1, "actions": [{ "kind": "click", "selector": { "text": "Welcome" } }] }
     ])), &[], None), Ok(()));
 }
@@ -209,7 +234,7 @@ fn two_character_typed_values_do_not_exempt() {
             { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "option", "name": "Abacus" } }] }
         ]),
     );
-    assert_eq!(check_seen(&map, &s, &[], None), Err(refusal(2, "option \"Abacus\"")));
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(refusal(2, "option \"Abacus\"")));
 }
 
 #[test]
@@ -219,12 +244,12 @@ fn open_tab_needs_a_seen_path() {
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "open_tab", "name": "two", "url": "https://app.example/ratings?x=1" }] }]),
     );
-    assert_eq!(check_seen(&map, &seen, &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &seen, &[], None), Ok(()));
     let unseen = script(
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "open_tab", "name": "two", "url": "https://app.example/payroll#x" }] }]),
     );
-    assert_eq!(check_seen(&map, &unseen, &[], None), Err(refusal(1, "/payroll")));
+    assert_eq!(check_seen(&map, &none(), &unseen, &[], None), Err(refusal(1, "/payroll")));
 }
 
 #[test]
@@ -242,7 +267,7 @@ fn a_changed_script_with_no_declared_steps_is_checked_in_full() {
             { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Save" } }] }
         ]),
     );
-    assert_eq!(check_seen(&map, &s, &[], steps_to_check(None).as_deref()), Err(refusal(1, "button \"Old\"")));
+    assert_eq!(check_seen(&map, &none(), &s, &[], steps_to_check(None).as_deref()), Err(refusal(1, "button \"Old\"")));
 }
 
 #[test]
@@ -253,18 +278,18 @@ fn a_short_or_partial_word_from_the_case_does_not_exempt_a_check() {
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": { "role": "button", "name": "OK" } }] }]),
     );
-    assert_eq!(check_seen(&map, &short, &case_text, None), Err(refusal(1, "button \"OK\"")));
+    assert_eq!(check_seen(&map, &none(), &short, &case_text, None), Err(refusal(1, "button \"OK\"")));
     // Long enough, but only part of a word.
     let partial = script(
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": { "text": "oken" } }] }]),
     );
-    assert_eq!(check_seen(&map, &partial, &case_text, None), Err(refusal(1, "text \"oken\"")));
+    assert_eq!(check_seen(&map, &none(), &partial, &case_text, None), Err(refusal(1, "text \"oken\"")));
     let inside = script(
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": { "text": "Rating" } }] }]),
     );
-    assert_eq!(check_seen(&map, &inside, &case_text, None), Err(refusal(1, "text \"Rating\"")));
+    assert_eq!(check_seen(&map, &none(), &inside, &case_text, None), Err(refusal(1, "text \"Rating\"")));
 }
 
 #[test]
@@ -276,7 +301,7 @@ fn a_whole_phrase_from_the_case_exempts_a_check() {
             Some("Ratings"),
             serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": { "text": name } }] }]),
         );
-        assert_eq!(check_seen(&map, &s, &case_text, None), Ok(()), "{name}");
+        assert_eq!(check_seen(&map, &none(), &s, &case_text, None), Ok(()), "{name}");
     }
 }
 
@@ -297,24 +322,24 @@ fn a_typed_value_exempts_only_a_locator_that_holds_it_as_whole_words() {
         )
     };
     // "test" is a whole word inside "Test connection".
-    assert_eq!(check_seen(&map, &typed("Test", "Test connection"), &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &typed("Test", "Test connection"), &[], None), Ok(()));
     // The locator's name inside the typed value does not count.
     assert_eq!(
-        check_seen(&map, &typed("AutoTest Leave 7", "Leave"), &[], None),
+        check_seen(&map, &none(), &typed("AutoTest Leave 7", "Leave"), &[], None),
         Err(refusal(2, "button \"Leave\""))
     );
     // Part of a word is not a word.
     assert_eq!(
-        check_seen(&map, &typed("Test", "Contest"), &[], None),
+        check_seen(&map, &none(), &typed("Test", "Contest"), &[], None),
         Err(refusal(2, "button \"Contest\""))
     );
     assert_eq!(
-        check_seen(&map, &typed("Test", "Testing"), &[], None),
+        check_seen(&map, &none(), &typed("Test", "Testing"), &[], None),
         Err(refusal(2, "button \"Testing\""))
     );
     // Two characters exempt nothing, even as a whole word.
     assert_eq!(
-        check_seen(&map, &typed("QA", "QA report"), &[], None),
+        check_seen(&map, &none(), &typed("QA", "QA report"), &[], None),
         Err(refusal(2, "button \"QA report\""))
     );
 }
@@ -329,7 +354,7 @@ fn a_row_holding_the_typed_record_is_exempt() {
             { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "row", "name": "AutoTest Leave 7 Pending" } }] }
         ]),
     );
-    assert_eq!(check_seen(&map, &s, &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()));
 }
 
 /// An import names every unseen locator, step by step, where a save names
@@ -350,18 +375,18 @@ fn check_seen_all_lists_every_unseen_locator_and_check_seen_still_stops_at_the_f
             ] }
         ]),
     );
-    let unseen = |step: i32, what: &str| Unseen { step, locator: what.to_string() };
+    let unseen = |step: i32, what: &str| Unseen { step, locator: what.to_string(), refused: None };
     assert_eq!(
-        check_seen_all(&map, &s, &[], None),
+        check_seen_all(&map, &none(), &s, &[], None),
         vec![unseen(1, "button \"Publish\""), unseen(2, "/elsewhere"), unseen(2, "button \"Archive\"")]
     );
-    assert_eq!(check_seen(&map, &s, &[], None), Err(refusal(1, "button \"Publish\"")));
-    assert_eq!(check_seen_all(&map, &s, &[], Some(&[2])).len(), 2, "only the declared steps");
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(refusal(1, "button \"Publish\"")));
+    assert_eq!(check_seen_all(&map, &none(), &s, &[], Some(&[2])).len(), 2, "only the declared steps");
     let ok = script(
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Save" } }] }]),
     );
-    assert!(check_seen_all(&map, &ok, &[], None).is_empty());
+    assert!(check_seen_all(&map, &none(), &ok, &[], None).is_empty());
 }
 
 /// A navigate to another record of a page the map has seen passes: ids in
@@ -372,7 +397,245 @@ fn a_navigate_to_another_record_of_a_seen_page_passes() {
     let nav = |url: &str| script(None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "navigate", "url": url }] }]));
     for seen in ["/leave/111/edit", "/leave/:id/edit"] {
         let map = map_with("", seen, &[]);
-        assert_eq!(check_seen(&map, &nav("https://h/leave/222/edit?tab=2"), &[], None), Ok(()), "{seen}");
-        assert_eq!(check_seen(&map, &nav("/leave/222/view"), &[], None), Err(refusal(1, "/leave/222/view")), "{seen}");
+        assert_eq!(check_seen(&map, &none(), &nav("https://h/leave/222/edit?tab=2"), &[], None), Ok(()), "{seen}");
+        assert_eq!(check_seen(&map, &none(), &nav("/leave/222/view"), &[], None), Err(refusal(1, "/leave/222/view")), "{seen}");
     }
+}
+
+// ---- scripts that use components ----
+
+fn use_component(step: i32, name: &str, inputs: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "step_number": step, "actions": [
+        { "kind": "use_component", "component": name, "inputs": inputs }
+    ] })
+}
+
+/// A component the project does not have is refused at its step, and an
+/// import lists it with the rest.
+#[test]
+fn an_unknown_component_is_refused() {
+    let map = map_with("Leave", "/leave", &[role("row", "Alpha")]);
+    let s = script(
+        Some("Leave"),
+        serde_json::json!([
+            use_component(1, "Edit a row", serde_json::json!({ "row": { "role": "row", "name": "Alpha" } })),
+            use_component(2, " Ghost ", serde_json::json!({}))
+        ]),
+    );
+    let have = components(serde_json::json!([edit_a_row()]));
+    assert_eq!(check_seen(&map, &have, &s, &[], None), Err("Step 2: Ghost is not saved in this project".to_string()));
+    assert_eq!(
+        check_seen_all(&map, &have, &s, &[], None),
+        vec![Unseen { step: 2, locator: " Ghost ".to_string(), refused: Some("Ghost is not saved in this project".to_string()) }]
+    );
+    assert_eq!(check_seen(&map, &have, &s, &[], Some(&[1])), Ok(()), "step 2 is not checked");
+    assert_eq!(
+        check_seen(&map, &none(), &s, &[], None),
+        Err("Step 1: Edit a row is not saved in this project".to_string())
+    );
+}
+
+/// Every declared input must be given, and of its kind.
+#[test]
+fn a_missing_or_wrong_kind_input_is_refused() {
+    let map = map_with("Leave", "/leave", &[role("textbox", "Day")]);
+    let have = components(serde_json::json!([{
+        "name": "Pick a date", "description": "d", "version": 1,
+        "inputs": [
+            { "name": "field", "kind": "target", "description": "" },
+            { "name": "day", "kind": "text", "description": "" }
+        ],
+        "actions": [{ "kind": "fill", "selector": { "input": "field" }, "value": "{{day}}" }]
+    }]));
+    let field = serde_json::json!({ "role": "textbox", "name": "Day" });
+    let with = |inputs: serde_json::Value| script(Some("Leave"), serde_json::json!([use_component(3, "pick a  DATE", inputs)]));
+    for (inputs, why) in [
+        (serde_json::json!({ "field": field }), "Step 3: Pick a date needs day"),
+        (serde_json::json!({ "day": "5" }), "Step 3: Pick a date needs field"),
+        (serde_json::json!({ "field": "#day", "day": "5" }), "Step 3: Pick a date needs field to be a locator"),
+        (serde_json::json!({ "field": { "nope": 1 }, "day": "5" }), "Step 3: Pick a date needs field to be a locator"),
+        (serde_json::json!({ "field": { "input": "field" }, "day": "5" }), "Step 3: Pick a date needs field to be a locator"),
+        (serde_json::json!({ "field": field, "day": { "css": "#x" } }), "Step 3: Pick a date needs day to be text"),
+    ] {
+        assert_eq!(check_seen(&map, &have, &with(inputs.clone()), &[], None), Err(why.to_string()), "{inputs}");
+    }
+    assert_eq!(check_seen(&map, &have, &with(serde_json::json!({ "field": field, "day": "5" })), &[], None), Ok(()));
+}
+
+/// A target input's links are checked like any locator in the script; the
+/// component's own fixed locators are not (its Edit button is not on this
+/// map). A use inside a `when_visible` is checked too.
+#[test]
+fn an_unseen_target_input_is_refused_and_a_seen_one_passes() {
+    let have = components(serde_json::json!([edit_a_row()]));
+    let s = script(
+        Some("Leave"),
+        serde_json::json!([use_component(1, "Edit a row", serde_json::json!({ "row": [
+            { "role": "grid", "name": "Requests" }, { "role": "row", "name": "Alpha" }
+        ] }))]),
+    );
+    let seen = map_with("Leave", "/leave", &[role("grid", "Requests"), role("row", "Alpha")]);
+    assert_eq!(check_seen(&seen, &have, &s, &[], None), Ok(()));
+    let unseen = map_with("Leave", "/leave", &[role("grid", "Requests")]);
+    assert_eq!(
+        check_seen(&unseen, &have, &s, &[], None),
+        Err(refusal(1, &Target::Chain(vec![role("grid", "Requests"), role("row", "Alpha")]).describe()))
+    );
+    let guarded = script(
+        Some("Leave"),
+        serde_json::json!([{ "step_number": 1, "actions": [{
+            "kind": "when_visible", "selector": { "role": "grid", "name": "Requests" },
+            "then": [{ "kind": "use_component", "component": "Edit a row", "inputs": { "row": { "role": "row", "name": "Beta" } } }]
+        }] }]),
+    );
+    assert_eq!(check_seen(&seen, &have, &guarded, &[], None), Err(refusal(1, "row \"Beta\"")));
+}
+
+/// A target input the component only checks for may be a name the test
+/// case says; one it clicks may not.
+#[test]
+fn a_target_input_a_component_checks_for_may_be_named_by_the_case() {
+    let map = map_with("Leave", "/leave", &[]);
+    let have = components(serde_json::json!([
+        {
+            "name": "See a message", "description": "d", "version": 1,
+            "inputs": [{ "name": "message", "kind": "target", "description": "" }],
+            "actions": [{ "kind": "expect_visible", "selector": { "input": "message" } }]
+        },
+        {
+            "name": "Close a message", "description": "d", "version": 1,
+            "inputs": [{ "name": "message", "kind": "target", "description": "" }],
+            "actions": [{ "kind": "click", "selector": { "input": "message" } }]
+        }
+    ]));
+    let case_text = vec!["The message Leave approved appears".to_string()];
+    let with = |name: &str| {
+        script(
+            Some("Leave"),
+            serde_json::json!([use_component(1, name, serde_json::json!({ "message": { "text": "Leave approved" } }))]),
+        )
+    };
+    assert_eq!(check_seen(&map, &have, &with("See a message"), &case_text, None), Ok(()));
+    assert_eq!(
+        check_seen(&map, &have, &with("Close a message"), &case_text, None),
+        Err(refusal(1, "text \"Leave approved\""))
+    );
+}
+
+/// A value typed in an earlier step exempts a target input that contains
+/// it, whether the script typed it or a component did with a text input.
+#[test]
+fn a_typed_value_exempts_a_target_input_that_contains_it() {
+    let map = map_with("Leave", "/leave", &[role("textbox", "Name")]);
+    let have = components(serde_json::json!([
+        edit_a_row(),
+        {
+            "name": "Type a name", "description": "d", "version": 1,
+            "inputs": [{ "name": "name", "kind": "text", "description": "" }],
+            "actions": [{ "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "{{name}}" }]
+        }
+    ]));
+    let row = |name: &str| serde_json::json!({ "row": { "role": "row", "name": name } });
+    let typed_by_script = script(
+        Some("Leave"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [
+                { "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "AutoTest Leave 7" }
+            ] },
+            use_component(2, "Edit a row", row("AutoTest Leave 7 Pending"))
+        ]),
+    );
+    assert_eq!(check_seen(&map, &have, &typed_by_script, &[], None), Ok(()));
+    let typed_by_component = script(
+        Some("Leave"),
+        serde_json::json!([
+            use_component(1, "Type a name", serde_json::json!({ "name": "AutoTest Leave 9" })),
+            use_component(2, "Edit a row", row("AutoTest Leave 9 Pending"))
+        ]),
+    );
+    assert_eq!(check_seen(&map, &have, &typed_by_component, &[], Some(&[2])), Ok(()));
+    let not_typed = script(Some("Leave"), serde_json::json!([use_component(1, "Edit a row", row("AutoTest Leave 9 Pending"))]));
+    assert_eq!(
+        check_seen(&map, &have, &not_typed, &[], None),
+        Err(refusal(1, "row \"AutoTest Leave 9 Pending\""))
+    );
+}
+
+/// "Open a request": clicks the row its text input names, then a fixed
+/// Edit button the component was checked for when it was saved.
+fn open_a_request() -> serde_json::Value {
+    serde_json::json!({
+        "name": "Open a request", "description": "d", "version": 1,
+        "inputs": [{ "name": "who", "kind": "text", "description": "" }],
+        "actions": [
+            { "kind": "click", "selector": { "role": "row", "name": "{{who}}" } },
+            { "kind": "click", "selector": { "role": "button", "name": "Edit" } }
+        ]
+    })
+}
+
+/// A text input put into a component's locator is checked like any
+/// locator the script names: the case may name it only for a check.
+#[test]
+fn a_text_input_inside_a_fixed_locator_is_seen_checked() {
+    let map = map_with("Leave", "/leave", &[role("row", "Alpha")]);
+    let have = components(serde_json::json!([
+        open_a_request(),
+        {
+            "name": "See a request", "description": "d", "version": 1,
+            "inputs": [{ "name": "who", "kind": "text", "description": "" }],
+            "actions": [{ "kind": "expect_visible", "selector": { "role": "row", "name": "{{who}}" } }]
+        }
+    ]));
+    let with = |name: &str, who: &str| {
+        script(Some("Leave"), serde_json::json!([use_component(1, name, serde_json::json!({ "who": who }))]))
+    };
+    assert_eq!(check_seen(&map, &have, &with("Open a request", "Alpha"), &[], None), Ok(()));
+    assert_eq!(
+        check_seen(&map, &have, &with("Open a request", "Beta"), &[], None),
+        Err(refusal(1, "row \"Beta\""))
+    );
+    let case_text = vec!["The request from Beta shows".to_string()];
+    assert_eq!(check_seen(&map, &have, &with("See a request", "Beta"), &case_text, None), Ok(()));
+    assert_eq!(
+        check_seen(&map, &have, &with("Open a request", "Beta"), &case_text, None),
+        Err(refusal(1, "row \"Beta\""))
+    );
+}
+
+/// A value typed earlier, by the script or earlier in the same
+/// component, exempts a locator a text input was put into.
+#[test]
+fn a_text_input_inside_a_fixed_locator_typed_earlier_is_exempt() {
+    let map = map_with("Leave", "/leave", &[role("textbox", "Name")]);
+    let have = components(serde_json::json!([
+        open_a_request(),
+        {
+            "name": "Add and open", "description": "d", "version": 1,
+            "inputs": [{ "name": "who", "kind": "text", "description": "" }],
+            "actions": [
+                { "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "{{who}}" },
+                { "kind": "click", "selector": { "role": "row", "name": "{{who}} Pending" } }
+            ]
+        }
+    ]));
+    let in_component =
+        script(Some("Leave"), serde_json::json!([use_component(1, "Add and open", serde_json::json!({ "who": "AutoTest Leave 3" }))]));
+    assert_eq!(check_seen(&map, &have, &in_component, &[], None), Ok(()));
+    let by_script = script(
+        Some("Leave"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [
+                { "kind": "fill", "selector": { "role": "textbox", "name": "Name" }, "value": "AutoTest Leave 4" }
+            ] },
+            use_component(2, "Open a request", serde_json::json!({ "who": "AutoTest Leave 4 Pending" }))
+        ]),
+    );
+    assert_eq!(check_seen(&map, &have, &by_script, &[], None), Ok(()));
+    let not_typed =
+        script(Some("Leave"), serde_json::json!([use_component(1, "Open a request", serde_json::json!({ "who": "AutoTest Leave 4 Pending" }))]));
+    assert_eq!(
+        check_seen(&map, &have, &not_typed, &[], None),
+        Err(refusal(1, "row \"AutoTest Leave 4 Pending\""))
+    );
 }

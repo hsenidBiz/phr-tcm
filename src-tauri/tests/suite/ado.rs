@@ -1455,3 +1455,29 @@ async fn a_wiki_name_is_one_path_segment_never_a_route() {
     assert!(client.get_wiki_page("o", "p", "..", "/Home").await.is_err());
     assert_eq!(server.received_requests().await.unwrap().len(), 1, "no second request");
 }
+
+/// The cases of the scripts that use a component, with the project each is
+/// in: an id that is no work item here is left out, not a failure of all.
+#[tokio::test]
+async fn case_texts_with_projects_leave_out_missing_ids() {
+    let server = MockServer::start().await;
+    let steps = "<steps id=\"0\" last=\"2\"><step id=\"2\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">Press Save</parameterizedString><parameterizedString isformatted=\"true\">Saved appears</parameterizedString><description/></step></steps>";
+    Mock::given(method("GET"))
+        .and(path("/acme/_apis/wit/workitems"))
+        .and(query_param("ids", "7,99"))
+        .and(query_param("errorPolicy", "omit"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                { "id": 7, "fields": { "System.Id": 7, "System.TeamProject": "Web", "Microsoft.VSTS.TCM.Steps": steps } },
+                null
+            ]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("tok".into(), server.uri());
+    let got = client.get_case_texts_with_projects("acme", &[7, 99]).await.unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].id, 7);
+    assert_eq!(got[0].project, "Web");
+    assert_eq!(got[0].text, vec!["Press Save".to_string(), "Saved appears".to_string()]);
+}

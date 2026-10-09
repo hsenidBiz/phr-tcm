@@ -610,7 +610,7 @@ fn propose_blames_the_browser_before_the_page() {
     let ordinary_fail = ActionOutcome::failed("nope");
     let mut harness_fail = ActionOutcome::failed("gone");
     harness_fail.harness = true;
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ordinary_fail, harness_fail], screenshot: None, downloads: vec![], tab: None, dialog: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ordinary_fail, harness_fail], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }];
     let p = propose(&case, &steps, None, false);
     assert_eq!(p.verdict, "Blocked");
 }
@@ -1412,7 +1412,7 @@ fn a_failed_navigate_whose_appended_dialog_reads_like_an_unreached_module_is_fai
     let detail = format!(
         "https://app.example/x did not finish loading within 1ms (the page showed alert: {LOOKALIKE} and it was accepted)"
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
 }
@@ -1428,7 +1428,7 @@ fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_sti
         "https://app.example/x did not finish loading within 1ms (the page showed alert: {} and it was accepted)",
         no_address(1)
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
 }
@@ -1440,7 +1440,7 @@ fn a_failed_navigate_whose_appended_dialog_is_the_address_sentence_itself_is_sti
 fn a_check_text_whose_value_is_the_address_sentence_itself_is_failed() {
     let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": no_address(1) }] }]));
     let detail = format!("page does NOT contain {}", no_address(1));
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![], tab: None, dialog: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }];
     let p = propose(&sc, &steps, None, false);
     assert_eq!(p.verdict, "Failed", "{}", p.reason);
     assert_eq!(p.reason, format!("step 1: {detail}"));
@@ -1463,6 +1463,7 @@ fn only_a_sign_in_whose_trip_back_failed_is_blocked_by_those_words() {
         downloads: vec![],
         tab: None,
         dialog: None,
+        components: Vec::new(),
     }];
     let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
         { "kind": "sign_in", "account": "admin" }, { "kind": "check_text", "value": "yes" }
@@ -1487,7 +1488,7 @@ fn a_failed_sign_in_whose_dialog_looks_like_a_failed_trip_back_is_not_blocked_by
     let detail = format!(
         "sign-in stopped at step 1: waited 1ms for the page (the page showed alert: x{lookalike} and it was accepted)"
     );
-    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![], tab: None, dialog: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes: vec![ActionOutcome::failed(detail.clone())], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }];
     let signs_in = script(1, Some("admin"), serde_json::json!([{ "step_number": 1, "actions": [
         { "kind": "sign_in", "account": "admin" }
     ] }]));
@@ -1521,7 +1522,7 @@ async fn a_mid_script_sign_in_whose_trip_back_fails_blocks_the_case() {
     assert_eq!(app.log.lock().unwrap().iter().filter(|l| *l == "click Leave").count(), 2, "one more go, then no more");
     assert_eq!(outcomes[1].detail, "not run: the module screen was not reached after the sign-in");
     assert!(!app.log.lock().unwrap().iter().any(|l| l.starts_with("check")));
-    let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None, downloads: vec![], tab: None, dialog: None }];
+    let steps = vec![StepRecord { step_number: 1, outcomes, screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }];
     let p = propose(&signs_in, &steps, Some(true), false);
     assert_eq!(p.verdict, "Blocked", "{}", p.reason);
     assert!(p.reason.starts_with(UNREACHED_PREFIX), "{}", p.reason);
@@ -1603,7 +1604,7 @@ async fn a_run_counts_quirk_evidence_for_the_cases_it_ran_and_no_others() {
         "case_id": 2, "title": "case 2", "verdict": "", "note": "", "steps": []
     }))
     .unwrap();
-    earlier.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![], tab: None, dialog: None });
+    earlier.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() });
     run.cases.push(earlier);
 
     let mut browsers = FakeBrowsers {
@@ -2106,4 +2107,79 @@ fn a_run_file_and_a_script_from_before_tabs_round_trip_unchanged() {
     let step: StepRecord = serde_json::from_str(record).unwrap();
     assert_eq!(step.tab, None);
     assert_eq!(serde_json::to_string(&step).unwrap(), record);
+}
+
+/// An unattended run keeps, on each step's record, the components it used
+/// and their versions, and each expanded action's outcome names its
+/// component.
+#[tokio::test]
+async fn an_unattended_run_records_the_components_each_step_used() {
+    use v2_lib::autorun::components::{put, ComponentUse};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let c = serde_json::from_value(serde_json::json!({
+        "name": "Say yes", "description": "d", "version": 3,
+        "inputs": [{ "name": "word", "kind": "text", "description": "" }],
+        "actions": [{ "kind": "check_text", "value": "{{word}}" }, { "kind": "check_text", "value": "yes" }]
+    }))
+    .unwrap();
+    put(root, "Acme", "Web", c).unwrap();
+    let case = script(
+        1,
+        None,
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "use_component", "component": "say yes", "inputs": { "word": "yes" } }] },
+            { "step_number": 2, "actions": [{ "kind": "check_text", "value": "yes" }] },
+        ]),
+    );
+    store::save_script(root, &case).unwrap();
+    let mut browsers = FakeBrowsers { queue: [Some(checking_driver())].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-x");
+    let cases = vec![(1, "case 1".to_string())];
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |_| {}).await.unwrap();
+
+    let rec = &run.cases[0];
+    assert_eq!(rec.proposed, "Passed", "{:?}", rec.steps);
+    let one = rec.steps.iter().find(|s| s.step_number == 1).unwrap();
+    assert_eq!(one.components, vec![ComponentUse { name: "Say yes".into(), version: 3 }]);
+    assert_eq!(one.outcomes.len(), 2);
+    assert!(one.outcomes.iter().all(|o| o.ok && o.component.as_deref() == Some("Say yes")), "{:?}", one.outcomes);
+    let two = rec.steps.iter().find(|s| s.step_number == 2).unwrap();
+    assert!(two.components.is_empty() && two.outcomes[0].component.is_none());
+    // And it is on disk the same way.
+    let saved = store::list_runs(root).into_iter().find(|r| r.id == "run-x").unwrap();
+    assert_eq!(saved.cases[0].steps.iter().find(|s| s.step_number == 1).unwrap().components, one.components);
+}
+
+// ---- components ----
+
+/// A component's `navigate` refused because this project does not allow
+/// addresses is the run's refusal, as it is in a script's own step.
+#[test]
+fn a_refusal_inside_a_component_is_blocked_not_failed() {
+    use v2_lib::autorun::components::ComponentFile;
+    use v2_lib::autorun::replay::propose_with;
+    let file: ComponentFile = serde_json::from_value(serde_json::json!({ "components": [{
+        "name": "Open help", "description": "d", "inputs": [], "version": 1,
+        "actions": [{ "kind": "navigate", "url": "https://app.example/help" }]
+    }] }))
+    .unwrap();
+    let sc = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [
+        { "kind": "check_text", "value": "yes" },
+        { "kind": "use_component", "component": "Open help", "inputs": {} }
+    ] }]));
+    let mut refused = ActionOutcome::failed(no_address(1));
+    refused.component = Some("Open help".into());
+    let steps = vec![StepRecord {
+        step_number: 1,
+        outcomes: vec![ActionOutcome::passed("page contains yes"), refused],
+        screenshot: None,
+        downloads: vec![],
+        tab: None,
+        dialog: None,
+        components: Vec::new(),
+    }];
+    let p = propose_with(&sc, &steps, None, false, &file);
+    assert_eq!((p.verdict, p.reason.as_str()), ("Blocked", no_address(1).as_str()));
 }

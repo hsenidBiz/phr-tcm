@@ -19,6 +19,7 @@
 //! `browser::actions`), never against a second copy of the wording.
 
 use super::api_checks as api;
+use super::components::{ran_actions, ComponentFile, Ran};
 use super::failures::{is_failed, stop_reason};
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::{CaseScript, LocalRun, StepRecord};
@@ -402,6 +403,7 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::WhenVisible { selector, .. } => Some(selector.describe()),
         // Each acts on the page as a whole; a key is pressed on whatever
         // has the focus.
+        Action::UseComponent { component, .. } => Some(format!("the component \"{}\"", component.trim())),
         Action::Reload => Some("the page".to_string()),
         Action::ExpireSession => Some("the session".to_string()),
         Action::ReturnToArea { .. } => Some(match action.area_named() {
@@ -441,12 +443,6 @@ pub fn action_target(action: &Action) -> Option<String> {
     }
 }
 
-fn scripted_action(script: Option<&CaseScript>, step_number: i32, index: usize) -> Option<&Action> {
-    script
-        .and_then(|s| s.steps.iter().find(|st| st.step_number == step_number))
-        .and_then(|st| st.actions.get(index))
-}
-
 /// One failed action, as a pattern sees it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FailurePoint {
@@ -463,20 +459,37 @@ pub struct FailurePoint {
 /// screen), skipped ones left out: a `not run:` action did not fail, an
 /// earlier one in the same step did.
 pub fn step_failures(step: &StepRecord, script: Option<&CaseScript>) -> Vec<FailurePoint> {
+    step_failures_with(step, script, &ComponentFile::default())
+}
+
+/// [`step_failures`], with the project's components: an action a
+/// component ran is read as it expands from them, so it is classed by its
+/// own kind and target. One that no longer expands is classed by its
+/// component.
+pub fn step_failures_with(step: &StepRecord, script: Option<&CaseScript>, components: &ComponentFile) -> Vec<FailurePoint> {
     if step.step_number == SIGN_IN_STEP || step.step_number == MODULE_STEP {
         return Vec::new();
     }
+    let ran = match script.and_then(|s| s.steps.iter().find(|st| st.step_number == step.step_number)) {
+        Some(st) => ran_actions(&st.actions, &step.outcomes, components, &step.components),
+        None => Vec::new(),
+    };
     step.outcomes
         .iter()
         .enumerate()
         .filter(|(_, o)| !o.ok && !o.detail.starts_with("not run:"))
         .map(|(i, o)| {
-            let action = scripted_action(script, step.step_number, i);
-            let target = action.and_then(action_target);
+            let (kind, target) = match ran.get(i) {
+                Some(Ran { action: Some(a), .. }) => (Some(action_kind(a)), action_target(a)),
+                Some(Ran { action: None, component: Some(c) }) => {
+                    (Some("use_component".to_string()), Some(format!("the component \"{}\"", c.trim())))
+                }
+                _ => (None, None),
+            };
             FailurePoint {
                 step_number: step.step_number,
                 action: i + 1,
-                kind: action.map(action_kind),
+                kind,
                 class: classify(&o.detail, target.as_deref()),
                 target,
             }
@@ -536,6 +549,11 @@ pub fn overlay_key(covering: &str) -> String {
 /// targets is one fact about the application. A covered failure is
 /// grouped only the second way, so it is never reported twice.
 pub fn find_patterns(run: &LocalRun, scripts: &[CaseScript]) -> Vec<Pattern> {
+    find_patterns_with(run, scripts, &ComponentFile::default())
+}
+
+/// [`find_patterns`], with the project's components (`step_failures_with`).
+pub fn find_patterns_with(run: &LocalRun, scripts: &[CaseScript], components: &ComponentFile) -> Vec<Pattern> {
     #[derive(PartialEq, Eq, PartialOrd, Ord)]
     enum Key {
         Covering(String),
@@ -545,7 +563,7 @@ pub fn find_patterns(run: &LocalRun, scripts: &[CaseScript]) -> Vec<Pattern> {
     for case in run.cases.iter().filter(|c| is_failed(c) && stop_reason(c).is_none()) {
         let script = scripts.iter().find(|s| s.case_id == case.case_id);
         for step in &case.steps {
-            for f in step_failures(step, script) {
+            for f in step_failures_with(step, script, components) {
                 if !f.class.about_the_app() {
                     continue;
                 }

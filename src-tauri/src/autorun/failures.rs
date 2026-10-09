@@ -10,6 +10,7 @@
 //! already decided the case is Blocked are all reasons to leave the
 //! script alone.
 
+use super::components::{ran_actions, ComponentFile, Ran};
 use super::edits::MAX_REPAIRS;
 use super::nav;
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
@@ -92,16 +93,44 @@ fn compact_json(v: &serde_json::Value) -> String {
 /// An action's JSON, for an assistant to read - except a `fill`'s value,
 /// which never leaves this machine's memory a second time: the assistant
 /// already knows what it wrote, and a run file is not the place to echo a
-/// password or anything else a `fill` might have carried.
+/// password or anything else a `fill` might have carried. A
+/// `use_component`'s text inputs are typed values too, and are masked the
+/// same way; its target inputs are locators, and stay. A `when_visible`'s
+/// guarded actions are masked as well.
 fn action_json(action: &Action) -> String {
     let mut v = serde_json::to_value(action).unwrap_or(serde_json::Value::Null);
-    if let serde_json::Value::Object(map) = &mut v {
-        if map.get("kind").and_then(|k| k.as_str()) == Some("fill") {
-            map.insert("value".to_string(), serde_json::Value::String("...".to_string()));
-        }
-    }
+    mask_typed(&mut v);
     compact_json(&v)
 }
+
+fn mask_typed(v: &mut serde_json::Value) {
+    let masked = || serde_json::Value::String("...".to_string());
+    let serde_json::Value::Object(map) = v else { return };
+    match map.get("kind").and_then(|k| k.as_str()) {
+        Some("fill") => {
+            map.insert("value".to_string(), masked());
+        }
+        Some("use_component") => {
+            if let Some(serde_json::Value::Object(inputs)) = map.get_mut("inputs") {
+                for value in inputs.values_mut() {
+                    // A locator is an object or a list of them; anything
+                    // else is text.
+                    if !(value.is_object() || value.is_array()) {
+                        *value = masked();
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    if let Some(serde_json::Value::Array(then)) = map.get_mut("then") {
+        then.iter_mut().for_each(mask_typed);
+    }
+}
+
+/// What to print in place of an action's JSON for an action a component
+/// ran, when the component on disk no longer expands to what ran.
+const CHANGED_COMPONENT: &str = "component: this action is not in the component on this machine (the component changed since the run)";
 
 /// What to print in place of an action's JSON, when the script on disk
 /// cannot supply one: no script at all for this case, or - a script IS
@@ -115,21 +144,23 @@ fn missing_action_text(script: Option<&CaseScript>, index: usize) -> String {
     }
 }
 
-/// The script action at this step and action index, or `None` when there
-/// is no such action - either no script matches this case, or one does
-/// but no longer has an action here.
-fn scripted_action<'a>(script: Option<&'a CaseScript>, step_number: i32, index: usize) -> Option<&'a Action> {
-    script
-        .and_then(|s| s.steps.iter().find(|st| st.step_number == step_number))
-        .and_then(|st| st.actions.get(index))
+/// What each of a step's outcomes ran (`components::ran_actions`): the
+/// script's actions with its components expanded. Empty when no script
+/// matches this case or it no longer has this step.
+fn ran_in_step(script: Option<&CaseScript>, step: &StepRecord, components: &ComponentFile) -> Vec<Ran> {
+    match script.and_then(|s| s.steps.iter().find(|st| st.step_number == step.step_number)) {
+        Some(st) => ran_actions(&st.actions, &step.outcomes, components, &step.components),
+        None => Vec::new(),
+    }
 }
 
 /// One step's lines: `sign-in: <detail>` for step 0 when it failed, one
 /// line for a step that never ran, or - for an ordinary step - one block
 /// per failed action and one `  action K: not run (...)` line per action
 /// skipped because an earlier action in the SAME step already failed. A
-/// step that saved files then names them (`push_downloads`).
-fn describe_step(step: &StepRecord, script: Option<&CaseScript>, out: &mut Vec<String>) {
+/// step that saved files then names them (`push_downloads`). An action a
+/// component ran names the component.
+fn describe_step(step: &StepRecord, script: Option<&CaseScript>, components: &ComponentFile, out: &mut Vec<String>) {
     if step.step_number == SIGN_IN_STEP {
         if let Some(o) = step.outcomes.last() {
             if !o.ok {
@@ -156,6 +187,7 @@ fn describe_step(step: &StepRecord, script: Option<&CaseScript>, out: &mut Vec<S
         return;
     }
 
+    let ran = ran_in_step(script, step, components);
     for (i, outcome) in step.outcomes.iter().enumerate() {
         if outcome.ok {
             continue;
@@ -168,11 +200,16 @@ fn describe_step(step: &StepRecord, script: Option<&CaseScript>, out: &mut Vec<S
             out.push(format!("  action {}: not run ({why})", i + 1));
             continue;
         }
-        let action_text = match scripted_action(script, step.step_number, i) {
-            Some(action) => action_json(action),
-            None => missing_action_text(script, i),
+        let here = ran.get(i);
+        let action_text = match here {
+            Some(Ran { action: Some(action), .. }) => action_json(action),
+            Some(Ran { action: None, component: Some(_) }) => CHANGED_COMPONENT.to_string(),
+            _ => missing_action_text(script, i),
         };
-        out.push(format!("step {}, action {}: {action_text}", step.step_number, i + 1));
+        match here.and_then(|r| r.component.as_deref()) {
+            Some(c) => out.push(format!("step {}, {c}, action {}: {action_text}", step.step_number, i + 1)),
+            None => out.push(format!("step {}, action {}: {action_text}", step.step_number, i + 1)),
+        }
         out.push(format!("  page said: {}", outcome.detail));
         if let Some(shot) = &outcome.screenshot {
             out.push(format!("  picture: {shot}"));
@@ -192,7 +229,7 @@ fn push_downloads(step: &StepRecord, out: &mut Vec<String>) {
 /// One failed case's whole block: header, account and repair count when
 /// known, the stop reason when there is one, every failed or skipped
 /// step, and the person's own note last.
-fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>) -> String {
+fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, components: &ComponentFile) -> String {
     let mut lines: Vec<String> = Vec::new();
 
     // A supervised run never fills in `proposed` - only a person's own
@@ -225,7 +262,7 @@ fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>) -
     }
 
     for step in &case.steps {
-        describe_step(step, script, &mut lines);
+        describe_step(step, script, components, &mut lines);
     }
 
     if !case.note.is_empty() {
@@ -240,11 +277,18 @@ fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>) -
 /// that nobody has judged either way yet, is left out entirely - this is a
 /// worklist of what needs fixing, not a transcript of the whole run.
 pub fn describe_failures(run: &LocalRun, scripts: &[CaseScript]) -> String {
+    describe_failures_with(run, scripts, &ComponentFile::default())
+}
+
+/// [`describe_failures`], with the project's components: an action a
+/// component ran is shown as it expands from them. Without them it is
+/// named by its component only.
+pub fn describe_failures_with(run: &LocalRun, scripts: &[CaseScript], components: &ComponentFile) -> String {
     let blocks: Vec<String> = run
         .cases
         .iter()
         .filter(|c| is_failed(c))
-        .map(|c| describe_case(&run.id, c, scripts.iter().find(|s| s.case_id == c.case_id)))
+        .map(|c| describe_case(&run.id, c, scripts.iter().find(|s| s.case_id == c.case_id), components))
         .collect();
 
     if blocks.is_empty() {
@@ -253,7 +297,7 @@ pub fn describe_failures(run: &LocalRun, scripts: &[CaseScript]) -> String {
     let mut out = blocks.join("\n\n");
     // The same failure in more than one case, last: read after the cases
     // it summarises, and absent altogether when nothing repeats.
-    let patterns = super::patterns::patterns_section(&super::patterns::find_patterns(run, scripts));
+    let patterns = super::patterns::patterns_section(&super::patterns::find_patterns_with(run, scripts, components));
     if !patterns.is_empty() {
         out.push_str("\n\n");
         out.push_str(patterns.trim_end());

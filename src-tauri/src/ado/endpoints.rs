@@ -5,7 +5,7 @@
 //! exception and is held to a tighter rule than this one. See its header.
 
 use super::{
-    tc_ids_i32, AdoClient, AdoError, BlankPolicy, BugTypeInfo, FieldRef, Org, PbiHit, Project,
+    tc_ids_i32, AdoClient, AdoError, BlankPolicy, BugTypeInfo, CaseText, FieldRef, Org, PbiHit, Project,
     TestCaseFull, TestCaseSummary, WikiHit, WikiPage,
 };
 
@@ -989,6 +989,39 @@ impl AdoClient {
             }
         }
         Ok(cases)
+    }
+
+    /// The text of each of `ids` and the project it is in, read only. An id
+    /// that is no work item in `organization` is left out
+    /// (`errorPolicy=omit`), so one script of another organization never
+    /// stops the rest being read.
+    pub async fn get_case_texts_with_projects(
+        &self,
+        organization: &str,
+        ids: &[i32],
+    ) -> Result<Vec<CaseText>, AdoError> {
+        let mut out = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
+            let ids_csv = chunk.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
+            let url = format!(
+                "{}/{}/_apis/wit/workitems?ids={}&fields=System.Id,System.TeamProject,Microsoft.VSTS.TCM.Steps&errorPolicy=omit&api-version=7.1",
+                self.base_url,
+                percent_encode_segment(organization),
+                ids_csv
+            );
+            let fetched = self.get_json(url).await?;
+            for w in fetched["value"].as_array().cloned().unwrap_or_default() {
+                let Some(id) = w["id"].as_i64() else { continue };
+                let f = &w["fields"];
+                let steps = crate::steps_xml::parse_steps_xml(f["Microsoft.VSTS.TCM.Steps"].as_str().unwrap_or_default());
+                out.push(CaseText {
+                    id: id as i32,
+                    project: f["System.TeamProject"].as_str().unwrap_or_default().to_string(),
+                    text: steps.into_iter().flat_map(|s| [s.action, s.expected]).collect(),
+                });
+            }
+        }
+        Ok(out)
     }
 
     /// A test case's steps as they stood at `as_of` (ISO 8601 UTC), read with

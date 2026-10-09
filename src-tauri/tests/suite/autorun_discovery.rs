@@ -8,7 +8,7 @@
 //! through the `_in` functions, against a fake browser slot that holds a
 //! scripted driver and says when it was closed.
 
-use crate::common::{account, quick, ready_probe, FakePage, ScriptedDriver};
+use crate::common::{account, pick_a_date, quick, ready_probe, FakePage, ScriptedDriver};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -17,6 +17,7 @@ use v2_lib::ai_bridge::{
     read_page, route, BridgeContext, DiscoveryBrowser, DiscoveryParts, NO_DISCOVERY,
 };
 use v2_lib::autorun::accounts::save_accounts;
+use v2_lib::autorun::components::{draft_fingerprint, put, Component};
 use v2_lib::autorun::discovery_map::{load_map, map_path, AreaMap};
 use v2_lib::autorun::lease::Held;
 use v2_lib::autorun::nav::{find_area, load_nav, put_path, ModulePath};
@@ -113,11 +114,11 @@ fn slot(d: ScriptedDriver, discovery: Option<DiscoveryState>) -> (Option<FakeBro
 }
 
 fn opened_for_discovery() -> Option<DiscoveryState> {
-    Some(DiscoveryState { area: None, account: None, started_at: 1 })
+    Some(DiscoveryState { area: None, account: None, started_at: 1, tried: Vec::new() })
 }
 
 fn exploring(area: &str) -> Option<DiscoveryState> {
-    Some(DiscoveryState { area: Some(area.to_string()), account: Some("admin".to_string()), started_at: 1 })
+    Some(DiscoveryState { area: Some(area.to_string()), account: Some("admin".to_string()), started_at: 1, tried: Vec::new() })
 }
 
 fn mapped_area(root: &std::path::Path, area: &str) -> Option<AreaMap> {
@@ -328,7 +329,7 @@ async fn an_action_reports_writes_dialogs_and_the_new_path_and_logs_writes_in_th
 
     let save = Action::Click { selector: "#save".into() };
     let (status, body) =
-        discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, Some("Leave Requests")).await;
+        discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, Some("Leave Requests")).await;
     assert_eq!(status, 200, "{body}");
     let v = parsed(&body);
     assert_eq!(v["ok"], true, "{body}");
@@ -353,7 +354,7 @@ async fn an_action_reports_writes_dialogs_and_the_new_path_and_logs_writes_in_th
     let d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/view?id=9");
     let (mut browser, _) = slot(d, exploring("Leave"));
     let open = Action::Click { selector: "#open".into() };
-    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &open, None).await;
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &open, None, None).await;
     assert_eq!(status, 200, "{body}");
     let area = mapped_area(dir.path(), "Leave").unwrap();
     assert!(area.outcomes.iter().any(|o| o.contains("#open") && o.contains("moved to /hr/leave/view")), "{:?}", area.outcomes);
@@ -376,7 +377,7 @@ async fn an_action_never_logs_a_query_string_or_a_typed_value() {
     let (mut browser, _) = slot(d, exploring("Leave"));
 
     let fill = Action::Fill { selector: "#name".into(), value: typed.to_string() };
-    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &fill, None).await;
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &fill, None, None).await;
     assert_eq!(status, 200, "{body}");
     let v = parsed(&body);
     assert_eq!(v["writes"], json!([{ "method": "PUT", "path": "/hr/autosave" }]), "{body}");
@@ -445,7 +446,7 @@ async fn close_browser_ends_a_discovery_session() {
     assert!(closed.load(Ordering::SeqCst));
     assert!(browser.is_none());
     let save = Action::Click { selector: "#save".into() };
-    let (status, out) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None).await;
+    let (status, out) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
     assert_eq!(status, 409, "{out}");
     assert!(out.contains("start_autorun_discovery"), "{out}");
     assert!(!close_browser_in(&mut browser), "nothing left to close");
@@ -484,7 +485,7 @@ async fn end_is_idempotent() {
 #[tokio::test]
 async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
     let dir = TempDir::new();
-    let state = DiscoveryState { area: Some("Leave".into()), account: Some("admin".into()), started_at: 1 };
+    let state = DiscoveryState { area: Some("Leave".into()), account: Some("admin".into()), started_at: 1, tried: Vec::new() };
     let at = discovery_sighting(dir.path(), ORG, PROJECT, Some(&state), None, Some("manager"))
         .expect("a project is chosen, so there is somewhere to file it");
     assert!(at.discovering.is_some());
@@ -519,7 +520,7 @@ async fn a_navigate_action_never_puts_a_host_or_query_in_the_map_or_its_outcome(
     ));
     let (mut browser, _) = slot(d, exploring("Leave"));
     let go = Action::Navigate { url: "https://hr.example.internal/x/y?token=abc".into() };
-    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &go, None).await;
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &go, None, None).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(parsed(&body)["ok"], true, "{body}");
 
@@ -859,6 +860,7 @@ async fn starting_discovery_does_not_mark_an_area_explored() {
         ORG,
         PROJECT,
         &Action::Click { selector: "#save".into() },
+        None,
         Some("LEAVE"),
     )
     .await;
@@ -921,4 +923,141 @@ async fn the_end_discovery_command_ends_like_the_route() {
     let source = include_str!("../../src/commands/autorun.rs");
     let cmd = &source[source.find("pub async fn auto_run_end_discovery").unwrap()..];
     assert!(cmd[..cmd.find('}').unwrap()].contains("end_discovery().await"), "not the route's own ending");
+}
+
+// ------------------------------------------------- trying a component
+
+/// "Pick a date" used on `#day` with a day that must never reach the map.
+fn pick_a_date_use() -> Action {
+    serde_json::from_value(json!({
+        "kind": "use_component", "component": "pick a  DATE",
+        "inputs": { "field": { "css": "#day" }, "day": "Secret-Day-17" }
+    }))
+    .unwrap()
+}
+
+fn draft(actions: Value) -> Component {
+    let mut c = pick_a_date();
+    c.actions = serde_json::from_value(actions).unwrap();
+    c
+}
+
+/// A draft that is not saved anywhere is expanded and run action by
+/// action, each through discovery's own path: every action answers in
+/// `steps`, each one's outcome line is filed, nothing typed is kept, and
+/// the try that worked is fingerprinted on the discovery.
+#[tokio::test]
+async fn a_draft_component_can_be_tried_and_is_fingerprinted() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/new?x=1"), exploring("Leave"));
+    let c = pick_a_date();
+
+    let (status, body) =
+        discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &pick_a_date_use(), Some(&c), None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], true, "{body}");
+    let steps = v["steps"].as_array().expect("a component try answers each of its actions");
+    assert_eq!(steps.len(), 3, "{body}");
+    assert!(steps.iter().all(|s| s["ok"] == true && s["detail"].is_string()), "{body}");
+    assert_eq!(steps[0]["action"], "click #day", "{body}");
+    assert_eq!(steps[2]["action"], "click text \"Done\"", "{body}");
+    assert!(!body.contains("Secret-Day-17"), "a typed value was handed back: {body}");
+
+    let area = mapped_area(dir.path(), "Leave").unwrap();
+    for each in ["click #day", "fill #day", "click text"] {
+        assert!(area.outcomes.iter().any(|o| o.starts_with(each)), "no outcome for {each}: {:?}", area.outcomes);
+    }
+    let file = std::fs::read_to_string(map_path(dir.path(), ORG, PROJECT)).unwrap();
+    assert!(!file.contains("Secret-Day-17"), "a typed value reached the map: {file}");
+
+    let state = browser.as_ref().unwrap().discovery.as_ref().unwrap();
+    assert_eq!(state.tried, vec![draft_fingerprint(&c)]);
+
+    // The fingerprint is stable, ignores how the name is written, and moves
+    // with the actions and the inputs.
+    let mut renamed = c.clone();
+    renamed.name = "  PICK a date ".into();
+    renamed.description = "something else".into();
+    assert_eq!(draft_fingerprint(&renamed), draft_fingerprint(&c));
+    assert_eq!(draft_fingerprint(&c).len(), 64);
+    let changed = draft(json!([{ "kind": "click", "selector": { "input": "field" } }]));
+    assert_ne!(draft_fingerprint(&changed), draft_fingerprint(&c));
+    let mut fewer = c.clone();
+    fewer.inputs.pop();
+    assert_ne!(draft_fingerprint(&fewer), draft_fingerprint(&c));
+}
+
+/// A try stops at the first action that fails, as a script step does; the
+/// actions after it are not run and the try is not fingerprinted.
+#[tokio::test]
+async fn a_failed_try_is_not_fingerprinted() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/new?x=1"), exploring("Leave"));
+    let c = draft(json!([
+        { "kind": "click", "selector": { "input": "field" } },
+        { "kind": "return_to_area", "area": "Nowhere At All" },
+        { "kind": "fill", "selector": { "input": "field" }, "value": "{{day}}" }
+    ]));
+
+    let (status, body) =
+        discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &pick_a_date_use(), Some(&c), None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], false, "{body}");
+    let steps = v["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 2, "the action after the failure ran: {body}");
+    assert_eq!(steps[0]["ok"], true, "{body}");
+    assert_eq!(steps[1]["ok"], false, "{body}");
+    assert_eq!(v["detail"], steps[1]["detail"], "{body}");
+
+    let state = browser.as_ref().unwrap().discovery.as_ref().unwrap();
+    assert!(state.tried.is_empty(), "{:?}", state.tried);
+}
+
+/// Without a draft the saved component is expanded and run; one that is
+/// not saved is refused before the browser is touched.
+#[tokio::test]
+async fn trying_a_saved_component_expands_it() {
+    let dir = root_with_recipe_and_account();
+    put(dir.path(), ORG, PROJECT, pick_a_date()).unwrap();
+    let (mut browser, _) = slot(leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/new?x=1"), exploring("Leave"));
+
+    let (status, body) =
+        discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &pick_a_date_use(), None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], true, "{body}");
+    assert_eq!(v["steps"].as_array().map(Vec::len), Some(3), "{body}");
+    let state = browser.as_ref().unwrap().discovery.as_ref().unwrap();
+    assert_eq!(state.tried, vec![draft_fingerprint(&pick_a_date())]);
+
+    let missing: Action =
+        serde_json::from_value(json!({ "kind": "use_component", "component": "Not There" })).unwrap();
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &missing, None, None).await;
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("Not There is not saved"), "{body}");
+
+    // A draft for another component is not this use's.
+    let mut other = pick_a_date();
+    other.name = "Pick a time".into();
+    let (status, body) =
+        discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &pick_a_date_use(), Some(&other), None).await;
+    assert_eq!(status, 400, "{body}");
+}
+
+/// The route reads a `draft` only for a `use_component`, and refuses one
+/// that is not a component, before the browser is touched.
+#[tokio::test]
+async fn the_route_takes_a_draft_only_for_a_use_component() {
+    let click = json!({ "kind": "click", "selector": "#a" });
+    let body = json!({ "action": click, "draft": serde_json::to_value(pick_a_date()).unwrap() }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-action", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("use_component"), "{out}");
+
+    let body = json!({ "action": pick_a_date_use(), "draft": { "name": 5 } }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-action", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("not a component"), "{out}");
 }

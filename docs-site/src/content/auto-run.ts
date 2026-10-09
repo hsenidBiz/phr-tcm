@@ -613,7 +613,7 @@ export const autoRun: Screen = {
       locate: { role: "button", name: "Start" },
       name: "Start",
       does:
-        "Starts the run. The window follows it case by case, and each case can be opened to see its steps as they go; **Stop** ends the run after the step it is on. " +
+        "Starts the run. The window follows it case by case, and each case can be opened to see its steps as they go, with the lines of a component grouped under its name; **Stop** ends the run after the step it is on. " +
         "**Run in background** (or Escape) closes the window and the run carries on: a pill in the window's title bar shows how far it has got, such as **Auto Run 3 of 8**, and clicking it opens the window again from any part of the app. " +
         "At a reset point the pill turns amber and reads **Reset needed**; click it to Continue or Stop. " +
         "When the run finishes with its window open, its review opens. Finished in the background, a message and the pill say **Run finished, Review**: click either to open the review on **Past runs**. " +
@@ -808,6 +808,21 @@ export const autoRun: Screen = {
         "If your assistant stopped without ending it, **End discovery** appears beside **View** while discovery runs: it closes the assistant's browser, and what was mapped is kept. " +
         "If the map cannot be read, the window offers **Reset map**, which moves the damaged file aside (it is kept, never deleted) and starts an empty map.",
       tips: ["In your assistant, **/tcm:discover** starts this for a case. The row reads **Not explored yet** until an area has been explored."],
+    },
+    {
+      id: "view-components",
+      shot: SETUP,
+      group: "setup",
+      locate: { role: "button", name: "View components" },
+      name: "View (components)",
+      does:
+        "The reusable steps your assistant has made for the site, such as picking a date in a date picker or confirming a dialog. A component takes text and target inputs, and every script that uses it gets its fixes. " +
+        "The assistant makes a component during discovery, and only after it has tried the component live on the site. A component cannot use another component. " +
+        "The **Components** window lists each one with what it does and the inputs it takes, where and when it was tried, the cases that use it, and how many times it has been changed so far. After 3 changes, the assistant stops and asks you before changing it again. A change can never remove a check, and it is checked against every script that uses it. " +
+        "**Remove** is greyed out while any script uses the component, and asks first otherwise; the scripts that use it have to be changed first. " +
+        "If the components file cannot be read, the window offers **Reset components**, which moves the damaged file aside (it is kept, never deleted) and starts with none. " +
+        "The row reads **None yet** until the assistant has made one. Fixtures and delete templates do not use components.",
+      tips: ["In your assistant, **/tcm:discover** is where components get made. In a run and in its review, the lines a component ran are grouped under its name."],
     },
     {
       id: "manage-test-files",

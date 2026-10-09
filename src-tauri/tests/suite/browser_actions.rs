@@ -655,6 +655,7 @@ fn only_checks_and_expectations_are_checks() {
         serde_json::from_value(serde_json::json!({ "kind": "expect_no_row", "table": "t", "cells": { "A": "b" } })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_sorted", "table": "t", "column": "A", "order": "ascending" })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_row_count", "table": "t", "equals": 1 })).unwrap(),
+        Action::UseComponent { component: "c".into(), inputs: serde_json::Map::new() },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
 

@@ -99,6 +99,15 @@ pub struct TestCaseFull {
     pub preconditions: String,
 }
 
+/// A test case's own words and the project it is in: each step's action
+/// then its expected result, in order (what the Auto Run seen check reads).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaseText {
+    pub id: i32,
+    pub project: String,
+    pub text: Vec<String>,
+}
+
 /// What a blank value means on an update.
 ///
 /// The two callers genuinely disagree, and conflating them was a bug in both

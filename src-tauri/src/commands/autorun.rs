@@ -55,6 +55,9 @@ pub struct DiscoveryState {
     /// When the discovery started (milliseconds since the epoch): a page it
     /// reads again keeps the locators matched since then.
     pub started_at: u64,
+    /// The components tried in this discovery that worked, by
+    /// `components::draft_fingerprint`. It goes with the discovery.
+    pub tried: Vec<String>,
 }
 
 /// The supervised session, for the bridge's page routes. Whoever locks
@@ -188,8 +191,12 @@ pub(crate) async fn open_for_discovery(browser_name: &str) -> Result<(), String>
     let root = store::configured_root().ok_or_else(|| NO_DATA_DIRECTORY.to_string())?;
     open_into(Ok(root), &mut slot, Browser::from_name(browser_name)).await?;
     if let Some(session) = slot.as_mut() {
-        session.discovery =
-            Some(DiscoveryState { area: None, account: None, started_at: crate::autorun::sessions::now_ms() });
+        session.discovery = Some(DiscoveryState {
+            area: None,
+            account: None,
+            started_at: crate::autorun::sessions::now_ms(),
+            tried: Vec::new(),
+        });
     }
     publish_discovery(&slot);
     Ok(())
@@ -338,6 +345,90 @@ pub fn auto_run_forget_map_area(
 #[specta::specta]
 pub fn auto_run_reset_map(app: tauri::AppHandle, organization: String, project: String) -> Result<Option<String>, String> {
     crate::autorun::discovery_map::reset_map(&root(&app)?, &organization, &project, crate::autorun::sessions::now_ms())
+}
+
+/// One saved component, as the Components dialog shows it.
+#[derive(serde::Serialize, specta::Type, Clone, Debug, PartialEq)]
+pub struct ComponentView {
+    pub name: String,
+    pub description: String,
+    pub inputs: Vec<crate::autorun::components::ComponentInput>,
+    pub tried_area: String,
+    /// When it last ran on the live app, milliseconds since the epoch;
+    /// `None` when never.
+    #[specta(type = Option<f64>)]
+    pub tried_at: Option<u64>,
+    pub version: u32,
+    /// How many times it has been changed so far.
+    pub changes: u32,
+    /// After this many changes the assistant stops and asks the person
+    /// before changing it again.
+    pub cap: u32,
+    /// The saved scripts that use it, by case id. While any do, it stays.
+    pub used_by_cases: Vec<i32>,
+}
+
+#[derive(serde::Serialize, specta::Type, Clone, Debug, PartialEq)]
+pub struct ComponentsView {
+    pub components: Vec<ComponentView>,
+}
+
+/// The project's components, each with the scripts that use it.
+pub fn components_view(root: &std::path::Path, org: &str, project: &str) -> Result<ComponentsView, String> {
+    use crate::autorun::components::{load_components, users_of, CHANGE_CAP};
+    let file = load_components(root, org, project)?;
+    let components = file
+        .components
+        .into_iter()
+        .map(|c| ComponentView {
+            used_by_cases: users_of(root, &c.name).cases,
+            tried_at: (c.tried_at > 0).then_some(c.tried_at),
+            name: c.name,
+            description: c.description,
+            inputs: c.inputs,
+            tried_area: c.tried_area,
+            version: c.version,
+            changes: c.changes,
+            cap: CHANGE_CAP,
+        })
+        .collect();
+    Ok(ComponentsView { components })
+}
+
+/// The project's components, for the Components dialog and its Setup row.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_load_components(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<ComponentsView, String> {
+    components_view(&root(&app)?, &organization, &project)
+}
+
+/// Remove a component no saved script uses (`components::remove_unused`,
+/// as the assistant's retire): one in use stays, and the refusal names the
+/// cases that use it. Hands back its saved name.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_remove_component(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    name: String,
+) -> Result<String, String> {
+    let removed = crate::autorun::components::remove_unused(&root(&app)?, &organization, &project, &name)?;
+    crate::applog::info(format!("Auto Run component {removed} removed"));
+    Ok(removed)
+}
+
+/// Reset in the Components dialog, offered when the file cannot be read:
+/// the damaged file is moved aside (never deleted). Hands back where it was
+/// moved, project-relative.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_reset_components(app: tauri::AppHandle, organization: String, project: String) -> Result<String, String> {
+    crate::autorun::components::reset_components(&root(&app)?, &organization, &project)
 }
 
 /// Said when something wants the browser a session holds. A discovery's
@@ -1316,8 +1407,17 @@ fn import_scripts(
             sc.no_save = true;
         }
     }
-    check_imported_seen(root, organization, project, &scripts, cases)?;
-    store::save_scripts_atomically(root, &scripts).map_err(|e| e.to_string())?;
+    // With a component in use, the check and the write hold the components
+    // lock, so a component save cannot slip between them.
+    let check_and_save = || -> Result<(), String> {
+        check_imported_seen(root, organization, project, &scripts, cases)?;
+        store::save_scripts_atomically(root, &scripts).map_err(|e| e.to_string())
+    };
+    if scripts.iter().any(crate::autorun::seen_check::uses_components) {
+        crate::autorun::components::with_components_locked(check_and_save)?;
+    } else {
+        check_and_save()?;
+    }
     let ids: Vec<i32> = scripts.iter().map(|sc| sc.case_id).collect();
     crate::applog::info(format!("Imported {} auto-run script(s)", ids.len()));
     Ok(ids)
@@ -1334,14 +1434,23 @@ fn check_imported_seen(
 ) -> Result<(), String> {
     let cases = cases.ok_or_else(|| IMPORT_NEEDS_CASES.to_string())?;
     let map = crate::autorun::discovery_map::load_map(root, organization, project)?;
+    // Read only when a script uses a component.
+    let components = if scripts.iter().any(crate::autorun::seen_check::uses_components) {
+        crate::autorun::components::load_components(root, organization, project)?
+    } else {
+        crate::autorun::components::ComponentFile::default()
+    };
     let mut lines: Vec<String> = Vec::new();
     for sc in scripts {
         let Some(text) = cases.get(&sc.case_id) else {
             lines.push(format!("Case {}: Azure DevOps has no test case with this id.", sc.case_id));
             continue;
         };
-        for u in crate::autorun::seen_check::check_seen_all(&map, sc, text, None) {
-            lines.push(format!("Case {}, step {}: {} was never seen on the live app.", sc.case_id, u.step, u.locator));
+        for u in crate::autorun::seen_check::check_seen_all(&map, &components, sc, text, None) {
+            lines.push(match &u.refused {
+                Some(why) => format!("Case {}, step {}: {why}.", sc.case_id, u.step),
+                None => format!("Case {}, step {}: {} was never seen on the live app.", sc.case_id, u.step, u.locator),
+            });
         }
     }
     if lines.is_empty() {
@@ -1410,6 +1519,8 @@ pub const REPORT_RUN_GONE: &str = "this run is no longer on this machine";
 pub fn write_report_at(
     offered: bool,
     root: &std::path::Path,
+    organization: &str,
+    project: &str,
     run_id: &str,
     ran_at: &str,
 ) -> Result<std::path::PathBuf, String> {
@@ -1423,9 +1534,14 @@ pub fn write_report_at(
         .iter()
         .filter_map(|c| store::load_script(root, c.case_id).ok().flatten())
         .collect();
-    let html = crate::autorun::report::build_with_downloads(
+    // The project's components, so an action one ran is named as it
+    // expands. A file that does not read leaves those actions named by
+    // their component only.
+    let components = crate::autorun::components::load_components(root, organization, project).unwrap_or_default();
+    let html = crate::autorun::report::build_with_components(
         &run,
         &scripts,
+        &components,
         ran_at,
         &|name| store::shot_exists(root, name),
         &|name| store::download_size(root, run_id, name),
@@ -1456,10 +1572,16 @@ pub const REPORT_NOT_OPENED: &str = "the report could not be opened in your brow
 /// page must not hold the main thread, which would freeze the window.
 #[tauri::command]
 #[specta::specta]
-pub async fn auto_run_open_report(app: tauri::AppHandle, run_id: String, ran_at: String) -> Result<(), String> {
+pub async fn auto_run_open_report(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    run_id: String,
+    ran_at: String,
+) -> Result<(), String> {
     let offered = crate::ai_tools::autorun_offered();
     let root = root(&app)?;
-    let path = tauri::async_runtime::spawn_blocking(move || write_report_at(offered, &root, &run_id, &ran_at))
+    let path = tauri::async_runtime::spawn_blocking(move || write_report_at(offered, &root, &organization, &project, &run_id, &ran_at))
         .await
         .map_err(|e| {
             crate::applog::warn(format!("auto run report: the writer stopped: {e}"));

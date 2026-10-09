@@ -609,6 +609,8 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "discover_autorun_action",
             "save_autorun_area",
             "end_autorun_discovery",
+            "save_autorun_component",
+            "remove_autorun_component",
             "get_autorun_failures",
             "record_autorun_quirk",
             "retire_autorun_quirk",
@@ -1720,4 +1722,44 @@ fn discover_and_heal_say_to_pass_the_area_to_discovery() {
     let flat = discover.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(flat.contains("pass `area` with its name"), "{flat}");
     assert!(flat.contains("call `save_autorun_area` as soon as you are on it"), "{flat}");
+}
+
+/// Components in the two commands: `/tcm:discover` checks the guide's list
+/// before working a widget out, and saves a new one only after trying it
+/// live as a draft; `/tcm:heal` fixes a failure inside a component in the
+/// component, not in the scripts that use it.
+#[test]
+fn discover_and_heal_say_how_to_use_components() {
+    let flat = |stem: &str| {
+        let c = COMMANDS.iter().find(|c| c.stem == stem).unwrap();
+        c.body.join("\n").split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    let discover = flat("discover");
+    let at = |what: &str| discover.find(what).unwrap_or_else(|| panic!("/tcm:discover never says {what:?}: {discover}"));
+    // The list is checked before a widget is worked out, a new component
+    // is tried live as a draft, then saved, all before the script's save.
+    let list = at("This project's components");
+    let draft = at("`draft`");
+    let save = at("`save_autorun_component`");
+    let script = at("`save_autorun_script`");
+    assert!(list < draft && draft < save && save < script, "{discover}");
+    // An action kind, not a tool: unquoted, since every quoted name with an
+    // underscore must be a tool.
+    for said in ["a use_component action", "more than once", "unchanged"] {
+        at(said);
+    }
+
+    let heal = flat("heal");
+    for said in [
+        "names a component",
+        "fix it in the component",
+        "`save_autorun_component`",
+        "`why`",
+        "3 changes",
+    ] {
+        assert!(heal.contains(said), "/tcm:heal never says {said:?}: {heal}");
+    }
+    for body in [&discover, &heal] {
+        assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
+    }
 }

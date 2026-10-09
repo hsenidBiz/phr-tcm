@@ -53,6 +53,8 @@ function runsTitle(f: ResultFilter): string {
 }
 
 export default function PastRuns({
+  org,
+  project,
   pbiId,
   onReview,
   onReplay,
@@ -60,6 +62,10 @@ export default function PastRuns({
   filter,
   onFilterChange,
 }: {
+  /** The project the screen is on: a report reads that project's
+   * components. */
+  org: string;
+  project: string;
   /** The PBI currently selected on the Auto Run screen. A run reviewed
    * here is sent with THIS PBI's title and step ids (see `RunReview`), so
    * a run saved under a different PBI must never be offered for review
@@ -127,7 +133,7 @@ export default function PastRuns({
    * The run's time goes as this screen shows it, so the report reads in the
    * person's own locale. */
   const openReport = useMutation({
-    mutationFn: (run: LocalRun_Serialize) => unwrapStr(commands.autoRunOpenReport(run.id, when(run.started_at))),
+    mutationFn: (run: LocalRun_Serialize) => unwrapStr(commands.autoRunOpenReport(org, project, run.id, when(run.started_at))),
     onSuccess: () => toast.success("Report opened in your browser"),
     onError: (e) => toast.error(`Could not open the report: ${e.message}`),
   });

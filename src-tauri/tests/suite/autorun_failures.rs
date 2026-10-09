@@ -89,6 +89,7 @@ fn stop_reason_is_some_when_the_sign_in_step_failed() {
             downloads: vec![],
             tab: None,
             dialog: None,
+            components: Vec::new(),
         }],
         verdict: "Blocked".to_string(),
         ..empty_case()
@@ -179,11 +180,13 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                             detail: "button \"Save\" not found".to_string(),
                             screenshot: Some("shot-1-000002.jpg".to_string()),
                             harness: false,
+                            component: None,
                         }],
                         screenshot: None,
                         downloads: vec![],
                         tab: None,
                         dialog: None,
+                        components: Vec::new(),
                     },
                     StepRecord {
                         step_number: 3,
@@ -192,6 +195,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                         downloads: vec![],
                         tab: None,
                         dialog: None,
+                        components: Vec::new(),
                     },
                 ],
                 proposed: "Failed".to_string(),
@@ -214,11 +218,13 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                         detail: "the page refused: no such element".to_string(),
                         screenshot: None,
                         harness: false,
+                        component: None,
                     }],
                     screenshot: None,
                     downloads: vec![],
                     tab: None,
                     dialog: None,
+                    components: Vec::new(),
                 }],
                 proposed: "Failed".to_string(),
                 reason: "step 1: the page refused: no such element".to_string(),
@@ -326,6 +332,7 @@ fn describe_failures_shows_the_stop_line_only_when_stop_reason_is_some() {
                 downloads: vec![],
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             }],
             ..empty_case()
         }],
@@ -355,6 +362,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
                 downloads: vec![],
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             }],
             ..empty_case()
         }],
@@ -434,6 +442,7 @@ fn describe_failures_prints_not_run_outcomes_in_a_mixed_step() {
                 downloads: vec![],
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             }],
             ..empty_case()
         }],
@@ -466,6 +475,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
                 downloads: vec![],
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             }],
             ..empty_case()
         }],
@@ -535,7 +545,7 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
     let case = CaseRecord {
         proposed: "Blocked".to_string(),
         reason: unreached.to_string(),
-        steps: vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None, downloads: vec![], tab: None, dialog: None }],
+        steps: vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![ActionOutcome::failed(unreached)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }],
         ..empty_case()
     };
     let expected = Some(
@@ -586,6 +596,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
             downloads: vec![],
             tab: None,
             dialog: None,
+            components: Vec::new(),
         }],
         ..empty_case()
     };
@@ -644,6 +655,7 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
                     downloads: vec!["Template.xlsx".to_string()],
                     tab: None,
                     dialog: None,
+                    components: Vec::new(),
                 },
                 StepRecord {
                     step_number: 2,
@@ -652,6 +664,7 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
                     downloads: vec!["errors.csv".to_string(), "errors (2).csv".to_string()],
                     tab: None,
                     dialog: None,
+                    components: Vec::new(),
                 },
                 StepRecord {
                     step_number: 3,
@@ -660,6 +673,7 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
                     downloads: vec![],
                     tab: None,
                     dialog: None,
+                    components: Vec::new(),
                 },
             ],
             ..empty_case()
@@ -678,4 +692,75 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
     assert!(!out.contains("step 3 downloads"), "{out}");
     // Names only: never the folder they are in.
     assert!(!out.contains("downloads\\") && !out.contains("downloads/"), "{out}");
+}
+
+// ---- components ----
+
+mod component_steps {
+    use crate::common::{component_case, component_run, component_script, pick_a_date_file, COMPONENT_TYPED};
+    use v2_lib::autorun::components::ComponentFile;
+    use v2_lib::autorun::failures::{describe_failures, describe_failures_with};
+
+    const TYPING: &str = "#start cannot be typed into";
+
+    #[test]
+    fn a_failure_inside_a_component_names_the_component_and_its_action() {
+        let run = component_run(vec![component_case(7, TYPING)]);
+        let text = describe_failures_with(&run, &[component_script(7)], &pick_a_date_file());
+        assert!(
+            text.contains(
+                "step 3, Pick a date, action 3: { \"kind\": \"fill\", \"selector\": { \"css\": \"#start\" }, \"value\": \"...\" }\n  page said: #start cannot be typed into"
+            ),
+            "{text}"
+        );
+        // The script's own action after the component lines up with it.
+        assert!(text.contains("step 3, action 5: { \"kind\": \"check_text\", \"value\": \"Saved\" }"), "{text}");
+        assert!(!text.contains("script changed"), "{text}");
+        assert!(!text.contains(COMPONENT_TYPED), "{text}");
+
+        // Without the components (gone, or not read), the action is named
+        // by its component, and the script is still not said to have
+        // changed.
+        for text in [
+            describe_failures(&run, &[component_script(7)]),
+            describe_failures_with(&run, &[component_script(7)], &ComponentFile::default()),
+        ] {
+            assert!(text.contains("step 3, Pick a date, action 3: component:"), "{text}");
+            assert!(text.contains("the component changed since the run"), "{text}");
+            assert!(text.contains("step 3, action 5: { \"kind\": \"check_text\", \"value\": \"Saved\" }"), "{text}");
+            assert!(!text.contains("script changed"), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_component_text_input_is_masked_in_the_failure_report() {
+        // A step whose component could not be used: the use itself is the
+        // failed action, so its JSON is shown.
+        let script: v2_lib::autorun::CaseScript = serde_json::from_value(serde_json::json!({
+            "case_id": 8, "title": "case 8",
+            "steps": [{ "step_number": 1, "actions": [
+                { "kind": "use_component", "component": "Pick a date",
+                  "inputs": { "field": { "css": "#start" }, "day": COMPONENT_TYPED, "count": 42 } },
+                { "kind": "when_visible", "selector": { "css": "#popup" }, "then": [
+                    { "kind": "use_component", "component": "Pick a date",
+                      "inputs": { "field": [{ "css": "#grid" }, { "text": "Row" }], "day": COMPONENT_TYPED } }
+                ] }
+            ] }]
+        }))
+        .unwrap();
+        let mut case = component_case(8, "x");
+        case.steps = serde_json::from_value(serde_json::json!([{ "step_number": 1, "outcomes": [
+            { "ok": false, "detail": "Pick a date is not saved in this project" },
+            { "ok": false, "detail": "#popup showed: Pick a date is not saved in this project" }
+        ] }]))
+        .unwrap();
+        let text = describe_failures_with(&component_run(vec![case]), &[script], &ComponentFile::default());
+        assert!(!text.contains(COMPONENT_TYPED), "{text}");
+        assert!(!text.contains("42"), "{text}");
+        assert!(
+            text.contains("\"inputs\": { \"field\": { \"css\": \"#start\" }, \"day\": \"...\", \"count\": \"...\" }"),
+            "{text}"
+        );
+        assert!(text.contains("\"field\": [{ \"css\": \"#grid\" }, { \"text\": \"Row\" }]"), "{text}");
+    }
 }

@@ -9,12 +9,20 @@
 //! name a check looks for that the test case itself says (the expected
 //! result the step is checking for). Both match whole words only, and a
 //! typed value shorter than 3 characters exempts nothing.
+//!
+//! A step that uses a component must name one the project has and give it
+//! every input, each of its kind. Every locator of the component an input
+//! goes into (a target input, or a text input written into a locator) is
+//! checked like any other, as it runs; the component's fixed locators are
+//! not, as they were checked when the component was saved.
 
+use super::components::{expand, find, not_saved, Component, ComponentFile};
 use super::discovery_map::{page_path, path_only, seen_keys, seen_paths, DiscoveryMap};
 use super::edits::Edit;
 use super::CaseScript;
 use crate::browser::actions::Action;
-use crate::browser::locator::{fold_name, LocatorStep};
+use crate::browser::locator::{fold_name, LocatorStep, SeenKey, Target};
+use std::collections::HashSet;
 
 /// A typed value, or a name taken from the test case, shorter than this
 /// exempts nothing: two characters are inside far too many names to say
@@ -75,24 +83,51 @@ fn words(link: &LocatorStep) -> Vec<String> {
 
 /// One locator, or one page path, a script names that the map has never
 /// seen: the step that names it and how it reads (`Target::describe`, or
-/// the path).
+/// the path). Or a use of a component the step cannot make: then
+/// `refused` says why, without the step ("Pick a date needs day"), and
+/// `locator` is the component's name as the script writes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unseen {
     pub step: i32,
     pub locator: String,
+    pub refused: Option<String>,
+}
+
+impl Unseen {
+    /// The sentence a component change is refused with for a script that
+    /// uses it, after "Case <id>, ".
+    pub fn broken_by_change(&self) -> String {
+        match &self.refused {
+            Some(why) => format!("step {}: {why}; this change would break it.", self.step),
+            None => format!(
+                "step {}: {} was never seen on the live app; this change would break it.",
+                self.step, self.locator
+            ),
+        }
+    }
+
+    /// The sentence a save refuses this with.
+    fn refusal(&self) -> String {
+        match &self.refused {
+            Some(why) => format!("Step {}: {why}", self.step),
+            None => refusal(self.step, &self.locator),
+        }
+    }
 }
 
 /// Checks `script` against what `map` has seen, in step order: every
 /// step, or only `only_steps` on a repair. `case_text` is the test case's
-/// own step actions and expected results. The first failure is returned.
+/// own step actions and expected results; `components` are the project's,
+/// for the steps that use one. The first failure is returned.
 pub fn check_seen(
     map: &DiscoveryMap,
+    components: &ComponentFile,
     script: &CaseScript,
     case_text: &[String],
     only_steps: Option<&[i32]>,
 ) -> Result<(), String> {
-    match scan(map, script, case_text, only_steps, true).into_iter().next() {
-        Some(u) => Err(refusal(u.step, &u.locator)),
+    match scan(map, components, script, case_text, only_steps, true, None).into_iter().next() {
+        Some(u) => Err(u.refusal()),
         None => Ok(()),
     }
 }
@@ -101,30 +136,142 @@ pub fn check_seen(
 /// an import names all of them at once.
 pub fn check_seen_all(
     map: &DiscoveryMap,
+    components: &ComponentFile,
     script: &CaseScript,
     case_text: &[String],
     only_steps: Option<&[i32]>,
 ) -> Vec<Unseen> {
-    scan(map, script, case_text, only_steps, false)
+    scan(map, components, script, case_text, only_steps, false, None)
 }
 
-/// The failures of the check, stopping at the first when `first_only`.
+/// Every use of `component` in `script`, checked the way the script's
+/// save checks it, against `components` as they would be (the version
+/// being saved): each locator an input goes into, read with what the
+/// script typed before it and `case_text`, and whether the use can still
+/// be expanded at all. The script's other locators are not checked again.
+pub fn check_component_uses(
+    map: &DiscoveryMap,
+    components: &ComponentFile,
+    script: &CaseScript,
+    case_text: &[String],
+    component: &str,
+) -> Vec<Unseen> {
+    scan(map, components, script, case_text, None, false, Some(component))
+}
+
+/// Does this script use a component anywhere? Its checks need the
+/// project's components file only then.
+pub fn uses_components(script: &CaseScript) -> bool {
+    script
+        .steps
+        .iter()
+        .flat_map(|s| s.actions.iter())
+        .flat_map(Action::each)
+        .any(|a| matches!(a, Action::UseComponent { .. }))
+}
+
+/// The targets an action's own check reads: a `when_visible`'s own
+/// selector only, as `each` lists its guarded actions after it.
+fn own_targets(action: &Action) -> Vec<&Target> {
+    match action {
+        Action::WhenVisible { selector, .. } => vec![selector],
+        _ => action.targets(),
+    }
+}
+
+/// A locator a component's inputs went into, as it runs: the links an
+/// input put there (a fixed link it already had is not re-checked; that
+/// was done when the component was saved), whether its action is a check,
+/// and what the component typed before it.
+struct InputLocator {
+    target: Target,
+    links: Vec<LocatorStep>,
+    check: bool,
+    typed_before: Vec<String>,
+}
+
+/// Every locator of `c` an input changed, from its `expanded` actions
+/// (`expand`'s, which pairs one for one with `c.actions`): a target
+/// input's locator, or a fixed one a text input was written into.
+fn input_locators(c: &Component, expanded: &[Action]) -> Vec<InputLocator> {
+    let mut out = Vec::new();
+    let mut typed_before: Vec<String> = Vec::new();
+    for (written, ran) in c.actions.iter().zip(expanded) {
+        for (w, r) in written.each().into_iter().zip(ran.each()) {
+            for (wt, rt) in own_targets(w).into_iter().zip(own_targets(r)) {
+                if wt == rt {
+                    continue;
+                }
+                let fixed = wt.links();
+                let links: Vec<LocatorStep> = rt.links().into_iter().filter(|l| !fixed.contains(l)).collect();
+                out.push(InputLocator { target: rt.clone(), links, check: is_check(r), typed_before: typed_before.clone() });
+            }
+            if let Some(v) = r.typed_value() {
+                let v = fold_name(v);
+                if v.chars().count() >= MIN_TYPED_LEN {
+                    typed_before.push(v);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The actions a `use_component` the project can expand runs as, for what
+/// they type and the areas they go to; nothing for any other action, or
+/// for a use that cannot be expanded (its own step refuses that).
+fn as_run(components: &ComponentFile, action: &Action) -> Vec<Action> {
+    match action {
+        Action::UseComponent { component, inputs } => {
+            find(components, component).and_then(|c| expand(c, inputs).ok()).unwrap_or_default()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Is this link neither on the map nor exempt?
+fn link_unseen(link: &LocatorStep, keys: &HashSet<SeenKey>, typed: &[String], case_text: &[String], check: bool) -> bool {
+    if link.seen_key().is_some_and(|k| keys.contains(&k)) {
+        return false;
+    }
+    let own = words(link);
+    // A value typed earlier (already at least 3 characters) as whole words
+    // inside the locator's text or name: the record the script created.
+    let typed_here = typed.iter().any(|t| own.iter().any(|w| has_phrase(w, t)));
+    // The locator's whole name, of at least 3 characters, as whole words in
+    // what the case says.
+    let in_case = check
+        && own
+            .iter()
+            .any(|w| w.chars().count() >= MIN_TYPED_LEN && case_text.iter().any(|t| has_phrase(t, w)));
+    !typed_here && !in_case
+}
+
+/// The failures of the check, stopping at the first when `first_only`;
+/// with `only_component`, of that component's uses alone.
 fn scan(
     map: &DiscoveryMap,
+    components: &ComponentFile,
     script: &CaseScript,
     case_text: &[String],
     only_steps: Option<&[i32]>,
     first_only: bool,
+    only_component: Option<&str>,
 ) -> Vec<Unseen> {
+    let only_key = only_component.map(super::nav::module_key);
     let mut unseen: Vec<Unseen> = Vec::new();
-    let mut areas: Vec<&str> = script.area_name().into_iter().collect();
+    let mut areas: Vec<String> = script.area_name().into_iter().map(str::to_string).collect();
     for step in &script.steps {
         for action in step.actions.iter().flat_map(Action::each) {
-            if let Some(a) = action.area_named() {
-                areas.push(a);
+            let ran = as_run(components, action);
+            for a in std::iter::once(action).chain(ran.iter().flat_map(Action::each)) {
+                if let Some(a) = a.area_named() {
+                    areas.push(a.to_string());
+                }
             }
         }
     }
+    let areas: Vec<&str> = areas.iter().map(String::as_str).collect();
     let keys = seen_keys(map, &areas);
     let paths = seen_paths(map);
     let case_text: Vec<String> = case_text.iter().map(|t| fold_name(t)).collect();
@@ -135,53 +282,130 @@ fn scan(
         let checked = only_steps.is_none_or(|only| only.contains(&step.step_number));
         if checked {
             for action in step.actions.iter().flat_map(Action::each) {
+                if let Some(k) = &only_key {
+                    let this_one = matches!(
+                        action,
+                        Action::UseComponent { component, .. } if super::nav::module_key(component) == *k
+                    );
+                    if !this_one {
+                        continue;
+                    }
+                }
                 if let Action::Navigate { url } | Action::OpenTab { url, .. } = action {
                     // Compared as the map files a page; named as written.
                     let path = path_only(url);
                     if !paths.contains(&page_path(url)) {
-                        unseen.push(Unseen { step: step.step_number, locator: path });
+                        unseen.push(Unseen { step: step.step_number, locator: path, refused: None });
                         if first_only {
                             return unseen;
                         }
                     }
                 }
-                // `each` lists a `when_visible`'s own actions after it, so
-                // only its own selector is taken here.
-                let targets = match action {
-                    Action::WhenVisible { selector, .. } => vec![selector],
-                    _ => action.targets(),
-                };
-                for target in targets {
-                    for link in target.links() {
-                        if link.seen_key().is_some_and(|k| keys.contains(&k)) {
-                            continue;
-                        }
-                        let own = words(&link);
-                        // A value typed earlier (already at least 3
-                        // characters) as whole words inside the locator's
-                        // text or name: the record the script created.
-                        let typed_here = typed.iter().any(|t| own.iter().any(|w| has_phrase(w, t)));
-                        // The locator's whole name, of at least 3
-                        // characters, as whole words in what the case says.
-                        let in_case = is_check(action)
-                            && own.iter().any(|w| {
-                                w.chars().count() >= MIN_TYPED_LEN && case_text.iter().any(|t| has_phrase(t, w))
+                // The locators the script names: the action's own, each
+                // with whether it is only looked for and what was typed
+                // before it; or every locator of a component its inputs
+                // went into.
+                let mut named: Vec<InputLocator> = own_targets(action)
+                    .into_iter()
+                    .map(|t| InputLocator {
+                        target: t.clone(),
+                        links: t.links(),
+                        check: is_check(action),
+                        typed_before: Vec::new(),
+                    })
+                    .collect();
+                if let Action::UseComponent { component, inputs } = action {
+                    let used = find(components, component)
+                        .ok_or_else(|| not_saved(component))
+                        .and_then(|c| expand(c, inputs).map(|ex| (c, ex)));
+                    let (c, expanded) = match used {
+                        Ok(used) => used,
+                        Err(why) => {
+                            unseen.push(Unseen {
+                                step: step.step_number,
+                                locator: component.clone(),
+                                refused: Some(why),
                             });
-                        if !typed_here && !in_case {
-                            unseen.push(Unseen { step: step.step_number, locator: target.describe() });
                             if first_only {
                                 return unseen;
                             }
-                            // One line per target, however many of its
-                            // links are unseen.
-                            break;
+                            continue;
+                        }
+                    };
+                    named.extend(input_locators(c, &expanded));
+                }
+                for n in named {
+                    let typed: Vec<String> = typed.iter().cloned().chain(n.typed_before).collect();
+                    // One line per target, however many of its links are
+                    // unseen.
+                    if n.links.iter().any(|l| link_unseen(l, &keys, &typed, &case_text, n.check)) {
+                        unseen.push(Unseen { step: step.step_number, locator: n.target.describe(), refused: None });
+                        if first_only {
+                            return unseen;
                         }
                     }
                 }
             }
         }
         for action in step.actions.iter().flat_map(Action::each) {
-            if let Some(v) = action.typed_value() {
+            // A component types what its actions type, its text inputs
+            // put in.
+            let ran = as_run(components, action);
+            for a in std::iter::once(action).chain(ran.iter().flat_map(Action::each)) {
+                if let Some(v) = a.typed_value() {
+                    let v = fold_name(v);
+                    if v.chars().count() >= MIN_TYPED_LEN {
+                        typed.push(v);
+                    }
+                }
+            }
+        }
+    }
+    unseen
+}
+
+/// Is this link left to the script: a target input's place, or one that
+/// holds a complete `{{x}}` text placeholder?
+fn input_link(link: &LocatorStep) -> bool {
+    link.input.is_some()
+        || serde_json::to_value(link).is_ok_and(|v| super::components::holds_text_placeholder(&v))
+}
+
+/// A component's own locators and the pages it goes to, checked against
+/// what `map` has seen in `area` (and in any area its actions return to),
+/// in order; the first unseen one is refused, named by the component's
+/// action. Two kinds of link are exempt, as only a script knows them: one
+/// a target input fills (`{"input": ...}`), and one a text input is
+/// written into (`{{x}}`). Every other link, beside one of those in a
+/// chain too, must be on the map. A script's save checks the exempt ones
+/// as they expand.
+pub fn check_component_seen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) -> Result<(), String> {
+    let mut areas: Vec<&str> = area.into_iter().collect();
+    areas.extend(actions.iter().flat_map(Action::each).filter_map(Action::area_named));
+    let keys = seen_keys(map, &areas);
+    let paths = seen_paths(map);
+    let refused = |i: usize, what: &str| {
+        format!(
+            "Action {}: {what} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
+            i + 1
+        )
+    };
+    // Values typed by the component's earlier actions.
+    let mut typed: Vec<String> = Vec::new();
+    for (i, action) in actions.iter().enumerate() {
+        for a in action.each() {
+            if let Action::Navigate { url } | Action::OpenTab { url, .. } = a {
+                if !paths.contains(&page_path(url)) {
+                    return Err(refused(i, &path_only(url)));
+                }
+            }
+            for t in own_targets(a) {
+                let check = is_check(a);
+                if t.links().iter().filter(|l| !input_link(l)).any(|l| link_unseen(l, &keys, &typed, &[], check)) {
+                    return Err(refused(i, &t.describe()));
+                }
+            }
+            if let Some(v) = a.typed_value() {
                 let v = fold_name(v);
                 if v.chars().count() >= MIN_TYPED_LEN {
                     typed.push(v);
@@ -189,5 +413,5 @@ fn scan(
             }
         }
     }
-    unseen
+    Ok(())
 }

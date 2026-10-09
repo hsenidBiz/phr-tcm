@@ -23,6 +23,7 @@ import ResultFilterRow from "./ResultFilterRow";
 import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
+import OutcomeGroups from "./OutcomeGroups";
 import PageErrorsBadge from "./PageErrorsBadge";
 import VerdictPicker from "./VerdictPicker";
 import { resetLinesBefore } from "./plan";
@@ -442,26 +443,29 @@ export default function RunReview(props: {
                             </button>
                           )}
                         </div>
-                        {s.outcomes.map((o, i) => (
-                          <p
-                            key={i}
-                            className={cn("mt-1 flex items-center gap-2", o.ok ? "text-muted" : "text-danger")}
-                          >
-                            {/* Its own element, separate from the Screenshot button below - a
-                                sibling button inside the same node would fold into this
-                                text's own content and break an exact-text lookup on it. */}
-                            <span>{o.detail}</span>
-                            {o.screenshot && (
-                              <button
-                                type="button"
-                                className="text-muted underline hover:text-accent"
-                                onClick={() => openShot(o.screenshot!)}
-                              >
-                                Screenshot
-                              </button>
-                            )}
-                          </p>
-                        ))}
+                        <OutcomeGroups
+                          outcomes={s.outcomes}
+                          line={(o, i) => (
+                            <p
+                              key={i}
+                              className={cn("mt-1 flex items-center gap-2", o.ok ? "text-muted" : "text-danger")}
+                            >
+                              {/* Its own element, separate from the Screenshot button below - a
+                                  sibling button inside the same node would fold into this
+                                  text's own content and break an exact-text lookup on it. */}
+                              <span>{o.detail}</span>
+                              {o.screenshot && (
+                                <button
+                                  type="button"
+                                  className="text-muted underline hover:text-accent"
+                                  onClick={() => openShot(o.screenshot!)}
+                                >
+                                  Screenshot
+                                </button>
+                              )}
+                            </p>
+                          )}
+                        />
                         {(() => {
                           const reason = unchecked(c.case_id, s.step_number);
                           return (

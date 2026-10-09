@@ -37,8 +37,8 @@ fn failed_at_2(proposed: &str, failed: ActionOutcome) -> CaseRecord {
         verdict: String::new(),
         note: String::new(),
         steps: vec![
-            StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("clicked #new")], screenshot: None, downloads: vec![], tab: None, dialog: None },
-            StepRecord { step_number: 2, outcomes: vec![failed], screenshot: None, downloads: vec![], tab: None, dialog: None },
+            StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("clicked #new")], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() },
+            StepRecord { step_number: 2, outcomes: vec![failed], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() },
             StepRecord {
                 step_number: 3,
                 outcomes: vec![ActionOutcome::failed("not run: an earlier step of this case failed")],
@@ -46,6 +46,7 @@ fn failed_at_2(proposed: &str, failed: ActionOutcome) -> CaseRecord {
                 downloads: vec![],
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             },
         ],
         proposed: proposed.into(),
@@ -132,8 +133,8 @@ fn the_browser_stopping_is_transient_wherever_it_happened() {
     // While going to the module, too.
     let mut module = case.clone();
     module.steps = vec![
-        StepRecord { step_number: SIGN_IN_STEP, outcomes: vec![ActionOutcome::passed("signed in")], screenshot: None, downloads: vec![], tab: None, dialog: None },
-        StepRecord { step_number: MODULE_STEP, outcomes: vec![silent], screenshot: None, downloads: vec![], tab: None, dialog: None },
+        StepRecord { step_number: SIGN_IN_STEP, outcomes: vec![ActionOutcome::passed("signed in")], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() },
+        StepRecord { step_number: MODULE_STEP, outcomes: vec![silent], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() },
     ];
     assert!(is_transient(&module, Some(&script(expect_save()))).is_some());
 }
@@ -199,7 +200,7 @@ fn an_api_request_the_network_dropped_is_transient_but_its_timeout_is_not() {
 fn sign_in_failed(outcomes: Vec<ActionOutcome>) -> CaseRecord {
     let last = outcomes.last().unwrap().detail.clone();
     CaseRecord {
-        steps: vec![StepRecord { step_number: SIGN_IN_STEP, outcomes, screenshot: None, downloads: vec![], tab: None, dialog: None }],
+        steps: vec![StepRecord { step_number: SIGN_IN_STEP, outcomes, screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }],
         proposed: "Blocked".into(),
         reason: format!("while signing in: {last}"),
         ..failed_at_2("Blocked", ActionOutcome::failed("x"))
@@ -244,4 +245,28 @@ fn a_mid_script_sign_in_whose_page_would_not_load_is_transient() {
     assert!(is_transient(&refused, Some(&script(sign_in.clone()))).is_some());
     let wrong = failed_at_2("Blocked", ActionOutcome::failed("sign-in stopped at step 2: #password is not on the page"));
     assert_eq!(is_transient(&wrong, Some(&script(sign_in))), None);
+}
+
+// ---- components ----
+
+#[test]
+fn a_network_error_inside_a_component_is_retried_like_any_other() {
+    use v2_lib::autorun::components::ComponentFile;
+    use v2_lib::autorun::transient::is_transient_with;
+    let file: ComponentFile = serde_json::from_value(json!({ "components": [{
+        "name": "Load the cycle", "description": "d", "inputs": [], "version": 1,
+        "actions": [{ "kind": "check_text", "value": "Cycles" }, api_get()]
+    }] }))
+    .unwrap();
+    let sc = script(json!({ "kind": "use_component", "component": "Load the cycle", "inputs": {} }));
+    let detail = "GET /hr/api/cycles/42 answered 503, expected 200";
+    let mut case = failed_at_2("Failed", ActionOutcome::failed(detail));
+    let mut checked = ActionOutcome::passed("page contains Cycles");
+    checked.component = Some("Load the cycle".into());
+    case.steps[1].outcomes[0].component = Some("Load the cycle".into());
+    case.steps[1].outcomes.insert(0, checked);
+    assert_eq!(is_transient_with(&case, Some(&sc), &file), Some(format!("step 2: {detail}")));
+    // The same outcome read against a component that is not there: no
+    // action to read it by, so no second go.
+    assert_eq!(is_transient_with(&case, Some(&sc), &ComponentFile::default()), None);
 }

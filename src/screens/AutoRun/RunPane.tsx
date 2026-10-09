@@ -29,6 +29,7 @@ import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 import { dbReadAccessOn } from "../../lib/mcpTools";
+import OutcomeGroups from "./OutcomeGroups";
 import VerdictPicker from "./VerdictPicker";
 import ResetNeededPanel from "./ResetNeededPanel";
 import { STOPPED_AT_RESET } from "./plan";
@@ -746,25 +747,26 @@ export default function RunPane({
   };
 
   /** One action outcome per line, a failure in danger with its screenshot. */
-  const outcomeLines = (list: ActionOutcome[]) =>
-    list.map((o, i) => (
-      <p
-        key={i}
-        className={cn("mt-1 text-xs", o.ok ? "text-muted" : "text-danger")}
-      >
-        {o.detail}
-        {o.screenshot && (
-          <button
-            type="button"
-            aria-label={`Screenshot for action ${i + 1}`}
-            className="ml-2 text-muted underline hover:text-accent"
-            onClick={() => openShot(o.screenshot!)}
-          >
-            Screenshot
-          </button>
-        )}
-      </p>
-    ));
+  const outcomeLines = (list: ActionOutcome[]) => (
+    <OutcomeGroups
+      outcomes={list}
+      line={(o, i) => (
+        <p key={i} className={cn("mt-1 text-xs", o.ok ? "text-muted" : "text-danger")}>
+          {o.detail}
+          {o.screenshot && (
+            <button
+              type="button"
+              aria-label={`Screenshot for action ${i + 1}`}
+              className="ml-2 text-muted underline hover:text-accent"
+              onClick={() => openShot(o.screenshot!)}
+            >
+              Screenshot
+            </button>
+          )}
+        </p>
+      )}
+    />
+  );
 
   return (
     // Walking away at a reset point ends the run there, as Stop does.

@@ -1766,6 +1766,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
                 downloads: vec![],
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             }],
             proposed: String::new(),
             reason: String::new(),
@@ -2099,6 +2100,8 @@ fn the_guard_still_holds_for_every_new_route() {
         "/autorun-quirk-retire",
         "/autorun-defect",
         "/autorun-order",
+        "/autorun-component-save",
+        "/autorun-component-retire",
     ];
     for path in autorun {
         let (status, body) =
@@ -2110,6 +2113,68 @@ fn the_guard_still_holds_for_every_new_route() {
     for path in ["/ping", "/guide", "/test-cases", "/tools"] {
         assert!(autorun_guard_for(path, false).is_none(), "{path} is not an Auto Run route");
     }
+}
+
+/// A component as the save route takes it.
+fn component_body(why: Option<&str>) -> String {
+    let mut body = serde_json::json!({
+        "name": "Pick a date",
+        "description": "picks a day in the calendar",
+        "inputs": [{ "name": "day", "kind": "text", "description": "the day" }],
+        "actions": [{ "kind": "click", "selector": { "role": "gridcell", "name": "{{day}}" } }],
+    });
+    if let Some(why) = why {
+        body["why"] = serde_json::json!(why);
+    }
+    body.to_string()
+}
+
+#[tokio::test]
+async fn a_component_saved_with_no_discovery_going_is_refused() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (status, out) =
+        route(&ctx(), None, "POST", "/autorun-component-save", &component_body(Some("first")), "1.0.0").await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.contains("Try the component live in discovery first"), "{out}");
+    // A body that is not a component says what one looks like.
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-save", "{\"name\": 5}", "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("\"inputs\""), "{out}");
+    // The rules that need no discovery are checked first.
+    let blank = component_body(None).replace("picks a day in the calendar", " ");
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-save", &blank, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "Pick a date needs a description."));
+    let files = v2_lib::autorun::components::load_components(dir.path(), "acme", "Web").unwrap();
+    assert!(files.components.is_empty());
+}
+
+#[tokio::test]
+async fn a_component_is_retired_only_when_no_script_uses_it() {
+    use v2_lib::autorun::components::{find, load_components, put, Component};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let c: Component = serde_json::from_str(&component_body(None)).unwrap();
+    put(dir.path(), "acme", "Web", c).unwrap();
+    let mut used = scripted(7);
+    used.steps[0].actions.push(Action::UseComponent { component: "pick a date".into(), inputs: Default::default() });
+    save_scripts_atomically(dir.path(), &[used]).unwrap();
+    let body = serde_json::json!({ "name": "Pick a date" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-retire", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (409, "Pick a date is used by case 7: change that script first."));
+    assert!(find(&load_components(dir.path(), "acme", "Web").unwrap(), "Pick a date").is_some());
+
+    save_scripts_atomically(dir.path(), &[scripted(7)]).unwrap();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-retire", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out, serde_json::json!({ "removed": "Pick a date" }).to_string());
+    assert!(load_components(dir.path(), "acme", "Web").unwrap().components.is_empty());
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-retire", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (404, "Pick a date is not saved in this project"));
+    let (status, _) = route(&ctx(), None, "POST", "/autorun-component-retire", "{}", "1.0.0").await;
+    assert_eq!(status, 400);
 }
 
 #[tokio::test]
@@ -2157,7 +2222,7 @@ async fn a_quirk_on_its_own_names_failed_steps_and_never_overrides_a_person() {
         "case_id": 7, "title": "case 7", "verdict": "", "note": "", "steps": [], "proposed": "Failed"
     }))
     .unwrap();
-    case.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![], tab: None, dialog: None });
+    case.steps.push(StepRecord { step_number: 1, outcomes: vec![ActionOutcome::passed("ok")], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() });
     case.steps.push(StepRecord {
         step_number: 2,
         outcomes: vec![ActionOutcome::failed("waited 5000ms: button \"Save\" not found")],
@@ -2165,6 +2230,7 @@ async fn a_quirk_on_its_own_names_failed_steps_and_never_overrides_a_person() {
         downloads: vec![],
         tab: None,
         dialog: None,
+        components: Vec::new(),
     });
     run.cases.push(case);
     save_run(dir.path(), &run).unwrap();
@@ -2810,4 +2876,48 @@ async fn an_unreadable_map_refuses_the_save() {
     assert!(out.contains("Reset map"), "the refusal gives the person no way out: {out}");
     assert!(!out.contains(&dir.path().to_string_lossy().to_string()), "a full path reached the assistant: {out}");
     assert_eq!(load_script(dir.path(), 7).unwrap(), None);
+}
+
+/// "Edit a row" saved in the test project: click the row the script names.
+fn put_edit_a_row(root: &std::path::Path) {
+    let c: v2_lib::autorun::components::Component = serde_json::from_value(serde_json::json!({
+        "name": "Edit a row", "description": "d", "version": 1,
+        "inputs": [{ "name": "row", "kind": "target", "description": "" }],
+        "actions": [{ "kind": "click", "selector": { "input": "row" } }]
+    }))
+    .unwrap();
+    v2_lib::autorun::components::put(root, "acme", "Web", c).unwrap();
+}
+
+/// A script that uses a component saves once the component is in the
+/// project and the row it is given was seen; before that, each is refused.
+#[tokio::test]
+async fn a_script_using_a_component_saves() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Edit a request", &[""])]).await;
+    let body = serde_json::json!([{
+        "case_id": 7,
+        "title": "Edit a request",
+        "steps": [{ "step_number": 1, "actions": [
+            { "kind": "use_component", "component": "Edit a row", "inputs": { "row": { "role": "row", "name": "Alpha" } } }
+        ]}]
+    }])
+    .to_string();
+
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "Step 1: Edit a row is not saved in this project"));
+
+    put_edit_a_row(dir.path());
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out), (400, never_seen(1, "row \"Alpha\"")));
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None);
+
+    let row: v2_lib::browser::locator::Target =
+        serde_json::from_value(serde_json::json!({ "role": "row", "name": "Alpha" })).unwrap();
+    v2_lib::autorun::discovery_map::record_matched(dir.path(), "acme", "Web", None, "/", &row, 0).unwrap();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some());
 }

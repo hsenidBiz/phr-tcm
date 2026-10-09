@@ -8,6 +8,7 @@
 
 use super::nav::module_key;
 use super::{CaseScript, StepScript};
+use crate::browser::actions::Action;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What an assistant declares before it may change an existing script.
@@ -62,10 +63,19 @@ pub fn step_signature(step: &StepScript) -> String {
     )
 }
 
-/// How many of a step's actions JUDGE the page, rather than drive or wait
+/// How many of these actions JUDGE the page, rather than drive or wait
 /// for it.
-fn checks(step: &StepScript) -> usize {
-    step.actions.iter().filter(|a| a.is_check()).count()
+fn checks(actions: &[Action]) -> usize {
+    actions.iter().filter(|a| a.is_check()).count()
+}
+
+/// Rule 3's comparison, for any list of actions a repair changes (a
+/// script step's, or a component's): `None` when `new` judges the page at
+/// least as many times as `old`, else why not, to follow the step or the
+/// component it belongs to.
+pub fn weakens(old: &[Action], new: &[Action]) -> Option<String> {
+    let (before, after) = (checks(old), checks(new));
+    (after < before).then(|| format!("had {before} checks and now has {after} - {NEVER_WEAKENED}"))
 }
 
 /// Rule 1's sentence, for one or several undeclared steps together, sorted
@@ -280,12 +290,10 @@ pub fn check_edits_following_case(
     // not - unless the test case itself changed or dropped that step since
     // the script was saved: following the case is not weakening it.
     for n in changed.iter().filter(|n| !changed_by_case.contains(n)) {
-        let old_checks = old_map.get(n).map(|s| checks(s)).unwrap_or(0);
-        let new_checks = new_map.get(n).map(|s| checks(s)).unwrap_or(0);
-        if new_checks < old_checks {
-            return Err(format!(
-                "step {n} had {old_checks} checks and now has {new_checks} - {NEVER_WEAKENED}"
-            ));
+        let old_actions = old_map.get(n).map_or(&[][..], |s| &s.actions[..]);
+        let new_actions = new_map.get(n).map_or(&[][..], |s| &s.actions[..]);
+        if let Some(why) = weakens(old_actions, new_actions) {
+            return Err(format!("step {n} {why}"));
         }
     }
 

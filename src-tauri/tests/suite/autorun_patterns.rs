@@ -26,7 +26,7 @@ fn failed_case(case_id: i32, step_number: i32, detail: &str) -> CaseRecord {
         title: format!("case {case_id}"),
         verdict: String::new(),
         note: String::new(),
-        steps: vec![StepRecord { step_number, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None }],
+        steps: vec![StepRecord { step_number, outcomes: vec![ActionOutcome::failed(detail)], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new() }],
         proposed: "Failed".into(),
         reason: format!("step {step_number}: {detail}"),
         duration_ms: None,
@@ -201,6 +201,7 @@ fn a_failure_in_one_case_only_is_no_pattern() {
         downloads: vec![],
         tab: None,
         dialog: None,
+        components: Vec::new(),
     });
     let mut s = script(11, 2, click("Save"));
     s.steps.push(StepScript { step_number: 3, actions: vec![click("Save")], unchecked: None });
@@ -284,4 +285,42 @@ fn an_overlay_is_grouped_on_its_tag_id_and_first_class() {
 fn the_advice_says_how_to_tie_the_quirk_to_the_cases() {
     assert!(PATTERN_ADVICE.contains("EVERY case you repair"), "{PATTERN_ADVICE}");
     assert!(PATTERN_ADVICE.contains("`cases`"), "{PATTERN_ADVICE}");
+}
+
+// ---- components ----
+
+#[test]
+fn a_component_step_is_classified_by_its_expanded_action() {
+    use crate::common::{component_case, component_run, component_script, pick_a_date, pick_a_date_file, COMPONENT_TYPED};
+    use v2_lib::autorun::components::{expand, ComponentFile};
+    use v2_lib::autorun::patterns::{find_patterns_with, step_failures_with};
+    let missing = "waited 5000ms: #start not found";
+    let run = component_run(vec![component_case(11, missing), component_case(12, missing)]);
+    let scripts = [component_script(11), component_script(12)];
+    let typed = expand(
+        &pick_a_date(),
+        serde_json::json!({ "field": { "css": "#start" }, "day": COMPONENT_TYPED }).as_object().unwrap(),
+    )
+    .unwrap();
+
+    // The failure is the component's fill, not the script's third action.
+    let points = step_failures_with(&run.cases[0].steps[0], Some(&scripts[0]), &pick_a_date_file());
+    assert_eq!(points.len(), 2, "{points:?}");
+    assert_eq!((points[0].action, points[0].kind.as_deref()), (3, Some("fill")));
+    assert_eq!(points[0].target, action_target(&typed[1]));
+    assert_eq!((points[1].action, points[1].kind.as_deref()), (5, Some("check_text")));
+
+    let patterns = find_patterns_with(&run, &scripts, &pick_a_date_file());
+    let p = patterns
+        .iter()
+        .find(|p| p.targets.iter().any(|t| t.starts_with("fill on ")))
+        .unwrap_or_else(|| panic!("{patterns:?}"));
+    assert_eq!(p.targets, vec![format!("fill on {}", action_target(&typed[1]).unwrap())]);
+    assert_eq!(p.cases(), 2);
+
+    // Without the components, still lined up: classed by its component.
+    let points = step_failures_with(&run.cases[0].steps[0], Some(&scripts[0]), &ComponentFile::default());
+    assert_eq!(points[0].kind.as_deref(), Some("use_component"));
+    assert_eq!(points[0].target.as_deref(), Some("the component \"Pick a date\""));
+    assert_eq!(points[1].kind.as_deref(), Some("check_text"));
 }

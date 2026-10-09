@@ -321,6 +321,27 @@ pub fn script_modified(root: &Path, case_id: i32) -> Option<String> {
     Some(crate::applog::iso_of(t))
 }
 
+/// Every saved script that reads; one that does not is skipped, with a
+/// warning that names its file and never what is in it.
+pub fn list_scripts(root: &Path) -> Vec<CaseScript> {
+    let Ok(entries) = std::fs::read_dir(scripts_dir(root)) else {
+        return vec![];
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_str().filter(|n| n.starts_with("case-") && n.ends_with(".json"))?.to_string();
+            let script = std::fs::read_to_string(e.path())
+                .ok()
+                .and_then(|s| serde_json::from_str::<CaseScript>(&s).ok());
+            if script.is_none() {
+                crate::applog::warn(format!("Auto Run: the script {name} could not be read, so it was skipped"));
+            }
+            script
+        })
+        .collect()
+}
+
 /// `Ok(None)` for a case nobody has scripted yet - that is the normal
 /// state of most cases, not an error.
 pub fn load_script(root: &Path, case_id: i32) -> Result<Option<CaseScript>, String> {

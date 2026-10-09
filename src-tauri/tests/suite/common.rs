@@ -936,3 +936,72 @@ pub fn see_scripts(root: &std::path::Path, org: &str, project: &str, body: &str)
         }
     }
 }
+
+// ---- a step that used a component, as a run recorded it ----
+
+/// What the component step types into its field: never to be seen in a
+/// report.
+pub const COMPONENT_TYPED: &str = "s3cret-day-42";
+
+/// "Pick a date": click the field, type the day into it, then Done.
+pub fn pick_a_date() -> v2_lib::autorun::components::Component {
+    serde_json::from_value(json!({
+        "name": "Pick a date", "description": "d", "version": 2,
+        "inputs": [
+            { "name": "field", "kind": "target", "description": "" },
+            { "name": "day", "kind": "text", "description": "" }
+        ],
+        "actions": [
+            { "kind": "click", "selector": { "input": "field" } },
+            { "kind": "fill", "selector": { "input": "field" }, "value": "{{day}}" },
+            { "kind": "click", "selector": { "text": "Done" } }
+        ]
+    }))
+    .unwrap()
+}
+
+pub fn pick_a_date_file() -> v2_lib::autorun::components::ComponentFile {
+    v2_lib::autorun::components::ComponentFile { components: vec![pick_a_date()] }
+}
+
+/// Case `case_id`'s script: step 3 clicks New, uses "Pick a date", then
+/// checks the page says Saved.
+pub fn component_script(case_id: i32) -> v2_lib::autorun::CaseScript {
+    serde_json::from_value(json!({
+        "case_id": case_id, "title": format!("case {case_id}"),
+        "steps": [{ "step_number": 3, "actions": [
+            { "kind": "click", "selector": "#new" },
+            { "kind": "use_component", "component": "Pick a date",
+              "inputs": { "field": { "css": "#start" }, "day": COMPONENT_TYPED } },
+            { "kind": "check_text", "value": "Saved" }
+        ] }]
+    }))
+    .unwrap()
+}
+
+/// Case `case_id` as a run recorded `component_script`'s step 3: the
+/// component's typing failed with `typing_failed`, and the check after it
+/// failed too.
+pub fn component_case(case_id: i32, typing_failed: &str) -> v2_lib::autorun::CaseRecord {
+    serde_json::from_value(json!({
+        "case_id": case_id, "title": format!("case {case_id}"), "verdict": "", "note": "",
+        "proposed": "Failed", "reason": format!("step 3: {typing_failed}"),
+        "steps": [{ "step_number": 3, "components": [{ "name": "Pick a date", "version": 2 }], "outcomes": [
+            { "ok": true, "detail": "clicked #new" },
+            { "ok": true, "detail": "clicked #start", "component": "Pick a date" },
+            { "ok": false, "detail": typing_failed, "component": "Pick a date" },
+            { "ok": true, "detail": "clicked Done", "component": "Pick a date" },
+            { "ok": false, "detail": "page does NOT contain Saved" }
+        ] }]
+    }))
+    .unwrap()
+}
+
+pub fn component_run(cases: Vec<v2_lib::autorun::CaseRecord>) -> v2_lib::autorun::LocalRun {
+    let mut run: v2_lib::autorun::LocalRun = serde_json::from_value(json!({
+        "id": "run-1786000200000", "pbi_id": 42, "started_at": "1786000200000", "mode": "unattended", "cases": []
+    }))
+    .unwrap();
+    run.cases = cases;
+    run
+}

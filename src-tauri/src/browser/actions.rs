@@ -27,6 +27,14 @@ fn ok_status() -> u16 {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {
     Navigate { url: String },
+    /// Runs a saved component with its inputs. Expanded into the
+    /// component's own steps before a script runs.
+    UseComponent {
+        component: String,
+        #[serde(default)]
+        #[specta(type = BTreeMap<String, specta_typescript::Unknown>)]
+        inputs: serde_json::Map<String, serde_json::Value>,
+    },
     Click { selector: Target },
     Fill { selector: Target, value: String },
     WaitFor { selector: Target, timeout_ms: u32 },
@@ -781,14 +789,19 @@ pub struct ActionOutcome {
     #[serde(skip)]
     #[specta(skip)]
     pub harness: bool,
+    /// The component this action came from, when a `use_component` was
+    /// expanded into it. Left out otherwise, so older run files read the
+    /// same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
 }
 
 impl ActionOutcome {
     pub fn passed(detail: impl Into<String>) -> Self {
-        ActionOutcome { ok: true, detail: detail.into(), screenshot: None, harness: false }
+        ActionOutcome { ok: true, detail: detail.into(), screenshot: None, harness: false, component: None }
     }
     pub fn failed(detail: impl Into<String>) -> Self {
-        ActionOutcome { ok: false, detail: detail.into(), screenshot: None, harness: false }
+        ActionOutcome { ok: false, detail: detail.into(), screenshot: None, harness: false, component: None }
     }
 }
 
@@ -937,6 +950,10 @@ impl Action {
         match self {
             Action::Navigate { url } if !is_navigable(url) => Err(not_an_address("navigate", url)),
             Action::Navigate { .. } => Ok(()),
+            Action::UseComponent { component, .. } if component.trim().is_empty() => {
+                Err("use_component names no component".to_string())
+            }
+            Action::UseComponent { .. } => Ok(()),
             Action::Click { selector }
             | Action::Fill { selector, .. }
             | Action::WaitFor { selector, .. }
@@ -1180,6 +1197,51 @@ impl Action {
             | Action::ExpectSorted { table, .. }
             | Action::ExpectRowCount { table, .. } => vec![table],
             Action::Navigate { .. }
+            | Action::UseComponent { .. }
+            | Action::CheckText { .. }
+            | Action::CheckUrl { .. }
+            | Action::SignIn { .. }
+            | Action::ExpectResponse { .. }
+            | Action::ApiRequest { .. }
+            | Action::Reload
+            | Action::ExpireSession
+            | Action::ReturnToArea { .. }
+            | Action::PressKey { .. }
+            | Action::ExpectDownload { .. }
+            | Action::ExpectTab { .. }
+            | Action::OpenTab { .. }
+            | Action::SwitchTab { .. }
+            | Action::CloseTab { .. }
+            | Action::ExpectTabClosed { .. }
+            | Action::ExpectDialog { .. } => Vec::new(),
+        }
+    }
+
+    /// `targets`, to change in place: every target this action points at,
+    /// in the same order.
+    pub fn targets_mut(&mut self) -> Vec<&mut Target> {
+        match self {
+            Action::Click { selector }
+            | Action::Fill { selector, .. }
+            | Action::WaitFor { selector, .. }
+            | Action::ExpectVisible { selector, .. }
+            | Action::ExpectHidden { selector, .. }
+            | Action::ExpectText { selector, .. }
+            | Action::ExpectContainsText { selector, .. }
+            | Action::ExpectCount { selector, .. }
+            | Action::ExpectAttribute { selector, .. }
+            | Action::Upload { selector, .. }
+            | Action::ExpectFocused { selector, .. } => vec![selector],
+            Action::WhenVisible { selector, then, .. } => {
+                std::iter::once(selector).chain(then.iter_mut().flat_map(Action::targets_mut)).collect()
+            }
+            Action::Drag { from, to, .. } => vec![from, to],
+            Action::ExpectRow { table, .. }
+            | Action::ExpectNoRow { table, .. }
+            | Action::ExpectSorted { table, .. }
+            | Action::ExpectRowCount { table, .. } => vec![table],
+            Action::Navigate { .. }
+            | Action::UseComponent { .. }
             | Action::CheckText { .. }
             | Action::CheckUrl { .. }
             | Action::SignIn { .. }
@@ -1534,6 +1596,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::ApiRequest { .. } => ActionOutcome::failed("api_request is carried out by the runner"),
         // Its `then` may hold an `upload`, which only the runner can place.
         Action::WhenVisible { .. } => ActionOutcome::failed("when_visible is carried out by the runner"),
+        Action::UseComponent { .. } => ActionOutcome::failed("components are expanded before they run"),
         Action::Reload => reload(d, timing).await,
         Action::ExpireSession => expire_session(d).await,
         Action::PressKey { key, times } => press_key(d, key, times.unwrap_or(1), timing).await,

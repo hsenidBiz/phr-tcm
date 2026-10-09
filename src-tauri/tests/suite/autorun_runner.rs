@@ -800,3 +800,158 @@ async fn a_try_for_another_case_runs_in_main_and_closes_the_last_cases_tabs() {
     assert!(d.tabs.called_in("report").is_empty(), "{:?}", d.tabs.calls);
     assert_eq!(tabs_case, Some(2));
 }
+
+// ---- components ----
+
+mod components_in_a_step {
+    use super::*;
+    use common::FakePage;
+    use v2_lib::autorun::components::{put, Component, ComponentUse};
+    use v2_lib::autorun::lease::Held;
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
+    use v2_lib::browser::actions::ActionOutcome;
+
+    fn made(name: &str, version: u32, inputs: serde_json::Value, actions: serde_json::Value) -> Component {
+        serde_json::from_value(json!({
+            "name": name, "description": "d", "inputs": inputs, "actions": actions, "version": version
+        }))
+        .expect("a component")
+    }
+
+    fn step_of(actions: serde_json::Value) -> StepScript {
+        StepScript { step_number: 1, actions: serde_json::from_value(actions).unwrap(), unchecked: None }
+    }
+
+    async fn run_in(
+        d: &mut ScriptedDriver,
+        root: &std::path::Path,
+        s: &StepScript,
+    ) -> (Vec<ActionOutcome>, Vec<ComponentUse>) {
+        let mut account = None;
+        let mut held = Held::supervised();
+        let mut r = InRun::default();
+        let out = run_step_in_run(
+            d,
+            root,
+            "Acme",
+            "Web",
+            s,
+            &quick(),
+            &mut account,
+            &mut held,
+            None,
+            AreaRoute::Unknown(NEEDS_SCRIPT_AREA),
+            &mut r,
+        )
+        .await
+        .unwrap();
+        (out, r.components)
+    }
+
+    #[tokio::test]
+    async fn an_unknown_component_fails_the_step_and_runs_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut d = FakePage::default().driver();
+        let s = step_of(json!([
+            { "kind": "click", "selector": { "role": "button", "name": "New" } },
+            { "kind": "use_component", "component": "Ghost", "inputs": {} },
+            { "kind": "check_text", "value": "Saved" }
+        ]));
+        let (out, used) = run_in(&mut d, dir.path(), &s).await;
+        assert!(d.calls.is_empty(), "an action ran: {:?}", d.calls);
+        assert!(used.is_empty());
+        assert_eq!(out.len(), 3, "{out:?}");
+        // The sentence is on the use; the click before it and the check
+        // after it are not run.
+        assert!(!out[1].ok && out[1].detail == "Ghost is not saved in this project", "{:?}", out[1]);
+        for i in [0, 2] {
+            assert!(!out[i].ok && out[i].detail.starts_with("not run:"), "{:?}", out[i]);
+        }
+        assert!(out.iter().all(|o| o.screenshot.is_none()));
+
+        // A missing input fails it the same way.
+        put(dir.path(), "Acme", "Web", made("Pick", 1, json!([{ "name": "day", "kind": "text", "description": "" }]),
+            json!([{ "kind": "check_text", "value": "{{day}}" }]))).unwrap();
+        let s = step_of(json!([{ "kind": "use_component", "component": "pick", "inputs": {} }]));
+        let (out, _) = run_in(&mut d, dir.path(), &s).await;
+        assert!(d.calls.is_empty(), "an action ran: {:?}", d.calls);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].detail, "Pick needs day");
+    }
+
+    #[tokio::test]
+    async fn a_run_records_the_version_it_used() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Acme", "Web", made("Close the toast", 1, json!([]),
+            json!([{ "kind": "check_text", "value": "Saved" }]))).unwrap();
+        let s = step_of(json!([
+            { "kind": "check_text", "value": "Saved" },
+            { "kind": "use_component", "component": "close the  TOAST", "inputs": {} }
+        ]));
+        let mut d = FakePage::default().driver();
+        let (out, used) = run_in(&mut d, dir.path(), &s).await;
+        assert_eq!(used, vec![ComponentUse { name: "Close the toast".into(), version: 1 }]);
+        assert_eq!(out.len(), 2, "{out:?}");
+        assert!(out.iter().all(|o| o.ok), "{out:?}");
+        assert_eq!(out[0].component, None);
+        assert_eq!(out[1].component.as_deref(), Some("Close the toast"));
+
+        // Changed after the script was saved: the run uses the version
+        // there now, all of its actions, and says which it was.
+        put(dir.path(), "Acme", "Web", made("Close the toast", 2, json!([]), json!([
+            { "kind": "check_text", "value": "Saved" },
+            { "kind": "click", "selector": { "css": "#close" } }
+        ]))).unwrap();
+        let mut d = FakePage::default().driver();
+        let (out, used) = run_in(&mut d, dir.path(), &s).await;
+        assert_eq!(used, vec![ComponentUse { name: "Close the toast".into(), version: 2 }]);
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert!(out[2].ok && out[2].detail.starts_with("clicked"), "{:?}", out[2]);
+        assert_eq!(out[1].component.as_deref(), Some("Close the toast"));
+        assert_eq!(out[2].component.as_deref(), Some("Close the toast"));
+
+        // The step's record keeps the use, and a run file without it reads.
+        let rec = v2_lib::autorun::StepRecord {
+            step_number: 1,
+            outcomes: out,
+            screenshot: None,
+            downloads: vec![],
+            tab: None,
+            dialog: None,
+            components: used,
+        };
+        let v = serde_json::to_value(&rec).unwrap();
+        assert_eq!(v["components"], json!([{ "name": "Close the toast", "version": 2 }]));
+        assert_eq!(v["outcomes"][2]["component"], json!("Close the toast"));
+        assert!(v["outcomes"][0].get("component").is_none(), "{v}");
+        let old: v2_lib::autorun::StepRecord =
+            serde_json::from_value(json!({ "step_number": 1, "outcomes": [{ "ok": true, "detail": "x" }] })).unwrap();
+        assert!(old.components.is_empty() && old.outcomes[0].component.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_failure_inside_a_component_never_logs_a_typed_value() {
+        let _log = crate::serial::log_tail();
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Acme", "Web", made("Enter a reason", 1,
+            json!([{ "name": "field", "kind": "target", "description": "" }, { "name": "reason", "kind": "text", "description": "" }]),
+            json!([
+                { "kind": "fill", "selector": { "input": "field" }, "value": "{{reason}}" },
+                { "kind": "check_text", "value": "Reason saved" }
+            ]))).unwrap();
+        let secret = "s3cret-typed-7f2";
+        let s = step_of(json!([{ "kind": "use_component", "component": "Enter a reason",
+            "inputs": { "field": { "css": "#reason" }, "reason": secret } }]));
+        let mut d = FakePage { body_has_text: false, ..FakePage::default() }.driver();
+        let (out, _) = run_in(&mut d, dir.path(), &s).await;
+        assert_eq!(out.len(), 2, "{out:?}");
+        assert!(out[0].ok && !out[1].ok, "{out:?}");
+        // It was typed...
+        assert!(format!("{:?}", d.calls_to("Input.insertText")).contains(secret), "the value was never typed");
+        // ...and is nowhere in what the step says or the log keeps.
+        assert!(!format!("{out:?}").contains(secret), "{out:?}");
+        assert!(!serde_json::to_string(&out).unwrap().contains(secret));
+        let logged = v2_lib::applog::recent(6000);
+        assert!(logged.iter().all(|l| !l.message.contains(secret)), "a log line holds the typed value");
+    }
+}

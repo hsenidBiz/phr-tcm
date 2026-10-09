@@ -435,6 +435,8 @@ function describeKnown(a: Action): Sentence {
     }
     case "when_visible":
       return [words("If "), ...describeTarget(a.selector), words(` appears within ${seconds(optNum(a.within_ms) ?? 2000)} s:`)];
+    case "use_component":
+      return [words(`Run the component "${str(a.component)}"`)];
     case "reload":
       return [words("Reload the page")];
     case "expire_session":

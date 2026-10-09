@@ -9,6 +9,7 @@
 //! goes: sign in, click through the menu to the case's module, check it
 //! arrived, then run the steps. A project with none runs as it always has.
 
+use super::components::{ran_actions, ComponentFile, Ran};
 use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
 use super::lease::{Held, Holder};
@@ -146,6 +147,7 @@ fn not_run(step: &StepScript, why: &str) -> StepRecord {
         downloads: Vec::new(),
         tab: None,
         dialog: None,
+        components: Vec::new(),
     }
 }
 
@@ -158,11 +160,10 @@ fn was_run(o: &ActionOutcome) -> bool {
 /// `sign_in`'s trip back. Decided by where the outcome sits, never by its
 /// words alone - a page's dialog or a script's `check_text` value can say
 /// the same thing, and that is still the page failing the test.
-fn unreached<'a>(script: &CaseScript, n: i32, i: usize, o: &'a ActionOutcome) -> Option<&'a str> {
+fn unreached<'a>(action: Option<&Action>, n: i32, o: &'a ActionOutcome) -> Option<&'a str> {
     if n == MODULE_STEP {
         return Some(o.detail.as_str());
     }
-    let action = script.steps.iter().find(|s| s.step_number == n).and_then(|s| s.actions.get(i));
     match action {
         // Another holder had the account: the case was never signed in as
         // it, so the run could not carry it out - Blocked, not Failed.
@@ -182,6 +183,34 @@ fn unreached<'a>(script: &CaseScript, n: i32, i: usize, o: &'a ActionOutcome) ->
 
 /// `signed_in`: None when no account applies to the case, Some(ok) otherwise.
 pub fn propose(script: &CaseScript, steps: &[StepRecord], signed_in: Option<bool>, stopped: bool) -> Proposal {
+    propose_with(script, steps, signed_in, stopped, &ComponentFile::default())
+}
+
+/// [`propose`], with the project's components: an outcome a component ran
+/// is read against the action it ran (`components::ran_actions`), so a
+/// refusal inside a component is told apart the same way.
+pub fn propose_with(
+    script: &CaseScript,
+    steps: &[StepRecord],
+    signed_in: Option<bool>,
+    stopped: bool,
+    components: &ComponentFile,
+) -> Proposal {
+    let paired: Vec<(i32, Vec<Ran>)> = steps
+        .iter()
+        .map(|s| {
+            let ran = script
+                .steps
+                .iter()
+                .find(|st| st.step_number == s.step_number)
+                .map(|st| ran_actions(&st.actions, &s.outcomes, components, &s.components))
+                .unwrap_or_default();
+            (s.step_number, ran)
+        })
+        .collect();
+    let action_at = |n: i32, i: usize| {
+        paired.iter().find(|(m, _)| *m == n).and_then(|(_, r)| r.get(i)).and_then(|r| r.action.as_ref())
+    };
     let ran = || {
         steps
             .iter()
@@ -212,7 +241,7 @@ pub fn propose(script: &CaseScript, steps: &[StepRecord], signed_in: Option<bool
     }
     // The run could not put the case where its steps begin: that is not
     // the application failing the test.
-    if let Some(why) = ran().filter(|(_, _, o)| !o.ok).find_map(|(n, i, o)| unreached(script, n, i, o)) {
+    if let Some(why) = ran().filter(|(_, _, o)| !o.ok).find_map(|(n, i, o)| unreached(action_at(n, i), n, o)) {
         return Proposal { verdict: "Blocked", reason: why.to_string() };
     }
     if signed_in == Some(false) {
@@ -380,7 +409,7 @@ async fn run_case_in<D: Driver>(
             };
             let ok = out.last().is_some_and(|o| o.ok);
             signed_in = Some(ok);
-            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new(), tab: None, dialog: None });
+            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None, downloads: Vec::new(), tab: None, dialog: None, components: Vec::new() });
         }
         skip = (signed_in == Some(false)).then_some(AFTER_FAILED_SIGN_IN);
     }
@@ -407,6 +436,7 @@ async fn run_case_in<D: Driver>(
                 downloads: Vec::new(),
                 tab: None,
                 dialog: None,
+                components: Vec::new(),
             });
         }
     }
@@ -489,7 +519,7 @@ async fn run_case_in<D: Driver>(
         } else if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
         }
-        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new(), tab: in_run.tab, dialog: in_run.dialog });
+        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot, downloads: Vec::new(), tab: in_run.tab, dialog: in_run.dialog, components: in_run.components });
         page_errors_seen += in_run.page_errors_seen;
     }
 
@@ -506,7 +536,9 @@ async fn run_case_in<D: Driver>(
         }
     }
 
-    let p = propose(script, &steps, signed_in, stopped);
+    // A file that does not read leaves a component's outcomes unpaired.
+    let components = super::components::load_components(root, organization, project).unwrap_or_default();
+    let p = propose_with(script, &steps, signed_in, stopped, &components);
     CaseRecord {
         case_id: script.case_id,
         title: script.title.clone(),
@@ -950,7 +982,10 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                         // setup runs again first (the first go may have
                         // changed its draft), and a setup that cannot run
                         // keeps the first go's record.
-                        let looked_transient = if retry_transient { transient::is_transient(&first, Some(&ready)) } else { None };
+                        let looked_transient = if retry_transient { {
+                            let components = super::components::load_components(root, organization, project).unwrap_or_default();
+                            transient::is_transient_with(&first, Some(&ready), &components)
+                        } } else { None };
                         match looked_transient {
                             Some(why) if !cancel.load(Ordering::SeqCst) => {
                                 match setup::prepare_case(browsers, root, organization, project, &script, timing, cancel).await {

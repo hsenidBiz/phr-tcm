@@ -18,6 +18,7 @@
 //! the test. An assertion that fails is never transient.
 
 use super::api_checks::NET_FAILED;
+use super::components::{ran_actions, ComponentFile};
 use super::replay::SIGN_IN_STEP;
 use super::signin::PAGE_DID_NOT_OPEN;
 use super::{CaseRecord, CaseScript};
@@ -48,14 +49,23 @@ const FETCH_FAILED: &str = "TypeError: Failed to fetch";
 /// Failed or Blocked qualifies: a stopped case proposes nothing. Without
 /// its script only a harness failure can be told.
 pub fn is_transient(case: &CaseRecord, script: Option<&CaseScript>) -> Option<String> {
+    is_transient_with(case, script, &ComponentFile::default())
+}
+
+/// [`is_transient`], with the project's components: a failure inside a
+/// component is read against the action that ran it
+/// (`components::ran_actions`), so a network error there is one more go
+/// like any other.
+pub fn is_transient_with(case: &CaseRecord, script: Option<&CaseScript>, components: &ComponentFile) -> Option<String> {
     if !matches!(case.proposed.as_str(), "Failed" | "Blocked") {
         return None;
     }
-    let (n, i, first) = case
+    let (step, i, first) = case
         .steps
         .iter()
-        .flat_map(|s| s.outcomes.iter().enumerate().map(move |(i, o)| (s.step_number, i, o)))
+        .flat_map(|s| s.outcomes.iter().enumerate().map(move |(i, o)| (s, i, o)))
         .find(|(_, _, o)| !o.ok && !o.detail.starts_with("not run:"))?;
+    let n = step.step_number;
     // A save the guard stopped happens again on every try: the page sends
     // it. Never worth another go.
     if crate::browser::save_guard::is_blocked(&first.detail) {
@@ -66,9 +76,11 @@ pub fn is_transient(case: &CaseRecord, script: Option<&CaseScript>) -> Option<St
     let transient = first.harness
         || (n == SIGN_IN_STEP && page_would_not_load(&first.detail))
         || {
-            let action =
-                script.and_then(|sc| sc.steps.iter().find(|s| s.step_number == n)).and_then(|s| s.actions.get(i));
-            action.is_some_and(|a| network_glitch(a, first))
+            let ran = script
+                .and_then(|sc| sc.steps.iter().find(|s| s.step_number == n))
+                .map(|s| ran_actions(&s.actions, &step.outcomes, components, &step.components))
+                .unwrap_or_default();
+            ran.get(i).and_then(|r| r.action.as_ref()).is_some_and(|a| network_glitch(a, first))
         };
     transient.then(|| case.reason.clone())
 }
