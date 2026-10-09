@@ -57,8 +57,7 @@ pub fn replay_is_running() -> bool {
 /// watching: a background browser has no screen for it to be seen on, and
 /// waiting `highlight_ms` before every action would only slow the run down.
 pub fn replay_timing(watch: bool) -> Timing {
-    let t = Timing::default();
-    if watch { t } else { Timing { highlight_ms: 0, ..t } }
+    Timing::watched(watch && crate::app_settings::current().autorun_highlight)
 }
 
 /// A case from the frontend's selection: enough to run it (`case_id`),

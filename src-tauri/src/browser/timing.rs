@@ -20,6 +20,19 @@ pub struct Timing {
 }
 
 impl Timing {
+    /// The default timing for a browser a person can see (a watched run, the
+    /// supervised browser): the outline and pause before each action are
+    /// kept only when `highlight` is on.
+    pub fn watched(highlight: bool) -> Timing {
+        let t = Timing::default();
+        if highlight { t } else { Timing { highlight_ms: 0, ..t } }
+    }
+
+    /// `watched`, with the person's Highlight each action choice.
+    pub fn supervised() -> Timing {
+        Timing::watched(crate::app_settings::current().autorun_highlight)
+    }
+
     pub fn lease_wait(&self) -> std::time::Duration {
         std::time::Duration::from_millis(self.lease_wait_ms)
     }

@@ -219,6 +219,29 @@ fn nobody_is_watching_a_background_run_so_it_does_not_pause_to_point() {
     assert_eq!(replay_timing(false).action_ms, v2_lib::browser::timing::Timing::default().action_ms);
 }
 
+/// Highlight each action off: a watched run keeps its waits but loses the
+/// outline pause; on keeps it.
+#[test]
+fn highlight_off_skips_the_pause_for_a_watched_run() {
+    use v2_lib::browser::timing::Timing;
+    let off = Timing::watched(false);
+    assert_eq!(off.highlight_ms, 0);
+    assert_eq!(off.action_ms, Timing::default().action_ms);
+    assert!(Timing::watched(true).highlight_ms > 0);
+    // The run's own timing reads the setting, which is on in a fresh process.
+    assert!(replay_timing(true).highlight_ms > 0);
+    assert_eq!(replay_timing(false).highlight_ms, 0);
+}
+
+/// The supervised browser follows the same switch.
+#[test]
+fn highlight_off_skips_the_pause_in_the_supervised_browser() {
+    use v2_lib::browser::timing::Timing;
+    assert_eq!(Timing::watched(false).highlight_ms, 0);
+    assert_eq!(Timing::supervised().highlight_ms, Timing::watched(v2_lib::app_settings::current().autorun_highlight).highlight_ms);
+    assert!(Timing::supervised().highlight_ms > 0);
+}
+
 // ---- Clearing scripts and results (dev-only Auto Run toolbar) ----------
 
 /// `auto_run_clear_scripts` and `auto_run_clear_runs` share this guard

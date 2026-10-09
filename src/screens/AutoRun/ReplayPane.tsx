@@ -21,6 +21,7 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
 import { Select } from "../../components/ui/select";
+import { toast } from "../../lib/toast";
 import {
   IconCancel,
   IconFollowRun,
@@ -134,6 +135,36 @@ function RunWindow({ run }: { run: BackgroundRun }) {
   /** Off by default: an unattended run's whole point is that nobody has to
    * sit in front of it. */
   const [watch, setWatch] = useState(() => localStorage.getItem("tcm-v2-autorun-watch") === "1");
+  /** Highlight each action: the outline and short pause before a click, fill
+   * or drag. Kept by Rust (it also covers the supervised browser), on until
+   * the saved setting says otherwise. */
+  const [highlight, setHighlight] = useState(true);
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const s = await commands.getAppSettings();
+        if (live && s && typeof s.autorun_highlight === "boolean") setHighlight(s.autorun_highlight);
+      } catch {
+        // unavailable - the box shows its default
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
+  const chooseHighlight = (on: boolean) => {
+    setHighlight(on);
+    void (async () => {
+      try {
+        const r = await commands.setAutorunHighlight(on);
+        if (r.status === "error") throw r.error;
+      } catch (e) {
+        setHighlight(!on);
+        toast.error(String(e));
+      }
+    })();
+  };
   /** On by default: a case that failed in a way that looks transient (a
    * gateway error, a dropped connection, the browser going silent) runs
    * once more, in a fresh browser, and is labelled Retried. */
@@ -330,6 +361,10 @@ function RunWindow({ run }: { run: BackgroundRun }) {
               }}
             />
             Watch the browser
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+            <Checkbox checked={highlight} ariaLabel="Highlight each action" onCheckedChange={chooseHighlight} />
+            Highlight each action
           </label>
           <p className="text-xs text-faint">
             Off: the browser runs in the background and you can keep working. On: a window opens

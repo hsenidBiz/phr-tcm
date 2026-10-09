@@ -801,7 +801,7 @@ pub async fn auto_run_step(
         &organization,
         &project,
         &step,
-        &crate::browser::timing::Timing::default(),
+        &crate::browser::timing::Timing::supervised(),
         &mut session.account,
         &mut session.lease,
         None,
@@ -903,7 +903,7 @@ pub(crate) async fn replay_supervised(
         &mut session.lease,
         &mut session.guarded_case,
         may_lift,
-        &crate::browser::timing::Timing::default(),
+        &crate::browser::timing::Timing::supervised(),
         &replay_to::CANCEL,
         || crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access),
         |k, of| {
@@ -2051,7 +2051,7 @@ pub async fn auto_run_sign_in(
         &account_key,
         &mut session.lease,
         &mut session.account,
-        &crate::browser::timing::Timing::default(),
+        &crate::browser::timing::Timing::supervised(),
     )
     .await
 }

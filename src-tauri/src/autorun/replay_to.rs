@@ -266,7 +266,7 @@ pub async fn replay_to<D: Driver>(
         lease,
         &mut guarded_case,
         true,
-        &Timing::default(),
+        &Timing::supervised(),
         cancel,
         db,
         progress,
