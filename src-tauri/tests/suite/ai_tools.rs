@@ -79,8 +79,8 @@ fn every_tool_gets_a_command_and_each_describes_itself() {
     // Auto Run is still in development: its tools are hidden and its
     // commands (`setup`, `heal`) are left out with them wherever they are
     // off, so nothing in the picker points at it.
-    const TOOLS: [&str; 7] = [
-        "begin-test-case-writing", "optimize", "get-wiki-info", "page", "setup", "discover", "heal",
+    const TOOLS: [&str; 8] = [
+        "begin-test-case-writing", "optimize", "get-wiki-info", "page", "setup", "discover", "map-menus", "heal",
     ];
     let stems: Vec<&str> = COMMANDS.iter().map(|c| c.stem).collect();
     assert_eq!(stems, TOOLS, "one command per tool, in call order");
@@ -1674,6 +1674,59 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
         assert!(flat.contains(said), "/tcm:discover never says {said:?}: {flat}");
     }
     assert!(flat.contains("`area`"), "the script's area must be named: {flat}");
+    assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
+}
+
+/// `/tcm:map-menus` walks the named modules' menus and saves each screen as
+/// an area. It rides the same gate as `/tcm:discover`, names its steps in
+/// order, and promises never to fill in or submit anything.
+#[test]
+fn the_map_menus_command_walks_the_menus_and_never_submits() {
+    let c = COMMANDS.iter().find(|c| c.stem == "map-menus").expect("a map-menus command");
+    assert_eq!(c.tool, "start_autorun_discovery");
+    assert!(!c.desc.is_empty() && !c.hint.is_empty());
+    let dir = std::path::Path::new("D:/repo/.claude/commands/tcm");
+    let hidden = command_files_in(dir, &effective_disabled_for(&[], false));
+    assert!(hidden.iter().all(|(p, _)| p.file_name().unwrap() != "map-menus.md"));
+    let offered = command_files_in(dir, &effective_disabled_for(&[], true));
+    assert!(offered.iter().any(|(p, _)| p.file_name().unwrap() == "map-menus.md"));
+    let off = command_files_in(dir, &["start_autorun_discovery".to_string()]);
+    assert!(off.iter().all(|(p, _)| p.file_name().unwrap() != "map-menus.md"));
+
+    let body = c.body.join("\n");
+    assert!(body.contains("$ARGUMENTS"), "{body}");
+    let mcp = include_str!("../../src/mcp.rs");
+    let is_tool = |name: &str| mcp.contains(&format!("\"name\": \"{name}\""));
+    let order = ["start_autorun_discovery", "discover_autorun_action", "save_autorun_area", "end_autorun_discovery"];
+    let mut from = 0;
+    for tool in order {
+        let at = body[from..]
+            .find(&format!("`{tool}`"))
+            .unwrap_or_else(|| panic!("/tcm:map-menus never names `{tool}` in order: {body}"));
+        from += at;
+        assert!(is_tool(tool), "`{tool}` is not in the bridge's tool list");
+    }
+    for name in body.split('`').skip(1).step_by(2).filter(|n| n.contains('_')) {
+        assert!(is_tool(name), "/tcm:map-menus names `{name}`, which mcp.rs does not expose");
+    }
+    let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "`mapping` set to true",
+        "`modules`",
+        "the save answers `unchanged`",
+        "When the clicks did not arrive, skip that screen and carry on",
+        "pick a more specific name and save again",
+        "Only these stop the run",
+        "the areas list as it stood when you read the guide",
+        "the admin side first and then self-service",
+        "\"Module / Menu path\"",
+        "Never fill in or submit anything",
+        "the session expires",
+        "150 saved screens",
+        "Last menu mapping",
+    ] {
+        assert!(flat.contains(said), "/tcm:map-menus never says {said:?}: {flat}");
+    }
     assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
 }
 

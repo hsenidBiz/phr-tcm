@@ -822,6 +822,32 @@ fn the_guide_never_points_at_the_source() {
     }
 }
 
+/// The guide says what a mapping run is: read-only, saving only its own
+/// areas, and feeding `/tcm:discover`.
+#[test]
+fn the_guide_explains_mapping_the_menus() {
+    let g = autorun_guide();
+    let section = g
+        .split("### Mapping the menus")
+        .nth(1)
+        .map(|rest| rest.split("\n##").next().unwrap())
+        .expect("the guide has no mapping section");
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "`/tcm:map-menus`",
+        "It is read-only",
+        "blocked and counted",
+        "saves only its own areas",
+        "an area a person made is refused and left as it is",
+        "150 screens",
+        "Last menu mapping",
+        "`/tcm:discover` uses the areas mapping made",
+    ] {
+        assert!(flat.contains(said), "the mapping section never says {said:?}: {flat}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+}
+
 /// The guide teaches discovery: its four tools, the save check, the three
 /// kinds of locator the check lets through unseen, what to do when a save
 /// is refused, the script's `area`, and the test name prefix.

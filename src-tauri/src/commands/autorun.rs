@@ -58,6 +58,88 @@ pub struct DiscoveryState {
     /// The components tried in this discovery that worked, by
     /// `components::draft_fingerprint`. It goes with the discovery.
     pub tried: Vec<String>,
+    /// Set when this discovery is a mapping run: read only, every save the
+    /// page tries is stopped (`browser::save_guard`).
+    pub mapping: Option<MappingRun>,
+}
+
+/// A mapping run: a discovery that walks the menus of `modules` and saves
+/// nothing. Its browser's save guard is on from the sign-in to the end.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MappingRun {
+    /// The test-case Modules the run maps, as named at its start.
+    pub modules: Vec<String>,
+    /// When the run started (milliseconds since the epoch).
+    pub started_at: u64,
+    /// The areas the run added.
+    pub added: Vec<String>,
+    /// The areas whose path the run changed: (name, old path, new path).
+    pub updated: Vec<(String, String, String)>,
+    /// The areas the run found where they were.
+    pub unchanged: Vec<String>,
+    /// The areas the run could not reach: (name, reason).
+    pub unreached: Vec<(String, String)>,
+    /// How many saves the page tried that the guard stopped.
+    pub blocked_writes: u32,
+    /// Every outcome, in the order it came: a screen met more than once is
+    /// summarized by its last (`mapping_summary::summarize`).
+    pub outcomes: Vec<(String, MappingOutcome)>,
+    /// Where the run's summary is kept, set once it has signed in. A run
+    /// that never signed in mapped nothing, and keeps no summary.
+    pub place: Option<MappingPlace>,
+}
+
+/// What happened to one screen in a mapping run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MappingOutcome {
+    Added,
+    Updated,
+    Unchanged,
+    Unreached,
+}
+
+/// The Auto Run folder and project a mapping run's summary is saved under.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MappingPlace {
+    pub root: PathBuf,
+    pub organization: String,
+    pub project: String,
+}
+
+impl MappingRun {
+    /// A screen the run added.
+    pub fn record_added(&mut self, name: String) {
+        self.outcomes.push((name.clone(), MappingOutcome::Added));
+        self.added.push(name);
+    }
+
+    /// A screen whose menu path the run changed from `old` to `new`.
+    pub fn record_updated(&mut self, name: String, old: String, new: String) {
+        self.outcomes.push((name.clone(), MappingOutcome::Updated));
+        self.updated.push((name, old, new));
+    }
+
+    /// A screen the run found where it was, or a person's it left alone.
+    pub fn record_unchanged(&mut self, name: String) {
+        self.outcomes.push((name.clone(), MappingOutcome::Unchanged));
+        self.unchanged.push(name);
+    }
+
+    /// A screen the run could not reach. The reason is kept with its
+    /// addresses taken out (`mapping_summary::without_addresses`).
+    pub fn record_unreached(&mut self, name: String, reason: &str) {
+        self.outcomes.push((name.clone(), MappingOutcome::Unreached));
+        self.unreached.push((name, crate::autorun::mapping_summary::without_addresses(reason)));
+    }
+
+    /// A run over `modules` (trimmed, blanks left out) starting now.
+    pub fn new(modules: &[String]) -> Self {
+        MappingRun {
+            modules: modules.iter().map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).collect(),
+            started_at: crate::autorun::sessions::now_ms(),
+            ..Default::default()
+        }
+    }
 }
 
 /// The supervised session, for the bridge's page routes. Whoever locks
@@ -182,7 +264,9 @@ pub(crate) fn refuse_discovery_while_busy() -> Result<(), String> {
 /// browser - a supervised browser already open included, which a
 /// discovery never replaces. The session is marked a discovery from the
 /// moment it opens; its area and account are set once the sign-in arrives.
-pub(crate) async fn open_for_discovery(browser_name: &str) -> Result<(), String> {
+/// `mapping` makes it a mapping run, whose save guard goes on once it has
+/// signed in (`ai_bridge::discover_start_in`).
+pub(crate) async fn open_for_discovery(browser_name: &str, mapping: Option<MappingRun>) -> Result<(), String> {
     refuse_discovery_while_busy()?;
     let mut slot = SESSION.lock().await;
     if let Some(open) = slot.as_ref() {
@@ -196,6 +280,7 @@ pub(crate) async fn open_for_discovery(browser_name: &str) -> Result<(), String>
             account: None,
             started_at: crate::autorun::sessions::now_ms(),
             tried: Vec::new(),
+            mapping,
         });
     }
     publish_discovery(&slot);
@@ -345,6 +430,18 @@ pub fn auto_run_forget_map_area(
 #[specta::specta]
 pub fn auto_run_reset_map(app: tauri::AppHandle, organization: String, project: String) -> Result<Option<String>, String> {
     crate::autorun::discovery_map::reset_map(&root(&app)?, &organization, &project, crate::autorun::sessions::now_ms())
+}
+
+/// The project's last mapping run's summary, for the Discovery dialog:
+/// `None` until a mapping run has ended.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_load_mapping_summary(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<Option<crate::autorun::mapping_summary::MappingSummary>, String> {
+    crate::autorun::mapping_summary::load_summary(&root(&app)?, &organization, &project)
 }
 
 /// One saved component, as the Components dialog shows it.
@@ -597,7 +694,10 @@ pub async fn close_autorun_browsers() {
     }
     crate::autorun::replay_to::stop();
     crate::autorun::setup::stop();
-    if let Some(s) = SESSION.lock().await.take() {
+    let mut slot = SESSION.lock().await;
+    // A mapping run going keeps its summary, as any other ending does.
+    crate::ai_bridge::finish_mapping(&mut slot);
+    if let Some(s) = slot.take() {
         close_session(s);
         crate::applog::info("Auto-run browser closed as the app exits");
     }
@@ -637,6 +737,9 @@ pub async fn auto_run_step(
     // changed; a value still missing refuses the step with its sentence.
     let step = crate::autorun::setup::resolve_step(&root, &organization, &project, case_id, &step)?;
     let mut slot = SESSION.lock().await;
+    // A discovery's browser is the assistant's: a step would act behind its
+    // back, and could lift a mapping run's save guard (`guard_supervised`).
+    crate::ai_bridge::refuse_while_discovering(&mut slot)?;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     // Another case's tabs do not carry over into this one.
     // The saved script's own choices about dialogs nobody expected and the
@@ -1010,7 +1113,7 @@ static ANSWERING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 /// commands - a person reading the page before pressing the next step -
 /// a task reads it (`keep_answering`), so the page is never held up
 /// waiting. Called with the session lock held.
-fn answer_between_commands() {
+pub(crate) fn answer_between_commands() {
     if ANSWERING.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }

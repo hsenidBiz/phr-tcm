@@ -365,6 +365,24 @@ export const commands = {
 	/**  What discovery has mapped of this project, for the Discovery card. */
 	autoRunLoadMap: (organization: string, project: string) => typedError<MapView, string>(__TAURI_INVOKE("auto_run_load_map", { organization, project })),
 	/**
+	 *  The project's last mapping run's summary, for the Discovery dialog:
+	 *  `None` until a mapping run has ended.
+	 */
+	autoRunLoadMappingSummary: (organization: string, project: string) => typedError<{
+	/**
+	 *  When the run started, milliseconds since the epoch; a JavaScript
+	 *  number holds it exactly.
+	 */
+	ran_at: number | null,
+	modules: string[],
+	added: string[],
+	updated: UpdatedArea[],
+	unchanged: string[],
+	unreached: UnreachedArea[],
+	/**  How many save requests the run's guard blocked. */
+	blocked_writes: number,
+} | null, string>(__TAURI_INVOKE("auto_run_load_mapping_summary", { organization, project })),
+	/**
 	 *  Forget what discovery mapped of `area`. Saved scripts keep running;
 	 *  new saves there need the area explored again.
 	 */
@@ -3347,6 +3365,25 @@ export type MapView = {
 	areas: AreaView[],
 };
 
+/**
+ *  What one mapping run did. Each screen is in exactly one list: the list
+ *  of the last thing that happened to it in the run.
+ */
+export type MappingSummary = {
+	/**
+	 *  When the run started, milliseconds since the epoch; a JavaScript
+	 *  number holds it exactly.
+	 */
+	ran_at: number | null,
+	modules: string[],
+	added: string[],
+	updated: UpdatedArea[],
+	unchanged: string[],
+	unreached: UnreachedArea[],
+	/**  How many save requests the run's guard blocked. */
+	blocked_writes: number,
+};
+
 export type MaterializedDraft = {
 	path: string,
 	stamp: string,
@@ -5481,6 +5518,12 @@ export type TimelineTask = {
 	log_id: number,
 };
 
+/**  A screen the run could not reach, and why. */
+export type UnreachedArea = {
+	name: string,
+	reason: string,
+};
+
 /**
  *  Emitted while an update package downloads, so the banner can show a bar
  *  instead of a spinner that says nothing about how long is left.
@@ -5524,6 +5567,18 @@ export type UpdateStatus = {
 	 *  is left to wonder whether clicking it did anything at all.
 	 */
 	failed_attempt: string | null,
+};
+
+/**  A screen whose menu path the run changed. */
+export type UpdatedArea = {
+	name: string,
+	/**  The menu path before, as click names joined with ", then ". */
+	old_path: string,
+	/**
+	 *  The menu path now. The same as `old_path` when only the page the
+	 *  clicks arrive on changed.
+	 */
+	new_path: string,
 };
 
 /**

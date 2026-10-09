@@ -19,6 +19,7 @@ pub mod failures;
 pub mod floor;
 pub mod guide;
 pub mod lease;
+pub mod mapping_summary;
 pub mod marks;
 pub mod nav;
 pub mod one_browser;

@@ -387,6 +387,8 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 "account": { "type": "string", "description": "The KEY of the saved account to sign in as, from get_accounts. Never a username or a password." },
                 "area": { "type": "string", "description": "The recorded area you are exploring, by its name: pass it whenever the case's area is listed in the guide. What you see is filed under it; with none, it is filed under no area." },
                 "browser": { "type": "string", "enum": ["edge", "chrome"], "description": "Optional: which browser to open. The one last used, when left out." },
+                "mapping": { "type": "boolean", "description": "Optional: true starts a menu mapping run, which only walks the menus and saves each screen as an area. It is read-only: every save the page tries is blocked and counted, and the action's answer carries `blocked`. Needs `modules`. Used by /tcm:map-menus." },
+                "modules": { "type": "array", "items": { "type": "string" }, "description": "The modules to map, by name, for a mapping run. At least one is needed when `mapping` is true." },
             }), &["account"]),
         },
         {

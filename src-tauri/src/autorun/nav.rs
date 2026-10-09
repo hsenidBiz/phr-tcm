@@ -57,6 +57,21 @@ pub struct ModulePath {
     /// always did.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub start: String,
+    /// Who made the area. Absent in a file written before this was kept:
+    /// such an area is a person's, and a mapping run never changes it.
+    #[serde(default)]
+    pub made_by: MadeBy,
+}
+
+/// Who made an area: a person (recorded in Areas, or saved by an ordinary
+/// discovery the person asked for), or a mapping run walking the menus. A
+/// mapping run adds areas and updates only its own.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MadeBy {
+    #[default]
+    Person,
+    Mapping,
 }
 
 impl ModulePath {
@@ -859,6 +874,12 @@ pub fn guide_section(nav: &NavFile) -> String {
 /// `tests/suite/autorun_guide.rs` holds the two texts together.
 pub const SET_AREA_RULE: &str = "Set the script's `area` to the area you explored, every time, even when it is the module's default area: a script with no `area` only gets credit for locators not tied to an area.";
 
+/// An area's clicks from the home page in words, in order: its menu path,
+/// with no address in it.
+pub fn menu_path(clicks: &[Target]) -> String {
+    clicks.iter().map(Target::describe).collect::<Vec<_>>().join(", then ")
+}
+
 /// The recorded areas, one line each: name - module - the address path it
 /// lands on - the menu path from the home page, which a discovery clicks
 /// to reach the area.
@@ -871,7 +892,7 @@ fn areas_section(nav: &NavFile) -> String {
          carrying out those clicks with `discover_autorun_action`.\n\n",
     );
     for m in &nav.modules {
-        let menu = m.clicks.iter().map(|c| c.describe()).collect::<Vec<_>>().join(", then ");
+        let menu = menu_path(&m.clicks);
         out.push_str(&format!("- {} - {} - {} - menu path: {}\n", m.name(), m.module.trim(), m.arrived, menu));
     }
     out.push_str(&format!(

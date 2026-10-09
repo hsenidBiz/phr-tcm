@@ -7,7 +7,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import type { AreaView } from "../../bindings";
+import type { AreaView, MappingSummary } from "../../bindings";
 import DiscoveryDialog, { discoverySummary } from "./DiscoveryDialog";
 
 afterEach(() => {
@@ -32,14 +32,16 @@ function area(over: Partial<AreaView> & { area: string }): AreaView {
 
 type Call = { cmd: string; args: Record<string, unknown> };
 
-/** A map that answers like Rust's: forget takes the area out of it. */
-function mount(areas: AreaView[]) {
+/** A map that answers like Rust's: forget takes the area out of it. The
+ * last menu mapping is `summary`, none by default. */
+function mount(areas: AreaView[], summary: MappingSummary | null = null) {
   const map = [...areas];
   const calls: Call[] = [];
   mockIPC((cmd, raw) => {
     const args = (raw ?? {}) as Record<string, unknown>;
     calls.push({ cmd, args });
     if (cmd === "auto_run_load_map") return { areas: map.map((a) => ({ ...a })) };
+    if (cmd === "auto_run_load_mapping_summary") return summary;
     if (cmd === "auto_run_forget_map_area") {
       const i = map.findIndex((a) => a.area === args.area);
       if (i >= 0) map.splice(i, 1);
@@ -209,4 +211,56 @@ test("a_map_that_reads_offers_no_reset", async () => {
   mount([area({ area: "Leave" })]);
   await screen.findByRole("listitem", { name: "Leave" });
   expect(screen.queryByRole("button", { name: "Reset map" })).not.toBeInTheDocument();
+});
+
+const MAPPED = Date.UTC(2026, 9, 8, 9);
+
+test("the_discovery_dialog_shows_the_last_mapping", async () => {
+  mount([area({ area: "Leave Apply" })], {
+    ran_at: MAPPED,
+    modules: ["Leave", "Payroll"],
+    added: ["Leave Apply"],
+    updated: [
+      { name: "Payroll Run", old_path: "Payroll, then Run", new_path: "Payroll, then Monthly, then Run" },
+      { name: "Payslips", old_path: "Payroll, then Payslips", new_path: "Payroll, then Payslips" },
+    ],
+    unchanged: [],
+    unreached: [{ name: "Leave Report", reason: "click 2 was not found" }],
+    blocked_writes: 3,
+  });
+  const section = await screen.findByRole("region", { name: "Last menu mapping" });
+  const date = new Date(MAPPED).toLocaleDateString();
+  expect(within(section).getByText(`Ran ${date} over Leave, Payroll`)).toBeInTheDocument();
+  expect(within(section).getByText("3 save requests blocked")).toBeInTheDocument();
+  expect(within(section).getByText("Unchanged: none")).toBeInTheDocument();
+
+  const lines = (name: string) =>
+    within(within(section).getByRole("list", { name, hidden: true }))
+      .getAllByRole("listitem", { hidden: true })
+      .map((li) => li.textContent);
+  expect(lines("Added")).toEqual(["Leave Apply"]);
+  expect(lines("Updated")).toEqual([
+    "Payroll Run: was Payroll, then Run, now Payroll, then Monthly, then Run",
+    "Payslips: Same menu path, arrived on a different page",
+  ]);
+  expect(lines("Could not reach")).toEqual(["Leave Report: click 2 was not found"]);
+
+  // Folded until asked for.
+  const updated = within(section).getByText("Updated (2)");
+  expect(updated.closest("details")).not.toHaveAttribute("open");
+  fireEvent.click(updated);
+  expect(updated.closest("details")).toHaveAttribute("open");
+});
+
+test("no_mapping_section_without_a_summary", async () => {
+  const { calls } = mount([area({ area: "Leave Apply" })]);
+  await screen.findByRole("listitem", { name: "Leave Apply" });
+  await waitFor(() => expect(calls.some((c) => c.cmd === "auto_run_load_mapping_summary")).toBe(true));
+  expect(calls.find((c) => c.cmd === "auto_run_load_mapping_summary")?.args).toEqual({
+    organization: "acme",
+    project: "Web",
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(screen.queryByText("Last menu mapping")).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Last menu mapping" })).not.toBeInTheDocument();
 });

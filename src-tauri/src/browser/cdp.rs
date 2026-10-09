@@ -66,6 +66,10 @@ const MAX_BUFFERED_EVENTS: usize = 256;
 /// forever, and only the most recent dialogs are worth reporting.
 const MAX_REMEMBERED_DIALOGS: usize = 20;
 
+/// The most stopped saves kept until `take_saves_stopped` is asked: a page
+/// that saves in a loop on a browser nobody asks never grows past it.
+const MAX_STOPPED_SAVES: usize = 500;
+
 /// One request on the wire.
 pub fn frame(id: u64, method: &str, params: serde_json::Value) -> String {
     serde_json::json!({ "id": id, "method": method, "params": params }).to_string()
@@ -635,6 +639,9 @@ pub struct Cdp<T: Transport = WsTransport> {
     hold_marker: Option<u64>,
     /// A stopped save from a tab that has since closed, not yet reported.
     blocked_elsewhere: Option<String>,
+    /// Every save stopped since `take_saves_stopped` was last asked, as
+    /// (method, path), at most `MAX_STOPPED_SAVES`.
+    saves_stopped: Vec<(String, String)>,
     /// Frames sent without waiting (answers to paused requests, a new tab's
     /// setup) not yet known to be sent, oldest first. A deadline can cut a
     /// call short while one is being written; whatever is still here is
@@ -783,6 +790,7 @@ impl<T: Transport> Cdp<T> {
             hold_tabs: HashSet::new(),
             hold_marker: None,
             blocked_elsewhere: None,
+            saves_stopped: Vec::new(),
             unsent_answers: VecDeque::new(),
             downloads: None,
             downloads_per_page: false,
@@ -1160,6 +1168,12 @@ impl<T: Transport> Cdp<T> {
         first.or(elsewhere)
     }
 
+    /// Every save stopped since the last time this was asked, in any tab,
+    /// as (method, path): never the host or the query.
+    pub fn take_saves_stopped(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.saves_stopped)
+    }
+
     /// Save every download the page starts into `dir` (made if missing),
     /// and follow each one: the browser saves it under its guid, and once it
     /// completes it is renamed to its own name (`downloads::sanitise_name`,
@@ -1403,11 +1417,11 @@ impl<T: Transport> Cdp<T> {
     /// Queue the answer to one paused request: stopped or continued.
     fn queue_answer(&mut self, session: &str, request_id: &str, method: &str, url: &str, stop: bool) {
         let (what, params) = if stop {
-            crate::applog::warn(format!(
-                "Auto Run stopped a save the page tried to send: {} {}",
-                method.to_ascii_uppercase(),
-                super::save_guard::path_of(url)
-            ));
+            let (method, path) = (method.trim().to_ascii_uppercase(), super::save_guard::path_of(url));
+            crate::applog::warn(format!("Auto Run stopped a save the page tried to send: {method} {path}"));
+            if self.saves_stopped.len() < MAX_STOPPED_SAVES {
+                self.saves_stopped.push((method, path));
+            }
             ("Fetch.failRequest", serde_json::json!({ "requestId": request_id, "errorReason": "BlockedByClient" }))
         } else {
             ("Fetch.continueRequest", serde_json::json!({ "requestId": request_id }))
@@ -2406,6 +2420,10 @@ pub trait Driver {
     fn take_save_blocked(&mut self) -> Option<String> {
         None
     }
+    /// See `Cdp::take_saves_stopped`. A driver with no guard stopped nothing.
+    fn take_saves_stopped(&mut self) -> Vec<(String, String)> {
+        Vec::new()
+    }
     /// The run's dialog book (`dialogs`). A driver that answers no dialogs
     /// of its own (a test's bare fake) has none: nothing is armed, and an
     /// `expect_dialog` sees no dialog.
@@ -2539,6 +2557,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn take_save_blocked(&mut self) -> Option<String> {
         Cdp::take_save_blocked(self)
+    }
+    fn take_saves_stopped(&mut self) -> Vec<(String, String)> {
+        Cdp::take_saves_stopped(self)
     }
     async fn idle(&mut self, wait: Duration) {
         Cdp::idle(self, wait).await

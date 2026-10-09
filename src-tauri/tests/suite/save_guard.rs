@@ -289,6 +289,29 @@ async fn paused_requests_are_answered_while_a_call_waits() {
     assert_eq!(cdp.take_save_blocked(), None);
 }
 
+/// Every save the guard stops is kept, by method and path - never the host
+/// or the query - for a mapping run to count, apart from the one sentence
+/// a case reports.
+#[tokio::test]
+async fn every_stopped_save_is_kept_by_method_and_path() {
+    let mut cdp = guarded(&[]).await;
+    let frames = [
+        paused("r1", "POST", "https://hr.example/api/Save?token=x"),
+        paused("r2", "GET", "https://hr.example/api/Save"),
+        paused("r3", "delete", "https://hr.example/api/Delete/7#top"),
+        paused("r4", "POST", "https://hr.example/api/List"),
+        r#"{"id":3,"result":{}}"#.to_string(),
+    ];
+    cdp.transport_mut().incoming.extend(frames);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(
+        cdp.take_saves_stopped(),
+        vec![("POST".to_string(), "/api/Save".to_string()), ("DELETE".to_string(), "/api/Delete/7".to_string())]
+    );
+    assert!(cdp.take_saves_stopped().is_empty(), "handed over twice");
+    assert_eq!(cdp.take_save_blocked().as_deref(), Some(SENTENCE), "the case's sentence is still there");
+}
+
 /// Minor (a): a call's deadline that cuts the answer to a paused request
 /// short mid-write never leaves the request paused - the answer is written
 /// again before the next frame goes out.
