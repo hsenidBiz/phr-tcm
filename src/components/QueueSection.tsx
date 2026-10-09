@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../lib/toast";
@@ -61,7 +61,11 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import ScanProgress from "./ScanProgress";
 import { Checkbox } from "./ui/checkbox";
+import { Collapse } from "./ui/collapse";
 import { Modal } from "./ui/modal";
+import { Switch } from "./ui/switch";
+import { usePersistedStringSet } from "../lib/collapsedGroups";
+import { buildAreaGroups, groupIndices, visibleOrder, type AreaGroup } from "../lib/areaGroups";
 import {
   IconCollapseAll,
   IconBack,
@@ -508,6 +512,18 @@ export default function QueueSection({
   useEffect(() => {
     setEditingIdx(null);
   }, [queue.length]);
+
+  // Group by area: a per-machine view choice, off until switched on. Only
+  // how the Queue is DRAWN - the queue array, its upload order and every
+  // index a row is keyed by stay exactly as they are.
+  const [areaGrouped, setAreaGrouped] = useState(() => {
+    try {
+      return localStorage.getItem("tcm-v2-queue-group") === "on";
+    } catch {
+      return false;
+    }
+  });
+  const [foldedAreas, toggleFoldedArea] = usePersistedStringSet("tcm-v2-queue-collapsed");
 
   // Per-row steps preview (collapsed by default): check what will actually
   // be written before submitting, for creates and updates alike.
@@ -1257,11 +1273,28 @@ export default function QueueSection({
     selAnchor.current = null;
   }, [queue.length]);
 
+  // Group by area: the tree, and the rows it leaves on screen top to
+  // bottom. A Shift-click range runs over what the user SEES, so while the
+  // Queue is grouped it follows this order (folded groups' cases left out)
+  // rather than raw queue positions. Held in a ref for the same reason the
+  // anchor is: toggleSelect has to stay stable for the memoised rows.
+  const areaGroups = useMemo(() => (areaGrouped ? buildAreaGroups(queue) : null), [areaGrouped, queue]);
+  const shownOrder = useRef<number[] | null>(null);
+  useEffect(() => {
+    shownOrder.current = areaGroups ? visibleOrder(areaGroups, foldedAreas) : null;
+  }, [areaGroups, foldedAreas]);
+
   const toggleSelect = useCallback((i: number, shift: boolean) => {
     const anchor = selAnchor.current;
+    const order = shownOrder.current;
     setSelected((s) => {
       const next = new Set(s);
-      if (shift && anchor != null) {
+      const from = order && anchor != null ? order.indexOf(anchor) : -1;
+      const to = order ? order.indexOf(i) : -1;
+      if (shift && anchor != null && order && from >= 0 && to >= 0) {
+        const [lo, hi] = from < to ? [from, to] : [to, from];
+        for (let k = lo; k <= hi; k++) next.add(order[k]);
+      } else if (shift && anchor != null && !order) {
         const [lo, hi] = anchor < i ? [anchor, i] : [i, anchor];
         for (let k = lo; k <= hi; k++) next.add(k);
       } else if (next.has(i)) {
@@ -1541,6 +1574,113 @@ export default function QueueSection({
     });
   }, [queue, currentCases.data, prefs.moduleRef, prefs.preconditionsRef, currentCases.isError]);
 
+  /** One queued case, by its real queue index - the same row whether the
+   * Queue is flat or grouped by area. */
+  const renderRow = (i: number) => {
+    const tc = queue[i];
+    const { diff, diffFailed } = reviewRows[i];
+    return (
+      <QueueRow
+        key={i}
+        tc={tc}
+        index={i}
+        org={org}
+        project={project}
+        isSelected={selected.has(i)}
+        stepsOpen={expandedSteps.has(i)}
+        diffOpen={expandedDiffs.has(i)}
+        editing={editingIdx === i}
+        failed={failedRows.has(rowKeys[i])}
+        uploaded={tc.update_id != null && uploadedIds.has(tc.update_id)}
+        held={held[i]}
+        ambiguous={ambiguous[i]}
+        touched={flash?.[rowKeys[i]]}
+        fileChange={tc.update_id == null ? fileChanges?.[rowKeys[i]] : undefined}
+        reviewing={reviewing}
+        problem={problems[i]}
+        duplicate={duplicates[i]}
+        diff={diff}
+        diffFailed={diffFailed}
+        busy={submit.isPending}
+        onToggleSelect={toggleSelect}
+        onToggleSteps={toggleSteps}
+        onToggleDiff={toggleDiff}
+        onToggleEdit={toggleEdit}
+        onRemove={removeRow}
+        onSave={saveRow}
+        onCancelEdit={cancelEdit}
+      />
+    );
+  };
+
+  /** One area group: its heading, its own cases, then its subgroups, each
+   * level indented under the last. `hidden` is true inside a folded
+   * ancestor.
+   *
+   * Folding never unmounts an open editor - folding away unsaved edits
+   * would be a silent discard (the rule Edit Existing's groups follow). So
+   * a folded group still shows the one row being edited, and the path of
+   * headings down to it, and nothing else. */
+  const renderAreaGroup = (g: AreaGroup, hidden: boolean) => {
+    const folded = foldedAreas.has(g.key);
+    const away = hidden || folded;
+    const all = groupIndices(g);
+    const keep = (i: number) => !away || i === editingIdx;
+    const rows = g.indices.filter(keep);
+    const kids = away ? g.children.filter((c) => editingIdx != null && groupIndices(c).includes(editingIdx)) : g.children;
+    const picked = all.filter((i) => selected.has(i)).length;
+    return (
+      <div key={g.key} className="space-y-1">
+        <div className="flex w-full items-center gap-3 pb-1 pt-2">
+          <button
+            type="button"
+            aria-label={`${folded ? "Expand" : "Collapse"} area ${g.path}`}
+            aria-expanded={!folded}
+            title={folded ? "Expand group" : "Collapse group"}
+            className="text-muted transition-colors hover:text-accent"
+            onClick={() => toggleFoldedArea(g.key)}
+          >
+            {folded ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+          </button>
+          <Checkbox
+            ariaLabel={`Select all in ${g.path}`}
+            checked={picked === all.length}
+            indeterminate={picked > 0 && picked < all.length}
+            onCheckedChange={(on) =>
+              setSelected((s) => {
+                const next = new Set(s);
+                for (const i of all) {
+                  if (on) next.add(i);
+                  else next.delete(i);
+                }
+                return next;
+              })
+            }
+          />
+          {/* The name folds too, same as the chevron - clicking the name is
+              how people expect to open a group. */}
+          <button
+            type="button"
+            className="group flex items-center gap-2"
+            title={folded ? "Expand group" : "Collapse group"}
+            onClick={() => toggleFoldedArea(g.key)}
+          >
+            <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+              {g.name} ({g.count})
+            </span>
+          </button>
+          <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
+        </div>
+        <Collapse open={rows.length + kids.length > 0} animateIn={false}>
+          <div className="space-y-1 pl-4">
+            {rows.length > 0 && <ul className="space-y-1">{rows.map(renderRow)}</ul>}
+            {kids.map((c) => renderAreaGroup(c, away))}
+          </div>
+        </Collapse>
+      </div>
+    );
+  };
+
   // An empty queue is not a queue - the whole section stays out of the
   // way until a case exists. The "Queue for PBI" header, its five action
   // buttons and the Review button all act on cases, and with zero cases
@@ -1655,9 +1795,16 @@ export default function QueueSection({
           appears when everything is already stamped would hide the reason
           the buttons are disabled, which is the one thing a mixed queue
           needs explained. */}
-      {queue.length > 1 &&
-        (["tester_order", "spec_order"] as const).some((k) => queue.some((tc) => tc[k] != null)) && (
-          <div className="flex items-center gap-2 text-xs text-muted">
+      {/* Group by area sits on the same line, at its far end: both change
+          how the list reads, but only the Order buttons change the queue.
+          A single case has nothing to group, so the switch waits for a
+          second - unless grouping is already on, when it stays to be
+          switched off. */}
+      {(queue.length > 1 || (queue.length > 0 && areaGrouped)) && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+          {queue.length > 1 &&
+            (["tester_order", "spec_order"] as const).some((k) => queue.some((tc) => tc[k] != null)) && (
+          <>
             <span>Order:</span>
             {(
               [
@@ -1685,8 +1832,25 @@ export default function QueueSection({
                 </Button>
               );
             })}
-          </div>
-        )}
+          </>
+          )}
+          <label className="ml-auto flex items-center gap-1.5">
+            <Switch
+              checked={areaGrouped}
+              ariaLabel="Group by area"
+              onCheckedChange={(on) => {
+                setAreaGrouped(on);
+                try {
+                  localStorage.setItem("tcm-v2-queue-group", on ? "on" : "off");
+                } catch {
+                  // storage unavailable -> session-only
+                }
+              }}
+            />
+            Group by area
+          </label>
+        </div>
+      )}
 
       {/* No empty-state island: with zero cases (and no submit running)
           the whole section early-returns above, so this point is only
@@ -1733,44 +1897,13 @@ export default function QueueSection({
         </div>
       )}
 
-      {queue.length > 0 && (
-        <ul className="space-y-1">
-          {queue.map((tc, i) => {
-            const { diff, diffFailed } = reviewRows[i];
-            return (
-              <QueueRow
-                key={i}
-                tc={tc}
-                index={i}
-                org={org}
-                project={project}
-                isSelected={selected.has(i)}
-                stepsOpen={expandedSteps.has(i)}
-                diffOpen={expandedDiffs.has(i)}
-                editing={editingIdx === i}
-                failed={failedRows.has(rowKeys[i])}
-                uploaded={tc.update_id != null && uploadedIds.has(tc.update_id)}
-                held={held[i]}
-                ambiguous={ambiguous[i]}
-                touched={flash?.[rowKeys[i]]}
-                fileChange={tc.update_id == null ? fileChanges?.[rowKeys[i]] : undefined}
-                reviewing={reviewing}
-                problem={problems[i]}
-                duplicate={duplicates[i]}
-                diff={diff}
-                diffFailed={diffFailed}
-                busy={submit.isPending}
-                onToggleSelect={toggleSelect}
-                onToggleSteps={toggleSteps}
-                onToggleDiff={toggleDiff}
-                onToggleEdit={toggleEdit}
-                onRemove={removeRow}
-                onSave={saveRow}
-                onCancelEdit={cancelEdit}
-              />
-            );
-          })}
-        </ul>
+      {queue.length > 0 && !areaGroups && <ul className="space-y-1">{queue.map((_, i) => renderRow(i))}</ul>}
+
+      {/* Grouped by area: the same rows, under one heading per level of
+          their area. Display only - each row is handed its real queue
+          index, so selection, editing and upload order never notice. */}
+      {queue.length > 0 && areaGroups && (
+        <div className="space-y-1">{areaGroups.map((g) => renderAreaGroup(g, false))}</div>
       )}
 
       {/* The same glowing bar the test-suite scan uses. Before the first
