@@ -2151,6 +2151,7 @@ async fn a_guarded_browser_answers_requests_made_between_calls() {
 #[tokio::test]
 #[ignore = "starts a real headless Edge"]
 async fn a_beacon_and_a_form_post_from_a_guarded_page_never_reach_the_server() {
+    let _log = crate::serial::log_tail();
     let server = SaveServer::start();
     let mut live = open().await;
     must(run(&mut live, json!({ "kind": "navigate", "url": server.page("") })).await);
@@ -2162,6 +2163,11 @@ async fn a_beacon_and_a_form_post_from_a_guarded_page_never_reach_the_server() {
     for path in ["/api/SaveBeacon", "/api/Save"] {
         assert!(stopped.iter().any(|(m, p)| m == "POST" && p == path), "{path} was not stopped: {stopped:?}");
     }
+    // Edge takes the typed patterns as they are: no fall back to pausing
+    // every request, which would hide a type it does not know.
+    let refused = v2_lib::browser::save_guard::TYPED_REFUSED;
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    assert!(!lines.iter().any(|l| l.starts_with(refused)), "{lines:?}");
 }
 
 /// A tab the page opens (a `target=_blank` link) is attached and guarded

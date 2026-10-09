@@ -23,6 +23,8 @@ const MAIN: &str = "S-main";
 /// - `before_reply`: these frames arrive just ahead of its answer, once.
 /// - `after_reply`: these frames arrive just after its answer, once.
 /// - `withhold_first`: like `withhold`, for the first such command only.
+/// - `refuse_typed`: every `Fetch.enable` with typed patterns is refused,
+///   as by a browser that does not know one of the types.
 ///
 /// `Target.createTarget` answers with the target `T-new`, and
 /// `Target.getTargetInfo` says main is in the browser context `C-1`.
@@ -35,6 +37,7 @@ struct FakeBrowser {
     before_reply: Vec<(String, Value)>,
     after_reply: Vec<(String, Value)>,
     withhold_first: Vec<String>,
+    refuse_typed: bool,
 }
 
 impl FakeBrowser {
@@ -48,6 +51,7 @@ impl FakeBrowser {
             before_reply: vec![],
             after_reply: vec![],
             withhold_first: vec![],
+            refuse_typed: false,
         }
     }
 }
@@ -67,7 +71,8 @@ impl Transport for FakeBrowser {
             let (_, frame) = self.before_reply.remove(i);
             self.incoming.push_back(frame.to_string());
         }
-        let mut reply = if self.refuse.iter().any(|n| names(n, &method, &session)) {
+        let typed = method == "Fetch.enable" && v["params"]["patterns"][0]["resourceType"].is_string();
+        let mut reply = if self.refuse.iter().any(|n| names(n, &method, &session)) || (self.refuse_typed && typed) {
             json!({ "id": id, "error": { "code": -32000, "message": "refused by the test" } })
         } else if method == "Target.attachToTarget" {
             json!({ "id": id, "result": { "sessionId": MAIN } })
@@ -365,6 +370,31 @@ async fn a_guarded_tab_whose_interception_is_refused_is_held_and_fails_the_case(
         "a tab that could not be guarded was let run"
     );
     assert_eq!(cdp.take_save_blocked().as_deref(), Some(TAB_HELD_UNGUARDED));
+}
+
+/// A tab the page opens in a browser that refuses the typed patterns is
+/// guarded by the catch-all before it runs, and its save is stopped.
+#[tokio::test]
+async fn a_tab_whose_typed_patterns_are_refused_is_guarded_by_the_catch_all() {
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    cdp.transport_mut().refuse_typed = true;
+    feed(&mut cdp, [attached("S-pop", "T-pop", "page", "https://hr.example/pop", true)]);
+    settle(&mut cdp).await;
+    let on_pop: Vec<&Value> = cdp.transport().sent.iter().filter(|f| f["sessionId"] == "S-pop").collect();
+    let enables: Vec<usize> = (0..on_pop.len()).filter(|&i| on_pop[i]["method"] == "Fetch.enable").collect();
+    assert_eq!(enables.len(), 2, "{on_pop:?}");
+    assert_eq!(on_pop[enables[0]]["params"], v2_lib::browser::save_guard::fetch_enable_params());
+    assert_eq!(on_pop[enables[1]]["params"], v2_lib::browser::save_guard::fetch_enable_all_params());
+    let run = on_pop
+        .iter()
+        .position(|f| f["method"] == "Runtime.runIfWaitingForDebugger")
+        .unwrap_or_else(|| panic!("never let run: {on_pop:?}"));
+    assert!(enables[1] < run, "let run before its catch-all was answered: {on_pop:?}");
+    assert_eq!(cdp.take_save_blocked(), None, "a guarded tab was failed as unguarded");
+    feed(&mut cdp, [paused("S-pop", "r1", "POST", "https://hr.example/api/Save")]);
+    settle(&mut cdp).await;
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
 }
 
 /// A tab that was already running when it was attached could not be held,

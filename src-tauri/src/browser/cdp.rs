@@ -544,7 +544,9 @@ pub const TAB_OPEN_UNGUARDED: &str = "this script must not save, but a tab that 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SetupStep {
     Bypass,
-    Fetch,
+    /// `typed`: sent with the typed patterns, so a refusal is retried with
+    /// the catch-all.
+    Fetch { typed: bool },
     /// The page log, dialog handler or lifecycle events: a refusal only
     /// loses that, and is logged.
     Watch(&'static str),
@@ -639,6 +641,9 @@ pub struct Cdp<T: Transport = WsTransport> {
     hold_marker: Option<u64>,
     /// A stopped save from a tab that has since closed, not yet reported.
     blocked_elsewhere: Option<String>,
+    /// This browser refused `Fetch.enable` with the typed patterns once: it
+    /// is sent the catch-all from then on (`fetch_params`).
+    typed_refused: bool,
     /// Every save stopped since `take_saves_stopped` was last asked, as
     /// (method, path), at most `MAX_STOPPED_SAVES`.
     saves_stopped: Vec<(String, String)>,
@@ -790,6 +795,7 @@ impl<T: Transport> Cdp<T> {
             hold_tabs: HashSet::new(),
             hold_marker: None,
             blocked_elsewhere: None,
+            typed_refused: false,
             saves_stopped: Vec::new(),
             unsent_answers: VecDeque::new(),
             downloads: None,
@@ -1025,12 +1031,42 @@ impl<T: Transport> Cdp<T> {
         Ok(())
     }
 
+    /// What `Fetch.enable` is sent in this browser: the typed patterns, or
+    /// the catch-all once it refused them.
+    fn fetch_params(&self) -> serde_json::Value {
+        if self.typed_refused {
+            super::save_guard::fetch_enable_all_params()
+        } else {
+            super::save_guard::fetch_enable_params()
+        }
+    }
+
+    /// The browser refused the typed patterns: said once, with its reason,
+    /// and the catch-all is sent from now on.
+    fn typed_were_refused(&mut self, why: &str) {
+        if !self.typed_refused {
+            self.typed_refused = true;
+            crate::applog::warn(format!("{}{why}", super::save_guard::TYPED_REFUSED));
+        }
+    }
+
     async fn guard_tab(&mut self, session: &str, patterns: &[String]) -> Result<(), CdpError> {
         let limit = self.limit_now();
         self.call_on(Some(session.to_string()), "Network.setBypassServiceWorker", serde_json::json!({ "bypass": true }), limit)
             .await?;
+        let typed = !self.typed_refused;
         let limit = self.limit_now();
-        self.call_on(Some(session.to_string()), "Fetch.enable", super::save_guard::fetch_enable_params(), limit).await?;
+        match self.call_on(Some(session.to_string()), "Fetch.enable", self.fetch_params(), limit).await {
+            Ok(_) => {}
+            // A browser that does not know one of the types: every request
+            // is paused instead. Refused too, the guard fails closed.
+            Err(CdpError::Protocol { message, .. }) if typed => {
+                self.typed_were_refused(&message);
+                let limit = self.limit_now();
+                self.call_on(Some(session.to_string()), "Fetch.enable", self.fetch_params(), limit).await?;
+            }
+            Err(e) => return Err(e),
+        }
         if let Some(t) = self.tabs.iter_mut().find(|t| t.session_id == session) {
             let blocked = t.guard.as_mut().and_then(|g| g.blocked.take());
             t.guard = Some(SaveGuard { patterns: patterns.to_vec(), hold: false, blocked });
@@ -1567,7 +1603,8 @@ impl<T: Transport> Cdp<T> {
         let s = session.as_str();
         if armed.is_some() {
             self.queue(s, "Network.setBypassServiceWorker", serde_json::json!({ "bypass": true }), Some(SetupStep::Bypass));
-            self.queue(s, "Fetch.enable", super::save_guard::fetch_enable_params(), Some(SetupStep::Fetch));
+            let typed = !self.typed_refused;
+            self.queue(s, "Fetch.enable", self.fetch_params(), Some(SetupStep::Fetch { typed }));
         }
         for (method, params) in [
             ("Network.enable", serde_json::json!({})),
@@ -1608,14 +1645,22 @@ impl<T: Transport> Cdp<T> {
         };
         let refused = answer.is_err();
         let unarmed = self.armed.is_none();
+        // The typed patterns refused while the run is still guarded: asked
+        // again with the catch-all, the tab still held until that answer.
+        if let (SetupStep::Fetch { typed: true }, Err(message), false) = (step, &answer, unarmed) {
+            self.typed_were_refused(message);
+            let params = self.fetch_params();
+            self.queue(&session, "Fetch.enable", params, Some(SetupStep::Fetch { typed: false }));
+            return self.send_unsent_answers().await;
+        }
         let tab = &mut self.tabs[i];
-        if step == SetupStep::Fetch {
+        if matches!(step, SetupStep::Fetch { .. }) {
             tab.guard_answered = true;
         }
         if let Err(message) = &answer {
             let (what, method) = match step {
                 SetupStep::Bypass => ("guard", "Network.setBypassServiceWorker"),
-                SetupStep::Fetch => ("guard", "Fetch.enable"),
+                SetupStep::Fetch { .. } => ("guard", "Fetch.enable"),
                 SetupStep::Watch(m) => ("watch", m),
             };
             crate::applog::warn(format!(
@@ -1626,16 +1671,17 @@ impl<T: Transport> Cdp<T> {
         match step {
             SetupStep::Watch(_) => return Ok(()),
             SetupStep::Bypass => tab.unguardable |= refused,
-            SetupStep::Fetch => {}
+            SetupStep::Fetch { .. } => {}
         }
-        if step == SetupStep::Fetch && !unarmed && (refused || tab.unguardable) {
+        let fetch = matches!(step, SetupStep::Fetch { .. });
+        if fetch && !unarmed && (refused || tab.unguardable) {
             let sentence = if tab.held { TAB_HELD_UNGUARDED } else { TAB_OPEN_UNGUARDED };
             if let Some(g) = tab.guard.as_mut() {
                 g.blocked.get_or_insert_with(|| sentence.to_string());
             }
             return Ok(());
         }
-        if tab.held && (step == SetupStep::Fetch || unarmed) {
+        if tab.held && (fetch || unarmed) {
             tab.held = false;
             self.queue(&session, "Runtime.runIfWaitingForDebugger", serde_json::json!({}), None);
             return self.send_unsent_answers().await;
@@ -2402,7 +2448,16 @@ pub trait Driver {
     fn guard_saves(&mut self, _patterns: &[String]) -> impl Future<Output = Result<(), CdpError>> {
         async move {
             self.call("Network.setBypassServiceWorker", serde_json::json!({ "bypass": true })).await?;
-            self.call("Fetch.enable", super::save_guard::fetch_enable_params()).await.map(|_| ())
+            // As `Cdp::guard_tab`: typed patterns refused, every request is
+            // paused instead; that refused too fails closed.
+            match self.call("Fetch.enable", super::save_guard::fetch_enable_params()).await {
+                Ok(_) => Ok(()),
+                Err(CdpError::Protocol { message, .. }) => {
+                    crate::applog::warn(format!("{}{message}", super::save_guard::TYPED_REFUSED));
+                    self.call("Fetch.enable", super::save_guard::fetch_enable_all_params()).await.map(|_| ())
+                }
+                Err(e) => Err(e),
+            }
         }
     }
     /// See `Cdp::stop_guarding_saves`.
