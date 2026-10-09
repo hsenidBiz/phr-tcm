@@ -235,7 +235,10 @@ fn the_saving_example_parses_as_a_real_save_payload() {
         scripts: Vec<v2_lib::autorun::CaseScript>,
     }
     let g = autorun_guide();
-    let example = first_balanced(&g, g.find("## Saving it").unwrap(), '{', '}');
+    // From the line that introduces it: the rules above it name
+    // placeholders in braces.
+    let saving = g.find("## Saving it").unwrap();
+    let example = first_balanced(&g, saving + g[saving..].find("For the case above").unwrap(), '{', '}');
     let payload: Payload =
         serde_json::from_str(example).expect("the save example is not a valid payload");
     assert_eq!(payload.scripts.len(), 1, "expected one script in the example");
@@ -1136,5 +1139,54 @@ fn the_guide_says_where_pictures_are_and_never_to_search() {
         "Prefer `get_autorun_page` (give it a `limit`) or `probe_autorun_locator`",
     ] {
         assert!(seeing.contains(phrase), "\"Seeing the page\" never says {phrase:?}");
+    }
+}
+
+/// Spec group 6: before its save examples, the guide says plainly how a
+/// save goes right: probe every final locator as written just before it,
+/// try a component live before saving it unchanged, a step is unchecked or
+/// checked but never both, state is checked with `expect_attribute`, where
+/// a fixture or setup placeholder may stand, and what a save refused in a
+/// discovery checks on the page by itself.
+#[test]
+fn the_guide_states_the_save_rules() {
+    let g = autorun_guide();
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    let saving = g.split_once("\n## Saving it\n").expect("no Saving it section").1;
+    let saving = saving.split("\n## ").next().unwrap();
+    let (rules, example) = saving.split_once("\"scripts\": [").expect("no save example");
+    let rules = flat(rules);
+    for said in [
+        "Probe every final locator with `probe_autorun_locator`, exactly as it is written in the script, immediately before saving",
+        "A step is either `unchecked` (no checks at all, and the reason) or checked, never both",
+        "`expect_attribute`",
+        "(`checked`, `aria-checked` or `disabled`)",
+        "A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a quoted attribute value",
+        "next to fixed text in an id or class",
+        "checked again once the run has filled it in",
+        "open the fixture's draft by its unique name instead",
+        "checks those locators on the discovery's current page once, on its own",
+        "`Recorded on the current page:`",
+        "nothing is clicked or typed",
+    ] {
+        assert!(rules.contains(said), "Saving it never says {said:?} before its example: {rules}");
+    }
+    assert!(!example.is_empty());
+
+    let components = g.split_once("\n## Components\n").expect("no Components section").1;
+    let components = components.split("\n## ").next().unwrap();
+    let (before, _) = components.split_once("Make it during discovery:").expect("no save steps");
+    let before = flat(before);
+    for said in [
+        "Try a component with `use_component` and `draft` before `save_autorun_component`, then save it unchanged",
+        "Probe its final locators exactly as written immediately before saving",
+        "checks them on the current page once, on its own",
+    ] {
+        assert!(before.contains(said), "Components never says {said:?} before its save steps: {before}");
+    }
+
+    for section in [saving, components] {
+        assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
     }
 }

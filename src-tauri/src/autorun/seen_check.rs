@@ -610,10 +610,13 @@ impl Unseen {
     }
 }
 
-/// A failure of the check, with the closest seen locator to offer.
+/// A failure of the check, with the closest seen locator to offer, and
+/// the locator itself when the failure is only that it was never seen
+/// (`None` for a page address or a component use the step cannot make).
 struct Found {
     unseen: Unseen,
     hint: Option<String>,
+    target: Option<Target>,
 }
 
 /// Checks `script` against what `map` has seen, in step order: every
@@ -644,6 +647,21 @@ pub fn check_seen_with_files(
         Some(f) => Err(f.unseen.refusal(f.hint.as_deref())),
         None => Ok(()),
     }
+}
+
+/// The locators [`check_seen_with_files`] refuses `script` for, in step
+/// order, when being unseen is all it refuses: `None` when it also refuses
+/// a page address or a component use the step cannot make. Empty when it
+/// refuses nothing.
+pub fn unseen_targets(
+    map: &DiscoveryMap,
+    components: &ComponentFile,
+    script: &CaseScript,
+    case_text: &[String],
+    only_steps: Option<&[i32]>,
+    files: &[TestFile],
+) -> Option<Vec<Target>> {
+    scan(map, components, script, case_text, only_steps, false, None, files).into_iter().map(|f| f.target).collect()
 }
 
 /// [`check_seen`], but every failure in step order rather than the first:
@@ -828,7 +846,11 @@ fn scan(
                     // Compared as the map files a page; named as written.
                     let path = path_only(url);
                     if !paths.contains(&page_path(url)) {
-                        unseen.push(Found { unseen: Unseen { step: step.step_number, locator: path, refused: None }, hint: None });
+                        unseen.push(Found {
+                            unseen: Unseen { step: step.step_number, locator: path, refused: None },
+                            hint: None,
+                            target: None,
+                        });
                         if first_only {
                             return unseen;
                         }
@@ -857,6 +879,7 @@ fn scan(
                             unseen.push(Found {
                                 unseen: Unseen { step: step.step_number, locator: component.clone(), refused: Some(why) },
                                 hint: None,
+                                target: None,
                             });
                             if first_only {
                                 return unseen;
@@ -887,6 +910,7 @@ fn scan(
                         unseen.push(Found {
                             unseen: Unseen { step: step.step_number, locator: n.target.describe(), refused: None },
                             hint: seen.closest(link),
+                            target: Some(n.target.clone()),
                         });
                         if first_only {
                             return unseen;
@@ -930,6 +954,27 @@ fn input_link(link: &LocatorStep) -> bool {
 /// as they expand. With no Test files known here, no file name or size is
 /// exempt.
 pub fn check_component_seen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) -> Result<(), String> {
+    match component_unseen(map, area, actions, true).into_iter().next() {
+        Some((why, _)) => Err(why),
+        None => Ok(()),
+    }
+}
+
+/// The locators [`check_component_seen`] refuses, in order, when being
+/// unseen is all it refuses: `None` when it also refuses a page address.
+/// Empty when it refuses nothing.
+pub fn unseen_component_targets(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) -> Option<Vec<Target>> {
+    component_unseen(map, area, actions, false).into_iter().map(|(_, t)| t).collect()
+}
+
+/// The refusals of a component's check, each with the locator it names
+/// (`None` for a page address), stopping at the first when `first_only`.
+fn component_unseen(
+    map: &DiscoveryMap,
+    area: Option<&str>,
+    actions: &[Action],
+    first_only: bool,
+) -> Vec<(String, Option<Target>)> {
     let mut areas: Vec<&str> = area.into_iter().collect();
     areas.extend(actions.iter().flat_map(Action::each).filter_map(Action::area_named));
     let seen = Sightings::new(map, &areas);
@@ -941,13 +986,17 @@ pub fn check_component_seen(map: &DiscoveryMap, area: Option<&str>, actions: &[A
             never_seen(what, hint)
         )
     };
+    let mut out: Vec<(String, Option<Target>)> = Vec::new();
     // Values typed by the component's earlier actions.
     let mut typed: Vec<String> = Vec::new();
     for (i, action) in actions.iter().enumerate() {
         for a in action.each() {
             if let Action::Navigate { url } | Action::OpenTab { url, .. } = a {
                 if !paths.contains(&page_path(url)) {
-                    return Err(refused(i, &path_only(url), None));
+                    out.push((refused(i, &path_only(url), None), None));
+                    if first_only {
+                        return out;
+                    }
                 }
             }
             let dates: Vec<Date> = typed.iter().filter_map(|v| parse_date(v)).collect();
@@ -956,7 +1005,10 @@ pub fn check_component_seen(map: &DiscoveryMap, area: Option<&str>, actions: &[A
                 let chain = t.links();
                 let links: Vec<LocatorStep> = chain.iter().filter(|l| !input_link(l)).cloned().collect();
                 if let Some(link) = first_unseen(&links, &chain, &seen, &own) {
-                    return Err(refused(i, &t.describe(), seen.closest(link).as_deref()));
+                    out.push((refused(i, &t.describe(), seen.closest(link).as_deref()), Some(t.clone())));
+                    if first_only {
+                        return out;
+                    }
                 }
             }
             if let Some(v) = a.typed_value() {
@@ -967,7 +1019,7 @@ pub fn check_component_seen(map: &DiscoveryMap, area: Option<&str>, actions: &[A
             }
         }
     }
-    Ok(())
+    out
 }
 
 // ---- at run time ----

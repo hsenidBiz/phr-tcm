@@ -2144,3 +2144,161 @@ async fn the_summary_names_no_address() {
     assert_eq!(reason("Claims"), "went to /claims instead");
     assert_eq!(kept.updated[0].new_path, "Reports, then /hr/reports");
 }
+
+// ------------------------- a save refused for a locator never seen
+
+use v2_lib::ai_bridge::{record_refused_in, save_component_in};
+use v2_lib::autorun::components::UserCases;
+use v2_lib::browser::snapshot::PROBE_SUMMARY_JS;
+
+/// A page at `/hr/cycles` on which every locator finds `found` elements,
+/// each `visible` or not. Anything a probe never sends (a click, a key)
+/// fails the test.
+fn cycles_page(found: usize, visible: bool) -> ScriptedDriver {
+    ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" if params["expression"] == "document" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.evaluate" if params["expression"] == "location.href" => {
+                Ok(json!({ "result": { "value": "https://hr.example.internal/hr/cycles?page=2" } }))
+            }
+            "Runtime.evaluate" if params["expression"] == "document.title" => Ok(json!({ "result": { "value": "Cycles" } })),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": visible } })),
+            "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(json!({
+                "result": { "value": { "tag": "button", "text": "2", "rect": [10.0, 20.0, 30.0, 24.0] } }
+            })),
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => Ok(json!({ "result": (0..found)
+                .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                .collect::<Vec<_>>() })),
+            other => panic!("a probe never sends {other} {params}"),
+        }
+    })
+}
+
+/// A driver that fails the test on any call at all: nothing was probed.
+fn untouched_page() -> ScriptedDriver {
+    ScriptedDriver::new(|method, params| panic!("nothing should reach the page, got {method} {params}"))
+}
+
+/// "Next page": one click on the pager's page 2 button, which only shows
+/// with more than ten cycles.
+fn next_page() -> Component {
+    serde_json::from_value(json!({
+        "name": "Next page",
+        "description": "Opens the second page of cycles",
+        "inputs": [],
+        "actions": [{ "kind": "click", "selector": { "css": "#pager-2" } }]
+    }))
+    .unwrap()
+}
+
+/// A discovery of `area` that has tried `c`.
+fn tried_in(area: &str, c: &Component) -> Option<DiscoveryState> {
+    exploring(area).map(|s| DiscoveryState { tried: vec![draft_fingerprint(c)], ..s })
+}
+
+/// Spec group 5: a component written before its locator was ever on the
+/// page is refused, the refused locator is checked on the discovery's
+/// page, found there once and visible, recorded under the discovery's
+/// area, and the save passes on its one retry. The answer says so first.
+#[tokio::test]
+async fn a_save_refused_in_discovery_records_a_locator_on_the_page_and_passes() {
+    let dir = TempDir::new();
+    let c = next_page();
+    let (mut browser, _) = slot(cycles_page(1, true), tried_in("Cycles", &c));
+    let now = 5;
+
+    let (status, body) =
+        save_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, now, Some(&UserCases::default())).await;
+    assert_eq!(status, 200, "{body}");
+    let (said, saved) = body.split_once('\n').expect("the recorded line, then the save's answer");
+    assert_eq!(said, "Recorded on the current page: #pager-2.");
+    assert_eq!(parsed(saved)["version"], 1, "{body}");
+
+    let area = mapped_area(dir.path(), "Cycles").expect("nothing was recorded");
+    let page = area.pages.iter().find(|p| p.path == "/hr/cycles").expect("no page, or a query was kept");
+    assert!(
+        page.elements.iter().any(|e| e.key == v2_lib::browser::locator::SeenKey::Css("#pager-2".into())),
+        "{:?}",
+        page.elements
+    );
+
+    // Found twice, found hidden, or not found: nothing is recorded, and the
+    // save's own refusal follows the line that says so.
+    for (found, visible) in [(2, true), (1, false), (0, true)] {
+        let fresh = TempDir::new();
+        let (mut browser, _) = slot(cycles_page(found, visible), tried_in("Cycles", &c));
+        let (status, body) =
+            save_component_in(&mut browser, fresh.path(), ORG, PROJECT, c.clone(), None, now, Some(&UserCases::default()))
+                .await;
+        assert_eq!(status, 400, "{found} {visible}: {body}");
+        assert!(
+            body.starts_with(
+                "Recorded on the current page: nothing - no refused locator matched exactly one visible element.\nAction 1: #pager-2 was never seen on the live app"
+            ),
+            "{found} {visible}: {body}"
+        );
+        assert!(load_map(fresh.path(), ORG, PROJECT).unwrap().areas.is_empty(), "{found} {visible}");
+    }
+}
+
+/// With no discovery going, the save is refused as it always was: nothing
+/// reaches the page and nothing is recorded. In discovery, a refusal for
+/// anything but unseen locators is never probed either.
+#[tokio::test]
+async fn a_save_refused_outside_discovery_records_nothing() {
+    let c = next_page();
+
+    // The person's own browser: no discovery, so nothing was tried.
+    let dir = TempDir::new();
+    let (mut browser, _) = slot(untouched_page(), None);
+    let (status, body) =
+        save_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default())).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(!body.contains("Recorded on the current page"), "{body}");
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty());
+
+    // No browser at all.
+    let mut empty: Option<FakeBrowser> = None;
+    let (status, body) =
+        save_component_in(&mut empty, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default())).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty());
+
+    // In discovery, refused for a page address it never saw as well: not
+    // probed, and the refusal is the save's own.
+    let away: Component = serde_json::from_value(json!({
+        "name": "Away", "description": "d", "inputs": [],
+        "actions": [
+            { "kind": "navigate", "url": "https://hr.example.internal/hr/elsewhere" },
+            { "kind": "click", "selector": { "css": "#pager-2" } }
+        ]
+    }))
+    .unwrap();
+    let (mut browser, _) = slot(untouched_page(), tried_in("Cycles", &away));
+    let (status, body) =
+        save_component_in(&mut browser, dir.path(), ORG, PROJECT, away, None, 5, Some(&UserCases::default())).await;
+    assert_eq!(status, 400, "{body}");
+    assert!(body.starts_with("Action 1: /hr/elsewhere was never seen"), "{body}");
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty());
+
+    // Outside discovery the page check itself does nothing.
+    let (mut browser, _) = slot(untouched_page(), None);
+    let probed = record_refused_in(&mut browser, dir.path(), ORG, PROJECT, &[Target::from("#pager-2")]).await;
+    assert_eq!(probed, None);
+}
+
+/// A refused locator holding a placeholder, or a component input's place,
+/// cannot be probed as written: it is left refused and never reaches the
+/// page.
+#[tokio::test]
+async fn a_refused_locator_with_a_placeholder_is_never_probed() {
+    let dir = TempDir::new();
+    let (mut browser, _) = slot(untouched_page(), exploring("Cycles"));
+    let held: Target = serde_json::from_value(json!({ "css": "div[data-cycle-id=\"{{setup.cycle_id}}\"]" })).unwrap();
+    let input: Target = serde_json::from_value(json!({ "input": "row" })).unwrap();
+    let probed = record_refused_in(&mut browser, dir.path(), ORG, PROJECT, &[held, input]).await;
+    assert_eq!(probed, Some(Vec::new()));
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty());
+}

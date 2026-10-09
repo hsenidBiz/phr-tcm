@@ -6,7 +6,7 @@ use v2_lib::autorun::discovery_map::{AreaMap, DiscoveryMap, PageMap, SeenElement
 use v2_lib::autorun::edits::Edit;
 use v2_lib::autorun::seen_check::{
     check_component_seen, check_resolved_inputs, check_seen, check_seen_all, check_seen_all_hinted, check_seen_with_files,
-    has_data_placeholders, has_placeholder_inputs, steps_to_check, Unseen,
+    has_data_placeholders, has_placeholder_inputs, steps_to_check, unseen_component_targets, unseen_targets, Unseen,
 };
 use v2_lib::autorun::CaseScript;
 use v2_lib::browser::locator::{LocatorStep, Target};
@@ -1279,4 +1279,63 @@ fn a_filled_value_cannot_break_out_of_its_quotes() {
     // Outside a real quote (here escaped), the placeholder is literal.
     let escaped = "[y=\\\"{{setup.v}}\\\"]";
     assert_eq!(check_seen(&map, &none(), &at(escaped), &[], None), Err(refusal(1, escaped)));
+}
+
+/// What a save refused in discovery checks on the page: every locator the
+/// check refuses as unseen, in step order, and none at all when it also
+/// refuses a page address, which no probe can find.
+#[test]
+fn unseen_targets_name_every_unseen_locator_or_none_when_a_page_is_refused() {
+    let map = map_with("Ratings", "/ratings", &[role("button", "Save")]);
+    let two = script(
+        Some("Ratings"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Save" } }] },
+            { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Publish" } }] },
+            { "step_number": 3, "actions": [{ "kind": "click", "selector": { "css": "#pager-2" } }] }
+        ]),
+    );
+    let found = unseen_targets(&map, &none(), &two, &[], None, &[]).expect("only locators were refused");
+    let named: Vec<String> = found.iter().map(Target::describe).collect();
+    assert_eq!(named, vec!["button \"Publish\"".to_string(), "#pager-2".to_string()]);
+
+    let seen = script(
+        Some("Ratings"),
+        serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Save" } }] }]),
+    );
+    assert_eq!(unseen_targets(&map, &none(), &seen, &[], None, &[]), Some(Vec::new()));
+
+    let away = script(
+        Some("Ratings"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/payroll" }] },
+            { "step_number": 2, "actions": [{ "kind": "click", "selector": { "css": "#pager-2" } }] }
+        ]),
+    );
+    assert_eq!(unseen_targets(&map, &none(), &away, &[], None, &[]), None);
+}
+
+/// The same for a component's own locators: its unseen ones, and none at
+/// all beside a page it never saw. The first refusal is still the check's.
+#[test]
+fn unseen_component_targets_name_its_unseen_locators_or_none_when_a_page_is_refused() {
+    let map = map_with("Ratings", "/ratings", &[role("button", "Save")]);
+    let actions: Vec<v2_lib::browser::actions::Action> = serde_json::from_value(serde_json::json!([
+        { "kind": "click", "selector": { "role": "button", "name": "Save" } },
+        { "kind": "click", "selector": { "css": "#pager-2" } },
+        { "kind": "click", "selector": { "css": "#pager-3" } }
+    ]))
+    .unwrap();
+    let found = unseen_component_targets(&map, Some("Ratings"), &actions).expect("only locators were refused");
+    let named: Vec<String> = found.iter().map(Target::describe).collect();
+    assert_eq!(named, vec!["#pager-2".to_string(), "#pager-3".to_string()]);
+    let first = check_component_seen(&map, Some("Ratings"), &actions).unwrap_err();
+    assert!(first.starts_with("Action 2: #pager-2 was never seen"), "{first}");
+
+    let away: Vec<v2_lib::browser::actions::Action> = serde_json::from_value(serde_json::json!([
+        { "kind": "navigate", "url": "https://app.example/payroll" },
+        { "kind": "click", "selector": { "css": "#pager-2" } }
+    ]))
+    .unwrap();
+    assert_eq!(unseen_component_targets(&map, Some("Ratings"), &away), None);
 }
