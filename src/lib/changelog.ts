@@ -27,6 +27,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.2-beta.1",
+    date: "2026-10-09",
+    items: [
+      "Auto Run can carry on in the background: press Run in background (or Escape) and keep using the app. A pill in the title bar shows how far the run has got, turns amber when a reset is needed, and opens the review when it finishes.",
+      "Your assistant can now discover the site itself before writing Auto Run scripts: it opens the browser, signs in and explores the screens, and the app keeps a map of what it saw. A script is only saved when every element it uses was seen on the live site.",
+      "Auto Run's Setup has a Discovery row: see what has been explored, which areas need another look, the save requests discovery made, and end a discovery from there.",
+      "Imported Auto Run scripts are checked against the live site the same way as scripts your assistant saves.",
+      "Auto Run components: steps for a common control, such as picking a date or confirming a dialog, are worked out once and reused by every script, so fixing one fixes them all. They are listed under Components in Auto Run's Setup, and a run shows a component's lines together.",
+      "On Import Test Cases, a new case that its file changed shows what changed on its row, until you dismiss the change report.",
+    ],
+  },
+  {
     version: "2.1.1",
     date: "2026-10-08",
     items: [
