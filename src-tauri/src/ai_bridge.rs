@@ -2453,7 +2453,7 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
         answer["page_unavailable"] = serde_json::json!(page);
     }
     if let Some(shot) = &outcome.screenshot {
-        answer["picture"] = serde_json::json!(shot);
+        answer["picture"] = serde_json::json!(crate::autorun::store::shot_path(root, shot).display().to_string());
     }
     (200, answer.to_string())
 }
@@ -3378,7 +3378,7 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
     };
     let mut text = format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
     if let Some(shot) = &outcome.screenshot {
-        text.push_str(&format!(" (picture: {shot})"));
+        text.push_str(&format!(" (picture: {})", crate::autorun::store::shot_path(root, shot).display()));
     }
     (200, text)
 }
@@ -3523,7 +3523,7 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
     // expands. A file that does not read leaves those actions named by
     // their component only.
     let components = crate::autorun::components::load_components(&root, &ctx.org, &ctx.project).unwrap_or_default();
-    (200, crate::autorun::failures::describe_failures_with(&run, &scripts, &components))
+    (200, crate::autorun::failures::describe_failures_in(Some(&root), &run, &scripts, &components))
 }
 
 /// Record something learned about the application, attributed, so the

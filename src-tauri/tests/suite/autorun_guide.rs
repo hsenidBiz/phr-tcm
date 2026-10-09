@@ -1119,3 +1119,22 @@ fn the_live_guide_lists_this_projects_components() {
     assert!(!flat.contains("Close the toast has had"), "{section}");
     assert!(!section.contains('\u{2013}') && !section.contains('\u{2014}'), "a dash crept in");
 }
+
+/// Pictures are named by path in every answer; the guide says so, says to
+/// open one directly, and says never to search the disk for one.
+#[test]
+fn the_guide_says_where_pictures_are_and_never_to_search() {
+    let g = autorun_guide();
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    let seeing = &flat[flat.find("## Seeing the page").unwrap()..];
+    let seeing = &seeing[..seeing.find("## Discovering the app").unwrap()];
+    for phrase in [
+        "gives its full path",
+        "`shots` folder",
+        "open it directly with the file reader",
+        "Never search the disk for a picture",
+        "Prefer `get_autorun_page` (give it a `limit`) or `probe_autorun_locator`",
+    ] {
+        assert!(seeing.contains(phrase), "\"Seeing the page\" never says {phrase:?}");
+    }
+}

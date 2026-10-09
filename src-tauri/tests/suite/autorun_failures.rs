@@ -764,3 +764,54 @@ mod component_steps {
         assert!(text.contains("\"field\": [{ \"css\": \"#grid\" }, { \"text\": \"Row\" }]"), "{text}");
     }
 }
+
+/// With the store known, a failure line names the picture by the full path
+/// of a file that is there; the run record itself keeps the bare name.
+#[test]
+fn a_failure_line_names_the_picture_by_a_path_that_exists() {
+    let dir = TempDir::new();
+    let name = v2_lib::autorun::store::save_shot(dir.path(), b"jpeg bytes").unwrap();
+    let run = LocalRun {
+        id: "run-1".to_string(),
+        pbi_id: 1,
+        started_at: "1".to_string(),
+        cases: vec![CaseRecord {
+            case_id: 7,
+            title: "Leave request".to_string(),
+            verdict: "Failed".to_string(),
+            steps: vec![StepRecord {
+                step_number: 1,
+                outcomes: vec![ActionOutcome {
+                    ok: false,
+                    detail: "button \"Save\" not found".to_string(),
+                    screenshot: Some(name.clone()),
+                    harness: false,
+                    component: None,
+                }],
+                screenshot: None,
+                downloads: vec![],
+                tab: None,
+                dialog: None,
+                components: Vec::new(),
+                duration_ms: None,
+            }],
+            ..empty_case()
+        }],
+        mode: String::new(),
+        published: None,
+        environment: None,
+        resets: vec![],
+    };
+    let out = v2_lib::autorun::failures::describe_failures_in(
+        Some(dir.path()),
+        &run,
+        &[],
+        &v2_lib::autorun::components::ComponentFile::default(),
+    );
+    let line = out.lines().find_map(|l| l.strip_prefix("  picture: ")).unwrap_or_else(|| panic!("no picture line in {out}"));
+    let path = std::path::Path::new(line);
+    assert!(path.is_absolute(), "{line}");
+    assert!(path.is_file(), "{line}");
+    assert_eq!(path.file_name().unwrap().to_str().unwrap(), name);
+    assert_eq!(run.cases[0].steps[0].outcomes[0].screenshot.as_deref(), Some(name.as_str()));
+}

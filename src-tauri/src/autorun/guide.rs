@@ -992,6 +992,13 @@ browser (see "Discovering the app"):
   without it: a case marked `no_save` is tried with its saves stopped,
   as in a run.
 
+A failed action, a try and `get_autorun_failures` may point at a picture
+of the page. The answer gives its full path, a file in the store's `shots`
+folder: open it directly with the file reader. Never search the disk for a
+picture, by its name or otherwise - a search of the drive can run for
+minutes and stall the work. Prefer `get_autorun_page` (give it a `limit`)
+or `probe_autorun_locator`, which answer in text and need no picture.
+
 The person opens their browser and signs in - you cannot do either in
 it, except through a replay to a failing step (see "Repairing a script
 that failed"), which the app opens and signs in for. To explore on your

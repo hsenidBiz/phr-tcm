@@ -444,6 +444,14 @@ fn shots_dir(root: &Path) -> PathBuf {
     root.join("shots")
 }
 
+/// The full path of a screenshot, for an assistant: a bare name tells it
+/// nothing about where to open the picture, and it has been known to search
+/// the whole disk for one. Not checked for existence or for a safe name:
+/// the run record keeps the bare name, and this only spells it out.
+pub fn shot_path(root: &Path, name: &str) -> PathBuf {
+    shots_dir(root).join(name)
+}
+
 /// Where every Auto Run browser's downloads go, one folder per run.
 fn all_downloads_dir(root: &Path) -> PathBuf {
     root.join("downloads")

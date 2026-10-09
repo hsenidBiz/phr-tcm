@@ -2921,3 +2921,27 @@ async fn a_script_using_a_component_saves() {
     assert_eq!(status, 200, "{out}");
     assert!(load_script(dir.path(), 7).unwrap().is_some());
 }
+
+/// A failed try names its picture by the full path of a file that is there,
+/// never by the bare name: an assistant given only a name searched the
+/// whole disk for it.
+#[tokio::test]
+async fn a_try_answer_names_the_picture_by_a_path_that_exists() {
+    let dir = TempDir::new();
+    let mut account = None;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    // A page that cannot find the button and can take a picture.
+    let page = crate::common::FakePage { found: 0, ..Default::default() };
+    let mut d = crate::common::ScriptedDriver::new(move |method, params| match method {
+        "Page.captureScreenshot" => Ok(serde_json::json!({ "data": "/9j/4AAQ" })),
+        _ => page.answer(method, params),
+    });
+    let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &click_save()).await;
+    assert_eq!(status, 200, "{text}");
+    let at = text.find("(picture: ").unwrap_or_else(|| panic!("no picture in {text}")) + "(picture: ".len();
+    let named = text[at..].trim_end_matches(')');
+    let path = std::path::Path::new(named);
+    assert!(path.is_absolute(), "{named}");
+    assert!(path.is_file(), "{named}");
+    assert_eq!(path.parent().unwrap(), dir.path().join("shots"), "{named}");
+}
