@@ -274,6 +274,33 @@ pub fn forget_suite(base_url: &str, org: &str, project: &str, pbi_id: i32) {
     crate::cache::forget(&crate::cache::keys::suite(base_url, org, project, pbi_id));
 }
 
+/// An area path as the refusal memory keys it: the permission is the
+/// area's, and Azure DevOps hands paths back in either case and slash.
+pub fn area_key(area: &str) -> String {
+    area.trim().to_lowercase().replace('/', "\\")
+}
+
+/// Whether the documented suite create was refused for `area` within the
+/// last week (`keys::SUITE_REFUSED_TTL_MS`). A remembered refusal sends the
+/// upload straight to the Boards route instead of asking again: the answer
+/// was the same 403 every time, and it cost a request per area per upload.
+/// The age is the cache entry's own stamp (`cache::fresh`).
+pub fn area_refused(base_url: &str, org: &str, project: &str, area: &str) -> bool {
+    let key = crate::cache::keys::suite_refused(base_url, org, project, &area_key(area));
+    crate::cache::fresh::<bool>(&key, crate::cache::keys::SUITE_REFUSED_TTL_MS).is_some()
+}
+
+/// Remember that the documented suite create was refused for `area`, now.
+pub fn remember_area_refused(base_url: &str, org: &str, project: &str, area: &str) {
+    crate::cache::put(&crate::cache::keys::suite_refused(base_url, org, project, &area_key(area)), &true);
+}
+
+/// A suite created through the documented route: whatever was refused for
+/// that area before is not true any more.
+pub fn forget_area_refused(base_url: &str, org: &str, project: &str, area: &str) {
+    crate::cache::forget(&crate::cache::keys::suite_refused(base_url, org, project, &area_key(area)));
+}
+
 pub fn default_plan_name(area_path: &str) -> String {
     let leaf = area_path
         .replace('/', "\\")

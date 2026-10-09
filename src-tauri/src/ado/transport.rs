@@ -335,12 +335,40 @@ impl AdoClient {
             403 => Err(refused(resp, AdoError::Forbidden).await),
             404 => Err(refused(resp, AdoError::NotFound).await),
             429 => Err(AdoError::RateLimited { retry_after_secs: retry_after(&resp) }),
-            s => Err(AdoError::Http {
-                status: s,
-                body: resp.text().await.unwrap_or_default(),
-            }),
+            s => {
+                let url = tidy(resp.url().as_str());
+                let body = resp.text().await.unwrap_or_default();
+                // A 400 on a PATCH used to leave one line in the log - the
+                // status - and nothing to say which rule refused it
+                // (2026-10-09, a share's relation PATCH). The reason goes
+                // next to it, like the 401/403/404 bodies `refused` keeps.
+                if (400..500).contains(&s) {
+                    let said = said(&body);
+                    if !said.is_empty() {
+                        crate::applog::warn(format!("{url} -> {s} said: {said}"));
+                    }
+                }
+                Err(AdoError::Http { status: s, body })
+            }
         }
     }
+}
+
+/// What Azure DevOps said when it refused a request, fit for the log:
+/// trimmed, anything shaped like a credential taken out, and capped at 500
+/// characters. Scrubbed BEFORE the cap, so a cut can never leave half a
+/// token showing. Azure DevOps does not echo the bearer token back, but a
+/// log line is pasted into bug reports, so this does not rely on that.
+pub fn said(body: &str) -> String {
+    use std::sync::LazyLock;
+    static BEARER: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}").unwrap());
+    static JWT: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]+").unwrap()
+    });
+    let scrubbed = BEARER.replace_all(body.trim(), "$1 [redacted]");
+    let scrubbed = JWT.replace_all(&scrubbed, "[redacted]");
+    scrubbed.chars().take(500).collect()
 }
 
 /// A 401/403/404 becomes a bodiless variant, and until 2026-09-22 the
@@ -352,8 +380,7 @@ impl AdoClient {
 pub(crate) async fn refused(resp: reqwest::Response, err: AdoError) -> AdoError {
     let status = resp.status().as_u16();
     let url = tidy(resp.url().as_str());
-    let body = resp.text().await.unwrap_or_default();
-    let body: String = body.trim().chars().take(600).collect();
+    let body = said(&resp.text().await.unwrap_or_default());
     if !body.is_empty() {
         crate::applog::warn(format!("{url} -> {status} said: {body}"));
     }

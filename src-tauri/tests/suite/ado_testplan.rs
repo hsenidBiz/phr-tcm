@@ -614,7 +614,7 @@ async fn ensure_picks_the_newest_iteration_matching_plan_among_equal_areas() {
 /// area's plan instead of nowhere.
 #[tokio::test]
 async fn ensure_falls_back_to_the_next_plan_when_the_first_forbids_suites() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await; // unshared: a 403 is remembered per server URL
     Mock::given(method("GET"))
         .and(path("/org/proj/_apis/testplan/plans"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
@@ -657,7 +657,7 @@ async fn ensure_falls_back_to_the_next_plan_when_the_first_forbids_suites() {
 /// shares the area, so it is reported as skipped rather than asked.
 #[tokio::test]
 async fn ensure_names_the_plans_when_every_candidate_forbids_suites() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await; // unshared: a 403 is remembered per server URL
     Mock::given(method("GET"))
         .and(path("/org/proj/_apis/testplan/plans"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
@@ -778,7 +778,7 @@ async fn ensure_scans_only_area_matched_plans_but_find_scans_all() {
 /// first, and the error says which AREA needs the permission.
 #[tokio::test]
 async fn ensure_tries_one_plan_per_area_and_names_the_area() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await; // unshared: a 403 is remembered per server URL
     Mock::given(method("GET"))
         .and(path("/org/proj/_apis/testplan/plans"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
@@ -843,4 +843,158 @@ fn iteration_details_skip_a_step_without_an_id() {
     assert_eq!(actions.len(), 2);
     assert_eq!(actions[0]["stepIdentifier"], "2");
     assert_eq!(actions[1]["stepIdentifier"], "4");
+}
+
+// ------------------------------------------- a refused suite route, remembered
+
+/// One plan for `Proj\Auth` with no suite for the PBI yet; the suite
+/// create answers `create`. A server of its own: the refusal is remembered
+/// per server URL, and a pooled server would carry it into another test.
+async fn one_plan_server(create: ResponseTemplate) -> MockServer {
+    let server = MockServer::builder().start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
+            {"id": 100, "name": "Auth plan", "areaPath": "Proj\\Auth", "iteration": "",
+             "state": "Active", "rootSuite": {"id": 1000}}
+        ]})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/Plans/100/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/testplan/Plans/100/suites"))
+        .respond_with(create)
+        .mount(&server)
+        .await;
+    server
+}
+
+fn suite_creates(asked: &[wiremock::Request]) -> usize {
+    asked
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path() == "/org/proj/_apis/testplan/Plans/100/suites")
+        .count()
+}
+
+/// The first upload is refused; the second does not ask again - it comes
+/// back refused at once (the same sentence, so the caller takes the Boards
+/// route) without a request to the documented create.
+#[tokio::test]
+async fn a_refused_area_skips_the_regular_route_next_time() {
+    use v2_lib::ado_testplan::area_refused;
+    let server = one_plan_server(ResponseTemplate::new(403)).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    assert!(!area_refused(&server.uri(), "org", "proj", "Proj\\Auth"));
+
+    for _ in 0..2 {
+        match client.ensure_requirement_suite_for_upload("org", "proj", 42, "Proj\\Auth", "").await {
+            Err(AdoError::Http { status: 403, body }) => {
+                assert!(body.contains("'Auth plan' (id 100)"), "{body}");
+            }
+            other => panic!("expected the named 403, got {other:?}"),
+        }
+    }
+    let asked = server.received_requests().await.unwrap();
+    assert_eq!(suite_creates(&asked), 1, "the second upload must not ask again");
+    // Either spelling of the area is the same area.
+    assert!(area_refused(&server.uri(), "org", "proj", "proj/auth"));
+    assert!(!area_refused(&server.uri(), "org", "other", "Proj\\Auth"), "another project is another key");
+}
+
+/// A week later the documented route is asked again - and a create that
+/// works there clears the memory.
+#[tokio::test]
+async fn the_refusal_expires_after_seven_days() {
+    use v2_lib::ado_testplan::{area_key, area_refused};
+    use v2_lib::cache::{keys::suite_refused, keys::SUITE_REFUSED_TTL_MS, now_ms, put_at};
+    let server = one_plan_server(
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 1001})),
+    )
+    .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    // The cache's own stamp is what ages; `put_at` back-dates it.
+    let key = suite_refused(&server.uri(), "org", "proj", &area_key("Proj\\Auth"));
+
+    // Refused six days ago: still remembered, nothing asked.
+    let day = 24 * 60 * 60 * 1000;
+    put_at(&key, &true, now_ms() - 6 * day);
+    assert!(area_refused(&server.uri(), "org", "proj", "Proj\\Auth"));
+    assert!(client.ensure_requirement_suite_for_upload("org", "proj", 42, "Proj\\Auth", "").await.is_err());
+    assert_eq!(suite_creates(&server.received_requests().await.unwrap()), 0);
+
+    // Refused just over seven days ago: expired, so the route is asked.
+    put_at(&key, &true, now_ms() - SUITE_REFUSED_TTL_MS - 1);
+    assert!(!area_refused(&server.uri(), "org", "proj", "Proj\\Auth"));
+    let ensured = client
+        .ensure_requirement_suite_for_upload("org", "proj", 42, "Proj\\Auth", "")
+        .await
+        .unwrap();
+    assert_eq!(ensured.suite_id, 1001);
+    assert_eq!(suite_creates(&server.received_requests().await.unwrap()), 1);
+    // The create worked, so the old refusal is gone, not merely stale.
+    assert!(v2_lib::cache::get::<bool>(&key).is_none());
+}
+
+/// Run Tests has no Boards route, so it never takes the remembered
+/// refusal as its answer: someone granted the permission since gets their
+/// suite at once, not "no permission" for the rest of the week - and the
+/// create that works clears the memory for the upload too.
+#[tokio::test]
+async fn run_tests_ensure_asks_again_even_when_the_area_is_remembered_as_refused() {
+    use v2_lib::ado_testplan::{area_refused, remember_area_refused};
+    let server = one_plan_server(
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 1001})),
+    )
+    .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    remember_area_refused(&server.uri(), "org", "proj", "Proj\\Auth");
+
+    // The call Run Tests makes (`ensure_pbi_suite`).
+    let ensured = client
+        .ensure_requirement_suite_cb("org", "proj", 42, "Proj\\Auth", "", |_, _| {})
+        .await
+        .unwrap();
+    assert_eq!(ensured.suite_id, 1001);
+    assert_eq!(suite_creates(&server.received_requests().await.unwrap()), 1, "asked despite the memory");
+    assert!(!area_refused(&server.uri(), "org", "proj", "Proj\\Auth"), "a create that works clears it");
+}
+
+/// Reading suites is not creating one: a suite the PBI already has is
+/// found and used whatever the area's refusal says.
+#[tokio::test]
+async fn an_existing_suite_is_still_used_when_the_area_is_remembered_as_refused() {
+    use v2_lib::ado_testplan::remember_area_refused;
+    let server = MockServer::builder().start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
+            {"id": 100, "name": "Auth plan", "areaPath": "Proj\\Auth", "iteration": "",
+             "state": "Active", "rootSuite": {"id": 1000}}
+        ]})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/Plans/100/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
+            {"id": 1000, "name": "root", "suiteType": "staticTestSuite"},
+            {"id": 1005, "name": "42 : Login", "suiteType": "requirementTestSuite",
+             "requirementId": 42, "parentSuite": {"id": 1000}}
+        ]})))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    remember_area_refused(&server.uri(), "org", "proj", "Proj\\Auth");
+
+    let ensured = client
+        .ensure_requirement_suite_for_upload("org", "proj", 42, "Proj\\Auth", "")
+        .await
+        .unwrap();
+    assert_eq!((ensured.plan_id, ensured.suite_id), (100, 1005));
+    for req in server.received_requests().await.unwrap() {
+        assert_eq!(req.method.as_str(), "GET", "nothing is created: {}", req.url);
+    }
 }

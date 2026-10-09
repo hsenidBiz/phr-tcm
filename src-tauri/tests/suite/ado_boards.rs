@@ -891,3 +891,94 @@ async fn the_team_scopes_are_read_several_at_a_time() {
         "eight 300 ms reads took {took:?} - they ran one after another"
     );
 }
+
+// ------------------------------------- the no-suite warning, only when both fail
+
+/// The project id and the covering team, which every Boards attempt reads
+/// first, and the route answering `route`.
+async fn boards_server(route: ResponseTemplate) -> MockServer {
+    let server = unshared_server().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(teams_reply(&[(GAMMA_ID, "Gamma Guardians")])),
+        )
+        .mount(&server)
+        .await;
+    mount_team_scope(&server, GAMMA_ID, "HRM\\Gamma Guardians", true).await;
+    Mock::given(method("POST")).and(path(route_path())).respond_with(route).mount(&server).await;
+    server
+}
+
+/// The refusal the documented route gave, as the upload holds it.
+fn refusal(pbi: i32) -> String {
+    format!(
+        "You don't have permission to create a test suite in 'Sprint plan' (id 5) for area 'HRM'. The test cases are linked to #{pbi}, but they will not appear in Run Tests until a requirement suite exists."
+    )
+}
+
+fn no_suite_lines(pbi: i32) -> Vec<String> {
+    v2_lib::applog::recent(500)
+        .into_iter()
+        .filter(|l| l.level == "warn" && l.message.starts_with(&format!("no requirement suite for #{pbi}")))
+        .map(|l| l.message)
+        .collect()
+}
+
+/// 2026-10-09: the documented create was refused, the Boards route made
+/// the suite, and the log still said "no requirement suite ... will not
+/// appear in Run Tests". The cases are in a suite: nothing is warned.
+#[tokio::test]
+async fn no_suite_warning_when_the_boards_route_succeeds() {
+    let _log = crate::serial::log_tail();
+    let pbi = 977_201;
+    let server = boards_server(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        "requirementId": pbi, "testPlanId": 157958, "testSuiteId": 157960,
+    })))
+    .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/{PROJECT}/_apis/testplan/plans/157958")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 157958, "name": "Sprint plan", "areaPath": "HRM\\Gamma Guardians",
+            "rootSuite": {"id": 157959},
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let out = client
+        .boards_after_refusal(ORG, PROJECT, pbi, "HRM\\Gamma Guardians", &[157957], &refusal(pbi))
+        .await
+        .unwrap();
+    assert_eq!(out.suite.suite_id, 157960);
+    assert!(no_suite_lines(pbi).is_empty(), "{:?}", no_suite_lines(pbi));
+}
+
+/// Both routes failed: the warning is logged once, and the person is shown
+/// the first refusal word for word plus one line about the second route.
+#[tokio::test]
+async fn the_no_suite_warning_stays_when_both_routes_fail() {
+    let _log = crate::serial::log_tail();
+    let pbi = 977_202;
+    let server = boards_server(ResponseTemplate::new(500).set_body_string("boom")).await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let shown = client
+        .boards_after_refusal(ORG, PROJECT, pbi, "HRM\\Gamma Guardians", &[157957], &refusal(pbi))
+        .await
+        .unwrap_err();
+    assert!(shown.starts_with(&refusal(pbi)), "{shown}");
+    assert!(shown.contains("The Boards route did not work either"), "{shown}");
+    assert!(!shown.contains("://"), "{shown}");
+    let lines = no_suite_lines(pbi);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains("will not appear in Run Tests"), "{}", lines[0]);
+
+    // Nothing landed, so there was no route to take: still reported.
+    let shown = v2_lib::ado_testplan::boards::no_suite_reported(977_203, &refusal(977_203), None);
+    assert_eq!(shown, refusal(977_203));
+    assert_eq!(no_suite_lines(977_203).len(), 1);
+}

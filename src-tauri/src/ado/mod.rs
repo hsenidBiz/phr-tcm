@@ -17,7 +17,7 @@ pub mod deletion;
 pub mod permissions;
 pub mod throttle;
 mod transport;
-pub use transport::{network_error, NET_GENERIC, NET_TIMEOUT, NET_UNREACHABLE};
+pub use transport::{network_error, said, NET_GENERIC, NET_TIMEOUT, NET_UNREACHABLE};
 pub(crate) use transport::tidy;
 
 use serde::{Deserialize, Serialize};

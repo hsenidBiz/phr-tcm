@@ -113,3 +113,20 @@ pub const SETUP_OUTPUTS_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 pub fn setup_outputs(case_id: i32) -> String {
     format!("setup-outputs:{case_id}")
 }
+
+/// How long a refused suite create is remembered for an area. "Manage test
+/// suites" and the Test Plans access level change when an administrator
+/// grants them, which is rare - but it does happen, so after a week the
+/// documented route is asked again.
+pub const SUITE_REFUSED_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+
+/// An area whose documented suite create answered 403, so the upload goes
+/// straight to the Boards route (uploads only - Run Tests always asks).
+/// The value is just `true`; the entry's own stamp is what the TTL is
+/// measured against (`cache::fresh`). Keyed by the plan's
+/// area, lower-cased with backslashes - the permission lives on the area,
+/// not on the plan or the PBI. The base_url is in the key for the same
+/// reason as `suite`.
+pub fn suite_refused(base_url: &str, org: &str, project: &str, area: &str) -> String {
+    format!("suite-refused:{base_url}|{org}|{project}|{area}")
+}

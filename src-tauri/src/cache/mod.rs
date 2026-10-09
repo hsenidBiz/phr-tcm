@@ -211,11 +211,18 @@ impl Store {
     /// Store a freshly fetched value, replacing whatever was there. Also
     /// where old wiki pages are evicted (`evict_wiki_pages`).
     pub fn put<T: Serialize>(&self, key: &str, value: &T) {
+        self.put_at(key, value, now_ms())
+    }
+
+    /// `put`, stamped as fetched at `at_ms` (epoch ms) instead of now. The
+    /// time seam for `fresh`: a test stores a value as a week old and sees
+    /// its TTL run out, without a clock of its own anywhere.
+    pub fn put_at<T: Serialize>(&self, key: &str, value: &T, at_ms: u64) {
         let Ok(value) = serde_json::to_value(value) else { return };
         let snap = {
             let mut inner = self.lock();
             let now = now_ms();
-            inner.disk.entries.insert(key.to_string(), Entry { value, at_ms: now });
+            inner.disk.entries.insert(key.to_string(), Entry { value, at_ms });
             evict_wiki_pages(&mut inner.disk.entries, now);
             self.snapshot(&mut inner)
         };
@@ -410,6 +417,11 @@ pub fn fresh<T: DeserializeOwned>(key: &str, ttl_ms: u64) -> Option<T> {
 
 pub fn put<T: Serialize>(key: &str, value: &T) {
     global().put(key, value)
+}
+
+/// See `Store::put_at`: the time seam for `fresh`.
+pub fn put_at<T: Serialize>(key: &str, value: &T, at_ms: u64) {
+    global().put_at(key, value, at_ms)
 }
 
 /// See `Store::update`: `f` runs with the cache locked and must not call
