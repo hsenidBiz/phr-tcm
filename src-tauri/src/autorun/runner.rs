@@ -10,6 +10,7 @@ use super::lease::Held;
 use super::nav::{self, Route};
 use super::api_checks;
 use super::recipe::{self, SignInRecipe};
+use super::run_files::RunFiles;
 use super::signin::{self, SignInOutcome};
 use super::components::{self, ComponentUse};
 use super::{store, PageErrors, StepDialog, StepScript};
@@ -68,10 +69,19 @@ pub fn area_routes(root: &Path, organization: &str, project: &str, names: &[&str
     }
     let nav_file = nav::load_nav(root, organization, project);
     let home = recipe::load_effective_recipe_if_any(root, organization, project);
+    routes_from(&nav_file, &home, names)
+}
+
+/// `area_routes` from files already read.
+fn routes_from(
+    nav_file: &Result<nav::NavFile, String>,
+    home: &Result<Option<SignInRecipe>, String>,
+    names: &[&str],
+) -> NamedAreas {
     names
         .iter()
         .map(|name| {
-            let route = match (&nav_file, &home) {
+            let route = match (nav_file, home) {
                 (Err(why), _) | (_, Err(why)) => Err(why.clone()),
                 (Ok(nav_file), Ok(home)) => match nav::find_area(nav_file, name) {
                     None => Err(nav::unrecorded_area(name)),
@@ -266,6 +276,9 @@ pub struct InRun<'a> {
     /// run counts its stopped saves instead (`Driver::take_saves_stopped`).
     /// The stopped save's sentence is still taken, so it never carries over.
     pub saves_only_counted: bool,
+    /// The run's recipe and areas file, read once and again only when they
+    /// changed (`RunFiles`). `None` reads them afresh for this step.
+    pub files: Option<&'a RunFiles>,
 }
 
 /// The longest an `expect_download` waits in a watched run or a try, which
@@ -333,7 +346,10 @@ pub async fn run_step_in_run<D: Driver>(
         .collect();
     let merged: Option<NamedAreas> = (!missing.is_empty()).then(|| {
         let mut all = run.areas.cloned().unwrap_or_default();
-        all.extend(area_routes(root, organization, project, &missing));
+        all.extend(match run.files {
+            Some(f) => routes_from(&f.nav(root, organization, project), &f.recipe(root, organization, project), &missing),
+            None => area_routes(root, organization, project, &missing),
+        });
         all
     });
     let areas = merged.as_ref().or(run.areas);
@@ -367,11 +383,18 @@ async fn run_expanded<D: Driver>(
 ) -> Result<Vec<ActionOutcome>, String> {
     // No recipe to run (none saved, no site address): navigation is open,
     // as before the built-in existed; the sign-in itself is what refuses.
-    let recipe = recipe::load_effective_recipe_if_any(root, organization, project)?;
+    // Looked at per step, the recipe and the areas file alike: a person may
+    // flip the switch between two steps of a supervised run. Within a run
+    // (`run.files`) a file is read again only when it changed.
+    let recipe = match run.files {
+        Some(f) => f.recipe(root, organization, project)?,
+        None => recipe::load_effective_recipe_if_any(root, organization, project)?,
+    };
     let policy = policy_for(recipe.as_ref());
-    // Read per step, like the recipe: a person may flip the switch between
-    // two steps of a supervised run.
-    let nav_file = nav::load_nav(root, organization, project)?;
+    let nav_file = match run.files {
+        Some(f) => f.nav(root, organization, project)?,
+        None => nav::load_nav(root, organization, project)?,
+    };
     // Where the step began in the browser's network record: an
     // `expect_response` looks only at requests that started after it. What
     // the browser has already sent is read first, so a request the page

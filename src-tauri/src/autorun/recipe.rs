@@ -412,7 +412,7 @@ pub fn project_slug(org: &str, project: &str) -> String {
     format!("{}__{}-{hash:08x}", slug_part(org), slug_part(project))
 }
 
-fn recipe_path(root: &Path, org: &str, project: &str) -> PathBuf {
+pub(crate) fn recipe_path(root: &Path, org: &str, project: &str) -> PathBuf {
     root.join("projects").join(format!("{}.json", project_slug(org, project)))
 }
 

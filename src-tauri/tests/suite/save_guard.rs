@@ -21,7 +21,8 @@ use v2_lib::autorun::{CaseRecord, CaseScript, StepRecord};
 use v2_lib::browser::actions::ActionOutcome;
 use v2_lib::browser::cdp::{Cdp, CdpError, Transport};
 use v2_lib::browser::save_guard::{
-    blocked, check_words, is_blocked, is_save, path_of, setup_failed, SAVE_WORDS,
+    blocked, check_words, fetch_enable_params, is_blocked, is_save, path_of, setup_failed, SAVE_WORDS,
+    UNPAUSED_TYPES,
 };
 use v2_lib::browser::timing::Timing;
 use v2_lib::commands::autorun::guard_for_case;
@@ -223,7 +224,7 @@ async fn guarded(patterns: &[&str]) -> Cdp<FakeTransport> {
 }
 
 #[tokio::test]
-async fn guarding_bypasses_service_workers_then_intercepts_every_request() {
+async fn guarding_bypasses_service_workers_then_intercepts_every_request_that_can_save() {
     let cdp = guarded(&["recalc"]).await;
     let f = sent(&cdp);
     assert_eq!(f[0]["method"], "Network.setBypassServiceWorker");
@@ -231,7 +232,101 @@ async fn guarding_bypasses_service_workers_then_intercepts_every_request() {
     assert_eq!(f[1]["method"], "Fetch.enable");
     assert_eq!(f[1]["params"]["patterns"][0]["urlPattern"], "*");
     assert_eq!(f[1]["params"]["patterns"][0]["requestStage"], "Request");
+    assert_eq!(f[1]["params"], fetch_enable_params());
     assert!(cdp.is_guarding_saves());
+}
+
+/// Every resource type CDP's `Network.ResourceType` has, as Edge 155's own
+/// protocol lists it.
+const CDP_RESOURCE_TYPES: [&str; 19] = [
+    "Document", "Stylesheet", "Image", "Media", "Font", "Script", "TextTrack", "XHR", "Fetch", "Prefetch",
+    "EventSource", "WebSocket", "Manifest", "SignedExchange", "Ping", "CSPViolationReport", "Preflight", "FedCM",
+    "Other",
+];
+
+/// Only requests that can save are paused: every type that can carry a
+/// POST (a form post is a `Document`, a beacon a `Ping`), and none a page
+/// only reads. A pattern with no type would pause everything again.
+#[test]
+fn the_fetch_patterns_hold_save_capable_types_only() {
+    let params = fetch_enable_params();
+    let patterns = params["patterns"].as_array().expect("patterns");
+    let types: Vec<&str> = patterns
+        .iter()
+        .map(|p| p["resourceType"].as_str().expect("a pattern with no type pauses every request"))
+        .collect();
+    for t in ["Document", "XHR", "Fetch", "Ping", "EventSource", "Other"] {
+        assert!(types.contains(&t), "{t} is not paused: {types:?}");
+    }
+    for t in UNPAUSED_TYPES {
+        assert!(!types.contains(&t), "{t} is paused: {types:?}");
+    }
+    for t in ["Image", "Stylesheet", "Script", "Font", "Media", "Manifest", "TextTrack", "WebSocket"] {
+        assert!(!types.contains(&t), "{t} is paused: {types:?}");
+    }
+    // Edge refuses the whole `Fetch.enable` over a `FedCM` pattern, which
+    // would leave every Must not save case Blocked (`browser_live`).
+    assert!(!types.contains(&"FedCM"), "{types:?}");
+    for t in &types {
+        assert!(CDP_RESOURCE_TYPES.contains(t), "{t} is not a CDP resource type");
+    }
+    let mut once = types.clone();
+    once.sort();
+    once.dedup();
+    assert_eq!(once.len(), types.len(), "a type twice: {types:?}");
+    for p in patterns {
+        assert_eq!(p["urlPattern"], "*");
+        assert_eq!(p["requestStage"], "Request");
+    }
+}
+
+fn paused_as(id: &str, kind: &str, method: &str, url: &str) -> String {
+    json!({ "method": "Fetch.requestPaused", "params": {
+        "requestId": id, "resourceType": kind, "frameId": "F-main",
+        "request": { "method": method, "url": url, "headers": {} }
+    } })
+    .to_string()
+}
+
+/// Review focus 3: with static files no longer paused, a form post (a
+/// `Document` POST) and a `navigator.sendBeacon` (a `Ping`) on a Must not
+/// save case are still paused and stopped, a page read still goes through,
+/// and the log names neither the host nor the query.
+#[tokio::test]
+async fn a_beacon_and_a_form_post_are_still_blocked() {
+    let _log = crate::serial::log_tail();
+    let mut cdp = guarded(&[]).await;
+    let types: Vec<String> = sent(&cdp)[1]["params"]["patterns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["resourceType"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(types.iter().any(|t| t == "Document") && types.iter().any(|t| t == "Ping"), "{types:?}");
+    let frames = [
+        paused_as("form", "Document", "POST", "https://hr.example/api/Save?token=x"),
+        paused_as("beacon", "Ping", "POST", "https://hr.example/api/update/beacon?k=v"),
+        paused_as("read", "Document", "GET", "https://hr.example/api/Save"),
+        r#"{"id":3,"result":{"done":true}}"#.to_string(),
+    ];
+    cdp.transport_mut().incoming.extend(frames);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+
+    for id in ["form", "beacon"] {
+        let a = answer_to(&cdp, id).unwrap_or_else(|| panic!("{id} was never answered"));
+        assert_eq!(a["method"], "Fetch.failRequest", "{id} went through");
+        assert_eq!(a["params"]["errorReason"], "BlockedByClient");
+    }
+    assert_eq!(answer_to(&cdp, "read").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(cdp.take_save_blocked().as_deref(), Some(SENTENCE), "the form post is what the case reports");
+    assert_eq!(
+        cdp.take_saves_stopped(),
+        vec![("POST".to_string(), "/api/Save".to_string()), ("POST".to_string(), "/api/update/beacon".to_string())]
+    );
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    let stopped: Vec<&String> = lines.iter().filter(|l| l.starts_with("Auto Run stopped a save")).collect();
+    assert!(stopped.iter().any(|l| l.ends_with("POST /api/update/beacon")), "{lines:?}");
+    assert!(stopped.iter().all(|l| !l.contains("hr.example") && !l.contains('?')), "{stopped:?}");
 }
 
 /// Fail closed: a browser that will not bypass its service workers is not
