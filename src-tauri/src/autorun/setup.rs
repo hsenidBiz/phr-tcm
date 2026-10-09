@@ -404,7 +404,6 @@ where
     Fut: std::future::Future<Output = ()>,
 {
     if !uses_fixtures(script) {
-        check_filled_inputs(root, org, project, script.area_name(), &script.steps, &script.steps, &script.steps)?;
         return Ok(Prepared { script: script.clone(), setup_outputs: BTreeMap::new() });
     }
     let id = script.case_id;
@@ -470,13 +469,14 @@ where
     Ok(Prepared { script: resolved, setup_outputs })
 }
 
-/// The run-time half of the seen check for a component input that held a
-/// data placeholder when the script was saved
-/// (`seen_check::check_resolved_inputs`): `saved` as saved, `filled` with
+/// The run-time half of the seen check for every locator that held a data
+/// placeholder when the script was saved, a step's own or one a component
+/// input gives (`seen_check::check_resolved_inputs`): `saved` as saved,
+/// `filled` with
 /// the run's values in, checked in the areas of `area` and `area_steps`
 /// (the script's own, and those its steps return to). The map and the
-/// components are read only when a saved step gives such an input. `Err`
-/// is the Blocked sentence, naming the input.
+/// components are read only when a saved step holds such a locator. `Err`
+/// is the Blocked sentence, naming the step.
 fn check_filled_inputs(
     root: &Path,
     org: &str,
@@ -487,7 +487,7 @@ fn check_filled_inputs(
     filled: &[StepScript],
 ) -> Result<(), String> {
     use super::seen_check;
-    if !seen_check::has_placeholder_inputs(saved) {
+    if !seen_check::has_data_placeholders(saved) {
         return Ok(());
     }
     let map = super::discovery_map::load_map(root, org, project)?;
@@ -540,7 +540,7 @@ pub fn resolve_step(root: &Path, org: &str, project: &str, case_id: i32, step: &
         }
         steps.into_iter().next().unwrap_or_else(|| step.clone())
     };
-    if super::seen_check::has_placeholder_inputs(one) {
+    if super::seen_check::has_data_placeholders(one) {
         // The areas are the saved script's: its own and those it returns to.
         let saved = super::store::load_script(root, case_id).ok().flatten();
         let area = saved.as_ref().and_then(|s| s.area_name());

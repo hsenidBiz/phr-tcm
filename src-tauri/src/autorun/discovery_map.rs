@@ -451,6 +451,13 @@ pub fn seen_keys(map: &DiscoveryMap, areas: &[&str]) -> HashSet<SeenKey> {
         .collect()
 }
 
+/// Every locator seen in the named areas and in the unattributed bucket,
+/// whole (a chain stays a chain, so what was seen inside what is kept), in
+/// map order.
+pub fn seen_locators(map: &DiscoveryMap, areas: &[&str]) -> Vec<Target> {
+    elements_in(map, areas).map(|e| e.locator.clone()).collect()
+}
+
 /// Every link seen in the named areas and in the unattributed bucket, as
 /// it was written when seen, in map order: what the seen check compares a
 /// name with beyond its exact key (`seen_keys`), and where it takes the

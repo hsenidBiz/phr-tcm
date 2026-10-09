@@ -10,29 +10,36 @@
 //! result the step is checking for). Both match whole words only, and a
 //! typed value shorter than 3 characters exempts nothing.
 //!
-//! The script's own data is exempt the same way: the name of a Test file
-//! the script uploads (and a name holding it), that file's size as the app
-//! shows it ("240.0 KB" or "1.2 MB"), a name that is a date the script
-//! picked (a component's text input) or typed, and a `dd/mm/yyyy` name
-//! inside a date picker that was seen.
+//! The script's own data is exempt the same way, from the step that brings
+//! it in: the name of one of the project's Test files that the script
+//! uploads in that step or an earlier one (and a name holding it), and that
+//! file's size as the app shows it ("240.0 KB" or "0.2 MB"); a date-picker
+//! day (`DAY_ROLES`) whose name is a date the script picked (a component's
+//! text input) or typed; and a `dd/mm/yyyy` day inside a seen date picker.
+//! With the Test files unknown, no file name or size is exempt.
 //!
 //! Some locators are built from data, so they are compared with a
 //! sighting by more than their text. None of this lets through a locator
 //! that could not exist on the seen page:
 //!
-//! - A placeholder the run fills in (`{{fixture.<id>.<output>}}`,
-//!   `{{setup.<output>}}`, `{{prefix}}`, `{{now:...}}`) inside a name, a
-//!   text or a css selector stands for a non-empty run of a seen value
+//! - A data placeholder (`{{fixture.<id>.<output>}}`, `{{setup.<output>}}`;
+//!   see `seen_match`) in a name or a text, or inside a quoted attribute
+//!   value of a css selector, stands for a non-empty run of a seen value
 //!   with no quote in it. The text around it must match the sighting as
-//!   written, and so must the role (or the rest of the selector). A
-//!   component input holding one is checked again once the run has filled
-//!   it in (`check_resolved_inputs`): the value must have the seen value's
-//!   shape, all digits where that was all digits.
-//! - A css selector's `:checked`, `:disabled`, `:enabled` and `:focus` are
-//!   left out before it is compared. A `:not(X)` or `:has(X)` passes only
-//!   when the rest was seen and X was seen in the same areas too: X as a
-//!   selector, or, when X is only attribute filters, the rest seen
-//!   carrying each of those attributes.
+//!   written, and so must the role (or the rest of the selector).
+//!   `{{prefix}}` and `{{now:...}}` are not data placeholders: Auto Run
+//!   never fills them in, so they stay literal and are refused. Once the
+//!   run has filled a placeholder in, the locator is checked again
+//!   (`check_resolved_inputs`): each value must have the shape of the seen
+//!   value it stands for, all digits where that was all digits.
+//! - A css selector's `:checked`, `:disabled`, `:enabled` and `:focus` on
+//!   an element it names are left out before it is compared; one that
+//!   starts the selector or follows a space or a combinator stands for an
+//!   element of its own and is kept. A `:not(X)` passes only when the rest
+//!   was seen and so was X in the same areas: X as a selector, or, when X
+//!   is only attribute filters, the rest seen carrying each of them. A
+//!   `:has(X)` passes only when X was seen inside the rest: a seen
+//!   selector or chain with the rest as an ancestor of X.
 //! - Names and texts compare with whitespace collapsed, case folded, and
 //!   an em dash, an en dash and a hyphen as one dash, with no space beside
 //!   it (`norm_name`).
@@ -47,8 +54,13 @@
 //! not, as they were checked when the component was saved.
 
 use super::components::{expand, find, not_saved, Component, ComponentFile};
-use super::discovery_map::{page_path, path_only, seen_keys, seen_links, seen_paths, DiscoveryMap};
+use super::discovery_map::{page_path, path_only, seen_keys, seen_links, seen_locators, seen_paths, DiscoveryMap};
 use super::edits::Edit;
+use super::seen_match::{
+    attribute_tails, css_pieces, descendant_splits, filter_attributes, fit, is_ddmmyyyy, name_pieces, parse_date,
+    same_shape, split_filters, strip_states, wild_fits, Date, Filter, Piece,
+};
+pub use super::seen_match::{holds_data_placeholder, is_data_placeholder, norm_name, only_data_placeholders};
 use super::{CaseScript, StepScript};
 use crate::browser::actions::Action;
 use crate::browser::locator::{fold_name, LocatorStep, SeenKey, Target};
@@ -67,6 +79,17 @@ const MIN_TYPED_LEN: usize = 3;
 /// `norm_name` makes them. "Publsh" offers "Publish" (1 edit in 7); "Add
 /// Rating Method" does not offer "Add Method" (7 edits in 17).
 const SUGGEST_WITHIN: (usize, usize) = (1, 3);
+
+/// The roles a date picker's day has: a button (most pickers), a gridcell
+/// (a calendar grid), an option (a listbox of days, as react-datepicker
+/// marks them) or a link. A day named by its text alone, or in any other
+/// role (a table cell holding a due date), is not a picked day.
+const DAY_ROLES: [&str; 4] = ["button", "gridcell", "option", "link"];
+
+/// The roles a date picker itself has, when it is named by role: the
+/// popup (dialog), its calendar grid, an application widget, a listbox of
+/// days, or a group around them.
+const PICKER_ROLES: [&str; 5] = ["dialog", "grid", "application", "listbox", "group"];
 
 /// The steps a changed script's check reads: the declared ones, or every
 /// step (`None`) when nothing is declared, so a missing declaration can
@@ -130,310 +153,30 @@ fn words(link: &LocatorStep) -> Vec<String> {
         .collect()
 }
 
-// ---- names, placeholders and selectors ----
-
-/// A name or a text as the check compares it: whitespace collapsed, case
-/// folded, an em dash or an en dash read as a hyphen, and no space beside
-/// a hyphen. Both sides of a comparison go through it.
-pub fn norm_name(s: &str) -> String {
-    let dashed: String = s.chars().map(|c| if matches!(c, '\u{2014}' | '\u{2013}') { '-' } else { c }).collect();
-    fold_name(&dashed).replace(" -", "-").replace("- ", "-")
+/// Does any field of `link` hold a data placeholder?
+fn link_holds_placeholder(link: &LocatorStep) -> bool {
+    [&link.role, &link.name, &link.text, &link.css].into_iter().flatten().any(|v| holds_data_placeholder(v))
 }
 
-/// Is `name` (what sits between the braces) a placeholder the run fills in
-/// from data: a fixture's output, the setup's, the run's prefix, or a date
-/// and time?
-pub fn is_data_placeholder(name: &str) -> bool {
-    let n = name.trim();
-    n.starts_with("fixture.") || n.starts_with("setup.") || n == "prefix" || n.starts_with("now:")
+/// Is `link` in one of `roles`?
+fn in_roles(link: &LocatorStep, roles: &[&str]) -> bool {
+    link.role.as_deref().is_some_and(|r| roles.contains(&fold_name(r).as_str()))
 }
 
-/// A name or a selector cut where its data placeholders are.
-#[derive(Debug, Clone, PartialEq)]
-enum Piece {
-    Lit(String),
-    Wild,
-}
-
-fn pieces(s: &str) -> Vec<Piece> {
-    let mut out = Vec::new();
-    let mut lit = String::new();
-    let mut rest = s;
-    while let Some(at) = rest.find("{{") {
-        let after = &rest[at + 2..];
-        match after.find("}}") {
-            Some(end) if is_data_placeholder(&after[..end]) => {
-                lit.push_str(&rest[..at]);
-                if !lit.is_empty() {
-                    out.push(Piece::Lit(std::mem::take(&mut lit)));
-                }
-                out.push(Piece::Wild);
-                rest = &after[end + 2..];
-            }
-            _ => {
-                lit.push_str(&rest[..at + 2]);
-                rest = after;
-            }
-        }
-    }
-    lit.push_str(rest);
-    if !lit.is_empty() {
-        out.push(Piece::Lit(lit));
-    }
-    out
-}
-
-/// Does `s` hold a data placeholder?
-pub fn holds_data_placeholder(s: &str) -> bool {
-    pieces(s).contains(&Piece::Wild)
-}
-
-/// Is every `{{` and `}}` in `s` part of a data placeholder? A component's
-/// text input may carry one; any other brace pair would be read as the
-/// component's own placeholder.
-pub fn only_data_placeholders(s: &str) -> bool {
-    pieces(s).iter().all(|p| match p {
-        Piece::Lit(l) => !l.contains("{{") && !l.contains("}}"),
-        Piece::Wild => true,
-    })
-}
-
-fn is_quote(c: char) -> bool {
-    matches!(c, '"' | '\'')
-}
-
-/// `pieces` matched against the whole of `seen`: what each placeholder
-/// stands for there (a non-empty run with no quote), or `None`.
-fn fit(pieces: &[Piece], seen: &str) -> Option<Vec<String>> {
-    fn go(pieces: &[Piece], s: &str, caps: &mut Vec<String>) -> bool {
-        match pieces.split_first() {
-            None => s.is_empty(),
-            Some((Piece::Lit(l), rest)) => match s.strip_prefix(l.as_str()) {
-                Some(after) => go(rest, after, caps),
-                None => false,
-            },
-            Some((Piece::Wild, rest)) => {
-                for (i, c) in s.char_indices() {
-                    if is_quote(c) {
-                        break;
-                    }
-                    let end = i + c.len_utf8();
-                    caps.push(s[..end].to_string());
-                    if go(rest, &s[end..], caps) {
-                        return true;
-                    }
-                    caps.pop();
-                }
-                false
-            }
-        }
-    }
-    let mut caps = Vec::new();
-    go(pieces, seen, &mut caps).then_some(caps)
-}
-
-/// Does `want`, which holds a data placeholder, fit `seen`?
-fn wild_fits(want: &str, seen: &str) -> bool {
-    let p = pieces(want);
-    p.contains(&Piece::Wild) && fit(&p, seen).is_some()
-}
-
-/// Was each value a placeholder stood for at run time (`got`) the shape of
-/// what it stood for in the sighting (`seen`): all digits where that was?
-fn same_shape(seen: &[String], got: &[String]) -> bool {
-    let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
-    seen.len() == got.len() && seen.iter().zip(got).all(|(s, g)| !digits(s) || digits(g))
-}
-
-const STATES: [&str; 4] = ["checked", "disabled", "enabled", "focus"];
-
-fn ident_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '-' || c == '_'
-}
-
-/// `css` with each state pseudo-class (`STATES`) left out, outside quotes
-/// and attribute brackets. `:focus-visible` and `::checked` are not one.
-fn strip_states(css: &str) -> String {
-    let mut out = String::with_capacity(css.len());
-    let mut quote: Option<char> = None;
-    let mut bracket = 0usize;
-    let mut i = 0;
-    while let Some(c) = css[i..].chars().next() {
-        let width = c.len_utf8();
-        if let Some(q) = quote {
-            if c == q {
-                quote = None;
-            }
-            out.push(c);
-            i += width;
-            continue;
-        }
-        match c {
-            '"' | '\'' => quote = Some(c),
-            '[' => bracket += 1,
-            ']' => bracket = bracket.saturating_sub(1),
-            ':' if bracket == 0 && !out.ends_with(':') && !css[i + 1..].starts_with(':') => {
-                let rest = &css[i + 1..];
-                let state = STATES
-                    .iter()
-                    .find(|s| rest.starts_with(**s) && !rest[s.len()..].chars().next().is_some_and(ident_char));
-                if let Some(s) = state {
-                    i += 1 + s.len();
-                    continue;
-                }
-            }
-            _ => {}
-        }
-        out.push(c);
-        i += width;
-    }
-    out.trim().to_string()
-}
-
-/// The length of what comes before the `)` that closes a paren already
-/// open, quotes and nested parens skipped; `None` when it never closes.
-fn paren_len(s: &str) -> Option<usize> {
-    let mut depth = 0usize;
-    let mut quote: Option<char> = None;
-    for (i, c) in s.char_indices() {
-        if let Some(q) = quote {
-            if c == q {
-                quote = None;
-            }
-            continue;
-        }
-        match c {
-            '"' | '\'' => quote = Some(c),
-            '(' => depth += 1,
-            ')' if depth == 0 => return Some(i),
-            ')' => depth -= 1,
-            _ => {}
-        }
-    }
-    None
-}
-
-/// `css` without its `:not(...)` and `:has(...)`, and what each held. One
-/// that never closes is left in, so it matches nothing.
-fn split_filters(css: &str) -> (String, Vec<String>) {
-    let mut base = String::with_capacity(css.len());
-    let mut inners = Vec::new();
-    let mut quote: Option<char> = None;
-    let mut bracket = 0usize;
-    let mut i = 0;
-    while let Some(c) = css[i..].chars().next() {
-        let width = c.len_utf8();
-        if let Some(q) = quote {
-            if c == q {
-                quote = None;
-            }
-            base.push(c);
-            i += width;
-            continue;
-        }
-        match c {
-            '"' | '\'' => quote = Some(c),
-            '[' => bracket += 1,
-            ']' => bracket = bracket.saturating_sub(1),
-            ':' if bracket == 0 => {
-                let rest = &css[i..];
-                if let Some(head) = [":not(", ":has("].iter().find(|h| rest.starts_with(**h)) {
-                    if let Some(len) = paren_len(&rest[head.len()..]) {
-                        inners.push(rest[head.len()..head.len() + len].trim().to_string());
-                        i += head.len() + len + 1;
-                        continue;
-                    }
-                }
-            }
-            _ => {}
-        }
-        base.push(c);
-        i += width;
-    }
-    (base.trim().to_string(), inners)
-}
-
-/// The attribute names of a selector that is attribute filters only
-/// (`[data-x*="a"]`, `[a][b="c"]`); `None` for any other.
-fn filter_attributes(x: &str) -> Option<Vec<String>> {
-    let mut names = Vec::new();
-    let mut rest = x.trim();
-    if rest.is_empty() {
-        return None;
-    }
-    while !rest.is_empty() {
-        rest = rest.strip_prefix('[')?;
-        let mut quote: Option<char> = None;
-        let close = rest.char_indices().find_map(|(i, c)| {
-            if let Some(q) = quote {
-                if c == q {
-                    quote = None;
-                }
-                return None;
-            }
-            if is_quote(c) {
-                quote = Some(c);
-                return None;
-            }
-            (c == ']').then_some(i)
-        })?;
-        let name: String = rest[..close]
-            .trim_start()
-            .chars()
-            .take_while(|c| !matches!(c, '=' | '~' | '|' | '^' | '$' | '*') && !c.is_whitespace())
-            .collect();
-        if name.is_empty() {
-            return None;
-        }
-        names.push(name);
-        rest = rest[close + 1..].trim_start();
-    }
-    Some(names)
-}
-
-// ---- dates ----
-
-/// A date as (year, month, day).
-type Date = (u32, u32, u32);
-
-/// A date written `dd/mm/yyyy`, `d-m-yyyy`, `dd.mm.yyyy` or `yyyy-mm-dd`
-/// (any one of `/`, `-` or `.` between the parts), and nothing else.
-fn parse_date(s: &str) -> Option<Date> {
-    let s = s.trim();
-    let sep = s.chars().find(|c| matches!(c, '/' | '-' | '.'))?;
-    let parts: Vec<&str> = s.split(sep).collect();
-    if parts.len() != 3 || parts.iter().any(|p| p.is_empty() || p.len() > 4 || !p.chars().all(|c| c.is_ascii_digit())) {
-        return None;
-    }
-    let n = |p: &str| p.parse::<u32>().ok();
-    let short = |p: &str| p.len() <= 2;
-    let (y, m, d) = if parts[0].len() == 4 && short(parts[1]) && short(parts[2]) {
-        (n(parts[0])?, n(parts[1])?, n(parts[2])?)
-    } else if parts[2].len() == 4 && short(parts[0]) && short(parts[1]) {
-        (n(parts[2])?, n(parts[1])?, n(parts[0])?)
-    } else {
-        return None;
-    };
-    ((1..=12).contains(&m) && (1..=31).contains(&d)).then_some((y, m, d))
-}
-
-/// Exactly `dd/mm/yyyy`, a real day and month.
-fn is_ddmmyyyy(s: &str) -> bool {
-    let b = s.as_bytes();
-    b.len() == 10
-        && b[2] == b'/'
-        && b[5] == b'/'
-        && [0, 1, 3, 4, 6, 7, 8, 9].iter().all(|&i| b[i].is_ascii_digit())
-        && parse_date(s).is_some()
-}
-
-/// Does this link name a date picker: "date" as a word, or "datepicker",
-/// "date-picker" or "calendar", in its name, text or selector?
+/// Does this link name a date picker: one of `PICKER_ROLES` whose name has
+/// "date" as a word, or "calendar" or "datepicker"; or a css selector
+/// holding "datepicker", "date-picker" or "calendar"?
 fn is_date_picker(link: &LocatorStep) -> bool {
-    [link.name.as_deref(), link.text.as_deref(), link.css.as_deref()].into_iter().flatten().any(|v| {
-        let v = v.to_lowercase();
-        has_phrase(&v, "date") || v.contains("datepicker") || v.contains("calendar")
-    })
+    let by_role = in_roles(link, &PICKER_ROLES)
+        && link.name.as_deref().is_some_and(|n| {
+            let n = n.to_lowercase();
+            has_phrase(&n, "date") || n.contains("calendar") || n.contains("datepicker")
+        });
+    let by_css = link.css.as_deref().is_some_and(|c| {
+        let c = c.to_lowercase();
+        c.contains("datepicker") || c.contains("date-picker") || c.contains("calendar")
+    });
+    by_role || by_css
 }
 
 // ---- what was seen ----
@@ -448,11 +191,20 @@ struct Sightings {
     texts: Vec<(String, LocatorStep)>,
     /// Css selectors, state pseudo-classes left out.
     css: Vec<String>,
+    /// Each seen chain's links' css (state pseudo-classes left out), in
+    /// order, outermost first; `None` for a link that is not css.
+    chains: Vec<Vec<Option<String>>>,
 }
 
 impl Sightings {
     fn new(map: &DiscoveryMap, areas: &[&str]) -> Self {
-        let mut s = Sightings { keys: seen_keys(map, areas), roles: Vec::new(), texts: Vec::new(), css: Vec::new() };
+        let mut s = Sightings {
+            keys: seen_keys(map, areas),
+            roles: Vec::new(),
+            texts: Vec::new(),
+            css: Vec::new(),
+            chains: Vec::new(),
+        };
         for l in seen_links(map, areas) {
             if let Some(role) = &l.role {
                 s.roles.push((fold_name(role), norm_name(l.name.as_deref().unwrap_or("")), l.clone()));
@@ -460,6 +212,12 @@ impl Sightings {
                 s.texts.push((norm_name(t), l.clone()));
             } else if let Some(c) = &l.css {
                 s.css.push(strip_states(c));
+            }
+        }
+        for t in seen_locators(map, areas) {
+            let links = t.links();
+            if links.len() > 1 {
+                s.chains.push(links.iter().map(|l| l.css.as_deref().map(strip_states)).collect());
             }
         }
         s
@@ -472,7 +230,7 @@ impl Sightings {
         if link.seen_key().is_some_and(|k| self.keys.contains(&k)) {
             return true;
         }
-        let fits = |want: &str, seen: &str| want == seen || (wild && wild_fits(want, seen));
+        let fits = |want: &str, seen: &str| want == seen || (wild && wild_fits(&name_pieces(want), seen));
         if let Some(role) = &link.role {
             let (r, n) = (fold_name(role), norm_name(link.name.as_deref().unwrap_or("")));
             return self.roles.iter().any(|(sr, sn, _)| *sr == r && fits(&n, sn));
@@ -484,20 +242,26 @@ impl Sightings {
         link.css.as_deref().is_some_and(|c| self.css_seen(c, wild, 0))
     }
 
+    /// Does the selector `base` (state pseudo-classes and filters already
+    /// left out) match the seen selector `seen`?
     fn base_fits(base: &str, seen: &str, wild: bool) -> bool {
-        base == seen || (wild && wild_fits(base, seen))
+        base == seen || (wild && wild_fits(&css_pieces(base), seen))
     }
 
     /// A css selector: its state pseudo-classes left out, the rest seen,
-    /// and each `:not`/`:has` filter's inner part seen too.
+    /// and each `:not`/`:has` filter's inner part seen as that filter
+    /// needs.
     fn css_seen(&self, css: &str, wild: bool, depth: u8) -> bool {
         let (base, inners) = split_filters(&strip_states(css));
         if base.is_empty() || !self.css.iter().any(|s| Self::base_fits(&base, s, wild)) {
             return false;
         }
-        inners.iter().all(|x| match filter_attributes(x) {
-            Some(names) => names.iter().all(|n| self.carries(&base, n, wild)),
-            None => depth < 3 && self.css_seen(x, wild, depth + 1),
+        inners.iter().all(|(kind, x)| match kind {
+            Filter::Not => match filter_attributes(x) {
+                Some(names) => names.iter().all(|n| self.carries(&base, n, wild)),
+                None => depth < 3 && self.css_seen(x, wild, depth + 1),
+            },
+            Filter::Has => self.holds_inside(&base, x, wild),
         })
     }
 
@@ -505,57 +269,123 @@ impl Sightings {
     /// `base` followed by attribute filters, one of them `attr`'s?
     fn carries(&self, base: &str, attr: &str, wild: bool) -> bool {
         self.css.iter().any(|s| {
-            s.char_indices().filter(|(_, c)| *c == '[').any(|(k, _)| {
-                k > 0
-                    && filter_attributes(&s[k..]).is_some_and(|names| names.iter().any(|n| n == attr))
-                    && Self::base_fits(base, s[..k].trim_end(), wild)
+            attribute_tails(s).into_iter().any(|(before, tail)| {
+                !before.is_empty()
+                    && filter_attributes(tail).is_some_and(|names| names.iter().any(|n| n == attr))
+                    && Self::base_fits(base, before, wild)
             })
         })
     }
 
-    /// Does `filled`, a link a run filled a data placeholder of `template`
-    /// in, match a sighting `template` matches, each value the placeholder
-    /// took the shape of the seen value it stands for there?
+    /// Does the seen selector `t` (one element) match the inner part `x` of
+    /// a `:has`: carrying each attribute when `x` is only attribute
+    /// filters, or matching `x` otherwise?
+    fn inner_fits(x: &str, t: &str, wild: bool) -> bool {
+        match filter_attributes(x) {
+            Some(names) => attribute_tails(t)
+                .into_iter()
+                .chain(std::iter::once(("", t)).filter(|(_, t)| t.starts_with('[')))
+                .any(|(_, tail)| filter_attributes(tail).is_some_and(|got| names.iter().all(|n| got.contains(n)))),
+            None => Self::base_fits(&strip_states(x), t, wild),
+        }
+    }
+
+    /// Was `x` seen inside `base`: a seen selector naming `base` as an
+    /// ancestor of an element matching `x` (`.card .badge`), or a seen
+    /// chain with a link matching `base` outside one matching `x`?
+    fn holds_inside(&self, base: &str, x: &str, wild: bool) -> bool {
+        let in_selector = self.css.iter().any(|s| {
+            descendant_splits(s).into_iter().any(|(ancestor, inside)| {
+                Self::base_fits(base, ancestor, wild)
+                    && std::iter::once(inside)
+                        .chain(descendant_splits(inside).into_iter().map(|(_, d)| d))
+                        .any(|d| Self::inner_fits(x, d, wild))
+            })
+        });
+        let in_chain = self.chains.iter().any(|chain| {
+            chain.iter().enumerate().any(|(i, outer)| {
+                outer.as_deref().is_some_and(|o| Self::base_fits(base, o, wild))
+                    && chain[i + 1..].iter().flatten().any(|inner| Self::inner_fits(x, inner, wild))
+            })
+        });
+        in_selector || in_chain
+    }
+
+    /// Every seen selector, and every descendant part of one: what a
+    /// filled `:has` part may be shaped by.
+    fn css_parts(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = Vec::new();
+        for s in &self.css {
+            out.push(s);
+            out.extend(descendant_splits(s).into_iter().map(|(_, d)| d));
+        }
+        out.extend(self.chains.iter().flatten().flatten().map(String::as_str));
+        out
+    }
+
+    /// Every attribute-filter tail of a seen selector: what a filled
+    /// attribute filter may be shaped by.
+    fn attribute_parts(&self) -> Vec<&str> {
+        self.css.iter().flat_map(|s| attribute_tails(s).into_iter().map(|(_, t)| t)).collect()
+    }
+
+    /// Does `filled`, the run's copy of `template` with its data
+    /// placeholders filled in, match a sighting `template` matches, each
+    /// value a placeholder took the shape of the seen value it stands for
+    /// there? A placeholder left unfilled never does.
     fn fills(&self, template: &LocatorStep, filled: &LocatorStep) -> bool {
-        let unfilled = [&filled.role, &filled.name, &filled.text, &filled.css]
-            .into_iter()
-            .flatten()
-            .any(|v| holds_data_placeholder(v));
-        if unfilled {
+        if link_holds_placeholder(filled) {
             return false;
         }
-        if self.has(filled, false) {
+        // Seen exactly as filled. A css selector's filters are not taken
+        // from `has`, which reads an attribute filter by its name alone:
+        // the value filled into one must be shaped below.
+        if filled.seen_key().is_some_and(|k| self.keys.contains(&k))
+            || (filled.css.is_none() && self.has(filled, false))
+        {
             return true;
         }
-        let (want, got, seen): (String, String, Vec<&str>) = if let Some(role) = &filled.role {
+        if let Some(role) = &filled.role {
             let r = fold_name(role);
-            (
-                norm_name(template.name.as_deref().unwrap_or("")),
-                norm_name(filled.name.as_deref().unwrap_or("")),
-                self.roles.iter().filter(|(sr, ..)| *sr == r).map(|(_, n, _)| n.as_str()).collect(),
-            )
-        } else if let Some(t) = &filled.text {
-            (
-                norm_name(template.text.as_deref().unwrap_or("")),
-                norm_name(t),
-                self.texts.iter().map(|(n, _)| n.as_str()).collect(),
-            )
-        } else if let Some(c) = &filled.css {
-            let written = template.css.as_deref().unwrap_or("");
-            if !self.css_seen(written, true, 0) {
+            let seen = self.roles.iter().filter(|(sr, ..)| *sr == r).map(|(_, n, _)| n.as_str());
+            return shaped(
+                &name_pieces(&norm_name(template.name.as_deref().unwrap_or(""))),
+                &norm_name(filled.name.as_deref().unwrap_or("")),
+                seen,
+            );
+        }
+        if let Some(t) = &filled.text {
+            let seen = self.texts.iter().map(|(n, _)| n.as_str());
+            return shaped(&name_pieces(&norm_name(template.text.as_deref().unwrap_or(""))), &norm_name(t), seen);
+        }
+        let (Some(written), Some(c)) = (template.css.as_deref(), filled.css.as_deref()) else { return false };
+        if !self.css_seen(written, true, 0) {
+            return false;
+        }
+        let (want_base, want_inners) = split_filters(&strip_states(written));
+        let (got_base, got_inners) = split_filters(&strip_states(c));
+        if want_inners.len() != got_inners.len()
+            || !shaped(&css_pieces(&want_base), &got_base, self.css.iter().map(String::as_str))
+        {
+            return false;
+        }
+        want_inners.iter().zip(&got_inners).all(|((kind, want), (got_kind, got))| {
+            let p = css_pieces(want);
+            if kind != got_kind {
                 return false;
             }
-            (
-                split_filters(&strip_states(written)).0,
-                split_filters(&strip_states(c)).0,
-                self.css.iter().map(String::as_str).collect(),
-            )
-        } else {
-            return false;
-        };
-        let p = pieces(&want);
-        let Some(took) = fit(&p, &got) else { return false };
-        seen.into_iter().any(|s| fit(&p, s).is_some_and(|stood| same_shape(&stood, &took)))
+            if !p.contains(&Piece::Wild) {
+                return want == got;
+            }
+            let Some(took) = fit(&p, got) else { return false };
+            let parts = if filter_attributes(want).is_some() { self.attribute_parts() } else { self.css_parts() };
+            let stood: Vec<Vec<String>> = parts.into_iter().filter_map(|s| fit(&p, s)).collect();
+            // An attribute filter is checked by its attribute's name at
+            // save (`carries`), so a value may have nothing seen to be
+            // shaped by (`*=` against a seen `=`): then filled, non-empty
+            // and quote-free is all that can be asked.
+            stood.is_empty() || stood.iter().any(|s| same_shape(s, &took))
+        })
     }
 
     /// The seen locator closest to `link`, as "did you mean <role>
@@ -591,12 +421,21 @@ impl Sightings {
                 best = Some((rank, l));
             }
         }
+        let quoted = |s: &str| s.replace('"', "\\\"");
         best.and_then(|(_, l)| match (&l.role, &l.text) {
-            (Some(r), _) => Some(format!("did you mean {r} \"{}\"?", l.name.as_deref().unwrap_or(""))),
-            (None, Some(t)) => Some(format!("did you mean text \"{t}\"?")),
+            (Some(r), _) => Some(format!("did you mean {r} \"{}\"?", quoted(l.name.as_deref().unwrap_or("")))),
+            (None, Some(t)) => Some(format!("did you mean text \"{}\"?", quoted(t))),
             _ => None,
         })
     }
+}
+
+/// Does `got` fit `pieces`, and some `seen` value fit them too, with each
+/// value a placeholder took in `got` the shape of the one it stood for in
+/// that seen value?
+fn shaped<'a>(pieces: &[Piece], got: &str, seen: impl Iterator<Item = &'a str>) -> bool {
+    let Some(took) = fit(pieces, got) else { return false };
+    seen.into_iter().any(|s| fit(pieces, s).is_some_and(|stood| same_shape(&stood, &took)))
 }
 
 /// How many characters must be added, dropped or changed to turn `a` into
@@ -625,8 +464,8 @@ struct Own<'a> {
     case_text: &'a [String],
     /// Whether the locator is only looked for.
     check: bool,
-    /// The Test files the script uploads, folded, each at least
-    /// `MIN_TYPED_LEN`.
+    /// The project's Test files the script has uploaded by this step,
+    /// folded, each at least `MIN_TYPED_LEN`.
     files: &'a [String],
     /// Their sizes as the app shows them, folded.
     sizes: &'a [String],
@@ -635,8 +474,8 @@ struct Own<'a> {
 }
 
 /// Is `link` the script's own data: a value typed earlier, a name the case
-/// says (a check only), a Test file it uploads or that file's size, or a
-/// date it picked or typed?
+/// says (a check only), a Test file it uploaded or that file's size, or a
+/// date-picker day that is a date it picked or typed?
 fn exempt(link: &LocatorStep, own: &Own) -> bool {
     let own_words = words(link);
     let has = |list: &[String]| list.iter().any(|t| own_words.iter().any(|w| has_phrase(w, t)));
@@ -650,16 +489,19 @@ fn exempt(link: &LocatorStep, own: &Own) -> bool {
             .iter()
             .any(|w| w.chars().count() >= MIN_TYPED_LEN && own.case_text.iter().any(|t| has_phrase(t, w)));
     let own_file = has(own.files) || has(own.sizes);
-    let picked = own_words.iter().filter_map(|w| parse_date(w)).any(|d| own.dates.contains(&d));
+    let picked = in_roles(link, &DAY_ROLES)
+        && own_words.iter().filter_map(|w| parse_date(w)).any(|d| own.dates.contains(&d));
     typed_here || in_case || own_file || picked
 }
 
-/// Is `link` a `dd/mm/yyyy` day inside a date picker seen in these areas:
-/// an earlier link of its chain?
+/// Is `link` a date-picker day (`DAY_ROLES`) named `dd/mm/yyyy`, inside a
+/// date picker seen in these areas: an earlier link of its chain?
 fn in_seen_date_picker(link: &LocatorStep, chain: &[LocatorStep], seen: &Sightings) -> bool {
     let Some(at) = chain.iter().position(|l| l == link) else { return false };
-    let name = link.name.as_deref().or(link.text.as_deref()).unwrap_or("");
-    is_ddmmyyyy(name.trim()) && chain[..at].iter().any(|o| is_date_picker(o) && seen.has(o, true))
+    let name = link.name.as_deref().unwrap_or("");
+    in_roles(link, &DAY_ROLES)
+        && is_ddmmyyyy(name.trim())
+        && chain[..at].iter().any(|o| is_date_picker(o) && seen.has(o, true))
 }
 
 /// The first of `links` (links of `chain`) neither seen nor exempt.
@@ -667,7 +509,7 @@ fn first_unseen<'a>(links: &'a [LocatorStep], chain: &[LocatorStep], seen: &Sigh
     links.iter().find(|l| !seen.has(l, true) && !exempt(l, own) && !in_seen_date_picker(l, chain, seen))
 }
 
-/// The Test files `actions` upload, as named.
+/// The files `actions` upload, as named.
 fn uploads<'a>(actions: impl Iterator<Item = &'a Action>) -> Vec<String> {
     actions
         .filter_map(|a| match a {
@@ -677,18 +519,23 @@ fn uploads<'a>(actions: impl Iterator<Item = &'a Action>) -> Vec<String> {
         .collect()
 }
 
-/// `names` folded, those long enough to exempt anything.
-fn exempting(names: &[String]) -> Vec<String> {
-    names.iter().map(|n| fold_name(n)).filter(|n| n.chars().count() >= MIN_TYPED_LEN).collect()
+/// The `files` among `uploaded`: what the script uploads that is one of
+/// the project's Test files.
+fn own_test_files<'a>(uploaded: &[String], files: &'a [TestFile]) -> Vec<&'a TestFile> {
+    files.iter().filter(|f| uploaded.iter().any(|n| n.trim().eq_ignore_ascii_case(f.name.trim()))).collect()
 }
 
-/// The sizes of the uploaded `names` among `files`, as the app shows a
-/// size, folded: one decimal, in KB and in MB (1 KB = 1024 bytes), as
-/// "240.0 KB" and "0.2 MB" (`test_files::human_size`'s form).
-fn shown_sizes(names: &[String], files: &[TestFile]) -> Vec<String> {
+/// Their names folded, those long enough to exempt anything.
+fn exempting(files: &[&TestFile]) -> Vec<String> {
+    files.iter().map(|f| fold_name(&f.name)).filter(|n| n.chars().count() >= MIN_TYPED_LEN).collect()
+}
+
+/// Their sizes as the app shows a size, folded: one decimal, in KB and in
+/// MB (1 KB = 1024 bytes), as "240.0 KB" and "0.2 MB"
+/// (`test_files::human_size`'s form).
+fn shown_sizes(files: &[&TestFile]) -> Vec<String> {
     files
         .iter()
-        .filter(|f| names.iter().any(|n| n.trim().eq_ignore_ascii_case(f.name.trim())))
         .flat_map(|f| {
             let b = f.size as f64;
             [format!("{:.1} kb", b / 1024.0), format!("{:.1} mb", b / (1024.0 * 1024.0))]
@@ -768,8 +615,8 @@ pub fn check_seen(
     check_seen_with_files(map, components, script, case_text, only_steps, &[])
 }
 
-/// [`check_seen`], knowing the project's Test files (`files`), so the size
-/// the app shows for a file the script uploads is exempt too.
+/// [`check_seen`], knowing the project's Test files (`files`), so the name
+/// and the size the app shows of one the script uploads are exempt.
 pub fn check_seen_with_files(
     map: &DiscoveryMap,
     components: &ComponentFile,
@@ -935,27 +782,21 @@ fn scan(
     let seen = Sightings::new(map, &areas);
     let paths = seen_paths(map);
     let case_text: Vec<String> = case_text.iter().map(|t| fold_name(t)).collect();
-    // The Test files the script uploads, anywhere in it, a component's
-    // uploads included, and their sizes as the app shows them.
-    let uploaded = {
-        let ran: Vec<Action> = script
-            .steps
-            .iter()
-            .flat_map(|s| s.actions.iter())
-            .flat_map(Action::each)
-            .flat_map(|a| as_run(components, a))
-            .collect();
-        let own = script.steps.iter().flat_map(|s| s.actions.iter()).flat_map(Action::each);
-        uploads(own.chain(ran.iter().flat_map(Action::each)))
-    };
-    let own_files = exempting(&uploaded);
-    let sizes = shown_sizes(&uploaded, files);
     // Values typed by the steps before the one being checked.
     let mut typed: Vec<String> = Vec::new();
     // The text inputs the steps before it gave components.
     let mut picked_before: Vec<String> = Vec::new();
+    // The files uploaded by this step and the ones before it, a
+    // component's uploads included.
+    let mut uploaded: Vec<String> = Vec::new();
 
     for step in &script.steps {
+        for action in step.actions.iter().flat_map(Action::each) {
+            let ran = as_run(components, action);
+            uploaded.extend(uploads(std::iter::once(action).chain(ran.iter().flat_map(Action::each))));
+        }
+        let own = own_test_files(&uploaded, files);
+        let (own_files, sizes) = (exempting(&own), shown_sizes(&own));
         let checked = only_steps.is_none_or(|only| only.contains(&step.step_number));
         if checked {
             for action in step.actions.iter().flat_map(Action::each) {
@@ -1071,7 +912,8 @@ fn input_link(link: &LocatorStep) -> bool {
 /// a target input fills (`{"input": ...}`), and one a text input is
 /// written into (`{{x}}`). Every other link, beside one of those in a
 /// chain too, must be on the map. A script's save checks the exempt ones
-/// as they expand.
+/// as they expand. With no Test files known here, no file name or size is
+/// exempt.
 pub fn check_component_seen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) -> Result<(), String> {
     let mut areas: Vec<&str> = area.into_iter().collect();
     areas.extend(actions.iter().flat_map(Action::each).filter_map(Action::area_named));
@@ -1084,7 +926,6 @@ pub fn check_component_seen(map: &DiscoveryMap, area: Option<&str>, actions: &[A
             never_seen(what, hint)
         )
     };
-    let own_files = exempting(&uploads(actions.iter().flat_map(Action::each)));
     // Values typed by the component's earlier actions.
     let mut typed: Vec<String> = Vec::new();
     for (i, action) in actions.iter().enumerate() {
@@ -1095,7 +936,7 @@ pub fn check_component_seen(map: &DiscoveryMap, area: Option<&str>, actions: &[A
                 }
             }
             let dates: Vec<Date> = typed.iter().filter_map(|v| parse_date(v)).collect();
-            let own = Own { typed: &typed, case_text: &[], check: is_check(a), files: &own_files, sizes: &[], dates: &dates };
+            let own = Own { typed: &typed, case_text: &[], check: is_check(a), files: &[], sizes: &[], dates: &dates };
             for t in own_targets(a) {
                 let chain = t.links();
                 let links: Vec<LocatorStep> = chain.iter().filter(|l| !input_link(l)).cloned().collect();
@@ -1127,21 +968,35 @@ fn value_holds_placeholder(v: &Value) -> bool {
 }
 
 /// Does a `use_component` in `steps` give an input holding a data
-/// placeholder? Only then is there anything for `check_resolved_inputs`.
+/// placeholder?
 pub fn has_placeholder_inputs(steps: &[StepScript]) -> bool {
     steps.iter().flat_map(|s| s.actions.iter()).flat_map(Action::each).any(|a| {
         matches!(a, Action::UseComponent { inputs, .. } if inputs.values().any(value_holds_placeholder))
     })
 }
 
-/// The run-time half of the check for a component input that held a data
-/// placeholder when the script was saved. `saved` are the steps as saved,
-/// `filled` the same steps once the run filled the placeholders in; each
-/// locator such an input goes into must match a sighting in `areas` that
-/// the saved locator matches, every value the placeholder took the shape
-/// of the seen value it stands for there (all digits where that was). A
-/// placeholder the run left unfilled fails. The failure names the
-/// component, the input and the locator it gave.
+/// Does any locator in `steps` hold a data placeholder: one a step names
+/// itself, or one a component input gives? Only then is there anything
+/// for `check_resolved_inputs`.
+pub fn has_data_placeholders(steps: &[StepScript]) -> bool {
+    has_placeholder_inputs(steps)
+        || steps
+            .iter()
+            .flat_map(|s| s.actions.iter())
+            .flat_map(Action::each)
+            .flat_map(own_targets)
+            .any(|t| t.links().iter().any(link_holds_placeholder))
+}
+
+/// The run-time half of the check for every locator that held a data
+/// placeholder when the script was saved: one a step names itself, and
+/// one a component input gives. `saved` are the steps as saved, `filled`
+/// the same steps once the run filled the placeholders in. Each such
+/// locator, as filled, must match a sighting in `areas` that the saved one
+/// matches, every value a placeholder took the shape of the seen value it
+/// stands for there (all digits where that was); a placeholder the run
+/// left unfilled fails. The failure names the step, and for a component
+/// the component and its input.
 pub fn check_resolved_inputs(
     map: &DiscoveryMap,
     components: &ComponentFile,
@@ -1151,7 +1006,21 @@ pub fn check_resolved_inputs(
 ) -> Result<(), String> {
     let seen = Sightings::new(map, areas);
     for (ss, fs) in saved.iter().zip(filled) {
+        let step = ss.step_number;
         for (sa, fa) in ss.actions.iter().flat_map(Action::each).zip(fs.actions.iter().flat_map(Action::each)) {
+            for (st, ft) in own_targets(sa).into_iter().zip(own_targets(fa)) {
+                let off = st
+                    .links()
+                    .iter()
+                    .zip(ft.links())
+                    .any(|(sl, fl)| link_holds_placeholder(sl) && !seen.fills(sl, &fl));
+                if off {
+                    return Err(format!(
+                        "Step {step}: {}, as filled in, does not fit what was seen on the live app",
+                        ft.describe()
+                    ));
+                }
+            }
             let (Action::UseComponent { component, inputs: given }, Action::UseComponent { inputs: filled_in, .. }) = (sa, fa)
             else {
                 continue;
@@ -1159,23 +1028,24 @@ pub fn check_resolved_inputs(
             if !given.values().any(value_holds_placeholder) {
                 continue;
             }
-            let c = find(components, component).ok_or_else(|| not_saved(component))?;
-            let ran = expand(c, filled_in)?;
+            let at_step = |why: String| format!("Step {step}: {why}");
+            let c = find(components, component).ok_or_else(|| at_step(not_saved(component)))?;
+            let ran = expand(c, filled_in).map_err(at_step)?;
             for (name, v) in given.iter().filter(|(_, v)| value_holds_placeholder(v)) {
                 // The same use with only this input as it was saved: the
                 // locators that differ from `ran` are the ones it fed.
                 let mut marked = filled_in.clone();
                 marked.insert(name.clone(), v.clone());
-                let as_saved = expand(c, &marked)?;
+                let as_saved = expand(c, &marked).map_err(at_step)?;
                 for (m, r) in as_saved.iter().flat_map(Action::each).zip(ran.iter().flat_map(Action::each)) {
                     for (mt, rt) in own_targets(m).into_iter().zip(own_targets(r)) {
                         let fed = mt.links().iter().zip(rt.links()).any(|(ml, rl)| {
-                            let changed = *ml != rl || serde_json::to_value(&rl).is_ok_and(|v| value_holds_placeholder(&v));
+                            let changed = *ml != rl || link_holds_placeholder(&rl);
                             changed && !seen.fills(ml, &rl)
                         });
                         if fed {
                             return Err(format!(
-                                "{}: its input {} gave {}, which does not fit what was seen on the live app",
+                                "Step {step}: {}: its input {} gave {}, which does not fit what was seen on the live app",
                                 c.name,
                                 name.trim(),
                                 rt.describe()

@@ -113,6 +113,14 @@ fn script(case_id: i32, setup: Option<&str>, steps: Value) -> CaseScript {
     serde_json::from_value(v).unwrap()
 }
 
+/// Records that the live app showed `css` in the Leave area: the run checks
+/// a locator a setup value was filled into against what was seen.
+fn seen_on_leave(root: &std::path::Path, css: &str) {
+    use v2_lib::browser::locator::{LocatorStep, Target};
+    let t = Target::One(LocatorStep { css: Some(css.to_string()), ..LocatorStep::default() });
+    v2_lib::autorun::discovery_map::record_matched(root, ORG, PROJECT, Some("Leave"), "/hr/leave", &t, 1).unwrap();
+}
+
 fn check(value: &str) -> Value {
     json!({ "kind": "check_text", "value": value })
 }
@@ -539,6 +547,54 @@ async fn a_failed_setup_blocks_with_the_fixtures_sentence() {
     assert!(!lease::is_held(&env, ACCOUNT));
 }
 
+/// A setup value filled into a step's own locator must have the shape of
+/// what was seen there: digits where digits were seen. Otherwise the case
+/// is Blocked, naming the step.
+#[tokio::test]
+async fn a_setup_value_filled_into_a_locator_must_fit_what_was_seen() {
+    let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
+    for (given, blocked) in [(json!(10071), false), (json!("draft-7"), true)] {
+        let mut r = setup_rig(vec![answer(200, json!({ "cycleId": given, "cycleName": "AUTOTEST cycle" }))]);
+        let root = r.root.path().to_path_buf();
+        let mut sc = script(
+            30,
+            Some("own"),
+            json!([{ "step_number": 1, "actions": [
+                { "kind": "click", "selector": { "css": "div[data-cycle-id=\"{{setup.cycle_id}}\"]" } }
+            ] }]),
+        );
+        sc.area = Some("Leave".into());
+        store::save_script(&root, &sc).unwrap();
+        seen_on_leave(&root, "div[data-cycle-id=\"10066\"]");
+        approve(&root, &sc);
+        let got = prepare_case_within(
+            &mut r.browsers,
+            &root,
+            ORG,
+            PROJECT,
+            &sc,
+            &quick(),
+            &NO_STOP,
+            |_| std::future::ready(()),
+            RUN_LIMIT,
+            &QUICK_PAUSES,
+            CLOCK,
+        )
+        .await
+        .map(|p| p.script.steps);
+        if blocked {
+            assert_eq!(
+                got,
+                Err("Step 1: div[data-cycle-id=\"draft-7\"], as filled in, does not fit what was seen on the live app".to_string())
+            );
+        } else {
+            let steps = got.expect("a digits id fits");
+            assert_eq!(serde_json::to_value(&steps).unwrap()[0]["actions"][0]["selector"]["css"], json!("div[data-cycle-id=\"10071\"]"));
+        }
+    }
+}
+
 // ---- approvals ----------------------------------------------------------------
 
 /// Review Focus 2: an approval counts only for what was approved. A change
@@ -732,6 +788,7 @@ async fn a_replay_to_a_step_runs_the_setup_first() {
     );
     sc.area = Some("Leave".into());
     store::save_script(&root, &sc).unwrap();
+    seen_on_leave(&root, "#c274");
 
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
     let req = ReplayRequest { case_id: 9, step: 2, db_read_access: false };
@@ -824,6 +881,7 @@ async fn a_setup_as_the_supervised_browsers_account_runs_and_the_case_signs_in_a
     sc.account = Some("admin".into());
     sc.area = Some("Leave".into());
     store::save_script(&root, &sc).unwrap();
+    seen_on_leave(&root, "#c274");
     approve(&root, &sc);
 
     // The supervised browser holds admin.

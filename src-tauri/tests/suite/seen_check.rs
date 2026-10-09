@@ -6,7 +6,7 @@ use v2_lib::autorun::discovery_map::{AreaMap, DiscoveryMap, PageMap, SeenElement
 use v2_lib::autorun::edits::Edit;
 use v2_lib::autorun::seen_check::{
     check_component_seen, check_resolved_inputs, check_seen, check_seen_all, check_seen_all_hinted, check_seen_with_files,
-    has_placeholder_inputs, steps_to_check, Unseen,
+    has_data_placeholders, has_placeholder_inputs, steps_to_check, Unseen,
 };
 use v2_lib::autorun::CaseScript;
 use v2_lib::browser::locator::{LocatorStep, Target};
@@ -687,7 +687,7 @@ fn a_placeholder_matches_only_a_seen_shape() {
         "/cycles",
         &[css("div[data-cycle-id=\"10066\"]"), css("button[aria-label^=\"Edit\"]"), role("button", "Edit Cycle A")],
     );
-    for id in ["{{setup.cycle_id}}", "{{fixture.pc-draft-before-evaluators.cycle_id}}", "{{ prefix }}", "{{now:yyyyMMdd}}"] {
+    for id in ["{{setup.cycle_id}}", "{{fixture.pc-draft-before-evaluators.cycle_id}}", "{{ setup.cycle_id }}"] {
         let s = one_step("Cycles", serde_json::json!([click(edit_in_card(id))]));
         assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()), "{id}");
     }
@@ -701,8 +701,16 @@ fn a_placeholder_matches_only_a_seen_shape() {
     // So must the element and the attribute.
     refused(serde_json::json!({ "css": "span[data-cycle-id=\"{{setup.cycle_id}}\"]" }), &map);
     refused(serde_json::json!({ "css": "div[data-cycle-key=\"{{setup.cycle_id}}\"]" }), &map);
-    // Not a placeholder the run fills in.
-    refused(edit_in_card("{{cycle_id}}"), &map);
+    // Not a placeholder the run fills in: Auto Run fills only fixture and
+    // setup values.
+    for id in ["{{cycle_id}}", "{{prefix}}", "{{ prefix }}", "{{now:yyyyMMdd}}"] {
+        refused(edit_in_card(id), &map);
+    }
+    // In css, only inside a quoted attribute value: anywhere else it is
+    // literal, so a selector made of data matches nothing.
+    for c in ["{{setup.sel}}", "div{{setup.x}}", ".phr-{{setup.cls}}", "div[{{setup.attr}}=\"10066\"]"] {
+        refused(serde_json::json!({ "css": c }), &map);
+    }
     // No such attribute seen at all, or only an empty one, or only with
     // another attribute after it: a placeholder never crosses a quote.
     for seen in ["div[data-cycle-name=\"Annual\"]", "div[data-cycle-id=\"\"]", "div[data-cycle-id=\"1\"][data-x=\"2\"]"] {
@@ -756,11 +764,15 @@ fn a_component_input_placeholder_is_checked_at_run_time() {
     };
     let saved = with(serde_json::json!({ "id": "{{setup.cycle_id}}" }));
     assert_eq!(check_seen(&map, &have, &saved, &[], None), Ok(()));
-    // Any other brace pair is still the component's own placeholder.
-    assert_eq!(
-        check_seen(&map, &have, &with(serde_json::json!({ "id": "{{cycle_id}}" })), &[], None),
-        Err("Step 1: Edit cycle by id got a placeholder as id".to_string())
-    );
+    // Any other brace pair is still the component's own placeholder, and
+    // a prefix or a time is not filled in by Auto Run.
+    for id in ["{{cycle_id}}", "{{prefix}}", "{{now:yyyyMMdd}}"] {
+        assert_eq!(
+            check_seen(&map, &have, &with(serde_json::json!({ "id": id })), &[], None),
+            Err("Step 1: Edit cycle by id got a placeholder as id".to_string()),
+            "{id}"
+        );
+    }
     assert!(has_placeholder_inputs(&saved.steps));
 
     let run = |filled: &str| {
@@ -771,7 +783,7 @@ fn a_component_input_placeholder_is_checked_at_run_time() {
     assert_eq!(run("10071"), Ok(()));
     let gave = |id: &str| {
         format!(
-            "Edit cycle by id: its input id gave button[aria-label^=\"Edit\"] in div[data-cycle-id=\"{id}\"], which does not fit what was seen on the live app"
+            "Step 1: Edit cycle by id: its input id gave button[aria-label^=\"Edit\"] in div[data-cycle-id=\"{id}\"], which does not fit what was seen on the live app"
         )
     };
     assert_eq!(run("draft-7"), Err(gave("draft-7")));
@@ -793,7 +805,7 @@ fn a_component_input_placeholder_is_checked_at_run_time() {
     assert_eq!(check_resolved_inputs(&map, &have, &["Cycles"], &saved.steps, &card("div[data-cycle-id=\"9\"]").steps), Ok(()));
     assert_eq!(
         check_resolved_inputs(&map, &have, &["Cycles"], &saved.steps, &card("div[data-cycle-id=\"x9\"]").steps),
-        Err("Open a card: its input card gave div[data-cycle-id=\"x9\"], which does not fit what was seen on the live app".to_string())
+        Err("Step 1: Open a card: its input card gave div[data-cycle-id=\"x9\"], which does not fit what was seen on the live app".to_string())
     );
     // A use with no placeholder in its inputs has nothing to check.
     assert!(!has_placeholder_inputs(&with(serde_json::json!({ "id": "10066" })).steps));
@@ -809,7 +821,18 @@ fn a_checked_state_on_a_seen_input_passes() {
         // A plain string selector reads the same.
         assert_eq!(check_seen(&map, &none(), &with(serde_json::json!(c)), &[], None), Ok(()), "{c}");
     }
-    for c in ["#er-other input:checked", "#er-goals-checkbox input:focus-visible", "#er-goals-checkbox select:checked"] {
+    // A state after a space or a combinator, or starting the selector, is
+    // an element of its own: never seen here.
+    for c in [
+        "#er-other input:checked",
+        "#er-goals-checkbox input:focus-visible",
+        "#er-goals-checkbox select:checked",
+        "#er-goals-checkbox input :checked",
+        "#er-goals-checkbox input > :checked",
+        ":checked",
+        "#er-goals-checkbox input :not(.x)",
+        "#er-goals-checkbox input+:has(.x)",
+    ] {
         assert_eq!(check_seen(&map, &none(), &with(serde_json::json!({ "css": c })), &[], None), Err(refusal(1, c)));
     }
 }
@@ -833,13 +856,34 @@ fn a_not_filter_needs_its_inner_part_seen() {
     assert_eq!(check_seen(&other, &none(), &with(not_annual), &[], None), Err(refusal(1, not_annual)));
     let no_base = map_with("Cycles", "/cycles", &[css(".phr-mc-card[data-cycle-name=\"A\"]")]);
     assert_eq!(check_seen(&no_base, &none(), &with(not_annual), &[], None), Err(refusal(1, not_annual)));
-    // A selector filter: its inner selector seen in the same areas.
+    // A :has needs its inner part seen inside the base, in the same areas:
+    // seen on its own does not do.
     let has_badge = ".phr-mc-card:has(.badge-draft)";
     assert_eq!(check_seen(&base_only, &none(), &with(has_badge), &[], None), Err(refusal(1, has_badge)));
-    let badge = map_with("Cycles", "/cycles", &[css(".phr-mc-card"), css(".badge-draft")]);
+    let apart = map_with("Cycles", "/cycles", &[css(".phr-mc-card"), css(".badge-draft")]);
+    assert_eq!(check_seen(&apart, &none(), &with(has_badge), &[], None), Err(refusal(1, has_badge)));
+    let badge = map_with("Cycles", "/cycles", &[css(".phr-mc-card"), css(".phr-mc-card .header > .badge-draft")]);
     assert_eq!(check_seen(&badge, &none(), &with(has_badge), &[], None), Ok(()));
-    let badge_elsewhere = joined(base_only.clone(), map_with("Payroll", "/payroll", &[css(".badge-draft")]));
+    // Or a seen chain with the badge inside the card.
+    let mut chained = map_with("Cycles", "/cycles", &[css(".phr-mc-card")]);
+    chained.areas[0].pages[0].elements.push(SeenElement {
+        key: css(".badge-draft").seen_key().unwrap(),
+        locator: Target::Chain(vec![css(".phr-mc-card"), css(".badge-draft")]),
+        role: String::new(),
+        name: String::new(),
+        kind: "other".to_string(),
+        required: false,
+        seen_at: 0,
+    });
+    assert_eq!(check_seen(&chained, &none(), &with(has_badge), &[], None), Ok(()));
+    let badge_elsewhere = joined(base_only.clone(), map_with("Payroll", "/payroll", &[css(".phr-mc-card .badge-draft")]));
     assert_eq!(check_seen(&badge_elsewhere, &none(), &with(has_badge), &[], None), Err(refusal(1, has_badge)));
+    // An attribute :has: the base carrying the attribute itself is not a
+    // descendant carrying it.
+    let has_named = ".phr-mc-card:has([data-cycle-name*=\"Annual\"])";
+    assert_eq!(check_seen(&carrying, &none(), &with(has_named), &[], None), Err(refusal(1, has_named)));
+    let inside = map_with("Cycles", "/cycles", &[css(".phr-mc-card"), css(".phr-mc-card span[data-cycle-name=\"Annual 2026\"]")]);
+    assert_eq!(check_seen(&inside, &none(), &with(has_named), &[], None), Ok(()));
     // A filter that never closes matches nothing.
     let open = ".phr-mc-card:not(.x";
     assert_eq!(check_seen(&badge, &none(), &with(open), &[], None), Err(refusal(1, open)));
@@ -869,8 +913,33 @@ fn a_test_file_name_and_size_are_exempt() {
         let s = after_upload(action.clone());
         assert_eq!(check_seen_with_files(&map, &none(), &s, &[], None, &files), Ok(()), "{action}");
     }
-    // The size needs the Test files to say it.
+    // The name and the size need the Test files to say them.
     assert_eq!(check_seen(&map, &none(), &after_upload(shows("240.0 KB")), &[], None), Err(refusal(2, "text \"240.0 KB\"")));
+    assert_eq!(
+        check_seen(&map, &none(), &after_upload(named("Download policy.docx")), &[], None),
+        Err(refusal(2, "button \"Download policy.docx\""))
+    );
+    // Not before the step that uploads it.
+    let before = script(
+        Some("Policies"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [named("Download policy.docx")] },
+            { "step_number": 2, "actions": [upload.clone()] }
+        ]),
+    );
+    assert_eq!(
+        check_seen_with_files(&map, &none(), &before, &[], None, &files),
+        Err(refusal(1, "button \"Download policy.docx\""))
+    );
+    // An upload naming no Test file exempts nothing.
+    let not_a_file = script(
+        Some("Policies"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "upload", "selector": { "role": "button", "name": "Attach" }, "file": "Approve" }] },
+            { "step_number": 2, "actions": [named("Approve")] }
+        ]),
+    );
+    assert_eq!(check_seen_with_files(&map, &none(), &not_a_file, &[], None, &files), Err(refusal(2, "button \"Approve\"")));
     // A file the script does not upload, and its size, are not its own.
     for (action, what) in [
         (named("Download other.pdf"), "button \"Download other.pdf\""),
@@ -936,6 +1005,26 @@ fn only_a_picked_date_is_exempt() {
             "{dialog} {name}"
         );
     }
+    // Only a day's role inside a picker's role: not a cell of a table
+    // naming a date, nor a text.
+    let mut tables = map.clone();
+    tables.areas[0].pages[0].elements.push(SeenElement {
+        key: role("table", "Due date").seen_key().unwrap(),
+        locator: Target::One(role("table", "Due date")),
+        role: "table".to_string(),
+        name: "Due date".to_string(),
+        kind: "table".to_string(),
+        required: false,
+        seen_at: 0,
+    });
+    let cell = one_step("Leave", serde_json::json!([click(serde_json::json!([
+        { "role": "table", "name": "Due date" }, { "role": "cell", "name": "15/01/2027" }
+    ]))]));
+    assert_eq!(check_seen(&tables, &none(), &cell, &[], None), Err(refusal(1, "cell \"15/01/2027\" in table \"Due date\"")));
+    let as_text = one_step("Leave", serde_json::json!([click(serde_json::json!([
+        { "role": "dialog", "name": "Choose date" }, { "text": "15/01/2027" }
+    ]))]));
+    assert_eq!(check_seen(&map, &none(), &as_text, &[], None), Err(refusal(1, "text \"15/01/2027\" in dialog \"Choose date\"")));
     // The picker itself must have been seen.
     let unseen_picker = map_with("Leave", "/leave", &[]);
     assert_eq!(
@@ -997,6 +1086,12 @@ fn the_suggestion_comes_from_the_same_area() {
         Err(refusal(1, "button \"Archive\""))
     );
     assert_eq!(check_seen(&map, &none(), &in_area("Leave", button("Publsh")), &[], None), Err(refusal(1, "button \"Publsh\"")));
+    // A quote in the seen name is escaped.
+    let quoted = map_with("Ratings", "/ratings", &[role("button", "Say \"hi\"")]);
+    assert_eq!(
+        check_seen(&quoted, &none(), &in_area("Ratings", button("Say \"hl\"")), &[], None),
+        Err(refusal_hinted(1, "button \"Say \"hl\"\"", "did you mean button \"Say \\\"hi\\\"\"?"))
+    );
     // An import lists it too.
     let hinted = check_seen_all_hinted(&map, &none(), &in_area("Ratings", button("Publsh")), &[], None, &[]);
     assert_eq!(hinted.len(), 1);
@@ -1031,4 +1126,56 @@ fn an_unseen_locator_is_still_refused() {
         let s = one_step("Cycles", serde_json::json!([click(selector)]));
         assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(refusal(1, what)), "{what}");
     }
+}
+
+/// A placeholder a step writes into its own locator is checked once the
+/// run fills it in, like a component input: by the seen value's shape.
+#[test]
+fn a_placeholder_in_a_scripts_own_locator_is_checked_when_filled() {
+    let map = map_with(
+        "Cycles",
+        "/cycles",
+        &[
+            css("div[data-cycle-id=\"10066\"]"),
+            css("button[aria-label^=\"Edit\"]"),
+            css(".phr-mc-card"),
+            css(".phr-mc-card[data-cycle-id=\"10066\"]"),
+            role("button", "Edit Cycle 12"),
+        ],
+    );
+    let saved = one_step("Cycles", serde_json::json!([click(edit_in_card("{{setup.cycle_id}}"))]));
+    assert_eq!(check_seen(&map, &none(), &saved, &[], None), Ok(()));
+    assert!(has_data_placeholders(&saved.steps));
+    let run = |saved: &CaseScript, filled: &CaseScript| check_resolved_inputs(&map, &none(), &["Cycles"], &saved.steps, &filled.steps);
+    let filled = |id: &str| one_step("Cycles", serde_json::json!([click(edit_in_card(id))]));
+    assert_eq!(run(&saved, &filled("10071")), Ok(()));
+    let blocked = |id: &str| {
+        format!(
+            "Step 1: button[aria-label^=\"Edit\"] in div[data-cycle-id=\"{id}\"], as filled in, does not fit what was seen on the live app"
+        )
+    };
+    assert_eq!(run(&saved, &filled("draft-7")), Err(blocked("draft-7")));
+    assert_eq!(run(&saved, &filled("{{setup.cycle_id}}")), Err(blocked("{{setup.cycle_id}}")), "never filled in");
+    // Inside a :not filter too.
+    let not_this = |id: &str| {
+        one_step("Cycles", serde_json::json!([click(serde_json::json!({ "css": format!(".phr-mc-card:not([data-cycle-id=\"{id}\"])") }))]))
+    };
+    let saved_not = not_this("{{setup.cycle_id}}");
+    assert_eq!(check_seen(&map, &none(), &saved_not, &[], None), Ok(()));
+    assert_eq!(run(&saved_not, &not_this("10071")), Ok(()));
+    assert_eq!(
+        run(&saved_not, &not_this("x7")),
+        Err("Step 1: .phr-mc-card:not([data-cycle-id=\"x7\"]), as filled in, does not fit what was seen on the live app".to_string())
+    );
+    // In a name.
+    let named = |n: &str| one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": n }))]));
+    let saved_name = named("Edit Cycle {{setup.cycle_no}}");
+    assert_eq!(run(&saved_name, &named("Edit Cycle 40")), Ok(()));
+    assert_eq!(
+        run(&saved_name, &named("Edit Cycle forty")),
+        Err("Step 1: button \"Edit Cycle forty\", as filled in, does not fit what was seen on the live app".to_string())
+    );
+    // A locator with no placeholder has nothing to check.
+    let plain = one_step("Cycles", serde_json::json!([click(edit_in_card("10066"))]));
+    assert!(!has_data_placeholders(&plain.steps));
 }
