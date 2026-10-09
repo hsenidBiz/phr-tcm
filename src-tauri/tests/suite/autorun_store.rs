@@ -1184,3 +1184,36 @@ fn a_run_without_phase_timings_still_loads() {
     let json = serde_json::to_string(&old).unwrap();
     assert!(!json.contains("phases") && !json.contains("duration_ms"), "{json}");
 }
+
+/// A supervised run's first save prunes the shots folder once, after its
+/// pictures are taken. The Review screen's Save of that run adds no
+/// pictures, so it does not read every run on disk to prune again.
+#[test]
+fn a_review_save_does_not_prune() {
+    use v2_lib::commands::autorun::save_run_at;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let shots = root.join("shots");
+    std::fs::create_dir_all(&shots).unwrap();
+    let write = |i: usize| std::fs::write(shots.join(format!("shot-{:013}-000000.jpg", i + 1)), [1u8]).unwrap();
+    let count = || std::fs::read_dir(&shots).unwrap().count();
+    for i in 0..1001 {
+        write(i);
+    }
+    let run = LocalRun {
+        id: "run-review".into(),
+        pbi_id: 1,
+        started_at: "1700000000000".into(),
+        cases: vec![],
+        mode: "supervised".into(),
+        published: None,
+        environment: None,
+        resets: vec![],
+    };
+    save_run_at(root, run.clone()).unwrap();
+    assert_eq!(count(), 1000, "the run's first save prunes");
+
+    write(2000);
+    save_run_at(root, run).unwrap();
+    assert_eq!(count(), 1001, "a review save of a run already on disk does not");
+}

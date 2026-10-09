@@ -1476,12 +1476,17 @@ pub fn save_run_at(root: &std::path::Path, mut run: LocalRun) -> Result<(), Stri
     if !safe_run_id(&run.id) {
         return Err(format!("run id {:?} is not a safe filename", run.id));
     }
-    if run.environment.is_none() && matches!(store::load_run(root, &run.id), Ok(None)) {
+    let first = matches!(store::load_run(root, &run.id), Ok(None));
+    if run.environment.is_none() && first {
         run.environment = crate::environments::active(root).ok().map(|e| e.name);
     }
     store::save_run_guarded(root, &run)?;
-    // A supervised run saves its file once, after its pictures are taken.
-    store::prune_old_shots(root);
+    // A supervised run's first save comes once, after its pictures are
+    // taken: the shots folder is pruned then. A later save (the Review
+    // screen's) adds no pictures, so it does not read every run to prune.
+    if first {
+        store::prune_old_shots(root);
+    }
     Ok(())
 }
 
