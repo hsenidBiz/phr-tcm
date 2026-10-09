@@ -274,13 +274,76 @@ fn new_tags_merge_case_insensitively_sorted_and_keep_the_age() {
     assert!(!add_new_tags(&mut unchanged, &["Smoke".into()]), "nothing new, nothing written");
 }
 
+/// The process-wide statics that hold a map and are NOT cached data, each
+/// with its reason: (file under src, static name, reason). An allowance is
+/// only for state that must not outlive the process and is never refetched
+/// - coordination between parts of the app, or live handles - never for
+/// data a module wants to remember. Each one is named here so adding one is
+/// a reviewed change.
+const NOT_CACHES: &[(&str, &str, &str)] = &[
+    ("autorun/lease.rs", "TABLE", "process coordination: who holds each account's sign-in right now"),
+    ("autorun/lease.rs", "GENERATIONS", "process coordination: how many times each account was taken"),
+    ("api_templates/held.rs", "STORE", "live browser processes kept signed in, closed on drain"),
+];
+
+/// Every static in `text` whose type holds a `HashMap` or `BTreeMap`,
+/// directly or through a `type` alias declared in the same file (an alias
+/// of an alias too): (line number, static name).
+fn static_maps(text: &str) -> Vec<(usize, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let idents = |s: &str| -> Vec<String> {
+        s.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).map(String::from).collect()
+    };
+    // `type X = ...;` / `pub type X<..> = ...;`, read on to the `;`.
+    let mut aliases: Vec<(String, String)> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim_start();
+        let t = t.strip_prefix("pub(crate) ").or_else(|| t.strip_prefix("pub ")).unwrap_or(t);
+        let Some(rest) = t.strip_prefix("type ") else { continue };
+        let Some((name, body)) = rest.split_once('=') else { continue };
+        let name = name.split('<').next().unwrap_or("").trim().to_string();
+        let decl = std::iter::once(body).chain(lines[i + 1..lines.len().min(i + 6)].iter().copied()).collect::<Vec<_>>().join(" ");
+        aliases.push((name, decl.split(';').next().unwrap_or("").to_string()));
+    }
+    let mut maps: Vec<String> = vec!["HashMap".into(), "BTreeMap".into()];
+    loop {
+        let before = maps.len();
+        for (name, body) in &aliases {
+            if !maps.contains(name) && idents(body).iter().any(|w| maps.contains(w)) {
+                maps.push(name.clone());
+            }
+        }
+        if maps.len() == before {
+            break;
+        }
+    }
+    let mut found = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim_start();
+        let Some(rest) = t.strip_prefix("static ").or_else(|| t.strip_prefix("pub static ")) else { continue };
+        // A static's type can wrap onto following lines: read on to the
+        // terminating `;`.
+        let decl = lines[i..lines.len().min(i + 6)].join(" ");
+        let decl_type = decl.split(';').next().unwrap_or("");
+        if idents(decl_type).iter().any(|w| maps.contains(w)) {
+            let name = rest.trim_start_matches("mut ").split(':').next().unwrap_or("").trim().to_string();
+            found.push((i + 1, name));
+        }
+    }
+    found
+}
+
 /// One cache means one: a module that needs to remember data uses
 /// `crate::cache`, not a map of its own in a static. If this fails, move
 /// that data onto the cache (a key in cache/keys.rs) instead of allowing it.
+/// A static that is not cached data at all (process coordination, live
+/// handles) is named in `NOT_CACHES` with its reason; a type alias does not
+/// hide a map from this.
 #[test]
 fn no_module_keeps_a_private_cache_map() {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut offenders = Vec::new();
+    let mut allowed_seen = Vec::new();
     let mut stack = vec![src.clone()];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).unwrap() {
@@ -295,24 +358,56 @@ fn no_module_keeps_a_private_cache_map() {
             if !path.extension().is_some_and(|e| e == "rs") {
                 continue;
             }
+            let rel = path.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
             let text = std::fs::read_to_string(&path).unwrap();
-            let lines: Vec<&str> = text.lines().collect();
-            for (i, line) in lines.iter().enumerate() {
-                let t = line.trim_start();
-                if !(t.starts_with("static ") || t.starts_with("pub static ")) {
-                    continue;
-                }
-                // A static's type can wrap onto following lines: read on
-                // to the terminating `;`.
-                let decl = lines[i..lines.len().min(i + 6)].join(" ");
-                let decl_type = decl.split(';').next().unwrap_or("");
-                if decl_type.contains("HashMap") || decl_type.contains("BTreeMap") {
-                    offenders.push(format!("{}:{}", path.strip_prefix(&src).unwrap().display(), i + 1));
+            for (line, name) in static_maps(&text) {
+                if NOT_CACHES.iter().any(|(f, s, _)| *f == rel && *s == name) {
+                    allowed_seen.push((rel.clone(), name));
+                } else {
+                    offenders.push(format!("{rel}:{line} {name}"));
                 }
             }
         }
     }
     assert!(offenders.is_empty(), "keep cached data in crate::cache, not a private static map: {offenders:?}");
+    for (file, name, _) in NOT_CACHES {
+        assert!(
+            allowed_seen.iter().any(|(f, n)| f == file && n == name),
+            "NOT_CACHES names {file} {name}, which no longer holds a map: remove the allowance"
+        );
+    }
+}
+
+/// The scanner itself: a map in a static is found whether it is named
+/// outright, behind an alias, or behind an alias of an alias; a static
+/// without one is not.
+#[test]
+fn the_cache_tripwire_sees_a_map_behind_an_alias() {
+    let direct = "static SEEN: OnceLock<Mutex<HashMap<String, u8>>> = OnceLock::new();";
+    assert_eq!(static_maps(direct), vec![(1, "SEEN".to_string())]);
+
+    let aliased = "type Remembered = BTreeMap<String, Vec<u8>>;
+fn f() {
+    static KEPT: OnceLock<Mutex<Remembered>> = OnceLock::new();
+}";
+    assert_eq!(static_maps(aliased), vec![(3, "KEPT".to_string())]);
+
+    let twice = "pub(crate) type Inner<V> =
+    HashMap<String, V>;
+type Outer = Inner<u8>;
+pub static OUTER: Mutex<Option<Outer>> = Mutex::new(None);";
+    assert_eq!(static_maps(twice), vec![(4, "OUTER".to_string())]);
+
+    let wrapped = "static WRAPPED: OnceLock<
+    Mutex<HashMap<u8, u8>>,
+> = OnceLock::new();";
+    assert_eq!(static_maps(wrapped), vec![(1, "WRAPPED".to_string())]);
+
+    let none = "type Count = u64;
+static N: AtomicU64 = AtomicU64::new(0);
+static C: Mutex<Count> = Mutex::new(0);
+static HASHMAPPED: Mutex<Vec<u8>> = Mutex::new(Vec::new());";
+    assert!(static_maps(none).is_empty());
 }
 
 /// A sign-in whose account cannot be named is not provably the owner, so

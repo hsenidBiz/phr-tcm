@@ -180,3 +180,19 @@ fn drain_all_hands_back_every_entry() {
     assert_eq!(tags, vec![9, 10]);
     assert!(held::drain_all::<Tag>().is_empty());
 }
+
+#[test]
+fn the_sweep_closes_a_browser_that_gave_way_before_its_idle_time_runs_out() {
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let now = Instant::now();
+    let (moved, still) = ("held.swept", "held.kept");
+    held::put_at(ENV, moved, entry(11, ENV, moved), now);
+    held::put_at(ENV, still, entry(12, ENV, still), now);
+    drop(lease::try_acquire(ENV, moved, Holder::Browser).unwrap());
+
+    let gone = held::expired_at::<Tag>(now);
+    assert_eq!(gone.into_iter().map(|e| e.driver).collect::<Vec<_>>(), vec![Tag(11)]);
+    let got = reused(held::take::<Tag>(ENV, still, fingerprint())).expect("the sweep took an entry that had not given way");
+    assert_eq!(got.driver, Tag(12));
+}
