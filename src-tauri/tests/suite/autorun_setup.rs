@@ -114,7 +114,10 @@ fn script(case_id: i32, setup: Option<&str>, steps: Value) -> CaseScript {
 }
 
 /// Records that the live app showed `css` in the Leave area: the run checks
-/// a locator a setup value was filled into against what was seen.
+/// a locator a setup value was filled into against what was seen. A step
+/// clicking `#c{{setup.cycle_id}}` needs some `#c<digits>` seen there (not
+/// the draft's own id, which is new every run): with nothing seen, the
+/// filled locator fits no sighting and the case is Blocked.
 fn seen_on_leave(root: &std::path::Path, css: &str) {
     use v2_lib::browser::locator::{LocatorStep, Target};
     let t = Target::One(LocatorStep { css: Some(css.to_string()), ..LocatorStep::default() });
@@ -788,7 +791,7 @@ async fn a_replay_to_a_step_runs_the_setup_first() {
     );
     sc.area = Some("Leave".into());
     store::save_script(&root, &sc).unwrap();
-    seen_on_leave(&root, "#c274");
+    seen_on_leave(&root, "#c100");
 
     let (mut d, app) = common::menu_app(&[("link", "Leave", "/hr/leave")], "/hr/home/index", 0);
     let req = ReplayRequest { case_id: 9, step: 2, db_read_access: false };
@@ -881,7 +884,7 @@ async fn a_setup_as_the_supervised_browsers_account_runs_and_the_case_signs_in_a
     sc.account = Some("admin".into());
     sc.area = Some("Leave".into());
     store::save_script(&root, &sc).unwrap();
-    seen_on_leave(&root, "#c274");
+    seen_on_leave(&root, "#c100");
     approve(&root, &sc);
 
     // The supervised browser holds admin.

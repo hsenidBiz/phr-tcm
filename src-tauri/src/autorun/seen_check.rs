@@ -25,7 +25,11 @@
 //! - A data placeholder (`{{fixture.<id>.<output>}}`, `{{setup.<output>}}`;
 //!   see `seen_match`) in a name or a text, or inside a quoted attribute
 //!   value of a css selector, stands for a non-empty run of a seen value
-//!   with no quote in it. The text around it must match the sighting as
+//!   with no quote in it. Inside an id or class token beside a literal
+//!   part of it (`#c{{setup.cycle_id}}`) it stands for a run of letters,
+//!   digits, `-` and `_` of a seen token of that kind with the same literal
+//!   parts; a whole token (`#{{setup.x}}`) or any other place in a
+//!   selector stays literal. The text around it must match the sighting as
 //!   written, and so must the role (or the rest of the selector).
 //!   `{{prefix}}` and `{{now:...}}` are not data placeholders: Auto Run
 //!   never fills them in, so they stay literal and are refused. Once the
@@ -57,7 +61,7 @@ use super::components::{expand, find, not_saved, Component, ComponentFile};
 use super::discovery_map::{page_path, path_only, seen_keys, seen_links, seen_locators, seen_paths, DiscoveryMap};
 use super::edits::Edit;
 use super::seen_match::{
-    attribute_tails, css_pieces, descendant_splits, filter_attributes, fit, is_ddmmyyyy, name_pieces, parse_date,
+    attribute_tails, css_pieces, descendant_splits, filter_attributes, fit, has_wild, is_ddmmyyyy, name_pieces, parse_date,
     same_shape, split_filters, strip_states, wild_fits, Date, Filter, Piece,
 };
 pub use super::seen_match::{holds_data_placeholder, is_data_placeholder, norm_name, only_data_placeholders};
@@ -374,7 +378,7 @@ impl Sightings {
             if kind != got_kind {
                 return false;
             }
-            if !p.contains(&Piece::Wild) {
+            if !has_wild(&p) {
                 return want == got;
             }
             let Some(took) = fit(&p, got) else { return false };

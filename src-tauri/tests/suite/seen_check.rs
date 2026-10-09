@@ -708,7 +708,7 @@ fn a_placeholder_matches_only_a_seen_shape() {
     }
     // In css, only inside a quoted attribute value: anywhere else it is
     // literal, so a selector made of data matches nothing.
-    for c in ["{{setup.sel}}", "div{{setup.x}}", ".phr-{{setup.cls}}", "div[{{setup.attr}}=\"10066\"]"] {
+    for c in ["{{setup.sel}}", "div{{setup.x}}", "#{{setup.x}}", ".{{setup.cls}}", "div[{{setup.attr}}=\"10066\"]"] {
         refused(serde_json::json!({ "css": c }), &map);
     }
     // No such attribute seen at all, or only an empty one, or only with
@@ -1178,4 +1178,38 @@ fn a_placeholder_in_a_scripts_own_locator_is_checked_when_filled() {
     // A locator with no placeholder has nothing to check.
     let plain = one_step("Cycles", serde_json::json!([click(edit_in_card("10066"))]));
     assert!(!has_data_placeholders(&plain.steps));
+}
+
+/// A placeholder inside an id or class token, beside a literal part of it,
+/// stands for that token's seen characters: a fresh setup draft's id is
+/// never seen exactly, but its shape is.
+#[test]
+fn a_placeholder_inside_an_id_or_class_keeps_the_seen_tokens_shape() {
+    let map = map_with("Cycles", "/cycles", &[css("#c274"), css(".row-alpha")]);
+    let click_css = |c: &str| one_step("Cycles", serde_json::json!([click(serde_json::json!({ "css": c }))]));
+    assert_eq!(check_seen(&map, &none(), &click_css("#c{{setup.cycle_id}}"), &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &click_css(".row-{{fixture.rows.name}}"), &[], None), Ok(()));
+    // The literal part must be as seen, and the kind of token.
+    for c in ["#d{{setup.cycle_id}}", ".c{{setup.cycle_id}}", "#c{{setup.cycle_id}}x", "#{{setup.x}}", ".{{setup.x}}"] {
+        assert_eq!(check_seen(&map, &none(), &click_css(c), &[], None), Err(refusal(1, c)), "{c}");
+    }
+    // At run time, the filled value keeps the seen token's shape.
+    let saved = click_css("#c{{setup.cycle_id}}");
+    let run = |filled: &str| check_resolved_inputs(&map, &none(), &["Cycles"], &saved.steps, &click_css(filled).steps);
+    assert_eq!(run("#c10071"), Ok(()));
+    for filled in ["#c10071 .x", "#cdraft-7", "#c10071.x", "#c10071#y"] {
+        assert_eq!(
+            run(filled),
+            Err(format!("Step 1: {filled}, as filled in, does not fit what was seen on the live app")),
+            "{filled}"
+        );
+    }
+    // A class seen with letters takes any token characters, but nothing else.
+    let saved = click_css(".row-{{fixture.rows.name}}");
+    let run = |filled: &str| check_resolved_inputs(&map, &none(), &["Cycles"], &saved.steps, &click_css(filled).steps);
+    assert_eq!(run(".row-beta_2"), Ok(()));
+    assert_eq!(
+        run(".row-beta > .x"),
+        Err("Step 1: .row-beta > .x, as filled in, does not fit what was seen on the live app".to_string())
+    );
 }

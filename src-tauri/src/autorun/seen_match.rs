@@ -4,9 +4,14 @@
 //!
 //! A data placeholder is one the run fills in from a fixture or the setup
 //! (`{{fixture.<id>.<output>}}`, `{{setup.<output>}}`). In a name or a text
-//! it stands for a run of a seen value anywhere; in a css selector only
-//! inside a quoted attribute value (`[data-cycle-id="{{setup.cycle_id}}"]`).
-//! Anywhere else it is literal text, which no sighting holds.
+//! it stands for a run of a seen value anywhere. In a css selector it
+//! stands for one in two places only: inside a quoted attribute value
+//! (`[data-cycle-id="{{setup.cycle_id}}"]`), and inside an id or class
+//! token beside a literal part of that token (`#c{{setup.cycle_id}}`,
+//! `.row-{{fixture.n}}`), where it stands for letters, digits, `-` and
+//! `_` only. Anywhere else (a whole token, `#{{setup.x}}`; an element or
+//! combinator position, `{{setup.sel}}`, `div{{setup.x}}`) it is literal
+//! text, which no sighting holds.
 
 use crate::browser::locator::fold_name;
 
@@ -30,7 +35,33 @@ pub fn is_data_placeholder(name: &str) -> bool {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Piece {
     Lit(String),
+    /// A run with no quote in it.
     Wild,
+    /// A run of the characters an id or a class is written with
+    /// (`token_char`).
+    Token,
+}
+
+/// Does `pieces` hold a placeholder of either kind?
+pub(crate) fn has_wild(pieces: &[Piece]) -> bool {
+    pieces.iter().any(|p| !matches!(p, Piece::Lit(_)))
+}
+
+/// A character an id or a class token is written with here: an ASCII
+/// letter or digit, `-` or `_`.
+fn token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
+}
+
+/// Is the placeholder at byte `at` of `s`, ending at byte `end`, inside an
+/// id or class token that has a literal part beside it: token characters
+/// right before it back to a `#` or `.`, or right after it?
+fn in_token(s: &str, at: usize, end: usize) -> bool {
+    let before = &s[..at];
+    let prefix = before.len() - before.trim_end_matches(token_char).len();
+    let opens = before[..before.len() - prefix].ends_with(['#', '.']);
+    let suffix = s[end..].chars().next().is_some_and(token_char);
+    opens && (prefix > 0 || suffix)
 }
 
 fn push_lit(out: &mut Vec<Piece>, lit: &mut String) {
@@ -65,7 +96,8 @@ pub(crate) fn name_pieces(s: &str) -> Vec<Piece> {
 }
 
 /// A css selector cut at each data placeholder inside a quoted attribute
-/// value; one anywhere else stays literal.
+/// value (`Piece::Wild`) or inside an id or class token beside a literal
+/// part of it (`Piece::Token`); one anywhere else stays literal.
 pub(crate) fn css_pieces(s: &str) -> Vec<Piece> {
     let mut out = Vec::new();
     let mut lit = String::new();
@@ -81,6 +113,18 @@ pub(crate) fn css_pieces(s: &str) -> Vec<Piece> {
                     push_lit(&mut out, &mut lit);
                     out.push(Piece::Wild);
                     i += 2 + end + 2;
+                    continue;
+                }
+            }
+        }
+        if quote.is_none() && bracket == 0 && s[i..].starts_with("{{") {
+            let after = &s[i + 2..];
+            if let Some(end) = after.find("}}") {
+                let close = i + 2 + end + 2;
+                if is_data_placeholder(&after[..end]) && in_token(s, i, close) {
+                    push_lit(&mut out, &mut lit);
+                    out.push(Piece::Token);
+                    i = close;
                     continue;
                 }
             }
@@ -113,7 +157,7 @@ pub fn holds_data_placeholder(s: &str) -> bool {
 pub fn only_data_placeholders(s: &str) -> bool {
     name_pieces(s).iter().all(|p| match p {
         Piece::Lit(l) => !l.contains("{{") && !l.contains("}}"),
-        Piece::Wild => true,
+        Piece::Wild | Piece::Token => true,
     })
 }
 
@@ -122,7 +166,8 @@ fn is_quote(c: char) -> bool {
 }
 
 /// `pieces` matched against the whole of `seen`: what each placeholder
-/// stands for there (a non-empty run with no quote), or `None`.
+/// stands for there (a non-empty run: with no quote for `Piece::Wild`, of
+/// `token_char`s for `Piece::Token`), or `None`.
 pub(crate) fn fit(pieces: &[Piece], seen: &str) -> Option<Vec<String>> {
     fn go(pieces: &[Piece], s: &str, caps: &mut Vec<String>) -> bool {
         match pieces.split_first() {
@@ -131,9 +176,10 @@ pub(crate) fn fit(pieces: &[Piece], seen: &str) -> Option<Vec<String>> {
                 Some(after) => go(rest, after, caps),
                 None => false,
             },
-            Some((Piece::Wild, rest)) => {
+            Some((kind, rest)) => {
+                let token = *kind == Piece::Token;
                 for (i, c) in s.char_indices() {
-                    if is_quote(c) {
+                    if is_quote(c) || (token && !token_char(c)) {
                         break;
                     }
                     let end = i + c.len_utf8();
@@ -153,7 +199,7 @@ pub(crate) fn fit(pieces: &[Piece], seen: &str) -> Option<Vec<String>> {
 
 /// Do `pieces`, which hold a placeholder, fit `seen`?
 pub(crate) fn wild_fits(pieces: &[Piece], seen: &str) -> bool {
-    pieces.contains(&Piece::Wild) && fit(pieces, seen).is_some()
+    has_wild(pieces) && fit(pieces, seen).is_some()
 }
 
 /// Was each value a placeholder took at run time (`got`) the shape of what
