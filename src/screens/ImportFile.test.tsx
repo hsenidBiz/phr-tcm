@@ -131,7 +131,7 @@ test("an update with nothing to change is not submitted at all", async () => {
   // Nothing leaves the queue: both rows stay until the user removes them.
   // The written one says so; the skipped one wrote nothing, so it does not.
   await screen.findByText("UPLOADED");
-  const rows = [...document.querySelectorAll("li.rounded-md")];
+  const rows = [...document.querySelectorAll("[role='row']")];
   expect(rows.map((li) => li.textContent)).toEqual([
     expect.stringContaining("Unchanged"),
     expect.stringContaining("Edited now"),
@@ -264,7 +264,7 @@ test("import feeds the shared queue; failed items stay queued", async () => {
   const queueRow = (title: string) =>
     screen
       .getAllByText(title)
-      .map((el) => el.closest("li"))
+      .map((el) => el.closest("[role='row']"))
       .find((li) => li?.className.includes("rounded-md"));
   const good = queueRow("Good");
   expect(good, "the created case should still be queued").toBeTruthy();
@@ -279,7 +279,7 @@ test("import feeds the shared queue; failed items stay queued", async () => {
   // no failure ring. The rows themselves stay, and so does the new id.
   fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
   await waitFor(() => expect(screen.queryByText("UPLOADED")).not.toBeInTheDocument());
-  const rows = [...document.querySelectorAll("li.rounded-md")];
+  const rows = [...document.querySelectorAll("[role='row']")];
   expect(rows).toHaveLength(2);
   expect(rows[0].textContent).toContain("UPDATE #901");
   expect(rows.map((li) => li.className).join(" ")).not.toMatch(/border-danger|border-success/);
@@ -1017,7 +1017,7 @@ test("the app's own id write-back after a submit does not re-import the file", a
   await waitFor(() =>
     expect(screen.getAllByText("UPLOADED")).toHaveLength(2),
   );
-  expect(document.querySelectorAll("li.rounded-md")).toHaveLength(2);
+  expect(document.querySelectorAll("[role='row']")).toHaveLength(2);
   expect(screen.queryByText(/Loaded 2 cases/)).not.toBeInTheDocument();
 });
 
@@ -1076,7 +1076,7 @@ test("after an upload the rows stay, and a later file edit updates them in place
   });
 
   await screen.findByText("Brand new, renamed");
-  const rows = document.querySelectorAll("li.rounded-md");
+  const rows = document.querySelectorAll("[role='row']");
   expect(rows).toHaveLength(1);
   expect(rows[0].textContent).toContain("UPDATE #153450");
 });

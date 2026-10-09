@@ -127,6 +127,69 @@
     });
   }
 
+  // A page grouped by area (the Queue's Group by area) wraps the cases in
+  // nested <details class='tc-group'> sections. A section whose cases the
+  // search has all hidden goes too, so the filter does not leave a column
+  // of empty headings. On a flat page there are no sections and this does
+  // nothing.
+  //
+  // When the QUERY changes, a folded section holding a match opens, or the
+  // count would name cases nobody can see. Only then: not when the filter
+  // is re-applied for another reason (a match switch, a live refresh), and
+  // never a section the reader folds while the search is on - any section
+  // that was open at the last sync and is shut now was shut by them, so it
+  // stays shut for the rest of the search, whoever opened it. Clearing the
+  // search ends it and folds back what the search opened. Kept outside
+  // wireSearch, by section key, so a live refresh (which re-wires the
+  // search) keeps it.
+  var lastQuery = '';
+  var wasOpen = {};
+  var searchOpened = {};
+  var readerFolded = {};
+  function syncGroups(query) {
+    var groups = Array.prototype.slice.call(document.querySelectorAll('details.tc-group'));
+    var keyOf = function (g) { return g.getAttribute('data-area') || ''; };
+    var searching = lastQuery !== '';
+    var changed = query !== lastQuery;
+    lastQuery = query;
+    groups.forEach(function (g) {
+      g.classList.toggle('hidden', !g.querySelector('.case:not(.hidden)'));
+      var key = keyOf(g);
+      if (searching && wasOpen[key] && !g.hasAttribute('open')) {
+        delete searchOpened[key];
+        readerFolded[key] = true;
+      }
+    });
+    if (!query) {
+      if (changed) {
+        groups.forEach(function (g) {
+          if (searchOpened[keyOf(g)]) g.removeAttribute('open');
+        });
+      }
+      searchOpened = {};
+      readerFolded = {};
+    } else if (changed) {
+      groups.forEach(function (g) {
+        var key = keyOf(g);
+        if (g.hasAttribute('open') || readerFolded[key] || g.classList.contains('hidden')) return;
+        g.setAttribute('open', '');
+        searchOpened[key] = true;
+      });
+    }
+    wasOpen = {};
+    groups.forEach(function (g) {
+      if (g.hasAttribute('open')) wasOpen[keyOf(g)] = true;
+    });
+  }
+
+  // Go to bookmark can reach into a section the reader has folded: every
+  // section around `el` is opened first, or there is nothing to scroll to.
+  function openGroupsAround(el) {
+    for (var g = el && el.parentElement; g; g = g.parentElement) {
+      if (g.matches && g.matches('details.tc-group')) g.setAttribute('open', '');
+    }
+  }
+
   function wireSearch() {
     var input = document.getElementById('tc-search');
     var count = document.getElementById('tc-count');
@@ -202,6 +265,7 @@
         if (key === 'all') markHits(cards[i], found.mark);
         else Array.prototype.forEach.call(cards[i].querySelectorAll(FIELD_SEL[key]), function (el) { markHits(el, found.mark); });
       });
+      syncGroups(found.tests.length > 0 ? input.value : '');
       count.textContent = found.tests.length
         ? shown + ' of ' + total + ' shown'
         : total + ' test case' + (total !== 1 ? 's' : '');
@@ -538,6 +602,7 @@
     go.dataset.wired = '1';
     go.addEventListener('click', function () {
       var card = markedCase();
+      openGroupsAround(card);
       if (card && card.scrollIntoView) card.scrollIntoView({ block: 'center', behavior: 'smooth' });
     });
   }
@@ -606,14 +671,28 @@
   function detailsKey(d) {
     return caseTitle(d.closest('.case')) + '\n' + d.className;
   }
+  // An area section (a grouped page) is keyed by its folded path, which
+  // the renderer puts on it as data-area - so a section the reader folded
+  // stays folded through a live refresh, as a case's own sections do.
+  function groupKey(d) {
+    return 'area:' + (d.getAttribute('data-area') || '');
+  }
   function openState(root) {
     var out = {};
     Array.prototype.forEach.call(root.querySelectorAll('.case details'), function (d) {
       out[detailsKey(d)] = d.hasAttribute('open');
     });
+    Array.prototype.forEach.call(root.querySelectorAll('details.tc-group'), function (d) {
+      out[groupKey(d)] = d.hasAttribute('open');
+    });
     return out;
   }
   function restoreOpen(root, state) {
+    Array.prototype.forEach.call(root.querySelectorAll('details.tc-group'), function (d) {
+      var k = groupKey(d);
+      if (!Object.prototype.hasOwnProperty.call(state, k)) return;
+      if (state[k]) d.setAttribute('open', ''); else d.removeAttribute('open');
+    });
     Array.prototype.forEach.call(root.querySelectorAll('.case details'), function (d) {
       var k = detailsKey(d);
       if (!Object.prototype.hasOwnProperty.call(state, k)) return;

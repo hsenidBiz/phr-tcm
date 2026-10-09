@@ -610,6 +610,9 @@ fn render_queue_html(
 ///
 /// `owners` is the file each queued case came from, aligned with `queue`;
 /// an empty entry means the case was typed by hand and has no file.
+///
+/// `grouped` lays the cases out under nested sections by area, the way the
+/// Queue shows them while Group by area is on; false keeps the flat page.
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -622,8 +625,9 @@ pub async fn view_draft_html(
     pbi_id: i32,
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
+    grouped: bool,
 ) -> Result<(), String> {
-    let path_str = render_draft_html(&app, queue, subtitle, owners, keys, pbi_id, files, palette).await?;
+    let path_str = render_draft_html(&app, queue, subtitle, owners, keys, pbi_id, files, palette, grouped).await?;
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -645,8 +649,9 @@ pub async fn refresh_draft_html(
     pbi_id: i32,
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
+    grouped: bool,
 ) -> Result<(), String> {
-    render_draft_html(&app, queue, subtitle, owners, keys, pbi_id, files, palette).await.map(|_| ())
+    render_draft_html(&app, queue, subtitle, owners, keys, pbi_id, files, palette, grouped).await.map(|_| ())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -659,6 +664,7 @@ async fn render_draft_html(
     pbi_id: i32,
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
+    grouped: bool,
 ) -> Result<String, String> {
     // Stable per run, deliberately: the name used to carry `queue.len()`,
     // so re-exporting after an edit that changed the count wrote a DIFFERENT
@@ -693,7 +699,7 @@ async fn render_draft_html(
     });
     let page_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let tree = crate::test_map::write_beside(&queue, &subtitle, &palette, &page_name, crate::note_server::REPORT_DRAFT)?;
-    import_parser::export_queue_page(
+    import_parser::export_queue_page_in(
         &queue,
         &path_str,
         &subtitle,
@@ -701,6 +707,8 @@ async fn render_draft_html(
         &palette,
         tree.as_deref(),
         &specs,
+        // The Queue's Group by area, carried onto the page.
+        if grouped { import_parser::PageLayout::ByArea } else { import_parser::PageLayout::Flat },
     )?;
     // Where an open page can pull the fresh content from, and the signal
     // that it should: the poll sees the revision move, fetches /report,

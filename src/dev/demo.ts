@@ -1958,6 +1958,8 @@ export const CAPTURE_RESET = [
   "tcm-v2-view-collapsed-groups",
   "tcm-v2-run-collapsed-groups",
   "tcm-v2-manage-collapsed-groups",
+  "tcm-v2-queue-group",
+  "tcm-v2-queue-collapsed",
   "tcm-v2-runner-pinned",
   "tcm-v2-run-order:",
   "tcm-v2-run-order-view:",

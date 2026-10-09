@@ -248,6 +248,33 @@ pub fn export_queue_page(
     tree_href: Option<&str>,
     specs: &[crate::spec_pane::SpecDoc],
 ) -> Result<(), String> {
+    export_queue_page_in(queue, path, subtitle, ctx, palette, tree_href, specs, PageLayout::Flat)
+}
+
+/// How the cases are laid out down the page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageLayout {
+    /// One case after another, in queue order - the page as it always was.
+    Flat,
+    /// Under nested, foldable sections by area, the way the Queue shows
+    /// them when Group by area is on (`area_groups`): sections in the
+    /// order of their first case, "No area" last. Each case block is
+    /// the same markup either way.
+    ByArea,
+}
+
+/// `export_queue_page`, laid out as `layout` says.
+#[allow(clippy::too_many_arguments)]
+pub fn export_queue_page_in(
+    queue: &[TestCase],
+    path: &str,
+    subtitle: &str,
+    ctx: Option<CommentCtx>,
+    palette: &crate::webtheme::PagePalette,
+    tree_href: Option<&str>,
+    specs: &[crate::spec_pane::SpecDoc],
+    layout: PageLayout,
+) -> Result<(), String> {
     // The side column only exists for a draft that came from files. Without
     // it the page keeps its original single centred column.
     let files: &[DraftFile] = match &ctx {
@@ -383,7 +410,12 @@ pub fn export_queue_page(
         "<span id='tc-count'></span></div>".into(),
         "<p id='tc-no-match' class='no-match hidden'>No test cases match your search.</p>".into(),
     ];
+    // Each case's markup, by queue index. Built in queue order whatever the
+    // layout, so the comment-box slots and the bookmark keys are the same
+    // whether the page is flat or grouped by area.
+    let mut blocks: Vec<String> = Vec::with_capacity(queue.len());
     for (idx, tc) in queue.iter().enumerate() {
+        let mut block: Vec<String> = vec![];
         // What the bookmark points at, and it has to survive a re-render: a
         // work item is its own identity, and a case that has none is keyed
         // by the slot its comment box is addressed by.
@@ -391,7 +423,7 @@ pub fn export_queue_page(
             .update_id
             .map(|id| id.to_string())
             .unwrap_or_else(|| format!("d{idx}"));
-        parts.push(format!("<div class='case' data-key='{key}'>"));
+        block.push(format!("<div class='case' data-key='{key}'>"));
         let wid = tc
             .update_id
             .map(|id| format!("<span class='wid'>#{id}</span>"))
@@ -413,7 +445,7 @@ pub fn export_queue_page(
         // Numbered by position in the page, and NOT renumbered when the
         // search filter hides some: "case 7" has to mean the same thing
         // before and after someone types in the box.
-        parts.push(format!(
+        block.push(format!(
             "<h2><span class='seq'>{}</span>{op}{wid}<span class='title'>{}</span>{MARK_BUTTON}</h2>",
             idx + 1,
             esc(&tc.title)
@@ -452,7 +484,7 @@ pub fn export_queue_page(
             ));
         }
         if !rows.is_empty() {
-            parts.push(format!("<div class='meta'>{}</div>", rows.join("")));
+            block.push(format!("<div class='meta'>{}</div>", rows.join("")));
         }
 
         // Every case shows a Prerequisites block, even when empty (v1 rule).
@@ -462,7 +494,7 @@ pub fn export_queue_page(
         } else {
             esc(prereq)
         };
-        parts.push(format!("<p class='pre'><b>Prerequisites:</b> {prereq_html}</p>"));
+        block.push(format!("<p class='pre'><b>Prerequisites:</b> {prereq_html}</p>"));
 
         // Reviewer notes: where this case came from in the spec. Open by
         // default - the whole reason the field exists is that matching a
@@ -481,7 +513,7 @@ pub fn export_queue_page(
         // individually closed ones - one button that undoes everything
         // beats remembering which x was clicked where.
         if !tc.reviewer_notes.trim().is_empty() {
-            parts.push(format!(
+            block.push(format!(
                 "<div class='rev-wrap'><details class='rev' open><summary>Reviewer notes\
                  <button type='button' class='rev-close' aria-label='Hide these reviewer notes' \
                  title='Hide these reviewer notes'>&#215;</button></summary>\
@@ -497,7 +529,7 @@ pub fn export_queue_page(
         // nobody reads. Markdown through crate::markdown, which drops raw
         // HTML, so an assistant cannot put script on this page.
         if !tc.findings.is_empty() {
-            parts.push(format!(
+            block.push(format!(
                 "<div class='find-wrap'><details class='findings' open><summary>Findings ({})\
                  <button type='button' class='find-close' aria-label='Hide these findings' \
                  title='Hide these findings'>&#215;</button></summary>",
@@ -520,27 +552,27 @@ pub fn export_queue_page(
                 } else {
                     format!("<div class='fdetail'>{}</div>", crate::markdown::to_html(&f.detail))
                 };
-                parts.push(format!(
+                block.push(format!(
                     "<article class='finding'><div class='meta'><span class='kind'>{}</span>{subject}</div>\
                      <p class='ftitle'>{}</p>{detail}</article>",
                     esc(kind),
                     esc(&f.title)
                 ));
             }
-            parts.push("</details></div>".into());
+            block.push("</details></div>".into());
         }
 
         if !tc.steps.is_empty() {
-            parts.push("<table><tr><th>#</th><th>Action</th><th>Expected result</th></tr>".into());
+            block.push("<table><tr><th>#</th><th>Action</th><th>Expected result</th></tr>".into());
             for (i, step) in tc.steps.iter().enumerate() {
-                parts.push(format!(
+                block.push(format!(
                     "<tr><td class='num'>{}</td><td class='action'>{}</td><td class='expected'>{}</td></tr>",
                     i + 1,
                     esc(&step.action),
                     esc(&step.expected)
                 ));
             }
-            parts.push("</table>".into());
+            block.push("</table>".into());
         }
         match &ctx {
             // An existing case: its note is the app's own scratchpad, so
@@ -548,7 +580,7 @@ pub fn export_queue_page(
             Some(CommentCtx::Ado(c)) => {
                 if let Some(id) = tc.update_id {
                     let existing = c.notes.get(&id.to_string()).map(String::as_str).unwrap_or("");
-                    parts.push(note_box(
+                    block.push(note_box(
                         &format!("nb-{id}"),
                         &format!("data-ado='{id}'"),
                         "e.g. Step 3 needs the new confirmation dialog (saved in the app, on this device only)",
@@ -570,7 +602,7 @@ pub fn export_queue_page(
                 } else {
                     "Saved with the draft in the app"
                 };
-                parts.push(note_box(
+                block.push(note_box(
                     &format!("nb-d{slot}"),
                     &format!("data-case='{slot}'"),
                     hint,
@@ -579,7 +611,16 @@ pub fn export_queue_page(
             }
             None => {}
         }
-        parts.push("</div>".into());
+        block.push("</div>".into());
+        blocks.push(block.join("\n"));
+    }
+    match layout {
+        PageLayout::Flat => parts.extend(blocks),
+        PageLayout::ByArea => {
+            for g in super::area_groups::build(queue) {
+                push_area_group(&mut parts, &g, &blocks, 0);
+            }
+        }
     }
     // Comment-box identities ride INSIDE the swappable content as inert
     // JSON, not as script vars outside it. When the page pulls a fresh
@@ -680,6 +721,36 @@ pub fn export_queue_page(
     }
     parts.push("</body></html>".into());
     std::fs::write(path, parts.join("\n")).map_err(|e| e.to_string())
+}
+
+/// One area section of a grouped page: a native disclosure, open, whose
+/// summary names the area and how many cases sit under it (nested
+/// included), holding its own cases and then its subsections. Native, so
+/// it folds with no script at all; the page's script only keeps the fold
+/// across a live refresh and hides a section its search emptied.
+fn push_area_group(parts: &mut Vec<String>, g: &super::area_groups::AreaGroup, blocks: &[String], level: usize) {
+    // The bucket for cases with no area (key "") is set apart from a real
+    // area that happens to share its name: in italics, with a tooltip.
+    let name_attrs = if g.key.is_empty() {
+        "class='tc-group-name tc-no-area' title='Cases with no area'"
+    } else {
+        "class='tc-group-name'"
+    };
+    parts.push(format!(
+        "<details class='tc-group' open data-area='{}' data-level='{level}'><summary>\
+         <span {name_attrs}>{}</span> <span class='tc-group-count'>({})</span></summary>\
+         <div class='tc-group-body'>",
+        esc_attr(&g.key),
+        esc(&g.name),
+        g.count
+    ));
+    for &i in &g.indices {
+        parts.push(blocks[i].clone());
+    }
+    for c in &g.children {
+        push_area_group(parts, c, blocks, level + 1);
+    }
+    parts.push("</div></details>".into());
 }
 
 /// One labelled, autosaving comment box. `hook` is the data attribute that

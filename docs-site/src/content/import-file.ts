@@ -7,7 +7,9 @@
 // CAPTURE_QUEUE): a new case with a comment and reviewer notes, an update
 // of #5002 whose title changed, and a new case titled like #5001, which the
 // duplicate check stops. Each row's Edit and Remove buttons are named for
-// their case ("Edit <title>", "Remove <title> from the queue").
+// their case ("Edit <title>", "Remove <title> from the queue"). A row itself
+// is named by its title and then its badges ("<title> NEW"), so routes find
+// it with a nameRe anchored on the title.
 //
 // Watched files, specs, general comments, change reports and Recent JSON
 // Imports only appear after a real file has been imported from disk, which
@@ -63,17 +65,17 @@ export const importFile: Screen = {
       id: SELECTED,
       route: [
         { nav: "Import Test Cases" },
-        { click: { role: "checkbox", name: `Select ${FIRST}` } },
-        { click: { role: "checkbox", name: `Select ${THIRD}` } },
+        { click: { role: "row", nameRe: `^${FIRST} ` } },
+        { ctrlClick: { role: "row", nameRe: `^${THIRD} ` } },
       ],
-      alt: "Two queued cases ticked, with the bulk actions",
+      alt: "Two queued cases selected, with the bulk actions",
     },
     {
       id: BULK,
       route: [
         { nav: "Import Test Cases" },
-        { click: { role: "checkbox", name: `Select ${FIRST}` } },
-        { click: { role: "checkbox", name: `Select ${THIRD}` } },
+        { click: { role: "row", nameRe: `^${FIRST} ` } },
+        { ctrlClick: { role: "row", nameRe: `^${THIRD} ` } },
         { click: { role: "button", name: "Bulk edit" } },
         { waitFor: { role: "button", nameRe: "^Apply to \\d+$" } },
       ],
@@ -83,12 +85,12 @@ export const importFile: Screen = {
       id: RENAME,
       route: [
         { nav: "Import Test Cases" },
-        { click: { role: "checkbox", name: `Select ${FIRST}` } },
-        { click: { role: "checkbox", name: `Select ${THIRD}` } },
+        { click: { role: "row", nameRe: `^${FIRST} ` } },
+        { ctrlClick: { role: "row", nameRe: `^${THIRD} ` } },
         { click: { role: "button", nameRe: "^Rename \\d+$" } },
         { waitFor: { role: "textbox", name: "Find" } },
       ],
-      alt: "The rename window for two ticked queued cases",
+      alt: "The rename window for two selected queued cases",
     },
     {
       id: REVIEW,
@@ -104,8 +106,8 @@ export const importFile: Screen = {
       id: RESULTS,
       route: [
         { nav: "Import Test Cases" },
-        { click: { role: "checkbox", name: `Select ${FIRST}` } },
-        { click: { role: "checkbox", name: `Select ${THIRD}` } },
+        { click: { role: "row", nameRe: `^${FIRST} ` } },
+        { ctrlClick: { role: "row", nameRe: `^${THIRD} ` } },
         { click: { role: "button", name: "Remove 2" } },
         { click: { role: "button", nameRe: "^Review \\d+ test cases?$" } },
         { click: { role: "button", nameRe: "^Confirm & update" } },
@@ -119,7 +121,7 @@ export const importFile: Screen = {
     { id: "the-queue", title: "The queue", summary: "Everything waiting to be uploaded, with what you can do to all of it." },
     { id: "queued-cases", title: "A queued case", summary: "Each row is one case: open it to see its steps, or to see what an update will change." },
     { id: "edit-case", title: "Edit a queued case", summary: "Change a case in the queue before it is uploaded." },
-    { id: "many-at-once", title: "Change many cases at once", summary: "Tick cases to edit, rename or remove them together." },
+    { id: "many-at-once", title: "Change many cases at once", summary: "Select cases to edit, rename or remove them together." },
     { id: "upload", title: "Review and upload", summary: "A last look at every case, then the upload and its results." },
   ],
   controls: [
@@ -208,21 +210,40 @@ export const importFile: Screen = {
       does: "Sorts the queue to follow the specification document, so a reviewer can read both side by side.",
     },
     {
+      id: "group-by-area",
+      shot: QUEUE,
+      group: "the-queue",
+      locate: { role: "switch", name: "Group by area" },
+      name: "Group by area",
+      does:
+        "Shows the queue under a heading for each area, one level for each part of the area's path, in the order the cases come. " +
+        "Each heading counts the cases under it. Click its name or its arrow to fold it; tick its box to select every case under it, nested included (a dash means some are). " +
+        "Cases with no area sit under **No area**, in italics, last. " +
+        "Only the view changes: the cases are still uploaded in queue order, and **View in browser** groups its page the same way.",
+      tips: ["The switch and the groups you fold are remembered on this computer."],
+    },
+    {
       id: "select-all",
       shot: QUEUE,
       group: "queued-cases",
       locate: { role: "checkbox", name: "Select all queued cases" },
       name: "Select cases for bulk actions",
-      does: "Ticks every case, ready for a bulk action.",
+      does: "Selects every case, ready for a bulk action.",
     },
     {
       id: "row-select",
       shot: QUEUE,
       group: "queued-cases",
-      locate: { role: "checkbox", name: `Select ${FIRST}` },
+      locate: { role: "row", nameRe: `^${FIRST} ` },
       name: "A queued case",
       does:
-        "One row per case. Its box ticks it for a bulk action; hold [[Shift]] and click another box to tick everything in between.",
+        "One row per case. Click it to select it; click it again to clear. [[Ctrl]]+click adds or removes one case, [[Shift]]+click selects a range. " +
+        "Its buttons and links do their own job and leave the selection alone.",
+      tips: [
+        "The queue is one [[Tab]] stop: [[Up]] and [[Down]] move between cases, [[Home]] and [[End]] jump to the first and last, [[Space]] selects, [[Ctrl]]+[[Space]] adds or removes one, and [[Shift]]+[[Down]] or [[Shift]]+[[Up]] extends the selection.",
+        "Double-clicking a word or dragging across the text to copy it leaves the selection as it was.",
+        "When the queue is grouped by area, a [[Shift]]+click range runs over the cases on screen and skips folded groups.",
+      ],
     },
     {
       id: "expand-steps",
@@ -423,7 +444,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { text: "2 of 3 selected" },
       name: "Selected",
-      does: "How many cases are ticked.",
+      does: "How many cases are selected.",
     },
     {
       id: "bulk-edit",
@@ -431,7 +452,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "button", name: "Bulk edit" },
       name: "Bulk edit",
-      does: "Changes the automation status, module, tags or preconditions of every ticked case at once.",
+      does: "Changes the automation status, module, tags or preconditions of every selected case at once.",
     },
     {
       id: "rename-selected",
@@ -439,7 +460,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "button", name: "Rename 2" },
       name: "Rename",
-      does: "Opens the rename window for the ticked cases only.",
+      does: "Opens the rename window for the selected cases only.",
     },
     {
       id: "remove-selected",
@@ -447,7 +468,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "button", name: "Remove 2" },
       name: "Remove",
-      does: "Takes the ticked cases out of the queue.",
+      does: "Takes the selected cases out of the queue.",
     },
     {
       id: "bulk-status",
@@ -455,7 +476,7 @@ export const importFile: Screen = {
       group: "many-at-once",
       locate: { role: "combobox", name: "Automation status" },
       name: "Automation status",
-      does: "Leave it unchanged, or set every ticked case to **Not Automated** or **Planned**.",
+      does: "Leave it unchanged, or set every selected case to **Not Automated** or **Planned**.",
     },
     {
       id: "bulk-module",

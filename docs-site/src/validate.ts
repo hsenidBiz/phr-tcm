@@ -57,6 +57,7 @@ function stepProblem(step: unknown): string | null {
     case "press":
       return nonEmpty(s[kind]) ? null : `${kind} is empty`;
     case "click":
+    case "ctrlClick":
     case "activate":
     case "waitFor":
     case "scrollTo":

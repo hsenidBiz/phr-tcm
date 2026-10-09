@@ -18,6 +18,7 @@ export type Locate =
 export type Step =
   | { nav: string } // sidebar item's visible label, e.g. "Run Tests"
   | { click: Locate }
+  | { ctrlClick: Locate } // a click with Ctrl (Cmd on a Mac) held - adds a row to a selection
   | { activate: Locate } // a click sent to the element itself, for a control reached by keyboard that the page draws something over (the Test map's case list)
   | { press: string } // e.g. "Control+K", "Escape"
   | { waitFor: Locate }

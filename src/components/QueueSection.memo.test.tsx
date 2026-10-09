@@ -107,7 +107,7 @@ test("selecting a row re-renders that row only", async () => {
   await new Promise((r) => setTimeout(r, 50));
   const before = rowRenders;
 
-  fireEvent.click(screen.getByRole("checkbox", { name: "Select Case 1" }));
-  expect(screen.getByRole("checkbox", { name: "Select Case 1" })).toHaveAttribute("aria-checked", "true");
+  fireEvent.click(screen.getByRole("row", { name: /^Case 1 / }));
+  expect(screen.getByRole("row", { name: /^Case 1 / })).toHaveAttribute("aria-selected", "true");
   expect(rowRenders).toBe(before + 1);
 });
