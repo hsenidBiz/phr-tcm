@@ -1213,3 +1213,65 @@ fn a_placeholder_inside_an_id_or_class_keeps_the_seen_tokens_shape() {
         Err("Step 1: .row-beta > .x, as filled in, does not fit what was seen on the live app".to_string())
     );
 }
+
+/// A placeholder is found in the name as written, the way the run finds
+/// it: one the run would not fill (`{{Setup.x}}`) is literal text, never a
+/// wildcard.
+#[test]
+fn a_placeholder_the_run_would_not_fill_is_literal_text() {
+    let map = map_with("Cycles", "/cycles", &[role("button", "Save"), text("Saved")]);
+    let with = |selector: serde_json::Value| one_step("Cycles", serde_json::json!([click(selector)]));
+    for (selector, what) in [
+        (serde_json::json!({ "role": "button", "name": "{{Setup.x}}" }), "button \"{{Setup.x}}\""),
+        (serde_json::json!({ "role": "button", "name": "{{SETUP.x}}" }), "button \"{{SETUP.x}}\""),
+        (serde_json::json!({ "text": "{{FIXTURE.a.b}}" }), "text \"{{FIXTURE.a.b}}\""),
+    ] {
+        let s = with(selector);
+        assert!(!has_data_placeholders(&s.steps), "{what}");
+        assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(refusal(1, what)), "{what}");
+    }
+    // As the run writes it, it is a wildcard as before.
+    assert_eq!(check_seen(&map, &none(), &with(serde_json::json!({ "role": "button", "name": "{{setup.x}}" })), &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &with(serde_json::json!({ "text": "{{fixture.a.b}}" })), &[], None), Ok(()));
+}
+
+/// A date picker is known by what was seen of it, never by a word a
+/// placeholder holds.
+#[test]
+fn a_placeholder_never_names_a_date_picker() {
+    let map = map_with("Leave", "/leave", &[role("dialog", "Leave request"), css("div.panel[data-x=\"abc\"]")]);
+    for (picker, describe) in [
+        (serde_json::json!({ "role": "dialog", "name": "{{setup.date}}" }), "dialog \"{{setup.date}}\""),
+        (serde_json::json!({ "role": "dialog", "name": "{{setup.calendar}}" }), "dialog \"{{setup.calendar}}\""),
+        (serde_json::json!({ "css": "div.panel[data-x=\"{{setup.calendar}}\"]" }), "div.panel[data-x=\"{{setup.calendar}}\"]"),
+    ] {
+        let s = one_step("Leave", serde_json::json!([click(serde_json::json!([picker, { "role": "button", "name": "15/01/2027" }]))]));
+        assert_eq!(
+            check_seen(&map, &none(), &s, &[], None),
+            Err(refusal(1, &format!("button \"15/01/2027\" in {describe}"))),
+            "{describe}"
+        );
+    }
+}
+
+/// A filled value cannot leave the quotes or the bracket it was put in,
+/// and an escaped quote never opens or closes a value.
+#[test]
+fn a_filled_value_cannot_break_out_of_its_quotes() {
+    let map = map_with("Cycles", "/cycles", &[css("[x=\"abc\"]"), css("[y=\\\"abc\\\"]")]);
+    let at = |c: &str| one_step("Cycles", serde_json::json!([click(serde_json::json!({ "css": c }))]));
+    let saved = at("[x=\"{{setup.v}}\"]");
+    assert_eq!(check_seen(&map, &none(), &saved, &[], None), Ok(()));
+    let run = |filled: &str| check_resolved_inputs(&map, &none(), &["Cycles"], &saved.steps, &at(filled).steps);
+    assert_eq!(run("[x=\"ok-1\"]"), Ok(()));
+    for filled in ["[x=\"a], .evil, [y=\"]", "[x=\"a b\"]", "[x=\"a\\\\\"]", "[x=\"a,b\"]"] {
+        assert_eq!(
+            run(filled),
+            Err(format!("Step 1: {filled}, as filled in, does not fit what was seen on the live app")),
+            "{filled}"
+        );
+    }
+    // Outside a real quote (here escaped), the placeholder is literal.
+    let escaped = "[y=\\\"{{setup.v}}\\\"]";
+    assert_eq!(check_seen(&map, &none(), &at(escaped), &[], None), Err(refusal(1, escaped)));
+}

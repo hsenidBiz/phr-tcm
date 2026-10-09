@@ -95,9 +95,69 @@ pub(crate) fn name_pieces(s: &str) -> Vec<Piece> {
     out
 }
 
+/// A name or a text as the check compares it with a sighting: its data
+/// placeholders found in the raw text, case-sensitively as the run finds
+/// them (`is_data_placeholder`), and only then the rest folded
+/// (`norm_name`). A `{{Setup.x}}` the run would never fill stays literal
+/// text, which must match a seen name as written.
+pub(crate) fn name_pattern(raw: &str) -> Vec<Piece> {
+    // A private-use character stands in for each placeholder while the
+    // rest is folded; a name already holding one is all literal.
+    const MARK: char = '\u{E000}';
+    if raw.contains(MARK) {
+        return vec![Piece::Lit(norm_name(raw))];
+    }
+    let marked: String = name_pieces(raw)
+        .into_iter()
+        .map(|p| match p {
+            Piece::Lit(l) => l,
+            _ => MARK.to_string(),
+        })
+        .collect();
+    let folded = norm_name(&marked);
+    let mut out = Vec::new();
+    for (i, part) in folded.split(MARK).enumerate() {
+        if i > 0 {
+            out.push(Piece::Wild);
+        }
+        if !part.is_empty() {
+            out.push(Piece::Lit(part.to_string()));
+        }
+    }
+    out
+}
+
+/// `s` with every `{{...}}` taken out: what it says without the values a
+/// run would put in.
+pub(crate) fn without_placeholders(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = rest.find("{{") {
+        out.push_str(&rest[..at]);
+        match rest[at + 2..].find("}}") {
+            Some(end) => rest = &rest[at + 2 + end + 2..],
+            None => {
+                rest = &rest[at..];
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Can a value a run filled into a css selector stay inside the value it
+/// was put in: no quote, backslash, `]`, comma or whitespace, any of which
+/// could close the value or the bracket and start another selector?
+pub(crate) fn safe_filled(v: &str) -> bool {
+    !v.chars().any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '\\' | ']' | ','))
+}
+
 /// A css selector cut at each data placeholder inside a quoted attribute
 /// value (`Piece::Wild`) or inside an id or class token beside a literal
-/// part of it (`Piece::Token`); one anywhere else stays literal.
+/// part of it (`Piece::Token`); one anywhere else stays literal. A
+/// backslash escapes the character after it: an escaped quote neither
+/// opens nor closes a value.
 pub(crate) fn css_pieces(s: &str) -> Vec<Piece> {
     let mut out = Vec::new();
     let mut lit = String::new();
@@ -105,6 +165,15 @@ pub(crate) fn css_pieces(s: &str) -> Vec<Piece> {
     let mut bracket = 0usize;
     let mut i = 0;
     while let Some(c) = s[i..].chars().next() {
+        if c == '\\' {
+            lit.push(c);
+            i += 1;
+            if let Some(next) = s[i..].chars().next() {
+                lit.push(next);
+                i += next.len_utf8();
+            }
+            continue;
+        }
         if quote.is_some() && bracket > 0 && s[i..].starts_with("{{") {
             let after = &s[i + 2..];
             if let Some(end) = after.find("}}") {
@@ -166,8 +235,8 @@ fn is_quote(c: char) -> bool {
 }
 
 /// `pieces` matched against the whole of `seen`: what each placeholder
-/// stands for there (a non-empty run: with no quote for `Piece::Wild`, of
-/// `token_char`s for `Piece::Token`), or `None`.
+/// stands for there (a non-empty run: with no quote or backslash for
+/// `Piece::Wild`, of `token_char`s for `Piece::Token`), or `None`.
 pub(crate) fn fit(pieces: &[Piece], seen: &str) -> Option<Vec<String>> {
     fn go(pieces: &[Piece], s: &str, caps: &mut Vec<String>) -> bool {
         match pieces.split_first() {
@@ -179,7 +248,7 @@ pub(crate) fn fit(pieces: &[Piece], seen: &str) -> Option<Vec<String>> {
             Some((kind, rest)) => {
                 let token = *kind == Piece::Token;
                 for (i, c) in s.char_indices() {
-                    if is_quote(c) || (token && !token_char(c)) {
+                    if is_quote(c) || c == '\\' || (token && !token_char(c)) {
                         break;
                     }
                     let end = i + c.len_utf8();

@@ -61,8 +61,8 @@ use super::components::{expand, find, not_saved, Component, ComponentFile};
 use super::discovery_map::{page_path, path_only, seen_keys, seen_links, seen_locators, seen_paths, DiscoveryMap};
 use super::edits::Edit;
 use super::seen_match::{
-    attribute_tails, css_pieces, descendant_splits, filter_attributes, fit, has_wild, is_ddmmyyyy, name_pieces, parse_date,
-    same_shape, split_filters, strip_states, wild_fits, Date, Filter, Piece,
+    attribute_tails, css_pieces, descendant_splits, filter_attributes, fit, has_wild, is_ddmmyyyy, name_pattern, parse_date,
+    safe_filled, same_shape, split_filters, strip_states, wild_fits, without_placeholders, Date, Filter, Piece,
 };
 pub use super::seen_match::{holds_data_placeholder, is_data_placeholder, norm_name, only_data_placeholders};
 use super::{CaseScript, StepScript};
@@ -169,15 +169,16 @@ fn in_roles(link: &LocatorStep, roles: &[&str]) -> bool {
 
 /// Does this link name a date picker: one of `PICKER_ROLES` whose name has
 /// "date" as a word, or "calendar" or "datepicker"; or a css selector
-/// holding "datepicker", "date-picker" or "calendar"?
+/// holding "datepicker", "date-picker" or "calendar"? Read without its
+/// placeholders: a word a run would put in names nothing that was seen.
 fn is_date_picker(link: &LocatorStep) -> bool {
     let by_role = in_roles(link, &PICKER_ROLES)
         && link.name.as_deref().is_some_and(|n| {
-            let n = n.to_lowercase();
+            let n = without_placeholders(n).to_lowercase();
             has_phrase(&n, "date") || n.contains("calendar") || n.contains("datepicker")
         });
     let by_css = link.css.as_deref().is_some_and(|c| {
-        let c = c.to_lowercase();
+        let c = without_placeholders(c).to_lowercase();
         c.contains("datepicker") || c.contains("date-picker") || c.contains("calendar")
     });
     by_role || by_css
@@ -234,14 +235,16 @@ impl Sightings {
         if link.seen_key().is_some_and(|k| self.keys.contains(&k)) {
             return true;
         }
-        let fits = |want: &str, seen: &str| want == seen || (wild && wild_fits(&name_pieces(want), seen));
+        // The placeholders are found in the raw name before it is folded
+        // (`name_pattern`): folding first would turn a `{{Setup.x}}` the
+        // run never fills into one it does.
+        let fits = |raw: &str, seen: &str| norm_name(raw) == seen || (wild && wild_fits(&name_pattern(raw), seen));
         if let Some(role) = &link.role {
-            let (r, n) = (fold_name(role), norm_name(link.name.as_deref().unwrap_or("")));
-            return self.roles.iter().any(|(sr, sn, _)| *sr == r && fits(&n, sn));
+            let (r, n) = (fold_name(role), link.name.as_deref().unwrap_or(""));
+            return self.roles.iter().any(|(sr, sn, _)| *sr == r && fits(n, sn));
         }
         if let Some(t) = &link.text {
-            let n = norm_name(t);
-            return self.texts.iter().any(|(sn, _)| fits(&n, sn));
+            return self.texts.iter().any(|(sn, _)| fits(t, sn));
         }
         link.css.as_deref().is_some_and(|c| self.css_seen(c, wild, 0))
     }
@@ -353,14 +356,14 @@ impl Sightings {
             let r = fold_name(role);
             let seen = self.roles.iter().filter(|(sr, ..)| *sr == r).map(|(_, n, _)| n.as_str());
             return shaped(
-                &name_pieces(&norm_name(template.name.as_deref().unwrap_or(""))),
+                &name_pattern(template.name.as_deref().unwrap_or("")),
                 &norm_name(filled.name.as_deref().unwrap_or("")),
                 seen,
             );
         }
         if let Some(t) = &filled.text {
             let seen = self.texts.iter().map(|(n, _)| n.as_str());
-            return shaped(&name_pieces(&norm_name(template.text.as_deref().unwrap_or(""))), &norm_name(t), seen);
+            return shaped(&name_pattern(template.text.as_deref().unwrap_or("")), &norm_name(t), seen);
         }
         let (Some(written), Some(c)) = (template.css.as_deref(), filled.css.as_deref()) else { return false };
         if !self.css_seen(written, true, 0) {
@@ -368,8 +371,13 @@ impl Sightings {
         }
         let (want_base, want_inners) = split_filters(&strip_states(written));
         let (got_base, got_inners) = split_filters(&strip_states(c));
+        // A value filled into a selector must stay inside the value or the
+        // token it was put in (`safe_filled`).
+        let stays = |p: &[Piece], got: &str| fit(p, got).is_some_and(|took| took.iter().all(|v| safe_filled(v)));
+        let base_pieces = css_pieces(&want_base);
         if want_inners.len() != got_inners.len()
-            || !shaped(&css_pieces(&want_base), &got_base, self.css.iter().map(String::as_str))
+            || !stays(&base_pieces, &got_base)
+            || !shaped(&base_pieces, &got_base, self.css.iter().map(String::as_str))
         {
             return false;
         }
@@ -382,12 +390,15 @@ impl Sightings {
                 return want == got;
             }
             let Some(took) = fit(&p, got) else { return false };
+            if !took.iter().all(|v| safe_filled(v)) {
+                return false;
+            }
             let parts = if filter_attributes(want).is_some() { self.attribute_parts() } else { self.css_parts() };
             let stood: Vec<Vec<String>> = parts.into_iter().filter_map(|s| fit(&p, s)).collect();
             // An attribute filter is checked by its attribute's name at
             // save (`carries`), so a value may have nothing seen to be
             // shaped by (`*=` against a seen `=`): then filled, non-empty
-            // and quote-free is all that can be asked.
+            // and unable to leave its value is all that can be asked.
             stood.is_empty() || stood.iter().any(|s| same_shape(s, &took))
         })
     }
