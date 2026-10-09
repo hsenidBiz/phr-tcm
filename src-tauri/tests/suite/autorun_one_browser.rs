@@ -388,11 +388,16 @@ async fn a_browser_that_will_not_open_reports_no_url() {
     assert_eq!(w.closes, 1, "and it is not left running");
 }
 
+/// A page that does not say its context is not known to be another
+/// case's: with cases run one at a time, no other context is live. It is
+/// one of this case's tabs, and while the run is guarded it is guarded
+/// before it runs. It is never let run bare.
 #[tokio::test]
-async fn a_page_that_does_not_say_its_context_is_never_the_cases() {
+async fn a_page_that_does_not_say_its_context_is_guarded_before_it_runs() {
     let dir = tempfile::tempdir().unwrap();
     let (mut b, world) = browsers(dir.path());
     let mut d = b.open().await.unwrap();
+    d.guard_saves(&[]).await.unwrap();
     d.transport_mut().incoming.push_back(
         json!({ "method": "Target.attachedToTarget", "params": {
             "sessionId": "S-unsaid", "waitingForDebugger": true,
@@ -401,10 +406,24 @@ async fn a_page_that_does_not_say_its_context_is_never_the_cases() {
         .to_string(),
     );
     d.pump(Duration::from_millis(50)).await;
-    assert_eq!(d.tabs().len(), 1, "only the case's own page");
+    assert_eq!(d.tabs().len(), 2, "the page is one of the case's tabs");
     let w = world.lock().unwrap();
-    assert!(w.sent("Target.detachFromTarget").iter().any(|(_, f)| f["params"]["sessionId"] == "S-unsaid"));
-    assert!(w.sent("Runtime.runIfWaitingForDebugger").iter().any(|(_, f)| f["sessionId"] == "S-unsaid"));
+    let on_it: Vec<(usize, &str)> = w
+        .sent
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, f))| f["sessionId"] == "S-unsaid")
+        .map(|(i, (_, f))| (i, f["method"].as_str().unwrap_or("")))
+        .collect();
+    let guarded = on_it.iter().find(|(_, m)| *m == "Fetch.enable").map(|(i, _)| *i);
+    let ran = on_it.iter().find(|(_, m)| *m == "Runtime.runIfWaitingForDebugger").map(|(i, _)| *i);
+    let guarded = guarded.unwrap_or_else(|| panic!("its interception was never asked: {on_it:?}"));
+    let ran = ran.unwrap_or_else(|| panic!("it was left paused: {on_it:?}"));
+    assert!(guarded < ran, "it ran before it was guarded: {on_it:?}");
+    assert!(
+        !w.sent("Target.detachFromTarget").iter().any(|(_, f)| f["params"]["sessionId"] == "S-unsaid"),
+        "it was let go unguarded"
+    );
 }
 
 #[tokio::test]

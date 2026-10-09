@@ -1502,11 +1502,16 @@ impl<T: Transport> Cdp<T> {
         let page = info["type"].as_str() == Some("page");
         let waiting = p["waitingForDebugger"].as_bool().unwrap_or(false);
         let known = self.tabs.iter().any(|t| t.target_id == target || t.session_id == session);
-        // A page in another context is another case's, or the browser's
-        // own default context's: let run, and let go. One that does not
-        // say its context is not known to be this case's, so it is let go
-        // too (fail closed).
-        let foreign = self.context.as_deref().is_some_and(|c| info["browserContextId"].as_str() != Some(c));
+        // A page that names another context is another case's, or the
+        // browser's own default context's: let run, and let go. One that
+        // does not say its context is not known to be anyone else's (cases
+        // run one at a time, so no other context is live): it is taken as
+        // this case's tab, and so guarded before it runs while the run is
+        // guarded. Letting it go would let it run unguarded.
+        let foreign = self
+            .context
+            .as_deref()
+            .is_some_and(|c| info["browserContextId"].as_str().is_some_and(|named| named != c));
         if !page || known || foreign {
             if waiting {
                 self.queue(&session, "Runtime.runIfWaitingForDebugger", serde_json::json!({}), None);
