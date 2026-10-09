@@ -2788,8 +2788,14 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
     if arrived.is_empty() {
         return (409, "the page would not say where it is - read the page and try again".to_string());
     }
+    // Where the screen is, for a mapping run's summary, however this ends.
+    let screen = crate::commands::autorun::MappingScreen { arrived: Some(arrived.clone()), menu: nav::menu_path(&clicks) };
+    // The check starts from a fresh home page, never from where the page
+    // stands: PeoplesHR's menu remembers whether a person left it open, so
+    // the clicks would otherwise depend on it (spec 2026-10-09, mapped
+    // areas). `load_home` runs `after_sign_in` once, on the fresh load.
     let home = nav::Home::of(&recipe);
-    let mut went = nav::go_home(d, &home, timing).await;
+    let mut went = nav::load_home(d, &home, timing).await;
     let signed_in = went.ok
         && crate::browser::expect::expect(
             d,
@@ -2813,7 +2819,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             Ok(out) if !out.ok => return (409, out.detail),
             Ok(_) => {}
         }
-        went = nav::go_home(d, &home, timing).await;
+        went = nav::load_home(d, &home, timing).await;
     }
     let reached = if went.ok {
         let start = match crate::browser::page::eval_value(d, "location.href").await {
@@ -2847,6 +2853,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
             };
             if let Some(run) = p.discovery.as_mut().and_then(|s| s.mapping.as_mut()) {
                 run.record_unreached(name, &reason);
+                run.locate_last(screen);
             }
             return (409, format!("The clicks did not arrive: {reason}. The page showed: {showed}"));
         }
@@ -2857,6 +2864,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
         if let Some(state) = p.discovery.as_mut() {
             if let Some(run) = state.mapping.as_mut() {
                 run.record_unchanged(kept.clone());
+                run.locate_last(screen);
             }
         }
         stand_in_saved_area(d, p.discovery, p.signed_in.as_deref(), root, organization, project, kept).await;
@@ -2874,6 +2882,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
                 Some(old) => run.record_updated(old.name().to_string(), nav::menu_path(&old.clicks), new_menu),
                 None => run.record_added(name.clone()),
             }
+            run.locate_last(screen);
         }
     }
     let kept = match &existing {

@@ -29,7 +29,7 @@ use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::{Target, VISIBLE_JS};
 use v2_lib::browser::snapshot::DEFAULT_LIMIT;
 use v2_lib::autorun::mapping_summary::{load_summary, summarize, summary_path, MappingSummary};
-use v2_lib::commands::autorun::{busy_browser_sentence, DiscoveryState, MappingPlace, MappingRun};
+use v2_lib::commands::autorun::{busy_browser_sentence, DiscoveryState, MappingPlace, MappingRun, MappingScreen};
 
 const ORG: &str = "acme";
 const PROJECT: &str = "Web";
@@ -1248,6 +1248,239 @@ async fn a_save_stopped_on_an_area_saves_trip_is_counted_at_once() {
     assert!(b.d.saves_on_call.is_empty(), "the trip never sent its save");
     assert!(b.d.saves_stopped.is_empty(), "the stopped save was left to carry over");
     assert_eq!(the_run(&browser).blocked_writes, 1);
+}
+
+// ------------------------------------- an area is checked from a fresh home
+
+/// A recipe whose home is `/hr/home/index` and whose `after_sign_in` is
+/// `after`: what a fresh load of home runs once it shows `#marker`.
+fn root_with_after_sign_in(after: Value) -> TempDir {
+    let dir = TempDir::new();
+    let recipe: SignInRecipe = serde_json::from_value(json!({
+        "start_url": "https://hr.example.internal/hr/home/index",
+        "steps": [ { "kind": "click", "selector": { "css": "#go" } } ],
+        "after_sign_in": after,
+        "signed_in": { "css": "#marker" }
+    }))
+    .unwrap();
+    save_recipe(dir.path(), ORG, PROJECT, &recipe).unwrap();
+    save_accounts(dir.path(), &[account()]).unwrap();
+    dir
+}
+
+/// PeoplesHR's own `after_sign_in`: the toggle, only while the menu is closed.
+fn open_a_closed_menu() -> Value {
+    json!([ { "kind": "when_visible", "selector": { "css": "#toggle:not(.active)" }, "within_ms": 100,
+        "then": [ { "kind": "click", "selector": { "css": "#toggle" } } ] } ])
+}
+
+/// What `sidebar_app` saw, in order (`navigate <path>`, `click <css>`),
+/// where its page is, and whether its menu is open.
+struct Sidebar {
+    log: Arc<Mutex<Vec<String>>>,
+    path: Arc<Mutex<String>>,
+    open: Arc<AtomicBool>,
+}
+
+/// An application with a left menu that remembers whether it is open, the
+/// way PeoplesHR keeps it in the browser's storage: a page load leaves it
+/// as it was. `#toggle` opens or closes it, and `#toggle:not(.active)` is
+/// on the page only while it is closed. The menu's `#talent` and `#wizard`
+/// are found only while it is open; `#wizard` lands on `screen`. The page
+/// stands on `at`, signed in, and `#missing` is never there.
+fn sidebar_app(open: bool, at: &str, screen: &'static str) -> (ScriptedDriver, Sidebar) {
+    let app = Sidebar {
+        log: Arc::new(Mutex::new(vec![])),
+        path: Arc::new(Mutex::new(at.to_string())),
+        open: Arc::new(AtomicBool::new(open)),
+    };
+    let (log, path, menu) = (app.log.clone(), app.path.clone(), app.open.clone());
+    let mut last_css = String::new();
+    let mut d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Page.navigate" => {
+                let p = v2_lib::autorun::nav::path_of(params["url"].as_str().unwrap_or(""));
+                log.lock().unwrap().push(format!("navigate {p}"));
+                *path.lock().unwrap() = p;
+                json!({ "frameId": "F", "loaderId": "L" })
+            }
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.evaluate" if params["expression"] == "location.href" => json!({ "result": {
+                "value": format!("https://hr.example.internal{}?token=t0p-secret", path.lock().unwrap())
+            } }),
+            "Runtime.evaluate" if params["expression"] == "document.title" => json!({ "result": { "value": "Home" } }),
+            "Runtime.evaluate" => {
+                json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } })
+            }
+            "Accessibility.getFullAXTree" => json!({ "nodes": [
+                { "nodeId": "1", "ignored": false, "role": { "value": "button" }, "name": { "value": "Save" },
+                  "childIds": [] }
+            ] }),
+            "Network.getAllCookies" => json!({ "cookies": [] }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": ready_probe() } }),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
+                json!({ "result": { "value": true } })
+            }
+            "Runtime.callFunctionOn" if f == FOCUS_JS => json!({ "result": { "value": "text" } }),
+            "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" => {
+                if let Some(sel) = params["arguments"][0]["value"].as_str() {
+                    last_css = sel.to_string();
+                }
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => {
+                let open = menu.load(Ordering::SeqCst);
+                let there = match last_css.as_str() {
+                    "#toggle:not(.active)" => !open,
+                    "#talent" | "#wizard" => open,
+                    "#missing" => false,
+                    _ => true,
+                };
+                json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": "el" } })] } else { vec![] } })
+            }
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                log.lock().unwrap().push(format!("click {last_css}"));
+                match last_css.as_str() {
+                    "#toggle" => {
+                        menu.fetch_xor(true, Ordering::SeqCst);
+                    }
+                    "#wizard" => *path.lock().unwrap() = screen.to_string(),
+                    _ => {}
+                }
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    d.on_every_call_events.push((
+        "Page.navigate".into(),
+        Event { method: "Page.lifecycleEvent".into(), params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }) },
+    ));
+    (d, app)
+}
+
+/// A mapping run over Talent on `d`, signed in as `admin`.
+fn talent_run(d: ScriptedDriver) -> Option<FakeBrowser> {
+    let (mut browser, _) = slot(d, mapping(exploring("Talent"), &["Talent"]));
+    browser.as_mut().unwrap().account = Some("admin".into());
+    browser
+}
+
+/// The check loads home afresh before the first click and runs
+/// `after_sign_in` there exactly once. A plain toggle proves it: run twice,
+/// it would close the menu it opened, and the first click would not find
+/// its entry.
+#[tokio::test]
+async fn an_area_check_starts_from_home_with_the_menu_open_once() {
+    let dir = root_with_after_sign_in(json!([ { "kind": "click", "selector": { "css": "#toggle" } } ]));
+    let (d, app) = sidebar_app(false, "/talent/wizard", "/talent/wizard");
+    let mut browser = talent_run(d);
+
+    let clicks = vec![css("#talent"), css("#wizard")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Definition Wizard", "Talent", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["arrived"], "/talent/wizard", "{body}");
+    let log = app.log.lock().unwrap().clone();
+    assert_eq!(log[..4], ["navigate /hr/home/index", "click #toggle", "click #talent", "click #wizard"], "{log:?}");
+    assert_eq!(log.iter().filter(|l| *l == "click #toggle").count(), 1, "{log:?}");
+    assert_eq!(log.iter().filter(|l| l.starts_with("navigate")).count(), 1, "{log:?}");
+    assert!(app.open.load(Ordering::SeqCst));
+}
+
+/// 2026-10-09: a person, or an assistant, left the menu closed, on a
+/// screen whose address still reads like home (a single-page application's
+/// can). The check used to start from that page as it stood, found no
+/// "Talent" and refused the save. It now starts from a fresh home page,
+/// where `after_sign_in` opens the menu, and the saved clicks need nothing
+/// left open by hand.
+#[tokio::test]
+async fn a_closed_menu_does_not_refuse_an_area_save() {
+    let dir = root_with_after_sign_in(open_a_closed_menu());
+    let (d, app) = sidebar_app(false, "/hr/home/index", "/hr/home/index");
+    let mut browser = talent_run(d);
+
+    let clicks = vec![css("#talent"), css("#wizard")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Definition Wizard", "Talent", clicks.clone(), &quick())
+            .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["saved"], true, "{body}");
+    let log = app.log.lock().unwrap().clone();
+    assert_eq!(log[..4], ["navigate /hr/home/index", "click #toggle", "click #talent", "click #wizard"], "{log:?}");
+    let saved = find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Definition Wizard").cloned().unwrap();
+    assert_eq!(saved.clicks, clicks, "the toggle is not one of the saved clicks");
+    assert_eq!(the_run(&browser).added, vec!["Definition Wizard".to_string()]);
+}
+
+/// 2026-10-09: a save was refused, and the same screen was then saved
+/// under another name. The refused name is not listed as not reached.
+#[tokio::test]
+async fn an_unreached_screen_saved_later_under_another_name_leaves_the_summary() {
+    let dir = root_with_after_sign_in(open_a_closed_menu());
+    let (d, app) = sidebar_app(false, "/talent/wizard", "/talent/wizard");
+    let mut browser = talent_run(d);
+
+    let missing = vec![css("#talent"), css("#missing")];
+    let (status, out) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Definition Wizard", "Talent", missing, &quick()).await;
+    assert_eq!(status, 409, "{out}");
+    // The assistant goes back to the screen before saving it again.
+    *app.path.lock().unwrap() = "/talent/wizard".to_string();
+    let clicks = vec![css("#talent"), css("#wizard")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Talent Wizard", "Talent", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+
+    let s = summarize(the_run(&browser));
+    assert_eq!(s.added, vec!["Talent Wizard".to_string()]);
+    assert!(s.unreached.is_empty(), "{s:?}");
+}
+
+/// A screen not reached stays listed when what was saved after it is
+/// another screen.
+#[tokio::test]
+async fn an_unreached_screen_stays_listed_when_another_screen_is_saved() {
+    let dir = root_with_after_sign_in(open_a_closed_menu());
+    let (d, app) = sidebar_app(false, "/talent/review", "/talent/wizard");
+    let mut browser = talent_run(d);
+
+    let missing = vec![css("#talent"), css("#missing")];
+    let (status, out) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Review", "Talent", missing, &quick()).await;
+    assert_eq!(status, 409, "{out}");
+    // The assistant moves on to another screen and saves that.
+    *app.path.lock().unwrap() = "/talent/wizard".to_string();
+    let clicks = vec![css("#talent"), css("#wizard")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Definition Wizard", "Talent", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+
+    let s = summarize(the_run(&browser));
+    assert_eq!(s.added, vec!["Definition Wizard".to_string()]);
+    assert_eq!(s.unreached.len(), 1, "{s:?}");
+    assert_eq!(s.unreached[0].name, "Review");
+}
+
+/// With no address path known for a screen not reached, a later save with
+/// the same clicks is that screen; other clicks are not, and a screen
+/// nothing is known about stays listed.
+#[test]
+fn an_unreached_screen_with_no_address_matches_a_later_save_by_its_clicks() {
+    let mut run = MappingRun::new(&["Talent".to_string()]);
+    run.record_unreached("Wizard".into(), "the home page did not load");
+    run.locate_last(MappingScreen { arrived: None, menu: "Talent, then Wizard".into() });
+    run.record_unreached("Review".into(), "the home page did not load");
+    run.locate_last(MappingScreen { arrived: None, menu: "Talent, then Review".into() });
+    run.record_unreached("Unplaced".into(), "click 1 was not found");
+    run.record_added("Definition Wizard".into());
+    run.locate_last(MappingScreen { arrived: Some("/talent/wizard".into()), menu: "Talent, then Wizard".into() });
+
+    let s = summarize(&run);
+    let names: Vec<&str> = s.unreached.iter().map(|u| u.name.as_str()).collect();
+    assert_eq!(names, ["Review", "Unplaced"], "{s:?}");
 }
 
 /// What `area`'s map holds on `page`, by name.
