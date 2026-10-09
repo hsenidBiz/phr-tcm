@@ -328,3 +328,16 @@ async fn a_deferred_call_on_a_closed_socket_or_one_never_answered_is_no_answer()
         Err(CdpError::Timeout { .. })
     ));
 }
+
+/// The tab a deferred call went to closes before its answer comes: the
+/// wait ends at once with `Closed`, not at its time limit.
+#[tokio::test]
+async fn a_tab_that_closes_before_its_deferred_answer_is_no_answer_at_once() {
+    let t = FakeTransport::hanging(&[r#"{"method":"Target.detachedFromTarget","params":{"sessionId":""}}"#]);
+    let mut cdp = Cdp::over(t);
+    let id = cdp.send_deferred("Page.captureScreenshot", serde_json::json!({})).await.unwrap();
+    let began = Instant::now();
+    let got = cdp.collect(id, "Page.captureScreenshot", Duration::from_secs(5)).await;
+    assert!(matches!(got, Err(CdpError::Closed)), "{got:?}");
+    assert!(began.elapsed() < Duration::from_secs(2), "waited for the time limit");
+}

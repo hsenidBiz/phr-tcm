@@ -955,3 +955,58 @@ mod components_in_a_step {
         assert!(logged.iter().all(|l| !l.message.contains(secret)), "a log line holds the typed value");
     }
 }
+
+/// Every action kind, and whether it waits for the step before's picture:
+/// anything that may change the page waits; checks and reads do not.
+#[test]
+fn every_action_kind_says_whether_it_changes_the_page() {
+    use v2_lib::autorun::runner::changes_the_page;
+    let css = json!({ "css": "#x" });
+    let table: Vec<(serde_json::Value, bool)> = vec![
+        (json!({ "kind": "navigate", "url": "/a" }), true),
+        (json!({ "kind": "use_component", "component": "c" }), true),
+        (json!({ "kind": "click", "selector": css }), true),
+        (json!({ "kind": "fill", "selector": css, "value": "v" }), true),
+        (json!({ "kind": "sign_in", "account": "a" }), true),
+        (json!({ "kind": "upload", "selector": css, "file": "f.txt" }), true),
+        (json!({ "kind": "api_request", "path": "/api/x" }), true),
+        (json!({ "kind": "when_visible", "selector": css, "then": [] }), true),
+        (json!({ "kind": "reload" }), true),
+        (json!({ "kind": "expire_session" }), true),
+        (json!({ "kind": "return_to_area" }), true),
+        (json!({ "kind": "press_key", "key": "Enter" }), true),
+        (json!({ "kind": "drag", "from": css, "to": css }), true),
+        (json!({ "kind": "open_tab", "name": "t", "url": "/a" }), true),
+        (json!({ "kind": "switch_tab", "name": "t" }), true),
+        (json!({ "kind": "close_tab", "name": "t" }), true),
+        (json!({ "kind": "wait_for", "selector": css, "timeout_ms": 10 }), false),
+        (json!({ "kind": "check_text", "value": "v" }), false),
+        (json!({ "kind": "check_url", "contains": "v" }), false),
+        (json!({ "kind": "expect_visible", "selector": css }), false),
+        (json!({ "kind": "expect_hidden", "selector": css }), false),
+        (json!({ "kind": "expect_text", "selector": css, "equals": "v" }), false),
+        (json!({ "kind": "expect_contains_text", "selector": css, "value": "v" }), false),
+        (json!({ "kind": "expect_count", "selector": css, "equals": 1 }), false),
+        (json!({ "kind": "expect_attribute", "selector": css, "name": "n", "equals": "v" }), false),
+        (json!({ "kind": "expect_response", "url_contains": "/api" }), false),
+        (json!({ "kind": "expect_focused", "selector": css }), false),
+        (json!({ "kind": "expect_download", "name": "*.csv" }), false),
+        (json!({ "kind": "expect_tab", "name": "t" }), false),
+        (json!({ "kind": "expect_tab_closed", "name": "t" }), false),
+        (json!({ "kind": "expect_dialog", "answer": "accept" }), false),
+        (json!({ "kind": "expect_row", "table": css, "cells": { "Name": "a" } }), false),
+        (json!({ "kind": "expect_no_row", "table": css, "cells": { "Name": "a" } }), false),
+        (json!({ "kind": "expect_sorted", "table": css, "column": "Name", "order": "ascending" }), false),
+        (json!({ "kind": "expect_row_count", "table": css, "equals": 1 }), false),
+    ];
+    let mut kinds = std::collections::BTreeSet::new();
+    for (raw, changes) in &table {
+        let action: Action = serde_json::from_value(raw.clone()).unwrap_or_else(|e| panic!("{raw}: {e}"));
+        assert_eq!(changes_the_page(&action), *changes, "{raw}");
+        kinds.insert(action.kind());
+    }
+    for kind in v2_lib::autorun::guide::ACTION_KINDS {
+        assert!(kinds.contains(*kind), "{kind} is missing from the table");
+    }
+    assert_eq!(kinds.len(), table.len(), "a kind is in the table twice");
+}

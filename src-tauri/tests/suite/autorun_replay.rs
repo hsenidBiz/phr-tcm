@@ -2487,3 +2487,89 @@ async fn a_failed_capture_leaves_no_picture() {
     assert!(rec.steps.iter().all(|s| s.outcomes.iter().all(|o| o.ok)), "{:?}", rec.steps);
     assert_eq!(shots_on_disk(root), 0);
 }
+
+/// At most one picture is still being taken: a long run of check-only
+/// steps after a click never piles them up past what the browser keeps.
+#[tokio::test]
+async fn every_step_keeps_its_picture_through_seventeen_check_only_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut steps = vec![serde_json::json!({ "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#one" } }] })];
+    for n in 2..=18 {
+        steps.push(serde_json::json!({ "step_number": n, "actions": [{ "kind": "check_text", "value": "ok" }] }));
+    }
+    let case = script(1, None, serde_json::Value::Array(steps));
+    let mut d = deferring_page();
+    let rec = run_one(&mut d, root, &case).await;
+    assert_eq!(rec.steps.len(), 18);
+    for s in &rec.steps {
+        let name = s.screenshot.as_deref().unwrap_or_else(|| panic!("step {} has no picture", s.step_number));
+        assert!(store::shot_exists(root, name), "step {} names {name}, which is not on disk", s.step_number);
+    }
+    assert_eq!(rec.proposed, "Passed", "{rec:?}");
+}
+
+const LATE_SAVE: &str = "the page tried to save after its step";
+
+const AFTER_AN_EARLIER_STEP: &str = "not run: an earlier step of this case failed";
+
+/// A save read as step 1's picture is collected, at step 2's click, is
+/// step 1's: step 1 fails, and step 2 stops before it clicks.
+#[tokio::test]
+async fn a_save_read_as_the_picture_is_collected_fails_its_own_step_and_the_next_never_acts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    d.block_on_collect = Some(LATE_SAVE.into());
+    let rec = run_one(&mut d, dir.path(), &clicks(&["#one", "#two"])).await;
+    let one = &rec.steps[0];
+    assert_eq!(one.outcomes.last().map(|o| o.detail.as_str()), Some(LATE_SAVE), "{rec:?}");
+    assert!(one.screenshot.is_some(), "{rec:?}");
+    let two = &rec.steps[1];
+    assert!(two.outcomes.iter().all(|o| o.detail == AFTER_AN_EARLIER_STEP), "{rec:?}");
+    let m = d.methods();
+    let read = m.iter().position(|x| *x == collected()).expect("the picture was never read");
+    assert!(!m[read..].iter().any(|x| x == "Input.dispatchMouseEvent"), "step 2 clicked: {m:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
+
+/// The same save read as the last step's picture is finished, at the end
+/// of the case, still fails the case.
+#[tokio::test]
+async fn a_save_read_as_the_last_picture_is_finished_fails_the_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    d.block_on_collect = Some(LATE_SAVE.into());
+    let rec = run_one(&mut d, dir.path(), &clicks(&["#one"])).await;
+    assert_eq!(rec.steps[0].outcomes.last().map(|o| o.detail.as_str()), Some(LATE_SAVE), "{rec:?}");
+    assert!(rec.steps[0].screenshot.is_some(), "{rec:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
+
+/// A save taken during a check-only step, while the step before's picture
+/// is still being taken, was sent before this step changed anything: the
+/// step before is blamed, and the case goes no further.
+#[tokio::test]
+async fn a_save_taken_during_a_check_only_step_is_the_step_befores() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    d.block_when = Some((
+        Box::new(|method: &str, params: &serde_json::Value| {
+            method == "Runtime.callFunctionOn" && params["functionDeclaration"] == v2_lib::browser::actions::CHECK_TEXT_JS
+        }),
+        LATE_SAVE.into(),
+    ));
+    let case = script(
+        1,
+        None,
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#one" } }] },
+            { "step_number": 2, "actions": [{ "kind": "check_text", "value": "ok" }] },
+            { "step_number": 3, "actions": [{ "kind": "click", "selector": { "css": "#three" } }] },
+        ]),
+    );
+    let rec = run_one(&mut d, dir.path(), &case).await;
+    assert_eq!(rec.steps[0].outcomes.last().map(|o| o.detail.as_str()), Some(LATE_SAVE), "{rec:?}");
+    assert!(rec.steps[1].outcomes.iter().all(|o| o.ok), "step 2 was blamed: {rec:?}");
+    assert!(rec.steps[2].outcomes.iter().all(|o| o.detail == AFTER_AN_EARLIER_STEP), "{rec:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}

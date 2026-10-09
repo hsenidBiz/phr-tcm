@@ -29,7 +29,7 @@ use std::time::Instant;
 pub const SIGN_IN_STEP: i32 = 0;
 /// The runner's own "Go to X" line: after the sign-in, before step 1.
 pub const MODULE_STEP: i32 = -1;
-const AFTER_FAILED_STEP: &str = "not run: an earlier step of this case failed";
+const AFTER_FAILED_STEP: &str = runner::AFTER_STEP_BEFORE_FAILED;
 const AFTER_FAILED_SIGN_IN: &str = "not run: the sign-in failed";
 const AFTER_UNREACHED: &str = "not run: the module screen was not reached";
 use super::runner::AFTER_STOP;
@@ -468,8 +468,9 @@ async fn run_case_in<D: Driver>(
     super::page_errors::drop_all(d);
     let mut page_errors_seen = 0u32;
     // Each step's picture, by its index in `steps`, still being taken or
-    // written. The next step settles the latest before it changes the
-    // page; every one is finished before the record is made.
+    // written. At most one is still being taken: the latest, which the next
+    // step settles before it changes the page, or before its own picture
+    // is asked for. Every one is finished before the record is made.
     let mut pictures: Vec<(usize, runner::Picture)> = Vec::new();
     let stepping = Instant::now();
     for step in &script.steps {
@@ -517,8 +518,22 @@ async fn run_case_in<D: Driver>(
             Ok(o) => o,
             Err(why) => step.actions.iter().map(|_| ActionOutcome::failed(why.clone())).collect(),
         };
+        // A save the step before's picture was taken through: that step's.
+        let mut late_save = in_run.picture.take().and_then(|p| p.late_save.take());
+        let (tab, dialog, components, seen_errors) =
+            (in_run.tab, in_run.dialog, in_run.components, in_run.page_errors_seen);
         // The step's own start, the one its `expect_download` used.
         step_began.push((steps.len(), in_run.began.unwrap_or(asked_at)));
+        // One picture still being taken at a time: the step before's is
+        // read now, if this step did not change the page.
+        if let Some((_, p)) = pictures.last_mut() {
+            p.settle(d).await;
+            late_save = late_save.or_else(|| p.late_save.take());
+        }
+        if let (Some(sentence), Some(&(at, _))) = (late_save, pictures.last()) {
+            charge_late_save(&mut steps[at], sentence);
+            skip = Some(AFTER_FAILED_STEP);
+        }
         let mut outcomes = outcomes;
         // A Stop that ended a wait inside the step: the case stops here, as
         // it would have before the next step, with no picture to wait for.
@@ -540,16 +555,21 @@ async fn run_case_in<D: Driver>(
         } else if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
         }
-        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot: None, downloads: Vec::new(), tab: in_run.tab, dialog: in_run.dialog, components: in_run.components, duration_ms: Some(ms(asked_at.elapsed())) });
-        page_errors_seen += in_run.page_errors_seen;
+        steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot: None, downloads: Vec::new(), tab, dialog, components, duration_ms: Some(ms(asked_at.elapsed())) });
+        page_errors_seen += seen_errors;
         if let Some(p) = picture {
             pictures.push((steps.len() - 1, p));
         }
     }
     // Every picture on disk, or none, before the record names it. A
     // browser that went away leaves its step with none.
+    // A save read as the last one was taken is its step's.
     for (at, p) in pictures {
-        steps[at].screenshot = p.finish(d).await;
+        let (file, late_save) = p.finish(d).await;
+        steps[at].screenshot = file;
+        if let Some(sentence) = late_save {
+            charge_late_save(&mut steps[at], sentence);
+        }
     }
 
     // The case's one wait for a download still arriving (`one_go` does not
@@ -583,6 +603,17 @@ async fn run_case_in<D: Driver>(
         notice: None,
         page_errors_seen,
         phases: Some(CasePhases { sign_in_ms: sign_in_took, area_ms: area_took, steps_ms: steps_took, total_ms: ms(took), ..Default::default() }),
+    }
+}
+
+/// A save the guard stopped while a step's picture was being taken fails
+/// that step's last outcome, when nothing else of it failed: the same rule
+/// as a save read just after its last action.
+fn charge_late_save(step: &mut StepRecord, sentence: String) {
+    if step.outcomes.iter().all(|o| o.ok) {
+        if let Some(last) = step.outcomes.last_mut() {
+            *last = ActionOutcome::failed(sentence);
+        }
     }
 }
 
