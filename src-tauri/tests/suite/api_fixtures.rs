@@ -704,6 +704,66 @@ mod running {
         answer(200, json!({ "cycleId": 274, "cycleName": "AUTOTEST cycle 20261006" }))
     }
 
+    /// The rig's browsers, noting how many held browsers had been closed
+    /// when the fixture opened its own.
+    struct Watching {
+        inner: crate::api_templates_runner::FakeBrowsers,
+        kept_closed: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        closed_at_open: Option<usize>,
+    }
+
+    impl v2_lib::autorun::replay::Browsers for Watching {
+        type D = crate::api_templates_runner::App;
+
+        async fn open(&mut self) -> Result<Self::D, String> {
+            self.closed_at_open = Some(self.kept_closed.load(std::sync::atomic::Ordering::SeqCst));
+            self.inner.open().await
+        }
+
+        async fn close(&mut self, d: Self::D) {
+            self.inner.close(d).await
+        }
+    }
+
+    /// Spec "held browser" section 3: a fixture signing in as an account a
+    /// single run kept a browser for makes that browser give way, closed
+    /// before the fixture's own opens - one browser per account at most.
+    #[tokio::test]
+    async fn a_held_browser_for_the_account_is_closed_before_a_fixture_opens_its_own() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use v2_lib::api_templates::held::{self, HeldEntry};
+        use v2_lib::api_templates::runner::Session;
+        let _act = crate::serial::activity_log();
+        let _h = crate::serial::held_browsers();
+        let _l = crate::serial::account_leases();
+        let f = fixture();
+        let mut r = rig_with(vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))], &f, &[make_cycle(), add_suite()]);
+        let env = v2_lib::environments::active_id(r.root.path()).unwrap();
+        let kept_closed = Arc::new(AtomicUsize::new(0));
+        let session = Session::new(
+            crate::common::recipe(),
+            crate::common::account(),
+            "https://hr.example.internal".into(),
+            Vec::new(),
+        );
+        let kept = crate::template_held::KeptApp { app: r.another_page(), closed: kept_closed.clone() };
+        let generation = v2_lib::autorun::lease::generation(&env, "admin");
+        held::keep(&env, "admin", HeldEntry { driver: kept, session, fingerprint: 0, generation, page: None });
+
+        let inner = std::mem::replace(
+            &mut r.browsers,
+            crate::api_templates_runner::FakeBrowsers { next: None, opened: 0, closed: 0, last: None },
+        );
+        let mut watching = Watching { inner, kept_closed: kept_closed.clone(), closed_at_open: None };
+        let report = run_fixture_within(&mut watching, r.root.path(), ORG, PROJECT, &f, &quick(), RUN_LIMIT, &QUICK_PAUSES, CLOCK)
+            .await;
+        assert!(report.ok, "{report:?}");
+        assert_eq!(watching.closed_at_open, Some(1), "the held browser was still open when the fixture opened its own");
+        assert_eq!(kept_closed.load(Ordering::SeqCst), 1);
+        assert!(held::drain_all::<crate::template_held::KeptApp>().is_empty(), "the held browser stayed held");
+    }
+
     #[tokio::test]
     async fn two_steps_pass_a_value_between_them_in_one_signed_in_browser() {
         let _act = crate::serial::activity_log();

@@ -188,7 +188,7 @@ impl Keeps for FakeBrowsers {
         Err(d)
     }
 
-    fn adopt(&mut self, kept: NotKept) -> App {
+    fn adopt(&mut self, kept: NotKept) -> Result<App, NotKept> {
         match kept {}
     }
 }

@@ -12,7 +12,8 @@
 //! A run keeps its browser with `keep`. The first `keep` of a driver type
 //! starts that type's idle sweep (`SWEEP_EVERY`) and enrols it in
 //! `close_all`, which the app's exit, an environment change and signing out
-//! call. An entry a run has taken out is not in the store, so neither the
+//! call, and in `give_way`, which a fixture or a cleanup calls for its
+//! account before it opens its own browser. An entry a run has taken out is not in the store, so neither the
 //! sweep nor `close_all` can close a browser while a run uses it.
 //!
 //! **A held driver owns its browser process.** In the app,
@@ -244,7 +245,9 @@ pub trait Keeps: Browsers {
     fn keep(&mut self, d: Self::D) -> Result<Self::Kept, Self::D>;
     /// A kept browser taken back for a run. From here on it is this
     /// value's own: its `close`, or dropping it, ends the process.
-    fn adopt(&mut self, kept: Self::Kept) -> Self::D;
+    /// `Err(kept)` when its process has ended while it was kept: it is
+    /// never reused, and the caller closes it.
+    fn adopt(&mut self, kept: Self::Kept) -> Result<Self::D, Self::Kept>;
 }
 
 /// The `Kept` of `Browsers` that never keep a browser: nothing of this
@@ -284,9 +287,20 @@ pub fn sweep<K: HeldBrowser>() {
 /// quits, the active environment changes or the person signs out.
 pub fn close_all() {
     // Copied out first: a close is never made under the lock.
-    let closers: Vec<fn()> = kinds().iter().map(|(_, close)| *close).collect();
+    let closers: Vec<fn()> = kinds().iter().map(|k| k.close_all).collect();
     for close in closers {
         close();
+    }
+}
+
+/// Closes the browser held for the account `key` in `env`, of any driver
+/// type: a fixture or a cleanup is about to sign that account in with a
+/// browser of its own, which would end the held one's session anyway. One
+/// browser process per account at most.
+pub fn give_way(env: &str, key: &str) {
+    let closers: Vec<fn(&str, &str)> = kinds().iter().map(|k| k.give_way).collect();
+    for close in closers {
+        close(env, key);
     }
 }
 
@@ -296,9 +310,24 @@ fn close_every<K: HeldBrowser>() {
     }
 }
 
-/// Each driver type kept so far, with how to close all of its entries.
-fn kinds() -> MutexGuard<'static, Vec<(TypeId, fn())>> {
-    static KINDS: Mutex<Vec<(TypeId, fn())>> = Mutex::new(Vec::new());
+fn give_way_one<K: HeldBrowser>(env: &str, key: &str) {
+    let slot = store().remove(&at::<K>(env, key));
+    if let Some(e) = slot.and_then(open::<K>) {
+        applog::info(format!("held browser: {key} gave way to a fixture or a cleanup"));
+        e.driver.close();
+    }
+}
+
+/// A driver type kept so far, with how to close its entries.
+struct Kind {
+    ty: TypeId,
+    close_all: fn(),
+    give_way: fn(&str, &str),
+}
+
+/// Each driver type kept so far.
+fn kinds() -> MutexGuard<'static, Vec<Kind>> {
+    static KINDS: Mutex<Vec<Kind>> = Mutex::new(Vec::new());
     KINDS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -309,10 +338,10 @@ fn enrol<K: HeldBrowser>() {
     let ty = TypeId::of::<K>();
     {
         let mut k = kinds();
-        if k.iter().any(|(t, _)| *t == ty) {
+        if k.iter().any(|kind| kind.ty == ty) {
             return;
         }
-        k.push((ty, close_every::<K>));
+        k.push(Kind { ty, close_all: close_every::<K>, give_way: give_way_one::<K> });
     }
     tauri::async_runtime::spawn(async {
         loop {

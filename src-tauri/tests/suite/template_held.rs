@@ -218,9 +218,9 @@ use v2_lib::api_templates::ApiTemplate;
 use v2_lib::autorun::replay::Browsers;
 
 /// A kept fake page; closing it only counts.
-struct KeptApp {
-    app: App,
-    closed: Arc<AtomicUsize>,
+pub(crate) struct KeptApp {
+    pub(crate) app: App,
+    pub(crate) closed: Arc<AtomicUsize>,
 }
 
 impl HeldBrowser for KeptApp {
@@ -248,9 +248,13 @@ impl Keeping {
 impl Browsers for Keeping {
     type D = App;
 
+    /// A page opened is a new browser: whatever ended the last one
+    /// (`browser_gone`, on the script the pages share) is over.
     async fn open(&mut self) -> Result<App, String> {
         self.opened += 1;
-        self.next.pop_front().ok_or_else(|| "no browser left".to_string())
+        let page = self.next.pop_front().ok_or_else(|| "no browser left".to_string())?;
+        page.script.lock().unwrap().browser_gone = false;
+        Ok(page)
     }
 
     async fn close(&mut self, _d: App) {
@@ -265,8 +269,13 @@ impl Keeps for Keeping {
         Ok(KeptApp { app: d, closed: self.kept_closed.clone() })
     }
 
-    fn adopt(&mut self, kept: KeptApp) -> App {
-        kept.app
+    /// A kept page whose browser has gone is handed back, as `RealBrowsers`
+    /// hands back one whose process has ended.
+    fn adopt(&mut self, kept: KeptApp) -> Result<App, KeptApp> {
+        if kept.app.script.lock().unwrap().browser_gone {
+            return Err(kept);
+        }
+        Ok(kept.app)
     }
 }
 
@@ -547,7 +556,16 @@ async fn quitting_changing_environment_or_signing_out_closes_the_held_browser() 
     let qa = saved.environments.iter().find(|e| e.name == "QA").unwrap().id.clone();
     let store = v2_lib::db::credentials::MemoryStore::default();
     v2_lib::commands::environments::set_active_with(root, &store, &qa).await.unwrap();
-    assert_eq!(closed(), 3, "changing environment left the held browser open");
+    // The switch closes it off the async threads without waiting.
+    let gone = async {
+        while closed() < 3 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), gone).await.is_ok(),
+        "changing environment left the held browser open"
+    );
     assert!(held_pages().is_empty());
 }
 
@@ -571,4 +589,74 @@ async fn a_reused_run_reports_its_sign_in_as_reused() {
     assert_eq!(pages[0]["sign_ins"][0]["via"], "sign-in recipe");
     assert_eq!(pages[1]["sign_ins"], json!([{ "via": REUSED, "appeared": [] }]));
     assert_eq!(REUSED, "Signed in earlier, reused");
+}
+
+fn redirected_to_login() -> serde_json::Value {
+    json!({
+        "status": 200,
+        "contentType": "text/html",
+        "finalUrl": LOGIN,
+        "redirected": true,
+        "text": "<html>sign in</html>",
+    })
+}
+
+#[tokio::test]
+async fn a_held_browser_that_died_is_replaced_by_a_fresh_one() {
+    let _act = crate::serial::activity_log();
+    let (_h, _l, _c) = (crate::serial::held_browsers(), crate::serial::account_leases(), Clean);
+    let mut r = rig(ok_answers(), None);
+    let kept_closed = Arc::new(AtomicUsize::new(0));
+    let mut first = Keeping::new(vec![first_page(&mut r)], &kept_closed);
+    assert!(run(&r, &mut first, template()).await.ok);
+
+    // The kept browser's process ends while it waits.
+    r.script.lock().unwrap().browser_gone = true;
+    r.script.lock().unwrap().responses.extend(ok_answers());
+    let (page, clicks) = fresh_page(&r);
+    let mut second = Keeping::new(vec![page], &kept_closed);
+    let report = run(&r, &mut second, template()).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!(kept_closed.load(Ordering::SeqCst), 1, "the dead browser was not closed");
+    assert_eq!((second.opened, second.closed), (1, 0), "a fresh browser opened in its place, and is kept");
+    assert_eq!(clicks.load(Ordering::SeqCst), 1, "the fresh browser signs in once");
+    assert_eq!(held_pages().len(), 1);
+}
+
+#[tokio::test]
+async fn a_redirected_first_request_on_a_reused_browser_signs_in_again_once() {
+    let _act = crate::serial::activity_log();
+    let (_h, _l, _c) = (crate::serial::held_browsers(), crate::serial::account_leases(), Clean);
+    let mut r = rig(ok_answers(), None);
+    let kept_closed = Arc::new(AtomicUsize::new(0));
+    let mut first = Keeping::new(vec![first_page(&mut r)], &kept_closed);
+    assert!(run(&r, &mut first, template()).await.ok);
+
+    // The token page is skipped (already on it), so the ended session shows
+    // first as the request sent to the sign-in page.
+    r.script.lock().unwrap().responses.extend([redirected_to_login()].into_iter().chain(ok_answers()));
+    let (page, clicks) = fresh_page(&r);
+    let mut second = Keeping::new(vec![page], &kept_closed);
+    let report = run(&r, &mut second, template()).await;
+    assert!(report.ok, "{report:?}");
+    assert_eq!((second.opened, second.closed), (1, 1), "the reused browser is closed and one fresh one opens");
+    assert_eq!(clicks.load(Ordering::SeqCst), 1);
+    assert_eq!(report.steps.len(), 2, "the template ran from its first step: {report:?}");
+    assert_eq!(held_pages().len(), 1);
+}
+
+#[tokio::test]
+async fn a_run_whose_request_was_sent_to_another_page_keeps_nothing() {
+    let _act = crate::serial::activity_log();
+    let (_h, _l, _c) = (crate::serial::held_browsers(), crate::serial::account_leases(), Clean);
+    let mut r = rig(vec![redirected_to_login()], None);
+    let kept_closed = Arc::new(AtomicUsize::new(0));
+    let mut b = Keeping::new(vec![first_page(&mut r)], &kept_closed);
+    let report = run(&r, &mut b, template()).await;
+    assert!(!report.ok);
+    let detail = &report.steps.last().unwrap().detail;
+    assert!(detail.contains("the session may have ended"), "{detail}");
+    assert_eq!(b.opened, 1, "a fresh browser is not opened again");
+    assert_eq!(b.closed, 1, "a browser whose session ended is closed");
+    assert!(held_pages().is_empty(), "and never kept");
 }

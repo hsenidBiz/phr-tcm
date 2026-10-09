@@ -249,9 +249,9 @@ pub async fn set_active_with(root: &Path, store: &dyn SecretStore, id: &str) -> 
     let run_slot = crate::api_templates::runner::claim().ok_or_else(|| SWITCH_TEMPLATE_RUNNING.to_string())?;
     let file = environments::set_active(root, id)?;
     // A browser a template run kept signed in belongs to the environment
-    // it signed in to. Closed while the slot is still taken, so no run can
-    // keep another in between.
-    crate::api_templates::held::close_all();
+    // it signed in to. Closed off the async threads (ending a process waits
+    // for it to go), and not waited for, as signing out does.
+    tauri::async_runtime::spawn_blocking(crate::api_templates::held::close_all);
     drop(run_slot);
     drop(slot);
     if let Some(e) = file.environments.iter().find(|e| e.id == file.active) {

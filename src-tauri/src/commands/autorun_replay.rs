@@ -217,12 +217,16 @@ impl Keeps for RealBrowsers {
     }
 
     /// Puts the process back in `current`: from here on `close`, or a
-    /// panic dropping this value, ends it like one this value opened.
-    fn adopt(&mut self, kept: KeptBrowser) -> Cdp {
+    /// panic dropping this value, ends it like one this value opened. One
+    /// whose process has ended while kept is handed back to be closed.
+    fn adopt(&mut self, mut kept: KeptBrowser) -> Result<Cdp, KeptBrowser> {
+        if !matches!(kept.browser.child.try_wait(), Ok(None)) {
+            return Err(kept);
+        }
         if let Some(old) = self.current.replace(kept.browser) {
             super::autorun::close_browser(old);
         }
-        kept.cdp
+        Ok(kept.cdp)
     }
 }
 

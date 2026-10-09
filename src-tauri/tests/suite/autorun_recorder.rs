@@ -369,6 +369,8 @@ async fn a_browser_that_stops_answering_during_the_sign_in_is_told_apart() {
 #[tokio::test]
 async fn a_recording_waits_for_a_run_and_a_run_waits_for_a_recording() {
     let _claims = crate::serial::autorun();
+    // Reaches `held::close_all`, which closes every held template browser.
+    let _held = crate::serial::held_browsers();
     assert!(refuse_to_record_now().await.is_ok());
     let run = OneAtATime::claim().expect("nothing is running");
     assert_eq!(refuse_to_record_now().await.unwrap_err(), "an unattended run is going - wait for it, or stop it first");
