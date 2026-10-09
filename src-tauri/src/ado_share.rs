@@ -85,10 +85,18 @@ pub fn draft_file_name(pbi_id: i32, json: &str) -> String {
 
 /// Whether a rejected PATCH is Azure DevOps saying the relation is on the
 /// work item already (`RelationAlreadyExistsException`, "Relation already
-/// exists").
+/// exists"). When the body is Azure DevOps' JSON error, its `typeKey`
+/// decides - a rule error whose message happened to mention a relation
+/// must not pass as shared. Only a body without one falls back to the
+/// message text.
 pub fn relation_already_exists(body: &str) -> bool {
-    let b = body.to_ascii_lowercase();
-    b.contains("relationalreadyexists") || b.contains("relation already exists")
+    let typed = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v["typeKey"].as_str().map(str::to_ascii_lowercase));
+    match typed {
+        Some(type_key) => type_key.contains("relationalreadyexists"),
+        None => body.to_ascii_lowercase().contains("relation already exists"),
+    }
 }
 
 /// The field a work-item rule error names - its NAME and nothing else. The
@@ -125,12 +133,17 @@ pub fn rule_field(body: &str) -> Option<String> {
 pub fn refused_in_words(e: AdoError, step: &str, pbi_id: i32) -> AdoError {
     match e {
         AdoError::Http { status, body } => {
+            // The transport logs what Azure DevOps said for a 4xx only, so
+            // only a 4xx sentence points at the log for it.
             let sentence = match rule_field(&body) {
                 Some(field) => format!(
                     "Azure DevOps would not {step} PBI #{pbi_id}: a rule on its {field} field is not met. Fix that field on the PBI in Azure DevOps, then share again. Settings → Logs has what it said."
                 ),
-                None => format!(
+                None if (400..500).contains(&status) => format!(
                     "Azure DevOps would not {step} PBI #{pbi_id} (it answered {status}). Settings → Logs has what it said."
+                ),
+                None => format!(
+                    "Azure DevOps could not {step} PBI #{pbi_id} (it answered {status}). Try again in a moment."
                 ),
             };
             AdoError::Http { status, body: sentence }

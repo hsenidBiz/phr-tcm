@@ -403,6 +403,17 @@ async fn a_relation_that_already_exists_counts_as_shared() {
         share_refused_with(pbi, ResponseTemplate::new(400).set_body_string(body)).await;
     let link = client.share_draft("acme", "Web", pbi, "{}").await.unwrap();
     assert_eq!(link, format!("tcm-share:acme/Web/{pbi}/abcd1234-0000-1111-2222-333344445555"));
+
+    // The typeKey decides: a different 400 whose message mentions an
+    // existing relation is still a refusal, not a share.
+    let other = serde_json::json!({
+        "message": "TF401320: Rule Error for field State. Relation already exists on a linked item.",
+        "typeKey": "RuleValidationException",
+    })
+    .to_string();
+    let (_server, client) =
+        share_refused_with(977_105, ResponseTemplate::new(400).set_body_string(other)).await;
+    assert!(client.share_draft("acme", "Web", 977_105, "{}").await.is_err());
 }
 
 /// Any other refusal reaches the person as a sentence: the PBI, the field
@@ -438,4 +449,15 @@ async fn another_rejection_shows_a_clear_sentence_without_a_url() {
     let shown = client.share_draft("acme", "Web", 977_104, "{}").await.unwrap_err().user_text();
     assert!(shown.starts_with("Azure DevOps would not attach the draft to PBI #977104"), "{shown}");
     assert!(!shown.contains("://") && !shown.contains("Something else"), "{shown}");
+
+    // A 5xx has no reason in the log to point at, so the sentence does not
+    // send the person there.
+    let (_server, client) = share_refused_with(
+        977_106,
+        ResponseTemplate::new(503).set_body_string("Service Unavailable https://x.example/y"),
+    )
+    .await;
+    let shown = client.share_draft("acme", "Web", 977_106, "{}").await.unwrap_err().user_text();
+    assert!(shown.contains("PBI #977106") && shown.contains("503"), "{shown}");
+    assert!(!shown.contains("Settings → Logs") && !shown.contains("://"), "{shown}");
 }

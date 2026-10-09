@@ -382,8 +382,25 @@ impl AdoClient {
             .await
     }
 
-    /// Same, reporting (done, total) per plan scanned.
-    #[allow(clippy::too_many_arguments)]
+    /// The upload's ensure: the same, except that an area whose suite create
+    /// was refused within the last week is not asked again - the upload
+    /// takes the Boards route after its cases exist instead (see
+    /// `boards_after_refusal`). Nothing else may skip the ask: only the
+    /// upload has a second route.
+    pub async fn ensure_requirement_suite_for_upload(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+        iteration: &str,
+    ) -> Result<EnsuredSuite, AdoError> {
+        self.ensure_inner(org, project, pbi_id, area_path, iteration, true, |_, _| {})
+            .await
+    }
+
+    /// Same as `ensure_requirement_suite`, reporting (done, total) per plan
+    /// scanned. Always asks the documented create, remembered refusal or not.
     pub async fn ensure_requirement_suite_cb(
         &self,
         org: &str,
@@ -391,6 +408,21 @@ impl AdoClient {
         pbi_id: i32,
         area_path: &str,
         iteration: &str,
+        progress: impl FnMut(u32, u32),
+    ) -> Result<EnsuredSuite, AdoError> {
+        self.ensure_inner(org, project, pbi_id, area_path, iteration, false, progress)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn ensure_inner(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+        iteration: &str,
+        skip_remembered: bool,
         mut progress: impl FnMut(u32, u32),
     ) -> Result<EnsuredSuite, AdoError> {
         let plans = self.get_test_plans(org, project).await?;
@@ -431,7 +463,9 @@ impl AdoClient {
             let plan = self
                 .create_test_plan(org, project, &default_plan_name(area_path), area_path, iteration)
                 .await?;
-            return self.suite_under(org, project, &plan, pbi_id, true).await;
+            let ensured = self.suite_under(org, project, &plan, pbi_id, true).await?;
+            super::forget_area_refused(&self.base_url, org, project, &plan.area_path);
+            return Ok(ensured);
         }
         // Try each candidate in turn - but only ONE per area path. "Manage
         // test suites" is an area-path permission, so a 403 in one plan is a
@@ -439,14 +473,16 @@ impl AdoClient {
         // requests and 70 s of identical refusals (2026-09-22). A plan for a
         // DIFFERENT area is still worth asking. Anything but a 403 propagates
         // unchanged, so the caller keeps telling 401 and 429 apart from the rest.
-        let mut forbidden: Vec<(String, String, String, usize)> = vec![]; // (plan label, area key, area as named, skipped)
         //
         // A refusal is also REMEMBERED per area for a week (2026-10-09): an
         // account without the access level was refused on every upload, and
-        // the Boards route made the suite every time after. A remembered
-        // area is not asked at all - it counts as refused, and the caller
-        // takes the Boards route. Reading suites above is unaffected, so a
-        // suite that exists is still found and used.
+        // the Boards route made the suite every time after. On the UPLOAD
+        // (`skip_remembered`) a remembered area is not asked at all - it
+        // counts as refused, and the upload takes the Boards route. Run
+        // Tests has no Boards route, so it always asks: someone granted the
+        // permission since must not be told "no permission" for a week.
+        // Reading suites above is unaffected, so a suite that exists is
+        // still found and used.
         let mut forbidden: Vec<(String, String, String, usize)> = vec![]; // (plan label, area key, area as named, skipped)
         for p in candidates {
             let area = super::area_key(&p.area_path);
@@ -454,7 +490,7 @@ impl AdoClient {
                 f.3 += 1;
                 continue;
             }
-            if super::area_refused(&self.base_url, org, project, &p.area_path) {
+            if skip_remembered && super::area_refused(&self.base_url, org, project, &p.area_path) {
                 crate::applog::debug(format!(
                     "suite create for area '{}' was refused within the last week - not asked again",
                     p.area_path.trim()
@@ -477,13 +513,7 @@ impl AdoClient {
                         "no permission to create a suite in test plan '{}' (id {}) for area '{}' - skipping the other plans for that area",
                         plan.name, plan.id, plan.area_path
                     ));
-                    super::remember_area_refused(
-                        &self.base_url,
-                        org,
-                        project,
-                        &plan.area_path,
-                        crate::cache::now_ms(),
-                    );
+                    super::remember_area_refused(&self.base_url, org, project, &plan.area_path);
                     forbidden.push((format!("'{}' (id {})", plan.name, plan.id), area, plan.area_path.trim().to_string(), 0));
                 }
                 Err(e) => return Err(e),

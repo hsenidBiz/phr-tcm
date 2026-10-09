@@ -778,7 +778,7 @@ async fn ensure_scans_only_area_matched_plans_but_find_scans_all() {
 /// first, and the error says which AREA needs the permission.
 #[tokio::test]
 async fn ensure_tries_one_plan_per_area_and_names_the_area() {
-    let server = MockServer::start().await;
+    let server = MockServer::builder().start().await; // unshared: a 403 is remembered per server URL
     Mock::given(method("GET"))
         .and(path("/org/proj/_apis/testplan/plans"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
@@ -891,7 +891,7 @@ async fn a_refused_area_skips_the_regular_route_next_time() {
     assert!(!area_refused(&server.uri(), "org", "proj", "Proj\\Auth"));
 
     for _ in 0..2 {
-        match client.ensure_requirement_suite("org", "proj", 42, "Proj\\Auth", "").await {
+        match client.ensure_requirement_suite_for_upload("org", "proj", 42, "Proj\\Auth", "").await {
             Err(AdoError::Http { status: 403, body }) => {
                 assert!(body.contains("'Auth plan' (id 100)"), "{body}");
             }
@@ -909,38 +909,58 @@ async fn a_refused_area_skips_the_regular_route_next_time() {
 /// works there clears the memory.
 #[tokio::test]
 async fn the_refusal_expires_after_seven_days() {
-    use v2_lib::ado_testplan::{area_refused, remember_area_refused};
-    use v2_lib::cache::{keys::SUITE_REFUSED_TTL_MS, now_ms};
+    use v2_lib::ado_testplan::{area_key, area_refused};
+    use v2_lib::cache::{keys::suite_refused, keys::SUITE_REFUSED_TTL_MS, now_ms, put_at};
     let server = one_plan_server(
         ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 1001})),
     )
     .await;
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    // The cache's own stamp is what ages; `put_at` back-dates it.
+    let key = suite_refused(&server.uri(), "org", "proj", &area_key("Proj\\Auth"));
 
     // Refused six days ago: still remembered, nothing asked.
     let day = 24 * 60 * 60 * 1000;
-    remember_area_refused(&server.uri(), "org", "proj", "Proj\\Auth", now_ms() - 6 * day);
+    put_at(&key, &true, now_ms() - 6 * day);
     assert!(area_refused(&server.uri(), "org", "proj", "Proj\\Auth"));
-    assert!(client.ensure_requirement_suite("org", "proj", 42, "Proj\\Auth", "").await.is_err());
+    assert!(client.ensure_requirement_suite_for_upload("org", "proj", 42, "Proj\\Auth", "").await.is_err());
     assert_eq!(suite_creates(&server.received_requests().await.unwrap()), 0);
 
     // Refused just over seven days ago: expired, so the route is asked.
-    remember_area_refused(&server.uri(), "org", "proj", "Proj\\Auth", now_ms() - SUITE_REFUSED_TTL_MS - 1);
+    put_at(&key, &true, now_ms() - SUITE_REFUSED_TTL_MS - 1);
     assert!(!area_refused(&server.uri(), "org", "proj", "Proj\\Auth"));
     let ensured = client
-        .ensure_requirement_suite("org", "proj", 42, "Proj\\Auth", "")
+        .ensure_requirement_suite_for_upload("org", "proj", 42, "Proj\\Auth", "")
         .await
         .unwrap();
     assert_eq!(ensured.suite_id, 1001);
     assert_eq!(suite_creates(&server.received_requests().await.unwrap()), 1);
     // The create worked, so the old refusal is gone, not merely stale.
-    assert!(v2_lib::cache::get::<u64>(&v2_lib::cache::keys::suite_refused(
-        &server.uri(),
-        "org",
-        "proj",
-        "proj\\auth"
-    ))
-    .is_none());
+    assert!(v2_lib::cache::get::<bool>(&key).is_none());
+}
+
+/// Run Tests has no Boards route, so it never takes the remembered
+/// refusal as its answer: someone granted the permission since gets their
+/// suite at once, not "no permission" for the rest of the week - and the
+/// create that works clears the memory for the upload too.
+#[tokio::test]
+async fn run_tests_ensure_asks_again_even_when_the_area_is_remembered_as_refused() {
+    use v2_lib::ado_testplan::{area_refused, remember_area_refused};
+    let server = one_plan_server(
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 1001})),
+    )
+    .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    remember_area_refused(&server.uri(), "org", "proj", "Proj\\Auth");
+
+    // The call Run Tests makes (`ensure_pbi_suite`).
+    let ensured = client
+        .ensure_requirement_suite_cb("org", "proj", 42, "Proj\\Auth", "", |_, _| {})
+        .await
+        .unwrap();
+    assert_eq!(ensured.suite_id, 1001);
+    assert_eq!(suite_creates(&server.received_requests().await.unwrap()), 1, "asked despite the memory");
+    assert!(!area_refused(&server.uri(), "org", "proj", "Proj\\Auth"), "a create that works clears it");
 }
 
 /// Reading suites is not creating one: a suite the PBI already has is
@@ -967,10 +987,10 @@ async fn an_existing_suite_is_still_used_when_the_area_is_remembered_as_refused(
         .mount(&server)
         .await;
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
-    remember_area_refused(&server.uri(), "org", "proj", "Proj\\Auth", v2_lib::cache::now_ms());
+    remember_area_refused(&server.uri(), "org", "proj", "Proj\\Auth");
 
     let ensured = client
-        .ensure_requirement_suite("org", "proj", 42, "Proj\\Auth", "")
+        .ensure_requirement_suite_for_upload("org", "proj", 42, "Proj\\Auth", "")
         .await
         .unwrap();
     assert_eq!((ensured.plan_id, ensured.suite_id), (100, 1005));

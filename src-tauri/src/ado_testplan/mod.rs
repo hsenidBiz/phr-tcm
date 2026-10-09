@@ -284,16 +284,15 @@ pub fn area_key(area: &str) -> String {
 /// last week (`keys::SUITE_REFUSED_TTL_MS`). A remembered refusal sends the
 /// upload straight to the Boards route instead of asking again: the answer
 /// was the same 403 every time, and it cost a request per area per upload.
+/// The age is the cache entry's own stamp (`cache::fresh`).
 pub fn area_refused(base_url: &str, org: &str, project: &str, area: &str) -> bool {
     let key = crate::cache::keys::suite_refused(base_url, org, project, &area_key(area));
-    crate::cache::get::<u64>(&key)
-        .is_some_and(|at| crate::cache::now_ms().saturating_sub(at) < crate::cache::keys::SUITE_REFUSED_TTL_MS)
+    crate::cache::fresh::<bool>(&key, crate::cache::keys::SUITE_REFUSED_TTL_MS).is_some()
 }
 
-/// Remember a refusal for `area`, stamped `at_ms` (epoch ms). Callers pass
-/// `cache::now_ms()`; a test passes an older stamp to see it expire.
-pub fn remember_area_refused(base_url: &str, org: &str, project: &str, area: &str, at_ms: u64) {
-    crate::cache::put(&crate::cache::keys::suite_refused(base_url, org, project, &area_key(area)), &at_ms);
+/// Remember that the documented suite create was refused for `area`, now.
+pub fn remember_area_refused(base_url: &str, org: &str, project: &str, area: &str) {
+    crate::cache::put(&crate::cache::keys::suite_refused(base_url, org, project, &area_key(area)), &true);
 }
 
 /// A suite created through the documented route: whatever was refused for

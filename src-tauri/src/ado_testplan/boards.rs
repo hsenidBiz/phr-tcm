@@ -79,7 +79,7 @@ pub fn no_suite_reported(pbi_id: i32, sentence: &str, why: Option<&str>) -> Stri
             // The first sentence stands word for word - it is still the
             // true reason - with one line saying the second route did not
             // work either. What exactly went wrong is a job for the log.
-            format!("{sentence} The Boards route did not work either - Settings, Logs has what it said.")
+            format!("{sentence} The Boards route did not work either - Settings → Logs has what it said.")
         }
         None => sentence.to_string(),
     }
@@ -378,7 +378,6 @@ impl AdoClient {
     /// nothing is warned and nothing is shown, because the cases DID land
     /// in a suite. Only when this route fails too is the no-suite warning
     /// logged, and the returned `Err` is the reason to show.
-    #[allow(clippy::too_many_arguments)]
     pub async fn boards_after_refusal(
         &self,
         org: &str,

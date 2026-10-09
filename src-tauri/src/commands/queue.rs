@@ -822,7 +822,7 @@ pub async fn submit_queue(
                     Some(s) => Ok(s),
                     None => {
                         client
-                            .ensure_requirement_suite(&organization, &project, pbi_id, &area, &iteration)
+                            .ensure_requirement_suite_for_upload(&organization, &project, pbi_id, &area, &iteration)
                             .await
                     }
                 };
