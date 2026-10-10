@@ -773,6 +773,13 @@ test.each([
   ],
   [{ end: { kind: "stopped", detail: { step: 2 } }, sentence: "the replay was stopped at step 2" }, "text-muted"],
   [
+    {
+      end: { kind: "browser_gone", detail: { step: 1 } },
+      sentence: "replay stopped at step 1: the Auto Run browser closed before the step finished",
+    },
+    "text-warning",
+  ],
+  [
     { end: { kind: "refused", detail: "case 1 has no saved script" }, sentence: "case 1 has no saved script" },
     "text-warning",
   ],
@@ -790,6 +797,20 @@ test.each([
 
   await r.finish(answer);
   expect(await screen.findByText(answer.sentence)).toHaveClass(tone);
+});
+
+test("a replay whose browser closed under it says why and leaves the pane with no browser", async () => {
+  const r = mockReplay({ account: "hr.admin" });
+  renderReplay(3);
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+  const sentence =
+    "replay stopped at step 1: the Auto Run browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens";
+  await r.finish({ end: { kind: "browser_gone", detail: { step: 1 } }, sentence });
+  expect(await screen.findByText(sentence)).toBeInTheDocument();
+  // The app let that browser go: the pane offers to open one, and never
+  // signs in over a browser that is not there.
+  expect(await screen.findByRole("button", { name: "Open browser" })).toBeInTheDocument();
+  expect(r.named("auto_run_sign_in")).toHaveLength(0);
 });
 
 test("after a replay to step 3, steps 1 and 2 are marked and step 3 is next, with no second sign-in", async () => {

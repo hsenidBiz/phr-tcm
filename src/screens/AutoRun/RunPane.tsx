@@ -50,6 +50,7 @@ const REPLAY_TONE: Record<ReplayEnd["kind"], string> = {
   ready: "text-success",
   stopped_at: "text-danger",
   stopped: "text-muted",
+  browser_gone: "text-warning",
   refused: "text-warning",
   blocked: "text-warning",
 };
@@ -433,6 +434,13 @@ export default function RunPane({
       // A refusal never touched the browser this pane would close: whatever
       // is open belongs to someone else, and the pane leaves it alone.
       if (end.kind === "refused") return;
+      // The browser closed under the replay and the app let it go: there is
+      // no browser to call this pane's own, and the next step opens one.
+      if (end.kind === "browser_gone") {
+        openedRef.current = false;
+        setOpened(false);
+        return;
+      }
       // The replay started the case afresh: the tabs its steps ran in,
       // outside main, are the ones the rows say, as a live step's are.
       setStepTabs(Object.fromEntries(r.data.tabs.map((t) => [t.step, t.tab])));
