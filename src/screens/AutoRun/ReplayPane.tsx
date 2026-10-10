@@ -135,8 +135,8 @@ function RunWindow({ run }: { run: BackgroundRun }) {
   /** Off by default: an unattended run's whole point is that nobody has to
    * sit in front of it. */
   const [watch, setWatch] = useState(() => localStorage.getItem("tcm-v2-autorun-watch") === "1");
-  /** Highlight each action: the outline and short pause before a click, fill
-   * or drag. Kept by Rust (it also covers the supervised browser), on until
+  /** Pause before each action: the short pause before a click, fill or drag
+   * (the outline is always drawn). Kept by Rust (it also covers the supervised browser), on until
    * the saved setting says otherwise. */
   const [highlight, setHighlight] = useState(true);
   useEffect(() => {
@@ -363,8 +363,8 @@ function RunWindow({ run }: { run: BackgroundRun }) {
             Watch the browser
           </label>
           <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
-            <Checkbox checked={highlight} ariaLabel="Highlight each action" onCheckedChange={chooseHighlight} />
-            Highlight each action
+            <Checkbox checked={highlight} ariaLabel="Pause before each action" onCheckedChange={chooseHighlight} />
+            Pause before each action
           </label>
           <p className="text-xs text-faint">
             Off: the browser runs in the background and you can keep working. On: a window opens

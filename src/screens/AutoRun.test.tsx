@@ -672,7 +672,7 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "test_files_list", // read-only, local: the Setup card's Test files count
     "env_list", // read-only, local: the header's environment name and its address
     "db_databases", // read-only, local: the environments list checks its databases against these
-    "get_app_settings", // read-only, local: the run dialog's Highlight each action box
+    "get_app_settings", // read-only, local: the run dialog's Pause before each action box
     "plugin:event|listen", // Tauri's own event subscription - ReplayPane's progress feed
     "plugin:event|unlisten", // the same subscription's cleanup on unmount
   ]);

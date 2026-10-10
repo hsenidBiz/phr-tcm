@@ -39,12 +39,12 @@ pub struct AppSettings {
     /// Folder of the PHR-PLAYWRIGHT-AUTOMATION clone Auto Run scripts export
     /// into. Empty until the person picks one.
     pub playwright_clone: String,
-    /// Auto Run points at each element (outline and a short pause) before it
-    /// clicks, fills or drags, in a watched run and in the supervised
+    /// Auto Run pauses briefly on each element before it clicks, fills or
+    /// drags (the outline is drawn either way), in a watched run and in the supervised
     /// browser, which covers the recording sign-in replays and the AI
     /// bridge's discovery and try-an-action paths too
-    /// (`Timing::supervised`). Off skips them all. An unwatched run never
-    /// highlights.
+    /// (`Timing::supervised`). Off skips the pause. An unwatched run never
+    /// pauses.
     pub autorun_highlight: bool,
 }
 

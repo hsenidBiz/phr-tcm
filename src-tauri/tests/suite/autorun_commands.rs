@@ -221,7 +221,7 @@ fn nobody_is_watching_a_background_run_so_it_does_not_pause_to_point() {
     assert_eq!(replay_timing(false).action_ms, v2_lib::browser::timing::Timing::default().action_ms);
 }
 
-/// Highlight each action, turned through its own setter for one test and
+/// Pause before each action, turned through its own setter for one test and
 /// put back as it was when the test ends, passed or not. The settings
 /// folder is set once for the binary and removed after each test (the
 /// next save makes it again).
@@ -255,7 +255,7 @@ impl Drop for Highlight {
     }
 }
 
-/// Highlight each action off: a watched run keeps its waits but loses the
+/// Pause before each action off: a watched run keeps its waits but loses the
 /// outline pause; on keeps it.
 #[test]
 fn highlight_off_skips_the_pause_for_a_watched_run() {

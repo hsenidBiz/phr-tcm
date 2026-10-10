@@ -206,11 +206,11 @@ test("the highlight box saves the setting", async () => {
     { shouldMockEvents: true },
   );
   mountPane([{ id: 1, title: "A" }]);
-  const box = await screen.findByRole("checkbox", { name: "Highlight each action" });
+  const box = await screen.findByRole("checkbox", { name: "Pause before each action" });
   expect(box).toHaveAttribute("aria-checked", "true");
   fireEvent.click(box);
   await waitFor(() => expect(saved).toEqual([false]));
-  expect(screen.getByRole("checkbox", { name: "Highlight each action" })).toHaveAttribute("aria-checked", "false");
+  expect(screen.getByRole("checkbox", { name: "Pause before each action" })).toHaveAttribute("aria-checked", "false");
 });
 
 test("progress moves the rows and the finished run is handed on", async () => {
