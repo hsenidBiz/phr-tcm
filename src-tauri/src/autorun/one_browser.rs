@@ -24,6 +24,7 @@
 
 use crate::autorun::replay::Browsers;
 use crate::browser::cdp::{Cdp, CdpError, Transport};
+pub use crate::browser::launch::Liveness;
 use std::future::Future;
 
 /// What a case's Blocked reason says when its browser would not give it a
@@ -44,9 +45,9 @@ pub trait Launcher {
     fn launch(&mut self) -> impl Future<Output = Result<Self::Process, String>>;
     /// A new connection to the browser itself, with no page driven yet.
     fn connect(&mut self, p: &Self::Process) -> impl Future<Output = Result<Cdp<Self::T>, String>>;
-    /// Is it still usable: does any of its processes still run, and does
-    /// its DevTools port answer?
-    fn alive(&mut self, p: &mut Self::Process) -> impl Future<Output = bool>;
+    /// Is it still usable: does any of its own processes still run, and
+    /// does its DevTools port answer?
+    fn alive(&mut self, p: &mut Self::Process) -> impl Future<Output = Liveness>;
     /// End every process of it, wait until they are gone, and delete its
     /// profile. A browser whose processes will not end is handed back.
     fn close(&mut self, p: Self::Process) -> Result<(), Self::Process>;
@@ -86,7 +87,9 @@ impl<L: Launcher> OneBrowser<L> {
     /// again, and no other browser may be started while it is.
     fn retire(&mut self) -> bool {
         let Some(p) = self.current.take() else { return true };
-        match self.launcher.close(p) {
+        // Closing waits for the processes to go: off the async worker.
+        let launcher = &mut self.launcher;
+        match crate::browser::tree::blocking(|| launcher.close(p)) {
             Ok(()) => true,
             Err(p) => {
                 crate::applog::warn("unattended run: the browser's processes would not end - no other browser is started beside it");
@@ -131,8 +134,13 @@ impl<L: Launcher> Browsers for OneBrowser<L> {
     /// `NO_FRESH_PAGE` (a launch that failed says its own words).
     async fn open(&mut self) -> Result<Cdp<L::T>, String> {
         if let Some(p) = self.current.as_mut() {
-            if !self.launcher.alive(p).await {
-                crate::applog::warn("unattended run: the browser closed during the run - a new one is started");
+            let found = self.launcher.alive(p).await;
+            if found != Liveness::Alive {
+                crate::applog::warn(if found == Liveness::NotAnswering {
+                    "unattended run: the browser stopped answering during the run, though its processes still run - it is ended and a new one is started"
+                } else {
+                    "unattended run: the browser closed during the run - a new one is started"
+                });
                 if !self.retire() {
                     return Err(NO_FRESH_PAGE.to_string());
                 }

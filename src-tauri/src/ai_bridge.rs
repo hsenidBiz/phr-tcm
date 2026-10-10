@@ -2813,7 +2813,9 @@ pub fn close_browser_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
     finish_mapping(slot);
     match slot.take() {
         Some(browser) => {
-            browser.close();
+            // Closing waits for the browser's processes to go: off the
+            // async worker.
+            crate::browser::tree::blocking(|| browser.close());
             true
         }
         None => false,

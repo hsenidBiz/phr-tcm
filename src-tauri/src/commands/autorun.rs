@@ -722,11 +722,14 @@ pub async fn close_autorun_browsers() {
     let mut slot = SESSION.lock().await;
     // A mapping run going keeps its summary, as any other ending does.
     crate::ai_bridge::finish_mapping(&mut slot);
-    if let Some(s) = slot.take() {
-        close_session(s);
+    let session = slot.take();
+    drop(slot);
+    // Closing waits for the browser's processes to go: on a blocking
+    // thread, so the caller's bound around this future still holds.
+    if let Some(s) = session {
+        let _ = tauri::async_runtime::spawn_blocking(move || close_session(s)).await;
         crate::applog::info("Auto-run browser closed as the app exits");
     }
-    drop(slot);
     let _ = held.await;
     // Last, every browser the app started that is still running: an
     // unattended run's, which nothing above closes, and any other one.

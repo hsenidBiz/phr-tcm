@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use v2_lib::autorun::one_browser::{Launcher, OneBrowser, NO_FRESH_PAGE};
-use v2_lib::browser::launch::still_alive;
+use v2_lib::browser::launch::{liveness, still_alive, Liveness};
 use v2_lib::browser::tree::{self, Ends};
 use v2_lib::autorun::replay::{run_selection, Browsers};
 use v2_lib::autorun::sessions::now_ms;
@@ -215,11 +215,11 @@ impl Launcher for FakeLauncher {
     /// What the real launcher asks: does the job still have processes,
     /// and does DevTools answer? A dead browser that will not end still
     /// has its processes; it just no longer answers.
-    async fn alive(&mut self, p: &mut FakeProcess) -> bool {
+    async fn alive(&mut self, p: &mut FakeProcess) -> Liveness {
         let w = self.world.lock().unwrap();
         let dead = w.dead.contains(&p.browser);
         let processes = if dead && !w.undying.contains(&p.browser) { 0 } else { 5 };
-        still_alive(Some(processes), w.pid_ended.contains(&p.browser), !dead)
+        liveness(Some(processes), w.pid_ended.contains(&p.browser), !dead)
     }
 
     fn close(&mut self, p: FakeProcess) -> Result<(), FakeProcess> {
@@ -707,4 +707,6 @@ fn a_browser_is_alive_by_its_processes_and_devtools_never_by_its_first_pid() {
     assert!(!still_alive(Some(0), false, true), "no process left");
     assert!(still_alive(None, false, true), "no job to ask: the first pid decides");
     assert!(!still_alive(None, true, true));
+    assert_eq!(liveness(Some(3), false, false), Liveness::NotAnswering, "said apart from a closed browser");
+    assert_eq!(liveness(Some(0), false, false), Liveness::Gone);
 }

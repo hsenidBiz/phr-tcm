@@ -10,7 +10,7 @@ use crate::autorun::replay::{self, Browsers, CaseToRun};
 use crate::autorun::reset_wait::{self, AppGate};
 use crate::autorun::{sessions, store, LocalRun};
 use crate::browser::cdp::{Cdp, WsTransport};
-use crate::browser::launch::{background_args, launch_with, pid_gone_line, still_alive, Browser, LaunchedBrowser};
+use crate::browser::launch::{background_args, launch_with, liveness, pid_gone_line, Browser, LaunchedBrowser, Liveness};
 use crate::browser::timing::Timing;
 use crate::events::ReplayProgress;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -102,9 +102,15 @@ pub(crate) async fn open_real(which: Browser, visible: bool) -> Result<(Cdp, Lau
 /// How long a liveness check waits for DevTools to answer.
 const ANSWER_WITHIN: Duration = Duration::from_secs(3);
 
-/// Does the browser's DevTools port answer, within `ANSWER_WITHIN`?
+/// Does the browser's DevTools port answer, within `ANSWER_WITHIN`? Asked
+/// once more before saying no: a slow, busy machine is not a dead browser.
 async fn devtools_answers(port: u16) -> bool {
-    matches!(tokio::time::timeout(ANSWER_WITHIN, Cdp::answers(port)).await, Ok(Ok(())))
+    for _ in 0..2 {
+        if matches!(tokio::time::timeout(ANSWER_WITHIN, Cdp::answers(port)).await, Ok(Ok(()))) {
+            return true;
+        }
+    }
+    false
 }
 
 /// How an unattended run starts its one browser (`OneBrowser`): headless
@@ -143,13 +149,13 @@ impl Launcher for RealLauncher {
     /// The browser's job still has processes and its DevTools port answers.
     /// The pid the app spawned ending is logged once, with what the job and
     /// DevTools said, and is otherwise no reason to give the browser up.
-    async fn alive(&mut self, p: &mut LaunchedBrowser) -> bool {
+    async fn alive(&mut self, p: &mut LaunchedBrowser) -> Liveness {
         let answered = devtools_answers(p.port).await;
-        let processes = p.processes();
+        let processes = crate::browser::tree::blocking(|| p.processes());
         if p.pid_ended() && p.note_pid_gone() {
             crate::applog::info(pid_gone_line(p.pid(), processes, answered));
         }
-        still_alive(processes, p.pid_ended(), answered)
+        liveness(processes, p.pid_ended(), answered)
     }
 
     fn close(&mut self, p: LaunchedBrowser) -> Result<(), LaunchedBrowser> {
