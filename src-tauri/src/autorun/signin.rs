@@ -105,6 +105,90 @@ fn clear_failed(e: CdpError) -> String {
     )
 }
 
+/// Why the application refused the session a page was given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionRefusal {
+    /// PeoplesHR's "Cookie has been tampered. Reason [EMPUSERID] dont match
+    /// current context user." error page (`SecureCookieModule`): the
+    /// browser holds one person's sign-in and another person's PeoplesHR
+    /// cookie, or the server's context for the user has moved on.
+    Tampered,
+    /// A page answered 400 with nothing in it: the application refused the
+    /// request before reading it, as it does for a session it no longer
+    /// knows.
+    EmptyBadRequest,
+}
+
+/// An expression this app wrote, with no input in it: `tampered` for the
+/// PeoplesHR error page, `empty400` for an empty 400 page, else empty. It
+/// hands back a word, never the page's text.
+///
+/// The error page is ASP.NET's own: its title is the message, and its body
+/// says "Server Error in '/hr' Application." above it. Either the title
+/// holding "Cookie has been tampered", or the body holding both that phrase
+/// and "Server Error in", counts - a page that only mentions the phrase
+/// does not. The top document is read, then each same-origin frame (an
+/// error page loaded into one); a frame of another origin cannot be read
+/// and says nothing.
+pub const SESSION_REFUSED_JS: &str = r#"(() => {
+  const PHRASE = 'Cookie has been tampered';
+  const tampered = (doc) => {
+    try {
+      const t = (doc.body && doc.body.innerText) || '';
+      return (doc.title || '').includes(PHRASE) || (t.includes(PHRASE) && t.includes('Server Error in'));
+    } catch (e) { return false; }
+  };
+  try {
+    if (tampered(document)) return 'tampered';
+    for (const f of Array.from(document.querySelectorAll('iframe, frame'))) {
+      let inner = null;
+      try { inner = f.contentDocument; } catch (e) { inner = null; }
+      if (inner && tampered(inner)) return 'tampered';
+    }
+    const t = (document.body && document.body.innerText) || '';
+    const nav = (performance.getEntriesByType('navigation') || [])[0];
+    if (nav && nav.responseStatus === 400 && t.trim() === '') return 'empty400';
+    return '';
+  } catch (e) { return ''; }
+})()"#;
+
+/// Does the page say the application no longer accepts the session it was
+/// given (`SessionRefusal`)? A page that cannot be read says nothing.
+pub async fn session_refused<D: Driver>(d: &mut D) -> Option<SessionRefusal> {
+    match crate::browser::page::eval_value(d, SESSION_REFUSED_JS).await.ok()?.as_str()? {
+        "tampered" => Some(SessionRefusal::Tampered),
+        "empty400" => Some(SessionRefusal::EmptyBadRequest),
+        _ => None,
+    }
+}
+
+/// Said when the application refused an account's session again after a
+/// fresh sign-in. Names the account by its key, never its login.
+pub fn session_refused_again(account_key: &str) -> String {
+    format!(
+        "the application refused the session for account \"{account_key}\" again after a fresh sign-in (\"Cookie has been tampered\": the sign-in and the application's own cookie name different users) - sign that account out wherever else it is signed in, then run again"
+    )
+}
+
+/// Whether a captured session is complete enough to save. The site gives
+/// no reliable way to read the signed-in user off the page (the recipe
+/// names only a signed-in marker, and the header's name is the person's,
+/// not the account key), so completeness is judged by what the sign-in
+/// leaves behind: some cookie at all, and the PeoplesHR pair whole - its
+/// sign-in cookie (`.ASPXAUTH`) and its own cookie (`ehrm85`, which carries
+/// the user the server checks the sign-in against) both there, or neither
+/// (a site that uses neither). One without the other is a sign-in caught
+/// halfway, which every restore would then meet as "Cookie has been
+/// tampered". Only names are looked at, never values.
+///
+/// The pair rule is PeoplesHR's own: a site that sets `.ASPXAUTH` but never
+/// `ehrm85` is never saved by it, and signs in through its form every time.
+/// That costs time, never a wrong session, and is accepted.
+pub fn session_complete(s: &crate::browser::session::SavedSession) -> bool {
+    let has = |name: &str| s.cookies.iter().any(|c| c["name"].as_str() == Some(name));
+    !s.cookies.is_empty() && has(".ASPXAUTH") == has("ehrm85")
+}
+
 /// How `sign_in`'s words begin when the start address would not open.
 pub const PAGE_DID_NOT_OPEN: &str = "the sign-in page did not open: ";
 /// What `sign_in`'s words hold when the sign-in worked and `after_sign_in`
@@ -229,10 +313,21 @@ async fn sign_in_held<D: Driver>(
         match session::restore(d, &saved).await {
             Ok(ids) => {
                 let arrived = open_start(d, &go, timing, &policy).await;
+                // The application's own word that this session is no
+                // longer good ("Cookie has been tampered", an empty 400):
+                // dropped and signed in fresh below, without waiting for a
+                // marker that cannot come.
+                let refused = if arrived.ok { session_refused(d).await } else { None };
+                if refused.is_some() {
+                    crate::applog::info(format!(
+                        "Auto Run: the application no longer accepts the saved session for {}; it is dropped and the account signed in fresh",
+                        account.key
+                    ));
+                }
                 // Short-circuit exactly like the plain `&&` this replaces:
                 // the marker is never even asked for once the navigate
                 // itself has already failed.
-                let marker = if arrived.ok {
+                let marker = if arrived.ok && refused.is_none() {
                     Some(expect(d, &recipe.signed_in, Check::Visible, timing.expect_ms, timing.poll_ms).await)
                 } else {
                     None
@@ -304,6 +399,11 @@ async fn sign_in_held<D: Driver>(
     }
 
     let marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+    if !marker.ok && !marker.harness && session_refused(d).await.is_some() {
+        // Refused again, with a session made just now: not the password.
+        forget_session(root, &account.key);
+        return run.done(false, session_refused_again(&account.key), false, false);
+    }
     if !marker.ok {
         let harness_failure = marker.harness;
         return run.done(
@@ -323,12 +423,28 @@ async fn sign_in_held<D: Driver>(
     let prompts = Prompts::Together { window_ms: FRESH_LOGIN_WINDOW_MS };
     let after = run_steps(d, &mut run, &recipe.after_sign_in, prompts, timing, &policy).await;
 
+    // Refused even now, after a fresh sign-in: said plainly, never saved.
+    if session_refused(d).await.is_some() {
+        forget_session(root, &account.key);
+        return run.done(false, session_refused_again(&account.key), false, false);
+    }
+
     // Saving is a convenience for next time. Failing to save is not a
-    // failure to sign in. Captured AFTER after_sign_in, so a saved session
-    // keeps what those steps left in the page's storage - and kept even
-    // when one of them failed, since the sign-in itself worked.
-    if let Ok(captured) = session::capture(d, &origins, now_ms()).await {
-        let _ = save_session(root, &account.key, &captured);
+    // failure to sign in. Saved only once the sign-in is complete: the
+    // marker showed, every after_sign_in step finished, the page is not a
+    // refusal, and the captured cookies are whole (`session_complete`). A
+    // session caught partway would be refused on every restore.
+    if after.is_ok() {
+        if let Ok(captured) = session::capture(d, &origins, now_ms()).await {
+            if session_complete(&captured) {
+                let _ = save_session(root, &account.key, &captured);
+            } else {
+                crate::applog::info(format!(
+                    "Auto Run: the session for {} was not saved - its sign-in cookies were not complete yet",
+                    account.key
+                ));
+            }
+        }
     }
     if let Err((n, why, harness_failure)) = after {
         return run.done(

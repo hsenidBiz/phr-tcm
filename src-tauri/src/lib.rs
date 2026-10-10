@@ -204,6 +204,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_remove_component,
             autorun::auto_run_reset_components,
             autorun::auto_run_end_discovery,
+            autorun::auto_run_release_browser,
             autorun::auto_run_replay_to_step,
             autorun::auto_run_stop_replay,
             autorun::auto_run_answer_replay_request,

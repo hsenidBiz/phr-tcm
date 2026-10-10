@@ -1034,6 +1034,15 @@ You open and drive a browser of your own to find what a script needs:
   if they arrive where you are. If you cannot reach a screen through the
   menus, ask the person to record the area in Auto Run.
 - `end_autorun_discovery` closes the browser when you are done.
+- `release_autorun_browser` lets go of an Auto Run browser the app still
+  holds after it closed, and ends your own discovery the way
+  `end_autorun_discovery` does. Call it when a discovery or a replay is
+  refused with "close the supervised browser first", or a page read
+  answers "the browser did not answer", while no Auto Run browser is
+  really open. It never closes the person's own browser while it is open:
+  then it says so, and you ask the person to close it or to press Release
+  Auto Run browser. It never stops a replay. Never ask the person to
+  restart the app for any of this.
 
 What the app sees on a live page is kept in this project's map, area by
 area: while you explore, in the person's browser, and in replays. A save

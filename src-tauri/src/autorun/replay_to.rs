@@ -65,9 +65,17 @@ pub enum ReplayEnd {
     /// and the case is Blocked with this sentence as its reason, as a
     /// watched start blocks it.
     Blocked(String),
-    /// The stop control, or the browser closing, ended the replay before
+    /// The stop control (Stop, Close browser, Open browser replacing it,
+    /// Release Auto Run browser or the app exiting) ended the replay before
     /// step `step` finished.
     Stopped { step: i32 },
+    /// The browser closed under the replay before step `step` finished: its
+    /// window was closed, or it crashed or stopped answering. The replay
+    /// lets it go (`commands::autorun::replay_supervised`), so the next
+    /// replay or discovery opens a new one. A replay that had stopped on a
+    /// failure first (`StoppedAt`) keeps that failure's `why` and
+    /// `outcomes` here, so the pane still shows the failed step's rows.
+    BrowserGone { step: i32, why: Option<String>, outcomes: Vec<ActionOutcome> },
     /// Nothing was replayed: the sentence says why.
     Refused(String),
 }
@@ -89,11 +97,21 @@ impl ReplayEnd {
                 format!("replay stopped at step {step}: {why}")
             }
             ReplayEnd::Blocked(why) => why.clone(),
-            ReplayEnd::Stopped { step } => format!("the replay was stopped at step {step}"),
+            ReplayEnd::Stopped { step } => format!("the replay was stopped at step {step}: {ASKED_TO_STOP}"),
+            ReplayEnd::BrowserGone { step, why: None, .. } => format!("replay stopped at step {step}: {BROWSER_CLOSED}"),
+            ReplayEnd::BrowserGone { step, why: Some(why), .. } => {
+                format!("replay stopped at step {step}: {why}; then {BROWSER_CLOSED}")
+            }
             ReplayEnd::Refused(why) => why.clone(),
         }
     }
 }
+
+/// Why a replay the stop control ended stopped.
+pub const ASKED_TO_STOP: &str = "it was asked to stop (Stop, Close browser or Release Auto Run browser)";
+
+/// Why a replay whose browser closed under it stopped.
+pub const BROWSER_CLOSED: &str = "the Auto Run browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens";
 
 /// What the panes hear once a replay has opened the supervised browser:
 /// nothing when one was open already (`had_browser`).
@@ -422,7 +440,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
         };
         let mut one = runner::as_action_outcome(&out);
         if closed(&one) {
-            return ReplayEnd::Stopped { step: 1 };
+            return ReplayEnd::BrowserGone { step: 1, why: None, outcomes: Vec::new() };
         }
         if !one.ok {
             if !one.harness {
@@ -440,7 +458,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     let from = if signed_now { TripFrom::SignIn } else { TripFrom::Elsewhere };
     let went = replay::trip_to_module(d, root, &route, from, timing, &who(id)).await;
     if closed(&went) {
-        return ReplayEnd::Stopped { step: 1 };
+        return ReplayEnd::BrowserGone { step: 1, why: None, outcomes: Vec::new() };
     }
     if !went.ok {
         return ReplayEnd::StoppedAt { phase: ReplayPhase::Area, step: 1, why: went.detail.clone(), outcomes: vec![went] };
@@ -491,8 +509,11 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
             Ok(o) => o,
             Err(why) => return ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step: k, why, outcomes: Vec::new() },
         };
-        if outcomes.iter().any(|o| o.detail == AFTER_STOP || closed(o)) {
+        if outcomes.iter().any(|o| o.detail == AFTER_STOP) {
             return ReplayEnd::Stopped { step: k };
+        }
+        if outcomes.iter().any(closed) {
+            return ReplayEnd::BrowserGone { step: k, why: None, outcomes: Vec::new() };
         }
         // A save the page sent after the step's last action passed is
         // still this step's.

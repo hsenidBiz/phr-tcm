@@ -271,8 +271,8 @@ async fn an_optional_step_that_appears_is_named() {
 }
 
 /// Signed in, but the page is not the way scripts expect it: that is a
-/// failure the person must see, named as this step - and the session the
-/// sign-in itself earned is still kept.
+/// failure the person must see, named as this step - and no session is
+/// saved: a sign-in whose after_sign_in did not finish is not complete.
 #[tokio::test]
 async fn a_failing_after_sign_in_step_fails_the_sign_in_and_names_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -282,5 +282,5 @@ async fn a_failing_after_sign_in_step_fails_the_sign_in_and_names_it() {
     assert!(!out.ok);
     assert!(out.detail.contains("after_sign_in step 1"), "{}", out.detail);
     no_password_anywhere(&out);
-    assert!(session_path(dir.path(), "admin").unwrap().is_file(), "the sign-in itself worked");
+    assert!(!session_path(dir.path(), "admin").unwrap().exists(), "an incomplete sign-in was saved");
 }

@@ -609,6 +609,7 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "discover_autorun_action",
             "save_autorun_area",
             "end_autorun_discovery",
+            "release_autorun_browser",
             "save_autorun_component",
             "remove_autorun_component",
             "get_autorun_failures",

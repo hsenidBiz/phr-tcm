@@ -789,6 +789,22 @@ async fn run_expanded<D: Driver>(
             }
         }
         unexpected_dialog(d, &mut dialogs_read, fail_on_unexpected, &mut outcome);
+        // The application refused the session the browser holds ("Cookie
+        // has been tampered", an empty 400): the account is signed in fresh
+        // so its saved session is repaired, and the action fails saying so,
+        // with the rest of the step and the case stopped. The action is never
+        // tried again: what the earlier actions built is gone. Not looked at
+        // once the step is already stopped (a save the guard caught
+        // included), nor with a Stop pending.
+        let stop_pending = run.cancel.is_some_and(|c| c.load(Ordering::SeqCst));
+        if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP && blocked.is_none() && !stop_pending {
+            if let Some(key) = account.clone() {
+                if signin::session_refused(d).await.is_some() {
+                    outcome = after_session_refused(d, &here, &key, step.step_number, timing, account, lease).await;
+                    blocked = Some(AFTER_SESSION_REFUSED);
+                }
+            }
+        }
         // A Stop is no failure to picture.
         if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP {
             outcome.screenshot = picture(d, root).await;
@@ -903,6 +919,55 @@ struct Here<'a> {
     policy: &'a Policy,
     direct_urls: bool,
     step: i32,
+}
+
+/// Said by the actions after one the application refused the session for.
+pub const AFTER_SESSION_REFUSED: &str = "not run: the site refused the session the browser held";
+
+/// The sentence for an action the application refused the session for:
+/// the account (by key, never a login) was signed in fresh, and the case
+/// runs again from the start.
+pub fn session_refused_mid_case(account_key: &str) -> String {
+    format!("the site refused the saved session; {account_key} was signed in fresh - run the case again")
+}
+
+/// An action failed on a page that says the application no longer accepts
+/// the session (`signin::session_refused`). The account's saved session is
+/// dropped and the account signed in fresh, its lease taken first as every
+/// sign-in takes it, so the next run finds a good session; the action
+/// itself fails with `session_refused_mid_case`. Nothing is tried again.
+/// A fresh sign-in the application refuses as well says so
+/// (`signin::session_refused_again`).
+async fn after_session_refused<D: Driver>(
+    d: &mut D,
+    here: &Here<'_>,
+    key: &str,
+    step_number: i32,
+    timing: &Timing,
+    account: &mut Option<String>,
+    lease: &mut Held,
+) -> ActionOutcome {
+    super::sessions::forget_session(here.root, key);
+    crate::applog::info(format!(
+        "Auto Run, step {step_number}: the site refused the session for {key}; it is signed in fresh"
+    ));
+    let (r, who) = match signin::prepare(here.root, here.organization, here.project, key) {
+        Ok(found) => found,
+        Err(why) => {
+            *account = None;
+            return ActionOutcome::failed(why);
+        }
+    };
+    if let Err(why) = lease.hold(here.root, &who.key).await {
+        *account = None;
+        return ActionOutcome::failed(why);
+    }
+    let signed = signin::sign_in_fresh(d, here.root, &r, &who, timing).await;
+    if !signed.ok {
+        *account = None;
+        return as_action_outcome(&signed);
+    }
+    ActionOutcome::failed(session_refused_mid_case(key))
 }
 
 /// A plain action - one a `when_visible` may guard - carried out, and why

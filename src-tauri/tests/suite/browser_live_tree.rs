@@ -247,3 +247,118 @@ fn scopeguard_kill(pid: u32) -> impl Drop {
     }
     KillOnDrop(pid)
 }
+
+/// The held browser's liveness (`held_browser_alive`) against a real Edge:
+/// alive while it answers; gone once its main page is closed although its
+/// processes still run (the report: the window closed, the app kept the
+/// browser as held); gone once its processes have ended.
+#[tokio::test]
+#[ignore = "starts a real Edge"]
+async fn a_held_browser_is_alive_only_while_its_own_page_answers() {
+    use v2_lib::commands::autorun::held_browser_alive;
+    let _held = crate::serial::held_browsers();
+    let mut b = start().await;
+    // A page of its own to drive: the first page Edge lists can be one of
+    // its own dialogs.
+    let mut cdp = Cdp::connect_browser(b.port).await.expect("connected");
+    cdp.drive_new_page().await.expect("a page to drive");
+    assert!(held_browser_alive(&mut b, &mut cdp).await, "a browser that answers was taken for gone");
+
+    // Another tab keeps the browser running; the page the app drives closes.
+    let mut other = Cdp::connect_browser(b.port).await.expect("a second connection");
+    other.call("Target.createTarget", json!({ "url": "about:blank" })).await.expect("a second tab");
+    // The page the app drives is closed from outside, as the person
+    // closing its tab would.
+    let main = cdp.current().expect("a main tab").target_id.clone();
+    other.call("Target.closeTarget", json!({ "targetId": main })).await.expect("closed");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(b.processes().unwrap() > 0, "the browser itself should still run");
+    assert!(
+        !held_browser_alive(&mut b, &mut cdp).await,
+        "a browser whose page closed is still taken for alive while its processes linger"
+    );
+
+    // Its processes ended: gone, without asking.
+    let mut fresh = start().await;
+    let mut fresh_cdp = Cdp::connect(fresh.port).await.expect("connected");
+    assert!(fresh.end(), "ended");
+    assert!(!held_browser_alive(&mut fresh, &mut fresh_cdp).await);
+    drop(other);
+    assert!(b.close().is_ok());
+}
+
+/// Release Auto Run browser against real processes: a browser the app
+/// started is ended through its job, and a program outside the app's jobs
+/// (a harmless `ping` standing in for the person's own Edge) is left
+/// running.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "starts a real Edge"]
+async fn release_closes_the_apps_browsers_and_nothing_else() {
+    let _a = crate::serial::autorun();
+    let _t = crate::serial::api_template_run();
+    let _held = crate::serial::held_browsers();
+    let b = start().await;
+    let profile = b.profile_dir.clone();
+    assert!(!processes_on(&profile).is_empty());
+    let mut outside = std::process::Command::new("ping")
+        .args(["-n", "60", "127.0.0.1"])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("ping starts");
+    let ended_it = scopeguard_kill(outside.id());
+    assert!(!b.holds(outside.id()));
+
+    let said = v2_lib::commands::autorun::release_autorun_browsers().await.expect("release refused");
+    assert!(said.contains("1 of the app's own browsers was closed"), "{said}");
+    assert!(eventually(Duration::from_secs(8), || processes_on(&profile).is_empty()), "{:?}", processes_on(&profile));
+    assert!(outside.try_wait().unwrap().is_none(), "a process outside the app's jobs was ended");
+    drop(ended_it);
+    let _ = outside.wait();
+    drop(b);
+}
+
+/// The clear a sign-in makes before the next account (`session::clear`),
+/// against a real Edge: a cookie of the account before, on the site's
+/// domain, is gone afterwards. Only cookie names are compared.
+#[tokio::test]
+#[ignore = "starts a real Edge"]
+async fn the_sign_in_clear_leaves_no_cookie_of_the_account_before() {
+    let _held = crate::serial::held_browsers();
+    let b = start().await;
+    let mut cdp = Cdp::connect(b.port).await.expect("connected");
+    cdp.call(
+        "Network.setCookies",
+        json!({ "cookies": [
+            { "name": "ehrm85", "value": "previous-user", "domain": "hr.example.internal", "path": "/" },
+            { "name": ".ASPXAUTH", "value": "previous-user", "domain": "hr.example.internal", "path": "/", "httpOnly": true }
+        ] }),
+    )
+    .await
+    .expect("cookies set");
+    let names = |v: &serde_json::Value| -> Vec<String> {
+        v["cookies"].as_array().into_iter().flatten().filter_map(|c| c["name"].as_str().map(str::to_string)).collect()
+    };
+    let before = cdp.call("Network.getAllCookies", json!({})).await.unwrap();
+    assert!(names(&before).contains(&"ehrm85".to_string()), "{:?}", names(&before));
+    v2_lib::browser::session::clear(&mut cdp, &["https://hr.example.internal".to_string()]).await.expect("cleared");
+    let after = cdp.call("Network.getAllCookies", json!({})).await.unwrap();
+    assert!(names(&after).is_empty(), "a cookie survived the clear: {:?}", names(&after));
+    assert!(b.close().is_ok());
+}
+
+/// A fresh profile's Edge can list one of its own pages first (a sync
+/// dialog): `Cdp::connect` never drives it, nor any other browser page.
+#[tokio::test]
+#[ignore = "starts a real Edge"]
+async fn connect_drives_an_application_page_on_a_fresh_profile() {
+    let _held = crate::serial::held_browsers();
+    for extra in [&["--headless=new"][..], &[][..]] {
+        let b = start_with(extra).await;
+        let mut cdp = Cdp::connect(b.port).await.expect("connected");
+        let href = page::eval_value(&mut cdp, "location.href").await.expect("the page answers");
+        let href = href.as_str().unwrap_or("").to_string();
+        assert!(v2_lib::browser::cdp::is_app_page(&href), "drove a browser page: {href}");
+        assert!(!href.starts_with("edge://"), "{href}");
+        assert!(b.close().is_ok());
+    }
+}
