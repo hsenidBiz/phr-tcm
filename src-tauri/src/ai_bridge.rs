@@ -1673,12 +1673,81 @@ pub async fn supervised_page(organization: &str, project: &str, limit: usize) ->
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
-    let at = supervised_sighting(session, organization, project);
-    let answer = read_page(&mut session.cdp, limit, at.as_ref()).await;
+    let root = if project.trim().is_empty() { None } else { crate::autorun::store::configured_root() };
+    let tabs_case = session.tabs_case;
+    let answer = page_read_in(session, root.as_deref(), organization, project, tabs_case, limit).await;
     // A browser that has gone is let go here, not kept to answer 503 again.
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery(&slot);
     answer
+}
+
+/// Said at the end of a page read during a discovery that has no area yet:
+/// nothing was recorded.
+pub const READ_WITH_NO_AREA: &str = "Recorded nothing as seen: this discovery has no area yet. Save the area with save_autorun_area, or name it with \"area\" on discover_autorun_action, then read the page again.";
+
+/// Said at the end of a page read during a discovery when the page is not
+/// on the application's own origins: nothing was recorded.
+pub const READ_OFF_THE_APP: &str =
+    "Recorded nothing as seen: this page is not on one of this project's allowed origins.";
+
+/// Said at the end of a page read during a discovery when what it showed
+/// could not be filed (the reason is in the log).
+pub const READ_NOT_FILED: &str =
+    "Recorded nothing as seen: the discovery map could not be written (see Settings -> Logs).";
+
+/// The line a page read during a discovery ends with when it recorded.
+pub fn recorded_on(n: usize, area: &str) -> String {
+    let what = if n == 1 { "element" } else { "elements" };
+    format!("Recorded {n} {what} as seen on {}.", area.trim())
+}
+
+/// The page in `browser` as text, `limit` lines at most: what
+/// `get_autorun_page` answers. `root` is where the discovery map lives,
+/// `None` when there is nowhere to file (no project, no data folder).
+///
+/// During a discovery a read of the page counts exactly as an action's
+/// read of it does (the same page text, filed by the same `read_and_file`),
+/// so a read of the whole page explores it. It is filed under the
+/// discovery's current area, and the answer ends with one line saying how
+/// many elements were recorded as seen there. A discovery with no area yet
+/// records nothing and says so (`READ_WITH_NO_AREA`): the case's area or
+/// the unattributed bucket would file it where the discovery is not.
+///
+/// Outside a discovery the read is filed as it always was
+/// (`discovery_sighting`: the area of the case the browser last ran, else
+/// the unattributed bucket), never explores anything, and the answer is the
+/// page text alone.
+pub async fn page_read_in<B: DiscoveryBrowser>(
+    browser: &mut B,
+    root: Option<&std::path::Path>,
+    organization: &str,
+    project: &str,
+    tabs_case: Option<i32>,
+    limit: usize,
+) -> (u16, String) {
+    let p = browser.parts();
+    let discovery_area = p.discovery.as_ref().map(|s| named(s.area.as_deref()));
+    let at = root.and_then(|root| {
+        discovery_sighting(root, organization, project, p.discovery.as_ref(), tabs_case, p.signed_in.as_deref())
+    });
+    let Some(area) = discovery_area else {
+        return read_page(p.driver, limit, at.as_ref()).await;
+    };
+    let Some(area) = area else {
+        let (status, text) = read_page(p.driver, limit, None).await;
+        return if status == 200 { (status, format!("{text}\n\n{READ_WITH_NO_AREA}")) } else { (status, text) };
+    };
+    let (status, text, filed) = read_and_file(p.driver, limit, at.as_ref()).await;
+    if status != 200 {
+        return (status, text);
+    }
+    let line = match filed {
+        Filed::Recorded(n) => recorded_on(n, &area),
+        Filed::OffOrigin => READ_OFF_THE_APP.to_string(),
+        Filed::Not | Filed::Unrecorded => READ_NOT_FILED.to_string(),
+    };
+    (status, format!("{text}\n\n{line}"))
 }
 
 /// Where what the live page shows is filed in the discovery map
@@ -1694,6 +1763,24 @@ pub struct Sighting {
     pub account: Option<String>,
     /// When the discovery under way started, or `None` outside one.
     pub discovering: Option<u64>,
+    /// The application's own origins, as a discovery's `navigate` is held
+    /// to them (`runner::policy_for` the project's recipe): a page read
+    /// files nothing from a page this does not allow.
+    pub policy: crate::browser::actions::Policy,
+}
+
+/// The origins a page read may file from: those of the project's recipe in
+/// the active environment, as an action's address is checked; any, with no
+/// recipe (`runner::policy_for(None)`, as for actions); none, when the
+/// recipe cannot be read, so an unreadable recipe never widens what counts.
+pub fn recording_policy(root: &std::path::Path, organization: &str, project: &str) -> crate::browser::actions::Policy {
+    match crate::autorun::recipe::load_effective_recipe_if_any(root, organization, project) {
+        Ok(recipe) => crate::autorun::runner::policy_for(recipe.as_ref()),
+        Err(why) => {
+            unrecorded(&format!("the sign-in recipe could not be read: {why}"));
+            crate::browser::actions::Policy::only(vec![])
+        }
+    }
 }
 
 /// The area a recording belongs to: the discovery's own area, else the area
@@ -1750,6 +1837,7 @@ pub fn discovery_sighting(
         area: recording_area(root, discovery.and_then(|s| s.area.as_deref()), tabs_case),
         account: discovery.and_then(|s| s.account.clone()).or_else(|| signed_in.map(str::to_string)),
         discovering: discovery.map(|s| s.started_at),
+        policy: recording_policy(root, organization, project),
         root: root.to_path_buf(),
         org: organization.to_string(),
         project: project.to_string(),
@@ -1760,12 +1848,20 @@ pub fn discovery_sighting(
 /// fragment; empty when it cannot be read) and its title. The address is
 /// read as `nav::go_to_module` reads it to compare with `arrived`.
 pub async fn current_page<D: crate::browser::cdp::Driver>(d: &mut D) -> (String, String) {
+    let (href, title) = page_address(d).await;
+    let path = if href.trim().is_empty() { String::new() } else { crate::autorun::discovery_map::path_only(&href) };
+    (path, title)
+}
+
+/// The page's full address (empty when it cannot be read) and its title.
+/// The address is only checked against the allowed origins and cut to its
+/// path: it is never logged or answered whole.
+async fn page_address<D: crate::browser::cdp::Driver>(d: &mut D) -> (String, String) {
     let href = crate::browser::page::eval_value(d, "location.href").await;
     let href = href.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
     let title = crate::browser::page::eval_value(d, "document.title").await;
     let title = title.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-    let path = if href.trim().is_empty() { String::new() } else { crate::autorun::discovery_map::path_only(&href) };
-    (path, title)
+    (href, title)
 }
 
 /// A recording that could not be written is said in the log and never
@@ -1781,33 +1877,72 @@ pub async fn read_page<D: crate::browser::cdp::Driver>(
     limit: usize,
     at: Option<&Sighting>,
 ) -> (u16, String) {
-    let (text, lines) = match crate::browser::snapshot::snapshot_with_lines(d, limit).await {
+    let (status, text, _) = read_and_file(d, limit, at).await;
+    (status, text)
+}
+
+/// What a page read filed in the discovery map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Filed {
+    /// Nowhere to file it (`at` was none), or the read failed.
+    Not,
+    /// This many distinct elements recorded as seen.
+    Recorded(usize),
+    /// The page is not on the application's own origins (`Sighting::policy`).
+    OffOrigin,
+    /// It could not be written; the log says why.
+    Unrecorded,
+}
+
+/// `read_page`, saying what it filed. The single path every page read
+/// records through: only the lines the read returned are filed, a page the
+/// application's origins do not allow files nothing, and a read the line
+/// limit cut short files what it returned without exploring the page
+/// (`discovery_map::record_read`).
+pub async fn read_and_file<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    limit: usize,
+    at: Option<&Sighting>,
+) -> (u16, String, Filed) {
+    let read = match crate::browser::snapshot::snapshot_read(d, limit).await {
         Ok(read) => read,
-        Err(e) => return (503, format!("the browser did not answer: {e}")),
+        Err(e) => return (503, format!("the browser did not answer: {e}"), Filed::Not),
     };
-    if let Some(at) = at {
-        let (path, title) = current_page(d).await;
-        let recorded = if path.is_empty() {
-            Err("the page's address could not be read".to_string())
-        } else {
-            crate::autorun::discovery_map::record_seen(
-                &at.root,
-                &at.org,
-                &at.project,
-                at.area.as_deref(),
-                &path,
-                &title,
-                &lines,
-                at.account.as_deref(),
-                at.discovering,
-                crate::autorun::sessions::now_ms(),
-            )
-        };
-        if let Err(why) = recorded {
+    let Some(at) = at else {
+        return (200, read.text, Filed::Not);
+    };
+    let (href, title) = page_address(d).await;
+    if href.trim().is_empty() {
+        unrecorded("the page's address could not be read");
+        return (200, read.text, Filed::Unrecorded);
+    }
+    if !at.policy.allows(&href) {
+        crate::applog::info(format!(
+            "Discovery map: a page read was not filed, as the page is not on {}",
+            crate::browser::actions::ALLOWED_ORIGINS
+        ));
+        return (200, read.text, Filed::OffOrigin);
+    }
+    let recorded = crate::autorun::discovery_map::record_read(
+        &at.root,
+        &at.org,
+        &at.project,
+        at.area.as_deref(),
+        &crate::autorun::discovery_map::path_only(&href),
+        &title,
+        &read.lines,
+        at.account.as_deref(),
+        at.discovering,
+        !read.cut,
+        crate::autorun::sessions::now_ms(),
+    );
+    match recorded {
+        Ok(n) => (200, read.text, Filed::Recorded(n)),
+        Err(why) => {
             unrecorded(&why);
+            (200, read.text, Filed::Unrecorded)
         }
     }
-    (200, text)
 }
 
 /// Files each locator in `targets` at `at` under the page at `path`.
@@ -3878,6 +4013,9 @@ async fn try_action<D: crate::browser::cdp::Driver>(
             area: recording_area(root, discovery_area, Some(case_id)),
             account: None,
             discovering: None,
+            // Filing what a try matched (`record_matched_targets`) reads no
+            // page address, so no policy applies there.
+            policy: crate::browser::actions::Policy::default(),
         };
         record_matched_targets(&at, &started_on, &matched);
     }

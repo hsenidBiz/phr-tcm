@@ -290,9 +290,27 @@ pub fn render_frames(nodes: &[AxNode], frames: &[FrameTree], limit: usize) -> St
 /// `render_frames`, and the lines it printed as data (only those that carry
 /// a locator, and only those inside the limit). The text is byte-identical.
 pub fn render_frames_with_lines(nodes: &[AxNode], frames: &[FrameTree], limit: usize) -> (String, Vec<SnapLine>) {
+    let read = render_frames_read(nodes, frames, limit);
+    (read.text, read.lines)
+}
+
+/// One read of the page: the text, the lines it printed as data, and
+/// whether `limit` cut it short (the text then ends "... and N more").
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageRead {
+    pub text: String,
+    pub lines: Vec<SnapLine>,
+    /// True when the page had more lines than the read printed: what it
+    /// shows is not the whole page.
+    pub cut: bool,
+}
+
+/// `render_frames_with_lines`, saying as well whether the limit cut it.
+pub fn render_frames_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize) -> PageRead {
     const EMPTY: &str = "the page has nothing a locator could name";
+    let empty = || PageRead { text: EMPTY.to_string(), lines: vec![], cut: false };
     let Some(root) = nodes.first() else {
-        return (EMPTY.to_string(), vec![]);
+        return empty();
     };
     let tree = Tree {
         by_id: nodes.iter().map(|n| (n.id.as_str(), n)).collect(),
@@ -303,7 +321,7 @@ pub fn render_frames_with_lines(nodes: &[AxNode], frames: &[FrameTree], limit: u
     let mut seen = std::collections::HashSet::new();
     walk(&root.id, 0, &tree, &mut lines, &mut seen);
     if lines.is_empty() {
-        return (EMPTY.to_string(), vec![]);
+        return empty();
     }
     let total = lines.len();
     let mut out = lines.iter().take(limit).map(|(t, _)| t.clone()).collect::<Vec<_>>().join("\n");
@@ -314,7 +332,7 @@ pub fn render_frames_with_lines(nodes: &[AxNode], frames: &[FrameTree], limit: u
         }
         out.push_str(&format!("... and {} more (raise the limit, or scope the probe)", total - limit));
     }
-    (out, data)
+    PageRead { text: out, lines: data, cut: total > limit }
 }
 
 /// `Accessibility.getFullAXTree`, retried once after `Accessibility.enable`
@@ -326,6 +344,11 @@ pub async fn snapshot<D: Driver>(d: &mut D, limit: usize) -> Result<String, CdpE
 
 /// `snapshot`, and the printed lines as data.
 pub async fn snapshot_with_lines<D: Driver>(d: &mut D, limit: usize) -> Result<(String, Vec<SnapLine>), CdpError> {
+    snapshot_read(d, limit).await.map(|read| (read.text, read.lines))
+}
+
+/// `snapshot_with_lines`, saying as well whether the limit cut it.
+pub async fn snapshot_read<D: Driver>(d: &mut D, limit: usize) -> Result<PageRead, CdpError> {
     let result = match d.call("Accessibility.getFullAXTree", json!({})).await {
         Ok(v) => v,
         Err(CdpError::Protocol { message, .. }) if message.to_lowercase().contains("enabled") => {
@@ -346,7 +369,7 @@ pub async fn snapshot_with_lines<D: Driver>(d: &mut D, limit: usize) -> Result<(
             inner.frames = frames_in(d, &inner.nodes).await;
         }
     }
-    Ok(render_frames_with_lines(&nodes, &frames, limit))
+    Ok(render_frames_read(&nodes, &frames, limit))
 }
 
 /// The trees of the `Iframe` nodes in `nodes` (one level), each with the

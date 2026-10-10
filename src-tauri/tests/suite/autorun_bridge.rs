@@ -1526,6 +1526,7 @@ fn sighting(root: &std::path::Path, area: Option<&str>) -> Sighting {
         area: area.map(str::to_string),
         account: None,
         discovering: None,
+        policy: v2_lib::browser::actions::Policy::open(),
     }
 }
 

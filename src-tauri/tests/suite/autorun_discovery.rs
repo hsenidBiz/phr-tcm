@@ -2529,3 +2529,199 @@ async fn the_person_open_browser_is_still_refused_while_discovering() {
     assert_eq!(source.matches("ReplayBy::Assistant)").count(), 0, "a person's path replays as the assistant");
     assert_eq!(source.matches("refuse_while_discovering(&mut slot)").count(), 3, "a refusal went missing");
 }
+
+// ------------------------------------------ a page read during a discovery
+
+use v2_lib::ai_bridge::{page_read_in, READ_OFF_THE_APP, READ_WITH_NO_AREA};
+
+/// The Leave page, on the recipe's own origin, with a query string nothing
+/// may keep.
+const LEAVE_PAGE: &str = "https://hr.example.internal/hr/leave?token=t0p-secret#top";
+
+/// The AX tree of a page holding one button per name, under a root the
+/// snapshot folds away: each button is one printed line.
+fn buttons_tree(names: &[String]) -> Value {
+    let mut nodes = vec![json!({
+        "nodeId": "root", "ignored": true, "role": { "value": "generic" },
+        "childIds": (0..names.len()).map(|i| format!("b{i}")).collect::<Vec<_>>()
+    })];
+    for (i, n) in names.iter().enumerate() {
+        nodes.push(json!({
+            "nodeId": format!("b{i}"), "ignored": false, "role": { "value": "button" },
+            "name": { "value": n }, "childIds": []
+        }));
+    }
+    json!({ "nodes": nodes })
+}
+
+/// A page at `href` holding a button for each of `names`.
+fn buttons_page(href: &str, names: &[&str]) -> ScriptedDriver {
+    let href = href.to_string();
+    let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+    ScriptedDriver::new(move |method, params| {
+        Ok(match method {
+            "Accessibility.getFullAXTree" => buttons_tree(&names),
+            "Runtime.evaluate" if params["expression"] == "location.href" => json!({ "result": { "value": href } }),
+            "Runtime.evaluate" if params["expression"] == "document.title" => {
+                json!({ "result": { "value": "Leave" } })
+            }
+            _ => json!({}),
+        })
+    })
+}
+
+/// A page at `href` on which an action works as on `FakePage`, holding a
+/// button for each of `names`.
+fn acting_page(href: &'static str, names: Vec<String>) -> ScriptedDriver {
+    let page = FakePage { href, ..FakePage::default() };
+    ScriptedDriver::new(move |method, params| match method {
+        "Accessibility.getFullAXTree" => Ok(buttons_tree(&names)),
+        _ => page.answer(method, params),
+    })
+}
+
+/// The names of the buttons the area has sighted, sorted.
+fn sighted(root: &std::path::Path, area: &str) -> Vec<String> {
+    let mut names: Vec<String> = mapped_area(root, area)
+        .map(|a| a.sightings.into_iter().filter_map(|s| s.link.name).collect())
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+/// `exploring(area)`, as a discovery that started after everything filed so
+/// far: a read of the whole page would drop what it does not show.
+fn exploring_anew(area: &str) -> Option<DiscoveryState> {
+    exploring(area).map(|s| DiscoveryState { started_at: u64::MAX, ..s })
+}
+
+/// During a discovery with an area, every line the read returned is filed
+/// under that area, keyed and kept as an action's read is, and the answer
+/// ends by saying how many were recorded and where. The page text itself
+/// is unchanged and names no host or query string.
+#[tokio::test]
+async fn a_page_read_in_discovery_records_its_lines() {
+    let dir = root_with_recipe_and_account();
+    let (mut held, _) = slot(buttons_page(LEAVE_PAGE, &["Save", "Cancel"]), exploring("Leave"));
+    let (status, text) =
+        page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    let (_, plain) = read_page(&mut buttons_page(LEAVE_PAGE, &["Save", "Cancel"]), DEFAULT_LIMIT, None).await;
+    assert_eq!(text, format!("{plain}\n\nRecorded 2 elements as seen on Leave."));
+    assert!(!text.contains("hr.example.internal") && !text.contains("t0p-secret"), "{text}");
+
+    let area = mapped_area(dir.path(), "Leave").expect("nothing was recorded under the area");
+    assert_eq!(sighted(dir.path(), "Leave"), ["Cancel", "Save"]);
+    assert!(area.sightings.iter().all(|s| s.page == "/hr/leave"), "{:?}", area.sightings);
+    assert!(area.explored_at.is_some(), "a discovery's read did not stamp the area");
+    assert_eq!(area.account.as_deref(), Some("admin"));
+    let file = std::fs::read_to_string(map_path(dir.path(), ORG, PROJECT)).unwrap();
+    assert!(!file.contains("t0p-secret") && !file.contains('?'), "{file}");
+}
+
+/// Outside a discovery the read is filed as it was before (the
+/// unattributed bucket here), explores nothing, and the answer is the page
+/// text alone.
+#[tokio::test]
+async fn a_page_read_outside_discovery_adds_no_answer_line_and_explores_nothing() {
+    let dir = root_with_recipe_and_account();
+    let (mut held, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), None);
+    let (status, text) =
+        page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    let (_, plain) = read_page(&mut buttons_page(LEAVE_PAGE, &["Save"]), DEFAULT_LIMIT, None).await;
+    assert_eq!(text, plain, "a read outside a discovery gained a line");
+    assert!(!text.contains("Recorded"), "{text}");
+
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    assert!(map.areas.iter().all(|a| a.explored_at.is_none()), "{map:?}");
+    assert_eq!(sighted(dir.path(), ""), ["Save"], "the shipped recording outside a discovery went");
+}
+
+/// A read cut short by its limit files only the lines it returned, and
+/// drops nothing past the cut: it never counts as exploring the whole page.
+/// The same page read whole by the same discovery does drop what it does
+/// not show, which is what the cut is kept from.
+#[tokio::test]
+async fn a_limited_read_records_only_returned_lines() {
+    let dir = root_with_recipe_and_account();
+    let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier", "Older"]), exploring("Leave"));
+    page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(sighted(dir.path(), "Leave"), ["Earlier", "Older"]);
+
+    let (mut cut, _) = slot(buttons_page(LEAVE_PAGE, &["Save", "Cancel", "Delete"]), exploring_anew("Leave"));
+    let (status, text) = page_read_in(cut.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, 1).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("... and 2 more"), "the read was not cut: {text}");
+    assert!(text.ends_with("\n\nRecorded 1 element as seen on Leave."), "{text}");
+    assert_eq!(sighted(dir.path(), "Leave"), ["Earlier", "Older", "Save"], "a cut read dropped or overreached");
+    let area = mapped_area(dir.path(), "Leave").unwrap();
+    let page = area.pages.iter().find(|p| p.path == "/hr/leave").expect("no page");
+    let names: Vec<&str> = page.elements.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"Earlier") && names.contains(&"Older") && names.contains(&"Save"), "{names:?}");
+    assert!(!names.contains(&"Cancel") && !names.contains(&"Delete"), "{names:?}");
+
+    let (mut whole, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), exploring_anew("Leave"));
+    page_read_in(whole.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(sighted(dir.path(), "Leave"), ["Save"], "a whole read no longer explores the page");
+}
+
+/// An action's read is the same path: cut at its limit, it files only what
+/// it returned and keeps what the area saw on the page before.
+#[tokio::test]
+async fn a_cut_action_read_records_only_returned_lines() {
+    let dir = root_with_recipe_and_account();
+    let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier"]), exploring("Leave"));
+    page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+
+    let names: Vec<String> = (0..DEFAULT_LIMIT + 5).map(|i| format!("Row {i:03}")).collect();
+    let d = acting_page("https://hr.example.internal/hr/leave", names);
+    let (mut browser, _) = slot(d, exploring_anew("Leave"));
+    let click = Action::Click { selector: "#save".into() };
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], true, "{body}");
+    assert!(v["page"].as_str().unwrap_or("").contains("... and 5 more"), "the action's read was not cut");
+
+    let seen = sighted(dir.path(), "Leave");
+    assert!(seen.contains(&"Earlier".to_string()), "a cut action read dropped an earlier sighting: {seen:?}");
+    assert!(seen.contains(&"Row 000".to_string()) && seen.contains(&format!("Row {:03}", DEFAULT_LIMIT - 1)));
+    assert!(!seen.contains(&format!("Row {:03}", DEFAULT_LIMIT)), "a line past the cut was recorded");
+}
+
+/// With no current area, nothing is recorded, and the answer ends by
+/// saying how to name one.
+#[tokio::test]
+async fn a_read_with_no_area_says_so() {
+    let dir = root_with_recipe_and_account();
+    let (mut held, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), opened_for_discovery());
+    let (status, text) =
+        page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.ends_with(&format!("\n\n{READ_WITH_NO_AREA}")), "{text}");
+    assert!(READ_WITH_NO_AREA.contains("save_autorun_area") && READ_WITH_NO_AREA.contains("discover_autorun_action"));
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty(), "a read with no area recorded");
+}
+
+/// A page off the application's own origins files nothing, whether a page
+/// read or an action's read shows it, and a page read says so.
+#[tokio::test]
+async fn a_page_read_off_the_app_records_nothing() {
+    let dir = root_with_recipe_and_account();
+    let (mut held, _) =
+        slot(buttons_page("https://elsewhere.example/sso?ticket=abc", &["Continue"]), exploring("Leave"));
+    let (status, text) =
+        page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.ends_with(&format!("\n\n{READ_OFF_THE_APP}")), "{text}");
+    assert!(!text.contains("elsewhere.example") && !text.contains("ticket"), "{text}");
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty(), "an off-site page was recorded");
+
+    let d = acting_page("https://elsewhere.example/sso", vec!["Continue".to_string()]);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let click = Action::Click { selector: "#save".into() };
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(sighted(dir.path(), "Leave").is_empty(), "an action's read of an off-site page was recorded");
+}
