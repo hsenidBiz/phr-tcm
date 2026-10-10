@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.7",
+    date: "2026-10-10",
+    items: [
+      "Your assistant writes Auto Run scripts faster: during discovery, reading a screen counts as seeing it, a refused save lists every problem at once with a suggestion for each, and a save can be checked without saving.",
+      "Your assistant can run several discovery steps in one go, and starts repeat work from a short list of rules instead of the whole guide.",
+      "Only the application's own pages count as seen, and a screen read only in part no longer forgets what was seen before.",
+    ],
+  },
+  {
     version: "2.1.3-beta.6",
     date: "2026-10-10",
     items: [
