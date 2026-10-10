@@ -2398,3 +2398,92 @@ async fn a_refused_locator_is_counted_in_the_log_never_written_out() {
         assert!(!l.contains("hr.example.internal") && !l.contains("secret") && !l.contains("a[href"), "{l}");
     }
 }
+
+// ---- the assistant's replay ends its own discovery ---------------------------
+
+/// The assistant's replay to a step, asked for while its discovery holds
+/// the browser, ends that discovery the way End discovery does - the map
+/// it filled is kept - and then replays: the end and the replay's open sit
+/// under the one session lock, with nothing between them.
+#[tokio::test]
+async fn a_replay_requested_during_a_discovery_ends_it_and_replays() {
+    use v2_lib::ai_bridge::end_discovery_for_replay;
+    let _log = crate::serial::log_tail();
+    let dir = root_with_recipe_and_account();
+    v2_lib::autorun::discovery_map::record_outcome(dir.path(), ORG, PROJECT, "Leave", "click Apply: moved to /hr/leave")
+        .unwrap();
+    let (mut browser, closed) = slot(menu_app(true, "/hr/leave"), exploring("Leave"));
+
+    assert!(end_discovery_for_replay(&mut browser), "the discovery was not ended");
+    assert!(browser.is_none() && closed.load(Ordering::SeqCst), "the discovery's browser is still open");
+    let kept = mapped_area(dir.path(), "Leave").expect("ending the discovery lost its map");
+    assert_eq!(kept.outcomes, vec!["click Apply: moved to /hr/leave".to_string()]);
+
+    // Nothing to end: the person's own browser, or none, is left alone.
+    let (mut theirs, theirs_closed) = slot(FakePage::default().driver(), None);
+    assert!(!end_discovery_for_replay(&mut theirs));
+    assert!(theirs.is_some() && !theirs_closed.load(Ordering::SeqCst));
+    let mut none: Option<FakeBrowser> = None;
+    assert!(!end_discovery_for_replay(&mut none));
+
+    // In the app: the assistant's replay ends it under the lock, says so
+    // to the window, and only then opens and replays.
+    let source = include_str!("../../src/commands/autorun.rs");
+    let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
+    let replay = &replay[..replay.find("replay_to_traced(").unwrap()];
+    let lock = replay.find("SESSION.lock().await").unwrap();
+    let end = replay.find("end_discovery_for_replay(&mut slot)").expect("the assistant's replay does not end it");
+    let publish = replay.find("publish_discovery(&slot)").expect("the window is not told");
+    let open = replay.find("open_if_none(").unwrap();
+    assert!(lock < end && end < publish && publish < open, "the end is not under the replay's lock");
+    assert_eq!(replay.matches("SESSION.lock()").count(), 1, "the lock is let go between the end and the replay");
+}
+
+/// A mapping run ended by the assistant's replay keeps its summary, as
+/// End discovery would.
+#[tokio::test]
+async fn a_mapping_run_ended_by_a_replay_saves_its_summary() {
+    use v2_lib::ai_bridge::end_discovery_for_replay;
+    let _log = crate::serial::log_tail();
+    let dir = root_with_recipe_and_account();
+    let (mut browser, closed) = mapping_browser_in(dir.path());
+    let clicks = vec![css("#leave"), css("#apply")];
+    let (status, body) =
+        discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
+    assert_eq!(status, 200, "{body}");
+
+    assert!(end_discovery_for_replay(&mut browser));
+    assert!(closed.load(Ordering::SeqCst));
+    let kept = load_summary(dir.path(), ORG, PROJECT).unwrap().expect("the replay lost the run's summary");
+    assert_eq!(kept.added, vec!["Leave Apply".to_string()]);
+    assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply").is_some(), "the saved area went");
+}
+
+/// Only the assistant's replay ends a discovery. The person's own Open
+/// browser, Run step and Replay to step are still refused while one holds
+/// the browser.
+#[tokio::test]
+async fn the_person_open_browser_is_still_refused_while_discovering() {
+    let (mut discovering, closed) = slot(FakePage::default().driver(), exploring("Leave"));
+    assert_eq!(refuse_while_discovering(&mut discovering), Err(busy_browser_sentence(true).to_string()));
+    assert!(discovering.is_some() && !closed.load(Ordering::SeqCst));
+
+    let source = include_str!("../../src/commands/autorun.rs");
+    let open = &source[source.find("pub async fn auto_run_open_browser").unwrap()..];
+    let open = &open[..open.find("open_into(").unwrap()];
+    assert!(open.contains("refuse_while_discovering(&mut slot)?"), "Open browser no longer refuses");
+    assert!(!open.contains("end_discovery_for_replay"), "Open browser ends a discovery");
+
+    // The person's Replay to step passes may_lift = true, which refuses.
+    let person = &source[source.find("pub async fn auto_run_replay_to_step").unwrap()..];
+    let person = &person[..person.find("pub(crate) async fn replay_supervised").unwrap()];
+    assert!(person.contains("replay_supervised(&app, &organization, &project, req, true)"), "{person}");
+    let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
+    let replay = &replay[..replay.find("open_if_none(").unwrap()];
+    assert!(replay.contains("let by_assistant = !may_lift;"), "{replay}");
+    assert!(replay.contains("} else if let Err(why) = crate::ai_bridge::refuse_while_discovering(&mut slot) {"));
+    // And the assistant's host is the only caller that passes false.
+    let host = include_str!("../../src/commands/ai_bridge.rs");
+    assert!(host.contains("replay_supervised(&self.0, &organization, &project, req, false)"));
+    assert_eq!(source.matches("refuse_while_discovering(&mut slot)").count(), 3, "a refusal went missing");
+}

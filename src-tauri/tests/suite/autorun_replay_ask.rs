@@ -10,7 +10,10 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
-use v2_lib::ai_bridge::{autorun_guard_for, autorun_replay_with, route, BridgeContext, HostFuture, ReplayHost};
+use v2_lib::ai_bridge::{
+    autorun_guard_for, autorun_replay_with, route, AssistantReplay, BridgeContext, HostFuture, ReplayHost,
+    ENDED_DISCOVERY_FIRST,
+};
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::nav::{save_nav, ModulePath, NavFile};
 use v2_lib::autorun::recipe::save_recipe;
@@ -70,11 +73,14 @@ struct FakeHost {
     notices: Mutex<Vec<String>>,
     replays: Mutex<Vec<(String, String, ReplayRequest)>>,
     end: ReplayEnd,
+    /// A discovery holds the browser: the prompt says so, and the replay
+    /// ends it first.
+    discovering: bool,
 }
 
 impl FakeHost {
     fn ending(end: ReplayEnd) -> Self {
-        FakeHost { notices: Mutex::new(vec![]), replays: Mutex::new(vec![]), end }
+        FakeHost { notices: Mutex::new(vec![]), replays: Mutex::new(vec![]), end, discovering: false }
     }
     fn ready() -> Self {
         Self::ending(ReplayEnd::Ready { case_id: ID, step: 3, notice: None })
@@ -90,15 +96,26 @@ impl FakeHost {
 impl ReplayHost for FakeHost {
     fn notify(&self, notice: Notice<'_>) {
         let line = match notice {
-            Notice::Asked(a) => format!("asked {} {} ({}) step {}", a.id, a.case_id, a.title, a.step),
+            Notice::Asked(a) => {
+                let ends = if a.ends_discovery { " ending the discovery" } else { "" };
+                format!("asked {} {} ({}) step {}{ends}", a.id, a.case_id, a.title, a.step)
+            }
             Notice::Ended(id) => format!("ended {id}"),
         };
         self.notices.lock().unwrap().push(line);
     }
-    fn replay(&self, organization: String, project: String, req: ReplayRequest) -> HostFuture<'_, Result<ReplayEnd, String>> {
+    fn discovering(&self) -> bool {
+        self.discovering
+    }
+    fn replay(
+        &self,
+        organization: String,
+        project: String,
+        req: ReplayRequest,
+    ) -> HostFuture<'_, Result<AssistantReplay, String>> {
         Box::pin(async move {
             self.replays.lock().unwrap().push((organization, project, req));
-            Ok(self.end.clone())
+            Ok(AssistantReplay { end: self.end.clone(), ended_discovery: self.discovering })
         })
     }
     fn page(&self, _organization: String, _project: String) -> HostFuture<'_, (u16, String)> {
@@ -133,7 +150,7 @@ async fn allow_answers_the_waiting_request_and_the_end_is_told() {
     let asks = Asks::new();
     let host = FakeHost::ready();
     let notify = |n: Notice<'_>| host.notify(n);
-    let (asked, id) = tokio::join!(asks.ask(ID, "Leave request", 3, Duration::from_secs(5), &notify), async {
+    let (asked, id) = tokio::join!(asks.ask(ID, "Leave request", 3, false, Duration::from_secs(5), &notify), async {
         let id = waiting_id(&asks).await;
         asks.answer(&id, true).unwrap();
         id
@@ -146,7 +163,7 @@ async fn allow_answers_the_waiting_request_and_the_end_is_told() {
 #[tokio::test]
 async fn deny_is_the_declined_sentence() {
     let asks = Asks::new();
-    let (asked, _) = tokio::join!(asks.ask(ID, "Leave request", 3, Duration::from_secs(5), &|_| {}), async {
+    let (asked, _) = tokio::join!(asks.ask(ID, "Leave request", 3, false, Duration::from_secs(5), &|_| {}), async {
         let id = waiting_id(&asks).await;
         asks.answer(&id, false).unwrap();
     });
@@ -159,7 +176,7 @@ async fn no_answer_in_time_is_the_timeout_sentence_and_a_late_allow_is_refused()
     let asks = Asks::new();
     let host = FakeHost::ready();
     let notify = |n: Notice<'_>| host.notify(n);
-    let (asked, id) = tokio::join!(asks.ask(ID, "Leave request", 3, Duration::from_millis(60), &notify), waiting_id(&asks));
+    let (asked, id) = tokio::join!(asks.ask(ID, "Leave request", 3, false, Duration::from_millis(60), &notify), waiting_id(&asks));
     assert_eq!(asked.unwrap_err(), NO_ANSWER);
     assert_eq!(NO_ANSWER, "the person did not answer within 2 minutes");
     assert!(asks.waiting().is_none(), "an expired request still waits");
@@ -171,9 +188,9 @@ async fn no_answer_in_time_is_the_timeout_sentence_and_a_late_allow_is_refused()
 #[tokio::test]
 async fn a_second_request_while_one_waits_is_refused() {
     let asks = Asks::new();
-    let (first, second) = tokio::join!(asks.ask(ID, "Leave request", 3, Duration::from_secs(5), &|_| {}), async {
+    let (first, second) = tokio::join!(asks.ask(ID, "Leave request", 3, false, Duration::from_secs(5), &|_| {}), async {
         let id = waiting_id(&asks).await;
-        let second = asks.ask(78, "Other", 2, Duration::from_secs(5), &|_| panic!("the second was shown")).await;
+        let second = asks.ask(78, "Other", 2, false, Duration::from_secs(5), &|_| panic!("the second was shown")).await;
         assert_eq!(asks.waiting().map(|a| a.id), Some(id.clone()), "the first still waits");
         asks.answer(&id, true).unwrap();
         second
@@ -196,7 +213,7 @@ async fn a_request_whose_caller_went_away_stops_waiting() {
     let notify = |n: Notice<'_>| host.notify(n);
     let gone = tokio::time::timeout(
         Duration::from_millis(50),
-        asks.ask(ID, "Leave request", 3, Duration::from_secs(5), &notify),
+        asks.ask(ID, "Leave request", 3, false, Duration::from_secs(5), &notify),
     )
     .await;
     assert!(gone.is_err(), "the ask should still have been waiting");
@@ -395,4 +412,69 @@ async fn the_route_is_gated_with_the_auto_run_routes() {
     project(dir.path(), &script(false));
     let (status, text) = route(&ctx(), None, "POST", "/autorun-replay", &body(2), "test").await;
     assert_eq!(status, 503, "{text}");
+}
+
+// ---- a discovery holding the browser ---------------------------------------
+
+/// The Allow prompt carries `ends_discovery` only while a discovery holds
+/// the browser, so the modal can say the replay ends it first.
+#[tokio::test]
+async fn the_approval_request_carries_ends_discovery_only_when_one_is_running() {
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(true));
+    for discovering in [true, false] {
+        let asks = Asks::new();
+        let host = FakeHost { discovering, ..FakeHost::ready() };
+        let (c, b) = (ctx(), body(3));
+        let ((status, text), shown) = tokio::join!(
+            autorun_replay_with(&c, &b, &host, &asks, Duration::from_secs(5)),
+            async {
+                let id = waiting_id(&asks).await;
+                let shown = asks.waiting().unwrap();
+                asks.answer(&id, true).unwrap();
+                shown
+            }
+        );
+        assert_eq!(status, 200, "{text}");
+        assert_eq!(shown.ends_discovery, discovering);
+        let ends = host.notices()[0].ends_with(" ending the discovery");
+        assert_eq!(ends, discovering, "{:?}", host.notices());
+    }
+}
+
+/// A replay that ended the assistant's discovery says so first; one that
+/// found none answers as before.
+#[tokio::test]
+async fn the_replay_answer_says_the_discovery_was_ended() {
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    assert_eq!(
+        ENDED_DISCOVERY_FIRST,
+        "Ended your discovery first (what it mapped is kept); start a new one to explore again."
+    );
+    let ready = "replayed case 77 to step 3 - the browser is on the page before step 3 runs";
+
+    let (asks, host) = (Asks::new(), FakeHost { discovering: true, ..FakeHost::ready() });
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), &host, &asks, Duration::from_secs(5)).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} {ready}"));
+    assert!(v["page"].is_string(), "{v}");
+    assert_eq!(host.replays().len(), 1, "the replay did not run");
+
+    // A stop after the end still says the discovery is over.
+    let stopped = ReplayEnd::Stopped { step: 2 };
+    let (asks, host) = (Asks::new(), FakeHost { discovering: true, ..FakeHost::ending(stopped) });
+    let (_, text) = autorun_replay_with(&ctx(), &body(3), &host, &asks, Duration::from_secs(5)).await;
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} the replay was stopped at step 2"));
+
+    let (asks, host) = (Asks::new(), FakeHost::ready());
+    let (_, text) = autorun_replay_with(&ctx(), &body(3), &host, &asks, Duration::from_secs(5)).await;
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["sentence"], ready);
 }

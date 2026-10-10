@@ -19,6 +19,15 @@ export function replayRequestText(r: AutorunReplayRequest): string {
   return `The assistant wants to replay case ${r.case_id} (${r.title}) up to step ${r.step}. This script must not save; the guard stays on. Allow?`;
 }
 
+/** The one line added while the assistant's discovery holds the browser:
+ * Allow ends it first (the Rust side is `end_discovery_for_replay`). */
+export const ENDS_DISCOVERY_LINE = "This ends the assistant's discovery first; what it mapped is kept.";
+
+/** The extra line this request shows, if any. */
+export function replayRequestDiscoveryLine(r: AutorunReplayRequest): string | null {
+  return r.ends_discovery ? ENDS_DISCOVERY_LINE : null;
+}
+
 export default function ReplayRequestModal() {
   const [request, setRequest] = useState<AutorunReplayRequest | null>(null);
   const [answering, setAnswering] = useState(false);
@@ -61,6 +70,9 @@ export default function ReplayRequestModal() {
         Replay request
       </h2>
       <p className="text-xs leading-relaxed text-muted">{replayRequestText(request)}</p>
+      {replayRequestDiscoveryLine(request) && (
+        <p className="text-xs leading-relaxed text-muted">{replayRequestDiscoveryLine(request)}</p>
+      )}
       <div className="flex shrink-0 items-center justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={() => void answer(false)} disabled={answering}>
           <IconCancel aria-hidden />

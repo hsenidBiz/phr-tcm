@@ -2757,6 +2757,27 @@ pub fn refuse_while_discovering<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Re
     Ok(())
 }
 
+/// Before the assistant's replay to a step takes the browser in `slot`: a
+/// discovery holding it is ended exactly as End discovery ends it
+/// (`end_discovery_in`), so what it mapped is kept and a mapping run's
+/// summary is saved. Whether one was ended. Called under the session lock
+/// the replay then keeps while it opens and runs, so nothing takes the
+/// browser between the end and the replay. The person's own Replay to step
+/// still goes through `refuse_while_discovering`.
+pub fn end_discovery_for_replay<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
+    if !slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
+        return false;
+    }
+    end_discovery_in(slot);
+    crate::applog::info("Auto Run: the assistant's replay to a step ended its discovery first");
+    true
+}
+
+/// Put before the answer to an assistant's replay that ended its discovery
+/// first (`end_discovery_for_replay`).
+pub const ENDED_DISCOVERY_FIRST: &str =
+    "Ended your discovery first (what it mapped is kept); start a new one to explore again.";
+
 /// Close whatever browser `slot` holds - a discovery ends with it. Whether
 /// there was one.
 pub fn close_browser_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
@@ -3433,18 +3454,31 @@ pub trait ReplayHost: Send + Sync {
     /// Tell the app's window: the Allow prompt for a must-not-save script,
     /// and its end.
     fn notify(&self, notice: crate::autorun::replay_ask::Notice<'_>);
+    /// Whether a discovery holds the Auto Run browser now, so the Allow
+    /// prompt can say the replay ends it first.
+    fn discovering(&self) -> bool;
     /// Run the replay in the supervised browser, by the same path as the
     /// person's Replay to step button, as the assistant's: it never lifts a
-    /// guard held for another case. `Err` is a browser that would not open.
+    /// guard held for another case, and a discovery holding the browser is
+    /// ended first rather than refusing (`end_discovery_for_replay`). `Err`
+    /// is a browser that would not open.
     fn replay(
         &self,
         organization: String,
         project: String,
         req: crate::autorun::replay_to::ReplayRequest,
-    ) -> HostFuture<'_, Result<crate::autorun::replay_to::ReplayEnd, String>>;
+    ) -> HostFuture<'_, Result<AssistantReplay, String>>;
     /// The page the replay left the browser on, as `/autorun-page` answers
     /// for this organization and project.
     fn page(&self, organization: String, project: String) -> HostFuture<'_, (u16, String)>;
+}
+
+/// How an assistant's replay ended, and whether it ended a discovery
+/// before it took the browser.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssistantReplay {
+    pub end: crate::autorun::replay_to::ReplayEnd,
+    pub ended_discovery: bool,
 }
 
 static REPLAY_HOST: std::sync::OnceLock<Box<dyn ReplayHost>> = std::sync::OnceLock::new();
@@ -3475,6 +3509,10 @@ async fn autorun_replay(ctx: &BridgeContext, body: &str) -> (u16, String) {
 /// save then asks the person and waits (`replay_ask`): Deny, no answer or
 /// another request waiting refuse it, and only Allow goes on. Database
 /// Read Access is the `db_query` switch, as for the person's own replay.
+///
+/// A discovery holding the browser does not refuse it: the replay ends it
+/// first (`end_discovery_for_replay`), the Allow prompt says it will, and
+/// the answer's sentence starts with `ENDED_DISCOVERY_FIRST`.
 ///
 /// The answer is `{ "sentence" }`, and once the browser stands before the
 /// step, `"page"` beside it: the page as `get_autorun_page` shows it, so the
@@ -3516,16 +3554,21 @@ pub async fn autorun_replay_with(
     }
     if checked.script.no_save {
         let notify = |n: crate::autorun::replay_ask::Notice<'_>| host.notify(n);
-        if let Err(why) = asks.ask(case_id, &checked.script.title, step, wait, &notify).await {
+        let ends_discovery = host.discovering();
+        if let Err(why) = asks.ask(case_id, &checked.script.title, step, ends_discovery, wait, &notify).await {
             crate::applog::info(format!("Auto Run replay of case {case_id} for the assistant: {why}"));
             return (409, why);
         }
     }
-    let end = match host.replay(ctx.org.clone(), ctx.project.clone(), req).await {
-        Ok(end) => end,
+    let (end, ended_discovery) = match host.replay(ctx.org.clone(), ctx.project.clone(), req).await {
+        Ok(AssistantReplay { end, ended_discovery }) => (end, ended_discovery),
         Err(why) => return (503, why),
     };
-    let sentence = end.sentence();
+    // Said first when the replay ended the assistant's own discovery.
+    let sentence = match ended_discovery {
+        true => format!("{ENDED_DISCOVERY_FIRST} {}", end.sentence()),
+        false => end.sentence(),
+    };
     match end {
         ReplayEnd::Refused(_) | ReplayEnd::Blocked(_) => (409, sentence),
         ReplayEnd::Ready { .. } => {

@@ -2045,12 +2045,16 @@ export type AutorunReplayProgress = {
  *  to step `step` and its script must not save: the app shows the Allow
  *  prompt for request `id` (`autorun::replay_ask`), and nothing runs until
  *  the person answers it with `auto_run_answer_replay_request`.
+ *  `ends_discovery`: the assistant's discovery holds the browser as it
+ *  asks, and Allow ends it first (what it mapped is kept), so the prompt
+ *  says so.
  */
 export type AutorunReplayRequest = {
 	id: string,
 	case_id: number,
 	title: string,
 	step: number,
+	ends_discovery: boolean,
 };
 
 /**
