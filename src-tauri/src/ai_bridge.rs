@@ -3345,7 +3345,7 @@ pub async fn save_component_in<B: DiscoveryBrowser>(
         return component_answer(saved);
     };
     let area = area.as_deref().map(str::trim).filter(|a| !a.is_empty());
-    let targets = crate::autorun::discovery_map::load_map(root, organization, project).ok().and_then(|map| {
+    let targets = crate::autorun::seen_check::load_checked_map(root, organization, project).ok().and_then(|map| {
         let own = crate::autorun::seen_check::check_component_seen(&map, area, &draft.actions);
         if own.as_ref().err() != Some(refused) {
             return None;
@@ -4719,6 +4719,8 @@ async fn save_autorun_scripts(
     // for a new script (all of them), its declared steps for a repair. An
     // unchanged resave is not listed: it was checked when it was saved.
     let mut seen_scope: Vec<(i32, Option<Vec<i32>>)> = Vec::new();
+    // Whether scripts saved before they were stamped count here, read once.
+    let legacy = crate::autorun::seen_check::legacy_scripts_count(&root, &ctx.org, &ctx.project);
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
@@ -4726,6 +4728,14 @@ async fn save_autorun_scripts(
         };
         let declared = edits.iter().find(|e| e.case_id == sent.case_id);
         let mut script = sent.clone();
+        // A new script is checked whole; an unchanged one and a repair keep
+        // steps checked by an earlier save, so they vouch as it did.
+        let vouched = existing
+            .as_ref()
+            .is_none_or(|old| crate::autorun::seen_check::vouch_carries_over(old, &ctx.org, &ctx.project, legacy));
+        script.organization = Some(ctx.org.trim().to_string());
+        script.project = Some(ctx.project.trim().to_string());
+        script.checked = vouched;
         match existing {
             // A re-send that changes nothing is not a repair. The count
             // is of changes made without a person looking, so an
@@ -4891,10 +4901,13 @@ async fn save_autorun_scripts(
             .iter()
             .any(|s| s.case_id == *case_id && crate::autorun::seen_check::uses_components(s))
     });
+    // The saved scripts, read once for every check of this save.
+    let saved_scripts =
+        if seen_scope.is_empty() { Vec::new() } else { crate::autorun::store::list_scripts(&root) };
     let check_and_save = || -> Result<(), SaveRefusal> {
         if !seen_scope.is_empty() {
-            let (map, components, files) =
-                seen_check_inputs(&root, ctx, uses_components).map_err(|e| SaveRefusal::Other(400, e))?;
+            let (map, components, files) = seen_check_inputs(&root, ctx, uses_components, &saved_scripts)
+                .map_err(|e| SaveRefusal::Other(400, e))?;
             for (case_id, only) in &seen_scope {
                 let (Some(script), Some(case)) = (
                     prepared.iter().find(|s| s.case_id == *case_id),
@@ -4942,7 +4955,7 @@ async fn save_autorun_scripts(
     // there are recorded, and the save is checked once more.
     let mut recorded: Option<Vec<String>> = None;
     if matches!(checked, Err(SaveRefusal::Unseen(_))) {
-        let targets = seen_check_inputs(&root, ctx, uses_components).ok().and_then(|(map, components, files)| {
+        let targets = seen_check_inputs(&root, ctx, uses_components, &saved_scripts).ok().and_then(|(map, components, files)| {
             let mut all: Vec<crate::browser::locator::Target> = Vec::new();
             for (case_id, only) in &seen_scope {
                 let script = prepared.iter().find(|s| s.case_id == *case_id)?;
@@ -5068,11 +5081,12 @@ fn seen_check_inputs(
     root: &std::path::Path,
     ctx: &BridgeContext,
     uses_components: bool,
+    saved_scripts: &[crate::autorun::CaseScript],
 ) -> Result<
     (crate::autorun::discovery_map::DiscoveryMap, crate::autorun::components::ComponentFile, Vec<crate::test_files::TestFile>),
     String,
 > {
-    let map = crate::autorun::discovery_map::load_map(root, &ctx.org, &ctx.project)?;
+    let map = crate::autorun::seen_check::load_checked_map_with(root, &ctx.org, &ctx.project, saved_scripts)?;
     let components = if uses_components {
         crate::autorun::components::load_components(root, &ctx.org, &ctx.project)?
     } else {

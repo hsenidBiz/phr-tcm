@@ -726,7 +726,7 @@ pub fn save_tried(
         return Err(TRY_IT_FIRST.to_string());
     };
     let area = session.area.map(str::trim).filter(|a| !a.is_empty());
-    let map = super::discovery_map::load_map(root, org, project)?;
+    let map = super::seen_check::load_checked_map(root, org, project)?;
     super::seen_check::check_component_seen(&map, area, &draft.actions)?;
     if !session.tried.contains(&draft_fingerprint(&draft)) {
         return Err(TRY_IT_FIRST.to_string());

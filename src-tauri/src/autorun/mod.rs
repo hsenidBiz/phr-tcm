@@ -160,6 +160,20 @@ pub struct CaseScript {
     /// only when there are any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignore_page_errors: Vec<String>,
+    /// The organization and project the script was saved in, stamped by
+    /// every save whatever was sent. Absent on scripts saved before the
+    /// stamp existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// Whether the saves that wrote it checked its steps against the live
+    /// app (the assistant's save and an import), so its own locators count
+    /// as seen in its area (`seen_check::load_checked_map`). A save from
+    /// the editor clears it. Set by the save, whatever was sent; written
+    /// only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub checked: bool,
 }
 
 /// What a script does with the page's own errors.

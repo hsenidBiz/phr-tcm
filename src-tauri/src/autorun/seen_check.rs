@@ -52,8 +52,21 @@
 //!   an em dash, an en dash and a hyphen as one dash, with no space beside
 //!   it (`norm_name`).
 //!
-//! A refusal names the closest locator seen in the same areas when one is
-//! close enough (`SUGGEST_WITHIN`).
+//! A link a checked saved script of one of the checked areas uses, written
+//! exactly as it is there, counts as seen (`load_checked_map`): the save
+//! that wrote it checked it against the live app, so a sighting the map
+//! has since let go does not refuse it again. Only a script that vouches
+//! counts (`vouches`): one saved in this organization and project by a
+//! save that ran this check (the assistant's or an import, `checked`),
+//! never one saved from the editor. A script saved before scripts were
+//! stamped counts only while exactly one project has recorded areas and it
+//! is this one. Only a script whose own area is one the check reads counts,
+//! never another area's or one with no area, and a saved link that holds a
+//! placeholder or a component input counts for nothing.
+//!
+//! A refusal names the closest locator seen in the same areas, in the same
+//! role (a text locator offers only text), when one is close enough
+//! (`SUGGEST_WITHIN`).
 //!
 //! A step that uses a component must name one the project has and give it
 //! every input, each of its kind. Every locator of the component an input
@@ -62,8 +75,12 @@
 //! not, as they were checked when the component was saved.
 
 use super::components::{expand, find, not_saved, Component, ComponentFile};
-use super::discovery_map::{page_path, path_only, seen_keys, seen_links, seen_locators, seen_paths, DiscoveryMap};
+use super::discovery_map::{
+    area_key, load_map, page_path, path_only, seen_keys, seen_links, seen_locators, seen_paths, AreaMap, DiscoveryMap,
+};
 use super::edits::Edit;
+use super::nav::NavFile;
+use super::recipe::project_slug;
 use super::seen_match::{
     attribute_tails, css_pieces, descendant_splits, filter_attributes, fit, has_wild, is_ddmmyyyy, name_pattern, parse_date,
     safe_filled, same_shape, split_filters, strip_states, wild_fits, without_placeholders, Date, Filter, Piece,
@@ -203,6 +220,8 @@ struct Sightings {
     /// Each seen chain's links' css (state pseudo-classes left out), in
     /// order, outermost first; `None` for a link that is not css.
     chains: Vec<Vec<Option<String>>>,
+    /// The links the areas' saved scripts use, as written there.
+    saved: Vec<LocatorStep>,
 }
 
 impl Sightings {
@@ -213,7 +232,12 @@ impl Sightings {
             texts: Vec::new(),
             css: Vec::new(),
             chains: Vec::new(),
+            saved: Vec::new(),
         };
+        let wanted: Vec<String> = areas.iter().map(|a| area_key(a)).filter(|k| !k.is_empty()).collect();
+        for a in map.areas.iter().filter(|a| wanted.contains(&area_key(&a.area))) {
+            s.saved.extend(a.saved_links.iter().cloned());
+        }
         for l in seen_links(map, areas) {
             if let Some(role) = &l.role {
                 s.roles.push((fold_name(role), norm_name(l.name.as_deref().unwrap_or("")), l.clone()));
@@ -236,7 +260,7 @@ impl Sightings {
     /// matches. With `wild`, a data placeholder in it stands for a seen
     /// value.
     fn has(&self, link: &LocatorStep, wild: bool) -> bool {
-        if link.seen_key().is_some_and(|k| self.keys.contains(&k)) {
+        if link.seen_key().is_some_and(|k| self.keys.contains(&k)) || self.saved.contains(link) {
             return true;
         }
         // The placeholders are found in the raw name before it is folded
@@ -408,9 +432,10 @@ impl Sightings {
     }
 
     /// The seen locator closest to `link`, as "did you mean <role>
-    /// "<name>"?": the same role first, then the fewest edits, within
-    /// `SUGGEST_WITHIN`; `None` when nothing is that close, or for a css
-    /// link (a selector has no name to offer).
+    /// "<name>"?": only one in the same role (a text locator offers only
+    /// text), the fewest edits, within `SUGGEST_WITHIN`; `None` when no
+    /// name in that role is that close, or for a css link (a selector has
+    /// no name to offer).
     fn closest(&self, link: &LocatorStep) -> Option<String> {
         let (role, want) = match (&link.role, &link.text) {
             (Some(r), _) => (fold_name(r), norm_name(link.name.as_deref().unwrap_or(""))),
@@ -425,9 +450,9 @@ impl Sightings {
             .iter()
             .map(|(r, n, l)| (r.as_str(), n.as_str(), l))
             .chain(self.texts.iter().map(|(n, l)| ("text", n.as_str(), l)));
-        let mut best: Option<((bool, usize), &LocatorStep)> = None;
+        let mut best: Option<(usize, &LocatorStep)> = None;
         for (r, n, l) in candidates {
-            if n.is_empty() {
+            if n.is_empty() || r != role {
                 continue;
             }
             let edits = edit_distance(&want, n);
@@ -435,9 +460,8 @@ impl Sightings {
             if edits * SUGGEST_WITHIN.1 > longer * SUGGEST_WITHIN.0 {
                 continue;
             }
-            let rank = (r != role, edits);
-            if best.as_ref().is_none_or(|(b, _)| rank < *b) {
-                best = Some((rank, l));
+            if best.as_ref().is_none_or(|(b, _)| edits < *b) {
+                best = Some((edits, l));
             }
         }
         let quoted = |s: &str| s.replace('"', "\\\"");
@@ -625,6 +649,140 @@ struct Found {
     unseen: Unseen,
     hint: Option<String>,
     target: Option<Target>,
+}
+
+/// Adds to `map`, in memory, the links each of `scripts` uses, under the
+/// script's own area: a link a saved script of an area uses, written
+/// exactly as it is there, counts as seen in that area. A script with no
+/// area adds nothing (it would count everywhere), and neither does a link
+/// that holds a placeholder (`{{...}}`) or is a component's input place.
+/// `map` is never written back: these links are not sightings.
+pub fn add_saved_scripts(map: &mut DiscoveryMap, scripts: &[CaseScript]) {
+    for script in scripts {
+        let Some(area) = script.area_name() else { continue };
+        let key = area_key(area);
+        if key.is_empty() {
+            continue;
+        }
+        let i = match map.areas.iter().position(|a| area_key(&a.area) == key) {
+            Some(i) => i,
+            None => {
+                map.areas.push(AreaMap { area: area.to_string(), ..AreaMap::default() });
+                map.areas.len() - 1
+            }
+        };
+        let saved = &mut map.areas[i].saved_links;
+        for link in script_links(script) {
+            if !saved.contains(&link) {
+                saved.push(link);
+            }
+        }
+    }
+}
+
+/// Every link `script` names as written, a component's target inputs
+/// included, leaving out any that holds a placeholder or an input place.
+fn script_links(script: &CaseScript) -> Vec<LocatorStep> {
+    let mut out: Vec<LocatorStep> = Vec::new();
+    for action in script.steps.iter().flat_map(|s| s.actions.iter()).flat_map(Action::each) {
+        let mut targets: Vec<Target> = action.targets().into_iter().cloned().collect();
+        if let Action::UseComponent { inputs, .. } = action {
+            targets.extend(
+                inputs
+                    .values()
+                    .filter(|v| v.is_object() || v.is_array())
+                    .filter_map(|v| serde_json::from_value::<Target>(v.clone()).ok()),
+            );
+        }
+        for link in targets.iter().flat_map(Target::links) {
+            let placeholder = serde_json::to_string(&link).map_or(true, |j| j.contains("{{"));
+            if link.input.is_none() && !placeholder {
+                out.push(link);
+            }
+        }
+    }
+    out
+}
+
+/// The project's map as a save checks it: `load_map`, with the links of
+/// every saved script under `root` that vouches for them here (`vouches`)
+/// added to its area (`add_saved_scripts`), the replaced one included,
+/// read as `store::list_scripts` reads them.
+pub fn load_checked_map(root: &std::path::Path, org: &str, project: &str) -> Result<DiscoveryMap, String> {
+    load_checked_map_with(root, org, project, &super::store::list_scripts(root))
+}
+
+/// [`load_checked_map`] with the saved scripts already read, so a save
+/// that checks more than once reads them once.
+pub fn load_checked_map_with(
+    root: &std::path::Path,
+    org: &str,
+    project: &str,
+    saved: &[CaseScript],
+) -> Result<DiscoveryMap, String> {
+    let mut map = load_map(root, org, project)?;
+    let legacy = legacy_scripts_count(root, org, project);
+    let vouching: Vec<CaseScript> = saved.iter().filter(|s| vouches(s, org, project, legacy)).cloned().collect();
+    add_saved_scripts(&mut map, &vouching);
+    Ok(map)
+}
+
+/// Is this script stamped as saved in `org`/`project`, compared as the
+/// project's files are named (`project_slug`)?
+fn same_project(script: &CaseScript, org: &str, project: &str) -> bool {
+    match (&script.organization, &script.project) {
+        (Some(o), Some(p)) => project_slug(o, p) == project_slug(org, project),
+        _ => false,
+    }
+}
+
+/// Was this script saved before scripts were stamped?
+fn unstamped(script: &CaseScript) -> bool {
+    script.organization.is_none() && script.project.is_none() && !script.checked
+}
+
+/// Do `script`'s own locators count as seen for a check in `org`/`project`:
+/// a checked save of this project, or, with `legacy` (see
+/// `legacy_scripts_count`), one saved before scripts were stamped?
+pub fn vouches(script: &CaseScript, org: &str, project: &str, legacy: bool) -> bool {
+    if unstamped(script) {
+        return legacy;
+    }
+    script.checked && same_project(script, org, project)
+}
+
+/// Whether a save that keeps steps of `old` unchecked (an unchanged resave,
+/// or a repair, which checks only the steps it declares) still vouches:
+/// when `old` did for this project, or, saved before scripts were stamped,
+/// when `legacy` says such scripts count here (`legacy_scripts_count`).
+/// Otherwise the save is stamped unchecked.
+pub fn vouch_carries_over(old: &CaseScript, org: &str, project: &str, legacy: bool) -> bool {
+    if unstamped(old) {
+        return legacy;
+    }
+    old.checked && same_project(old, org, project)
+}
+
+/// Scripts saved before they were stamped name no project, so they count
+/// only where they can belong to no other: exactly one project under
+/// `root` has recorded areas, and it is `org`/`project`. An areas file
+/// that cannot be read makes none of them count: it could be any project's.
+pub fn legacy_scripts_count(root: &std::path::Path, org: &str, project: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(root.join("projects")) else { return false };
+    let mut with_areas: Vec<String> = Vec::new();
+    for e in entries.flatten() {
+        let Some(name) = e.file_name().to_str().filter(|n| n.ends_with(".nav.json")).map(str::to_string) else {
+            continue;
+        };
+        let nav = std::fs::read_to_string(e.path())
+            .ok()
+            .and_then(|s| serde_json::from_str::<NavFile>(s.strip_prefix('\u{feff}').unwrap_or(&s)).ok());
+        let Some(nav) = nav else { return false };
+        if !nav.modules.is_empty() {
+            with_areas.push(name);
+        }
+    }
+    with_areas.len() == 1 && with_areas[0] == format!("{}.nav.json", project_slug(org, project))
 }
 
 /// Checks `script` against what `map` has seen, in step order: every

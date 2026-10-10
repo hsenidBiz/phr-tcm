@@ -437,7 +437,7 @@ fn script_for(case_id: i32) -> CaseScript {
         needs_unchanged: vec![],
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![],
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
     }
 }
 
