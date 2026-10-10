@@ -437,6 +437,9 @@ export default function RunPane({
       // The browser closed under the replay and the app let it go: there is
       // no browser to call this pane's own, and the next step opens one.
       if (end.kind === "browser_gone") {
+        // A failure before the browser closed keeps its rows.
+        const { step: k, outcomes } = end.detail;
+        if (outcomes.length > 0) setResults((prev) => ({ ...prev, [k]: outcomes }));
         openedRef.current = false;
         setOpened(false);
         return;
@@ -518,6 +521,15 @@ export default function RunPane({
     const un = events.autorunSessionChanged.listen((e) => {
       if (replayGoing.current) return;
       const { opened: isOpen, account } = e.payload;
+      // The browser was let go (Release, or the app found it had closed):
+      // this pane no longer calls it its own, and offers Open browser.
+      if (!isOpen) {
+        if (openedRef.current) {
+          openedRef.current = false;
+          setOpened(false);
+        }
+        return;
+      }
       const own = ownAccount.current;
       if (isOpen && !openedRef.current) {
         const launch = launchRef.current + 1;

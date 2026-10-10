@@ -774,7 +774,7 @@ test.each([
   [{ end: { kind: "stopped", detail: { step: 2 } }, sentence: "the replay was stopped at step 2" }, "text-muted"],
   [
     {
-      end: { kind: "browser_gone", detail: { step: 1 } },
+      end: { kind: "browser_gone", detail: { step: 1, why: null, outcomes: [] } },
       sentence: "replay stopped at step 1: the Auto Run browser closed before the step finished",
     },
     "text-warning",
@@ -805,7 +805,7 @@ test("a replay whose browser closed under it says why and leaves the pane with n
   await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
   const sentence =
     "replay stopped at step 1: the Auto Run browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens";
-  await r.finish({ end: { kind: "browser_gone", detail: { step: 1 } }, sentence });
+  await r.finish({ end: { kind: "browser_gone", detail: { step: 1, why: null, outcomes: [] } }, sentence });
   expect(await screen.findByText(sentence)).toBeInTheDocument();
   // The app let that browser go: the pane offers to open one, and never
   // signs in over a browser that is not there.
@@ -1073,6 +1073,40 @@ test("a browser another replay opened is shown as open, and never opened again",
   expect(await screen.findByRole("button", { name: "Run step 1" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Open browser" })).not.toBeInTheDocument();
   expect(calls).not.toContain("auto_run_open_browser");
+});
+
+test("a browser the app let go is no longer this pane's, and Open browser comes back", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS };
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  renderPane([{ id: 1, title: "Valid login" }]);
+  const { emit } = await import("@tauri-apps/api/event");
+  await act(async () => {
+    await emit("autorun-session-changed", { opened: true, account: null });
+  });
+  expect(await screen.findByRole("button", { name: "Run step 1" })).toBeInTheDocument();
+  // Release, or the app finding the browser had closed.
+  await act(async () => {
+    await emit("autorun-session-changed", { opened: false, account: null });
+  });
+  expect(await screen.findByRole("button", { name: "Open browser" })).toBeInTheDocument();
+});
+
+test("a replay whose browser closed after a failed step says both, and leaves the pane with no browser", async () => {
+  const r = mockReplay();
+  renderReplay(3);
+  await waitFor(() => expect(r.named("auto_run_replay_to_step")).toHaveLength(1));
+  const why = 'button "Save" not found';
+  await r.finish({
+    end: { kind: "browser_gone", detail: { step: 2, why, outcomes: [{ ok: false, detail: why }] } },
+    sentence: `replay stopped at step 2: ${why}; then the Auto Run browser closed`,
+  });
+  expect(await screen.findByText(`replay stopped at step 2: ${why}; then the Auto Run browser closed`)).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Open browser" })).toBeInTheDocument();
 });
 
 test("a replay that signs the browser in as another account is said, and this case signs in again before its next step", async () => {
