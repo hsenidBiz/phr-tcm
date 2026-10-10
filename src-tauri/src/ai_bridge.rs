@@ -3519,6 +3519,11 @@ async fn autorun_component_save(
         Some(serde_json::Value::String(s)) => Some(s.clone()),
         Some(_) => return (400, "\"why\" is one sentence".to_string()),
     };
+    let dry_run = match v.get("dry_run") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(_) => return (400, "\"dry_run\" is true or false.".to_string()),
+    };
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
@@ -3559,11 +3564,54 @@ async fn autorun_component_save(
         // No discovery can be going while an unattended run has the
         // browser, so the save is refused for that, as it always was.
         let mut none: Option<crate::commands::autorun::Session> = None;
+        if dry_run {
+            return dry_run_component_in(&mut none, &root, &ctx.org, &ctx.project, draft, why.as_deref(), now, cases.as_ref());
+        }
         return save_component_in(&mut none, &root, &ctx.org, &ctx.project, draft, why.as_deref(), now, cases.as_ref())
             .await;
     }
     let mut slot = crate::commands::autorun::supervised().lock().await;
+    if dry_run {
+        return dry_run_component_in(&mut slot, &root, &ctx.org, &ctx.project, draft, why.as_deref(), now, cases.as_ref());
+    }
     save_component_in(&mut slot, &root, &ctx.org, &ctx.project, draft, why.as_deref(), now, cases.as_ref()).await
+}
+
+/// A component save's dry run (`"dry_run": true`) against the discovery
+/// going in `slot`: every rule a save makes (`components::check_tried`),
+/// answered as the save would answer it, or `would_save` with the version
+/// it would become. Nothing is written, nothing is probed or recorded, and
+/// it is not a try of the component.
+#[allow(clippy::too_many_arguments)]
+pub fn dry_run_component_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    draft: crate::autorun::components::Component,
+    why: Option<&str>,
+    now: u64,
+    cases: Option<&crate::autorun::components::UserCases>,
+) -> (u16, String) {
+    use crate::autorun::components::{check_tried, TriedIn};
+    let held = match slot.as_mut() {
+        Some(b) => b.parts().discovery.as_ref().map(|d| (d.area.clone(), d.tried.clone())),
+        None => None,
+    };
+    let session = held.as_ref().map(|(area, tried)| TriedIn { area: area.as_deref(), tried });
+    match check_tried(root, organization, project, draft, why, session, now, cases) {
+        Ok(would) => (
+            200,
+            serde_json::json!({
+                "would_save": would.saved,
+                "version": would.version,
+                "changes": would.changes,
+                "cap_reached": would.cap_reached,
+            })
+            .to_string(),
+        ),
+        Err(why) => component_answer(Err(why)),
+    }
 }
 
 /// A component save (`components::save_tried`) against the discovery going
@@ -4693,11 +4741,13 @@ async fn db_query(ctx: &BridgeContext, body: &str) -> (u16, String) {
 /// back rather than dropped - a misspelled "edits" that was silently
 /// ignored would let an undeclared repair through as if it were a new
 /// script.
-const SAVE_BODY_KEYS: [&str; 2] = ["scripts", "edits"];
+const SAVE_BODY_KEYS: [&str; 3] = ["scripts", "edits", "dry_run"];
 
 struct SaveRequest {
     scripts: Vec<crate::autorun::CaseScript>,
     edits: Vec<crate::autorun::edits::Edit>,
+    /// Run every check and say what would happen, writing nothing.
+    dry_run: bool,
 }
 
 fn bad_scripts(e: serde_json::Error) -> String {
@@ -4724,6 +4774,7 @@ fn bad_edits(e: serde_json::Error) -> String {
 /// no declaration, the same as leaving it out.
 fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
     let v: serde_json::Value = serde_json::from_str(body).map_err(bad_scripts)?;
+    let mut dry_run = false;
     let (mut scripts_value, edits_value) = match v {
         serde_json::Value::Array(_) => (v, None),
         serde_json::Value::Object(mut map) => {
@@ -4734,11 +4785,16 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
                 .collect();
             if !unknown.is_empty() {
                 return Err(format!(
-                    "this body carries {} save_autorun_script does not read: {}. It reads \"scripts\" and \"edits\".",
+                    "this body carries {} save_autorun_script does not read: {}. It reads \"scripts\", \"edits\" and \"dry_run\".",
                     if unknown.len() == 1 { "a key" } else { "keys" },
                     unknown.join(", ")
                 ));
             }
+            dry_run = match map.remove("dry_run") {
+                None | Some(serde_json::Value::Null) => false,
+                Some(serde_json::Value::Bool(b)) => b,
+                Some(_) => return Err("\"dry_run\" is true or false.".to_string()),
+            };
             let scripts = map.remove("scripts").ok_or_else(|| {
                 "this body has no \"scripts\". Send { \"scripts\": [...], \"edits\": [...] }.".to_string()
             })?;
@@ -4800,7 +4856,7 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
         }
         edits.push(edit);
     }
-    Ok(SaveRequest { scripts, edits })
+    Ok(SaveRequest { scripts, edits, dry_run })
 }
 
 /// The case and steps a repair's quirk is about, with the class of the
@@ -4911,7 +4967,7 @@ async fn save_autorun_scripts(
     client: Option<&crate::ado::AdoClient>,
     body: &str,
 ) -> (u16, String) {
-    let SaveRequest { scripts, edits } = match parse_save_request(body) {
+    let SaveRequest { scripts, edits, dry_run } = match parse_save_request(body) {
         Ok(r) => r,
         Err(e) => return (400, e),
     };
@@ -5061,10 +5117,12 @@ async fn save_autorun_scripts(
                 seen_scope.push((sent.case_id, crate::autorun::seen_check::steps_to_check(declared)));
                 if let Some(e) = declared {
                     let why = e.why.trim();
-                    crate::applog::info(format!(
-                        "AI repaired case {} steps {:?}: {why}",
-                        script.case_id, e.steps
-                    ));
+                    if !dry_run {
+                        crate::applog::info(format!(
+                            "AI repaired case {} steps {:?}: {why}",
+                            script.case_id, e.steps
+                        ));
+                    }
                     script.last_repair = Some(why.to_string());
                     if let Some(d) = old.suspected_defect.as_ref().filter(|d| e.steps.contains(&d.step_number)) {
                         repaired_marks.push((script.case_id, d.step_number));
@@ -5169,6 +5227,10 @@ async fn save_autorun_scripts(
         if !seen_scope.is_empty() {
             let (map, components, files) = seen_check_inputs(&root, ctx, uses_components, &saved_scripts)
                 .map_err(|e| SaveRefusal::Other(400, e))?;
+            // Every script is checked, and every locator never seen in any
+            // of them is named at once; a refusal of any other kind is
+            // answered alone, as it always was.
+            let mut unseen: Vec<(i32, Vec<String>)> = Vec::new();
             for (case_id, only) in &seen_scope {
                 let (Some(script), Some(case)) = (
                     prepared.iter().find(|s| s.case_id == *case_id),
@@ -5179,18 +5241,29 @@ async fn save_autorun_scripts(
                         format!("case {case_id} could not be checked against the live app, so it was not saved"),
                     ));
                 };
-                crate::autorun::seen_check::check_seen_with_files(
+                use crate::autorun::seen_check::SeenVerdict;
+                match crate::autorun::seen_check::seen_verdict(
                     &map,
                     &components,
                     script,
                     &case_step_text(case),
                     only.as_deref(),
                     &files,
-                )
-                .map_err(SaveRefusal::Unseen)?;
+                ) {
+                    SeenVerdict::Passed => {}
+                    SeenVerdict::Other(why) => return Err(SaveRefusal::Unseen(why)),
+                    SeenVerdict::Unseen(lines) => unseen.push((*case_id, lines)),
+                }
+            }
+            if !unseen.is_empty() {
+                return Err(SaveRefusal::Unseen(unseen_in_bundle(&unseen)));
             }
         }
-        // Everything has passed; now the disk.
+        // Everything has passed. A dry run checks the bundle as the write
+        // would and stops there; a save writes it.
+        if dry_run {
+            return crate::autorun::store::check_scripts(&prepared).map_err(|e| SaveRefusal::Other(400, e));
+        }
         match crate::autorun::store::save_scripts_atomically(&root, &prepared) {
             Ok(()) => Ok(()),
             Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => Err(SaveRefusal::Other(400, e)),
@@ -5202,9 +5275,10 @@ async fn save_autorun_scripts(
     // With a component in use, the components load, the check and the
     // write hold the components lock, so a component save (which re-checks
     // the scripts that use it) cannot slip between them. Nothing in here
-    // awaits or saves a component.
+    // awaits or saves a component. A dry run writes nothing, so it does
+    // not hold the lock.
     let check_and_save_locked = || {
-        if uses_components {
+        if uses_components && !dry_run {
             crate::autorun::components::with_components_locked(check_and_save)
         } else {
             check_and_save()
@@ -5214,8 +5288,9 @@ async fn save_autorun_scripts(
     // Refused only for locators never seen, while a discovery is open: the
     // refused ones are checked on the discovery's current page, the ones
     // there are recorded, and the save is checked once more.
+    // Never on a dry run: it records nothing.
     let mut recorded: Option<Vec<String>> = None;
-    if matches!(checked, Err(SaveRefusal::Unseen(_))) {
+    if !dry_run && matches!(checked, Err(SaveRefusal::Unseen(_))) {
         let targets = seen_check_inputs(&root, ctx, uses_components, &saved_scripts).ok().and_then(|(map, components, files)| {
             let mut all: Vec<crate::browser::locator::Target> = Vec::new();
             for (case_id, only) in &seen_scope {
@@ -5253,6 +5328,9 @@ async fn save_autorun_scripts(
     };
     if let Err(refused) = checked {
         return answer(refused.said());
+    }
+    if dry_run {
+        return (200, format!("would save {} script(s): {}", prepared.len(), lines.join(", ")));
     }
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
 
@@ -5309,6 +5387,21 @@ async fn save_autorun_scripts(
         }
     }
     answer((200, report.join("\n")))
+}
+
+/// The refusal of a bundle whose scripts name locators never seen, from
+/// each refused case's lines in bundle order: the lines alone when one
+/// case is refused, each after "case <id>: " when more are; listed as
+/// `seen_check::refusal_list` lists them.
+fn unseen_in_bundle(unseen: &[(i32, Vec<String>)]) -> String {
+    let lines: Vec<String> = match unseen {
+        [(_, lines)] => lines.clone(),
+        many => many
+            .iter()
+            .flat_map(|(case_id, lines)| lines.iter().map(move |l| format!("case {case_id}: {l}")))
+            .collect(),
+    };
+    crate::autorun::seen_check::refusal_list(&lines)
 }
 
 /// Why a script save's last gate refused it: a locator never seen on the

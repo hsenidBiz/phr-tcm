@@ -2794,3 +2794,147 @@ async fn the_answer_names_the_area_as_the_map_files_it() {
     assert!(text.ends_with("Recorded 1 element as seen on Leave Apply."), "{text}");
     assert_eq!(sighted(dir.path(), "Leave Apply"), ["Save"]);
 }
+
+// ------------------------- every refused locator at once, and a dry run
+
+/// Every file under `root`, by its path, with its bytes.
+fn every_file(root: &std::path::Path) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else {
+                out.insert(path.clone(), std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    out
+}
+
+/// "Three pages": one click on each of three pager buttons, none seen.
+fn three_pages() -> Component {
+    serde_json::from_value(json!({
+        "name": "Three pages",
+        "description": "Opens three pages of cycles in turn",
+        "inputs": [],
+        "actions": [
+            { "kind": "click", "selector": { "css": "#pager-1" } },
+            { "kind": "click", "selector": { "css": "#pager-2" } },
+            { "kind": "click", "selector": { "css": "#pager-3" } }
+        ]
+    }))
+    .unwrap()
+}
+
+/// During a discovery, the page check runs over every refused locator,
+/// not only the first: each one there is recorded, the save is checked
+/// once more, and the answer names them all. When none is there, the
+/// refusal that follows still lists every one. A script save's page check
+/// takes the whole list the same way.
+#[tokio::test]
+async fn record_on_page_runs_over_every_refused_locator() {
+    let c = three_pages();
+    let refused = |i: usize| {
+        format!("Action {i}: #pager-{i} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.")
+    };
+
+    let dir = TempDir::new();
+    let (mut browser, _) = slot(cycles_page(1, true), tried_in("Cycles", &c));
+    let (status, body) =
+        save_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default())).await;
+    assert_eq!(status, 200, "{body}");
+    let (said, saved) = body.split_once('\n').expect("the recorded line, then the save's answer");
+    assert_eq!(said, "Recorded on the current page: #pager-1, #pager-2, #pager-3.");
+    assert_eq!(parsed(saved)["version"], 1, "{body}");
+
+    // None of them on the page: the refusal after the line lists all three.
+    let fresh = TempDir::new();
+    let (mut browser, _) = slot(cycles_page(0, true), tried_in("Cycles", &c));
+    let (status, body) =
+        save_component_in(&mut browser, fresh.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default())).await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(
+        body,
+        format!(
+            "Recorded on the current page: nothing - no refused locator matched exactly one visible element.\n{}\n{}\n{}",
+            refused(1),
+            refused(2),
+            refused(3)
+        )
+    );
+
+    // A script save hands over every refused locator, and every one there
+    // is recorded under the discovery's area, so the check then passes.
+    use v2_lib::ai_bridge::record_refused_for_scripts_in;
+    let script: v2_lib::autorun::CaseScript = serde_json::from_value(json!({
+        "case_id": 7, "title": "T", "area": "Cycles",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": "#pager-1" }] },
+            { "step_number": 2, "actions": [
+                { "kind": "click", "selector": "#pager-2" },
+                { "kind": "click", "selector": "#pager-3" }
+            ] }
+        ]
+    }))
+    .unwrap();
+    let none = v2_lib::autorun::components::ComponentFile::default();
+    let scripts_dir = TempDir::new();
+    let map = load_map(scripts_dir.path(), ORG, PROJECT).unwrap();
+    let targets = v2_lib::autorun::seen_check::unseen_targets(&map, &none, &script, &[], None, &[]).unwrap();
+    assert_eq!(targets.len(), 3);
+    let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));
+    let probed =
+        record_refused_for_scripts_in(&mut browser, scripts_dir.path(), ORG, PROJECT, &[Some("Cycles")], &targets).await;
+    assert_eq!(probed, Some(vec!["#pager-1".to_string(), "#pager-2".to_string(), "#pager-3".to_string()]));
+    let map = load_map(scripts_dir.path(), ORG, PROJECT).unwrap();
+    assert_eq!(v2_lib::autorun::seen_check::check_seen(&map, &none, &script, &[], None), Ok(()));
+}
+
+/// A component's dry run answers what the save would, refused or not, and
+/// writes nothing, probes nothing and records nothing: no component, no
+/// map, every file the same byte for byte. It is not a try either.
+#[tokio::test]
+async fn a_component_dry_run_writes_and_records_nothing() {
+    use v2_lib::ai_bridge::dry_run_component_in;
+    use v2_lib::autorun::components::{components_path, TRY_IT_FIRST};
+    let dir = TempDir::new();
+    let c = next_page();
+
+    // Refused: the save's own refusal, with no page check before it.
+    let (mut browser, _) = slot(untouched_page(), tried_in("Cycles", &c));
+    let before = every_file(dir.path());
+    let (status, body) =
+        dry_run_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default()));
+    assert_eq!(
+        (status, body.as_str()),
+        (400, "Action 1: #pager-2 was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.")
+    );
+    assert_eq!(every_file(dir.path()), before);
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty());
+
+    // Seen and tried: it would save as version 1, and nothing is written.
+    v2_lib::autorun::discovery_map::record_matched(dir.path(), ORG, PROJECT, Some("Cycles"), "/hr/cycles", &Target::from("#pager-2"), 0)
+        .unwrap();
+    let seen = every_file(dir.path());
+    let (status, body) =
+        dry_run_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default()));
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body), json!({ "would_save": "Next page", "version": 1, "changes": 0, "cap_reached": false }));
+    assert_eq!(every_file(dir.path()), seen, "a dry run changed a file");
+    assert!(!components_path(dir.path(), ORG, PROJECT).exists());
+
+    // Not tried in this discovery: refused as a save is, and a dry run
+    // does not make it a try.
+    let (mut browser, _) = slot(untouched_page(), exploring("Cycles"));
+    let (status, body) =
+        dry_run_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default()));
+    assert_eq!((status, body.as_str()), (409, TRY_IT_FIRST));
+    let (status, body) =
+        save_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default())).await;
+    assert_eq!((status, body.as_str()), (409, TRY_IT_FIRST));
+    assert_eq!(every_file(dir.path()), seen);
+}

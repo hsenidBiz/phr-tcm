@@ -6,7 +6,8 @@ use v2_lib::autorun::discovery_map::{AreaMap, DiscoveryMap, PageMap, SeenElement
 use v2_lib::autorun::edits::Edit;
 use v2_lib::autorun::seen_check::{
     check_component_seen, check_resolved_inputs, check_seen, check_seen_all, check_seen_all_hinted, check_seen_with_files,
-    has_data_placeholders, has_placeholder_inputs, steps_to_check, unseen_component_targets, unseen_targets, Unseen,
+    component_verdict, has_data_placeholders, has_placeholder_inputs, refusal_list, seen_verdict, steps_to_check,
+    unseen_component_targets, unseen_targets, SeenVerdict, Unseen, MAX_LISTED,
 };
 use v2_lib::autorun::CaseScript;
 use v2_lib::browser::locator::{LocatorStep, Target};
@@ -176,7 +177,11 @@ fn only_declared_steps_are_checked_on_a_repair() {
     );
     assert_eq!(check_seen(&map, &none(), &s, &[], Some(&[2])), Ok(()));
     assert_eq!(check_seen(&map, &none(), &s, &[], Some(&[2, 3])), Err(refusal(3, "button \"New\"")));
-    assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(refusal(1, "button \"Old\"")));
+    assert_eq!(
+        check_seen(&map, &none(), &s, &[], None),
+        Err(format!("{}
+{}", refusal(1, "button \"Old\""), refusal(3, "button \"New\"")))
+    );
 }
 
 #[test]
@@ -360,10 +365,10 @@ fn a_row_holding_the_typed_record_is_exempt() {
     assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()));
 }
 
-/// An import names every unseen locator, step by step, where a save names
-/// only the first.
+/// An import names every unseen locator, step by step. A save refused for a
+/// page address as well names that refusal alone.
 #[test]
-fn check_seen_all_lists_every_unseen_locator_and_check_seen_still_stops_at_the_first() {
+fn check_seen_all_lists_every_unseen_locator_and_check_seen_names_a_page_alone() {
     let map = map_with("Ratings", "/ratings", &[role("button", "Save")]);
     let s = script(
         Some("Ratings"),
@@ -383,7 +388,7 @@ fn check_seen_all_lists_every_unseen_locator_and_check_seen_still_stops_at_the_f
         check_seen_all(&map, &none(), &s, &[], None),
         vec![unseen(1, "button \"Publish\""), unseen(2, "/elsewhere"), unseen(2, "button \"Archive\"")]
     );
-    assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(refusal(1, "button \"Publish\"")));
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(refusal(2, "/elsewhere")));
     assert_eq!(check_seen_all(&map, &none(), &s, &[], Some(&[2])).len(), 2, "only the declared steps");
     let ok = script(
         Some("Ratings"),
@@ -1690,4 +1695,128 @@ fn an_unstamped_script_carries_over_only_under_the_legacy_rule() {
     assert!(!vouch_carries_over(&checked, "Acme", "Mobile", true));
     let editor = CaseScript { checked: false, ..checked };
     assert!(!vouch_carries_over(&editor, "Acme", "Web", true));
+}
+
+// ---- a refused save names every problem at once
+
+/// A refused save names every unseen locator in step order, then action
+/// order, one line each, each with its own "did you mean" of the same role
+/// only: never a link for a button, never a button for a text.
+#[test]
+fn a_refusal_lists_every_unseen_locator_in_order() {
+    let map = map_with(
+        "Ratings",
+        "/ratings",
+        &[role("button", "Publish"), role("button", "Save"), role("link", "Archive"), text("Rating saved")],
+    );
+    let s = script(
+        Some("Ratings"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [
+                click(serde_json::json!({ "role": "button", "name": "Publsh" })),
+                click(serde_json::json!({ "role": "button", "name": "Save" })),
+                { "kind": "expect_visible", "selector": { "text": "Rating savd" } }
+            ] },
+            { "step_number": 2, "actions": [
+                click(serde_json::json!({ "role": "button", "name": "Archive" })),
+                click(serde_json::json!([
+                    { "role": "dialog", "name": "Confirm" },
+                    { "role": "button", "name": "Publsh" }
+                ]))
+            ] }
+        ]),
+    );
+    let expected = [
+        refusal_hinted(1, "button \"Publsh\"", "did you mean button \"Publish\"?"),
+        refusal_hinted(1, "text \"Rating savd\"", "did you mean text \"Rating saved\"?"),
+        refusal(2, "button \"Archive\""),
+        refusal(2, "button \"Publsh\" in dialog \"Confirm\""),
+    ];
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(expected.join("\n")));
+    assert_eq!(
+        seen_verdict(&map, &none(), &s, &[], None, &[]),
+        SeenVerdict::Unseen(expected.to_vec()),
+        "the same lines, one by one"
+    );
+    // One unseen locator is answered exactly as it always was.
+    let one = one_step("Ratings", serde_json::json!([click(serde_json::json!({ "role": "button", "name": "Publsh" }))]));
+    assert_eq!(
+        check_seen(&map, &none(), &one, &[], None),
+        Err(refusal_hinted(1, "button \"Publsh\"", "did you mean button \"Publish\"?"))
+    );
+}
+
+/// Past fifty, the refusal lists fifty and says how many more there are.
+#[test]
+fn the_refusal_list_is_capped_at_fifty() {
+    assert_eq!(MAX_LISTED, 50);
+    let map = map_with("Ratings", "/ratings", &[role("button", "Save")]);
+    let clicks: Vec<serde_json::Value> =
+        (1..=53).map(|i| click(serde_json::json!({ "css": format!("#unseen-{i}") }))).collect();
+    let s = one_step("Ratings", serde_json::Value::Array(clicks));
+    let refused = check_seen(&map, &none(), &s, &[], None).unwrap_err();
+    let lines: Vec<&str> = refused.lines().collect();
+    assert_eq!(lines.len(), 51, "{refused}");
+    assert_eq!(lines[0], refusal(1, "#unseen-1"));
+    assert_eq!(lines[49], refusal(1, "#unseen-50"));
+    assert_eq!(lines[50], "and 3 more");
+
+    // Exactly fifty: no "and" line.
+    let fifty: Vec<String> = (1..=50).map(|i| format!("line {i}")).collect();
+    assert_eq!(refusal_list(&fifty).lines().count(), 50);
+    assert_eq!(refusal_list(&fifty[..1]), "line 1");
+}
+
+/// A refusal that is not of a locator never seen (a component the project
+/// does not have, a page address never seen) comes back alone, as it
+/// always did, however many unseen locators the script also names.
+#[test]
+fn a_refusal_that_is_not_an_unseen_locator_comes_back_alone() {
+    let map = map_with("Ratings", "/ratings", &[role("button", "Save")]);
+    let s = script(
+        Some("Ratings"),
+        serde_json::json!([
+            { "step_number": 1, "actions": [click(serde_json::json!({ "css": "#first" }))] },
+            { "step_number": 2, "actions": [
+                { "kind": "use_component", "component": "Missing", "inputs": {} },
+                click(serde_json::json!({ "css": "#second" }))
+            ] }
+        ]),
+    );
+    let alone = format!("Step 2: {}", v2_lib::autorun::components::not_saved("Missing"));
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(alone.clone()));
+    assert_eq!(seen_verdict(&map, &none(), &s, &[], None, &[]), SeenVerdict::Other(alone));
+
+    // A component's page address never seen, beside its unseen locators.
+    let actions: Vec<v2_lib::browser::actions::Action> = serde_json::from_value(serde_json::json!([
+        click(serde_json::json!({ "css": "#first" })),
+        { "kind": "navigate", "url": "/elsewhere" },
+        click(serde_json::json!({ "css": "#second" }))
+    ]))
+    .unwrap();
+    assert_eq!(
+        check_component_seen(&map, Some("Ratings"), &actions),
+        Err("Action 2: /elsewhere was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.".to_string())
+    );
+}
+
+/// A component's save names every unseen locator too, in action order,
+/// each with its own hint of the same role.
+#[test]
+fn a_component_refusal_lists_every_unseen_locator_in_order() {
+    let map = map_with("Ratings", "/ratings", &[role("button", "Publish"), role("button", "Save"), role("link", "Archive")]);
+    let actions: Vec<v2_lib::browser::actions::Action> = serde_json::from_value(serde_json::json!([
+        click(serde_json::json!({ "role": "button", "name": "Publsh" })),
+        click(serde_json::json!({ "role": "button", "name": "Save" })),
+        click(serde_json::json!({ "role": "button", "name": "Archive" }))
+    ]))
+    .unwrap();
+    let line = |i: usize, what: &str, hint: Option<&str>| match hint {
+        Some(h) => format!("Action {i}: {what} was never seen on the live app; {h} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."),
+        None => format!("Action {i}: {what} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."),
+    };
+    let expected =
+        [line(1, "button \"Publsh\"", Some("did you mean button \"Publish\"?")), line(3, "button \"Archive\"", None)];
+    assert_eq!(check_component_seen(&map, Some("Ratings"), &actions), Err(expected.join("\n")));
+    assert_eq!(component_verdict(&map, Some("Ratings"), &actions), SeenVerdict::Unseen(expected.to_vec()));
 }

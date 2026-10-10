@@ -69,6 +69,12 @@
 //! (`SUGGEST_WITHIN`). One seen on the page the refused step's area arrives
 //! on (`add_area_pages`) is offered before one seen only elsewhere.
 //!
+//! A refused save names every locator never seen at once, in step order,
+//! then action order, then link order, each with its own hint, up to
+//! `MAX_LISTED` lines and then how many more. A refusal of any other kind
+//! (a page address never seen, a component use the step cannot make)
+//! is answered alone, as it always was (`SeenVerdict`).
+//!
 //! A step that uses a component must name one the project has and give it
 //! every input, each of its kind. Every locator of the component an input
 //! goes into (a target input, or a text input written into a locator) is
@@ -832,10 +838,68 @@ pub fn legacy_scripts_count(root: &std::path::Path, org: &str, project: &str) ->
     with_areas.len() == 1 && with_areas[0] == format!("{}.nav.json", project_slug(org, project))
 }
 
+/// How many refusals a refused save lists before it says only how many
+/// more there are.
+pub const MAX_LISTED: usize = 50;
+
+/// `lines`, one to a line: the first `MAX_LISTED`, then "and N more" for
+/// the rest. One line is exactly that line.
+pub fn refusal_list(lines: &[String]) -> String {
+    let mut out: Vec<String> = lines.iter().take(MAX_LISTED).cloned().collect();
+    if lines.len() > MAX_LISTED {
+        out.push(format!("and {} more", lines.len() - MAX_LISTED));
+    }
+    out.join("\n")
+}
+
+/// What the save check says of a script or a component.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SeenVerdict {
+    /// Nothing is refused.
+    Passed,
+    /// Refused for something other than a locator never seen (a page
+    /// address never seen, or a component use the step cannot make): the
+    /// first such refusal, alone, as a save has always answered it.
+    Other(String),
+    /// Refused only for locators never seen: every one, in step (or
+    /// action) order and then link order, each with its "did you mean".
+    Unseen(Vec<String>),
+}
+
+impl SeenVerdict {
+    /// The refusal a save answers with: `Other`'s sentence, or the
+    /// `Unseen` lines as `refusal_list` lists them.
+    pub fn into_result(self) -> Result<(), String> {
+        match self {
+            SeenVerdict::Passed => Ok(()),
+            SeenVerdict::Other(why) => Err(why),
+            SeenVerdict::Unseen(lines) => Err(refusal_list(&lines)),
+        }
+    }
+
+    /// From the check's failures in order, each with whether it is a
+    /// locator never seen.
+    fn of(failures: impl IntoIterator<Item = (String, bool)>) -> SeenVerdict {
+        let mut unseen: Vec<String> = Vec::new();
+        for (line, locator) in failures {
+            if !locator {
+                return SeenVerdict::Other(line);
+            }
+            unseen.push(line);
+        }
+        if unseen.is_empty() {
+            SeenVerdict::Passed
+        } else {
+            SeenVerdict::Unseen(unseen)
+        }
+    }
+}
+
 /// Checks `script` against what `map` has seen, in step order: every
 /// step, or only `only_steps` on a repair. `case_text` is the test case's
 /// own step actions and expected results; `components` are the project's,
-/// for the steps that use one. The first failure is returned.
+/// for the steps that use one. Refused, it names every locator never seen
+/// (`seen_verdict`).
 pub fn check_seen(
     map: &DiscoveryMap,
     components: &ComponentFile,
@@ -856,10 +920,24 @@ pub fn check_seen_with_files(
     only_steps: Option<&[i32]>,
     files: &[TestFile],
 ) -> Result<(), String> {
-    match scan(map, components, script, case_text, only_steps, true, None, files).into_iter().next() {
-        Some(f) => Err(f.unseen.refusal(f.hint.as_deref())),
-        None => Ok(()),
-    }
+    seen_verdict(map, components, script, case_text, only_steps, files).into_result()
+}
+
+/// What [`check_seen_with_files`] says of `script`, before it is put as
+/// one refusal: a bundle save lists the lines of all its scripts together.
+pub fn seen_verdict(
+    map: &DiscoveryMap,
+    components: &ComponentFile,
+    script: &CaseScript,
+    case_text: &[String],
+    only_steps: Option<&[i32]>,
+    files: &[TestFile],
+) -> SeenVerdict {
+    SeenVerdict::of(
+        scan(map, components, script, case_text, only_steps, None, files)
+            .into_iter()
+            .map(|f| (f.unseen.refusal(f.hint.as_deref()), f.target.is_some())),
+    )
 }
 
 /// The locators [`check_seen_with_files`] refuses `script` for, in step
@@ -874,7 +952,7 @@ pub fn unseen_targets(
     only_steps: Option<&[i32]>,
     files: &[TestFile],
 ) -> Option<Vec<Target>> {
-    scan(map, components, script, case_text, only_steps, false, None, files).into_iter().map(|f| f.target).collect()
+    scan(map, components, script, case_text, only_steps, None, files).into_iter().map(|f| f.target).collect()
 }
 
 /// [`check_seen`], but every failure in step order rather than the first:
@@ -886,7 +964,7 @@ pub fn check_seen_all(
     case_text: &[String],
     only_steps: Option<&[i32]>,
 ) -> Vec<Unseen> {
-    scan(map, components, script, case_text, only_steps, false, None, &[]).into_iter().map(|f| f.unseen).collect()
+    scan(map, components, script, case_text, only_steps, None, &[]).into_iter().map(|f| f.unseen).collect()
 }
 
 /// [`check_seen_all`], knowing the project's Test files, each failure with
@@ -900,7 +978,7 @@ pub fn check_seen_all_hinted(
     only_steps: Option<&[i32]>,
     files: &[TestFile],
 ) -> Vec<(Unseen, Option<String>)> {
-    scan(map, components, script, case_text, only_steps, false, None, files)
+    scan(map, components, script, case_text, only_steps, None, files)
         .into_iter()
         .map(|f| (f.unseen, f.hint))
         .collect()
@@ -918,7 +996,7 @@ pub fn check_component_uses(
     case_text: &[String],
     component: &str,
 ) -> Vec<Unseen> {
-    scan(map, components, script, case_text, None, false, Some(component), &[]).into_iter().map(|f| f.unseen).collect()
+    scan(map, components, script, case_text, None, Some(component), &[]).into_iter().map(|f| f.unseen).collect()
 }
 
 /// Does this script use a component anywhere? Its checks need the
@@ -1003,16 +1081,14 @@ pub fn script_areas(components: &ComponentFile, area: Option<&str>, steps: &[Ste
     areas
 }
 
-/// The failures of the check, stopping at the first when `first_only`;
-/// with `only_component`, of that component's uses alone.
-#[allow(clippy::too_many_arguments)]
+/// Every failure of the check, in step order, then action order, then
+/// link order; with `only_component`, of that component's uses alone.
 fn scan(
     map: &DiscoveryMap,
     components: &ComponentFile,
     script: &CaseScript,
     case_text: &[String],
     only_steps: Option<&[i32]>,
-    first_only: bool,
     only_component: Option<&str>,
     files: &[TestFile],
 ) -> Vec<Found> {
@@ -1056,9 +1132,6 @@ fn scan(
                             hint: None,
                             target: None,
                         });
-                        if first_only {
-                            return unseen;
-                        }
                     }
                 }
                 // The locators the script names: the action's own, each
@@ -1086,9 +1159,6 @@ fn scan(
                                 hint: None,
                                 target: None,
                             });
-                            if first_only {
-                                return unseen;
-                            }
                             continue;
                         }
                     };
@@ -1116,9 +1186,6 @@ fn scan(
                             hint: seen.closest(link, area_page(map, here.as_deref())),
                             target: Some(n.target.clone()),
                         });
-                        if first_only {
-                            return unseen;
-                        }
                     }
                 }
             }
@@ -1204,27 +1271,26 @@ fn input_link(link: &LocatorStep) -> bool {
 /// as they expand. With no Test files known here, no file name or size is
 /// exempt.
 pub fn check_component_seen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) -> Result<(), String> {
-    match component_unseen(map, area, actions, true).into_iter().next() {
-        Some((why, _)) => Err(why),
-        None => Ok(()),
-    }
+    component_verdict(map, area, actions).into_result()
+}
+
+/// What [`check_component_seen`] says of a component's actions: refused
+/// only for locators never seen, every one in action order, each with its
+/// "did you mean"; refused for a page address, that refusal alone.
+pub fn component_verdict(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) -> SeenVerdict {
+    SeenVerdict::of(component_unseen(map, area, actions).into_iter().map(|(why, t)| (why, t.is_some())))
 }
 
 /// The locators [`check_component_seen`] refuses, in order, when being
 /// unseen is all it refuses: `None` when it also refuses a page address.
 /// Empty when it refuses nothing.
 pub fn unseen_component_targets(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) -> Option<Vec<Target>> {
-    component_unseen(map, area, actions, false).into_iter().map(|(_, t)| t).collect()
+    component_unseen(map, area, actions).into_iter().map(|(_, t)| t).collect()
 }
 
-/// The refusals of a component's check, each with the locator it names
-/// (`None` for a page address), stopping at the first when `first_only`.
-fn component_unseen(
-    map: &DiscoveryMap,
-    area: Option<&str>,
-    actions: &[Action],
-    first_only: bool,
-) -> Vec<(String, Option<Target>)> {
+/// Every refusal of a component's check, in action order, each with the
+/// locator it names (`None` for a page address).
+fn component_unseen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) -> Vec<(String, Option<Target>)> {
     let mut areas: Vec<&str> = area.into_iter().collect();
     areas.extend(actions.iter().flat_map(Action::each).filter_map(Action::area_named));
     let seen = Sightings::new(map, &areas);
@@ -1244,9 +1310,6 @@ fn component_unseen(
             if let Action::Navigate { url } | Action::OpenTab { url, .. } = a {
                 if !paths.contains(&page_path(url)) {
                     out.push((refused(i, &path_only(url), None), None));
-                    if first_only {
-                        return out;
-                    }
                 }
             }
             let dates: Vec<Date> = typed.iter().filter_map(|v| parse_date(v)).collect();
@@ -1257,9 +1320,6 @@ fn component_unseen(
                 if let Some(link) = first_unseen(&links, &chain, &seen, &own) {
                     let hint = seen.closest(link, area_page(map, area));
                     out.push((refused(i, &t.describe(), hint.as_deref()), Some(t.clone())));
-                    if first_only {
-                        return out;
-                    }
                 }
             }
             push_typed(&mut typed, a);

@@ -2841,7 +2841,8 @@ async fn a_repair_checks_only_its_declared_steps() {
     };
     // Step 2's new toast was never seen.
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &repair(".toast"), "1.0.0").await;
-    assert_eq!((status, out), (400, never_seen(2, "#save")));
+    assert_eq!((status, out), (400, format!("{}
+{}", never_seen(2, "#save"), never_seen(2, ".toast"))));
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 0);
 
     // Step 2's locators seen; step 1's unseen page is not looked at.
@@ -3058,4 +3059,134 @@ async fn a_legacy_script_resaved_with_two_projects_with_areas_stays_unchecked() 
 async fn a_legacy_script_resaved_as_the_one_project_with_areas_is_checked() {
     let saved = resave_a_legacy_script(false).await;
     assert_eq!((saved.project.as_deref(), saved.checked), (Some("Web"), true));
+}
+
+// ------------------------- every refusal at once, and a dry run
+
+/// Every file under `root`, by its path, with its bytes.
+fn every_file(root: &std::path::Path) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else {
+                out.insert(path.clone(), std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    out
+}
+
+/// Case `id` as `case_7` writes it, under another id.
+fn case_as(id: i32, selector: &str, value: &str) -> serde_json::Value {
+    let mut v = case_7(selector, value);
+    v[0]["case_id"] = serde_json::json!(id);
+    v
+}
+
+/// A bundle whose scripts name locators never seen lists every one of
+/// them, case by case, each line after its case.
+#[tokio::test]
+async fn a_bundle_refusal_names_every_unseen_locator_of_every_case() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[
+        (7, "Save a rating", &["", "A toast says Saved"]),
+        (8, "Save a rating", &["", "A toast says Saved"]),
+    ])
+    .await;
+    // The page was seen; neither Save button nor toast was.
+    see_scripts(dir.path(), &serde_json::json!([{ "case_id": 1, "title": "x", "steps": [{ "step_number": 1, "actions": [
+        { "kind": "navigate", "url": "https://app.example/ratings" }
+    ]}]}]).to_string());
+    let both = serde_json::Value::Array(
+        [case_as(7, ".toast", "Saved"), case_as(8, ".toast", "Saved")].into_iter().map(|v| v[0].clone()).collect(),
+    );
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &both.to_string(), "1.0.0").await;
+    let expected = [
+        format!("case 7: {}", never_seen(2, "#save")),
+        format!("case 7: {}", never_seen(2, ".toast")),
+        format!("case 8: {}", never_seen(2, "#save")),
+        format!("case 8: {}", never_seen(2, ".toast")),
+    ];
+    assert_eq!((status, out), (400, expected.join("\n")));
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None);
+    assert_eq!(load_script(dir.path(), 8).unwrap(), None);
+}
+
+/// A dry run that passes every check says it would save, and saves
+/// nothing. It travels through the tool as `dry_run` beside `scripts`.
+#[tokio::test]
+async fn a_dry_run_that_passes_says_it_would_save() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let scripts = case_7("#toast", "Saved");
+    see_scripts(dir.path(), &scripts.to_string());
+
+    let body = tool_body(serde_json::json!({ "scripts": scripts, "dry_run": true }));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (new)"));
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None, "a dry run wrote the script");
+
+    // The scripts as a string, as sibling tools take them, and false.
+    let body = tool_body(serde_json::json!({ "scripts": scripts.to_string(), "dry_run": true }));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (new)"));
+    let body = tool_body(serde_json::json!({ "scripts": scripts, "dry_run": false }));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.starts_with("saved 1 script(s)"), "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some());
+
+    // Anything but true or false is refused, before anything is read.
+    let odd = serde_json::json!({ "scripts": scripts, "dry_run": "yes" }).to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &odd, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "\"dry_run\" is true or false."));
+}
+
+/// A dry run writes nothing and records nothing, refused or not: no
+/// script, no map, no stamp, no repair counted, no quirk. Every file under
+/// the Auto Run folder is the same, byte for byte. A refused dry run
+/// answers the refusal a save would.
+#[tokio::test]
+async fn a_dry_run_writes_and_records_nothing() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let first = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &first);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let before = every_file(dir.path());
+
+    let dry = |selector: &str, quirk: bool| {
+        let mut edit = edit_step_2("the toast moved");
+        if quirk {
+            edit["quirk"] = serde_json::json!("Toasts fade after two seconds");
+        }
+        serde_json::json!({ "scripts": case_7(selector, "Saved"), "edits": [edit], "dry_run": true }).to_string()
+    };
+    // Refused: the same answer as the save, and nothing changes.
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry(".toast", true), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, never_seen(2, ".toast").as_str()));
+    assert_eq!(every_file(dir.path()), before, "a refused dry run changed a file");
+
+    // Passing: would save, and still nothing changes - no repair counted,
+    // no quirk recorded, the map left as it was.
+    see_scripts(dir.path(), &case_7(".toast", "Saved").to_string());
+    let seen = every_file(dir.path());
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry(".toast", true), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (repaired, 1 of 3 used)"));
+    assert_eq!(every_file(dir.path()), seen, "a dry run that passed changed a file");
+    let kept = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(kept.repairs, 0);
+    assert!(load_quirks(dir.path(), "acme", "Web").unwrap().is_empty());
 }

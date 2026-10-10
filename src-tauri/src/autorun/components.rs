@@ -719,6 +719,39 @@ pub fn save_tried(
     now: u64,
     cases: Option<&UserCases>,
 ) -> Result<Saved, String> {
+    tried(root, org, project, draft, why, session, now, cases, true)
+}
+
+/// [`save_tried`]'s every rule, in the same order, and what it would
+/// answer, without writing anything: the components file is read, never
+/// written, and its lock is not taken.
+#[allow(clippy::too_many_arguments)]
+pub fn check_tried(
+    root: &Path,
+    org: &str,
+    project: &str,
+    draft: Component,
+    why: Option<&str>,
+    session: Option<TriedIn<'_>>,
+    now: u64,
+    cases: Option<&UserCases>,
+) -> Result<Saved, String> {
+    tried(root, org, project, draft, why, session, now, cases, false)
+}
+
+/// [`save_tried`], or with `write` false [`check_tried`].
+#[allow(clippy::too_many_arguments)]
+fn tried(
+    root: &Path,
+    org: &str,
+    project: &str,
+    draft: Component,
+    why: Option<&str>,
+    session: Option<TriedIn<'_>>,
+    now: u64,
+    cases: Option<&UserCases>,
+    write: bool,
+) -> Result<Saved, String> {
     check_component(&draft)?;
     // With no discovery going, nothing was tried, and there is no area to
     // check the locators in.
@@ -734,7 +767,7 @@ pub fn save_tried(
     let name = draft.name.trim().to_string();
     // The saved one is read, compared and replaced under one lock, so two
     // saves can never both become the same next version.
-    update_with(root, org, project, |file| {
+    let change = |file: &mut ComponentFile| {
         let (version, changes) = match find(file, &name) {
             None => (1, 0),
             Some(old) => {
@@ -763,7 +796,12 @@ pub fn save_tried(
         check_users(root, &map, &after, &name, cases)?;
         put_in(file, saved);
         Ok(Saved { saved: name.clone(), version, changes, cap_reached: changes >= CHANGE_CAP })
-    })
+    };
+    if write {
+        update_with(root, org, project, change)
+    } else {
+        change(&mut load_components(root, org, project)?)
+    }
 }
 
 /// Removes `name` unless a saved script uses it, handing back its saved

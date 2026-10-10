@@ -104,6 +104,81 @@ impl std::fmt::Display for SaveScriptsError {
 
 impl std::error::Error for SaveScriptsError {}
 
+/// The checks [`save_scripts_atomically`] makes of a bundle before it
+/// writes anything, in its order: a real case id, each case once, steps,
+/// each step once, a usable account key, a reason for every unchecked
+/// step, no sign-in placeholder, and every action valid. Reads nothing.
+pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for sc in scripts {
+        if sc.case_id <= 0 {
+            return Err(format!(
+                "case id {} is not a valid Azure DevOps work item id",
+                sc.case_id
+            ));
+        }
+        if !seen.insert(sc.case_id) {
+            return Err(format!(
+                "case {} appears more than once in this bundle",
+                sc.case_id
+            ));
+        }
+        if sc.steps.is_empty() {
+            return Err(format!(
+                "case {} has no steps - a script that runs nothing cannot be saved",
+                sc.case_id
+            ));
+        }
+        {
+            let mut seen_steps = std::collections::HashSet::new();
+            for step in &sc.steps {
+                if !seen_steps.insert(step.step_number) {
+                    return Err(format!(
+                        "case {}: step {} appears more than once",
+                        sc.case_id, step.step_number
+                    ));
+                }
+            }
+        }
+        if let Some(key) = &sc.account {
+            if !crate::autorun::accounts::valid_key(key) {
+                return Err(format!(
+                    "case {}: \"{key}\" is not a usable account key",
+                    sc.case_id
+                ));
+            }
+        }
+        for step in &sc.steps {
+            if let Some(reason) = &step.unchecked {
+                if reason.trim().is_empty() {
+                    return Err(format!(
+                        "case {} step {}: unchecked needs a reason, not an empty string",
+                        sc.case_id, step.step_number
+                    ));
+                }
+            }
+            for (i, action) in step.actions.iter().enumerate() {
+                let text = serde_json::to_string(action).unwrap_or_default();
+                if crate::autorun::recipe::has_placeholder(&text) {
+                    return Err(format!(
+                        "case {} step {} action {}: {{{{username}}}} and {{{{password}}}} belong in the project's sign-in recipe, not in a script",
+                        sc.case_id, step.step_number, i + 1
+                    ));
+                }
+                if let Err(why) = action.validate() {
+                    return Err(format!(
+                        "case {} step {} action {}: {why}",
+                        sc.case_id,
+                        step.step_number,
+                        i + 1
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Save a whole bundle of scripts as one unit: every entry lands, or none
 /// does. Used by both the AI bridge's `save_autorun_script` and the Auto
 /// Run screen's file import - the two places a batch of scripts can
@@ -139,73 +214,9 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
     let saved_at = crate::applog::iso_stamp();
 
     // Pass 1: validate + serialise.
-    let mut seen = std::collections::HashSet::new();
+    check_scripts(scripts).map_err(SaveScriptsError::Invalid)?;
     let mut entries: Vec<(PathBuf, String)> = Vec::with_capacity(scripts.len());
     for sc in scripts {
-        if sc.case_id <= 0 {
-            return Err(SaveScriptsError::Invalid(format!(
-                "case id {} is not a valid Azure DevOps work item id",
-                sc.case_id
-            )));
-        }
-        if !seen.insert(sc.case_id) {
-            return Err(SaveScriptsError::Invalid(format!(
-                "case {} appears more than once in this bundle",
-                sc.case_id
-            )));
-        }
-        if sc.steps.is_empty() {
-            return Err(SaveScriptsError::Invalid(format!(
-                "case {} has no steps - a script that runs nothing cannot be saved",
-                sc.case_id
-            )));
-        }
-        {
-            let mut seen_steps = std::collections::HashSet::new();
-            for step in &sc.steps {
-                if !seen_steps.insert(step.step_number) {
-                    return Err(SaveScriptsError::Invalid(format!(
-                        "case {}: step {} appears more than once",
-                        sc.case_id, step.step_number
-                    )));
-                }
-            }
-        }
-        if let Some(key) = &sc.account {
-            if !crate::autorun::accounts::valid_key(key) {
-                return Err(SaveScriptsError::Invalid(format!(
-                    "case {}: \"{key}\" is not a usable account key",
-                    sc.case_id
-                )));
-            }
-        }
-        for step in &sc.steps {
-            if let Some(reason) = &step.unchecked {
-                if reason.trim().is_empty() {
-                    return Err(SaveScriptsError::Invalid(format!(
-                        "case {} step {}: unchecked needs a reason, not an empty string",
-                        sc.case_id, step.step_number
-                    )));
-                }
-            }
-            for (i, action) in step.actions.iter().enumerate() {
-                let text = serde_json::to_string(action).unwrap_or_default();
-                if crate::autorun::recipe::has_placeholder(&text) {
-                    return Err(SaveScriptsError::Invalid(format!(
-                        "case {} step {} action {}: {{{{username}}}} and {{{{password}}}} belong in the project's sign-in recipe, not in a script",
-                        sc.case_id, step.step_number, i + 1
-                    )));
-                }
-                if let Err(why) = action.validate() {
-                    return Err(SaveScriptsError::Invalid(format!(
-                        "case {} step {} action {}: {why}",
-                        sc.case_id,
-                        step.step_number,
-                        i + 1
-                    )));
-                }
-            }
-        }
         // The disk's mark stays only while the script still has its step:
         // a mark on a step that is gone could never label a failure or
         // pass, so it would never clear itself.

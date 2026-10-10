@@ -339,6 +339,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "description": "Only when a script already exists: one entry per case you are changing, { case_id, steps, why, area?, quirk? }",
                     "items": { "type": "object" },
                 },
+                "dry_run": { "type": "boolean", "description": DRY_RUN_SCRIPT },
             }), &["scripts"]),
         },
         {
@@ -454,6 +455,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "items": { "type": "object" },
                 },
                 "why": { "type": "string", "description": "Only when changing a saved component: one sentence on why it changes." },
+                "dry_run": { "type": "boolean", "description": DRY_RUN_COMPONENT },
             }), &["name", "description", "inputs", "actions"]),
         },
         {
@@ -774,6 +776,30 @@ pub const BUNDLE_EDITS_NOT_A_LIST: &str = "the bundle sent as \"scripts\" has an
 /// added to the bundle's own: it is neither a list nor one entry.
 pub const BESIDE_EDITS_NOT_A_LIST: &str = "the \"edits\" sent beside the bundle in \"scripts\" is not a list - send one \"edits\" list beside \"scripts\", one entry per case";
 
+/// What `dry_run` does on `save_autorun_script`.
+const DRY_RUN_SCRIPT: &str = "true: run every check a save makes, the seen check included, and answer \"would save\" or every refusal, writing nothing and recording nothing.";
+
+/// What `dry_run` does on `save_autorun_component`.
+const DRY_RUN_COMPONENT: &str = "true: run every rule a save makes and answer would_save or the refusal, writing nothing and recording nothing. It is not a try of the component.";
+
+/// The script save's body with the tool's `dry_run` carried into it: the
+/// bare array becomes `{ "scripts": [...], "dry_run": ... }`, and an object
+/// body gets the key. Without one, or with a body that is not JSON (the
+/// route names what is wrong with it), the body is unchanged.
+fn with_dry_run(body: String, dry_run: Option<&serde_json::Value>) -> String {
+    let Some(flag) = dry_run.filter(|v| !v.is_null()) else { return body };
+    match serde_json::from_str::<serde_json::Value>(&body) {
+        Ok(scripts @ serde_json::Value::Array(_)) => {
+            serde_json::json!({ "scripts": scripts, "dry_run": flag }).to_string()
+        }
+        Ok(serde_json::Value::Object(mut bundle)) => {
+            bundle.insert("dry_run".to_string(), flag.clone());
+            serde_json::Value::Object(bundle).to_string()
+        }
+        _ => body,
+    }
+}
+
 /// The bundle's own `edits` with the ones sent beside it added, exact
 /// duplicates dropped. Either side may be a list, one entry, or a JSON
 /// string of either. When both are there and one of them is anything else,
@@ -990,7 +1016,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 (None, _) => Ok(args.to_string()),
             };
             match body {
-                Ok(body) => call("POST", "/autorun-script", &body),
+                Ok(body) => call("POST", "/autorun-script", &with_dry_run(body, args.get("dry_run"))),
                 // Refused here, before anything reaches the app, in the
                 // same shape as a refusal from the route.
                 Err(refused) => Ok((400, refused)),
