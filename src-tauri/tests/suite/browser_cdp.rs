@@ -281,13 +281,13 @@ async fn forgetting_events_drops_what_was_buffered() {
 #[tokio::test]
 #[ignore = "starts a real Edge window"]
 async fn eval_round_trips_against_a_real_browser() {
-    let mut b = v2_lib::browser::launch::launch().unwrap();
+    let b = v2_lib::browser::launch::launch().unwrap();
     // Give the browser a moment to bind its port.
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
     let mut cdp = v2_lib::browser::cdp::Cdp::connect(b.port).await.unwrap();
     let v = cdp.eval("1 + 1").await.unwrap();
     assert_eq!(v["result"]["value"], 2);
-    let _ = b.child.kill();
+    let _ = b.close();
 }
 
 // ---- Calls answered later (send_deferred / collect) ----------------------

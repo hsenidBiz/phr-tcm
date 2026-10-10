@@ -1,7 +1,9 @@
 //! Where the browser lives and how it is started.
 
+use super::tree::{self, Ends, Tree};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
+use std::sync::Arc;
 
 /// Which browser the run is watched in. Both are Chromium, so both speak
 /// the same DevTools Protocol and take the same switches - the only thing
@@ -128,10 +130,103 @@ pub fn free_port() -> Result<u16, String> {
     Ok(port)
 }
 
+/// A browser the app started: the process it spawned, the DevTools port,
+/// the throwaway profile, and (on Windows) the job every process of the
+/// browser runs in (`tree`). Dropping it closes the job's last handle,
+/// which kills the whole tree: a browser the app forgets can no longer
+/// outlive it. `close` is the tidy way, which also removes the profile.
 pub struct LaunchedBrowser {
     pub child: Child,
     pub port: u16,
     pub profile_dir: PathBuf,
+    tree: Arc<Tree>,
+    pid_gone_noted: bool,
+}
+
+impl LaunchedBrowser {
+    /// The pid the app spawned. Edge can replace that process with another
+    /// one, so it says nothing on its own about whether the browser runs.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// How many processes the browser's job holds now. `None` off Windows.
+    pub fn processes(&self) -> Option<u32> {
+        self.tree.processes()
+    }
+
+    /// Is this process one of the browser's (in its job)?
+    pub fn holds(&self, pid: u32) -> bool {
+        self.tree.holds(pid)
+    }
+
+    /// Has the process the app spawned ended?
+    pub fn pid_ended(&mut self) -> bool {
+        !matches!(self.child.try_wait(), Ok(None))
+    }
+
+    /// Does any process of the browser still run? On Windows that is the
+    /// job, whatever became of the spawned pid; elsewhere the spawned pid.
+    pub fn running(&mut self) -> bool {
+        match self.processes() {
+            Some(n) => n > 0,
+            None => !self.pid_ended(),
+        }
+    }
+
+    /// True the first time it is asked, false after: so that the spawned
+    /// pid going is logged once per browser, not once per case.
+    pub fn note_pid_gone(&mut self) -> bool {
+        !std::mem::replace(&mut self.pid_gone_noted, true)
+    }
+
+    /// End the browser's whole process tree, wait until it is gone, then
+    /// remove its profile. A browser whose processes are still there after
+    /// `tree::END_WITHIN` is handed back: the caller must not start another
+    /// one in its place, and dropping it is the last resort (its job
+    /// closes and Windows kills what is left).
+    pub fn close(mut self) -> Result<(), LaunchedBrowser> {
+        if self.end() {
+            Ok(())
+        } else {
+            Err(self)
+        }
+    }
+
+    /// `close` in place: end the tree, wait, remove the profile. True when
+    /// no process is left. For a holder that cannot give the value up,
+    /// such as a `Drop`.
+    pub fn end(&mut self) -> bool {
+        #[cfg(not(windows))]
+        {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        let gone = self.tree.end();
+        let _ = self.child.try_wait();
+        gone
+    }
+}
+
+/// Is a launched browser still usable? Its job still has processes (or,
+/// off Windows where there is no job, the spawned pid still runs) AND its
+/// DevTools port answered. The spawned pid ending on Windows does not
+/// matter: Edge can hand its browser to another process of the same job.
+pub fn still_alive(processes: Option<u32>, pid_ended: bool, devtools_answered: bool) -> bool {
+    let running = match processes {
+        Some(n) => n > 0,
+        None => !pid_ended,
+    };
+    running && devtools_answered
+}
+
+/// The one line logged when a browser's spawned pid is found gone: enough
+/// to tell a browser that really closed from one that moved to another
+/// process. Names no host and no port.
+pub fn pid_gone_line(pid: u32, processes: Option<u32>, devtools_answered: bool) -> String {
+    let count = processes.map_or("an unknown number of".to_string(), |n| n.to_string());
+    let answered = if devtools_answered { "answered" } else { "did not answer" };
+    format!("unattended run: the browser's first process (pid {pid}) has ended; its job has {count} processes and DevTools {answered}")
 }
 
 fn env_or(key: &str, fallback: &str) -> String {
@@ -171,14 +266,32 @@ pub fn launch_with(which: Browser, extra_args: &[&str]) -> Result<LaunchedBrowse
     let profile_dir = std::env::temp_dir().join(format!("tcm-autorun-{port}"));
     std::fs::create_dir_all(&profile_dir).map_err(|e| e.to_string())?;
 
-    let child = Command::new(exe)
+    let tree = Tree::new(profile_dir.clone()).map_err(|e| format!("could not start {}: {e}", which.label()))?;
+    let mut command = Command::new(exe);
+    command
         .args(args_with(port, &profile_dir, extra_args))
         // Never the app's own cwd: a browser that inherits the install's
         // `current\` pins it, and the next update cannot rename it. See
         // `leave_install_dir` in lib.rs for the update that taught us this.
-        .current_dir(&profile_dir)
-        .spawn()
-        .map_err(|e| format!("could not start {}: {e}", which.label()))?;
+        .current_dir(&profile_dir);
+    // Started suspended, put in its job, and only then let run: Edge
+    // starts its crashpad handler within milliseconds, and a process it
+    // starts before the browser is in the job would be outside it.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
+    }
+    let mut child = command.spawn().map_err(|e| format!("could not start {}: {e}", which.label()))?;
+    #[cfg(windows)]
+    if let Err(e) = tree.adopt_suspended(&child) {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&profile_dir);
+        return Err(format!("could not start {}: {e}", which.label()));
+    }
 
-    Ok(LaunchedBrowser { child, port, profile_dir })
+    let tree = Arc::new(tree);
+    tree::register(&tree);
+    Ok(LaunchedBrowser { child, port, profile_dir, tree, pid_gone_noted: false })
 }

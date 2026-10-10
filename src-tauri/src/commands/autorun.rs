@@ -641,20 +641,18 @@ async fn open_into(root: Result<PathBuf, String>, slot: &mut Option<Session>, wh
     Ok(())
 }
 
-/// Kill the process and drop its throwaway profile. Shared with
-/// `autorun_replay`, whose `RealBrowsers` closes one of these after every
-/// `open`, and whose unattended run closes its one browser when the run
-/// ends or the browser dies (and on the way out of a failed open), so a
-/// background browser can never outlive the run that started it. It waits for the process to be
-/// gone first: a browser still shutting down holds files in its profile,
-/// and removing the folder under it fails.
-pub(crate) fn close_browser(mut browser: LaunchedBrowser) {
-    let _ = browser.child.kill();
-    let _ = browser.child.wait();
-    if let Err(e) = std::fs::remove_dir_all(&browser.profile_dir) {
-        let name = browser.profile_dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        crate::applog::info(format!("auto-run: could not remove browser profile {name}: {e}"));
-    }
+/// End the browser's whole process tree and drop its throwaway profile
+/// (`LaunchedBrowser::close`). Shared with `autorun_replay`, whose
+/// `RealBrowsers` closes one of these after every `open`, and with the
+/// recorder and the held template browsers. It waits for every process of
+/// the browser to be gone first: a browser still shutting down holds files
+/// in its profile, and removing the folder under it fails. True when the
+/// tree is gone. One that will not go is dropped here, which closes its
+/// job, and Windows kills what is left. The unattended run, which must not
+/// start another browser beside one that will not go, uses
+/// `LaunchedBrowser::close` itself.
+pub(crate) fn close_browser(browser: LaunchedBrowser) -> bool {
+    browser.close().is_ok()
 }
 
 /// Point the supervised browser at `downloads/supervised`, emptied first
@@ -710,7 +708,9 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
 ///
 /// The browsers API template runs kept signed in (`api_templates::held`)
 /// go too, closed off the async threads alongside the rest, so the
-/// caller's bound covers them.
+/// caller's bound covers them. Then every browser still in the registry
+/// (`browser::tree`) is ended, an unattended run's included. Windows kills
+/// any that are left when the app's job handles close.
 pub async fn close_autorun_browsers() {
     let held = tauri::async_runtime::spawn_blocking(crate::api_templates::held::close_all);
     let _ = crate::commands::autorun_record::auto_run_record_cancel().await;
@@ -728,6 +728,10 @@ pub async fn close_autorun_browsers() {
     }
     drop(slot);
     let _ = held.await;
+    // Last, every browser the app started that is still running: an
+    // unattended run's, which nothing above closes, and any other one.
+    // Each is ended as a whole tree, and its profile removed.
+    let _ = tauri::async_runtime::spawn_blocking(crate::browser::tree::end_all).await;
 }
 
 /// What a supervised step answers: one outcome per action, the tab the

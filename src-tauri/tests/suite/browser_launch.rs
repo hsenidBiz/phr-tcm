@@ -78,11 +78,11 @@ fn free_port_returns_a_usable_port() {
 #[test]
 #[ignore = "starts a real Edge window"]
 fn launch_starts_a_browser_that_answers_on_its_port() {
-    let mut b = v2_lib::browser::launch::launch().unwrap();
+    let b = v2_lib::browser::launch::launch().unwrap();
     let url = format!("http://127.0.0.1:{}/json/version", b.port);
     let body = reqwest::blocking::get(&url).unwrap().text().unwrap();
     assert!(body.contains("webSocketDebuggerUrl"), "got: {body}");
-    let _ = b.child.kill();
+    let _ = b.close();
 }
 
 // ---- Chrome as well as Edge --------------------------------------------

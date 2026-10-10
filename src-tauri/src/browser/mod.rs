@@ -20,6 +20,7 @@
 //! browser; everything else is tested against a scripted fake.
 
 pub mod launch;
+pub mod tree;
 pub mod cdp;
 pub mod page_log;
 pub mod net_record;

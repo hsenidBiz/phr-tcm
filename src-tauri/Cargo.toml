@@ -104,9 +104,18 @@ pdf-extract = "0.12.1"
 tauri-plugin-single-instance = "2"
 
 # Each database's login is kept in Windows Credential Manager rather than
-# in a file or the webview's storage - see db/credentials.rs.
+# in a file or the webview's storage - see db/credentials.rs. Each browser
+# Auto Run starts runs in a job object of its own, so its whole process
+# tree can be ended and nothing else - see browser/tree.rs.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Credentials",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 # The uninstaller removes the Start with Windows entry (tray.rs). The same
 # version the autostart plugin's auto-launch already uses - no new crate.
 winreg = "=0.10.1"
