@@ -107,16 +107,21 @@ impl crate::ai_bridge::ReplayHost for AppReplayHost {
         };
     }
 
+    fn discovering(&self) -> bool {
+        crate::commands::autorun::auto_run_discovery_active()
+    }
+
     fn replay(
         &self,
         organization: String,
         project: String,
         req: crate::autorun::replay_to::ReplayRequest,
-    ) -> crate::ai_bridge::HostFuture<'_, Result<crate::autorun::replay_to::ReplayEnd, String>> {
+    ) -> crate::ai_bridge::HostFuture<'_, Result<crate::ai_bridge::AssistantReplay, String>> {
         Box::pin(async move {
-            crate::commands::autorun::replay_supervised(&self.0, &organization, &project, req, false)
+            use crate::commands::autorun::{replay_supervised, ReplayBy};
+            replay_supervised(&self.0, &organization, &project, req, ReplayBy::Assistant)
                 .await
-                .map(|(end, _tabs)| end)
+                .map(|(end, _tabs, discovery)| crate::ai_bridge::AssistantReplay { end, discovery })
         })
     }
 

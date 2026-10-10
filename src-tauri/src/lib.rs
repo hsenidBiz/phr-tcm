@@ -516,6 +516,16 @@ pub fn run() {
                 // inside it - see activity_log.rs.
                 activity_log::init(dir.join("activity"));
             }
+            // Profile folders a browser of an older version left in the
+            // temp folder (`browser::tree`): only exact `tcm-autorun-<digits>`
+            // names, only ones no browser of this app holds and nothing has
+            // open. Off the start-up path: it touches the disk only.
+            std::thread::spawn(|| {
+                let removed = browser::tree::sweep_leftover_profiles(&std::env::temp_dir());
+                if !removed.is_empty() {
+                    applog::info(format!("auto-run: removed {} leftover browser profiles", removed.len()));
+                }
+            });
             // The app's one Rust-side cache (project tags, resolved suites,
             // the assigned-items baseline), on disk and shared by the UI and
             // the AI bridge - see cache/mod.rs.

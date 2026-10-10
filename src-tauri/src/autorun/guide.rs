@@ -1370,7 +1370,8 @@ with the case and its failing step, runs that case's saved steps before it
 in the supervised browser and stops there. Its answer carries the page, so
 you can try the step with `try_autorun_action` at once. No browser needs to
 be open: the app opens one, signs in as the case's account and goes to its
-area.
+area. A discovery of yours still open is ended first, keeping what it
+mapped, and the answer says so; start a new one to explore again.
 
 - You may replay without asking the person, except that a script marked
   must not save asks the person in the app first, and runs only once they

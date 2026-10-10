@@ -6,7 +6,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "../../lib/toast";
-import ReplayRequestModal from "./ReplayRequestModal";
+import ReplayRequestModal, { ENDS_DISCOVERY_LINE } from "./ReplayRequestModal";
 
 vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
 
@@ -16,7 +16,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-const REQUEST = { id: "replay-1-ab", case_id: 77, title: "Leave request", step: 3 };
+const REQUEST = { id: "replay-1-ab", case_id: 77, title: "Leave request", step: 3, ends_discovery: false };
 const TEXT =
   "The assistant wants to replay case 77 (Leave request) up to step 3. This script must not save; the guard stays on. Allow?";
 
@@ -101,4 +101,18 @@ test("Escape while an answer is in flight sends nothing more", async () => {
   });
   await waitFor(() => expect(screen.queryByText(TEXT)).not.toBeInTheDocument());
   expect(answers).toEqual([{ id: "replay-1-ab", allow: true }]);
+});
+
+test("the approval prompt mentions ending discovery only when one is running", async () => {
+  expect(ENDS_DISCOVERY_LINE).toBe("This ends the assistant's discovery first; what it mapped is kept.");
+  mount();
+  await send("autorun-replay-request", REQUEST);
+  expect(await screen.findByText(TEXT)).toBeInTheDocument();
+  expect(screen.queryByText(ENDS_DISCOVERY_LINE)).not.toBeInTheDocument();
+  await send("autorun-replay-request-ended", { id: "replay-1-ab" });
+  await waitFor(() => expect(screen.queryByText(TEXT)).not.toBeInTheDocument());
+
+  await send("autorun-replay-request", { ...REQUEST, id: "replay-2-cd", ends_discovery: true });
+  expect(await screen.findByText(TEXT)).toBeInTheDocument();
+  expect(screen.getByText(ENDS_DISCOVERY_LINE)).toBeInTheDocument();
 });

@@ -53,15 +53,40 @@ fn remove_profile_dir(dir: &Path) {
     }
 }
 
+/// The registry of live browser trees (`serial::held_browsers`), held for
+/// as long as a test's browser lives, so another module's exit path
+/// (`close_autorun_browsers`) can never end it mid-test. Re-entrant on the
+/// test's own thread: a test that starts two browsers takes it once.
+struct TreesHeld(#[allow(dead_code)] Option<std::sync::MutexGuard<'static, ()>>);
+
+thread_local! {
+    static TREES_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn hold_trees() -> TreesHeld {
+    let depth = TREES_DEPTH.with(|d| {
+        let n = d.get();
+        d.set(n + 1);
+        n
+    });
+    TreesHeld((depth == 0).then(crate::serial::held_browsers))
+}
+
+impl Drop for TreesHeld {
+    fn drop(&mut self) {
+        TREES_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
 struct Live {
     browser: LaunchedBrowser,
     cdp: Cdp,
+    _trees: TreesHeld,
 }
 
 impl Drop for Live {
     fn drop(&mut self) {
-        let _ = self.browser.child.kill();
-        let _ = self.browser.child.wait();
+        self.browser.end();
         remove_profile_dir(&self.browser.profile_dir);
     }
 }
@@ -105,6 +130,7 @@ async fn run(live: &mut Live, action: serde_json::Value) -> ActionOutcome {
 /// long varies with what else the machine is doing. Retrying beats a fixed
 /// sleep that is either slow or flaky.
 async fn open() -> Live {
+    let trees = hold_trees();
     let mut browser = launch_with(Browser::Edge, &["--headless=new"]).expect("Edge did not start");
     let mut last = String::new();
     let mut connected = None;
@@ -121,12 +147,11 @@ async fn open() -> Live {
     let Some(cdp) = connected else {
         // There is no `Live` yet, so nothing would tidy up after this.
         let port = browser.port;
-        let _ = browser.child.kill();
-        let _ = browser.child.wait();
+        browser.end();
         let _ = std::fs::remove_dir_all(&browser.profile_dir);
         panic!("could not reach Edge on port {port}: {last}");
     };
-    let mut live = Live { browser, cdp };
+    let mut live = Live { browser, cdp, _trees: trees };
     let out = run(&mut live, json!({ "kind": "navigate", "url": fixture_url() })).await;
     assert!(out.ok, "the fixture did not load: {}", out.detail);
     live
@@ -1079,6 +1104,7 @@ async fn a_navigate_outside_the_projects_origins_is_refused_before_it_happens() 
 struct LiveBrowsers {
     started: usize,
     current: Option<LaunchedBrowser>,
+    _trees: TreesHeld,
 }
 
 impl Browsers for LiveBrowsers {
@@ -1103,8 +1129,7 @@ impl Browsers for LiveBrowsers {
     async fn close(&mut self, d: Cdp) {
         drop(d);
         if let Some(mut b) = self.current.take() {
-            let _ = b.child.kill();
-            let _ = b.child.wait();
+            b.end();
             remove_profile_dir(&b.profile_dir);
         }
     }
@@ -1116,8 +1141,7 @@ impl Drop for LiveBrowsers {
     /// throwaway profile, still on the machine.
     fn drop(&mut self) {
         if let Some(mut b) = self.current.take() {
-            let _ = b.child.kill();
-            let _ = b.child.wait();
+            b.end();
             remove_profile_dir(&b.profile_dir);
         }
     }
@@ -1207,7 +1231,7 @@ async fn an_unattended_selection_runs_each_case_in_its_own_browser_and_proposes_
     );
     store::save_scripts_atomically(root.path(), &[case1, case2, case3]).unwrap();
 
-    let mut browsers = LiveBrowsers { started: 0, current: None };
+    let mut browsers = LiveBrowsers { started: 0, current: None, _trees: hold_trees() };
     let mut run = new_run(42);
     let cases = vec![
         (1, "leaves a request".to_string()),
@@ -1329,7 +1353,7 @@ async fn stopping_an_unattended_run_keeps_what_was_done_and_starts_nothing_more(
     }
     store::save_scripts_atomically(root.path(), &scripts).unwrap();
 
-    let mut browsers = LiveBrowsers { started: 0, current: None };
+    let mut browsers = LiveBrowsers { started: 0, current: None, _trees: hold_trees() };
     let mut run = new_run(7);
     let cases = vec![(11, "first".to_string()), (12, "second".to_string()), (13, "third".to_string())];
     let cancel = AtomicBool::new(false);
@@ -1358,7 +1382,7 @@ async fn stopping_an_unattended_run_keeps_what_was_done_and_starts_nothing_more(
 #[tokio::test]
 #[ignore = "starts a real headless Edge"]
 async fn a_background_browser_really_is_a_desktop_sized_window() {
-    let mut browsers = LiveBrowsers { started: 0, current: None };
+    let mut browsers = LiveBrowsers { started: 0, current: None, _trees: hold_trees() };
     let mut cdp = browsers.open().await.expect("Edge did not start");
     let nav = execute_with(&mut cdp, &action_of(json!({ "kind": "navigate", "url": fixture_url() })), &timing()).await;
     assert!(nav.ok, "{}", nav.detail);
@@ -2894,6 +2918,7 @@ struct LiveLauncher {
     launches: Arc<AtomicUsize>,
     closes: Arc<AtomicUsize>,
     port: Arc<std::sync::Mutex<Option<u16>>>,
+    _trees: TreesHeld,
 }
 
 impl v2_lib::autorun::one_browser::Launcher for LiveLauncher {
@@ -2915,8 +2940,7 @@ impl v2_lib::autorun::one_browser::Launcher for LiveLauncher {
                 Err(e) => last = e,
             }
         }
-        let _ = browser.child.kill();
-        let _ = browser.child.wait();
+        browser.end();
         remove_profile_dir(&browser.profile_dir);
         Err(last)
     }
@@ -2925,15 +2949,14 @@ impl v2_lib::autorun::one_browser::Launcher for LiveLauncher {
         Cdp::connect_browser(p.port).await
     }
 
-    fn alive(&mut self, p: &mut LaunchedBrowser) -> bool {
-        matches!(p.child.try_wait(), Ok(None))
+    async fn alive(&mut self, p: &mut LaunchedBrowser) -> v2_lib::browser::launch::Liveness {
+        let answered = Cdp::answers(p.port).await.is_ok();
+        v2_lib::browser::launch::liveness(p.processes(), p.pid_ended(), answered)
     }
 
-    fn close(&mut self, mut p: LaunchedBrowser) {
-        let _ = p.child.kill();
-        let _ = p.child.wait();
-        remove_profile_dir(&p.profile_dir);
+    fn close(&mut self, p: LaunchedBrowser) -> Result<(), LaunchedBrowser> {
         self.closes.fetch_add(1, Ordering::SeqCst);
+        p.close()
     }
 }
 
@@ -3026,7 +3049,7 @@ async fn one_browser_gives_each_case_a_context_of_its_own() {
     let launches = Arc::new(AtomicUsize::new(0));
     let closes = Arc::new(AtomicUsize::new(0));
     let port = Arc::new(std::sync::Mutex::new(None));
-    let launcher = LiveLauncher { launches: launches.clone(), closes: closes.clone(), port: port.clone() };
+    let launcher = LiveLauncher { launches: launches.clone(), closes: closes.clone(), port: port.clone(), _trees: hold_trees() };
     let mut browsers = WatchedOneBrowser {
         inner: v2_lib::autorun::one_browser::OneBrowser::new(launcher),
         port: port.clone(),

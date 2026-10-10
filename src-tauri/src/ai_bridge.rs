@@ -2708,19 +2708,29 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
 /// A mapping run's summary is kept first (`finish_mapping`), and the
 /// answer is `{detail, summary}`.
 pub fn end_discovery_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
-    if slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
-        let summary = finish_mapping(slot);
-        if let Some(browser) = slot.take() {
-            browser.close();
-        }
-        crate::applog::info("Auto Run discovery ended; its browser is closed");
-        const ENDED: &str = "the discovery is over and its browser is closed";
-        return match summary {
-            Some(summary) => (200, serde_json::json!({ "detail": ENDED, "summary": summary }).to_string()),
-            None => (200, ENDED.to_string()),
-        };
+    const ENDED: &str = "the discovery is over and its browser is closed";
+    match close_discovery(slot) {
+        Some(Some(summary)) => (200, serde_json::json!({ "detail": ENDED, "summary": summary }).to_string()),
+        Some(None) => (200, ENDED.to_string()),
+        None => (200, "no discovery is going".to_string()),
     }
-    (200, "no discovery is going".to_string())
+}
+
+/// The one way a discovery in `slot` ends: a mapping run's summary is kept
+/// (`finish_mapping`), then its browser is closed. `None` with no discovery
+/// going, else the mapping run's summary, if it was one.
+fn close_discovery<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+) -> Option<Option<crate::autorun::mapping_summary::MappingSummary>> {
+    if !slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
+        return None;
+    }
+    let summary = finish_mapping(slot);
+    if let Some(browser) = slot.take() {
+        browser.close();
+    }
+    crate::applog::info("Auto Run discovery ended; its browser is closed");
+    Some(summary)
 }
 
 /// Close out the mapping run in `slot`, if one is going, however it ends:
@@ -2757,13 +2767,55 @@ pub fn refuse_while_discovering<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Re
     Ok(())
 }
 
+/// Before the assistant's replay to a step takes the browser in `slot`: a
+/// discovery holding it is ended exactly as End discovery ends it
+/// (`end_discovery_in`), so what it mapped is kept and a mapping run's
+/// summary is saved. Says whether one was ended, with that summary. Called
+/// under the session lock the replay then keeps while it opens and runs, so
+/// nothing takes the browser between the end and the replay. The person's
+/// own Replay to step still goes through `refuse_while_discovering`.
+pub fn end_discovery_for_replay<B: DiscoveryBrowser>(slot: &mut Option<B>) -> DiscoveryEnded {
+    match close_discovery(slot) {
+        Some(summary) => {
+            crate::applog::info("Auto Run: the assistant's replay to a step ended its discovery first");
+            DiscoveryEnded { ended: true, summary }
+        }
+        None => DiscoveryEnded::default(),
+    }
+}
+
+/// Whether the assistant's replay ended a discovery before it took the
+/// browser (`end_discovery_for_replay`), and that mapping run's summary
+/// when it was one.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DiscoveryEnded {
+    pub ended: bool,
+    pub summary: Option<crate::autorun::mapping_summary::MappingSummary>,
+}
+
+/// Put before the answer to an assistant's replay that ended its discovery
+/// first (`end_discovery_for_replay`).
+pub const ENDED_DISCOVERY_FIRST: &str =
+    "Ended your discovery first (what it mapped is kept); start a new one to explore again.";
+
+/// `said`, after `ENDED_DISCOVERY_FIRST` when the replay ended a discovery:
+/// its answer, or the browser that would not open after the end.
+pub fn after_ended_discovery(ended: bool, said: &str) -> String {
+    match ended {
+        true => format!("{ENDED_DISCOVERY_FIRST} {said}"),
+        false => said.to_string(),
+    }
+}
+
 /// Close whatever browser `slot` holds - a discovery ends with it. Whether
 /// there was one.
 pub fn close_browser_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
     finish_mapping(slot);
     match slot.take() {
         Some(browser) => {
-            browser.close();
+            // Closing waits for the browser's processes to go: off the
+            // async worker.
+            crate::browser::tree::blocking(|| browser.close());
             true
         }
         None => false,
@@ -3433,18 +3485,31 @@ pub trait ReplayHost: Send + Sync {
     /// Tell the app's window: the Allow prompt for a must-not-save script,
     /// and its end.
     fn notify(&self, notice: crate::autorun::replay_ask::Notice<'_>);
+    /// Whether a discovery holds the Auto Run browser now, so the Allow
+    /// prompt can say the replay ends it first.
+    fn discovering(&self) -> bool;
     /// Run the replay in the supervised browser, by the same path as the
     /// person's Replay to step button, as the assistant's: it never lifts a
-    /// guard held for another case. `Err` is a browser that would not open.
+    /// guard held for another case, and a discovery holding the browser is
+    /// ended first rather than refusing (`end_discovery_for_replay`). `Err`
+    /// is a browser that would not open.
     fn replay(
         &self,
         organization: String,
         project: String,
         req: crate::autorun::replay_to::ReplayRequest,
-    ) -> HostFuture<'_, Result<crate::autorun::replay_to::ReplayEnd, String>>;
+    ) -> HostFuture<'_, Result<AssistantReplay, String>>;
     /// The page the replay left the browser on, as `/autorun-page` answers
     /// for this organization and project.
     fn page(&self, organization: String, project: String) -> HostFuture<'_, (u16, String)>;
+}
+
+/// How an assistant's replay ended, and the discovery it ended before it
+/// took the browser, if any.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssistantReplay {
+    pub end: crate::autorun::replay_to::ReplayEnd,
+    pub discovery: DiscoveryEnded,
 }
 
 static REPLAY_HOST: std::sync::OnceLock<Box<dyn ReplayHost>> = std::sync::OnceLock::new();
@@ -3475,6 +3540,10 @@ async fn autorun_replay(ctx: &BridgeContext, body: &str) -> (u16, String) {
 /// save then asks the person and waits (`replay_ask`): Deny, no answer or
 /// another request waiting refuse it, and only Allow goes on. Database
 /// Read Access is the `db_query` switch, as for the person's own replay.
+///
+/// A discovery holding the browser does not refuse it: the replay ends it
+/// first (`end_discovery_for_replay`), the Allow prompt says it will, and
+/// the answer's sentence starts with `ENDED_DISCOVERY_FIRST`.
 ///
 /// The answer is `{ "sentence" }`, and once the browser stands before the
 /// step, `"page"` beside it: the page as `get_autorun_page` shows it, so the
@@ -3516,16 +3585,26 @@ pub async fn autorun_replay_with(
     }
     if checked.script.no_save {
         let notify = |n: crate::autorun::replay_ask::Notice<'_>| host.notify(n);
-        if let Err(why) = asks.ask(case_id, &checked.script.title, step, wait, &notify).await {
+        let ends_discovery = host.discovering();
+        if let Err(why) = asks.ask(case_id, &checked.script.title, step, ends_discovery, wait, &notify).await {
             crate::applog::info(format!("Auto Run replay of case {case_id} for the assistant: {why}"));
             return (409, why);
         }
     }
-    let end = match host.replay(ctx.org.clone(), ctx.project.clone(), req).await {
-        Ok(end) => end,
+    let (end, discovery) = match host.replay(ctx.org.clone(), ctx.project.clone(), req).await {
+        Ok(AssistantReplay { end, discovery }) => (end, discovery),
         Err(why) => return (503, why),
     };
-    let sentence = end.sentence();
+    // Said first when the replay ended the assistant's own discovery.
+    let sentence = after_ended_discovery(discovery.ended, &end.sentence());
+    // An ended mapping run's summary goes beside the sentence, as
+    // `end_autorun_discovery` hands it back.
+    let with_summary = |mut answer: serde_json::Value| {
+        if let Some(summary) = &discovery.summary {
+            answer["summary"] = serde_json::json!(summary);
+        }
+        answer.to_string()
+    };
     match end {
         ReplayEnd::Refused(_) | ReplayEnd::Blocked(_) => (409, sentence),
         ReplayEnd::Ready { .. } => {
@@ -3533,10 +3612,10 @@ pub async fn autorun_replay_with(
                 (200, page) => serde_json::json!({ "sentence": sentence, "page": page }),
                 (_, why) => serde_json::json!({ "sentence": sentence, "page_unavailable": why }),
             };
-            (200, answer.to_string())
+            (200, with_summary(answer))
         }
         ReplayEnd::StoppedAt { .. } | ReplayEnd::Stopped { .. } => {
-            (200, serde_json::json!({ "sentence": sentence }).to_string())
+            (200, with_summary(serde_json::json!({ "sentence": sentence })))
         }
     }
 }

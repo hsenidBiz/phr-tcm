@@ -75,14 +75,17 @@ impl Asks {
     }
 
     /// Ask the person whether case `case_id` may be replayed to `step`, and
-    /// wait up to `wait` for the answer. `notify` shows the request and
-    /// says when it ended. `Ok` is Allow; `Err` is the sentence for Deny, no
-    /// answer in time, or another request already waiting.
+    /// wait up to `wait` for the answer. `ends_discovery`: a discovery holds
+    /// the browser, and the prompt says the replay ends it first. `notify`
+    /// shows the request and says when it ended. `Ok` is Allow; `Err` is
+    /// the sentence for Deny, no answer in time, or another request already
+    /// waiting.
     pub async fn ask(
         &self,
         case_id: i32,
         title: &str,
         step: i32,
+        ends_discovery: bool,
         wait: Duration,
         notify: &(dyn Fn(Notice<'_>) + Send + Sync),
     ) -> Result<(), String> {
@@ -92,7 +95,8 @@ impl Asks {
             if slot.is_some() {
                 return Err(ALREADY_WAITING.to_string());
             }
-            let ask = AutorunReplayRequest { id: self.new_id(), case_id, title: title.to_string(), step };
+            let ask =
+                AutorunReplayRequest { id: self.new_id(), case_id, title: title.to_string(), step, ends_discovery };
             *slot = Some(Pending { ask: ask.clone(), answer: tx });
             ask
         };
