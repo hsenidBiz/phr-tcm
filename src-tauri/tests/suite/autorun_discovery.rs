@@ -82,13 +82,14 @@ fn root_with_recipe_and_account() -> TempDir {
 
 /// The Auto Run browser as the `_in` functions see it: a driver, its lease,
 /// its signed-in account and the discovery under way. `closed` says
-/// whether the slot closed it.
+/// whether the slot closed it; `gone` makes it a browser that has gone.
 struct FakeBrowser {
     d: ScriptedDriver,
     lease: Held,
     account: Option<String>,
     discovery: Option<DiscoveryState>,
     closed: Arc<AtomicBool>,
+    gone: Arc<AtomicBool>,
 }
 
 impl DiscoveryBrowser for FakeBrowser {
@@ -104,13 +105,17 @@ impl DiscoveryBrowser for FakeBrowser {
     fn close(self) {
         self.closed.store(true, Ordering::SeqCst);
     }
+    async fn alive(&mut self) -> bool {
+        !self.gone.load(Ordering::SeqCst)
+    }
 }
 
 /// A browser slot holding `d`, opened for a discovery (no account yet)
 /// when `discovering`, else the person's own browser.
 fn slot(d: ScriptedDriver, discovery: Option<DiscoveryState>) -> (Option<FakeBrowser>, Arc<AtomicBool>) {
     let closed = Arc::new(AtomicBool::new(false));
-    let b = FakeBrowser { d, lease: Held::supervised(), account: None, discovery, closed: closed.clone() };
+    let gone = Arc::new(AtomicBool::new(false));
+    let b = FakeBrowser { d, lease: Held::supervised(), account: None, discovery, closed: closed.clone(), gone };
     (Some(b), closed)
 }
 
@@ -2229,13 +2234,16 @@ use v2_lib::browser::snapshot::PROBE_SUMMARY_JS;
 /// each `visible` or not. Anything a probe never sends (a click, a key)
 /// fails the test.
 fn cycles_page(found: usize, visible: bool) -> ScriptedDriver {
+    cycles_page_at("https://hr.example.internal/hr/cycles?page=2", found, visible)
+}
+
+/// `cycles_page`, at `href`.
+fn cycles_page_at(href: &'static str, found: usize, visible: bool) -> ScriptedDriver {
     ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         match method {
             "Runtime.evaluate" if params["expression"] == "document" => Ok(json!({ "result": { "objectId": "doc" } })),
-            "Runtime.evaluate" if params["expression"] == "location.href" => {
-                Ok(json!({ "result": { "value": "https://hr.example.internal/hr/cycles?page=2" } }))
-            }
+            "Runtime.evaluate" if params["expression"] == "location.href" => Ok(json!({ "result": { "value": href } })),
             "Runtime.evaluate" if params["expression"] == "document.title" => Ok(json!({ "result": { "value": "Cycles" } })),
             "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": visible } })),
             "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(json!({
@@ -2528,4 +2536,1041 @@ async fn the_person_open_browser_is_still_refused_while_discovering() {
     assert!(host.contains("replay_supervised(&self.0, &organization, &project, req, ReplayBy::Assistant)"));
     assert_eq!(source.matches("ReplayBy::Assistant)").count(), 0, "a person's path replays as the assistant");
     assert_eq!(source.matches("refuse_while_discovering(&mut slot)").count(), 3, "a refusal went missing");
+}
+
+// ------------------------------------------ a page read during a discovery
+
+use v2_lib::ai_bridge::{page_read_in, READ_OFF_THE_APP, READ_WITH_NO_AREA};
+
+/// The Leave page, on the recipe's own origin, with a query string nothing
+/// may keep.
+const LEAVE_PAGE: &str = "https://hr.example.internal/hr/leave?token=t0p-secret#top";
+
+/// The AX tree of a page holding one button per name, under a root the
+/// snapshot folds away: each button is one printed line.
+fn buttons_tree(names: &[String]) -> Value {
+    let mut nodes = vec![json!({
+        "nodeId": "root", "ignored": true, "role": { "value": "generic" },
+        "childIds": (0..names.len()).map(|i| format!("b{i}")).collect::<Vec<_>>()
+    })];
+    for (i, n) in names.iter().enumerate() {
+        nodes.push(json!({
+            "nodeId": format!("b{i}"), "ignored": false, "role": { "value": "button" },
+            "name": { "value": n }, "childIds": []
+        }));
+    }
+    json!({ "nodes": nodes })
+}
+
+/// A page at `href` holding a button for each of `names`.
+fn buttons_page(href: &str, names: &[&str]) -> ScriptedDriver {
+    let href = href.to_string();
+    let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+    ScriptedDriver::new(move |method, params| {
+        Ok(match method {
+            "Accessibility.getFullAXTree" => buttons_tree(&names),
+            "Runtime.evaluate" if params["expression"] == "location.href" => json!({ "result": { "value": href } }),
+            "Runtime.evaluate" if params["expression"] == "document.title" => {
+                json!({ "result": { "value": "Leave" } })
+            }
+            _ => json!({}),
+        })
+    })
+}
+
+/// A page at `href` on which an action works as on `FakePage`, holding a
+/// button for each of `names`.
+fn acting_page(href: &'static str, names: Vec<String>) -> ScriptedDriver {
+    let page = FakePage { href, ..FakePage::default() };
+    ScriptedDriver::new(move |method, params| match method {
+        "Accessibility.getFullAXTree" => Ok(buttons_tree(&names)),
+        _ => page.answer(method, params),
+    })
+}
+
+/// The names of the buttons the area has sighted, sorted.
+fn sighted(root: &std::path::Path, area: &str) -> Vec<String> {
+    let mut names: Vec<String> = mapped_area(root, area)
+        .map(|a| a.sightings.into_iter().filter_map(|s| s.link.name).collect())
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+/// `exploring(area)`, as a discovery that started after everything filed so
+/// far: a read of the whole page would drop what it does not show.
+fn exploring_anew(area: &str) -> Option<DiscoveryState> {
+    exploring(area).map(|s| DiscoveryState { started_at: u64::MAX, ..s })
+}
+
+/// During a discovery with an area, every line the read returned is filed
+/// under that area, keyed and kept as an action's read is, and the answer
+/// ends by saying how many were recorded and where. The page text itself
+/// is unchanged and names no host or query string.
+#[tokio::test]
+async fn a_page_read_in_discovery_records_its_lines() {
+    let dir = root_with_recipe_and_account();
+    let (mut held, _) = slot(buttons_page(LEAVE_PAGE, &["Save", "Cancel"]), exploring("Leave"));
+    let (status, text) =
+        page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    let (_, plain) = read_page(&mut buttons_page(LEAVE_PAGE, &["Save", "Cancel"]), DEFAULT_LIMIT, None).await;
+    assert_eq!(text, format!("{plain}\n\nRecorded 2 elements as seen on Leave."));
+    assert!(!text.contains("hr.example.internal") && !text.contains("t0p-secret"), "{text}");
+
+    let area = mapped_area(dir.path(), "Leave").expect("nothing was recorded under the area");
+    assert_eq!(sighted(dir.path(), "Leave"), ["Cancel", "Save"]);
+    assert!(area.sightings.iter().all(|s| s.page == "/hr/leave"), "{:?}", area.sightings);
+    assert!(area.explored_at.is_some(), "a discovery's read did not stamp the area");
+    assert_eq!(area.account.as_deref(), Some("admin"));
+    let file = std::fs::read_to_string(map_path(dir.path(), ORG, PROJECT)).unwrap();
+    assert!(!file.contains("t0p-secret") && !file.contains('?'), "{file}");
+}
+
+/// Outside a discovery the read is filed as it was before (the
+/// unattributed bucket here), explores nothing, and the answer is the page
+/// text alone.
+#[tokio::test]
+async fn a_page_read_outside_discovery_adds_no_answer_line_and_explores_nothing() {
+    let dir = root_with_recipe_and_account();
+    let (mut held, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), None);
+    let (status, text) =
+        page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    let (_, plain) = read_page(&mut buttons_page(LEAVE_PAGE, &["Save"]), DEFAULT_LIMIT, None).await;
+    assert_eq!(text, plain, "a read outside a discovery gained a line");
+    assert!(!text.contains("Recorded"), "{text}");
+
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    assert!(map.areas.iter().all(|a| a.explored_at.is_none()), "{map:?}");
+    assert_eq!(sighted(dir.path(), ""), ["Save"], "the shipped recording outside a discovery went");
+}
+
+/// A read cut short by its limit files only the lines it returned, and
+/// drops nothing past the cut: it never counts as exploring the whole page.
+/// The same page read whole by the same discovery does drop what it does
+/// not show, which is what the cut is kept from.
+#[tokio::test]
+async fn a_limited_read_records_only_returned_lines() {
+    let dir = root_with_recipe_and_account();
+    let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier", "Older"]), exploring("Leave"));
+    page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(sighted(dir.path(), "Leave"), ["Earlier", "Older"]);
+
+    let (mut cut, _) = slot(buttons_page(LEAVE_PAGE, &["Save", "Cancel", "Delete"]), exploring_anew("Leave"));
+    let (status, text) = page_read_in(cut.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, 1).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("... and 2 more"), "the read was not cut: {text}");
+    assert!(text.ends_with("\n\nRecorded 1 element as seen on Leave."), "{text}");
+    assert_eq!(sighted(dir.path(), "Leave"), ["Earlier", "Older", "Save"], "a cut read dropped or overreached");
+    let area = mapped_area(dir.path(), "Leave").unwrap();
+    let page = area.pages.iter().find(|p| p.path == "/hr/leave").expect("no page");
+    let names: Vec<&str> = page.elements.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"Earlier") && names.contains(&"Older") && names.contains(&"Save"), "{names:?}");
+    assert!(!names.contains(&"Cancel") && !names.contains(&"Delete"), "{names:?}");
+
+    let (mut whole, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), exploring_anew("Leave"));
+    page_read_in(whole.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(sighted(dir.path(), "Leave"), ["Save"], "a whole read no longer explores the page");
+}
+
+/// An action's read is the same path: cut at its limit, it files only what
+/// it returned and keeps what the area saw on the page before.
+#[tokio::test]
+async fn a_cut_action_read_records_only_returned_lines() {
+    let dir = root_with_recipe_and_account();
+    let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier"]), exploring("Leave"));
+    page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+
+    let names: Vec<String> = (0..DEFAULT_LIMIT + 5).map(|i| format!("Row {i:03}")).collect();
+    let d = acting_page("https://hr.example.internal/hr/leave", names);
+    let (mut browser, _) = slot(d, exploring_anew("Leave"));
+    let click = Action::Click { selector: "#save".into() };
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], true, "{body}");
+    assert!(v["page"].as_str().unwrap_or("").contains("... and 5 more"), "the action's read was not cut");
+
+    let seen = sighted(dir.path(), "Leave");
+    assert!(seen.contains(&"Earlier".to_string()), "a cut action read dropped an earlier sighting: {seen:?}");
+    assert!(seen.contains(&"Row 000".to_string()) && seen.contains(&format!("Row {:03}", DEFAULT_LIMIT - 1)));
+    assert!(!seen.contains(&format!("Row {:03}", DEFAULT_LIMIT)), "a line past the cut was recorded");
+}
+
+/// With no current area, nothing is recorded, and the answer ends by
+/// saying how to name one.
+#[tokio::test]
+async fn a_read_with_no_area_says_so() {
+    let dir = root_with_recipe_and_account();
+    let (mut held, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), opened_for_discovery());
+    let (status, text) =
+        page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.ends_with(&format!("\n\n{READ_WITH_NO_AREA}")), "{text}");
+    assert!(READ_WITH_NO_AREA.contains("save_autorun_area") && READ_WITH_NO_AREA.contains("discover_autorun_action"));
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty(), "a read with no area recorded");
+}
+
+/// A page off the application's own origins files nothing, whether a page
+/// read or an action's read shows it, and a page read says so.
+#[tokio::test]
+async fn a_page_read_off_the_app_records_nothing() {
+    let dir = root_with_recipe_and_account();
+    let (mut held, _) =
+        slot(buttons_page("https://elsewhere.example/sso?ticket=abc", &["Continue"]), exploring("Leave"));
+    let (status, text) =
+        page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.ends_with(&format!("\n\n{READ_OFF_THE_APP}")), "{text}");
+    assert!(!text.contains("elsewhere.example") && !text.contains("ticket"), "{text}");
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty(), "an off-site page was recorded");
+
+    let d = acting_page("https://elsewhere.example/sso", vec!["Continue".to_string()]);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let click = Action::Click { selector: "#save".into() };
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(sighted(dir.path(), "Leave").is_empty(), "an action's read of an off-site page was recorded");
+}
+
+/// A read the limit cut short saw only part of the page: it never stamps
+/// the area explored, never clears a failure and never sets the account.
+/// A whole read of the same page does all three.
+#[tokio::test]
+async fn a_cut_read_does_not_freshen_the_area() {
+    let dir = root_with_recipe_and_account();
+    v2_lib::autorun::discovery_map::mark_failed(dir.path(), ORG, PROJECT, "Leave").unwrap();
+    let (mut cut, _) = slot(buttons_page(LEAVE_PAGE, &["Save", "Cancel"]), exploring("Leave"));
+    let (_, text) = page_read_in(cut.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, 1).await;
+    assert!(text.ends_with("Recorded 1 element as seen on Leave."), "{text}");
+    let area = mapped_area(dir.path(), "Leave").unwrap();
+    assert_eq!(area.explored_at, None, "a cut read stamped the area explored");
+    assert!(area.failed_since, "a cut read cleared the area's failure");
+    assert_eq!(area.account, None, "a cut read set the account");
+
+    let (mut whole, _) = slot(buttons_page(LEAVE_PAGE, &["Save", "Cancel"]), exploring("Leave"));
+    page_read_in(whole.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    let area = mapped_area(dir.path(), "Leave").unwrap();
+    assert!(area.explored_at.is_some() && !area.failed_since, "{area:?}");
+    assert_eq!(area.account.as_deref(), Some("admin"));
+}
+
+/// A page on an origin the recipe allows besides its own start page is the
+/// application's, and is recorded.
+#[tokio::test]
+async fn a_page_on_an_extra_allowed_origin_is_recorded() {
+    let dir = TempDir::new();
+    let mut with_files = recipe();
+    with_files.allowed_origins = vec!["https://files.example.internal".to_string()];
+    save_recipe(dir.path(), ORG, PROJECT, &with_files).unwrap();
+    let (mut held, _) = slot(buttons_page("https://files.example.internal/docs/list", &["Upload"]), exploring("Leave"));
+    let (status, text) =
+        page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.ends_with("Recorded 1 element as seen on Leave."), "{text}");
+    assert_eq!(sighted(dir.path(), "Leave"), ["Upload"]);
+}
+
+/// A browser on about:blank, or on its own error page, is not on the
+/// application, whether or not a recipe limits the origins: nothing is
+/// filed, and the area is not stamped.
+#[tokio::test]
+async fn a_blank_or_error_page_records_nothing_with_or_without_a_recipe() {
+    for with_recipe in [true, false] {
+        for href in ["about:blank", "chrome-error://chromewebdata/"] {
+            let dir = if with_recipe { root_with_recipe_and_account() } else { TempDir::new() };
+            let (mut held, _) = slot(buttons_page(href, &["Reload"]), exploring("Leave"));
+            let (status, text) =
+                page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+            assert_eq!(status, 200, "{text}");
+            assert!(text.ends_with(&format!("\n\n{READ_OFF_THE_APP}")), "{href}, recipe {with_recipe}: {text}");
+            let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+            assert!(map.areas.is_empty(), "{href}, recipe {with_recipe}: {map:?}");
+        }
+    }
+}
+
+/// The answer names the area as the map files it: the recorded area's own
+/// spelling, not the one the discovery was given.
+#[tokio::test]
+async fn the_answer_names_the_area_as_the_map_files_it() {
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Person, vec![css("#leave")], "/hr/leave/apply")).unwrap();
+    let (mut held, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), exploring("leave   apply"));
+    let (_, text) = page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert!(text.ends_with("Recorded 1 element as seen on Leave Apply."), "{text}");
+    assert_eq!(sighted(dir.path(), "Leave Apply"), ["Save"]);
+}
+
+// ------------------------- every refused locator at once, and a dry run
+
+use crate::common::every_file;
+
+/// "Three pages": one click on each of three pager buttons, none seen.
+fn three_pages() -> Component {
+    serde_json::from_value(json!({
+        "name": "Three pages",
+        "description": "Opens three pages of cycles in turn",
+        "inputs": [],
+        "actions": [
+            { "kind": "click", "selector": { "css": "#pager-1" } },
+            { "kind": "click", "selector": { "css": "#pager-2" } },
+            { "kind": "click", "selector": { "css": "#pager-3" } }
+        ]
+    }))
+    .unwrap()
+}
+
+/// During a discovery, the page check runs over every refused locator,
+/// not only the first: each one there is recorded, the save is checked
+/// once more, and the answer names them all. When none is there, the
+/// refusal that follows still lists every one. A script save's page check
+/// takes the whole list the same way.
+#[tokio::test]
+async fn record_on_page_runs_over_every_refused_locator() {
+    let c = three_pages();
+    let refused = |i: usize| {
+        format!("Action {i}: #pager-{i} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.")
+    };
+
+    let dir = TempDir::new();
+    let (mut browser, _) = slot(cycles_page(1, true), tried_in("Cycles", &c));
+    let (status, body) =
+        save_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default())).await;
+    assert_eq!(status, 200, "{body}");
+    let (said, saved) = body.split_once('\n').expect("the recorded line, then the save's answer");
+    assert_eq!(said, "Recorded on the current page: #pager-1, #pager-2, #pager-3.");
+    assert_eq!(parsed(saved)["version"], 1, "{body}");
+
+    // None of them on the page: the refusal after the line lists all three.
+    let fresh = TempDir::new();
+    let (mut browser, _) = slot(cycles_page(0, true), tried_in("Cycles", &c));
+    let (status, body) =
+        save_component_in(&mut browser, fresh.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default())).await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(
+        body,
+        format!(
+            "Recorded on the current page: nothing - no refused locator matched exactly one visible element.\n{}\n{}\n{}",
+            refused(1),
+            refused(2),
+            refused(3)
+        )
+    );
+
+    // A script save hands over every refused locator, and every one there
+    // is recorded under the discovery's area, so the check then passes.
+    use v2_lib::ai_bridge::record_refused_for_scripts_in;
+    let script: v2_lib::autorun::CaseScript = serde_json::from_value(json!({
+        "case_id": 7, "title": "T", "area": "Cycles",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": "#pager-1" }] },
+            { "step_number": 2, "actions": [
+                { "kind": "click", "selector": "#pager-2" },
+                { "kind": "click", "selector": "#pager-3" }
+            ] }
+        ]
+    }))
+    .unwrap();
+    let none = v2_lib::autorun::components::ComponentFile::default();
+    let scripts_dir = TempDir::new();
+    let map = load_map(scripts_dir.path(), ORG, PROJECT).unwrap();
+    let targets = v2_lib::autorun::seen_check::unseen_targets(&map, &none, &script, &[], None, &[]).unwrap();
+    assert_eq!(targets.len(), 3);
+    let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));
+    let probed =
+        record_refused_for_scripts_in(&mut browser, scripts_dir.path(), ORG, PROJECT, &[Some("Cycles")], &targets).await;
+    assert_eq!(probed, Some(vec!["#pager-1".to_string(), "#pager-2".to_string(), "#pager-3".to_string()]));
+    let map = load_map(scripts_dir.path(), ORG, PROJECT).unwrap();
+    assert_eq!(v2_lib::autorun::seen_check::check_seen(&map, &none, &script, &[], None), Ok(()));
+}
+
+/// A component's dry run answers what the save would, refused or not, and
+/// writes nothing, probes nothing and records nothing: no component, no
+/// map, every file the same byte for byte. It is not a try either.
+#[tokio::test]
+async fn a_component_dry_run_writes_and_records_nothing() {
+    use v2_lib::ai_bridge::dry_run_component_in;
+    use v2_lib::autorun::components::{components_path, TRY_IT_FIRST};
+    let dir = TempDir::new();
+    let c = next_page();
+
+    // Refused: the save's own refusal, with no page check before it.
+    let (mut browser, _) = slot(untouched_page(), tried_in("Cycles", &c));
+    let before = every_file(dir.path());
+    let (status, body) =
+        dry_run_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default()));
+    assert_eq!(
+        (status, body.as_str()),
+        (400, "Action 1: #pager-2 was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.")
+    );
+    assert_eq!(every_file(dir.path()), before);
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty());
+
+    // Seen and tried: it would save as version 1, and nothing is written.
+    v2_lib::autorun::discovery_map::record_matched(dir.path(), ORG, PROJECT, Some("Cycles"), "/hr/cycles", &Target::from("#pager-2"), 0)
+        .unwrap();
+    let seen = every_file(dir.path());
+    let (status, body) =
+        dry_run_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default()));
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body), json!({ "would_save": "Next page", "version": 1, "changes": 0, "cap_reached": false }));
+    assert_eq!(every_file(dir.path()), seen, "a dry run changed a file");
+    assert!(!components_path(dir.path(), ORG, PROJECT).exists());
+    assert!(browser.as_ref().unwrap().d.calls.is_empty(), "a dry run reached the page");
+
+    // Not tried in this discovery: refused as a save is, and a dry run
+    // does not make it a try.
+    let (mut browser, _) = slot(untouched_page(), exploring("Cycles"));
+    let (status, body) =
+        dry_run_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default()));
+    assert_eq!((status, body.as_str()), (409, TRY_IT_FIRST));
+    let (status, body) =
+        save_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default())).await;
+    assert_eq!((status, body.as_str()), (409, TRY_IT_FIRST));
+    assert_eq!(every_file(dir.path()), seen);
+}
+
+/// The component save route reads `dry_run` as true or false only, and a
+/// dry run with no discovery going gives the save's own refusal, writing
+/// nothing, as the save itself does.
+#[tokio::test]
+async fn the_component_save_route_takes_a_dry_run() {
+    let dir = TempDir::new();
+    let _g = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let with = |dry_run: Value| {
+        let mut body = serde_json::to_value(next_page()).unwrap();
+        body["dry_run"] = dry_run;
+        body.to_string()
+    };
+    let before = every_file(dir.path());
+
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-save", &with(json!("yes")), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "\"dry_run\" is true or false."));
+
+    let (dry_status, dry) = route(&ctx(), None, "POST", "/autorun-component-save", &with(json!(true)), "1.0.0").await;
+    assert_ne!(dry_status, 200, "{dry}");
+    assert_eq!(every_file(dir.path()), before, "a dry run changed a file");
+    let (status, saved) = route(&ctx(), None, "POST", "/autorun-component-save", &with(json!(false)), "1.0.0").await;
+    assert_eq!((dry_status, dry.as_str()), (status, saved.as_str()), "a dry run answered unlike the save");
+    assert_eq!(every_file(dir.path()), before, "a refused save changed a file");
+}
+
+/// The page check a refused save makes files nothing from a page off the
+/// application's origins: the answer says nothing was recorded, the map
+/// stays empty, and the save's own refusal follows.
+#[tokio::test]
+async fn record_on_page_off_the_app_records_nothing() {
+    let dir = root_with_recipe_and_account();
+    let c = next_page();
+    let (mut browser, _) = slot(cycles_page_at("https://elsewhere.example/sso?ticket=abc", 1, true), tried_in("Cycles", &c));
+    let (status, body) =
+        save_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default())).await;
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        body.starts_with(
+            "Recorded on the current page: nothing - no refused locator matched exactly one visible element.\nAction 1: #pager-2 was never seen on the live app"
+        ),
+        "{body}"
+    );
+    assert!(!body.contains("elsewhere.example") && !body.contains("ticket"), "{body}");
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty(), "an off-site page was recorded");
+}
+
+/// A page at `/hr/leave` holding a button for each of `names` and an iframe
+/// whose contents cannot be read: the page says it cannot reach into it
+/// when `cross_origin` (another site), else the frame cannot even be asked
+/// (still loading, say).
+fn framed_page(names: &[&str], cross_origin: bool) -> ScriptedDriver {
+    let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+    ScriptedDriver::new(move |method, params| {
+        Ok(match method {
+            "DOM.resolveNode" if cross_origin => json!({ "object": { "objectId": "help-frame" } }),
+            "Runtime.callFunctionOn" if cross_origin && params["functionDeclaration"] == v2_lib::browser::locator::FRAME_JS => {
+                json!({ "result": { "value": "unreachable" } })
+            }
+            "Accessibility.getFullAXTree" => {
+                let mut tree = buttons_tree(&names);
+                let nodes = tree["nodes"].as_array_mut().unwrap();
+                nodes[0]["childIds"].as_array_mut().unwrap().push(json!("help"));
+                nodes.push(json!({
+                    "nodeId": "help", "ignored": false, "role": { "value": "Iframe" },
+                    "name": { "value": "Help" }, "backendDOMNodeId": 77, "childIds": []
+                }));
+                tree
+            }
+            "Runtime.evaluate" if params["expression"] == "location.href" => json!({ "result": { "value": LEAVE_PAGE } }),
+            "Runtime.evaluate" if params["expression"] == "document.title" => json!({ "result": { "value": "Leave" } }),
+            _ => json!({}),
+        })
+    })
+}
+
+/// A read with a frame it could not read did not see the whole page: like a
+/// read cut at its limit, it files what it showed, keeps what the area saw
+/// on the page before, and does not stamp the area explored.
+#[tokio::test]
+async fn a_read_with_an_unreadable_frame_drops_nothing() {
+    let dir = root_with_recipe_and_account();
+    let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier", "Older"]), exploring("Leave"));
+    page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, 1).await;
+    assert_eq!(sighted(dir.path(), "Leave"), ["Earlier"]);
+    assert_eq!(mapped_area(dir.path(), "Leave").unwrap().explored_at, None);
+
+    let (mut framed, _) = slot(framed_page(&["Save"], false), exploring_anew("Leave"));
+    let (status, text) =
+        page_read_in(framed.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("frame contents could not be read"), "{text}");
+    assert!(!text.contains("... and"), "the read was cut by its limit: {text}");
+    assert_eq!(sighted(dir.path(), "Leave"), ["Earlier", "Help", "Save"], "a read missing a frame dropped a sighting");
+    assert_eq!(mapped_area(dir.path(), "Leave").unwrap().explored_at, None, "a read missing a frame stamped the area");
+
+    // The same page with every frame read is whole, and does drop it.
+    let (mut whole, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), exploring_anew("Leave"));
+    page_read_in(whole.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(sighted(dir.path(), "Leave"), ["Save"]);
+    assert!(mapped_area(dir.path(), "Leave").unwrap().explored_at.is_some());
+}
+
+/// A frame from another site (a badge, a chat widget) holds nothing Auto
+/// Run could ever reach, so a read with one is still the whole page: it
+/// drops what it does not show and stamps the area explored, with the
+/// frame's note line still printed.
+#[tokio::test]
+async fn a_page_whose_only_frame_is_from_another_site_is_explored() {
+    let dir = root_with_recipe_and_account();
+    let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier", "Older"]), exploring("Leave"));
+    page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, 1).await;
+    assert_eq!(mapped_area(dir.path(), "Leave").unwrap().explored_at, None);
+
+    let (mut framed, _) = slot(framed_page(&["Save"], true), exploring_anew("Leave"));
+    let (status, text) =
+        page_read_in(framed.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("frame contents could not be read"), "{text}");
+    assert_eq!(sighted(dir.path(), "Leave"), ["Help", "Save"], "a whole read kept what it did not show");
+    assert!(mapped_area(dir.path(), "Leave").unwrap().explored_at.is_some(), "the area was not stamped explored");
+}
+
+// ------------------------------------------------- several actions at once
+
+use v2_lib::ai_bridge::{discover_actions_in, BATCH_EMPTY, BATCH_TOO_LONG, MAX_BATCH};
+
+/// A page on which every locator finds one ready element, and whose address
+/// and one button move on with each click: `/hr/leave/start` showing
+/// "Start" before any, `/hr/leave/first` showing "First" after the first,
+/// and `/hr/leave/second` showing "Second" after that. Its address carries
+/// a query string, which nothing may keep.
+fn stepping_page() -> ScriptedDriver {
+    ScriptedDriver::new(stepping_answers()).with_net_record()
+}
+
+/// What `stepping_page` answers, for a page that wraps it.
+fn stepping_answers(
+) -> impl FnMut(&str, &Value) -> Result<Value, v2_lib::browser::cdp::CdpError> + Send + 'static {
+    let page = FakePage::default();
+    let clicks = std::sync::atomic::AtomicUsize::new(0);
+    move |method: &str, params: &Value| {
+        if method == "Input.dispatchMouseEvent" && params["type"] == "mouseReleased" {
+            clicks.fetch_add(1, Ordering::SeqCst);
+        }
+        let (path, name) = match clicks.load(Ordering::SeqCst) {
+            0 => ("start", "Start"),
+            1 => ("first", "First"),
+            _ => ("second", "Second"),
+        };
+        match method {
+            "Accessibility.getFullAXTree" => Ok(buttons_tree(&[name.to_string()])),
+            "Runtime.evaluate" if params["expression"] == "location.href" => Ok(json!({ "result": {
+                "value": format!("https://hr.example.internal/hr/leave/{path}?token=t0p-secret")
+            } })),
+            _ => page.answer(method, params),
+        }
+    }
+}
+
+fn click(css: &str) -> Action {
+    Action::Click { selector: css.into() }
+}
+
+/// An action that fails at once: there is no such area to return to.
+fn nowhere() -> Action {
+    serde_json::from_value(json!({ "kind": "return_to_area", "area": "Nowhere At All" })).unwrap()
+}
+
+/// The page as `get_autorun_page` prints it with one button, `name`.
+async fn page_with(name: &str) -> String {
+    read_page(&mut buttons_page(LEAVE_PAGE, &[name]), DEFAULT_LIMIT, None).await.1
+}
+
+/// The lines of a batch's answer before its page.
+fn batch_lines(text: &str) -> Vec<&str> {
+    text.split("\n\n").next().unwrap().lines().collect()
+}
+
+/// The actions run in order, each answered by one line, and the page is
+/// answered once, from where the last action left it, ending as a page read
+/// during a discovery does. No host or query string comes back.
+#[tokio::test]
+async fn a_batch_runs_in_order_and_answers_the_page_once() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a"), click("#b")], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(lines[0].starts_with("1. ok: ") && lines[0].contains("/hr/leave/first"), "{text}");
+    assert!(lines[1].starts_with("2. ok: ") && lines[1].contains("/hr/leave/second"), "{text}");
+
+    let last = page_with("Second").await;
+    assert!(text.ends_with(&format!("{last}\n\nRecorded 1 element as seen on Leave.")), "{text}");
+    assert_eq!(text.matches(&last).count(), 1, "the page came back more than once: {text}");
+    assert!(!text.contains("\"First\""), "an action's own page came back: {text}");
+    assert!(!text.contains("hr.example.internal") && !text.contains("t0p-secret"), "{text}");
+
+    // Each action read its page, and the answer read the last one again.
+    let b = browser.as_ref().unwrap();
+    assert_eq!(b.d.calls_to("Accessibility.getFullAXTree").len(), 3);
+}
+
+/// By default the batch stops at the first action that fails: the line
+/// says why, the actions after it are not run and a line says how many,
+/// and the page is where the browser stopped.
+#[tokio::test]
+async fn a_batch_stops_on_the_first_failure() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let actions = [click("#a"), nowhere(), click("#b"), click("#c")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 3, "{text}");
+    assert!(lines[0].starts_with("1. ok: "), "{text}");
+    assert!(lines[1].starts_with("2. failed: ") && lines[1].contains("Nowhere At All"), "{text}");
+    assert_eq!(lines[2], "Stopped at the failure: 2 actions were not run.");
+    assert!(text.ends_with(&format!("{}\n\nRecorded 1 element as seen on Leave.", page_with("First").await)), "{text}");
+    let b = browser.as_ref().unwrap();
+    let released = b.d.calls_to("Input.dispatchMouseEvent").iter().filter(|p| p["type"] == "mouseReleased").count();
+    assert_eq!(released, 1, "an action after the failure ran");
+}
+
+/// With `stop_on_failure` false, a failed action is answered and the rest
+/// still run.
+#[tokio::test]
+async fn a_batch_can_carry_on_past_a_failure() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let actions = [click("#a"), nowhere(), click("#b")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, false, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 3, "{text}");
+    assert!(lines[0].starts_with("1. ok: "), "{text}");
+    assert!(lines[1].starts_with("2. failed: "), "{text}");
+    assert!(lines[2].starts_with("3. ok: ") && lines[2].contains("/hr/leave/second"), "{text}");
+    assert!(!text.contains("not run"), "{text}");
+    assert!(text.ends_with(&format!("{}\n\nRecorded 1 element as seen on Leave.", page_with("Second").await)), "{text}");
+}
+
+/// More than 20 actions is refused before anything else is looked at, by
+/// the route and by the batch itself.
+#[tokio::test]
+async fn a_batch_of_more_than_twenty_is_refused() {
+    let _g = crate::serial::autorun();
+    let one = json!({ "kind": "click", "selector": "#a" });
+    let body = json!({ "actions": vec![one.clone(); 21] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, BATCH_TOO_LONG));
+    assert_eq!(BATCH_TOO_LONG, "at most 20 actions in one call");
+    assert_eq!(BATCH_TOO_LONG, format!("at most {MAX_BATCH} actions in one call"), "the cap and its sentence differ");
+
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let many: Vec<Action> = (0..21).map(|_| click("#a")).collect();
+    let (status, out) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &many, None, None, true, &no_stop()).await;
+    assert_eq!((status, out.as_str()), (400, BATCH_TOO_LONG));
+    assert!(browser.as_ref().unwrap().d.calls.is_empty(), "the browser was touched");
+}
+
+/// An empty batch is refused, and so is one whose actions are not a list.
+#[tokio::test]
+async fn an_empty_batch_is_refused() {
+    let _g = crate::serial::autorun();
+    let body = json!({ "actions": [] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, BATCH_EMPTY));
+    let body = json!({ "actions": { "kind": "click", "selector": "#a" } }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("list of actions"), "{out}");
+
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let (status, out) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[], None, None, true, &no_stop()).await;
+    assert_eq!((status, out.as_str()), (400, BATCH_EMPTY));
+}
+
+/// Each action is checked as a single action is, before the browser is
+/// touched: one refused action refuses the batch, naming which. A
+/// `stop_on_failure` that is not true or false is refused, and so is a
+/// draft no action uses.
+#[tokio::test]
+async fn a_batch_with_a_refused_action_runs_none() {
+    let _g = crate::serial::autorun();
+    let body = json!({ "actions": [
+        { "kind": "click", "selector": "#a" },
+        { "kind": "sign_in", "account": "admin" }
+    ] })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "action 2: sign_in is not a thing an assistant does - the person signs in");
+
+    let body = json!({ "actions": [{ "kind": "click", "selector": "#a" }], "stop_on_failure": "yes" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("stop_on_failure"), "{out}");
+
+    let draft = serde_json::to_value(pick_a_date()).unwrap();
+    let body = json!({ "actions": [{ "kind": "click", "selector": "#a" }], "draft": draft }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("use_component"), "{out}");
+}
+
+/// A `use_component` is expanded before the browser is touched too: a
+/// component that is not saved (and sent with no draft) refuses the whole
+/// batch, naming its action, so the click before it never runs. The same
+/// batch without it gets past every check, to the browser that is not
+/// there.
+#[tokio::test]
+async fn a_batch_with_an_unsaved_component_runs_none() {
+    let dir = root_with_recipe_and_account();
+    let _g = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let click = json!({ "kind": "click", "selector": "#a" });
+    let unsaved = serde_json::to_value(pick_a_date_use()).unwrap();
+    let before = every_file(dir.path());
+
+    let body = json!({ "actions": [click.clone(), unsaved.clone()] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    let want = format!("action 2: {}", v2_lib::ai_bridge::not_saved_try_draft("pick a  DATE"));
+    assert_eq!((status, out.as_str()), (400, want.as_str()));
+    assert!(!out.contains("Secret-Day-17"), "a typed input came back: {out}");
+    assert_eq!(every_file(dir.path()), before, "a refused batch changed a file");
+
+    // A draft of another component does not stand in for it.
+    let mut other = pick_a_date();
+    other.name = "Another one".into();
+    let another = json!({ "kind": "use_component", "component": "Another one",
+                          "inputs": { "field": { "css": "#day" }, "day": "1" } });
+    let body = json!({ "actions": [click.clone(), unsaved, another], "draft": serde_json::to_value(other).unwrap() })
+        .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, want.as_str()));
+
+    let body = json!({ "actions": [click] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (409, NO_DISCOVERY), "the batch did not reach the browser stage");
+}
+
+/// Outside a discovery the batch is refused as a single action is.
+#[tokio::test]
+async fn a_batch_needs_a_discovery() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), None);
+    let (status, out) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a")], None, None, true, &no_stop()).await;
+    assert_eq!((status, out.as_str()), (409, NO_DISCOVERY));
+    assert!(browser.as_ref().unwrap().d.calls.is_empty(), "the browser was touched");
+}
+
+/// A mapping run's guarded browser on which clicks make the page send
+/// saves: three in all, taken as the clicks come.
+async fn saving_mapping_browser() -> Option<FakeBrowser> {
+    use v2_lib::browser::cdp::Driver;
+    let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list?page=2");
+    d.guard_saves(&[]).await.unwrap();
+    for (method, url) in [
+        ("POST", "https://hr.example.internal/hr/leave/save?id=5&token=t0p-secret"),
+        ("DELETE", "https://hr.example.internal/hr/leave/delete/7"),
+        ("PUT", "https://hr.example.internal/hr/leave/update"),
+    ] {
+        d.saves_on_call.push(("Input.dispatchMouseEvent".into(), method.into(), url.into()));
+    }
+    slot(d, mapping(exploring("Leave"), &["Leave"])).0
+}
+
+/// In a mapping run every save the batch's actions set off is blocked and
+/// counted exactly as the same actions sent one at a time: the run's count
+/// is the same, no action fails for it, and the answer says the total.
+#[tokio::test]
+async fn a_batch_blocks_saves_like_single_actions() {
+    let dir = root_with_recipe_and_account();
+    let save = click("#save");
+
+    let mut one_by_one = saving_mapping_browser().await;
+    let mut singles = 0;
+    for _ in 0..2 {
+        let (status, body) = discover_action_in(&mut one_by_one, dir.path(), ORG, PROJECT, &save, None, None).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(parsed(&body)["ok"], true, "{body}");
+        singles += parsed(&body)["blocked"].as_u64().unwrap();
+    }
+    let single_run = the_run(&one_by_one).blocked_writes;
+    assert!(single_run > 0, "nothing was blocked");
+    assert_eq!(u64::from(single_run), singles);
+
+    let mut batch = saving_mapping_browser().await;
+    let (status, text) =
+        discover_actions_in(&mut batch, dir.path(), ORG, PROJECT, &[save.clone(), save.clone()], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert!(lines[0].starts_with("1. ok: ") && lines[1].starts_with("2. ok: "), "a blocked save failed an action: {text}");
+    assert_eq!(the_run(&batch).blocked_writes, single_run, "the batch counted differently: {text}");
+    assert_eq!(lines[2], format!("Saves blocked by the mapping run: {singles}."), "{text}");
+    assert!(!text.contains("t0p-secret") && !text.contains("hr.example.internal"), "{text}");
+}
+
+/// Each action's own page read records what it showed, as a single action's
+/// does: a page only the first action saw is recorded, not just the last.
+#[tokio::test]
+async fn a_batch_records_what_each_action_read() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a"), click("#b")], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+
+    assert_eq!(sighted(dir.path(), "Leave"), ["First", "Second"]);
+    let area = mapped_area(dir.path(), "Leave").unwrap();
+    let pages: Vec<&str> = area.pages.iter().map(|p| p.path.as_str()).collect();
+    assert!(pages.contains(&"/hr/leave/first") && pages.contains(&"/hr/leave/second"), "{pages:?}");
+    let file = std::fs::read_to_string(map_path(dir.path(), ORG, PROJECT)).unwrap();
+    assert!(!file.contains("t0p-secret") && !file.contains('?'), "{file}");
+}
+
+/// An action the browser never gets to (a component not saved, with no
+/// draft) is a failed line like any other, not the end of the batch. The
+/// route refuses such a batch before running any of it
+/// (`a_batch_with_an_unsaved_component_runs_none`); this is the batch's own
+/// defence should one reach it.
+#[tokio::test]
+async fn a_refused_action_in_a_batch_is_one_failed_line() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let actions = [pick_a_date_use(), click("#a")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, false, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert_eq!(lines[0], format!("1. failed: {}", v2_lib::ai_bridge::not_saved_try_draft("pick a DATE")), "{text}");
+    assert!(lines[1].starts_with("2. ok: "), "{text}");
+    assert!(text.ends_with(&format!("{}\n\nRecorded 1 element as seen on Leave.", page_with("First").await)), "{text}");
+}
+
+// --------------------------------- a batch's area, a gone browser, a stop
+
+use v2_lib::ai_bridge::{ended_line, BROWSER_GONE};
+
+/// No stop asked for: what a batch gets in place of the route's flag.
+fn no_stop() -> AtomicBool {
+    AtomicBool::new(false)
+}
+
+/// `area` moves the discovery before the first action, even when that
+/// action is refused before the browser is touched (a component not saved):
+/// what the batch then reads is filed under the named area, not the one the
+/// discovery was in.
+#[tokio::test]
+async fn a_batch_moves_to_its_area_before_its_first_action() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let (status, text) = discover_actions_in(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        &[pick_a_date_use(), click("#a")],
+        None,
+        Some("Payroll"),
+        true,
+        &no_stop(),
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    assert!(batch_lines(&text)[0].starts_with("1. failed: "), "{text}");
+    assert!(text.ends_with("\n\nRecorded 1 element as seen on Payroll."), "{text}");
+    assert_eq!(browser.as_ref().unwrap().discovery.as_ref().unwrap().area.as_deref(), Some("Payroll"));
+    assert_eq!(sighted(dir.path(), "Payroll"), ["Start"]);
+    assert!(sighted(dir.path(), "Leave").is_empty(), "the batch filed under the area it left");
+}
+
+/// A page that works as `stepping_page` until its second click, when the
+/// browser goes: that call and every one after it is `Closed`, and `gone`
+/// is set, as the browser's own liveness check would find it.
+fn dying_page(gone: Arc<AtomicBool>) -> ScriptedDriver {
+    let mut answer = stepping_answers();
+    let clicks = std::sync::atomic::AtomicUsize::new(0);
+    ScriptedDriver::new(move |method, params| {
+        if gone.load(Ordering::SeqCst) {
+            return Err(v2_lib::browser::cdp::CdpError::Closed);
+        }
+        if method == "Input.dispatchMouseEvent" && params["type"] == "mousePressed" {
+            if clicks.fetch_add(1, Ordering::SeqCst) == 1 {
+                gone.store(true, Ordering::SeqCst);
+                return Err(v2_lib::browser::cdp::CdpError::Closed);
+            }
+        }
+        answer(method, params)
+    })
+    .with_net_record()
+}
+
+/// A browser that goes partway through a batch is let go right there, and
+/// the answer keeps the lines of the actions that did run, ending with the
+/// sentence a single call would have answered.
+#[tokio::test]
+async fn a_browser_gone_mid_batch_keeps_the_lines_that_ran() {
+    let dir = root_with_recipe_and_account();
+    let gone = Arc::new(AtomicBool::new(false));
+    let (mut browser, closed) = slot(dying_page(gone.clone()), exploring("Leave"));
+    browser.as_mut().unwrap().gone = gone.clone();
+    let actions = [click("#a"), click("#b"), click("#c")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, false, &no_stop()).await;
+    assert_eq!(status, 409, "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].starts_with("1. ok: "), "the line of the action that ran was lost: {text}");
+    assert!(lines.iter().any(|l| l.starts_with("2. failed: ")), "{text}");
+    assert_eq!(*lines.last().unwrap(), BROWSER_GONE, "{text}");
+    assert!(browser.is_none(), "the gone browser is still held");
+    assert!(closed.load(Ordering::SeqCst), "it was not let go through its normal close");
+}
+
+/// A stop asked for while a batch runs (End discovery, Close browser or a
+/// release, before they wait for the browser) is heard before the next
+/// action: the batch answers what ran, says how many were not run, reads
+/// nothing more, and the stop is used up.
+#[tokio::test]
+async fn a_batch_gives_way_to_a_stop_before_its_next_action() {
+    let dir = root_with_recipe_and_account();
+    let stop = Arc::new(AtomicBool::new(false));
+    let pressed = stop.clone();
+    let mut inner = stepping_answers();
+    let d = ScriptedDriver::new(move |method, params| {
+        if method == "Input.dispatchMouseEvent" && params["type"] == "mouseReleased" {
+            pressed.store(true, Ordering::SeqCst);
+        }
+        inner(method, params)
+    })
+    .with_net_record();
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let actions = [click("#a"), click("#b"), click("#c")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &stop).await;
+    assert_eq!(status, 409, "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(lines[0].starts_with("1. ok: "), "{text}");
+    assert_eq!(lines[1], ended_line(2));
+    assert_eq!(ended_line(2), "Stopped: 2 not run - End discovery, Close browser or a release asked the batch to stop.");
+    assert!(!stop.load(Ordering::SeqCst), "the stop was not used up");
+    let b = browser.as_ref().unwrap();
+    assert_eq!(b.d.calls_to("Accessibility.getFullAXTree").len(), 1, "the batch read on after the stop");
+}
+
+/// End discovery is not kept waiting behind a long batch: it asks the batch
+/// to stop and then waits for the browser, as `end_discovery` does, and gets
+/// it after the action under way rather than after all twenty.
+#[tokio::test(flavor = "multi_thread")]
+async fn end_discovery_is_not_stuck_behind_a_long_batch() {
+    let dir = root_with_recipe_and_account();
+    let stop = Arc::new(AtomicBool::new(false));
+    let started = Arc::new(AtomicBool::new(false));
+    let seen = started.clone();
+    let mut inner = stepping_answers();
+    let d = ScriptedDriver::new(move |method, params| {
+        if method == "Input.dispatchMouseEvent" && params["type"] == "mouseReleased" {
+            seen.store(true, Ordering::SeqCst);
+            // Each click takes a while: twenty of them far outlast the wait below.
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        }
+        inner(method, params)
+    })
+    .with_net_record();
+    let session = Arc::new(tokio::sync::Mutex::new(slot(d, exploring("Leave")).0));
+
+    let (held, flag, root) = (session.clone(), stop.clone(), dir.path().to_path_buf());
+    let batch = tokio::spawn(async move {
+        let mut slot = held.lock().await;
+        let many: Vec<Action> = (0..20).map(|_| click("#a")).collect();
+        discover_actions_in(&mut slot, &root, ORG, PROJECT, &many, None, None, true, &flag).await
+    });
+    while !started.load(Ordering::SeqCst) {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    // The End discovery order: ask the batch to stop, then wait.
+    stop.store(true, Ordering::SeqCst);
+    let mut slot = tokio::time::timeout(std::time::Duration::from_secs(4), session.lock())
+        .await
+        .expect("End discovery waited behind the whole batch");
+    let (status, ended) = end_discovery_in(&mut slot);
+    assert_eq!(status, 200, "{ended}");
+    assert!(slot.is_none(), "the discovery's browser is still held");
+    drop(slot);
+    let (status, text) = batch.await.unwrap();
+    assert_eq!(status, 409, "{text}");
+    assert!(text.ends_with("not run - End discovery, Close browser or a release asked the batch to stop."), "{text}");
+
+    // Each way the person or the assistant ends the discovery asks a batch
+    // to give way before it waits for the browser.
+    let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+    for start in [
+        "pub(crate) async fn end_discovery()",
+        "pub async fn auto_run_close_browser()",
+        "pub async fn release_autorun_browsers()",
+        "pub async fn release_for_assistant()",
+        "pub async fn close_autorun_browsers()",
+    ] {
+        let body = &source[source.find(start).unwrap_or_else(|| panic!("{start} is gone"))..];
+        let body = &body[..body.find("SESSION.lock()").unwrap()];
+        assert!(body.contains("crate::ai_bridge::stop_batch();"), "{start} does not stop a batch before it waits");
+    }
+    // And the route clears an earlier stop before it takes the browser.
+    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let route = &bridge[bridge.find("async fn autorun_discover_actions(").unwrap()..];
+    let route = &route[..route.find("supervised().lock()").unwrap()];
+    assert!(route.contains("BATCH_STOP.store(false"), "an old stop would end the next batch");
+}
+
+/// A draft is tried only by the `use_component` that names it: another
+/// component in the same batch runs as saved.
+#[tokio::test]
+async fn a_draft_leaves_another_component_to_run_as_saved() {
+    let dir = root_with_recipe_and_account();
+    put(dir.path(), ORG, PROJECT, pick_a_date()).unwrap();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let mut other = pick_a_date();
+    other.name = "Pick a time".into();
+    let (status, text) = discover_actions_in(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        &[pick_a_date_use()],
+        Some(&other),
+        None,
+        true,
+        &no_stop(),
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    assert!(batch_lines(&text)[0].starts_with("1. ok: "), "{text}");
+    let state = browser.as_ref().unwrap().discovery.as_ref().unwrap();
+    assert_eq!(state.tried, vec![draft_fingerprint(&pick_a_date())], "the saved one was not what ran");
 }

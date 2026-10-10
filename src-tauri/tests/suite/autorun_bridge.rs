@@ -1526,6 +1526,7 @@ fn sighting(root: &std::path::Path, area: Option<&str>) -> Sighting {
         area: area.map(str::to_string),
         account: None,
         discovering: None,
+        policy: v2_lib::browser::actions::Policy::open(),
     }
 }
 
@@ -1558,6 +1559,11 @@ fn ratings_page() -> crate::common::ScriptedDriver {
 
 /// A page on which every locator finds `found` elements, at `/hr/ratings`.
 fn probed_page(found: usize) -> crate::common::ScriptedDriver {
+    probed_page_at("https://app.example/hr/ratings", found)
+}
+
+/// `probed_page`, at `href`.
+fn probed_page_at(href: &'static str, found: usize) -> crate::common::ScriptedDriver {
     crate::common::ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         match method {
@@ -1565,7 +1571,7 @@ fn probed_page(found: usize) -> crate::common::ScriptedDriver {
                 Ok(serde_json::json!({ "result": { "objectId": "doc" } }))
             }
             "Runtime.evaluate" if params["expression"] == "location.href" => {
-                Ok(serde_json::json!({ "result": { "value": "https://app.example/hr/ratings" } }))
+                Ok(serde_json::json!({ "result": { "value": href } }))
             }
             "Runtime.evaluate" if params["expression"] == "document.title" => {
                 Ok(serde_json::json!({ "result": { "value": "Ratings" } }))
@@ -1716,6 +1722,74 @@ async fn an_ok_expect_hidden_try_records_nothing() {
     assert_eq!(status, 200);
     assert!(text.starts_with("ok:"), "{text}");
     assert!(load_map(dir.path(), "acme", "Web").unwrap().areas.is_empty());
+}
+
+/// Only the application's own pages are recorded: an http, https or file
+/// address the policy allows. A blank or browser error page never is, with
+/// or without a recipe; another site is not, under a recipe; a local file
+/// is only when no recipe limits the origins.
+#[test]
+fn may_record_allows_only_the_apps_own_pages() {
+    use v2_lib::ai_bridge::may_record;
+    use v2_lib::browser::actions::Policy;
+    let recipe: v2_lib::autorun::recipe::SignInRecipe = serde_json::from_value(serde_json::json!({
+        "start_url": "https://app.example/",
+        "allowed_origins": ["https://files.example"],
+        "steps": [],
+        "signed_in": { "css": "#marker" }
+    }))
+    .unwrap();
+    let with_recipe = v2_lib::autorun::runner::policy_for(Some(&recipe));
+    assert!(may_record("https://app.example/hr/ratings?id=42", &with_recipe));
+    assert!(may_record("https://files.example/docs/list", &with_recipe), "an extra allowed origin");
+    assert!(!may_record("https://elsewhere.example/sso?ticket=abc", &with_recipe));
+    assert!(!may_record("http://app.example/hr", &with_recipe), "another scheme is another origin");
+    assert!(!may_record("file:///C:/fixture/page.html", &with_recipe));
+
+    let open = Policy::open();
+    assert!(may_record("http://app.example/hr", &open));
+    assert!(may_record("https://elsewhere.example/sso", &open));
+    assert!(may_record("file:///C:/fixture/page.html", &open));
+    for not_a_page in ["about:blank", "chrome-error://chromewebdata/", "", "data:text/html,hi"] {
+        assert!(!may_record(not_a_page, &open), "{not_a_page:?} with no recipe");
+        assert!(!may_record(not_a_page, &with_recipe), "{not_a_page:?} with a recipe");
+    }
+}
+
+/// A probe that matched on a page off the application's origins (a sign-in
+/// page on another site) files nothing: a sighting counts for its area.
+#[tokio::test]
+async fn a_probe_off_the_app_records_nothing() {
+    let dir = TempDir::new();
+    let mut elsewhere = probed_page_at("https://elsewhere.example/sso?ticket=abc", 1);
+    let only_the_app = Sighting {
+        policy: v2_lib::browser::actions::Policy::only(vec!["https://app.example".into()]),
+        ..sighting(dir.path(), Some("Ratings"))
+    };
+    let (status, text) = probe_page(&mut elsewhere, &archive(), Some(&only_the_app)).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("matches: 1"), "{text}");
+    assert!(load_map(dir.path(), "acme", "Web").unwrap().areas.is_empty(), "an off-site probe was recorded");
+
+    // The same probe on the application's own page is recorded.
+    let (status, _) = probe_page(&mut probed_page(1), &archive(), Some(&only_the_app)).await;
+    assert_eq!(status, 200);
+    assert!(mapped_area(dir.path(), "Ratings").is_some(), "a probe on the app was not recorded");
+}
+
+/// A try that worked on a page that is not the application's (about:blank)
+/// files nothing, with no recipe as with one.
+#[tokio::test]
+async fn a_try_that_works_on_a_blank_page_records_nothing() {
+    let dir = TempDir::new();
+    let mut account = None;
+    let mut lease = v2_lib::autorun::lease::Held::supervised();
+    let mut d = crate::common::FakePage { href: "about:blank", ..crate::common::FakePage::default() }.driver();
+    let (status, text) =
+        try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &click_save()).await;
+    assert_eq!(status, 200);
+    assert!(text.starts_with("ok:"), "{text}");
+    assert!(load_map(dir.path(), "acme", "Web").unwrap().areas.is_empty(), "a try on about:blank was recorded");
 }
 
 /// A click that takes the page somewhere else was matched on the page it
@@ -2840,7 +2914,7 @@ async fn a_repair_checks_only_its_declared_steps() {
     };
     // Step 2's new toast was never seen.
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &repair(".toast"), "1.0.0").await;
-    assert_eq!((status, out), (400, never_seen(2, "#save")));
+    assert_eq!((status, out), (400, format!("{}\n{}", never_seen(2, "#save"), never_seen(2, ".toast"))));
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 0);
 
     // Step 2's locators seen; step 1's unseen page is not looked at.
@@ -3057,4 +3131,168 @@ async fn a_legacy_script_resaved_with_two_projects_with_areas_stays_unchecked() 
 async fn a_legacy_script_resaved_as_the_one_project_with_areas_is_checked() {
     let saved = resave_a_legacy_script(false).await;
     assert_eq!((saved.project.as_deref(), saved.checked), (Some("Web"), true));
+}
+
+// ------------------------- every refusal at once, and a dry run
+
+use crate::common::every_file;
+
+/// Case `id` as `case_7` writes it, under another id.
+fn case_as(id: i32, selector: &str, value: &str) -> serde_json::Value {
+    let mut v = case_7(selector, value);
+    v[0]["case_id"] = serde_json::json!(id);
+    v
+}
+
+/// A bundle whose scripts name locators never seen lists every one of
+/// them, case by case, each line after its case.
+#[tokio::test]
+async fn a_bundle_refusal_names_every_unseen_locator_of_every_case() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[
+        (7, "Save a rating", &["", "A toast says Saved"]),
+        (8, "Save a rating", &["", "A toast says Saved"]),
+    ])
+    .await;
+    // The page was seen; neither Save button nor toast was.
+    see_scripts(dir.path(), &serde_json::json!([{ "case_id": 1, "title": "x", "steps": [{ "step_number": 1, "actions": [
+        { "kind": "navigate", "url": "https://app.example/ratings" }
+    ]}]}]).to_string());
+    let both = serde_json::Value::Array(
+        [case_as(7, ".toast", "Saved"), case_as(8, ".toast", "Saved")].into_iter().map(|v| v[0].clone()).collect(),
+    );
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &both.to_string(), "1.0.0").await;
+    let expected = [
+        format!("case 7: {}", never_seen(2, "#save")),
+        format!("case 7: {}", never_seen(2, ".toast")),
+        format!("case 8: {}", never_seen(2, "#save")),
+        format!("case 8: {}", never_seen(2, ".toast")),
+    ];
+    assert_eq!((status, out), (400, expected.join("\n")));
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None);
+    assert_eq!(load_script(dir.path(), 8).unwrap(), None);
+}
+
+/// A dry run that passes every check says it would save, and saves
+/// nothing. It travels through the tool as `dry_run` beside `scripts`.
+#[tokio::test]
+async fn a_dry_run_that_passes_says_it_would_save() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let scripts = case_7("#toast", "Saved");
+    see_scripts(dir.path(), &scripts.to_string());
+
+    let body = tool_body(serde_json::json!({ "scripts": scripts, "dry_run": true }));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (new)"));
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None, "a dry run wrote the script");
+
+    // The scripts as a string, as sibling tools take them, and false.
+    let body = tool_body(serde_json::json!({ "scripts": scripts.to_string(), "dry_run": true }));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (new)"));
+    let body = tool_body(serde_json::json!({ "scripts": scripts, "dry_run": false }));
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.starts_with("saved 1 script(s)"), "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_some());
+
+    // Anything but true or false is refused, before anything is read.
+    let odd = serde_json::json!({ "scripts": scripts, "dry_run": "yes" }).to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &odd, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "\"dry_run\" is true or false."));
+}
+
+/// A dry run writes nothing and records nothing, refused or not: no
+/// script, no map, no stamp, no repair counted, no quirk. Every file under
+/// the Auto Run folder is the same, byte for byte. A refused dry run
+/// answers the refusal a save would.
+#[tokio::test]
+async fn a_dry_run_writes_and_records_nothing() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let first = case_7("#toast", "Saved").to_string();
+    see_scripts(dir.path(), &first);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let before = every_file(dir.path());
+
+    let dry = |selector: &str, quirk: bool| {
+        let mut edit = edit_step_2("the toast moved");
+        if quirk {
+            edit["quirk"] = serde_json::json!("Toasts fade after two seconds");
+        }
+        serde_json::json!({ "scripts": case_7(selector, "Saved"), "edits": [edit], "dry_run": true }).to_string()
+    };
+    // Refused: the same answer as the save, and nothing changes.
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry(".toast", true), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, never_seen(2, ".toast").as_str()));
+    assert_eq!(every_file(dir.path()), before, "a refused dry run changed a file");
+
+    // Passing: would save, and still nothing changes - no repair counted,
+    // no quirk recorded, the map left as it was.
+    see_scripts(dir.path(), &case_7(".toast", "Saved").to_string());
+    let seen = every_file(dir.path());
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry(".toast", true), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (repaired, 1 of 3 used)"));
+    assert_eq!(every_file(dir.path()), seen, "a dry run that passed changed a file");
+    let kept = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(kept.repairs, 0);
+    assert!(load_quirks(dir.path(), "acme", "Web").unwrap().is_empty());
+}
+
+/// `?quick=true` answers the Quick rules and the live sections only: the
+/// active environment, the areas, the components and the quirks, and none
+/// of the full guide's other sections. Without it the full guide comes
+/// back, opening with the same Quick rules, and the same live sections.
+#[tokio::test]
+async fn the_quick_guide_holds_the_rules_and_the_live_sections() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    record_two_areas(dir.path());
+    let component: v2_lib::autorun::components::Component = serde_json::from_value(serde_json::json!({
+        "name": "Close the toast",
+        "description": "Closes the message in the corner, when one shows.",
+        "inputs": [],
+        "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Close" } }],
+        "version": 1
+    }))
+    .unwrap();
+    v2_lib::autorun::components::put(dir.path(), "acme", "Web", component).unwrap();
+    let body = serde_json::json!({ "text": "the grid loads after a spinner" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let (status, quick) = route(&ctx(), None, "GET", "/autorun-guide?quick=true", "", "1.0.0").await;
+    assert_eq!(status, 200, "{quick}");
+    let (status, full) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert_eq!(status, 200, "{full}");
+
+    assert!(quick.starts_with(&v2_lib::autorun::guide::quick_rules()), "{quick}");
+    for live in [
+        "## The active environment",
+        "## This project's areas",
+        "Cycle Setup",
+        "## This project's components",
+        "Close the toast",
+        "## Known quirks of this application",
+        "the grid loads after a spinner",
+    ] {
+        assert!(quick.contains(live), "the quick guide has no {live:?}: {quick}");
+        assert!(full.contains(live), "the full guide lost {live:?}");
+    }
+    for full_only in ["# Writing an Auto Run action script", "## The actions", "## Discovering the app", "## Saving it"] {
+        assert!(!quick.contains(full_only), "the quick guide carries {full_only:?}");
+        assert!(full.contains(full_only), "the full guide has no {full_only:?}");
+    }
+    assert!(full.starts_with(&autorun_guide()), "the full guide is answered as before");
+    assert!(full.contains("## Quick rules"), "the full guide opens with the Quick rules too");
+    assert!(quick.len() * 4 < full.len(), "the quick guide is not short: {} of {}", quick.len(), full.len());
 }

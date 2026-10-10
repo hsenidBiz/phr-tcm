@@ -7,7 +7,7 @@ use common::ScriptedDriver;
 use serde_json::json;
 use v2_lib::browser::cdp::CdpError;
 use v2_lib::browser::locator::{Target, VISIBLE_JS};
-use v2_lib::browser::snapshot::{parse_nodes, probe, render, render_frames, render_frames_with_lines, snapshot, AxNode, FrameTree, DEFAULT_LIMIT, PROBE_SUMMARY_JS};
+use v2_lib::browser::snapshot::{parse_nodes, probe, render, render_frames, render_frames_read, render_frames_with_lines, snapshot, snapshot_read, AxNode, FrameTree, DEFAULT_LIMIT, PROBE_SUMMARY_JS};
 
 /// A plain, printable node with no value/ignored/disabled/focusable
 /// wrinkles - tests override the fields they care about with `..`.
@@ -549,6 +549,7 @@ fn page_with_frame(n: usize) -> (Vec<AxNode>, FrameTree) {
         step: json!({ "css": "iframe[title='Employee Search']" }),
         nodes,
         unreadable: None,
+        cross_origin: false,
         frames: vec![],
     };
     (parent, frame)
@@ -602,6 +603,7 @@ fn nested(id: &str, title: &str, frames: Vec<FrameTree>) -> FrameTree {
         step: json!({ "css": format!("iframe[title='{title}']") }),
         nodes: vec![node("r", "RootWebArea", "", &["inner"]), node("inner", "Iframe", &format!("{title} child"), &[])],
         unreadable: None,
+        cross_origin: false,
         frames,
     }
 }
@@ -622,6 +624,84 @@ fn a_frame_deeper_than_three_says_it_is_not_shown() {
     let indent = |l: &str| l.len() - l.trim_start().len();
     assert!(indent(note) > indent(lines[deep]), "the note sits under the frame's line: {out}");
     assert_eq!(out.matches("nested deeper than 3").count(), 1, "{out}");
+}
+
+/// A frame whose contents were not shown (unreadable, or past the depth
+/// the snapshot follows) makes the read not the whole page, as the line
+/// limit does: `cut` is set. A read whose every frame was shown is whole.
+#[test]
+fn a_read_missing_a_frame_is_cut() {
+    let (parent, frame) = page_with_frame(1);
+    assert!(!render_frames_read(&parent, &[frame], DEFAULT_LIMIT).cut, "a whole read with its frame was cut");
+
+    let (parent, mut unreadable) = page_with_frame(0);
+    unreadable.nodes.clear();
+    unreadable.unreadable = Some("no frame id".to_string());
+    let read = render_frames_read(&parent, &[unreadable.clone()], DEFAULT_LIMIT);
+    assert!(read.cut, "{}", read.text);
+    assert!(!read.text.contains("... and"), "{}", read.text);
+
+    // An unreadable frame inside a readable one counts too.
+    let outer = nested("f1", "One", vec![FrameTree { iframe_id: "inner".into(), ..unreadable }]);
+    let parent = vec![node("1", "RootWebArea", "Frames", &["f1"]), node("f1", "Iframe", "One", &[])];
+    let read = render_frames_read(&parent, &[outer], DEFAULT_LIMIT);
+    assert!(read.text.contains("frame contents could not be read"), "{}", read.text);
+    assert!(read.cut, "{}", read.text);
+
+    let three = nested("inner", "Three", vec![]);
+    let deep = nested("f1", "One", vec![nested("inner", "Two", vec![three])]);
+    let read = render_frames_read(&parent, &[deep], DEFAULT_LIMIT);
+    assert!(read.text.contains("nested deeper than 3"), "{}", read.text);
+    assert!(read.cut, "{}", read.text);
+}
+
+/// A frame the page cannot reach (another site) holds nothing that could
+/// ever be recorded or scripted: its note line stays, but it alone leaves
+/// the read whole. A frame unreadable for any other reason still cuts it.
+#[test]
+fn only_a_frame_from_another_site_leaves_the_read_whole() {
+    let parent = vec![
+        node("1", "RootWebArea", "Frames", &["f1", "f2"]),
+        node("f1", "Iframe", "Badge", &[]),
+        node("f2", "Iframe", "Report", &[]),
+    ];
+    let unread = |id: &str, why: &str, cross_origin: bool| FrameTree {
+        iframe_id: id.into(),
+        step: json!({ "css": "iframe" }),
+        nodes: vec![],
+        unreadable: Some(why.into()),
+        cross_origin,
+        frames: vec![],
+    };
+    let badge = unread("f1", "another site", true);
+    let report = unread("f2", "the frame tree did not come back", false);
+
+    let read = render_frames_read(&parent, &[badge.clone()], DEFAULT_LIMIT);
+    assert!(read.text.contains("(frame contents could not be read: another site)"), "{}", read.text);
+    assert!(!read.cut, "a frame from another site cut the read: {}", read.text);
+
+    let read = render_frames_read(&parent, &[badge, report], DEFAULT_LIMIT);
+    assert!(read.cut, "a frame that failed to read did not cut the read: {}", read.text);
+}
+
+/// An iframe Chrome gave no DOM node for is not followed: a line says so,
+/// and the read is not the whole page.
+#[tokio::test]
+async fn an_iframe_with_no_node_is_named_and_cuts_the_read() {
+    let mut d = ScriptedDriver::new(|method, _| {
+        Ok(match method {
+            "Accessibility.getFullAXTree" => json!({ "nodes": [
+                { "nodeId": "1", "ignored": false, "role": { "value": "RootWebArea" }, "name": { "value": "Page" },
+                  "childIds": ["2", "3"] },
+                { "nodeId": "2", "ignored": false, "role": { "value": "button" }, "name": { "value": "Save" }, "childIds": [] },
+                { "nodeId": "3", "ignored": false, "role": { "value": "Iframe" }, "name": { "value": "Help" }, "childIds": [] }
+            ] }),
+            _ => json!({}),
+        })
+    });
+    let read = snapshot_read(&mut d, DEFAULT_LIMIT).await.unwrap();
+    assert!(read.text.contains("(frame contents could not be read: Chrome gave no node for it)"), "{}", read.text);
+    assert!(read.cut, "{}", read.text);
 }
 
 /// Shallower frames that were not followed (no tree for them) print no note.
@@ -663,6 +743,7 @@ fn a_line_inside_a_frame_has_a_chain_locator() {
         step: json!({ "role": "Iframe", "name": "Pay", "exact": true }),
         nodes: vec![node("1", "button", "Go", &[])],
         unreadable: None,
+        cross_origin: false,
         frames: vec![],
     }];
     let (text, lines) = render_frames_with_lines(&nodes, &frames, DEFAULT_LIMIT);

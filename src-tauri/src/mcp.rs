@@ -322,8 +322,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_guide",
-            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. Locators come from what you saw on the live app, through discovery; every assertion comes from the test case's own expected result, never from what the code happens to do.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
+            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. Locators come from what you saw on the live app, through discovery; every assertion comes from the test case's own expected result, never from what the code happens to do. With `quick` true it answers only the Quick rules and this project's live sections, for work you have done before.",
+            "inputSchema": schema(serde_json::json!({
+                "quick": { "type": "boolean", "description": "true: answer only the Quick rules (the short form of the guide's rules) and the live sections: the active environment and whether get_accounts gives passwords, and this project's areas, areas to explore, components and quirks. Read the full guide, without quick, when something comes up that the quick rules do not cover." },
+            }), &[]),
         },
         {
             "name": "save_autorun_script",
@@ -339,11 +341,12 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "description": "Only when a script already exists: one entry per case you are changing, { case_id, steps, why, area?, quirk? }",
                     "items": { "type": "object" },
                 },
+                "dry_run": { "type": "boolean", "description": DRY_RUN_SCRIPT },
             }), &["scripts"]),
         },
         {
             "name": "get_autorun_page",
-            "description": "Read the page in the Auto Run browser, the one the person opened on the Auto Run tab or your discovery browser, as text: Chrome's own accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script - what a password field holds is never shown. Needs a supervised or discovery browser to be open.",
+            "description": "Read the page in the Auto Run browser, the one the person opened on the Auto Run tab or your discovery browser, as text: Chrome's own accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script - what a password field holds is never shown. During a discovery with an area, a read records what it shows as seen under that area, and the answer ends with a line saying what was recorded. Needs a supervised or discovery browser to be open.",
             "inputSchema": schema(serde_json::json!({
                 "limit": { "type": "number", "description": "How many lines before the snapshot stops (default 300). Raise it for a long page, or probe one locator instead of reading the whole tree." },
             }), &[]),
@@ -407,6 +410,23 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["action"]),
         },
         {
+            "name": "discover_autorun_actions",
+            "description": "Carry out SEVERAL script actions in the discovery browser in one call, in order, each as discover_autorun_action would carry it out: the same blocked saves in a mapping run, and what each action's page showed is recorded as seen. Every action is checked first: if any would be refused, none runs and the answer names it. A `draft` that no use_component action names is refused. Use it for a run of steps you already know, such as a menu path or filling a form. At most 20 actions. It stops at the first action that fails unless `stop_on_failure` is false. The answer is one line per action that ran, ok or failed with the reason, then the page once, after the last action. Needs start_autorun_discovery first.",
+            "inputSchema": schema(serde_json::json!({
+                "actions": {
+                    "type": "array",
+                    "description": "The actions, in order, each one action in the script vocabulary - call get_autorun_guide for all of them. At most 20.",
+                    "items": { "type": "object" },
+                },
+                "stop_on_failure": { "type": "boolean", "description": "Optional: false carries on past a failed action. True when left out." },
+                "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
+                "draft": {
+                    "type": "object",
+                    "description": "Optional: a component to try in place of the saved one of that name, for each use_component action that names it, exactly as you will send it to save_autorun_component.",
+                },
+            }), &["actions"]),
+        },
+        {
             "name": "save_autorun_area",
             "description": "Save a screen you found through the menus during discovery as an area, so runs can reach it before step 1. The app checks it first: from the home page, signed in, it replays your clicks and saves the area only if they arrive where the discovery browser is now. A refusal says what the page showed. A name already taken is refused; pick another or ask the person. Set each script's `area` to this name. If you cannot find the screen through the menus, ask the person to record the area in Auto Run instead.",
             "inputSchema": schema(serde_json::json!({
@@ -454,6 +474,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "items": { "type": "object" },
                 },
                 "why": { "type": "string", "description": "Only when changing a saved component: one sentence on why it changes." },
+                "dry_run": { "type": "boolean", "description": DRY_RUN_COMPONENT },
             }), &["name", "description", "inputs", "actions"]),
         },
         {
@@ -774,6 +795,30 @@ pub const BUNDLE_EDITS_NOT_A_LIST: &str = "the bundle sent as \"scripts\" has an
 /// added to the bundle's own: it is neither a list nor one entry.
 pub const BESIDE_EDITS_NOT_A_LIST: &str = "the \"edits\" sent beside the bundle in \"scripts\" is not a list - send one \"edits\" list beside \"scripts\", one entry per case";
 
+/// What `dry_run` does on `save_autorun_script`.
+const DRY_RUN_SCRIPT: &str = "true: run every check a save makes, the seen check included, and answer would save, or the refusal a save would give (every locator never seen, listed at once), writing nothing and recording nothing.";
+
+/// What `dry_run` does on `save_autorun_component`.
+const DRY_RUN_COMPONENT: &str = "true: run every rule a save makes and answer would_save or the refusal, writing nothing and recording nothing. It is not a try of the component.";
+
+/// The script save's body with the tool's `dry_run` carried into it: the
+/// bare array becomes `{ "scripts": [...], "dry_run": ... }`, and an object
+/// body gets the key. Without one, or with a body that is not JSON (the
+/// route names what is wrong with it), the body is unchanged.
+fn with_dry_run(body: String, dry_run: Option<&serde_json::Value>) -> String {
+    let Some(flag) = dry_run.filter(|v| !v.is_null()) else { return body };
+    match serde_json::from_str::<serde_json::Value>(&body) {
+        Ok(scripts @ serde_json::Value::Array(_)) => {
+            serde_json::json!({ "scripts": scripts, "dry_run": flag }).to_string()
+        }
+        Ok(serde_json::Value::Object(mut bundle)) => {
+            bundle.insert("dry_run".to_string(), flag.clone());
+            serde_json::Value::Object(bundle).to_string()
+        }
+        _ => body,
+    }
+}
+
 /// The bundle's own `edits` with the ones sent beside it added, exact
 /// duplicates dropped. Either side may be a list, one entry, or a JSON
 /// string of either. When both are there and one of them is anything else,
@@ -939,7 +984,13 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // is structurally unable to drop `paths` or `output_path` - the
         // same pattern as `check_spec_coverage` above.
         "merge_case_files" => call("POST", "/merge-cases", &args.to_string()),
-        "get_autorun_guide" => call("GET", "/autorun-guide", ""),
+        "get_autorun_guide" => {
+            if args["quick"].as_bool().unwrap_or(false) {
+                call("GET", "/autorun-guide?quick=true", "")
+            } else {
+                call("GET", "/autorun-guide", "")
+            }
+        }
         "save_autorun_script" => {
             // The bridge takes the bare array, so a caller that wrapped it
             // in {scripts: [...]} and one that sent the list directly both
@@ -990,7 +1041,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 (None, _) => Ok(args.to_string()),
             };
             match body {
-                Ok(body) => call("POST", "/autorun-script", &body),
+                Ok(body) => call("POST", "/autorun-script", &with_dry_run(body, args.get("dry_run"))),
                 // Refused here, before anything reaches the app, in the
                 // same shape as a refusal from the route.
                 Err(refused) => Ok((400, refused)),
@@ -1013,6 +1064,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // so the arguments object travels whole.
         "start_autorun_discovery" => call("POST", "/autorun-discover-start", &args.to_string()),
         "discover_autorun_action" => call("POST", "/autorun-discover-action", &args.to_string()),
+        "discover_autorun_actions" => call("POST", "/autorun-discover-actions", &args.to_string()),
         "save_autorun_area" => call("POST", "/autorun-discover-area", &args.to_string()),
         "end_autorun_discovery" => call("POST", "/autorun-discover-end", &args.to_string()),
         "release_autorun_browser" => call("POST", "/autorun-release", &args.to_string()),

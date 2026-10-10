@@ -283,7 +283,10 @@ pub async fn route(
         // document a format, drive the browser the person opened, or read
         // files this machine already wrote - so none of them needs a
         // signed-in client. All were let through by the guard above.
-        ("GET", "/autorun-guide") => (200, autorun_guide_with_quirks(ctx)),
+        ("GET", "/autorun-guide") => {
+            let quick = matches!(q(target, "quick").as_deref(), Some("true") | Some("1"));
+            (200, autorun_guide_with_quirks(ctx, quick))
+        }
         ("POST", "/autorun-script") => save_autorun_scripts(ctx, client, body).await,
         ("GET", "/autorun-page") => autorun_page(ctx, target).await,
         ("POST", "/autorun-probe") => autorun_probe(ctx, body).await,
@@ -293,6 +296,7 @@ pub async fn route(
         // the live application, one action at a time.
         ("POST", "/autorun-discover-start") => autorun_discover_start(ctx, body).await,
         ("POST", "/autorun-discover-action") => autorun_discover_action(ctx, body).await,
+        ("POST", "/autorun-discover-actions") => autorun_discover_actions(ctx, body).await,
         ("POST", "/autorun-discover-end") => crate::commands::autorun::end_discovery().await,
         // Release: every Auto Run browser record the app holds is cleared
         // and the app's own browsers closed, for a browser held after it
@@ -1604,8 +1608,12 @@ fn environment_database(ctx: &BridgeContext, env: &crate::environments::Environm
 /// project's components, then the recorded quirks. The constant (`autorun::guide::autorun_guide`)
 /// only says a quirks section exists; this reads what is actually on file,
 /// so the guide can never go stale on a live project.
-fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
-    let mut out = crate::autorun::guide::autorun_guide();
+///
+/// `quick` answers the Quick rules section in place of the full text, with
+/// the same live sections after it.
+fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool) -> String {
+    let mut out =
+        if quick { crate::autorun::guide::quick_rules() } else { crate::autorun::guide::autorun_guide() };
     let Some(root) = crate::autorun::store::configured_root() else {
         return out;
     };
@@ -1673,12 +1681,86 @@ pub async fn supervised_page(organization: &str, project: &str, limit: usize) ->
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
-    let at = supervised_sighting(session, organization, project);
-    let answer = read_page(&mut session.cdp, limit, at.as_ref()).await;
+    let root = if project.trim().is_empty() { None } else { crate::autorun::store::configured_root() };
+    let tabs_case = session.tabs_case;
+    let answer = page_read_in(session, root.as_deref(), organization, project, tabs_case, limit).await;
     // A browser that has gone is let go here, not kept to answer 503 again.
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery(&slot);
     answer
+}
+
+/// Said at the end of a page read during a discovery that has no area yet:
+/// nothing was recorded.
+pub const READ_WITH_NO_AREA: &str = "Recorded nothing as seen: this discovery has no area yet. Save the area with save_autorun_area, or name it with \"area\" on discover_autorun_action, then read the page again.";
+
+/// Said at the end of a page read during a discovery when the page is not
+/// on the application's own origins: nothing was recorded.
+pub const READ_OFF_THE_APP: &str =
+    "Recorded nothing as seen: this page is not on one of this project's allowed origins.";
+
+/// Said at the end of a page read during a discovery when what it showed
+/// could not be filed (the reason is in the log).
+pub const READ_NOT_FILED: &str =
+    "Recorded nothing as seen: the discovery map could not be written (see Settings -> Logs).";
+
+/// The line a page read during a discovery ends with when it recorded.
+pub fn recorded_on(n: usize, area: &str) -> String {
+    let what = if n == 1 { "element" } else { "elements" };
+    format!("Recorded {n} {what} as seen on {}.", area.trim())
+}
+
+/// The page in `browser` as text, `limit` lines at most: what
+/// `get_autorun_page` answers. `root` is where the discovery map lives,
+/// `None` when there is nowhere to file (no project, no data folder).
+///
+/// During a discovery a read of the page counts exactly as an action's
+/// read of it does (the same page text, filed by the same `read_and_file`),
+/// so a read of the whole page explores it. It is filed under the
+/// discovery's current area, and the answer ends with one line saying how
+/// many elements were recorded as seen there. A discovery with no area yet
+/// records nothing and says so (`READ_WITH_NO_AREA`): the case's area or
+/// the unattributed bucket would file it where the discovery is not.
+///
+/// Outside a discovery the read is filed as it always was
+/// (`discovery_sighting`: the area of the case the browser last ran, else
+/// the unattributed bucket), never explores anything, and the answer is the
+/// page text alone.
+pub async fn page_read_in<B: DiscoveryBrowser>(
+    browser: &mut B,
+    root: Option<&std::path::Path>,
+    organization: &str,
+    project: &str,
+    tabs_case: Option<i32>,
+    limit: usize,
+) -> (u16, String) {
+    let p = browser.parts();
+    let discovery_area = p.discovery.as_ref().map(|s| named(s.area.as_deref()));
+    let at = root.and_then(|root| {
+        discovery_sighting(root, organization, project, p.discovery.as_ref(), tabs_case, p.signed_in.as_deref())
+    });
+    let Some(area) = discovery_area else {
+        return read_page(p.driver, limit, at.as_ref()).await;
+    };
+    let Some(area) = area else {
+        let (status, text) = read_page(p.driver, limit, None).await;
+        return if status == 200 { (status, format!("{text}\n\n{READ_WITH_NO_AREA}")) } else { (status, text) };
+    };
+    let (status, text, filed) = read_and_file(p.driver, limit, at.as_ref()).await;
+    if status != 200 {
+        return (status, text);
+    }
+    // Named as the map files it.
+    let area = match root {
+        Some(root) => crate::autorun::discovery_map::canonical_area(root, organization, project, &area),
+        None => area,
+    };
+    let line = match filed {
+        Filed::Recorded(n) => recorded_on(n, &area),
+        Filed::OffOrigin => READ_OFF_THE_APP.to_string(),
+        Filed::Not | Filed::Unrecorded => READ_NOT_FILED.to_string(),
+    };
+    (status, format!("{text}\n\n{line}"))
 }
 
 /// Where what the live page shows is filed in the discovery map
@@ -1694,6 +1776,27 @@ pub struct Sighting {
     pub account: Option<String>,
     /// When the discovery under way started, or `None` outside one.
     pub discovering: Option<u64>,
+    /// The application's own origins, as a discovery's `navigate` is held
+    /// to them (`runner::policy_for` the project's recipe): a page read
+    /// files nothing from a page this does not allow.
+    pub policy: crate::browser::actions::Policy,
+}
+
+/// The origins a page read may file from: those of the project's recipe in
+/// the active environment, as an action's address is checked; any, with no
+/// recipe (`runner::policy_for(None)`, as for actions); none, when the
+/// recipe cannot be read, so an unreadable recipe never widens what counts.
+pub fn recording_policy(root: &std::path::Path, organization: &str, project: &str) -> crate::browser::actions::Policy {
+    match crate::autorun::recipe::load_effective_recipe_if_any(root, organization, project) {
+        Ok(recipe) => crate::autorun::runner::policy_for(recipe.as_ref()),
+        Err(why) => {
+            // The error itself can quote the file (an address in it), so
+            // only its kind is logged.
+            let kind = if why.starts_with("the sign-in recipe is not readable") { "not a valid recipe" } else { "a file error" };
+            unrecorded(&format!("the sign-in recipe could not be read ({kind}), so no page read is filed"));
+            crate::browser::actions::Policy::only(vec![])
+        }
+    }
 }
 
 /// The area a recording belongs to: the discovery's own area, else the area
@@ -1750,6 +1853,7 @@ pub fn discovery_sighting(
         area: recording_area(root, discovery.and_then(|s| s.area.as_deref()), tabs_case),
         account: discovery.and_then(|s| s.account.clone()).or_else(|| signed_in.map(str::to_string)),
         discovering: discovery.map(|s| s.started_at),
+        policy: recording_policy(root, organization, project),
         root: root.to_path_buf(),
         org: organization.to_string(),
         project: project.to_string(),
@@ -1760,12 +1864,20 @@ pub fn discovery_sighting(
 /// fragment; empty when it cannot be read) and its title. The address is
 /// read as `nav::go_to_module` reads it to compare with `arrived`.
 pub async fn current_page<D: crate::browser::cdp::Driver>(d: &mut D) -> (String, String) {
+    let (href, title) = page_address(d).await;
+    let path = if href.trim().is_empty() { String::new() } else { crate::autorun::discovery_map::path_only(&href) };
+    (path, title)
+}
+
+/// The page's full address (empty when it cannot be read) and its title.
+/// The address is only checked against the allowed origins and cut to its
+/// path: it is never logged or answered whole.
+async fn page_address<D: crate::browser::cdp::Driver>(d: &mut D) -> (String, String) {
     let href = crate::browser::page::eval_value(d, "location.href").await;
     let href = href.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
     let title = crate::browser::page::eval_value(d, "document.title").await;
     let title = title.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-    let path = if href.trim().is_empty() { String::new() } else { crate::autorun::discovery_map::path_only(&href) };
-    (path, title)
+    (href, title)
 }
 
 /// A recording that could not be written is said in the log and never
@@ -1781,53 +1893,113 @@ pub async fn read_page<D: crate::browser::cdp::Driver>(
     limit: usize,
     at: Option<&Sighting>,
 ) -> (u16, String) {
-    let (text, lines) = match crate::browser::snapshot::snapshot_with_lines(d, limit).await {
-        Ok(read) => read,
-        Err(e) => return (503, format!("the browser did not answer: {e}")),
-    };
-    if let Some(at) = at {
-        let (path, title) = current_page(d).await;
-        let recorded = if path.is_empty() {
-            Err("the page's address could not be read".to_string())
-        } else {
-            crate::autorun::discovery_map::record_seen(
-                &at.root,
-                &at.org,
-                &at.project,
-                at.area.as_deref(),
-                &path,
-                &title,
-                &lines,
-                at.account.as_deref(),
-                at.discovering,
-                crate::autorun::sessions::now_ms(),
-            )
-        };
-        if let Err(why) = recorded {
-            unrecorded(&why);
-        }
-    }
-    (200, text)
+    let (status, text, _) = read_and_file(d, limit, at).await;
+    (status, text)
 }
 
-/// Files each locator in `targets` at `at` under the page at `path`.
-fn record_matched_targets(at: &Sighting, path: &str, targets: &[&crate::browser::locator::Target]) {
-    if targets.is_empty() || at.project.trim().is_empty() {
-        return;
-    }
-    if path.is_empty() {
+/// What a page read filed in the discovery map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Filed {
+    /// Nowhere to file it (`at` was none), or the read failed.
+    Not,
+    /// This many distinct elements recorded as seen.
+    Recorded(usize),
+    /// The page is not on the application's own origins (`Sighting::policy`).
+    OffOrigin,
+    /// It could not be written; the log says why.
+    Unrecorded,
+}
+
+/// `read_page`, saying what it filed. The single path every page read
+/// records through: only the lines the read returned are filed, a page the
+/// application's origins do not allow files nothing, and a read the line
+/// limit cut short files what it returned without exploring the page
+/// (`discovery_map::record_read`).
+pub async fn read_and_file<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    limit: usize,
+    at: Option<&Sighting>,
+) -> (u16, String, Filed) {
+    let read = match crate::browser::snapshot::snapshot_read(d, limit).await {
+        Ok(read) => read,
+        Err(e) => return (503, format!("the browser did not answer: {e}"), Filed::Not),
+    };
+    let Some(at) = at else {
+        return (200, read.text, Filed::Not);
+    };
+    let (href, title) = page_address(d).await;
+    if href.trim().is_empty() {
         unrecorded("the page's address could not be read");
-        return;
+        return (200, read.text, Filed::Unrecorded);
     }
+    if !may_record(&href, &at.policy) {
+        crate::applog::info(format!(
+            "Discovery map: a page read was not filed, as the page is not on {}",
+            crate::browser::actions::ALLOWED_ORIGINS
+        ));
+        return (200, read.text, Filed::OffOrigin);
+    }
+    let recorded = crate::autorun::discovery_map::record_read(
+        &at.root,
+        &at.org,
+        &at.project,
+        at.area.as_deref(),
+        &crate::autorun::discovery_map::path_only(&href),
+        &title,
+        &read.lines,
+        at.account.as_deref(),
+        at.discovering,
+        !read.cut,
+        crate::autorun::sessions::now_ms(),
+    );
+    match recorded {
+        Ok(n) => (200, read.text, Filed::Recorded(n)),
+        Err(why) => {
+            unrecorded(&why);
+            (200, read.text, Filed::Unrecorded)
+        }
+    }
+}
+
+/// Can a page at `href` (its full address) be filed as seen: only a page
+/// of the application counts. An address that is not an http, https or
+/// file page (about:blank, a browser error page) never is, even when no
+/// recipe limits the origins; one `policy` does not allow never is either.
+pub fn may_record(href: &str, policy: &crate::browser::actions::Policy) -> bool {
+    crate::autorun::recipe::origin_of(href).is_some() && policy.allows(href)
+}
+
+/// Files each locator in `targets` at `at` under the page at `href` (its
+/// full address, cut to its path here), only when `may_record` allows that
+/// page. Says whether every locator was filed.
+fn record_matched_targets(at: &Sighting, href: &str, targets: &[&crate::browser::locator::Target]) -> bool {
+    if targets.is_empty() || at.project.trim().is_empty() {
+        return false;
+    }
+    if href.trim().is_empty() {
+        unrecorded("the page's address could not be read");
+        return false;
+    }
+    if !may_record(href, &at.policy) {
+        crate::applog::info(format!(
+            "Discovery map: a matched locator was not filed, as the page is not on {}",
+            crate::browser::actions::ALLOWED_ORIGINS
+        ));
+        return false;
+    }
+    let path = crate::autorun::discovery_map::path_only(href);
     let now = crate::autorun::sessions::now_ms();
+    let mut filed = true;
     for target in targets {
         let area = at.area.as_deref();
         if let Err(why) =
-            crate::autorun::discovery_map::record_matched(&at.root, &at.org, &at.project, area, path, target, now)
+            crate::autorun::discovery_map::record_matched(&at.root, &at.org, &at.project, area, &path, target, now)
         {
             unrecorded(&why);
+            filed = false;
         }
     }
+    filed
 }
 
 /// The locators an action that WORKED must have matched at least once.
@@ -1928,8 +2100,8 @@ pub async fn probe_page<D: crate::browser::cdp::Driver>(
         Err(e) => return (503, format!("the browser did not answer: {e}")),
     };
     if let Some(at) = at.filter(|_| probe_matches(&text) > 0) {
-        let (path, _) = current_page(d).await;
-        record_matched_targets(at, &path, &[target]);
+        let (href, _) = page_address(d).await;
+        record_matched_targets(at, &href, &[target]);
     }
     (200, text)
 }
@@ -1985,11 +2157,13 @@ pub async fn record_refused_in<B: DiscoveryBrowser>(
         if !one_visible_match(&text) {
             continue;
         }
-        if let Some(at) = at.as_ref() {
-            let (path, _) = current_page(p.driver).await;
-            record_matched_targets(at, &path, &[target]);
+        let Some(at) = at.as_ref() else {
+            continue;
+        };
+        let (href, _) = page_address(p.driver).await;
+        if record_matched_targets(at, &href, &[target]) {
+            recorded.push(described);
         }
-        recorded.push(described);
     }
     if unchecked > 0 {
         crate::applog::warn(format!("Auto Run save: {unchecked} refused locator(s) could not be checked on the page"));
@@ -2685,6 +2859,216 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     (200, answer.to_string())
 }
 
+/// The batch cap as a literal, so `MAX_BATCH` and the sentences that name
+/// it are built from the one number.
+macro_rules! max_batch {
+    () => {
+        20
+    };
+}
+
+/// The most actions `discover_autorun_actions` runs in one call.
+pub const MAX_BATCH: usize = max_batch!();
+
+/// Said to a batch of more than `MAX_BATCH` actions.
+pub const BATCH_TOO_LONG: &str = concat!("at most ", max_batch!(), " actions in one call");
+
+/// Said to a batch with no actions in it.
+pub const BATCH_EMPTY: &str = "send at least one action in \"actions\"";
+
+/// A batch's size, refused when it holds nothing or more than `MAX_BATCH`.
+pub fn refuse_batch_size(n: usize) -> Result<(), (u16, String)> {
+    match n {
+        0 => Err((400, BATCH_EMPTY.to_string())),
+        n if n > MAX_BATCH => Err((400, BATCH_TOO_LONG.to_string())),
+        _ => Ok(()),
+    }
+}
+
+/// The draft a batch's action is tried with: `draft` for a `use_component`
+/// that names it, else none (a saved component, or not a component).
+fn draft_for<'a>(
+    action: &crate::browser::actions::Action,
+    draft: Option<&'a crate::autorun::components::Component>,
+) -> Option<&'a crate::autorun::components::Component> {
+    let key = crate::autorun::nav::module_key;
+    match (action, draft) {
+        (crate::browser::actions::Action::UseComponent { component, .. }, Some(c)) if key(&c.name) == key(component) => {
+            Some(c)
+        }
+        _ => None,
+    }
+}
+
+/// One line of a batch's answer for an action that ran, from its single
+/// answer (`discover_action_in`'s JSON): ok or failed with the detail, the
+/// dialogs it raised, the writes it set off (method and path only), the
+/// page path when it changed, whether its own page read failed, and where
+/// its picture is.
+fn batch_line(n: usize, action: &crate::browser::actions::Action, v: &serde_json::Value, last_path: &mut Option<String>) -> String {
+    let ok = v["ok"].as_bool().unwrap_or(false);
+    let detail = v["detail"].as_str().map(str::trim).filter(|d| !d.is_empty());
+    let mut said = one_short_line(&detail.map(str::to_string).unwrap_or_else(|| describe_action(action)));
+    for dialog in v["dialogs"].as_array().into_iter().flatten().filter_map(|d| d.as_str()) {
+        said.push_str(&format!("; dialog {}", one_short_line(dialog)));
+    }
+    for write in v["writes"].as_array().into_iter().flatten() {
+        let (method, path) = (write["method"].as_str().unwrap_or(""), write["path"].as_str().unwrap_or(""));
+        said.push_str(&format!("; wrote {method} {path}"));
+    }
+    if let Some(path) = v["path"].as_str().filter(|p| !p.trim().is_empty()) {
+        if last_path.as_deref() != Some(path) {
+            said.push_str(&format!("; page {path}"));
+            *last_path = Some(path.to_string());
+        }
+    }
+    if v.get("page_unavailable").is_some() {
+        said.push_str("; page unreadable");
+    }
+    if let Some(picture) = v["picture"].as_str() {
+        said.push_str(&format!("; picture {picture}"));
+    }
+    format!("{n}. {}: {said}", if ok { "ok" } else { "failed" })
+}
+
+/// Said when a batch stopped at a failure: how many actions were not run.
+fn not_run_line(n: usize) -> String {
+    let what = if n == 1 { "action was" } else { "actions were" };
+    format!("Stopped at the failure: {n} {what} not run.")
+}
+
+/// Said when a batch gave way to End discovery, Close browser or a
+/// release: how many actions were not run, and what may have asked. A
+/// release that timed out still asked, so the line never claims the
+/// discovery ended.
+pub fn ended_line(n: usize) -> String {
+    format!("Stopped: {n} not run - End discovery, Close browser or a release asked the batch to stop.")
+}
+
+/// The batch's stop control: set by End discovery, Close browser and both
+/// releases before they wait for the browser, so a batch holding it gives
+/// way before its next action instead of keeping them waiting. Cleared
+/// when a batch hears it, and before each batch starts.
+pub static BATCH_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ask the batch going, if any, to stop before its next action.
+pub fn stop_batch() {
+    BATCH_STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// A batch's answer when the browser failed under it: `lines` so far, and
+/// when the browser has gone (`let_go_if_silent` lets it go right here)
+/// `BROWSER_GONE` after them, with 409. A browser still there keeps the
+/// failure's own status.
+async fn batch_ended_by_the_browser<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    failure: (u16, String),
+    mut lines: Vec<String>,
+) -> (u16, String) {
+    let (status, said) = let_go_if_silent(slot, failure).await;
+    if said == BROWSER_GONE {
+        lines.push(BROWSER_GONE.to_string());
+        return (409, lines.join("\n"));
+    }
+    (status, lines.join("\n"))
+}
+
+/// Several actions in the discovery's browser, in order, each exactly as
+/// `discover_action_in` runs one: its own blocking and counting in a
+/// mapping run, its own page read and the sightings that read records, and
+/// a `use_component` naming `draft` tried with it. `area`, when named,
+/// moves the discovery there once, before the first action, so even a
+/// first action refused before the browser is touched leaves the batch in
+/// the named area. The caller holds the browser for the whole batch, so
+/// nothing comes between its actions; `stop` (`BATCH_STOP` from the route)
+/// is checked before each action, and when it is set the batch answers what
+/// ran and lets the browser go at once.
+///
+/// It stops at the first action that fails unless `stop_on_failure` is
+/// false; a browser that fails stops it either way, and a browser that has
+/// gone is let go here, keeping the lines of the actions that ran. The
+/// answer is one line per action that ran (`N. ok: ...` or `N. failed:
+/// ...`), a line for the actions not run, the saves a mapping run blocked
+/// when there were any, and then the page once, as `get_autorun_page`
+/// answers it after the last action (`page_read_in`). As a whole read, that
+/// last read replaces the page's elements just as `get_autorun_page` after
+/// a single action does: something only the last action's own read saw (a
+/// message that has since gone) is dropped.
+#[allow(clippy::too_many_arguments)]
+pub async fn discover_actions_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    actions: &[crate::browser::actions::Action],
+    draft: Option<&crate::autorun::components::Component>,
+    area: Option<&str>,
+    stop_on_failure: bool,
+    stop: &std::sync::atomic::AtomicBool,
+) -> (u16, String) {
+    if let Err(refused) = refuse_batch_size(actions.len()) {
+        return refused;
+    }
+    let Some(state) = slot.as_mut().and_then(|b| b.parts().discovery.as_mut()) else {
+        return (409, NO_DISCOVERY.to_string());
+    };
+    if let Some(moved) = named(area) {
+        state.area = Some(crate::autorun::discovery_map::canonical_area(root, organization, project, &moved));
+    }
+    let mut lines = Vec::new();
+    let mut blocked = 0usize;
+    let mut last_path = None;
+    let mut ran = 0;
+    for (i, action) in actions.iter().enumerate() {
+        if stop.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            lines.push(ended_line(actions.len() - i));
+            return (409, lines.join("\n"));
+        }
+        let (status, body) =
+            discover_action_in(slot, root, organization, project, action, draft_for(action, draft), None).await;
+        ran = i + 1;
+        if status != 200 {
+            // The browser failed or the discovery is gone: nothing after
+            // it can run.
+            let stopped = said_browser_failed(&(status, body.clone())) || body == NO_DISCOVERY;
+            lines.push(format!("{}. failed: {}", i + 1, one_short_line(&body)));
+            if stopped {
+                if ran < actions.len() {
+                    lines.push(not_run_line(actions.len() - ran));
+                }
+                return batch_ended_by_the_browser(slot, (status, body), lines).await;
+            }
+            if stop_on_failure {
+                break;
+            }
+            continue;
+        }
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+        blocked += v["blocked"].as_u64().map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX));
+        lines.push(batch_line(i + 1, action, &v, &mut last_path));
+        if stop_on_failure && !v["ok"].as_bool().unwrap_or(false) {
+            break;
+        }
+    }
+    if ran < actions.len() {
+        lines.push(not_run_line(actions.len() - ran));
+    }
+    if blocked > 0 {
+        lines.push(format!("Saves blocked by the mapping run: {blocked}."));
+    }
+    let Some(browser) = slot.as_mut() else {
+        return (409, NO_DISCOVERY.to_string());
+    };
+    let filing = if project.trim().is_empty() { None } else { Some(root) };
+    let (status, page) =
+        page_read_in(browser, filing, organization, project, None, crate::browser::snapshot::DEFAULT_LIMIT).await;
+    if status != 200 {
+        lines.push(format!("The page could not be read: {}", one_short_line(&page)));
+        return batch_ended_by_the_browser(slot, (status, page), lines).await;
+    }
+    (200, format!("{}\n\n{page}", lines.join("\n")))
+}
+
 /// Said to a discovery's `use_component` naming a component the project
 /// has not saved, sent without a `draft`: how a new one is tried.
 pub fn not_saved_try_draft(name: &str) -> String {
@@ -3346,6 +3730,112 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
     answer
 }
 
+/// `/autorun-discover-actions`: several actions in the discovery's browser,
+/// in order, under one hold of it (`discover_actions_in`). Every action is
+/// checked as `/autorun-discover-action` checks one, all before the
+/// browser is touched: a batch with one refused action runs none. A
+/// `draft` is tried by each `use_component` that names it; `area` moves the
+/// discovery before the first action.
+async fn autorun_discover_actions(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    const SHAPE: &str = concat!("{ \"actions\": [<script actions, at most ", max_batch!(), ">], \"stop_on_failure\": <true or false, optional, true by default>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional> }");
+    let raw = match body_field(body, "actions", SHAPE) {
+        Ok(v) => v,
+        Err(refused) => return refused,
+    };
+    let Some(raw) = raw.as_array() else {
+        return (400, format!("\"actions\" is a list of actions. Expected {SHAPE}."));
+    };
+    if let Err(refused) = refuse_batch_size(raw.len()) {
+        return refused;
+    }
+    let mut actions = Vec::with_capacity(raw.len());
+    for (i, one) in raw.iter().enumerate() {
+        match serde_json::from_value::<crate::browser::actions::Action>(one.clone()) {
+            Ok(a) => actions.push(a),
+            Err(e) => {
+                return (
+                    400,
+                    format!("action {} is not an action: {e} - call get_autorun_guide for the vocabulary.", i + 1),
+                )
+            }
+        }
+    }
+    for (i, action) in actions.iter().enumerate() {
+        if let Err((status, why)) = refuse_as_a_tried_action(action) {
+            return (status, format!("action {}: {why}", i + 1));
+        }
+    }
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    let stop_on_failure = match v.get("stop_on_failure") {
+        None | Some(serde_json::Value::Null) => true,
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(_) => return (400, format!("\"stop_on_failure\" is true or false. Expected {SHAPE}.")),
+    };
+    let area = named(v.get("area").and_then(|a| a.as_str()));
+    let draft: Option<crate::autorun::components::Component> = match v.get("draft") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(raw) => match serde_json::from_value(raw.clone()) {
+            Ok(c) => Some(c),
+            Err(e) => return (400, format!("that draft is not a component: {e}. Expected {SHAPE}.")),
+        },
+    };
+    if let Some(c) = &draft {
+        if !actions.iter().any(|a| draft_for(a, Some(c)).is_some()) {
+            return (400, format!("a draft is tried by a use_component action that names it. Expected {SHAPE}."));
+        }
+    }
+    if let Some(busy) = unattended_run_is_using_the_browser() {
+        return busy;
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let recipe = match crate::autorun::recipe::load_effective_recipe(&root, &ctx.org, &ctx.project) {
+        Ok(r) => r,
+        Err(why) => return (409, why),
+    };
+    let policy = crate::autorun::runner::policy_for(Some(&recipe));
+    for (i, action) in actions.iter().enumerate() {
+        if let Err((status, why)) = refuse_outside_the_recipe(&policy, action) {
+            return (status, format!("action {}: {why}", i + 1));
+        }
+    }
+    // Every component expanded as its action would expand it, so one that
+    // is not saved, misses an input or leads outside the recipe refuses
+    // the batch before any earlier action drives the browser.
+    for (i, action) in actions.iter().enumerate() {
+        if let crate::browser::actions::Action::UseComponent { component, inputs } = action {
+            if let Err((status, why)) =
+                component_to_try(&root, &ctx.org, &ctx.project, component, inputs, draft_for(action, draft.as_ref()))
+            {
+                return (status, format!("action {}: {why}", i + 1));
+            }
+        }
+    }
+    // A stop asked for before this batch is not this batch's.
+    BATCH_STOP.store(false, std::sync::atomic::Ordering::SeqCst);
+    // Held for the whole batch: nothing else drives the browser between
+    // its actions. End discovery, Close browser or a release asks it to
+    // give way (`BATCH_STOP`). A gone browser is let go inside, keeping
+    // the lines of the actions that ran.
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let answer = discover_actions_in(
+        &mut slot,
+        &root,
+        &ctx.org,
+        &ctx.project,
+        &actions,
+        draft.as_ref(),
+        area.as_deref(),
+        stop_on_failure,
+        &BATCH_STOP,
+    )
+    .await;
+    crate::commands::autorun::publish_discovery(&slot);
+    answer
+}
+
 /// `/autorun-component-save`: a component, under every save rule
 /// (`components::save_tried`), against the open discovery: its area and
 /// the components it tried that worked. With no discovery going, nothing
@@ -3372,6 +3862,11 @@ async fn autorun_component_save(
         None | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::String(s)) => Some(s.clone()),
         Some(_) => return (400, "\"why\" is one sentence".to_string()),
+    };
+    let dry_run = match v.get("dry_run") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(_) => return (400, "\"dry_run\" is true or false.".to_string()),
     };
     let root = match autorun_root() {
         Ok(r) => r,
@@ -3413,11 +3908,54 @@ async fn autorun_component_save(
         // No discovery can be going while an unattended run has the
         // browser, so the save is refused for that, as it always was.
         let mut none: Option<crate::commands::autorun::Session> = None;
+        if dry_run {
+            return dry_run_component_in(&mut none, &root, &ctx.org, &ctx.project, draft, why.as_deref(), now, cases.as_ref());
+        }
         return save_component_in(&mut none, &root, &ctx.org, &ctx.project, draft, why.as_deref(), now, cases.as_ref())
             .await;
     }
     let mut slot = crate::commands::autorun::supervised().lock().await;
+    if dry_run {
+        return dry_run_component_in(&mut slot, &root, &ctx.org, &ctx.project, draft, why.as_deref(), now, cases.as_ref());
+    }
     save_component_in(&mut slot, &root, &ctx.org, &ctx.project, draft, why.as_deref(), now, cases.as_ref()).await
+}
+
+/// A component save's dry run (`"dry_run": true`) against the discovery
+/// going in `slot`: every rule a save makes (`components::check_tried`),
+/// answered as the save would answer it, or `would_save` with the version
+/// it would become. Nothing is written, nothing is probed or recorded, and
+/// it is not a try of the component.
+#[allow(clippy::too_many_arguments)]
+pub fn dry_run_component_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    draft: crate::autorun::components::Component,
+    why: Option<&str>,
+    now: u64,
+    cases: Option<&crate::autorun::components::UserCases>,
+) -> (u16, String) {
+    use crate::autorun::components::{check_tried, TriedIn};
+    let held = match slot.as_mut() {
+        Some(b) => b.parts().discovery.as_ref().map(|d| (d.area.clone(), d.tried.clone())),
+        None => None,
+    };
+    let session = held.as_ref().map(|(area, tried)| TriedIn { area: area.as_deref(), tried });
+    match check_tried(root, organization, project, draft, why, session, now, cases) {
+        Ok(would) => (
+            200,
+            serde_json::json!({
+                "would_save": would.saved,
+                "version": would.version,
+                "changes": would.changes,
+                "cap_reached": would.cap_reached,
+            })
+            .to_string(),
+        ),
+        Err(why) => component_answer(Err(why)),
+    }
 }
 
 /// A component save (`components::save_tried`) against the discovery going
@@ -3841,7 +4379,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // The page the try starts on: a click that navigates was matched on
     // this page, not the one it leads to.
     let matched = matched_targets(action);
-    let started_on = if matched.is_empty() { String::new() } else { current_page(d).await.0 };
+    let started_on = if matched.is_empty() { String::new() } else { page_address(d).await.0 };
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
     let mut run = InRun { areas: Some(&areas), saves_only_counted, ..Default::default() };
     let outcomes = match crate::autorun::runner::run_step_in_run(
@@ -3878,6 +4416,8 @@ async fn try_action<D: crate::browser::cdp::Driver>(
             area: recording_area(root, discovery_area, Some(case_id)),
             account: None,
             discovering: None,
+            // Only the application's own pages count (`may_record`).
+            policy: recording_policy(root, organization, project),
         };
         record_matched_targets(&at, &started_on, &matched);
     }
@@ -4544,11 +5084,13 @@ async fn db_query(ctx: &BridgeContext, body: &str) -> (u16, String) {
 /// back rather than dropped - a misspelled "edits" that was silently
 /// ignored would let an undeclared repair through as if it were a new
 /// script.
-const SAVE_BODY_KEYS: [&str; 2] = ["scripts", "edits"];
+const SAVE_BODY_KEYS: [&str; 3] = ["scripts", "edits", "dry_run"];
 
 struct SaveRequest {
     scripts: Vec<crate::autorun::CaseScript>,
     edits: Vec<crate::autorun::edits::Edit>,
+    /// Run every check and say what would happen, writing nothing.
+    dry_run: bool,
 }
 
 fn bad_scripts(e: serde_json::Error) -> String {
@@ -4575,6 +5117,7 @@ fn bad_edits(e: serde_json::Error) -> String {
 /// no declaration, the same as leaving it out.
 fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
     let v: serde_json::Value = serde_json::from_str(body).map_err(bad_scripts)?;
+    let mut dry_run = false;
     let (mut scripts_value, edits_value) = match v {
         serde_json::Value::Array(_) => (v, None),
         serde_json::Value::Object(mut map) => {
@@ -4585,11 +5128,16 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
                 .collect();
             if !unknown.is_empty() {
                 return Err(format!(
-                    "this body carries {} save_autorun_script does not read: {}. It reads \"scripts\" and \"edits\".",
+                    "this body carries {} save_autorun_script does not read: {}. It reads \"scripts\", \"edits\" and \"dry_run\".",
                     if unknown.len() == 1 { "a key" } else { "keys" },
                     unknown.join(", ")
                 ));
             }
+            dry_run = match map.remove("dry_run") {
+                None | Some(serde_json::Value::Null) => false,
+                Some(serde_json::Value::Bool(b)) => b,
+                Some(_) => return Err("\"dry_run\" is true or false.".to_string()),
+            };
             let scripts = map.remove("scripts").ok_or_else(|| {
                 "this body has no \"scripts\". Send { \"scripts\": [...], \"edits\": [...] }.".to_string()
             })?;
@@ -4651,7 +5199,7 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
         }
         edits.push(edit);
     }
-    Ok(SaveRequest { scripts, edits })
+    Ok(SaveRequest { scripts, edits, dry_run })
 }
 
 /// The case and steps a repair's quirk is about, with the class of the
@@ -4762,7 +5310,7 @@ async fn save_autorun_scripts(
     client: Option<&crate::ado::AdoClient>,
     body: &str,
 ) -> (u16, String) {
-    let SaveRequest { scripts, edits } = match parse_save_request(body) {
+    let SaveRequest { scripts, edits, dry_run } = match parse_save_request(body) {
         Ok(r) => r,
         Err(e) => return (400, e),
     };
@@ -4912,10 +5460,12 @@ async fn save_autorun_scripts(
                 seen_scope.push((sent.case_id, crate::autorun::seen_check::steps_to_check(declared)));
                 if let Some(e) = declared {
                     let why = e.why.trim();
-                    crate::applog::info(format!(
-                        "AI repaired case {} steps {:?}: {why}",
-                        script.case_id, e.steps
-                    ));
+                    if !dry_run {
+                        crate::applog::info(format!(
+                            "AI repaired case {} steps {:?}: {why}",
+                            script.case_id, e.steps
+                        ));
+                    }
                     script.last_repair = Some(why.to_string());
                     if let Some(d) = old.suspected_defect.as_ref().filter(|d| e.steps.contains(&d.step_number)) {
                         repaired_marks.push((script.case_id, d.step_number));
@@ -5020,6 +5570,10 @@ async fn save_autorun_scripts(
         if !seen_scope.is_empty() {
             let (map, components, files) = seen_check_inputs(&root, ctx, uses_components, &saved_scripts)
                 .map_err(|e| SaveRefusal::Other(400, e))?;
+            // Every script is checked, and every locator never seen in any
+            // of them is named at once; a refusal of any other kind is
+            // answered alone, as it always was.
+            let mut unseen: Vec<(i32, Vec<String>)> = Vec::new();
             for (case_id, only) in &seen_scope {
                 let (Some(script), Some(case)) = (
                     prepared.iter().find(|s| s.case_id == *case_id),
@@ -5030,18 +5584,29 @@ async fn save_autorun_scripts(
                         format!("case {case_id} could not be checked against the live app, so it was not saved"),
                     ));
                 };
-                crate::autorun::seen_check::check_seen_with_files(
+                use crate::autorun::seen_check::SeenVerdict;
+                match crate::autorun::seen_check::seen_verdict(
                     &map,
                     &components,
                     script,
                     &case_step_text(case),
                     only.as_deref(),
                     &files,
-                )
-                .map_err(SaveRefusal::Unseen)?;
+                ) {
+                    SeenVerdict::Passed => {}
+                    SeenVerdict::Other(why) => return Err(SaveRefusal::Unseen(why)),
+                    SeenVerdict::Unseen(lines) => unseen.push((*case_id, lines)),
+                }
+            }
+            if !unseen.is_empty() {
+                return Err(SaveRefusal::Unseen(unseen_in_bundle(&unseen)));
             }
         }
-        // Everything has passed; now the disk.
+        // Everything has passed. A dry run checks the bundle as the write
+        // would and stops there; a save writes it.
+        if dry_run {
+            return crate::autorun::store::check_scripts(&prepared).map_err(|e| SaveRefusal::Other(400, e));
+        }
         match crate::autorun::store::save_scripts_atomically(&root, &prepared) {
             Ok(()) => Ok(()),
             Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => Err(SaveRefusal::Other(400, e)),
@@ -5053,9 +5618,10 @@ async fn save_autorun_scripts(
     // With a component in use, the components load, the check and the
     // write hold the components lock, so a component save (which re-checks
     // the scripts that use it) cannot slip between them. Nothing in here
-    // awaits or saves a component.
+    // awaits or saves a component. A dry run writes nothing, so it does
+    // not hold the lock.
     let check_and_save_locked = || {
-        if uses_components {
+        if uses_components && !dry_run {
             crate::autorun::components::with_components_locked(check_and_save)
         } else {
             check_and_save()
@@ -5065,8 +5631,9 @@ async fn save_autorun_scripts(
     // Refused only for locators never seen, while a discovery is open: the
     // refused ones are checked on the discovery's current page, the ones
     // there are recorded, and the save is checked once more.
+    // Never on a dry run: it records nothing.
     let mut recorded: Option<Vec<String>> = None;
-    if matches!(checked, Err(SaveRefusal::Unseen(_))) {
+    if !dry_run && matches!(checked, Err(SaveRefusal::Unseen(_))) {
         let targets = seen_check_inputs(&root, ctx, uses_components, &saved_scripts).ok().and_then(|(map, components, files)| {
             let mut all: Vec<crate::browser::locator::Target> = Vec::new();
             for (case_id, only) in &seen_scope {
@@ -5104,6 +5671,9 @@ async fn save_autorun_scripts(
     };
     if let Err(refused) = checked {
         return answer(refused.said());
+    }
+    if dry_run {
+        return (200, format!("would save {} script(s): {}", prepared.len(), lines.join(", ")));
     }
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
 
@@ -5160,6 +5730,21 @@ async fn save_autorun_scripts(
         }
     }
     answer((200, report.join("\n")))
+}
+
+/// The refusal of a bundle whose scripts name locators never seen, from
+/// each refused case's lines in bundle order: the lines alone when one
+/// case is refused, each after "case <id>: " when more are; listed as
+/// `seen_check::refusal_list` lists them.
+fn unseen_in_bundle(unseen: &[(i32, Vec<String>)]) -> String {
+    let lines: Vec<String> = match unseen {
+        [(_, lines)] => lines.clone(),
+        many => many
+            .iter()
+            .flat_map(|(case_id, lines)| lines.iter().map(move |l| format!("case {case_id}: {l}")))
+            .collect(),
+    };
+    crate::autorun::seen_check::refusal_list(&lines)
 }
 
 /// Why a script save's last gate refused it: a locator never seen on the

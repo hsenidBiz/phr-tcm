@@ -72,6 +72,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Carry out one action while exploring, and see what it did and what it wrote.",
   },
   {
+    name: "discover_autorun_actions",
+    label: "Explore several actions",
+    summary: "Carry out up to 20 actions in order while exploring, and see how each went and the page they led to.",
+  },
+  {
     name: "save_autorun_area",
     label: "Save a found area",
     summary: "Save a screen found through the menus as an area, once its clicks are replayed and arrive.",
@@ -235,6 +240,7 @@ export const DEV_ONLY_TOOLS = [
   "replay_autorun_to_step",
   "start_autorun_discovery",
   "discover_autorun_action",
+  "discover_autorun_actions",
   "save_autorun_area",
   "end_autorun_discovery",
   "release_autorun_browser",
@@ -326,6 +332,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "replay_autorun_to_step",
     "start_autorun_discovery",
     "discover_autorun_action",
+    "discover_autorun_actions",
     "save_autorun_area",
     "end_autorun_discovery",
     "release_autorun_browser",

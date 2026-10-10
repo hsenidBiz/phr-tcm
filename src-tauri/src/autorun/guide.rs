@@ -58,10 +58,68 @@ pub const ACTION_KINDS: &[&str] = &[
 /// project has any on file - this constant only mentions that it will, so
 /// a person editing this Markdown by hand can never also go stale on a
 /// live project's quirks.
+///
+/// It opens with the Quick rules (`quick_rules`), the same text
+/// `get_autorun_guide` with `quick: true` answers on its own.
 pub fn autorun_guide() -> String {
-    r##"# Writing an Auto Run action script
+    let mut out = String::from("# Writing an Auto Run action script\n\n");
+    out.push_str(QUICK_RULES);
+    out.push('\n');
+    out.push_str(GUIDE_BODY);
+    out
+}
 
-An action script drives ONE test case through a real, visible browser -
+/// The Quick rules section alone: what `get_autorun_guide` with
+/// `quick: true` answers before the project's live sections. Every rule
+/// here is also in the full guide, in the section it belongs to;
+/// `tests/suite/autorun_guide.rs` holds the two together.
+pub fn quick_rules() -> String {
+    QUICK_RULES.to_string()
+}
+
+const QUICK_RULES: &str = r##"## Quick rules
+
+The short form of this guide, for work you have done before. When
+something comes up that these do not cover, call `get_autorun_guide`
+without `quick` and read the full guide.
+
+- Discover the live app; never read the application's code to write
+  scripts. A save refuses any locator the app has not seen.
+- During a discovery with an area, `get_autorun_page` records what it
+  shows as seen under that area.
+- `discover_autorun_actions` carries out up to 20 actions in order and
+  answers the page once. If any would be refused, none runs. It stops at
+  the first action that fails unless `stop_on_failure` is false, and
+  ending the discovery stops it before its next action.
+- Probe every final locator with `probe_autorun_locator`, exactly as it is
+  written in the script, immediately before saving.
+- Save with `"dry_run": true` to check a save without making it: writing
+  nothing and recording nothing. A refused save lists every locator never
+  seen, each with a hint when a close one was seen.
+- Try a component with `use_component` and `draft` before
+  `save_autorun_component`, then save it unchanged from the draft that
+  worked.
+- A step is either `unchecked` (no checks at all, and the reason) or
+  checked, never both.
+- Check a state with `expect_attribute` (`checked`, `aria-checked` or
+  `disabled`), not by adding a state to its selector.
+- A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
+  text, in a quoted attribute value, or next to fixed text in an id or
+  class. `{{prefix}}` and `{{now:...}}` are refused.
+- A picture is named by its full path: open it directly with the file
+  reader. Never search the disk for a picture.
+- Set `"no_save": true` on any script that works on a shared draft and
+  must not change it. A repair can turn `no_save` on, never off.
+- `end_autorun_discovery` closes the browser when you are done. A replay
+  to a failing step ends your own discovery first, keeping what it mapped.
+- When the sign-in fails, the session expires or you reach a cap, stop and
+  report to the person; never try again in a loop.
+- `release_autorun_browser` lets go of a browser the app still holds after
+  it closed, and ends your own discovery. Never ask the person to restart
+  the app.
+"##;
+
+const GUIDE_BODY: &str = r##"An action script drives ONE test case through a real, visible browser -
 either while a person watches and decides the verdict, or unattended,
 where the machine only proposes one. Nothing a script or a run does ever
 reaches Azure DevOps by itself; a person reviewing a finished run and
@@ -1027,7 +1085,19 @@ You open and drive a browser of your own to find what a script needs:
   appeared, and the requests that wrote data. Carry each of the case's
   steps out with it, the way a person would, and write the script from
   what happened. `get_autorun_page` and `probe_autorun_locator` work in
-  the discovery browser too.
+  the discovery browser too. During a discovery with an area,
+  `get_autorun_page` records what it shows as seen under that area, and
+  its answer ends with how many elements it recorded; with no area named
+  it records nothing and says how to name one.
+- `discover_autorun_actions` carries out up to 20 actions in order, each
+  carried out as `discover_autorun_action` would, and what each one's page
+  showed is recorded as seen. Every action is checked first: if any would
+  be refused, none runs and the answer names it, and a `draft` that no
+  use_component action names is refused. It answers one line per action,
+  ok or failed with the reason, then the page once, after the last action.
+  It stops at the first action that fails unless `stop_on_failure` is
+  false, and ending the discovery stops it before its next action. Use it
+  for steps you already know, such as a menu path or filling a form.
 - `save_autorun_area` saves a screen you reached through the menus as an
   area: its name, its test case Module, and the clicks from the home page.
   The app replays the clicks from the home page and saves the area only
@@ -1043,6 +1113,10 @@ You open and drive a browser of your own to find what a script needs:
   then it says so, and you ask the person to close it or to press Release
   Auto Run browser. It never stops a replay. Never ask the person to
   restart the app for any of this.
+
+When the sign-in fails, the session expires or you reach a cap (a mapping
+run's 150 screens, a script's 3 repairs, a component's 3 changes), stop and
+report to the person; never try again in a loop.
 
 What the app sees on a live page is kept in this project's map, area by
 area: while you explore, in the person's browser, and in replays. A save
@@ -1113,8 +1187,10 @@ What a save checks:
 A new script is checked in full. A script saved before is checked again
 only when it is next changed.
 
-A refusal names the step and the locator: `Step N: <the locator> was
-never seen on the live app.` Find it on the page with
+A refused save lists every locator never seen, in step order, one to a
+line, each with a hint when a close one was seen: `Step N: <the locator>
+was never seen on the live app.` (at most 50, then how many more). Find
+each on the page with
 `probe_autorun_locator` or `discover_autorun_action`, then save again.
 Never swap in a locator you did not see to get past the check.
 
@@ -1308,6 +1384,10 @@ Before every save:
   when something seen there fits around it; the value's shape is checked
   once the run has filled it in. When such a locator is still refused,
   open the fixture's draft by its unique name instead.
+- Save with `"dry_run": true` to check a save without making it: it runs
+  every check a save makes, the seen check included, and answers would
+  save, or the refusal a save would give (every locator never seen,
+  listed at once), writing nothing and recording nothing.
 - A save refused during a discovery only because some locators were never
   seen checks those locators on the discovery's current page once, on its
   own: each one found there exactly once, and visible, is recorded, and
@@ -1534,9 +1614,7 @@ plain sentence about what you saw, and leave the script alone.
 
 Nothing about a mark reaches Azure DevOps by itself; a person sends any
 reason.
-"##
-    .to_string()
-}
+"##;
 
 /// The live half of "Environments": which environment is active right now
 /// and whether `get_accounts` will include its passwords. Appended by the

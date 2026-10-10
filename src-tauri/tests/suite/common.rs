@@ -1108,3 +1108,21 @@ pub fn component_run(cases: Vec<v2_lib::autorun::CaseRecord>) -> v2_lib::autorun
     run.cases = cases;
     run
 }
+
+/// Every file under `root`, by its path, with its bytes.
+pub fn every_file(root: &std::path::Path) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else {
+                out.insert(path.clone(), std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    out
+}

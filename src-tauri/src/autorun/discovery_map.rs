@@ -14,10 +14,11 @@
 //! wizard that keeps one address for every step forgets the earlier steps
 //! as it moves on; its sightings do not. A sighting is never dropped for
 //! the number of newer ones. It goes when its area is forgotten, or when a
-//! later discovery reads its page and it was neither shown by that read
-//! nor seen since that discovery started (exploring again replaces, as for
-//! `elements`). `MAX_SIGHTINGS` is only a safety ceiling on the file's
-//! size: past it, the least recently seen sightings go first.
+//! later discovery reads its whole page and it was neither shown by that
+//! read nor seen since that discovery started (exploring again replaces, as
+//! for `elements`). A read cut short by its line limit drops nothing.
+//! `MAX_SIGHTINGS` is only a safety ceiling on the file's size: past it,
+//! the least recently seen sightings go first.
 
 use super::recipe::project_slug;
 use crate::browser::locator::{LocatorStep, SeenKey, Target};
@@ -313,6 +314,8 @@ pub fn page_path(url_or_path: &str) -> String {
         .join("/")
 }
 
+/// Files what a read of the whole page showed: `record_read` with `whole`
+/// set.
 #[allow(clippy::too_many_arguments)]
 pub fn record_seen(
     root: &Path,
@@ -326,22 +329,62 @@ pub fn record_seen(
     discovery: Option<u64>,
     now: u64,
 ) -> Result<(), String> {
+    record_read(root, org, project, area, page_path, title, lines, account, discovery, true, now).map(|_| ())
+}
+
+/// Files what one page read showed, `lines` being only the lines it
+/// returned, and answers how many distinct elements it recorded as seen.
+///
+/// A discovery's read of the WHOLE page (`whole`) explores that page: what
+/// the map held for it and this read did not show goes, unless it was seen
+/// since the discovery started. A read the line limit cut short (`whole`
+/// false) never counts as exploring the page: it adds and refreshes what it
+/// returned and drops nothing, because the lines past the cut were never
+/// looked at, and it leaves the area's `explored_at`, `failed_since` and
+/// `account` as they were.
+#[allow(clippy::too_many_arguments)]
+pub fn record_read(
+    root: &Path,
+    org: &str,
+    project: &str,
+    area: Option<&str>,
+    page_path: &str,
+    title: &str,
+    lines: &[SnapLine],
+    account: Option<&str>,
+    discovery: Option<u64>,
+    whole: bool,
+    now: u64,
+) -> Result<usize, String> {
     let path = self::page_path(page_path);
     let area = canonical_area(root, org, project, area.unwrap_or(""));
+    let mut recorded = 0;
     update(root, org, project, |map| {
         let a = area_mut(map, &area);
         // Only what a discovery sees in a named area marks that area
-        // explored: the bucket for no area is never explored.
-        if discovery.is_some() && !area.is_empty() {
+        // explored: the bucket for no area is never explored. A read the
+        // limit cut short saw only part of a page, so it never freshens the
+        // area either: no stamp, no clearing a failure, no account.
+        if discovery.is_some() && whole && !area.is_empty() {
             a.explored_at = Some(now);
             a.failed_since = false;
             a.account = account.map(str::to_string);
         }
         let page = page_mut(a, &path, title);
-        let old = match discovery {
+        let explores = discovery.filter(|_| whole);
+        let old = match explores {
             Some(_) => std::mem::take(&mut page.elements),
             None => vec![],
         };
+        let mut shown_locators: Vec<&Target> = Vec::new();
+        for line in lines {
+            if line.locator.links().last().and_then(LocatorStep::seen_key).is_some()
+                && !shown_locators.contains(&&line.locator)
+            {
+                shown_locators.push(&line.locator);
+            }
+        }
+        recorded = shown_locators.len();
         for line in lines {
             // The last link names the element; earlier links are frames.
             let Some(key) = line.locator.links().last().and_then(LocatorStep::seen_key) else { continue };
@@ -361,7 +404,7 @@ pub fn record_seen(
                 seen_at,
             });
         }
-        if let Some(started) = discovery {
+        if let Some(started) = explores {
             for e in old {
                 let matched_now = e.seen_at != 0 && e.seen_at >= started;
                 if matched_now && !page.elements.iter().any(|n| n.locator == e.locator) {
@@ -380,11 +423,12 @@ pub fn record_seen(
                 }
             }
         }
-        if let Some(started) = discovery {
+        if let Some(started) = explores {
             a.sightings.retain(|s| s.page != path || s.last_seen >= started || shown.contains(&s.key));
         }
         trim_sightings(a);
-    })
+    })?;
+    Ok(recorded)
 }
 
 /// Adds `link` to the area's sightings, or, when its key is there already

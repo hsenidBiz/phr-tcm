@@ -806,7 +806,10 @@ fn the_guide_never_points_at_the_source() {
     let stub = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> { Ok((200, "{}".into())) };
     let resp = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    let mut texts: Vec<(String, String)> = vec![("the guide".into(), autorun_guide())];
+    let mut texts: Vec<(String, String)> = vec![
+        ("the guide".into(), autorun_guide()),
+        ("the quick guide".into(), v2_lib::autorun::guide::quick_rules()),
+    ];
     for t in v["result"]["tools"].as_array().unwrap() {
         texts.push((format!("tool {}", t["name"]), t.to_string()));
     }
@@ -866,6 +869,7 @@ fn the_guide_names_the_discovery_tools_and_the_three_exceptions() {
     for tool in [
         "`start_autorun_discovery`",
         "`discover_autorun_action`",
+        "`discover_autorun_actions`",
         "`save_autorun_area`",
         "`end_autorun_discovery`",
         "`probe_autorun_locator`",
@@ -890,6 +894,11 @@ fn the_guide_names_the_discovery_tools_and_the_three_exceptions() {
         "Delete only records whose name carries that prefix",
         // A refused save.
         "then save again",
+        // The batch: its limit, its stopping and its one page.
+        "up to 20 actions in order",
+        "unless `stop_on_failure` is false",
+        "then the page once",
+        "if any would be refused, none runs",
     ] {
         assert!(flat.contains(said), "the discovery section never says {said:?}: {flat}");
     }
@@ -1190,5 +1199,104 @@ fn the_guide_states_the_save_rules() {
 
     for section in [saving, components] {
         assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+    }
+}
+
+/// The Quick rules open the guide, short enough to read every time, and
+/// with nothing in them an assistant must never read: no dash, no banned
+/// phrase, no hidden feature.
+#[test]
+fn the_guide_opens_with_the_quick_rules() {
+    use v2_lib::autorun::guide::quick_rules;
+    let g = autorun_guide();
+    let quick = quick_rules();
+    assert!(g.starts_with("# Writing an Auto Run action script\n\n## Quick rules\n"), "{}", &g[..200]);
+    assert_eq!(g.matches(quick.as_str()).count(), 1, "the quick rules are the guide's own, word for word, once");
+    assert!(quick.lines().count() <= 45, "the quick rules run to {} lines", quick.lines().count());
+    assert!(!quick.contains('\u{2014}') && !quick.contains('\u{2013}'), "no em or en dashes");
+    let lower = quick.to_lowercase();
+    for banned in ["read the source", "application's source", "source-derived"] {
+        assert!(!lower.contains(banned), "the quick rules say {banned:?}");
+    }
+    // docs-site/src/guard.test.ts: hidden features are never named. Its
+    // whole FORBIDDEN list, and the `\bdemo\b` its page check adds, case
+    // ignored as there.
+    for hidden in [
+        r"konami",
+        r"\bunlock",
+        r"\bextras\b",
+        r"dev panel",
+        r"demo data",
+        r"\bgames?\b",
+        r"api_template",
+        r"save_api_flow",
+        r"risk-tiered",
+        r"Test design rules",
+        r"get_api_flow_progress",
+        r"in dev(elopment)?\b",
+        r"\bdemo\b",
+    ] {
+        let re = regex::Regex::new(&format!("(?i){hidden}")).unwrap();
+        assert!(!re.is_match(&quick), "the quick rules name {hidden:?}");
+    }
+    assert!(quick.contains("call `get_autorun_guide`\nwithout `quick` and read the full guide"), "{quick}");
+}
+
+/// Review Focus 5: the quick guide never contradicts the full guide. Each
+/// quick rule's key phrase is in the quick rules and in the full guide's
+/// own section for that rule, so a rule cannot change in one place only.
+#[test]
+fn every_quick_rule_is_in_the_full_guide() {
+    use v2_lib::autorun::guide::quick_rules;
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = autorun_guide();
+    let quick = flat(&quick_rules());
+    let section = |name: &str| {
+        let from = g.find(&format!("\n## {name}\n")).unwrap_or_else(|| panic!("no section {name:?}"));
+        let rest = &g[from + 1..];
+        let end = rest[3..].find("\n## ").map(|e| e + 3).unwrap_or(rest.len());
+        flat(&rest[..end])
+    };
+    for (phrase, home) in [
+        ("never read the application's code to write scripts", "Discovering the app"),
+        ("A save refuses any locator the app has not seen", "Discovering the app"),
+        ("During a discovery with an area", "Discovering the app"),
+        ("`get_autorun_page` records what it shows as seen under that area", "Discovering the app"),
+        ("`discover_autorun_actions` carries out up to 20 actions in order", "Discovering the app"),
+        ("none runs", "Discovering the app"),
+        ("stops at the first action that fails unless `stop_on_failure` is false", "Discovering the app"),
+        ("ending the discovery stops it before its next action", "Discovering the app"),
+        (
+            "Probe every final locator with `probe_autorun_locator`, exactly as it is written in the script, immediately before saving",
+            "Saving it",
+        ),
+        ("Save with `\"dry_run\": true` to check a save without making it", "Saving it"),
+        ("writing nothing and recording nothing", "Saving it"),
+        ("A refused save lists every locator never seen", "Discovering the app"),
+        ("each with a hint when a close one was seen", "Discovering the app"),
+        (
+            "Try a component with `use_component` and `draft` before `save_autorun_component`, then save it unchanged from the draft that worked",
+            "Components",
+        ),
+        ("A step is either `unchecked` (no checks at all, and the reason) or checked, never both", "Saving it"),
+        ("Check a state with `expect_attribute`", "Saving it"),
+        ("(`checked`, `aria-checked` or `disabled`), not by adding a state to its selector", "Saving it"),
+        ("A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a text", "Saving it"),
+        ("in a quoted attribute value", "Saving it"),
+        ("next to fixed text in an id or class", "Saving it"),
+        ("`{{prefix}}` and `{{now:...}}`", "Saving it"),
+        ("open it directly with the file reader", "Seeing the page"),
+        ("Never search the disk for a picture", "Seeing the page"),
+        ("Set `\"no_save\": true` on any script that works on a shared draft and must not change it", "Scripts that must not save"),
+        ("A repair can turn `no_save` on, never off", "Scripts that must not save"),
+        ("`end_autorun_discovery` closes the browser when you are done", "Discovering the app"),
+        ("first, keeping what it mapped", "Repairing a script that failed"),
+        ("When the sign-in fails, the session expires or you reach a cap", "Discovering the app"),
+        ("stop and report to the person; never try again in a loop", "Discovering the app"),
+        ("the app still holds after it closed", "Discovering the app"),
+        ("Never ask the person to restart the app", "Discovering the app"),
+    ] {
+        assert!(quick.contains(phrase), "the quick rules never say {phrase:?}: {quick}");
+        assert!(section(home).contains(phrase), "\"{home}\" never says {phrase:?}");
     }
 }

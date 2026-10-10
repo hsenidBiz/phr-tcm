@@ -607,6 +607,7 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "replay_autorun_to_step",
             "start_autorun_discovery",
             "discover_autorun_action",
+            "discover_autorun_actions",
             "save_autorun_area",
             "end_autorun_discovery",
             "release_autorun_browser",
@@ -1671,6 +1672,7 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
         "delete only records carrying that prefix",
         "never read the application's code to write scripts",
         "Choosing a model for the work",
+        "`discover_autorun_actions` carries out up to 20 in one call",
     ] {
         assert!(flat.contains(said), "/tcm:discover never says {said:?}: {flat}");
     }
@@ -1815,5 +1817,30 @@ fn discover_and_heal_say_how_to_use_components() {
     }
     for body in [&discover, &heal] {
         assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
+    }
+}
+
+/// `/tcm:discover`, `/tcm:map-menus` and `/tcm:heal` read the quick guide
+/// first, and the full guide when something it does not cover comes up.
+#[test]
+fn the_commands_point_at_the_quick_guide() {
+    for stem in ["discover", "map-menus", "heal"] {
+        let c = COMMANDS.iter().find(|c| c.stem == stem).unwrap();
+        let flat = c.body.join("\n").split_whitespace().collect::<Vec<_>>().join(" ");
+        for said in [
+            "Call `get_autorun_guide` with `quick` true first and follow it.",
+            "Call it again without `quick` for the full guide when something the quick rules do not cover comes up",
+        ] {
+            assert!(flat.contains(said), "/tcm:{stem} never says {said:?}: {flat}");
+        }
+        let quick = flat.find("`get_autorun_guide` with `quick` true").unwrap();
+        let first_tool = ["get_test_cases", "start_autorun_discovery", "get_autorun_failures"]
+            .iter()
+            .filter_map(|t| flat.find(&format!("`{t}`")))
+            .min()
+            .unwrap();
+        assert!(quick < first_tool, "/tcm:{stem} reads the quick guide before it starts: {flat}");
+        assert!(!flat.contains("it holds every rule"), "/tcm:{stem} still sends the full guide first: {flat}");
+        assert!(!flat.contains('\u{2014}') && !flat.contains('\u{2013}'), "no em or en dashes");
     }
 }
