@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.6",
+    date: "2026-10-10",
+    items: [
+      "If the Auto Run browser has gone without the app noticing, it is let go instead of blocking discovery or replays, and a replay always says why it stopped. A new Release Auto Run browser button in Auto Run's Setup clears it and closes only the app's own browsers, so you never need to restart the app.",
+      "When the site rejects a saved sign-in (\"Cookie has been tampered\"), Auto Run drops that saved session and signs in fresh, and a sign-in is only saved once it has fully finished.",
+      "Your assistant gets clearer hints: how to try a component that is not saved yet, which page the browser was on when a component failed, and suggestions from the same page first.",
+    ],
+  },
+  {
     version: "2.1.3-beta.5",
     date: "2026-10-10",
     items: [
