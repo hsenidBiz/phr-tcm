@@ -416,6 +416,13 @@ export const commands = {
 	 */
 	autoRunEndDiscovery: () => typedError<null, string>(__TAURI_INVOKE("auto_run_end_discovery")),
 	/**
+	 *  Release Auto Run browser on Auto Run's Setup card
+	 *  (`release_autorun_browsers`). Asks no confirm, as Close browser and End
+	 *  discovery ask none: it closes only browsers the app opened, and the map
+	 *  keeps what a discovery saw.
+	 */
+	autoRunReleaseBrowser: () => typedError<string, string>(__TAURI_INVOKE("auto_run_release_browser")),
+	/**
 	 *  Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised
 	 *  browser and stop before `step` (`autorun::replay_to`), for the person's
 	 *  Replay to step button. The browser open is used; with none, the one last
@@ -4369,10 +4376,20 @@ export type ReplayEnd_Deserialize =
  */
 { kind: "blocked"; detail: string } | 
 /**
- *  The stop control, or the browser closing, ended the replay before
+ *  The stop control (Stop, Close browser, Open browser replacing it,
+ *  Release Auto Run browser or the app exiting) ended the replay before
  *  step `step` finished.
  */
 { kind: "stopped"; detail: {
+	step: number,
+} } | 
+/**
+ *  The browser closed under the replay before step `step` finished: its
+ *  window was closed, or it crashed or stopped answering. The replay
+ *  lets it go (`commands::autorun::replay_supervised`), so the next
+ *  replay or discovery opens a new one.
+ */
+{ kind: "browser_gone"; detail: {
 	step: number,
 } } | 
 /**  Nothing was replayed: the sentence says why. */
@@ -4409,10 +4426,20 @@ export type ReplayEnd_Serialize =
  */
 { kind: "blocked"; detail: string } | 
 /**
- *  The stop control, or the browser closing, ended the replay before
+ *  The stop control (Stop, Close browser, Open browser replacing it,
+ *  Release Auto Run browser or the app exiting) ended the replay before
  *  step `step` finished.
  */
 { kind: "stopped"; detail: {
+	step: number,
+} } | 
+/**
+ *  The browser closed under the replay before step `step` finished: its
+ *  window was closed, or it crashed or stopped answering. The replay
+ *  lets it go (`commands::autorun::replay_supervised`), so the next
+ *  replay or discovery opens a new one.
+ */
+{ kind: "browser_gone"; detail: {
 	step: number,
 } } | 
 /**  Nothing was replayed: the sentence says why. */

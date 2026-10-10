@@ -425,6 +425,11 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
+            "name": "release_autorun_browser",
+            "description": "Let go of every Auto Run browser the app holds (the supervised one, a discovery's, a replay's) and close the app's own browsers. Use it when the app still refuses with 'close the supervised browser first' or answers 'the browser did not answer' while no Auto Run browser is really open, instead of asking the person to restart the app. It only ever closes browsers the app itself opened; refused while an unattended run, a recording or an API template run is going.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
             "name": "save_autorun_component",
             "description": "Save a component: a widget or short flow worked out once on the live app, that any script then runs with one use_component action. Make one the first time a widget or short flow will be needed more than once; use a saved one instead of repeating its actions. Try it first with discover_autorun_action, a use_component of it with this component as its `draft`, and save it unchanged once that works; anything else is refused. Every fixed locator in it must have been seen; every input it declares must be used, and every one it uses declared; it cannot sign in, type a username or password, use another component, or build an address from an input. Saving a name already saved is a change: it needs `why`, is tried live again first, and may not remove a check or turn one into a non-check. After 3 accepted changes the save answers cap_reached: stop and report to the person instead of changing it again.",
             "inputSchema": schema(serde_json::json!({
@@ -1010,6 +1015,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "discover_autorun_action" => call("POST", "/autorun-discover-action", &args.to_string()),
         "save_autorun_area" => call("POST", "/autorun-discover-area", &args.to_string()),
         "end_autorun_discovery" => call("POST", "/autorun-discover-end", &args.to_string()),
+        "release_autorun_browser" => call("POST", "/autorun-release", &args.to_string()),
         // Components: each route reads its own named fields out of the body.
         "save_autorun_component" => call("POST", "/autorun-component-save", &args.to_string()),
         "remove_autorun_component" => call("POST", "/autorun-component-retire", &args.to_string()),

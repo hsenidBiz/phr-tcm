@@ -1960,6 +1960,39 @@ async fn a_failed_try_is_not_fingerprinted() {
     assert!(state.tried.is_empty(), "{:?}", state.tried);
 }
 
+/// A draft (or a saved component) whose first action fails says where the
+/// browser is: the page's path only, never its host or query. Most often it
+/// stands on another screen than the one the component starts on.
+#[tokio::test]
+async fn a_component_failing_on_its_first_action_says_the_page() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/new?x=1"), exploring("Leave"));
+    let c = draft(json!([
+        { "kind": "return_to_area", "area": "Nowhere At All" },
+        { "kind": "click", "selector": { "input": "field" } },
+        { "kind": "fill", "selector": { "input": "field" }, "value": "{{day}}" }
+    ]));
+    let (status, body) =
+        discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &pick_a_date_use(), Some(&c), None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], false, "{body}");
+    let detail = v["detail"].as_str().unwrap();
+    assert!(detail.ends_with("(the page is /hr/leave/new)"), "{detail}");
+    assert_eq!(v["steps"][0]["detail"], v["detail"], "{body}");
+    assert!(!body.contains("hr.example.internal") && !body.contains("x=1"), "a host or query came back: {body}");
+
+    // A later action failing is the step's own: no page added.
+    let later = draft(json!([
+        { "kind": "click", "selector": { "input": "field" } },
+        { "kind": "return_to_area", "area": "Nowhere At All" }
+    ]));
+    let (_, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &pick_a_date_use(), Some(&later), None).await;
+    let v = parsed(&body);
+    assert_eq!(v["ok"], false, "{body}");
+    assert!(!v["detail"].as_str().unwrap().contains("the page is"), "{body}");
+}
+
 /// Without a draft the saved component is expanded and run; one that is
 /// not saved is refused before the browser is touched.
 #[tokio::test]
@@ -1981,7 +2014,8 @@ async fn trying_a_saved_component_expands_it() {
         serde_json::from_value(json!({ "kind": "use_component", "component": "Not There" })).unwrap();
     let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &missing, None, None).await;
     assert_eq!(status, 400, "{body}");
-    assert!(body.contains("Not There is not saved"), "{body}");
+    // How to try a new one is said with it, and with no long dash.
+    assert_eq!(body, "\"Not There\" is not saved in this project - to try a new one, send it as draft");
 
     // A draft for another component is not this use's.
     let mut other = pick_a_date();

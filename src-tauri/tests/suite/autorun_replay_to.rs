@@ -290,7 +290,7 @@ async fn a_stop_mid_replay_ends_it_before_the_next_step() {
     })
     .await;
     assert_eq!(end, ReplayEnd::Stopped { step: 2 });
-    assert_eq!(end.sentence(), "the replay was stopped at step 2");
+    assert_eq!(end.sentence(), "the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)");
     assert!(clicked(&app, "#s1") && !clicked(&app, "#s2"), "{:?}", log(&app));
 }
 
@@ -325,7 +325,7 @@ impl Driver for Dies {
 }
 
 #[tokio::test]
-async fn the_browser_closing_mid_replay_ends_it_as_stopped() {
+async fn the_browser_closing_mid_replay_ends_it_saying_the_browser_closed() {
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps()));
@@ -339,8 +339,30 @@ async fn the_browser_closing_mid_replay_ends_it_as_stopped() {
         }
     })
     .await;
-    assert_eq!(end, ReplayEnd::Stopped { step: 2 });
+    assert_eq!(end, ReplayEnd::BrowserGone { step: 2 });
+    assert!(end.sentence().starts_with("replay stopped at step 2: the Auto Run browser closed"), "{}", end.sentence());
     assert!(clicked(&app, "#s1") && !clicked(&app, "#s2"), "{:?}", log(&app));
+}
+
+/// The reported case: a replay in a browser that had already gone (its
+/// window closed, its connection dead) stops at step 1 - and says why,
+/// never a bare "stopped at step 1".
+#[tokio::test]
+async fn a_replay_in_a_browser_already_gone_says_why_it_stopped_at_step_1() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (inner, app) = app();
+    let dead = Arc::new(AtomicBool::new(true));
+    let mut d = Dies { inner, dead };
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let said = end.sentence();
+    assert!(said.contains("step 1"), "{said}");
+    assert_ne!(said, "the replay was stopped at step 1", "no reason given");
+    let (_, why) = said.split_once(": ").unwrap_or_else(|| panic!("no reason: {said}"));
+    assert!(!why.trim().is_empty(), "{said}");
+    assert!(!clicked(&app, "#s1"), "{:?}", log(&app));
 }
 
 // ---- the guards ---------------------------------------------------------
@@ -560,7 +582,7 @@ fn a_stop_before_the_browser_opens_ends_the_replay_there() {
     cancel.store(true, Ordering::SeqCst);
     let end = stopped_before_opening(&cancel).expect("the stop was ignored");
     assert_eq!(end, ReplayEnd::Stopped { step: 1 });
-    assert_eq!(end.sentence(), "the replay was stopped at step 1");
+    assert_eq!(end.sentence(), "the replay was stopped at step 1: it was asked to stop (Stop, Close browser or Release Auto Run browser)");
 }
 
 /// The person's command answers with the sentence already said.

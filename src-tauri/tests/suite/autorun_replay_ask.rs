@@ -357,7 +357,12 @@ async fn a_replay_that_stops_answers_its_sentence_without_a_page() {
             },
             "replay stopped at step 2: nothing matched #s2",
         ),
-        (ReplayEnd::Stopped { step: 2 }, "the replay was stopped at step 2"),
+        (ReplayEnd::Stopped { step: 2 }, "the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)"),
+        // The browser closing under it says so, and why, at step 1 too.
+        (
+            ReplayEnd::BrowserGone { step: 1 },
+            "replay stopped at step 1: the Auto Run browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens",
+        ),
     ] {
         let (asks, host) = (Asks::new(), FakeHost::ending(end));
         let (status, text) = autorun_replay_with(&ctx(), &body(3), &host, &asks, Duration::from_secs(5)).await;
@@ -489,7 +494,7 @@ async fn the_replay_answer_says_the_discovery_was_ended() {
     let (asks, host) = (Asks::new(), FakeHost { discovering: true, ..FakeHost::ending(stopped) });
     let (_, text) = autorun_replay_with(&ctx(), &body(3), &host, &asks, Duration::from_secs(5)).await;
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} the replay was stopped at step 2"));
+    assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)"));
 
     let (asks, host) = (Asks::new(), FakeHost::ready());
     let (_, text) = autorun_replay_with(&ctx(), &body(3), &host, &asks, Duration::from_secs(5)).await;
