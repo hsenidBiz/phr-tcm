@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.3",
+    date: "2026-10-10",
+    items: [
+      "Auto Run moves around the site faster: a trip to a screen opens the menu from wherever the page already is instead of reloading the home page first, and after a trip home it waits half a second for pop-ups instead of a second and a half.",
+      "Each step's screenshot is taken without holding up the next step, and Must not save cases no longer pause images, styles and scripts, so runs finish sooner. Every request that can save is still stopped.",
+      "A new Highlight each action box beside Watch the browser turns off the outline and the short pause before each click, fill and drag, in watched runs and in the Auto Run browser.",
+    ],
+  },
+  {
     version: "2.1.3-beta.2",
     date: "2026-10-10",
     items: [
