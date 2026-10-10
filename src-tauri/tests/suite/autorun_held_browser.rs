@@ -361,3 +361,48 @@ fn an_unknown_page_gives_no_page_hint() {
     assert_eq!(with_page_where("button \"Go\" not found", ""), "button \"Go\" not found");
     assert_eq!(with_page_where("x", "https://h.example/hr/home/index?id=1"), "x (the page is /hr/home/index)");
 }
+
+/// The body of the function `name` in `source`, to its closing brace at
+/// the start of a line.
+fn body_of<'a>(source: &'a str, name: &str) -> &'a str {
+    let at = source.find(name).unwrap_or_else(|| panic!("{name} is gone"));
+    let rest = &source[at..];
+    &rest[..rest.find("\n}\n").unwrap_or(rest.len())]
+}
+
+/// A fixture run, a cleanup run and a case's setup (a watched start's,
+/// through `auto_run_check_preconditions`, included) each hold the template
+/// runner's one claim for as long as their browser is open, so Release,
+/// which takes that claim, refuses while any of them is going and never
+/// ends its browser mid-run.
+#[tokio::test]
+async fn release_refuses_while_a_fixture_cleanup_or_setup_run_holds_its_browser() {
+    let _a = crate::serial::autorun();
+    let _t = crate::serial::api_template_run();
+    let before = |body: &str, first: &str, then: &str| match (body.find(first), body.find(then)) {
+        (Some(a), Some(b)) => a < b,
+        _ => panic!("{first} or {then} is gone"),
+    };
+    let fixture = include_str!("../../src/api_templates/fixture_run.rs");
+    let run_saved = body_of(fixture, "pub async fn run_saved");
+    assert!(before(run_saved, "claim()", "run_fixture("), "a fixture run opens its browser unclaimed");
+    let commands = include_str!("../../src/commands/api_templates.rs");
+    let cleanup = body_of(commands, "pub async fn auto_run_cleanup_run");
+    assert!(before(cleanup, "runner::claim()", "run_cleanup("), "a cleanup run opens its browser unclaimed");
+    let setup = include_str!("../../src/autorun/setup.rs");
+    let prepare = body_of(setup, "pub async fn prepare_case_within");
+    assert!(before(prepare, "claim()", "run_fixture_for("), "a case's setup opens its browser unclaimed");
+    assert!(body_of(setup, "pub async fn check_supervised").contains("prepare_case_within("));
+    let autorun = include_str!("../../src/commands/autorun.rs");
+    assert!(body_of(autorun, "pub async fn auto_run_check_preconditions").contains("supervised_setup("));
+    assert!(body_of(autorun, "async fn supervised_setup").contains("check_supervised("));
+
+    // While that claim is held, Release refuses with its sentence.
+    for _run in ["fixture", "cleanup", "setup"] {
+        let held = v2_lib::api_templates::runner::claim().expect("the run slot is free");
+        let refused = release_autorun_browsers().await;
+        assert_eq!(refused, Err(TEMPLATE_RUN_GOING.to_string()));
+        assert!(TEMPLATE_RUN_GOING.contains("fixture") && TEMPLATE_RUN_GOING.contains("cleanup") && TEMPLATE_RUN_GOING.contains("setup"));
+        drop(held);
+    }
+}

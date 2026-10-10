@@ -345,3 +345,20 @@ async fn the_sign_in_clear_leaves_no_cookie_of_the_account_before() {
     assert!(names(&after).is_empty(), "a cookie survived the clear: {:?}", names(&after));
     assert!(b.close().is_ok());
 }
+
+/// A fresh profile's Edge can list one of its own pages first (a sync
+/// dialog): `Cdp::connect` never drives it, nor any other browser page.
+#[tokio::test]
+#[ignore = "starts a real Edge"]
+async fn connect_drives_an_application_page_on_a_fresh_profile() {
+    let _held = crate::serial::held_browsers();
+    for extra in [&["--headless=new"][..], &[][..]] {
+        let b = start_with(extra).await;
+        let mut cdp = Cdp::connect(b.port).await.expect("connected");
+        let href = page::eval_value(&mut cdp, "location.href").await.expect("the page answers");
+        let href = href.as_str().unwrap_or("").to_string();
+        assert!(v2_lib::browser::cdp::is_app_page(&href), "drove a browser page: {href}");
+        assert!(!href.starts_with("edge://"), "{href}");
+        assert!(b.close().is_ok());
+    }
+}

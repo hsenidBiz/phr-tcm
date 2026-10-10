@@ -816,8 +816,13 @@ pub async fn release_autorun_browsers() -> Result<String, String> {
 /// supervised step or an assistant's call to finish.
 const RELEASE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Said when Release is pressed while an API template run is going.
-pub const TEMPLATE_RUN_GOING: &str = "an API template run is going - wait for it, or stop it first";
+/// Said when Release is pressed while the template runner's one slot is
+/// held: by an API template run, a fixture run (Run or Rebuild, the
+/// person's or the assistant's), a cleanup run, or a case's setup (a
+/// watched start's, a replay's or an unattended case's). Each holds that
+/// claim for as long as its browser is open.
+pub const TEMPLATE_RUN_GOING: &str =
+    "an API template, fixture, cleanup or case setup run is going - wait for it, or stop it first";
 
 /// Said when the browser's lock did not come free within `RELEASE_WAIT`: a
 /// replay still stopping, or a long step or call still going in it.
