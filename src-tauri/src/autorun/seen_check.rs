@@ -66,7 +66,8 @@
 //!
 //! A refusal names the closest locator seen in the same areas, in the same
 //! role (a text locator offers only text), when one is close enough
-//! (`SUGGEST_WITHIN`).
+//! (`SUGGEST_WITHIN`). One seen on the page the refused step's area arrives
+//! on (`add_area_pages`) is offered before one seen only elsewhere.
 //!
 //! A step that uses a component must name one the project has and give it
 //! every input, each of its kind. Every locator of the component an input
@@ -76,7 +77,8 @@
 
 use super::components::{expand, find, not_saved, Component, ComponentFile};
 use super::discovery_map::{
-    area_key, load_map, page_path, path_only, seen_keys, seen_links, seen_locators, seen_paths, AreaMap, DiscoveryMap,
+    area_key, load_map, page_path, path_only, seen_keys, seen_links, seen_locators, seen_pages, seen_paths, AreaMap,
+    DiscoveryMap,
 };
 use super::edits::Edit;
 use super::nav::NavFile;
@@ -222,6 +224,8 @@ struct Sightings {
     chains: Vec<Vec<Option<String>>>,
     /// The links the areas' saved scripts use, as written there.
     saved: Vec<LocatorStep>,
+    /// The pages (`page_path`) each key was seen on.
+    pages: std::collections::HashMap<SeenKey, HashSet<String>>,
 }
 
 impl Sightings {
@@ -233,6 +237,7 @@ impl Sightings {
             css: Vec::new(),
             chains: Vec::new(),
             saved: Vec::new(),
+            pages: seen_pages(map, areas),
         };
         let wanted: Vec<String> = areas.iter().map(|a| area_key(a)).filter(|k| !k.is_empty()).collect();
         for a in map.areas.iter().filter(|a| wanted.contains(&area_key(&a.area))) {
@@ -433,10 +438,11 @@ impl Sightings {
 
     /// The seen locator closest to `link`, as "did you mean <role>
     /// "<name>"?": only one in the same role (a text locator offers only
-    /// text), the fewest edits, within `SUGGEST_WITHIN`; `None` when no
-    /// name in that role is that close, or for a css link (a selector has
-    /// no name to offer).
-    fn closest(&self, link: &LocatorStep) -> Option<String> {
+    /// text), within `SUGGEST_WITHIN`; one seen on `page` (the refused
+    /// step's area page, `page_path`) first when there is one that close,
+    /// else the fewest edits anywhere. `None` when no name in that role is
+    /// that close, or for a css link (a selector has no name to offer).
+    fn closest(&self, link: &LocatorStep, page: Option<&str>) -> Option<String> {
         let (role, want) = match (&link.role, &link.text) {
             (Some(r), _) => (fold_name(r), norm_name(link.name.as_deref().unwrap_or(""))),
             (None, Some(t)) => ("text".to_string(), norm_name(t)),
@@ -450,7 +456,14 @@ impl Sightings {
             .iter()
             .map(|(r, n, l)| (r.as_str(), n.as_str(), l))
             .chain(self.texts.iter().map(|(n, l)| ("text", n.as_str(), l)));
-        let mut best: Option<(usize, &LocatorStep)> = None;
+        let on_page = |l: &LocatorStep| {
+            page.filter(|p| !p.is_empty()).is_some_and(|p| {
+                l.seen_key().and_then(|k| self.pages.get(&k)).is_some_and(|pages| pages.contains(p))
+            })
+        };
+        // Ranked by being off the page first, then by edits: one seen on
+        // the page wins over a closer one seen only elsewhere.
+        let mut best: Option<((bool, usize), &LocatorStep)> = None;
         for (r, n, l) in candidates {
             if n.is_empty() || r != role {
                 continue;
@@ -460,8 +473,9 @@ impl Sightings {
             if edits * SUGGEST_WITHIN.1 > longer * SUGGEST_WITHIN.0 {
                 continue;
             }
-            if best.as_ref().is_none_or(|(b, _)| edits < *b) {
-                best = Some((edits, l));
+            let rank = (!on_page(l), edits);
+            if best.as_ref().is_none_or(|(b, _)| rank < *b) {
+                best = Some((rank, l));
             }
         }
         let quoted = |s: &str| s.replace('"', "\\\"");
@@ -724,7 +738,40 @@ pub fn load_checked_map_with(
     let legacy = legacy_scripts_count(root, org, project);
     let vouching: Vec<CaseScript> = saved.iter().filter(|s| vouches(s, org, project, legacy)).cloned().collect();
     add_saved_scripts(&mut map, &vouching);
+    // Where each area arrives, for "did you mean" to prefer that page. An
+    // areas file that cannot be read only costs the preference.
+    if let Ok(nav) = super::nav::load_nav(root, org, project) {
+        add_area_pages(&mut map, &nav);
+    }
     Ok(map)
+}
+
+/// Each recorded area's arrival page (`page_path` of its `arrived`), kept
+/// in memory on its area of `map` (`AreaMap::area_page`), an area the map
+/// has no entry for added empty. An area with no arrival recorded is left
+/// without one.
+pub fn add_area_pages(map: &mut DiscoveryMap, nav: &NavFile) {
+    for m in &nav.modules {
+        let key = area_key(&m.area);
+        let page = page_path(&m.arrived);
+        if key.is_empty() || m.arrived.trim().is_empty() {
+            continue;
+        }
+        match map.areas.iter_mut().find(|a| area_key(&a.area) == key) {
+            Some(a) => a.area_page = page,
+            None => map.areas.push(AreaMap { area: m.area.clone(), area_page: page, ..AreaMap::default() }),
+        }
+    }
+}
+
+/// The arrival page of the area named `area` in `map`, if it is known.
+fn area_page<'a>(map: &'a DiscoveryMap, area: Option<&str>) -> Option<&'a str> {
+    let key = area_key(area?);
+    map.areas
+        .iter()
+        .find(|a| !key.is_empty() && area_key(&a.area) == key)
+        .map(|a| a.area_page.as_str())
+        .filter(|p| !p.is_empty())
 }
 
 /// Is this script stamped as saved in `org`/`project`, compared as the
@@ -977,6 +1024,9 @@ fn scan(
     let paths = seen_paths(map);
     let case_text: Vec<String> = case_text.iter().map(|t| fold_name(t)).collect();
     let mut so_far = SoFar::default();
+    // The area the browser is in as each step runs: the script's own, until
+    // a `return_to_area` names another.
+    let mut here: Option<String> = script.area_name().map(str::to_string);
 
     for step in &script.steps {
         so_far.uploads_of(components, step);
@@ -985,6 +1035,9 @@ fn scan(
         let checked = only_steps.is_none_or(|only| only.contains(&step.step_number));
         if checked {
             for action in step.actions.iter().flat_map(Action::each) {
+                if let Some(a) = action.area_named() {
+                    here = Some(a.to_string());
+                }
                 if let Some(k) = &only_key {
                     let this_one = matches!(
                         action,
@@ -1060,7 +1113,7 @@ fn scan(
                     if let Some(link) = first_unseen(&n.links, &chain, &seen, &own) {
                         unseen.push(Found {
                             unseen: Unseen { step: step.step_number, locator: n.target.describe(), refused: None },
-                            hint: seen.closest(link),
+                            hint: seen.closest(link, area_page(map, here.as_deref())),
                             target: Some(n.target.clone()),
                         });
                         if first_only {
@@ -1071,6 +1124,11 @@ fn scan(
             }
         }
         so_far.typed_by(components, step);
+        if !checked {
+            for a in step.actions.iter().flat_map(Action::each).filter_map(Action::area_named) {
+                here = Some(a.to_string());
+            }
+        }
     }
     unseen
 }
@@ -1197,7 +1255,8 @@ fn component_unseen(
                 let chain = t.links();
                 let links: Vec<LocatorStep> = chain.iter().filter(|l| !input_link(l)).cloned().collect();
                 if let Some(link) = first_unseen(&links, &chain, &seen, &own) {
-                    out.push((refused(i, &t.describe(), seen.closest(link).as_deref()), Some(t.clone())));
+                    let hint = seen.closest(link, area_page(map, area));
+                    out.push((refused(i, &t.describe(), hint.as_deref()), Some(t.clone())));
                     if first_only {
                         return out;
                     }

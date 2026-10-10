@@ -1508,6 +1508,49 @@ fn did_you_mean_keeps_to_the_same_role() {
     assert_eq!(check_seen(&only_bar, &none(), &says("Step 2 of 9"), &[], None), Err(refusal(1, "text \"Step 2 of 9\"")));
 }
 
+/// "Did you mean" prefers a name seen on the page the refused step's area
+/// arrives on (`add_area_pages`) over a closer one seen only on another
+/// page, an element's page and a kept sighting's alike; still only in the
+/// same role. With the area's page unknown it offers the fewest edits.
+#[test]
+fn did_you_mean_prefers_the_steps_area_page() {
+    use v2_lib::autorun::discovery_map::Sighting;
+    use v2_lib::autorun::seen_check::add_area_pages;
+    let nav: v2_lib::autorun::nav::NavFile = serde_json::from_value(serde_json::json!({
+        "modules": [{ "area": "Cycles", "module": "PE", "clicks": [], "arrived": "/cycles/edit/12", "recorded": "2026-10-10T00:00:00Z" }]
+    }))
+    .unwrap();
+    let says = |t: &str| one_step("Cycles", serde_json::json!([{ "kind": "expect_visible", "selector": { "text": t } }]));
+    let hinted = |hint: &str| Err(refusal_hinted(1, "text \"Step 2 of 9\"", hint));
+
+    // Elements on pages.
+    let mut map = joined(
+        map_with("Cycles", "/dashboard", &[text("Step 2 of 99")]),
+        map_with("Cycles", "/cycles/edit/77", &[text("Step 4 of 99"), role("progressbar", "Step 2 of 9x")]),
+    );
+    assert_eq!(check_seen(&map, &none(), &says("Step 2 of 9"), &[], None), hinted("did you mean text \"Step 2 of 99\"?"));
+    add_area_pages(&mut map, &nav);
+    assert_eq!(check_seen(&map, &none(), &says("Step 2 of 9"), &[], None), hinted("did you mean text \"Step 4 of 99\"?"));
+
+    // Kept sightings, by the page each was last seen on.
+    let sighting = |t: &str, page: &str| Sighting { key: text(t).seen_key().unwrap(), link: text(t), page: page.to_string(), last_seen: 1 };
+    let mut kept = DiscoveryMap {
+        areas: vec![AreaMap {
+            area: "Cycles".into(),
+            sightings: vec![sighting("Step 2 of 99", "/dashboard"), sighting("Step 4 of 99", "/cycles/edit/:id")],
+            ..AreaMap::default()
+        }],
+    };
+    assert_eq!(check_seen(&kept, &none(), &says("Step 2 of 9"), &[], None), hinted("did you mean text \"Step 2 of 99\"?"));
+    add_area_pages(&mut kept, &nav);
+    assert_eq!(check_seen(&kept, &none(), &says("Step 2 of 9"), &[], None), hinted("did you mean text \"Step 4 of 99\"?"));
+
+    // Nothing close on the page: the closest elsewhere is still offered.
+    let mut elsewhere = joined(map_with("Cycles", "/dashboard", &[text("Step 2 of 99")]), map_with("Cycles", "/cycles/edit/1", &[text("Totally different")]));
+    add_area_pages(&mut elsewhere, &nav);
+    assert_eq!(check_seen(&elsewhere, &none(), &says("Step 2 of 9"), &[], None), hinted("did you mean text \"Step 2 of 99\"?"));
+}
+
 // ------------------------------------- who vouches for a saved locator
 
 const EVAL: &str = "Step 2 of 9 \u{2014} Eval Rules";
