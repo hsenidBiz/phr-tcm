@@ -22,9 +22,12 @@
 //! folder (`carries_profile`). The command line is read with
 //! `NtQueryInformationProcess(ProcessCommandLineInformation)`, which needs
 //! only `PROCESS_QUERY_LIMITED_INFORMATION` and reads no other process's
-//! memory. Closing a browser ends only those processes, and counts only
-//! those; anything else in the job is left running. The whole job is
-//! ended in one call only while every process in it carries the profile.
+//! memory. Closing a browser ends only those processes, one by one,
+//! through a handle held from the moment each was looked at (so its pid
+//! cannot be reused by another program in between), and counts only
+//! those; anything else in the job is left running. The job is never
+//! ended as a whole. A process that cannot be opened, other than one that
+//! has already ended, counts as someone else's.
 //!
 //! The job kills its processes when its last handle closes, so a browser
 //! the app forgets, or an app that crashes, still takes its tree with it.
@@ -100,12 +103,17 @@ pub fn register<E: Ends + 'static>(tree: &Arc<E>) {
     }
     static WATCHER: std::sync::Once = std::sync::Once::new();
     WATCHER.call_once(|| {
-        let _ = std::thread::Builder::new().name("browser-tree-watch".into()).spawn(|| loop {
+        let spawned = std::thread::Builder::new().name("browser-tree-watch".into()).spawn(|| loop {
             std::thread::sleep(WATCH_EVERY);
             for t in registered() {
                 t.watch();
             }
         });
+        if let Err(e) = spawned {
+            crate::applog::warn(format!(
+                "auto-run: the watcher for programs opened from a browser could not start ({e}) - a browser's job keeps kill-on-close until it is closed"
+            ));
+        }
     });
 }
 
@@ -269,13 +277,25 @@ pub struct Tree {
     foreign_seen: std::sync::atomic::AtomicBool,
 }
 
-/// A process in a browser's job: its pid, whether it is the browser's
-/// own (carries the profile), and its exe file name.
+/// A process in a browser's job: whether it is the browser's own
+/// (carries the profile), its exe file name, and a handle to it held
+/// since it was looked at, which pins its pid. `None` for a process that
+/// could not be opened: never the browser's, never ended.
 #[cfg(windows)]
 struct Member {
-    pid: u32,
     ours: bool,
     image: String,
+    process: Option<job::Process>,
+}
+
+#[cfg(windows)]
+impl Member {
+    /// End it, through the held handle. Only the browser's own are.
+    fn kill(&self, job: &job::Job) {
+        if let (true, Some(p)) = (self.ours, self.process.as_ref()) {
+            job.kill(p);
+        }
+    }
 }
 
 impl Tree {
@@ -325,10 +345,13 @@ impl Tree {
         let pids = self.job.pids()?;
         Some(
             pids.into_iter()
-                .filter_map(|pid| {
-                    let seen = job::inspect(pid)?;
-                    let ours = seen.command_line.as_deref().is_some_and(|c| carries_profile(c, &self.profile_dir));
-                    Some(Member { pid, ours, image: seen.image })
+                .filter_map(|pid| match job::inspect(pid) {
+                    job::Inspected::Gone => None,
+                    job::Inspected::Unopenable => Some(Member { ours: false, image: String::new(), process: None }),
+                    job::Inspected::Seen { process, command_line, image } => {
+                        let ours = command_line.as_deref().is_some_and(|c| carries_profile(c, &self.profile_dir));
+                        Some(Member { ours, image, process: Some(process) })
+                    }
                 })
                 .collect(),
         )
@@ -405,21 +428,17 @@ impl Tree {
 }
 
 impl Ends for Tree {
-    /// The whole job in one call while every process in it is the
-    /// browser's; otherwise each of the browser's own processes, and
-    /// nothing else.
+    /// Each of the browser's own processes, through its held handle, and
+    /// nothing else. Never the job as a whole: a program the person opened
+    /// could join it between a look and a whole-job kill. One the browser
+    /// starts meanwhile is caught by `wait_empty` asking again.
     fn terminate(&self) {
         #[cfg(windows)]
         {
-            use std::sync::atomic::Ordering;
             let Some(members) = self.members() else { return };
             self.note_foreign(&members);
-            if !self.foreign_seen.load(Ordering::SeqCst) && members.iter().all(|m| m.ours) {
-                self.job.terminate();
-            } else {
-                for m in members.iter().filter(|m| m.ours) {
-                    self.job.kill(m.pid);
-                }
+            for m in &members {
+                m.kill(&self.job);
             }
         }
     }
@@ -453,17 +472,17 @@ impl Ends for Tree {
     }
 }
 
-/// With kill-on-close off (a program the person opened runs in the job),
-/// a dropped tree still ends the browser's own processes. Without it, the
-/// handle closing does the same for the whole job.
+/// A dropped tree looks at its job once more: a program the person opened
+/// since the watcher's last round takes kill-on-close off first, so the
+/// handle closing cannot end it. Then the browser's own processes are
+/// ended. With nothing else in the job, the handle closing ends the rest.
 #[cfg(windows)]
 impl Drop for Tree {
     fn drop(&mut self) {
-        if self.foreign_seen.load(std::sync::atomic::Ordering::SeqCst) {
-            if let Some(members) = self.members() {
-                for m in members.iter().filter(|m| m.ours) {
-                    self.job.kill(m.pid);
-                }
+        if let Some(members) = self.members() {
+            self.note_foreign(&members);
+            for m in &members {
+                m.kill(&self.job);
             }
         }
     }
@@ -475,13 +494,15 @@ mod job {
 
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
     use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessCommandLineInformation};
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE, UNICODE_STRING};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_INVALID_PARAMETER, HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE, UNICODE_STRING,
+    };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
     };
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectBasicProcessIdList,
-        JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
+        JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
         JOBOBJECT_BASIC_PROCESS_ID_LIST, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::System::Threading::{
@@ -497,14 +518,25 @@ mod job {
         format!("{what}: {}", std::io::Error::last_os_error())
     }
 
-    /// A process handle, closed when dropped.
-    struct Process(HANDLE);
+    /// A process handle, closed when dropped. Held, it keeps the pid
+    /// from being given to another process.
+    pub struct Process(HANDLE);
+
+    // SAFETY: a process handle may be used and closed from any thread.
+    unsafe impl Send for Process {}
+    unsafe impl Sync for Process {}
 
     impl Process {
         fn open(access: u32, pid: u32) -> Option<Process> {
             // SAFETY: the handle is checked before it is owned.
             let h = unsafe { OpenProcess(access, 0, pid) };
             (!h.is_null()).then_some(Process(h))
+        }
+
+        fn ended(&self) -> bool {
+            let mut code = 0u32;
+            // SAFETY: a valid process handle; `code` lives for the call.
+            unsafe { GetExitCodeProcess(self.0, &mut code) == 0 || code != STILL_ACTIVE as u32 }
         }
     }
 
@@ -515,24 +547,38 @@ mod job {
         }
     }
 
-    /// What can be read of a process: its command line (if Windows lets
-    /// it be read) and its exe file name, never its path.
-    pub struct Seen {
-        pub command_line: Option<String>,
-        pub image: String,
+    /// What looking at a process in the job found.
+    pub enum Inspected {
+        /// It has ended, and is only still listed: a browser process on its
+        /// way out must never be taken for a program the person opened.
+        Gone,
+        /// It could not be opened, for a reason other than having ended:
+        /// someone else's, never ended by the app.
+        Unopenable,
+        /// Opened, with the rights to end it: its command line (if Windows
+        /// lets it be read) and its exe file name, never its path.
+        Seen { process: Process, command_line: Option<String>, image: String },
     }
 
-    /// Look at a process. `None` when it cannot be opened, or has ended
-    /// and is only still listed: a browser process on its way out must
-    /// never be taken for a program the person opened.
-    pub fn inspect(pid: u32) -> Option<Seen> {
-        let p = Process::open(PROCESS_QUERY_LIMITED_INFORMATION, pid)?;
-        let mut code = 0u32;
-        // SAFETY: a valid process handle; `code` lives for the call.
-        if unsafe { GetExitCodeProcess(p.0, &mut code) } == 0 || code != STILL_ACTIVE as u32 {
-            return None;
+    /// Look at a process, opening it once with the rights both to read and
+    /// to end it. That handle is what it is ended through, if it is.
+    pub fn inspect(pid: u32) -> Inspected {
+        let Some(p) = Process::open(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, pid) else {
+            return match std::io::Error::last_os_error().raw_os_error() {
+                Some(code) if code == ERROR_INVALID_PARAMETER as i32 => Inspected::Gone,
+                _ => Inspected::Unopenable,
+            };
+        };
+        if p.ended() {
+            return Inspected::Gone;
         }
-        Some(Seen { command_line: command_line(&p), image: image_name(&p) })
+        let command_line = command_line(&p);
+        // A read that failed because it ended meanwhile is not a stranger.
+        if command_line.is_none() && p.ended() {
+            return Inspected::Gone;
+        }
+        let image = image_name(&p);
+        Inspected::Seen { process: p, command_line, image }
     }
 
     fn command_line(p: &Process) -> Option<String> {
@@ -688,17 +734,9 @@ mod job {
             None
         }
 
-        /// End every process in the job. Returns at once; they go a
-        /// moment later.
-        pub fn terminate(&self) {
-            // SAFETY: a valid job handle.
-            unsafe { TerminateJobObject(self.raw(), 1) };
-        }
-
-        /// End one process, only if it is still in this job: a pid read a
-        /// moment ago may since belong to another program.
-        pub fn kill(&self, pid: u32) {
-            let Some(p) = Process::open(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, pid) else { return };
+        /// End one process through the handle held since it was looked at
+        /// (so it is the same process), and only while it is in this job.
+        pub fn kill(&self, p: &Process) {
             let mut inside = 0;
             // SAFETY: both handles are valid; `inside` lives for the call.
             if unsafe { IsProcessInJob(p.0, self.raw(), &mut inside) } != 0 && inside != 0 {

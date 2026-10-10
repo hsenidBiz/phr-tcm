@@ -202,7 +202,10 @@ async fn a_program_opened_from_the_browser_is_left_running_when_the_browser_clos
     let _held = crate::serial::held_browsers();
     let _tail = crate::serial::log_tail();
     let b = start_with(&[]).await;
-    assert_eq!(b.kills_on_close(), Some(true));
+    // A visible browser alone, its helpers included, is all its own: a
+    // watcher round later, kill-on-close is still on.
+    std::thread::sleep(tree::WATCH_EVERY + Duration::from_millis(1500));
+    assert_eq!(b.kills_on_close(), Some(true), "a process of the visible browser was taken for a program the person opened");
     let mut program = std::process::Command::new("ping")
         .args(["-n", "60", "127.0.0.1"])
         .stdout(std::process::Stdio::null())

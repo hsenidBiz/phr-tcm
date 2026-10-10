@@ -132,9 +132,12 @@ pub fn free_port() -> Result<u16, String> {
 
 /// A browser the app started: the process it spawned, the DevTools port,
 /// the throwaway profile, and (on Windows) the job every process of the
-/// browser runs in (`tree`). Dropping it closes the job's last handle,
-/// which kills the whole tree: a browser the app forgets can no longer
-/// outlive it. `close` is the tidy way, which also removes the profile.
+/// browser runs in (`tree`). Dropping it ends the browser's own processes
+/// and closes the job's last handle, which ends what is left of the tree
+/// unless a program the person opened from the browser was seen in the
+/// job (then that program is left running): a browser the app forgets can
+/// no longer outlive it. `close` is the tidy way, which also removes the
+/// profile.
 pub struct LaunchedBrowser {
     pub child: Child,
     pub port: u16,
@@ -273,7 +276,7 @@ fn fresh_profile() -> Result<(u16, PathBuf), String> {
     let mut last = String::new();
     for _ in 0..8 {
         let port = free_port()?;
-        let dir = std::env::temp_dir().join(format!("{}{port}", tree::PROFILE_PREFIX));
+        let dir = long_temp_dir().join(format!("{}{port}", tree::PROFILE_PREFIX));
         match std::fs::create_dir(&dir) {
             Ok(()) => return Ok((port, dir)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = e.to_string(),
@@ -281,6 +284,28 @@ fn fresh_profile() -> Result<(u16, PathBuf), String> {
         }
     }
     Err(last)
+}
+
+/// The temp folder in its long form. A `TMP` set to an 8.3 short path
+/// (`C:\Users\ADMINI~1\...`) would give the browser a profile path its
+/// processes might hand on in the long form, and a process of the browser
+/// would then not be told for its own (`tree::carries_profile`).
+fn long_temp_dir() -> PathBuf {
+    let temp = std::env::temp_dir();
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        let wide: Vec<u16> = temp.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let mut buf = vec![0u16; 1024];
+        // SAFETY: `wide` is NUL-terminated and `buf` holds `buf.len()` u16s.
+        let n = unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetLongPathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32)
+        } as usize;
+        if n > 0 && n < buf.len() {
+            return PathBuf::from(std::ffi::OsString::from_wide(&buf[..n]));
+        }
+    }
+    temp
 }
 
 fn env_or(key: &str, fallback: &str) -> String {
