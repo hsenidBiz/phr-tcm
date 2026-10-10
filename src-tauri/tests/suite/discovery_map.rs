@@ -613,3 +613,126 @@ fn recording_nothing_new_does_not_rewrite_the_file() {
     record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "New")], None, None, 4).unwrap();
     assert_ne!(std::fs::read_to_string(&path).unwrap(), text);
 }
+
+// ------------------------------------- every distinct sighting is kept
+
+/// The area's sightings: (key, last seen).
+fn sightings_of(dir: &std::path::Path, area: &str) -> Vec<(SeenKey, u64)> {
+    let map = load_map(dir, "Acme", "Web").unwrap();
+    let a = map.areas.iter().find(|a| a.area == area).expect("no such area");
+    a.sightings.iter().map(|s| (s.key.clone(), s.last_seen)).collect()
+}
+
+/// A wizard keeps one address for every step: its later steps replace the
+/// page's elements, and 201 newer sightings and outcome lines come after.
+/// The step seen first is still seen; a later discovery of the page that
+/// no longer shows it replaces it.
+#[test]
+fn a_sighting_survives_201_newer_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let eval = "Step 2 of 9 \u{2014} Eval Rules";
+    let evaluators = "Step 4 of 9 \u{2014} Evaluators";
+    record_seen(dir.path(), "Acme", "Web", Some("Cycles"), "/cycles/new", "New", &[line("progressbar", eval)], None, Some(1000), 1000)
+        .unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("Cycles"), "/cycles/new", "New", &[line("progressbar", evaluators)], None, Some(1000), 1100)
+        .unwrap();
+    assert_eq!(names_on(dir.path(), "/cycles/new"), [evaluators], "the page holds what it shows now");
+    let many: Vec<SnapLine> = (0..201).map(|i| line("button", &format!("Action {i}"))).collect();
+    record_seen(dir.path(), "Acme", "Web", Some("Cycles"), "/cycles/list", "List", &many, None, None, 1200).unwrap();
+    for i in 0..201 {
+        record_outcome(dir.path(), "Acme", "Web", "Cycles", &format!("line {i}")).unwrap();
+    }
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let keys = seen_keys(&map, &["Cycles"]);
+    assert!(keys.contains(&role_key("progressbar", eval)), "the first sighting was let go");
+    assert!(keys.contains(&role_key("button", "action 200")));
+    assert_eq!(sightings_of(dir.path(), "Cycles").len(), 203);
+
+    // A later discovery reads the page and no longer sees it: replaced.
+    record_seen(dir.path(), "Acme", "Web", Some("Cycles"), "/cycles/new", "New", &[line("progressbar", evaluators)], None, Some(5000), 5000)
+        .unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let keys = seen_keys(&map, &["Cycles"]);
+    assert!(!keys.contains(&role_key("progressbar", eval)));
+    assert!(keys.contains(&role_key("button", "action 0")), "another page was touched");
+}
+
+/// The same link seen again is one sighting, stamped with the latest time
+/// a discovery or a match saw it; an older stamp never takes it back.
+#[test]
+fn repeated_sightings_are_kept_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let save = [line("button", "Save")];
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &save, None, Some(1000), 1000).unwrap();
+    let as_matched = Target::One(LocatorStep { role: Some("button".into()), name: Some("SAVE".into()), ..LocatorStep::default() });
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &as_matched, 1500).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &save, None, None, 2000).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &as_matched, 1200).unwrap();
+    assert_eq!(sightings_of(dir.path(), "A"), [(role_key("button", "save"), 1500)]);
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/q", "Q", &save, None, Some(3000), 3000).unwrap();
+    assert_eq!(sightings_of(dir.path(), "A"), [(role_key("button", "save"), 3000)]);
+}
+
+/// A map written before sightings were kept loads, its elements still
+/// count as seen, and the next sighting is added to it.
+#[test]
+fn an_old_map_file_still_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(1000), 1000).unwrap();
+    let path = map_path(dir.path(), "Acme", "Web");
+    let mut old: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    for area in old["areas"].as_array_mut().unwrap() {
+        area.as_object_mut().unwrap().remove("sightings").expect("this version writes sightings");
+        for page in area["pages"].as_array_mut().unwrap() {
+            for e in page["elements"].as_array_mut().unwrap() {
+                e.as_object_mut().unwrap().remove("seen_at");
+            }
+        }
+    }
+    std::fs::write(&path, format!("\u{feff}{old}")).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert!(map.areas[0].sightings.is_empty());
+    assert!(seen_keys(&map, &["A"]).contains(&role_key("button", "save")));
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("link", "Home")], None, None, 2000).unwrap();
+    assert_eq!(sightings_of(dir.path(), "A"), [(role_key("link", "home"), 2000)]);
+}
+
+/// Forget map clears an area's sightings with the rest of it, and only
+/// that area's.
+#[test]
+fn forget_map_still_clears_an_area() {
+    let dir = tempfile::tempdir().unwrap();
+    for area in ["A", "B"] {
+        record_seen(dir.path(), "Acme", "Web", Some(area), "/p", "P", &[line("button", area)], None, Some(1), 1).unwrap();
+    }
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &Target::from("#only-a"), 3).unwrap();
+    assert!(seen_keys(&load_map(dir.path(), "Acme", "Web").unwrap(), &["A"]).contains(&role_key("button", "a")));
+    forget_area(dir.path(), "Acme", "Web", "a").unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let names: Vec<&str> = map.areas.iter().map(|a| a.area.as_str()).collect();
+    assert_eq!(names, ["B"]);
+    assert!(seen_keys(&map, &["A"]).is_empty());
+    assert!(seen_keys(&map, &["B"]).contains(&role_key("button", "b")));
+}
+
+/// Past the safety ceiling, the least recently seen sighting goes: not the
+/// first one kept, which a match has seen since.
+#[test]
+fn the_ceiling_evicts_the_least_recently_seen() {
+    use v2_lib::autorun::discovery_map::MAX_SIGHTINGS;
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "First")], None, None, 1).unwrap();
+    let many: Vec<SnapLine> = (0..MAX_SIGHTINGS - 2).map(|i| line("button", &format!("N{i}"))).collect();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/q", "Q", &many, None, None, 2).unwrap();
+    let first = Target::One(LocatorStep { role: Some("button".into()), name: Some("First".into()), ..LocatorStep::default() });
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &first, 3).unwrap();
+    assert_eq!(sightings_of(dir.path(), "A").len(), MAX_SIGHTINGS - 1);
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/r", "R", &[line("button", "New1"), line("button", "New2")], None, None, 4)
+        .unwrap();
+    let kept = sightings_of(dir.path(), "A");
+    assert_eq!(kept.len(), MAX_SIGHTINGS);
+    let has = |name: &str| kept.iter().any(|(k, _)| *k == role_key("button", name));
+    assert!(has("first"), "the first one kept was seen since");
+    assert!(!has("n0"), "the least recently seen goes");
+    assert!(has("n1") && has("new1") && has("new2"));
+}

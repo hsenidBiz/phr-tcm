@@ -3345,7 +3345,7 @@ pub async fn save_component_in<B: DiscoveryBrowser>(
         return component_answer(saved);
     };
     let area = area.as_deref().map(str::trim).filter(|a| !a.is_empty());
-    let targets = crate::autorun::discovery_map::load_map(root, organization, project).ok().and_then(|map| {
+    let targets = crate::autorun::seen_check::load_checked_map(root, organization, project).ok().and_then(|map| {
         let own = crate::autorun::seen_check::check_component_seen(&map, area, &draft.actions);
         if own.as_ref().err() != Some(refused) {
             return None;
@@ -5072,7 +5072,7 @@ fn seen_check_inputs(
     (crate::autorun::discovery_map::DiscoveryMap, crate::autorun::components::ComponentFile, Vec<crate::test_files::TestFile>),
     String,
 > {
-    let map = crate::autorun::discovery_map::load_map(root, &ctx.org, &ctx.project)?;
+    let map = crate::autorun::seen_check::load_checked_map(root, &ctx.org, &ctx.project)?;
     let components = if uses_components {
         crate::autorun::components::load_components(root, &ctx.org, &ctx.project)?
     } else {

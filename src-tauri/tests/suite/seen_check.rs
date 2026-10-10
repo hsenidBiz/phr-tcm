@@ -1071,14 +1071,10 @@ fn the_suggestion_comes_from_the_same_area() {
         check_seen(&map, &none(), &in_area("Ratings", button("Publsh")), &[], None),
         Err(refusal_hinted(1, "button \"Publsh\"", "did you mean button \"Publish\"?"))
     );
-    // Another role when no same-role name is close.
+    // Never another role: with no same-role name close, nothing is offered.
     assert_eq!(
         check_seen(&map, &none(), &in_area("Ratings", serde_json::json!({ "role": "progressbar", "name": "Step 1 of 9 - Cycle Setup" })), &[], None),
-        Err(refusal_hinted(
-            1,
-            "progressbar \"Step 1 of 9 - Cycle Setup\"",
-            "did you mean text \"Step 1 of 9 \u{2013} Cycle Setup\"?"
-        ))
+        Err(refusal(1, "progressbar \"Step 1 of 9 - Cycle Setup\""))
     );
     // Payroll's names are close, but not in this script's areas.
     assert_eq!(
@@ -1422,4 +1418,88 @@ fn a_placeholder_link_that_is_the_scripts_own_data_passes_at_run_time() {
     };
     assert_eq!(run(&upload("policy.docx", "policy.docx attached"), &files), Ok(()));
     assert!(run(&upload("policy.docx", "policy.docx attached"), &[]).is_err(), "not one of the project's Test files");
+}
+
+// ------------------------------------------ a saved script's own links
+
+use v2_lib::autorun::seen_check::add_saved_scripts;
+
+fn expect_bar(name: &str) -> serde_json::Value {
+    serde_json::json!({ "kind": "expect_visible", "selector": { "role": "progressbar", "name": name } })
+}
+
+/// A link a saved script of the area uses, written as it is there, is
+/// seen though the map has let it go: the saved script being replaced
+/// counts too. Another name is not, and a saved placeholder widens
+/// nothing.
+#[test]
+fn a_locator_used_by_a_saved_script_of_the_area_is_seen() {
+    use v2_lib::autorun::seen_check::load_checked_map;
+    let dir = tempfile::tempdir().unwrap();
+    let eval = "Step 2 of 9 \u{2014} Eval Rules";
+    let open = serde_json::json!({ "role": "button", "name": "{{setup.cycle_name}} Open" });
+    // Case 7 as saved: the script about to be replaced.
+    let saved = one_step("Cycles", serde_json::json!([expect_bar(eval), click(open.clone())]));
+    v2_lib::autorun::store::save_script(dir.path(), &saved).unwrap();
+    let map = load_checked_map(dir.path(), "Acme", "Web").unwrap();
+
+    let again = one_step("Cycles", serde_json::json!([expect_bar(eval)]));
+    assert_eq!(check_seen(&map, &none(), &again, &[], None), Ok(()));
+    let other = one_step("Cycles", serde_json::json!([expect_bar("Step 3 of 9 \u{2014} Eval Rules")]));
+    assert!(check_seen(&map, &none(), &other, &[], None).is_err());
+    let placeholder = one_step("Cycles", serde_json::json!([click(open)]));
+    assert!(check_seen(&map, &none(), &placeholder, &[], None).is_err(), "a saved placeholder widened the check");
+    // Nothing is written to the map.
+    assert!(!v2_lib::autorun::discovery_map::map_path(dir.path(), "Acme", "Web").exists());
+
+    // Another case of the area, checked against a map built in memory.
+    let mut map = DiscoveryMap::default();
+    let mut eleventh = one_step("cycles", serde_json::json!([expect_bar(eval)]));
+    eleventh.case_id = 11;
+    add_saved_scripts(&mut map, &[eleventh]);
+    assert_eq!(check_seen(&map, &none(), &again, &[], None), Ok(()));
+}
+
+/// Only the area's own scripts count: a link another area's script uses,
+/// or a script with no area, is still never seen here.
+#[test]
+fn a_locator_from_another_areas_script_is_not_seen() {
+    let eval = "Step 2 of 9 \u{2014} Eval Rules";
+    let mut payroll = one_step("Payroll", serde_json::json!([expect_bar(eval)]));
+    payroll.case_id = 21;
+    let mut nowhere = script(None, serde_json::json!([{ "step_number": 1, "actions": [expect_bar(eval)] }]));
+    nowhere.case_id = 22;
+    let mut map = map_with("Cycles", "/cycles", &[]);
+    add_saved_scripts(&mut map, &[payroll, nowhere]);
+    let here = one_step("Cycles", serde_json::json!([expect_bar(eval)]));
+    assert_eq!(
+        check_seen(&map, &none(), &here, &[], None),
+        Err(refusal(1, "progressbar \"Step 2 of 9 \u{2014} Eval Rules\""))
+    );
+    let there = one_step("Payroll", serde_json::json!([expect_bar(eval)]));
+    assert_eq!(check_seen(&map, &none(), &there, &[], None), Ok(()));
+}
+
+/// "Did you mean" offers only a name in the refused locator's own role: a
+/// text offers text, a progressbar a progressbar, and nothing when no name
+/// in that role is close.
+#[test]
+fn did_you_mean_keeps_to_the_same_role() {
+    let map = map_with("Cycles", "/cycles", &[role("progressbar", "Step 3 of 9"), text("Step 4 of 9")]);
+    let says = |t: &str| one_step("Cycles", serde_json::json!([{ "kind": "expect_visible", "selector": { "text": t } }]));
+    assert_eq!(
+        check_seen(&map, &none(), &says("Step 2 of 9"), &[], None),
+        Err(refusal_hinted(1, "text \"Step 2 of 9\"", "did you mean text \"Step 4 of 9\"?"))
+    );
+    assert_eq!(
+        check_seen(&map, &none(), &one_step("Cycles", serde_json::json!([expect_bar("Step 2 of 9")])), &[], None),
+        Err(refusal_hinted(1, "progressbar \"Step 2 of 9\"", "did you mean progressbar \"Step 3 of 9\"?"))
+    );
+    let only_text = map_with("Cycles", "/cycles", &[text("Step 4 of 9")]);
+    assert_eq!(
+        check_seen(&only_text, &none(), &one_step("Cycles", serde_json::json!([expect_bar("Step 2 of 9")])), &[], None),
+        Err(refusal(1, "progressbar \"Step 2 of 9\""))
+    );
+    let only_bar = map_with("Cycles", "/cycles", &[role("progressbar", "Step 3 of 9")]);
+    assert_eq!(check_seen(&only_bar, &none(), &says("Step 2 of 9"), &[], None), Err(refusal(1, "text \"Step 2 of 9\"")));
 }

@@ -1619,7 +1619,7 @@ fn check_imported_seen(
     cases: Option<&CaseTexts>,
 ) -> Result<(), String> {
     let cases = cases.ok_or_else(|| IMPORT_NEEDS_CASES.to_string())?;
-    let map = crate::autorun::discovery_map::load_map(root, organization, project)?;
+    let map = crate::autorun::seen_check::load_checked_map(root, organization, project)?;
     // Read only when a script uses a component.
     let components = if scripts.iter().any(crate::autorun::seen_check::uses_components) {
         crate::autorun::components::load_components(root, organization, project)?

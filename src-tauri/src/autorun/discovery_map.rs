@@ -7,6 +7,17 @@
 //! URL, a typed value or any text that came from a record. An area whose
 //! `explored_at` is old, or which has failed since, is stale and wants
 //! exploring again. `""` is the bucket for sightings that belong to no area.
+//!
+//! Each area also keeps its `sightings`: every distinct link it has seen,
+//! once each by its key (`SeenKey`), with when it was last seen. A page's
+//! `elements` are what the page holds now and a read replaces them, so a
+//! wizard that keeps one address for every step forgets the earlier steps
+//! as it moves on; its sightings do not. A sighting is never dropped for
+//! the number of newer ones. It goes when its area is forgotten, or when a
+//! later discovery reads its page and it was neither shown by that read
+//! nor seen since that discovery started (exploring again replaces, as for
+//! `elements`). `MAX_SIGHTINGS` is only a safety ceiling on the file's
+//! size: past it, the least recently seen sightings go first.
 
 use super::recipe::project_slug;
 use crate::browser::locator::{LocatorStep, SeenKey, Target};
@@ -17,7 +28,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 pub const STALE_AFTER_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+/// The area's `outcomes` are lines of prose saying what an action led to,
+/// shown as evidence; the seen check never reads them, so they stay capped.
 const MAX_OUTCOMES: usize = 200;
+/// The most distinct sightings one area keeps. Far above what an area
+/// holds; past it the least recently seen go first (`trim_sightings`).
+pub const MAX_SIGHTINGS: usize = 5000;
 const MAX_WRITES: usize = 500;
 
 #[derive(Serialize, Deserialize, specta::Type, Clone, Debug, Default, PartialEq)]
@@ -35,6 +51,27 @@ pub struct AreaMap {
     pub pages: Vec<PageMap>,
     pub outcomes: Vec<String>,
     pub writes: Vec<WriteEntry>,
+    /// Every distinct link seen in the area, once each by its key (see the
+    /// module's notes). A map written before these were kept has none.
+    #[serde(default)]
+    pub sightings: Vec<Sighting>,
+    /// The links the area's saved scripts use, as written: read in memory
+    /// by the seen check (`seen_check::add_saved_scripts`), never saved.
+    #[serde(skip)]
+    pub saved_links: Vec<LocatorStep>,
+}
+
+/// One distinct link an area has seen.
+#[derive(Serialize, Deserialize, specta::Type, Clone, Debug, PartialEq)]
+pub struct Sighting {
+    pub key: SeenKey,
+    /// The link as it was written when it was last seen.
+    pub link: LocatorStep,
+    /// The page (`page_path`) it was last seen on.
+    pub page: String,
+    /// When it was last seen, in milliseconds since the epoch.
+    #[specta(type = f64)]
+    pub last_seen: u64,
 }
 
 #[derive(Serialize, Deserialize, specta::Type, Clone, Debug, Default, PartialEq)]
@@ -326,7 +363,54 @@ pub fn record_seen(
                 }
             }
         }
+        // A discovery's read refreshes what it shows; any other read only
+        // adds what is new, so a read that shows nothing new writes nothing.
+        let mut shown: HashSet<SeenKey> = HashSet::new();
+        for line in lines {
+            for link in line.locator.links() {
+                if let Some(key) = link.seen_key() {
+                    shown.insert(key.clone());
+                    note_sighting(a, key, link, &path, now, discovery.is_some());
+                }
+            }
+        }
+        if let Some(started) = discovery {
+            a.sightings.retain(|s| s.page != path || s.last_seen >= started || shown.contains(&s.key));
+        }
+        trim_sightings(a);
     })
+}
+
+/// Adds `link` to the area's sightings, or, when its key is there already
+/// and `refresh` is set, stamps it seen at `now` on `page`.
+fn note_sighting(a: &mut AreaMap, key: SeenKey, link: LocatorStep, page: &str, now: u64, refresh: bool) {
+    match a.sightings.iter_mut().find(|s| s.key == key) {
+        Some(s) if refresh && now >= s.last_seen => {
+            s.last_seen = now;
+            s.link = link;
+            s.page = page.to_string();
+        }
+        Some(_) => {}
+        None => a.sightings.push(Sighting { key, link, page: page.to_string(), last_seen: now }),
+    }
+}
+
+/// Keeps the area within `MAX_SIGHTINGS`: past it, the least recently seen
+/// go, and among those seen at the same time the earliest kept goes first.
+fn trim_sightings(a: &mut AreaMap) {
+    let over = a.sightings.len().saturating_sub(MAX_SIGHTINGS);
+    if over == 0 {
+        return;
+    }
+    let mut order: Vec<usize> = (0..a.sightings.len()).collect();
+    order.sort_by_key(|&i| (a.sightings[i].last_seen, i));
+    let gone: HashSet<usize> = order.into_iter().take(over).collect();
+    let mut i = 0;
+    a.sightings.retain(|_| {
+        let keep = !gone.contains(&i);
+        i += 1;
+        keep
+    });
 }
 
 /// Adds each link of a target a probe or try matched, unless the page
@@ -344,6 +428,12 @@ pub fn record_matched(
     let area = canonical_area(root, org, project, area.unwrap_or(""));
     update(root, org, project, |map| {
         let a = area_mut(map, &area);
+        for link in target.links() {
+            if let Some(key) = link.seen_key() {
+                note_sighting(a, key, link, &path, now, true);
+            }
+        }
+        trim_sightings(a);
         let page = page_mut(a, &path, "");
         for link in target.links() {
             let Some(key) = link.seen_key() else { continue };
@@ -440,6 +530,19 @@ fn elements_in<'a>(map: &'a DiscoveryMap, areas: &[&str]) -> impl Iterator<Item 
         .flat_map(|p| p.elements.iter())
 }
 
+/// The sightings kept in the named areas and in the unattributed bucket,
+/// in map order.
+fn sightings_in<'a>(map: &'a DiscoveryMap, areas: &[&str]) -> impl Iterator<Item = &'a Sighting> {
+    let wanted: Vec<String> = areas.iter().map(|a| area_key(a)).collect();
+    map.areas
+        .iter()
+        .filter(move |a| {
+            let key = area_key(&a.area);
+            key.is_empty() || wanted.contains(&key)
+        })
+        .flat_map(|a| a.sightings.iter())
+}
+
 /// Every key seen in the named areas and in the unattributed bucket.
 pub fn seen_keys(map: &DiscoveryMap, areas: &[&str]) -> HashSet<SeenKey> {
     elements_in(map, areas)
@@ -448,6 +551,7 @@ pub fn seen_keys(map: &DiscoveryMap, areas: &[&str]) -> HashSet<SeenKey> {
             keys.push(e.key.clone());
             keys
         })
+        .chain(sightings_in(map, areas).map(|s| s.key.clone()))
         .collect()
 }
 
@@ -480,6 +584,7 @@ pub fn seen_links(map: &DiscoveryMap, areas: &[&str]) -> Vec<LocatorStep> {
         }
         out.extend(links);
     }
+    out.extend(sightings_in(map, areas).map(|s| s.link.clone()));
     out
 }
 
