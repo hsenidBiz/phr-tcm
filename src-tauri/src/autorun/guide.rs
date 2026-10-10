@@ -1028,6 +1028,12 @@ You open and drive a browser of your own to find what a script needs:
   steps out with it, the way a person would, and write the script from
   what happened. `get_autorun_page` and `probe_autorun_locator` work in
   the discovery browser too.
+- `discover_autorun_actions` carries out up to 20 actions in order, each
+  exactly as `discover_autorun_action` would, and what each one's page
+  showed is recorded as seen. It answers one line per action, ok or failed
+  with the reason, then the page once, after the last action. It stops at
+  the first action that fails unless `stop_on_failure` is false. Use it for
+  steps you already know, such as a menu path or filling a form.
 - `save_autorun_area` saves a screen you reached through the menus as an
   area: its name, its test case Module, and the clicks from the home page.
   The app replays the clicks from the home page and saves the area only

@@ -408,6 +408,23 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["action"]),
         },
         {
+            "name": "discover_autorun_actions",
+            "description": "Carry out SEVERAL script actions in the discovery browser in one call, in order, exactly as the same number of discover_autorun_action calls would: the same refusals, the same blocked saves in a mapping run, and what each action's page showed is recorded as seen. Use it for a run of steps you already know, such as a menu path or filling a form. At most 20 actions. It stops at the first action that fails unless `stop_on_failure` is false. The answer is one line per action that ran, ok or failed with the reason, then the page once, after the last action. Needs start_autorun_discovery first.",
+            "inputSchema": schema(serde_json::json!({
+                "actions": {
+                    "type": "array",
+                    "description": "The actions, in order, each one action in the script vocabulary - call get_autorun_guide for all of them. At most 20.",
+                    "items": { "type": "object" },
+                },
+                "stop_on_failure": { "type": "boolean", "description": "Optional: false carries on past a failed action. True when left out." },
+                "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
+                "draft": {
+                    "type": "object",
+                    "description": "Optional: a component to try in place of the saved one of that name, for each use_component action that names it, exactly as you will send it to save_autorun_component.",
+                },
+            }), &["actions"]),
+        },
+        {
             "name": "save_autorun_area",
             "description": "Save a screen you found through the menus during discovery as an area, so runs can reach it before step 1. The app checks it first: from the home page, signed in, it replays your clicks and saves the area only if they arrive where the discovery browser is now. A refusal says what the page showed. A name already taken is refused; pick another or ask the person. Set each script's `area` to this name. If you cannot find the screen through the menus, ask the person to record the area in Auto Run instead.",
             "inputSchema": schema(serde_json::json!({
@@ -1039,6 +1056,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // so the arguments object travels whole.
         "start_autorun_discovery" => call("POST", "/autorun-discover-start", &args.to_string()),
         "discover_autorun_action" => call("POST", "/autorun-discover-action", &args.to_string()),
+        "discover_autorun_actions" => call("POST", "/autorun-discover-actions", &args.to_string()),
         "save_autorun_area" => call("POST", "/autorun-discover-area", &args.to_string()),
         "end_autorun_discovery" => call("POST", "/autorun-discover-end", &args.to_string()),
         "release_autorun_browser" => call("POST", "/autorun-release", &args.to_string()),

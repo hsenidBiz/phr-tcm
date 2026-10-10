@@ -2938,3 +2938,275 @@ async fn a_component_dry_run_writes_and_records_nothing() {
     assert_eq!((status, body.as_str()), (409, TRY_IT_FIRST));
     assert_eq!(every_file(dir.path()), seen);
 }
+
+// ------------------------------------------------- several actions at once
+
+use v2_lib::ai_bridge::{discover_actions_in, BATCH_EMPTY, BATCH_TOO_LONG};
+
+/// A page on which every locator finds one ready element, and whose address
+/// and one button move on with each click: `/hr/leave/start` showing
+/// "Start" before any, `/hr/leave/first` showing "First" after the first,
+/// and `/hr/leave/second` showing "Second" after that. Its address carries
+/// a query string, which nothing may keep.
+fn stepping_page() -> ScriptedDriver {
+    let page = FakePage::default();
+    let clicks = std::sync::atomic::AtomicUsize::new(0);
+    ScriptedDriver::new(move |method, params| {
+        if method == "Input.dispatchMouseEvent" && params["type"] == "mouseReleased" {
+            clicks.fetch_add(1, Ordering::SeqCst);
+        }
+        let (path, name) = match clicks.load(Ordering::SeqCst) {
+            0 => ("start", "Start"),
+            1 => ("first", "First"),
+            _ => ("second", "Second"),
+        };
+        match method {
+            "Accessibility.getFullAXTree" => Ok(buttons_tree(&[name.to_string()])),
+            "Runtime.evaluate" if params["expression"] == "location.href" => Ok(json!({ "result": {
+                "value": format!("https://hr.example.internal/hr/leave/{path}?token=t0p-secret")
+            } })),
+            _ => page.answer(method, params),
+        }
+    })
+    .with_net_record()
+}
+
+fn click(css: &str) -> Action {
+    Action::Click { selector: css.into() }
+}
+
+/// An action that fails at once: there is no such area to return to.
+fn nowhere() -> Action {
+    serde_json::from_value(json!({ "kind": "return_to_area", "area": "Nowhere At All" })).unwrap()
+}
+
+/// The page as `get_autorun_page` prints it with one button, `name`.
+async fn page_with(name: &str) -> String {
+    read_page(&mut buttons_page(LEAVE_PAGE, &[name]), DEFAULT_LIMIT, None).await.1
+}
+
+/// The lines of a batch's answer before its page.
+fn batch_lines(text: &str) -> Vec<&str> {
+    text.split("\n\n").next().unwrap().lines().collect()
+}
+
+/// The actions run in order, each answered by one line, and the page is
+/// answered once, from where the last action left it, ending as a page read
+/// during a discovery does. No host or query string comes back.
+#[tokio::test]
+async fn a_batch_runs_in_order_and_answers_the_page_once() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a"), click("#b")], None, None, true).await;
+    assert_eq!(status, 200, "{text}");
+
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(lines[0].starts_with("1. ok: ") && lines[0].contains("/hr/leave/first"), "{text}");
+    assert!(lines[1].starts_with("2. ok: ") && lines[1].contains("/hr/leave/second"), "{text}");
+
+    let last = page_with("Second").await;
+    assert!(text.ends_with(&format!("{last}\n\nRecorded 1 element as seen on Leave.")), "{text}");
+    assert_eq!(text.matches(&last).count(), 1, "the page came back more than once: {text}");
+    assert!(!text.contains("\"First\""), "an action's own page came back: {text}");
+    assert!(!text.contains("hr.example.internal") && !text.contains("t0p-secret"), "{text}");
+
+    // Each action read its page, and the answer read the last one again.
+    let b = browser.as_ref().unwrap();
+    assert_eq!(b.d.calls_to("Accessibility.getFullAXTree").len(), 3);
+}
+
+/// By default the batch stops at the first action that fails: the line
+/// says why, the actions after it are not run and a line says how many,
+/// and the page is where the browser stopped.
+#[tokio::test]
+async fn a_batch_stops_on_the_first_failure() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let actions = [click("#a"), nowhere(), click("#b"), click("#c")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true).await;
+    assert_eq!(status, 200, "{text}");
+
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 3, "{text}");
+    assert!(lines[0].starts_with("1. ok: "), "{text}");
+    assert!(lines[1].starts_with("2. failed: ") && lines[1].contains("Nowhere At All"), "{text}");
+    assert_eq!(lines[2], "Stopped at the failure: 2 actions were not run.");
+    assert!(text.ends_with(&format!("{}\n\nRecorded 1 element as seen on Leave.", page_with("First").await)), "{text}");
+    let b = browser.as_ref().unwrap();
+    let released = b.d.calls_to("Input.dispatchMouseEvent").iter().filter(|p| p["type"] == "mouseReleased").count();
+    assert_eq!(released, 1, "an action after the failure ran");
+}
+
+/// With `stop_on_failure` false, a failed action is answered and the rest
+/// still run.
+#[tokio::test]
+async fn a_batch_can_carry_on_past_a_failure() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let actions = [click("#a"), nowhere(), click("#b")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, false).await;
+    assert_eq!(status, 200, "{text}");
+
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 3, "{text}");
+    assert!(lines[0].starts_with("1. ok: "), "{text}");
+    assert!(lines[1].starts_with("2. failed: "), "{text}");
+    assert!(lines[2].starts_with("3. ok: ") && lines[2].contains("/hr/leave/second"), "{text}");
+    assert!(!text.contains("not run"), "{text}");
+    assert!(text.ends_with(&format!("{}\n\nRecorded 1 element as seen on Leave.", page_with("Second").await)), "{text}");
+}
+
+/// More than 20 actions is refused before anything else is looked at, by
+/// the route and by the batch itself.
+#[tokio::test]
+async fn a_batch_of_more_than_twenty_is_refused() {
+    let one = json!({ "kind": "click", "selector": "#a" });
+    let body = json!({ "actions": vec![one.clone(); 21] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, BATCH_TOO_LONG));
+    assert_eq!(BATCH_TOO_LONG, "at most 20 actions in one call");
+
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let many: Vec<Action> = (0..21).map(|_| click("#a")).collect();
+    let (status, out) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &many, None, None, true).await;
+    assert_eq!((status, out.as_str()), (400, BATCH_TOO_LONG));
+    assert!(browser.as_ref().unwrap().d.calls.is_empty(), "the browser was touched");
+}
+
+/// An empty batch is refused, and so is one whose actions are not a list.
+#[tokio::test]
+async fn an_empty_batch_is_refused() {
+    let body = json!({ "actions": [] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, BATCH_EMPTY));
+    let body = json!({ "actions": { "kind": "click", "selector": "#a" } }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("list of actions"), "{out}");
+
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let (status, out) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[], None, None, true).await;
+    assert_eq!((status, out.as_str()), (400, BATCH_EMPTY));
+}
+
+/// Each action is checked as a single action is, before the browser is
+/// touched: one refused action refuses the batch, naming which. A
+/// `stop_on_failure` that is not true or false is refused, and so is a
+/// draft no action uses.
+#[tokio::test]
+async fn a_batch_with_a_refused_action_runs_none() {
+    let body = json!({ "actions": [
+        { "kind": "click", "selector": "#a" },
+        { "kind": "sign_in", "account": "admin" }
+    ] })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "action 2: sign_in is not a thing an assistant does - the person signs in");
+
+    let body = json!({ "actions": [{ "kind": "click", "selector": "#a" }], "stop_on_failure": "yes" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("stop_on_failure"), "{out}");
+
+    let draft = serde_json::to_value(pick_a_date()).unwrap();
+    let body = json!({ "actions": [{ "kind": "click", "selector": "#a" }], "draft": draft }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("use_component"), "{out}");
+}
+
+/// Outside a discovery the batch is refused as a single action is.
+#[tokio::test]
+async fn a_batch_needs_a_discovery() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), None);
+    let (status, out) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a")], None, None, true).await;
+    assert_eq!((status, out.as_str()), (409, NO_DISCOVERY));
+    assert!(browser.as_ref().unwrap().d.calls.is_empty(), "the browser was touched");
+}
+
+/// A mapping run's guarded browser on which clicks make the page send
+/// saves: three in all, taken as the clicks come.
+async fn saving_mapping_browser() -> Option<FakeBrowser> {
+    use v2_lib::browser::cdp::Driver;
+    let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list?page=2");
+    d.guard_saves(&[]).await.unwrap();
+    for (method, url) in [
+        ("POST", "https://hr.example.internal/hr/leave/save?id=5&token=t0p-secret"),
+        ("DELETE", "https://hr.example.internal/hr/leave/delete/7"),
+        ("PUT", "https://hr.example.internal/hr/leave/update"),
+    ] {
+        d.saves_on_call.push(("Input.dispatchMouseEvent".into(), method.into(), url.into()));
+    }
+    slot(d, mapping(exploring("Leave"), &["Leave"])).0
+}
+
+/// In a mapping run every save the batch's actions set off is blocked and
+/// counted exactly as the same actions sent one at a time: the run's count
+/// is the same, no action fails for it, and the answer says the total.
+#[tokio::test]
+async fn a_batch_blocks_saves_like_single_actions() {
+    let dir = root_with_recipe_and_account();
+    let save = click("#save");
+
+    let mut one_by_one = saving_mapping_browser().await;
+    let mut singles = 0;
+    for _ in 0..2 {
+        let (status, body) = discover_action_in(&mut one_by_one, dir.path(), ORG, PROJECT, &save, None, None).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(parsed(&body)["ok"], true, "{body}");
+        singles += parsed(&body)["blocked"].as_u64().unwrap();
+    }
+    let single_run = the_run(&one_by_one).blocked_writes;
+    assert!(single_run > 0, "nothing was blocked");
+    assert_eq!(u64::from(single_run), singles);
+
+    let mut batch = saving_mapping_browser().await;
+    let (status, text) =
+        discover_actions_in(&mut batch, dir.path(), ORG, PROJECT, &[save.clone(), save.clone()], None, None, true).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert!(lines[0].starts_with("1. ok: ") && lines[1].starts_with("2. ok: "), "a blocked save failed an action: {text}");
+    assert_eq!(the_run(&batch).blocked_writes, single_run, "the batch counted differently: {text}");
+    assert_eq!(lines[2], format!("Saves blocked by the mapping run: {singles}."), "{text}");
+    assert!(!text.contains("t0p-secret") && !text.contains("hr.example.internal"), "{text}");
+}
+
+/// Each action's own page read records what it showed, as a single action's
+/// does: a page only the first action saw is recorded, not just the last.
+#[tokio::test]
+async fn a_batch_records_what_each_action_read() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a"), click("#b")], None, None, true).await;
+    assert_eq!(status, 200, "{text}");
+
+    assert_eq!(sighted(dir.path(), "Leave"), ["First", "Second"]);
+    let area = mapped_area(dir.path(), "Leave").unwrap();
+    let pages: Vec<&str> = area.pages.iter().map(|p| p.path.as_str()).collect();
+    assert!(pages.contains(&"/hr/leave/first") && pages.contains(&"/hr/leave/second"), "{pages:?}");
+    let file = std::fs::read_to_string(map_path(dir.path(), ORG, PROJECT)).unwrap();
+    assert!(!file.contains("t0p-secret") && !file.contains('?'), "{file}");
+}
+
+/// An action the browser never gets to (a component not saved, with no
+/// draft) is a failed line like any other, not the end of the batch.
+#[tokio::test]
+async fn a_refused_action_in_a_batch_is_one_failed_line() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let actions = [pick_a_date_use(), click("#a")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, false).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert_eq!(lines[0], format!("1. failed: {}", v2_lib::ai_bridge::not_saved_try_draft("pick a DATE")), "{text}");
+    assert!(lines[1].starts_with("2. ok: "), "{text}");
+    assert!(text.ends_with(&format!("{}\n\nRecorded 1 element as seen on Leave.", page_with("First").await)), "{text}");
+}

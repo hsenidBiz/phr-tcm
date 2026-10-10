@@ -293,6 +293,7 @@ pub async fn route(
         // the live application, one action at a time.
         ("POST", "/autorun-discover-start") => autorun_discover_start(ctx, body).await,
         ("POST", "/autorun-discover-action") => autorun_discover_action(ctx, body).await,
+        ("POST", "/autorun-discover-actions") => autorun_discover_actions(ctx, body).await,
         ("POST", "/autorun-discover-end") => crate::commands::autorun::end_discovery().await,
         // Release: every Auto Run browser record the app holds is cleared
         // and the app's own browsers closed, for a browser held after it
@@ -2831,6 +2832,153 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     (200, answer.to_string())
 }
 
+/// The most actions `discover_autorun_actions` runs in one call.
+pub const MAX_BATCH: usize = 20;
+
+/// Said to a batch of more than `MAX_BATCH` actions.
+pub const BATCH_TOO_LONG: &str = "at most 20 actions in one call";
+
+/// Said to a batch with no actions in it.
+pub const BATCH_EMPTY: &str = "send at least one action in \"actions\"";
+
+/// A batch's size, refused when it holds nothing or more than `MAX_BATCH`.
+pub fn refuse_batch_size(n: usize) -> Result<(), (u16, String)> {
+    match n {
+        0 => Err((400, BATCH_EMPTY.to_string())),
+        n if n > MAX_BATCH => Err((400, BATCH_TOO_LONG.to_string())),
+        _ => Ok(()),
+    }
+}
+
+/// The draft a batch's action is tried with: `draft` for a `use_component`
+/// that names it, else none (a saved component, or not a component).
+fn draft_for<'a>(
+    action: &crate::browser::actions::Action,
+    draft: Option<&'a crate::autorun::components::Component>,
+) -> Option<&'a crate::autorun::components::Component> {
+    let key = crate::autorun::nav::module_key;
+    match (action, draft) {
+        (crate::browser::actions::Action::UseComponent { component, .. }, Some(c)) if key(&c.name) == key(component) => {
+            Some(c)
+        }
+        _ => None,
+    }
+}
+
+/// One line of a batch's answer for an action that ran, from its single
+/// answer (`discover_action_in`'s JSON): ok or failed with the detail, the
+/// dialogs it raised, the writes it set off (method and path only), the
+/// page path when it changed, and where its picture is.
+fn batch_line(n: usize, action: &crate::browser::actions::Action, v: &serde_json::Value, last_path: &mut Option<String>) -> String {
+    let ok = v["ok"].as_bool().unwrap_or(false);
+    let detail = v["detail"].as_str().map(str::trim).filter(|d| !d.is_empty());
+    let mut said = one_short_line(&detail.map(str::to_string).unwrap_or_else(|| describe_action(action)));
+    for dialog in v["dialogs"].as_array().into_iter().flatten().filter_map(|d| d.as_str()) {
+        said.push_str(&format!("; dialog {}", one_short_line(dialog)));
+    }
+    for write in v["writes"].as_array().into_iter().flatten() {
+        let (method, path) = (write["method"].as_str().unwrap_or(""), write["path"].as_str().unwrap_or(""));
+        said.push_str(&format!("; wrote {method} {path}"));
+    }
+    if let Some(path) = v["path"].as_str().filter(|p| !p.trim().is_empty()) {
+        if last_path.as_deref() != Some(path) {
+            said.push_str(&format!("; page {path}"));
+            *last_path = Some(path.to_string());
+        }
+    }
+    if let Some(picture) = v["picture"].as_str() {
+        said.push_str(&format!("; picture {picture}"));
+    }
+    format!("{n}. {}: {said}", if ok { "ok" } else { "failed" })
+}
+
+/// Said when a batch stopped at a failure: how many actions were not run.
+fn not_run_line(n: usize) -> String {
+    let what = if n == 1 { "action was" } else { "actions were" };
+    format!("Stopped at the failure: {n} {what} not run.")
+}
+
+/// Several actions in the discovery's browser, in order, each exactly as
+/// `discover_action_in` runs one: its own blocking and counting in a
+/// mapping run, its own page read and the sightings that read records, and
+/// a `use_component` naming `draft` tried with it. `area`, when named,
+/// moves the discovery there before the first action. The caller holds
+/// the browser for the whole batch, so nothing comes between its actions.
+///
+/// It stops at the first action that fails unless `stop_on_failure` is
+/// false; a browser that fails stops it either way. The answer is one line
+/// per action that ran (`N. ok: ...` or `N. failed: ...`), a line for the
+/// actions not run, the saves a mapping run blocked when there were any,
+/// and then the page once, as `get_autorun_page` answers it after the last
+/// action (`page_read_in`).
+#[allow(clippy::too_many_arguments)]
+pub async fn discover_actions_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    actions: &[crate::browser::actions::Action],
+    draft: Option<&crate::autorun::components::Component>,
+    area: Option<&str>,
+    stop_on_failure: bool,
+) -> (u16, String) {
+    if let Err(refused) = refuse_batch_size(actions.len()) {
+        return refused;
+    }
+    if !slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
+        return (409, NO_DISCOVERY.to_string());
+    }
+    let mut lines = Vec::new();
+    let mut blocked = 0usize;
+    let mut last_path = None;
+    let mut ran = 0;
+    for (i, action) in actions.iter().enumerate() {
+        let moved = if i == 0 { area } else { None };
+        let (status, body) =
+            discover_action_in(slot, root, organization, project, action, draft_for(action, draft), moved).await;
+        ran = i + 1;
+        if status != 200 {
+            // The browser failed or the discovery is gone: nothing after
+            // it can run, and the route lets a gone browser go.
+            let stopped = said_browser_failed(&(status, body.clone())) || body == NO_DISCOVERY;
+            lines.push(format!("{}. failed: {}", i + 1, one_short_line(&body)));
+            if stopped {
+                if ran < actions.len() {
+                    lines.push(not_run_line(actions.len() - ran));
+                }
+                return (status, lines.join("\n"));
+            }
+            if stop_on_failure {
+                break;
+            }
+            continue;
+        }
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+        blocked += v["blocked"].as_u64().map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX));
+        lines.push(batch_line(i + 1, action, &v, &mut last_path));
+        if stop_on_failure && !v["ok"].as_bool().unwrap_or(false) {
+            break;
+        }
+    }
+    if ran < actions.len() {
+        lines.push(not_run_line(actions.len() - ran));
+    }
+    if blocked > 0 {
+        lines.push(format!("Saves blocked by the mapping run: {blocked}."));
+    }
+    let Some(browser) = slot.as_mut() else {
+        return (409, NO_DISCOVERY.to_string());
+    };
+    let filing = if project.trim().is_empty() { None } else { Some(root) };
+    let (status, page) =
+        page_read_in(browser, filing, organization, project, None, crate::browser::snapshot::DEFAULT_LIMIT).await;
+    if status != 200 {
+        lines.push(format!("The page could not be read: {page}"));
+        return (status, lines.join("\n"));
+    }
+    (200, format!("{}\n\n{page}", lines.join("\n")))
+}
+
 /// Said to a discovery's `use_component` naming a component the project
 /// has not saved, sent without a `draft`: how a new one is tried.
 pub fn not_saved_try_draft(name: &str) -> String {
@@ -3487,6 +3635,96 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
     }
     let mut slot = crate::commands::autorun::supervised().lock().await;
     let answer = discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, draft.as_ref(), area.as_deref()).await;
+    let answer = let_go_if_silent(&mut slot, answer).await;
+    crate::commands::autorun::publish_discovery(&slot);
+    answer
+}
+
+/// `/autorun-discover-actions`: several actions in the discovery's browser,
+/// in order, under one hold of it (`discover_actions_in`). Every action is
+/// checked as `/autorun-discover-action` checks one, all before the
+/// browser is touched: a batch with one refused action runs none. A
+/// `draft` is tried by each `use_component` that names it; `area` moves the
+/// discovery before the first action.
+async fn autorun_discover_actions(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    const SHAPE: &str = "{ \"actions\": [<script actions, at most 20>], \"stop_on_failure\": <true or false, optional, true by default>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional> }";
+    let raw = match body_field(body, "actions", SHAPE) {
+        Ok(v) => v,
+        Err(refused) => return refused,
+    };
+    let Some(raw) = raw.as_array() else {
+        return (400, format!("\"actions\" is a list of actions. Expected {SHAPE}."));
+    };
+    if let Err(refused) = refuse_batch_size(raw.len()) {
+        return refused;
+    }
+    let mut actions = Vec::with_capacity(raw.len());
+    for (i, one) in raw.iter().enumerate() {
+        match serde_json::from_value::<crate::browser::actions::Action>(one.clone()) {
+            Ok(a) => actions.push(a),
+            Err(e) => {
+                return (
+                    400,
+                    format!("action {} is not an action: {e} - call get_autorun_guide for the vocabulary.", i + 1),
+                )
+            }
+        }
+    }
+    for (i, action) in actions.iter().enumerate() {
+        if let Err((status, why)) = refuse_as_a_tried_action(action) {
+            return (status, format!("action {}: {why}", i + 1));
+        }
+    }
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    let stop_on_failure = match v.get("stop_on_failure") {
+        None | Some(serde_json::Value::Null) => true,
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(_) => return (400, format!("\"stop_on_failure\" is true or false. Expected {SHAPE}.")),
+    };
+    let area = named(v.get("area").and_then(|a| a.as_str()));
+    let draft: Option<crate::autorun::components::Component> = match v.get("draft") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(raw) => match serde_json::from_value(raw.clone()) {
+            Ok(c) => Some(c),
+            Err(e) => return (400, format!("that draft is not a component: {e}. Expected {SHAPE}.")),
+        },
+    };
+    if let Some(c) = &draft {
+        if !actions.iter().any(|a| draft_for(a, Some(c)).is_some()) {
+            return (400, format!("a draft is tried by a use_component action that names it. Expected {SHAPE}."));
+        }
+    }
+    if let Some(busy) = unattended_run_is_using_the_browser() {
+        return busy;
+    }
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let recipe = match crate::autorun::recipe::load_effective_recipe(&root, &ctx.org, &ctx.project) {
+        Ok(r) => r,
+        Err(why) => return (409, why),
+    };
+    let policy = crate::autorun::runner::policy_for(Some(&recipe));
+    for (i, action) in actions.iter().enumerate() {
+        if let Err((status, why)) = refuse_outside_the_recipe(&policy, action) {
+            return (status, format!("action {}: {why}", i + 1));
+        }
+    }
+    // Held for the whole batch: nothing else drives the browser between
+    // its actions.
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let answer = discover_actions_in(
+        &mut slot,
+        &root,
+        &ctx.org,
+        &ctx.project,
+        &actions,
+        draft.as_ref(),
+        area.as_deref(),
+        stop_on_failure,
+    )
+    .await;
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery(&slot);
     answer

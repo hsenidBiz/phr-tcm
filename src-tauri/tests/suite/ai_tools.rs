@@ -607,6 +607,7 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "replay_autorun_to_step",
             "start_autorun_discovery",
             "discover_autorun_action",
+            "discover_autorun_actions",
             "save_autorun_area",
             "end_autorun_discovery",
             "release_autorun_browser",
@@ -1671,6 +1672,7 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
         "delete only records carrying that prefix",
         "never read the application's code to write scripts",
         "Choosing a model for the work",
+        "`discover_autorun_actions` carries out up to 20 in one call",
     ] {
         assert!(flat.contains(said), "/tcm:discover never says {said:?}: {flat}");
     }

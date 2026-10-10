@@ -866,6 +866,7 @@ fn the_guide_names_the_discovery_tools_and_the_three_exceptions() {
     for tool in [
         "`start_autorun_discovery`",
         "`discover_autorun_action`",
+        "`discover_autorun_actions`",
         "`save_autorun_area`",
         "`end_autorun_discovery`",
         "`probe_autorun_locator`",
@@ -890,6 +891,10 @@ fn the_guide_names_the_discovery_tools_and_the_three_exceptions() {
         "Delete only records whose name carries that prefix",
         // A refused save.
         "then save again",
+        // The batch: its limit, its stopping and its one page.
+        "up to 20 actions in order",
+        "unless `stop_on_failure` is false",
+        "then the page once",
     ] {
         assert!(flat.contains(said), "the discovery section never says {said:?}: {flat}");
     }
