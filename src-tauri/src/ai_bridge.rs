@@ -4719,6 +4719,8 @@ async fn save_autorun_scripts(
     // for a new script (all of them), its declared steps for a repair. An
     // unchanged resave is not listed: it was checked when it was saved.
     let mut seen_scope: Vec<(i32, Option<Vec<i32>>)> = Vec::new();
+    // Whether scripts saved before they were stamped count here, read once.
+    let legacy = crate::autorun::seen_check::legacy_scripts_count(&root, &ctx.org, &ctx.project);
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
@@ -4730,7 +4732,7 @@ async fn save_autorun_scripts(
         // steps checked by an earlier save, so they vouch as it did.
         let vouched = existing
             .as_ref()
-            .is_none_or(|old| crate::autorun::seen_check::vouch_carries_over(old, &ctx.org, &ctx.project));
+            .is_none_or(|old| crate::autorun::seen_check::vouch_carries_over(old, &ctx.org, &ctx.project, legacy));
         script.organization = Some(ctx.org.trim().to_string());
         script.project = Some(ctx.project.trim().to_string());
         script.checked = vouched;

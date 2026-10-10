@@ -3004,3 +3004,56 @@ async fn a_bridge_saved_script_vouches_for_its_locators() {
     let map = load_checked_map(dir.path(), "acme", "Web").unwrap();
     assert!(check_seen(&map, &components, &another, &[], None).is_err());
 }
+
+/// A script saved before scripts were stamped, resent by the assistant
+/// unchanged: it is stamped checked only while it is the one project with
+/// recorded areas (the legacy rule), and unchecked otherwise.
+async fn resave_a_legacy_script(another_project_has_areas: bool) -> CaseScript {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(201, "Publish a rating", &[""])]).await;
+    let area = |project: &str| {
+        v2_lib::autorun::nav::put_path(
+            dir.path(),
+            "acme",
+            project,
+            v2_lib::autorun::nav::ModulePath {
+                area: "Ratings".to_string(),
+                module: "Ratings".to_string(),
+                clicks: vec![v2_lib::browser::locator::Target::from("#ratings")],
+                arrived: "/ratings".to_string(),
+                recorded: "2026-10-10T10:00:00Z".to_string(),
+                start: String::new(),
+                made_by: v2_lib::autorun::nav::MadeBy::Person,
+            },
+        )
+        .unwrap()
+    };
+    area("Web");
+    if another_project_has_areas {
+        area("Mobile");
+    }
+    let body = serde_json::json!([{
+        "case_id": 201, "title": "Publish a rating", "area": "Ratings",
+        "steps": [{ "step_number": 1, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Publish" } }] }]
+    }]);
+    let legacy: Vec<CaseScript> = serde_json::from_value(body.clone()).unwrap();
+    save_scripts_atomically(dir.path(), &legacy).unwrap();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("unchanged"), "{out}");
+    load_script(dir.path(), 201).unwrap().unwrap()
+}
+
+#[tokio::test]
+async fn a_legacy_script_resaved_with_two_projects_with_areas_stays_unchecked() {
+    let saved = resave_a_legacy_script(true).await;
+    assert_eq!((saved.project.as_deref(), saved.checked), (Some("Web"), false));
+}
+
+#[tokio::test]
+async fn a_legacy_script_resaved_as_the_one_project_with_areas_is_checked() {
+    let saved = resave_a_legacy_script(false).await;
+    assert_eq!((saved.project.as_deref(), saved.checked), (Some("Web"), true));
+}

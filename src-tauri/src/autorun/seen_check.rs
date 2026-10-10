@@ -753,16 +753,20 @@ pub fn vouches(script: &CaseScript, org: &str, project: &str, legacy: bool) -> b
 
 /// Whether a save that keeps steps of `old` unchecked (an unchanged resave,
 /// or a repair, which checks only the steps it declares) still vouches:
-/// when `old` did for this project, or was saved before scripts were
-/// stamped, as those count under `legacy_scripts_count`'s rule.
-pub fn vouch_carries_over(old: &CaseScript, org: &str, project: &str) -> bool {
-    unstamped(old) || (old.checked && same_project(old, org, project))
+/// when `old` did for this project, or, saved before scripts were stamped,
+/// when `legacy` says such scripts count here (`legacy_scripts_count`).
+/// Otherwise the save is stamped unchecked.
+pub fn vouch_carries_over(old: &CaseScript, org: &str, project: &str, legacy: bool) -> bool {
+    if unstamped(old) {
+        return legacy;
+    }
+    old.checked && same_project(old, org, project)
 }
 
 /// Scripts saved before they were stamped name no project, so they count
 /// only where they can belong to no other: exactly one project under
 /// `root` has recorded areas, and it is `org`/`project`. An areas file
-/// that cannot be read counts as one with areas.
+/// that cannot be read makes none of them count: it could be any project's.
 pub fn legacy_scripts_count(root: &std::path::Path, org: &str, project: &str) -> bool {
     let Ok(entries) = std::fs::read_dir(root.join("projects")) else { return false };
     let mut with_areas: Vec<String> = Vec::new();
@@ -770,11 +774,11 @@ pub fn legacy_scripts_count(root: &std::path::Path, org: &str, project: &str) ->
         let Some(name) = e.file_name().to_str().filter(|n| n.ends_with(".nav.json")).map(str::to_string) else {
             continue;
         };
-        let has_areas = std::fs::read_to_string(e.path())
+        let nav = std::fs::read_to_string(e.path())
             .ok()
-            .and_then(|s| serde_json::from_str::<NavFile>(s.strip_prefix('\u{feff}').unwrap_or(&s)).ok())
-            .is_none_or(|nav| !nav.modules.is_empty());
-        if has_areas {
+            .and_then(|s| serde_json::from_str::<NavFile>(s.strip_prefix('\u{feff}').unwrap_or(&s)).ok());
+        let Some(nav) = nav else { return false };
+        if !nav.modules.is_empty() {
             with_areas.push(name);
         }
     }

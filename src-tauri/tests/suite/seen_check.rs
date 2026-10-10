@@ -1611,3 +1611,40 @@ fn legacy_unstamped_scripts_count_only_when_one_project_has_areas() {
     assert!(!eval_seen(dir.path(), "Acme", "Web", "Cycles"), "two projects have areas");
     assert!(!eval_seen(dir.path(), "Acme", "Mobile", "Cycles"));
 }
+
+/// An areas file that cannot be read could be any project's, so scripts
+/// saved before the stamp count nowhere while one is there, even beside
+/// the one project with areas, or as that project's own file.
+#[test]
+fn a_corrupt_areas_file_turns_the_legacy_rule_off() {
+    let dir = tempfile::tempdir().unwrap();
+    v2_lib::autorun::store::save_script(dir.path(), &eval_script(7, "Cycles")).unwrap();
+    record_area(dir.path(), "Acme", "Web", "Cycles");
+    assert!(eval_seen(dir.path(), "Acme", "Web", "Cycles"));
+    let stray = dir.path().join("projects").join("someone-else.nav.json");
+    std::fs::write(&stray, "{ not json").unwrap();
+    assert!(!eval_seen(dir.path(), "Acme", "Web", "Cycles"), "a corrupt areas file beside it");
+    std::fs::remove_file(&stray).unwrap();
+    assert!(eval_seen(dir.path(), "Acme", "Web", "Cycles"));
+    std::fs::write(v2_lib::autorun::nav::nav_path(dir.path(), "Acme", "Web"), "{ not json").unwrap();
+    assert!(!eval_seen(dir.path(), "Acme", "Web", "Cycles"), "its own areas file is corrupt");
+}
+
+/// What a save that keeps steps of an earlier script unchecked carries
+/// over: a checked script of this project vouches still; one saved before
+/// the stamp only when the legacy rule holds; anything else does not.
+#[test]
+fn an_unstamped_script_carries_over_only_under_the_legacy_rule() {
+    use v2_lib::autorun::seen_check::vouch_carries_over;
+    let legacy = eval_script(7, "Cycles");
+    assert!(vouch_carries_over(&legacy, "Acme", "Web", true));
+    assert!(!vouch_carries_over(&legacy, "Acme", "Web", false));
+    let mut checked = eval_script(7, "Cycles");
+    checked.organization = Some("Acme".into());
+    checked.project = Some("Web".into());
+    checked.checked = true;
+    assert!(vouch_carries_over(&checked, "acme", "web", false));
+    assert!(!vouch_carries_over(&checked, "Acme", "Mobile", true));
+    let editor = CaseScript { checked: false, ..checked };
+    assert!(!vouch_carries_over(&editor, "Acme", "Web", true));
+}
