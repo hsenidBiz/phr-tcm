@@ -10,11 +10,36 @@
 //!
 //! On Windows each browser therefore starts inside a job object of its
 //! own (`Job`). Windows puts every process the browser starts into the
-//! same job, and the job cannot be left: no breakaway is allowed. Ending
-//! the job ends the whole tree and nothing else, so the person's own Edge,
-//! which is never in one of these jobs, can never be touched. The job is
-//! set to kill on close, so a browser whose handle is dropped, or an app
-//! that crashes, still takes its tree with it.
+//! same job, and the job cannot be left: no breakaway is allowed.
+//!
+//! A job is not only the browser, though. A program the person opens from
+//! a visible app browser (a downloaded file in Excel, a `mailto:` link in
+//! Outlook, a link handed to the default browser, which can start the
+//! person's own Edge) is started by the browser and so lands in its job
+//! too. So the browser's own processes are told apart by their command
+//! line: Chromium gives every process of a browser its
+//! `--user-data-dir=<profile>`, and the profile is this tree's throwaway
+//! folder (`carries_profile`). The command line is read with
+//! `NtQueryInformationProcess(ProcessCommandLineInformation)`, which needs
+//! only `PROCESS_QUERY_LIMITED_INFORMATION` and reads no other process's
+//! memory. Closing a browser ends only those processes, and counts only
+//! those; anything else in the job is left running. The whole job is
+//! ended in one call only while every process in it carries the profile.
+//!
+//! The job kills its processes when its last handle closes, so a browser
+//! the app forgets, or an app that crashes, still takes its tree with it.
+//! That would also take a program the person opened from the browser, so a
+//! watcher (one thread, every `WATCH_EVERY`) looks at every live tree and,
+//! the first time it finds a process without the profile in one, takes
+//! kill-on-close off that job and logs the program's file name once. The
+//! cost, accepted: after that, a crash of the app can leave that browser's
+//! own processes running; the next start's sweep removes its profile once
+//! they are gone.
+//!
+//! Edge restarting itself (after an update, or "Restart" in its settings)
+//! asks to break away from its job. That is refused here, so such a
+//! browser simply exits; it is then judged dead and the app starts a new
+//! one, which is the safe outcome.
 //!
 //! Every live tree is kept in one registry (`register`), and the app's
 //! exit ends them all (`end_all`), including one an unattended run still
@@ -32,6 +57,10 @@ use std::time::{Duration, Instant};
 /// takes a few seconds to unwind after its first process goes.
 pub const END_WITHIN: Duration = Duration::from_secs(5);
 
+/// How often the watcher looks for programs the person opened from a
+/// browser.
+pub const WATCH_EVERY: Duration = Duration::from_secs(2);
+
 /// The start of every profile folder a launched browser gets. The full
 /// name is this and the DevTools port, digits only.
 pub const PROFILE_PREFIX: &str = "tcm-autorun-";
@@ -40,13 +69,16 @@ pub const PROFILE_PREFIX: &str = "tcm-autorun-";
 /// process tree and its profile folder. The registry holds these, so the
 /// tests can stand in a fake for a real browser.
 pub trait Ends: Send + Sync {
-    /// Ask every process to end, without waiting.
+    /// Ask every process of the browser to end, without waiting.
     fn terminate(&self);
-    /// End every process, wait until none is left (up to `END_WITHIN`),
-    /// then remove the profile folder. True when no process is left.
+    /// End every process of the browser, wait until none is left (up to
+    /// `END_WITHIN`), then remove the profile folder. True when no process
+    /// of the browser is left.
     fn end(&self) -> bool;
     /// The profile folder it uses.
     fn profile_dir(&self) -> &Path;
+    /// Called by the watcher every `WATCH_EVERY`.
+    fn watch(&self) {}
 }
 
 /// Every tree the app started that is still alive. Weak, so a tree that
@@ -57,12 +89,24 @@ fn live() -> std::sync::MutexGuard<'static, Vec<Weak<dyn Ends>>> {
     LIVE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Keep `tree` in the registry until it is dropped.
+/// Keep `tree` in the registry until it is dropped. The first one starts
+/// the watcher.
 pub fn register<E: Ends + 'static>(tree: &Arc<E>) {
     let tree: Arc<dyn Ends> = tree.clone();
-    let mut live = live();
-    live.retain(|w| w.strong_count() > 0);
-    live.push(Arc::downgrade(&tree));
+    {
+        let mut live = live();
+        live.retain(|w| w.strong_count() > 0);
+        live.push(Arc::downgrade(&tree));
+    }
+    static WATCHER: std::sync::Once = std::sync::Once::new();
+    WATCHER.call_once(|| {
+        let _ = std::thread::Builder::new().name("browser-tree-watch".into()).spawn(|| loop {
+            std::thread::sleep(WATCH_EVERY);
+            for t in registered() {
+                t.watch();
+            }
+        });
+    });
 }
 
 fn registered() -> Vec<Arc<dyn Ends>> {
@@ -87,6 +131,59 @@ pub fn held_profiles() -> Vec<PathBuf> {
     registered().iter().map(|t| t.profile_dir().to_path_buf()).collect()
 }
 
+/// Run blocking work (closing a browser waits for its processes) without
+/// stalling the async runtime's other tasks: moved off the worker on a
+/// multi-threaded runtime, run as it is anywhere else (a test's
+/// current-thread runtime, or no runtime at all).
+pub fn blocking<R>(f: impl FnOnce() -> R) -> R {
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => tokio::task::block_in_place(f),
+        _ => f(),
+    }
+}
+
+fn normalise(path: &str) -> String {
+    path.trim().replace('/', "\\").trim_end_matches('\\').to_lowercase()
+}
+
+/// The values of every `<switch>=` in a command line: `--x=v`, `--x="v"`
+/// and `"--x=v"` (a whole argument quoted, as a path with spaces is).
+fn switch_values<'a>(command_line: &'a str, switch: &str) -> Vec<&'a str> {
+    let lower = command_line.to_ascii_lowercase();
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(at) = lower[from..].find(switch).map(|i| from + i) {
+        let whole_quoted = at > 0 && command_line.as_bytes()[at - 1] == b'"';
+        let start = at + switch.len();
+        let rest = &command_line[start..];
+        let value = if let Some(inner) = rest.strip_prefix('"') {
+            inner.split('"').next().unwrap_or("")
+        } else if whole_quoted {
+            rest.split('"').next().unwrap_or("")
+        } else {
+            rest.split(|c: char| c.is_whitespace() || c == '"').next().unwrap_or("")
+        };
+        out.push(value);
+        from = start;
+    }
+    out
+}
+
+/// Is this a process of the browser on `profile`? Its command line names
+/// that folder as its `--user-data-dir` (Chromium copies the switch to
+/// every process it starts), or keeps its crash database inside it.
+/// Compared case-insensitively on the normalised path, never as a prefix
+/// of another folder (`tcm-autorun-1` is not `tcm-autorun-12`).
+pub fn carries_profile(command_line: &str, profile: &Path) -> bool {
+    let profile = normalise(&profile.to_string_lossy());
+    if profile.is_empty() {
+        return false;
+    }
+    let inside = format!("{profile}\\");
+    switch_values(command_line, "--user-data-dir=").iter().any(|v| normalise(v) == profile)
+        || switch_values(command_line, "--database=").iter().any(|v| normalise(v).starts_with(&inside))
+}
+
 /// Is this exactly a launched browser's profile folder name:
 /// `tcm-autorun-` and digits, nothing else? The test suite's own
 /// `tcm-autorun-bridge-*` and `-discovery-*` folders are not.
@@ -98,29 +195,41 @@ pub fn is_profile_name(name: &str) -> bool {
 /// browser's profile that no live tree of this app holds and that nothing
 /// has open. A folder in use is left as it is: it is renamed aside first,
 /// which Windows refuses while a file in it is open, so a browser still
-/// running on it never loses half its files. Never looks at processes.
+/// running on it never loses half its files. A folder an earlier sweep
+/// left aside (`<name>.sweep`) is removed too. Never looks at processes.
 /// Returns the names removed.
 pub fn sweep_leftover_profiles(temp: &Path) -> Vec<String> {
-    let held = held_profiles();
     let Ok(entries) = std::fs::read_dir(temp) else { return Vec::new() };
+    let dirs: Vec<(String, PathBuf)> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+        .collect();
     let mut removed = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if !is_profile_name(&name) || !entry.file_type().is_ok_and(|t| t.is_dir()) {
+    // Leftovers first: one still in the way would stop its profile's
+    // folder from being moved aside.
+    for (name, path) in &dirs {
+        if name.strip_suffix(".sweep").is_some_and(is_profile_name) && std::fs::remove_dir_all(path).is_ok() {
+            removed.push(name.clone());
+        }
+    }
+    for (name, path) in &dirs {
+        if !is_profile_name(name) {
             continue;
         }
-        let path = entry.path();
-        if held.iter().any(|h| h == &path) {
+        // Asked per folder: a browser started while the sweep runs is
+        // left alone too.
+        if held_profiles().iter().any(|h| h == path) {
             continue;
         }
         let aside = temp.join(format!("{name}.sweep"));
-        if std::fs::rename(&path, &aside).is_err() {
+        if std::fs::rename(path, &aside).is_err() {
             continue;
         }
         if std::fs::remove_dir_all(&aside).is_ok() {
-            removed.push(name);
+            removed.push(name.clone());
         } else {
-            let _ = std::fs::rename(&aside, &path);
+            let _ = std::fs::rename(&aside, path);
         }
     }
     removed
@@ -154,6 +263,19 @@ pub struct Tree {
     #[cfg(windows)]
     job: job::Job,
     profile_dir: PathBuf,
+    /// A process without the profile was found in the job: kill-on-close
+    /// is off, and the job is never ended as a whole again.
+    #[cfg(windows)]
+    foreign_seen: std::sync::atomic::AtomicBool,
+}
+
+/// A process in a browser's job: its pid, whether it is the browser's
+/// own (carries the profile), and its exe file name.
+#[cfg(windows)]
+struct Member {
+    pid: u32,
+    ours: bool,
+    image: String,
 }
 
 impl Tree {
@@ -164,6 +286,8 @@ impl Tree {
             #[cfg(windows)]
             job: job::Job::new()?,
             profile_dir,
+            #[cfg(windows)]
+            foreign_seen: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -174,12 +298,21 @@ impl Tree {
         self.job.adopt_suspended(child)
     }
 
-    /// How many processes are in the tree now. `None` off Windows, where
-    /// there is no job to ask.
-    pub fn processes(&self) -> Option<u32> {
+    /// Put a running process into this tree's job, as a program the
+    /// person opened from the browser would be. Only the live tests use
+    /// this.
+    #[cfg(windows)]
+    #[doc(hidden)]
+    pub fn put_in_job(&self, child: &std::process::Child) -> Result<(), String> {
+        self.job.assign(child)
+    }
+
+    /// Does the job still kill what is in it when its last handle closes?
+    /// `None` off Windows, or if Windows will not say.
+    pub fn kills_on_close(&self) -> Option<bool> {
         #[cfg(windows)]
         {
-            self.job.active_processes()
+            self.job.kills_on_close()
         }
         #[cfg(not(windows))]
         {
@@ -187,7 +320,53 @@ impl Tree {
         }
     }
 
-    /// Is this process one of the tree's? Always false off Windows.
+    #[cfg(windows)]
+    fn members(&self) -> Option<Vec<Member>> {
+        let pids = self.job.pids()?;
+        Some(
+            pids.into_iter()
+                .filter_map(|pid| {
+                    let seen = job::inspect(pid)?;
+                    let ours = seen.command_line.as_deref().is_some_and(|c| carries_profile(c, &self.profile_dir));
+                    Some(Member { pid, ours, image: seen.image })
+                })
+                .collect(),
+        )
+    }
+
+    /// The first time a process without the profile is seen in the job:
+    /// kill-on-close comes off, so a crash never ends it, and its file
+    /// name is logged.
+    #[cfg(windows)]
+    fn note_foreign(&self, members: &[Member]) {
+        use std::sync::atomic::Ordering;
+        let Some(stranger) = members.iter().find(|m| !m.ours) else { return };
+        if self.foreign_seen.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        self.job.clear_kill_on_close();
+        let image = if stranger.image.is_empty() { "a program" } else { stranger.image.as_str() };
+        crate::applog::warn(format!(
+            "auto-run: a program opened from the browser on profile {} runs beside it and is left running when the browser closes: {image}",
+            folder_name(&self.profile_dir)
+        ));
+    }
+
+    /// How many of the browser's own processes (those carrying its
+    /// profile) run now. `None` off Windows, where there is no job to ask,
+    /// or if Windows will not list the job.
+    pub fn processes(&self) -> Option<u32> {
+        #[cfg(windows)]
+        {
+            self.members().map(|m| m.iter().filter(|m| m.ours).count() as u32)
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    }
+
+    /// Is this process in the tree's job? Always false off Windows.
     pub fn holds(&self, pid: u32) -> bool {
         #[cfg(windows)]
         {
@@ -200,23 +379,49 @@ impl Tree {
         }
     }
 
-    /// Wait until no process is left in the tree, up to `within`.
+    /// Wait until none of the browser's own processes is left, up to
+    /// `within`, ending again any it started meanwhile. On Windows a job
+    /// that cannot be listed counts as not empty: a safety check fails
+    /// closed.
     fn wait_empty(&self, within: Duration) -> bool {
         let began = Instant::now();
+        let mut asked = Instant::now();
         loop {
             match self.processes() {
-                None | Some(0) => return true,
-                Some(_) if began.elapsed() >= within => return false,
-                Some(_) => std::thread::sleep(Duration::from_millis(50)),
+                Some(0) => return true,
+                #[cfg(not(windows))]
+                None => return true,
+                _ if began.elapsed() >= within => return false,
+                _ => {
+                    if asked.elapsed() >= Duration::from_millis(500) {
+                        self.terminate();
+                        asked = Instant::now();
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
             }
         }
     }
 }
 
 impl Ends for Tree {
+    /// The whole job in one call while every process in it is the
+    /// browser's; otherwise each of the browser's own processes, and
+    /// nothing else.
     fn terminate(&self) {
         #[cfg(windows)]
-        self.job.terminate();
+        {
+            use std::sync::atomic::Ordering;
+            let Some(members) = self.members() else { return };
+            self.note_foreign(&members);
+            if !self.foreign_seen.load(Ordering::SeqCst) && members.iter().all(|m| m.ours) {
+                self.job.terminate();
+            } else {
+                for m in members.iter().filter(|m| m.ours) {
+                    self.job.kill(m.pid);
+                }
+            }
+        }
     }
 
     fn end(&self) -> bool {
@@ -225,7 +430,7 @@ impl Ends for Tree {
             crate::applog::warn(format!(
                 "auto-run: the browser on profile {} still had {} processes {} s after it was ended",
                 folder_name(&self.profile_dir),
-                self.processes().unwrap_or(0),
+                self.processes().map_or("an unknown number of".to_string(), |n| n.to_string()),
                 END_WITHIN.as_secs()
             ));
             return false;
@@ -239,6 +444,29 @@ impl Ends for Tree {
     fn profile_dir(&self) -> &Path {
         &self.profile_dir
     }
+
+    fn watch(&self) {
+        #[cfg(windows)]
+        if let Some(members) = self.members() {
+            self.note_foreign(&members);
+        }
+    }
+}
+
+/// With kill-on-close off (a program the person opened runs in the job),
+/// a dropped tree still ends the browser's own processes. Without it, the
+/// handle closing does the same for the whole job.
+#[cfg(windows)]
+impl Drop for Tree {
+    fn drop(&mut self) {
+        if self.foreign_seen.load(std::sync::atomic::Ordering::SeqCst) {
+            if let Some(members) = self.members() {
+                for m in members.iter().filter(|m| m.ours) {
+                    self.job.kill(m.pid);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -246,25 +474,104 @@ mod job {
     //! The Windows job object a browser runs in.
 
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessCommandLineInformation};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE, UNICODE_STRING};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
     };
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectBasicAccountingInformation,
+        AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectBasicProcessIdList,
         JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
-        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_BASIC_PROCESS_ID_LIST, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::System::Threading::{
-        OpenProcess, OpenThread, ResumeThread, PROCESS_QUERY_LIMITED_INFORMATION, THREAD_SUSPEND_RESUME,
+        GetExitCodeProcess, OpenProcess, OpenThread, QueryFullProcessImageNameW, ResumeThread, TerminateProcess, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE, THREAD_SUSPEND_RESUME,
     };
 
     /// An owned job handle. Closing it (dropping this) kills every
-    /// process still in the job.
+    /// process still in the job, unless kill-on-close was taken off.
     pub struct Job(OwnedHandle);
 
     fn os_error(what: &str) -> String {
         format!("{what}: {}", std::io::Error::last_os_error())
+    }
+
+    /// A process handle, closed when dropped.
+    struct Process(HANDLE);
+
+    impl Process {
+        fn open(access: u32, pid: u32) -> Option<Process> {
+            // SAFETY: the handle is checked before it is owned.
+            let h = unsafe { OpenProcess(access, 0, pid) };
+            (!h.is_null()).then_some(Process(h))
+        }
+    }
+
+    impl Drop for Process {
+        fn drop(&mut self) {
+            // SAFETY: opened by `Process::open`, closed once.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    /// What can be read of a process: its command line (if Windows lets
+    /// it be read) and its exe file name, never its path.
+    pub struct Seen {
+        pub command_line: Option<String>,
+        pub image: String,
+    }
+
+    /// Look at a process. `None` when it cannot be opened, or has ended
+    /// and is only still listed: a browser process on its way out must
+    /// never be taken for a program the person opened.
+    pub fn inspect(pid: u32) -> Option<Seen> {
+        let p = Process::open(PROCESS_QUERY_LIMITED_INFORMATION, pid)?;
+        let mut code = 0u32;
+        // SAFETY: a valid process handle; `code` lives for the call.
+        if unsafe { GetExitCodeProcess(p.0, &mut code) } == 0 || code != STILL_ACTIVE as u32 {
+            return None;
+        }
+        Some(Seen { command_line: command_line(&p), image: image_name(&p) })
+    }
+
+    fn command_line(p: &Process) -> Option<String> {
+        let mut size: u32 = 32 * 1024;
+        for _ in 0..3 {
+            // u64s, so the UNICODE_STRING at the front is aligned.
+            let mut buf = vec![0u64; (size as usize).div_ceil(8)];
+            let mut needed = 0u32;
+            // SAFETY: the buffer is `size` bytes and lives for the call.
+            let status = unsafe {
+                NtQueryInformationProcess(p.0, ProcessCommandLineInformation, buf.as_mut_ptr().cast(), size, &mut needed)
+            };
+            if status == 0 {
+                // SAFETY: on success the buffer starts with a UNICODE_STRING
+                // whose text lies inside the same buffer.
+                let us = unsafe { &*(buf.as_ptr() as *const UNICODE_STRING) };
+                if us.Buffer.is_null() || us.Length == 0 {
+                    return Some(String::new());
+                }
+                let text = unsafe { std::slice::from_raw_parts(us.Buffer, (us.Length / 2) as usize) };
+                return Some(String::from_utf16_lossy(text));
+            }
+            if needed <= size {
+                return None;
+            }
+            size = needed;
+        }
+        None
+    }
+
+    fn image_name(p: &Process) -> String {
+        let mut buf = vec![0u16; 1024];
+        let mut len = buf.len() as u32;
+        // SAFETY: `buf` holds `len` u16s and lives for the call.
+        if unsafe { QueryFullProcessImageNameW(p.0, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len) } == 0 {
+            return String::new();
+        }
+        let full = String::from_utf16_lossy(&buf[..len as usize]);
+        full.rsplit(['\\', '/']).next().unwrap_or("").to_string()
     }
 
     impl Job {
@@ -279,18 +586,7 @@ mod job {
             }
             // SAFETY: `raw` is a valid handle this function owns.
             let job = Job(unsafe { OwnedHandle::from_raw_handle(raw as RawHandle) });
-            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            // SAFETY: the struct is the size passed, and lives for the call.
-            let ok = unsafe {
-                SetInformationJobObject(
-                    job.raw(),
-                    JobObjectExtendedLimitInformation,
-                    &limits as *const _ as *const core::ffi::c_void,
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                )
-            };
-            if ok == 0 {
+            if !job.set_limits(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) {
                 return Err(os_error("could not set up the browser's job"));
             }
             Ok(job)
@@ -300,32 +596,96 @@ mod job {
             self.0.as_raw_handle() as HANDLE
         }
 
-        /// Assign a process created suspended to this job, then resume
-        /// its threads. Assigned before it runs a single instruction, so
-        /// no process it starts can be outside the job.
-        pub fn adopt_suspended(&self, child: &std::process::Child) -> Result<(), String> {
-            // SAFETY: both handles are valid for the call.
-            if unsafe { AssignProcessToJobObject(self.raw(), child.as_raw_handle() as HANDLE) } == 0 {
-                return Err(os_error("could not put the browser in its job"));
+        fn set_limits(&self, flags: u32) -> bool {
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            limits.BasicLimitInformation.LimitFlags = flags;
+            // SAFETY: the struct is the size passed, and lives for the call.
+            unsafe {
+                SetInformationJobObject(
+                    self.raw(),
+                    JobObjectExtendedLimitInformation,
+                    &limits as *const _ as *const core::ffi::c_void,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                ) != 0
             }
-            resume_threads(child.id())
         }
 
-        /// How many processes are in the job now. `None` if Windows will
-        /// not say.
-        pub fn active_processes(&self) -> Option<u32> {
-            let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        /// Take kill-on-close off: closing the job's last handle then
+        /// leaves its processes running. No other limit is set, so none
+        /// is lost.
+        pub fn clear_kill_on_close(&self) {
+            if !self.set_limits(0) {
+                crate::applog::warn(format!("auto-run: {}", os_error("could not take kill-on-close off a browser's job")));
+            }
+        }
+
+        pub fn kills_on_close(&self) -> Option<bool> {
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
             // SAFETY: the struct is the size passed, and lives for the call.
             let ok = unsafe {
                 QueryInformationJobObject(
                     self.raw(),
-                    JobObjectBasicAccountingInformation,
-                    &mut info as *mut _ as *mut core::ffi::c_void,
-                    std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                    JobObjectExtendedLimitInformation,
+                    &mut limits as *mut _ as *mut core::ffi::c_void,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
                     std::ptr::null_mut(),
                 )
             };
-            (ok != 0).then_some(info.ActiveProcesses)
+            (ok != 0).then_some(limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE != 0)
+        }
+
+        /// Assign a process created suspended to this job, then resume
+        /// its threads. Assigned before it runs a single instruction, so
+        /// no process it starts can be outside the job.
+        pub fn adopt_suspended(&self, child: &std::process::Child) -> Result<(), String> {
+            self.assign(child)?;
+            resume_threads(child.id())
+        }
+
+        pub fn assign(&self, child: &std::process::Child) -> Result<(), String> {
+            // SAFETY: both handles are valid for the call.
+            if unsafe { AssignProcessToJobObject(self.raw(), child.as_raw_handle() as HANDLE) } == 0 {
+                return Err(os_error("could not put the browser in its job"));
+            }
+            Ok(())
+        }
+
+        /// Every process in the job now. `None` if Windows will not say.
+        pub fn pids(&self) -> Option<Vec<u32>> {
+            let header = std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList);
+            let mut room = 256usize;
+            for _ in 0..4 {
+                let bytes = header + room * std::mem::size_of::<usize>();
+                let mut buf = vec![0u64; bytes.div_ceil(8)];
+                // SAFETY: the buffer is `bytes` long, aligned for the
+                // struct, and lives for the call.
+                let ok = unsafe {
+                    QueryInformationJobObject(
+                        self.raw(),
+                        JobObjectBasicProcessIdList,
+                        buf.as_mut_ptr().cast(),
+                        bytes as u32,
+                        std::ptr::null_mut(),
+                    )
+                };
+                // SAFETY: the buffer starts with the struct's header.
+                let list = unsafe { &*(buf.as_ptr() as *const JOBOBJECT_BASIC_PROCESS_ID_LIST) };
+                let assigned = list.NumberOfAssignedProcesses as usize;
+                if ok == 0 && assigned <= room {
+                    return None;
+                }
+                if assigned > room {
+                    room = assigned + 32;
+                    continue;
+                }
+                let n = list.NumberOfProcessIdsInList as usize;
+                // SAFETY: Windows wrote `n` ids after the header.
+                let ids = unsafe {
+                    std::slice::from_raw_parts((buf.as_ptr() as *const u8).add(header) as *const usize, n)
+                };
+                return Some(ids.iter().map(|&id| id as u32).collect());
+            }
+            None
         }
 
         /// End every process in the job. Returns at once; they go a
@@ -335,18 +695,24 @@ mod job {
             unsafe { TerminateJobObject(self.raw(), 1) };
         }
 
-        /// Is the process with this pid in this job?
-        pub fn holds(&self, pid: u32) -> bool {
-            // SAFETY: the process handle is checked, and closed below.
-            let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-            if process.is_null() {
-                return false;
-            }
+        /// End one process, only if it is still in this job: a pid read a
+        /// moment ago may since belong to another program.
+        pub fn kill(&self, pid: u32) {
+            let Some(p) = Process::open(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, pid) else { return };
             let mut inside = 0;
             // SAFETY: both handles are valid; `inside` lives for the call.
-            let ok = unsafe { IsProcessInJob(process, self.raw(), &mut inside) };
-            // SAFETY: opened above, closed once.
-            unsafe { CloseHandle(process) };
+            if unsafe { IsProcessInJob(p.0, self.raw(), &mut inside) } != 0 && inside != 0 {
+                // SAFETY: a valid process handle.
+                unsafe { TerminateProcess(p.0, 1) };
+            }
+        }
+
+        /// Is the process with this pid in this job?
+        pub fn holds(&self, pid: u32) -> bool {
+            let Some(p) = Process::open(PROCESS_QUERY_LIMITED_INFORMATION, pid) else { return false };
+            let mut inside = 0;
+            // SAFETY: both handles are valid; `inside` lives for the call.
+            let ok = unsafe { IsProcessInJob(p.0, self.raw(), &mut inside) };
             ok != 0 && inside != 0
         }
     }

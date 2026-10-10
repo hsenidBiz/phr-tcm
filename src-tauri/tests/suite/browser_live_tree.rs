@@ -57,7 +57,13 @@ async fn answers(port: u16) -> bool {
 /// A headless Edge, once its DevTools port answers, and a moment more for
 /// its gpu, utility and renderer processes to start.
 async fn start() -> LaunchedBrowser {
-    let b = launch_with(Browser::Edge, &["--headless=new"]).expect("Edge did not start");
+    start_with(&["--headless=new"]).await
+}
+
+/// The same, with these switches (none: a visible window, as the
+/// supervised browser and the recorder have).
+async fn start_with(extra: &[&str]) -> LaunchedBrowser {
+    let b = launch_with(Browser::Edge, extra).expect("Edge did not start");
     for _ in 0..60 {
         if answers(b.port).await {
             tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -80,6 +86,10 @@ async fn a_launched_browser_and_all_its_children_are_in_its_job() {
         assert!(b.holds(*pid), "process {pid} on this profile is outside the browser's job");
     }
     assert!(b.processes().unwrap() as usize >= pids.len(), "{:?} vs {pids:?}", b.processes());
+    // Every one of them is told for the browser's own: the watcher, a
+    // round later, has found nothing else in the job.
+    std::thread::sleep(tree::WATCH_EVERY + Duration::from_millis(1500));
+    assert_eq!(b.kills_on_close(), Some(true), "a browser process was taken for a program the person opened");
     b.close().map_err(|_| ()).expect("closed");
 }
 
@@ -178,4 +188,59 @@ async fn a_reload_and_a_tab_open_close_keep_the_browser_for_the_next_case() {
     let profile = &started[0];
     assert!(processes_on(profile).is_empty(), "the run's browser ended with the run");
     assert!(!profile.exists());
+}
+
+/// A program the person opens from a visible app browser (a download in
+/// Excel, a link in their own Edge) is started by the browser and so lands
+/// in its job. Closing the browser ends only the browser's own processes,
+/// and the watcher takes kill-on-close off the job, so a crash of the app
+/// would not end that program either. A harmless `ping` stands in for the
+/// program, put in the job through the test seam; the test ends it itself.
+#[tokio::test]
+#[ignore = "starts a real Edge window"]
+async fn a_program_opened_from_the_browser_is_left_running_when_the_browser_closes() {
+    let _held = crate::serial::held_browsers();
+    let _tail = crate::serial::log_tail();
+    let b = start_with(&[]).await;
+    assert_eq!(b.kills_on_close(), Some(true));
+    let mut program = std::process::Command::new("ping")
+        .args(["-n", "60", "127.0.0.1"])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("ping starts");
+    let ended_it = scopeguard_kill(program.id());
+    b.put_in_job(&program).expect("the program joins the browser's job");
+    assert!(b.holds(program.id()));
+
+    assert!(
+        eventually(tree::WATCH_EVERY * 3, || b.kills_on_close() == Some(false)),
+        "the watcher never took kill-on-close off the job"
+    );
+    let warned: Vec<String> = v2_lib::applog::recent(500)
+        .into_iter()
+        .map(|l| l.message)
+        .filter(|m| m.contains("a program opened from the browser"))
+        .collect();
+    assert!(warned.iter().any(|m| m.to_ascii_lowercase().ends_with(": ping.exe")), "{warned:?}");
+    assert!(warned.iter().all(|m| !m.to_ascii_lowercase().contains("system32")), "only the file name: {warned:?}");
+
+    let profile = b.profile_dir.clone();
+    assert!(b.close().is_ok(), "the browser's own processes ended, the program's presence notwithstanding");
+    assert!(processes_on(&profile).is_empty(), "nothing of the browser is left");
+    assert!(!profile.exists());
+    assert!(program.try_wait().unwrap().is_none(), "the program the person opened is still running");
+    drop(ended_it);
+    let _ = program.wait();
+}
+
+/// Ends the test's own `ping` however the test ends, by its pid, through
+/// its own handle: never any other process.
+fn scopeguard_kill(pid: u32) -> impl Drop {
+    struct KillOnDrop(u32);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("taskkill").args(["/PID", &self.0.to_string(), "/F"]).output();
+        }
+    }
+    KillOnDrop(pid)
 }

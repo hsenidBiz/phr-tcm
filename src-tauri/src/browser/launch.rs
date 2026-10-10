@@ -150,9 +150,25 @@ impl LaunchedBrowser {
         self.child.id()
     }
 
-    /// How many processes the browser's job holds now. `None` off Windows.
+    /// How many of the browser's own processes (those carrying its
+    /// profile) its job holds now. `None` off Windows.
     pub fn processes(&self) -> Option<u32> {
         self.tree.processes()
+    }
+
+    /// Does the browser's job still kill what is in it if the app goes?
+    /// It stops once a program the person opened is seen in it.
+    pub fn kills_on_close(&self) -> Option<bool> {
+        self.tree.kills_on_close()
+    }
+
+    /// Put a running process in the browser's job, as a program the
+    /// person opened from the browser would be. Only the live tests use
+    /// this.
+    #[cfg(windows)]
+    #[doc(hidden)]
+    pub fn put_in_job(&self, child: &std::process::Child) -> Result<(), String> {
+        self.tree.put_in_job(child)
     }
 
     /// Is this process one of the browser's (in its job)?
@@ -208,16 +224,36 @@ impl LaunchedBrowser {
     }
 }
 
-/// Is a launched browser still usable? Its job still has processes (or,
+/// What a liveness check found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Liveness {
+    /// Its processes run and DevTools answers.
+    Alive,
+    /// None of its processes is left.
+    Gone,
+    /// Its processes still run, but DevTools did not answer.
+    NotAnswering,
+}
+
+/// Is a launched browser still usable? Its own processes still run (or,
 /// off Windows where there is no job, the spawned pid still runs) AND its
 /// DevTools port answered. The spawned pid ending on Windows does not
 /// matter: Edge can hand its browser to another process of the same job.
-pub fn still_alive(processes: Option<u32>, pid_ended: bool, devtools_answered: bool) -> bool {
+pub fn liveness(processes: Option<u32>, pid_ended: bool, devtools_answered: bool) -> Liveness {
     let running = match processes {
         Some(n) => n > 0,
         None => !pid_ended,
     };
-    running && devtools_answered
+    match (running, devtools_answered) {
+        (false, _) => Liveness::Gone,
+        (true, false) => Liveness::NotAnswering,
+        (true, true) => Liveness::Alive,
+    }
+}
+
+/// `liveness` as a yes or no.
+pub fn still_alive(processes: Option<u32>, pid_ended: bool, devtools_answered: bool) -> bool {
+    liveness(processes, pid_ended, devtools_answered) == Liveness::Alive
 }
 
 /// The one line logged when a browser's spawned pid is found gone: enough
@@ -226,7 +262,25 @@ pub fn still_alive(processes: Option<u32>, pid_ended: bool, devtools_answered: b
 pub fn pid_gone_line(pid: u32, processes: Option<u32>, devtools_answered: bool) -> String {
     let count = processes.map_or("an unknown number of".to_string(), |n| n.to_string());
     let answered = if devtools_answered { "answered" } else { "did not answer" };
-    format!("unattended run: the browser's first process (pid {pid}) has ended; its job has {count} processes and DevTools {answered}")
+    format!("unattended run: the browser's first process (pid {pid}) has ended; {count} of its processes run and DevTools {answered}")
+}
+
+/// A free DevTools port and a new, empty profile folder named for it. The
+/// folder is made with `create_dir`, never reused: one that already
+/// exists (a browser still holding it, or one an older version left)
+/// means another port is picked, so two browsers never share a profile.
+fn fresh_profile() -> Result<(u16, PathBuf), String> {
+    let mut last = String::new();
+    for _ in 0..8 {
+        let port = free_port()?;
+        let dir = std::env::temp_dir().join(format!("{}{port}", tree::PROFILE_PREFIX));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok((port, dir)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = e.to_string(),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Err(last)
 }
 
 fn env_or(key: &str, fallback: &str) -> String {
@@ -262,11 +316,14 @@ pub fn launch_with(which: Browser, extra_args: &[&str]) -> Result<LaunchedBrowse
         )
     })?;
 
-    let port = free_port()?;
-    let profile_dir = std::env::temp_dir().join(format!("tcm-autorun-{port}"));
-    std::fs::create_dir_all(&profile_dir).map_err(|e| e.to_string())?;
-
-    let tree = Tree::new(profile_dir.clone()).map_err(|e| format!("could not start {}: {e}", which.label()))?;
+    let (port, profile_dir) = fresh_profile()?;
+    let tree = match Tree::new(profile_dir.clone()) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&profile_dir);
+            return Err(format!("could not start {}: {e}", which.label()));
+        }
+    };
     let mut command = Command::new(exe);
     command
         .args(args_with(port, &profile_dir, extra_args))
@@ -282,7 +339,15 @@ pub fn launch_with(which: Browser, extra_args: &[&str]) -> Result<LaunchedBrowse
         use std::os::windows::process::CommandExt;
         command.creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
     }
-    let mut child = command.spawn().map_err(|e| format!("could not start {}: {e}", which.label()))?;
+    let spawned = command.spawn();
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut child = match spawned {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&profile_dir);
+            return Err(format!("could not start {}: {e}", which.label()));
+        }
+    };
     #[cfg(windows)]
     if let Err(e) = tree.adopt_suspended(&child) {
         let _ = child.kill();
