@@ -2980,11 +2980,17 @@ async fn record_on_page_off_the_app_records_nothing() {
 }
 
 /// A page at `/hr/leave` holding a button for each of `names` and an iframe
-/// whose contents cannot be read (another site, or not loaded yet).
-fn framed_page(names: &[&str]) -> ScriptedDriver {
+/// whose contents cannot be read: the page says it cannot reach into it
+/// when `cross_origin` (another site), else the frame cannot even be asked
+/// (still loading, say).
+fn framed_page(names: &[&str], cross_origin: bool) -> ScriptedDriver {
     let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
     ScriptedDriver::new(move |method, params| {
         Ok(match method {
+            "DOM.resolveNode" if cross_origin => json!({ "object": { "objectId": "help-frame" } }),
+            "Runtime.callFunctionOn" if cross_origin && params["functionDeclaration"] == v2_lib::browser::locator::FRAME_JS => {
+                json!({ "result": { "value": "unreachable" } })
+            }
             "Accessibility.getFullAXTree" => {
                 let mut tree = buttons_tree(&names);
                 let nodes = tree["nodes"].as_array_mut().unwrap();
@@ -3013,7 +3019,7 @@ async fn a_read_with_an_unreadable_frame_drops_nothing() {
     assert_eq!(sighted(dir.path(), "Leave"), ["Earlier"]);
     assert_eq!(mapped_area(dir.path(), "Leave").unwrap().explored_at, None);
 
-    let (mut framed, _) = slot(framed_page(&["Save"]), exploring_anew("Leave"));
+    let (mut framed, _) = slot(framed_page(&["Save"], false), exploring_anew("Leave"));
     let (status, text) =
         page_read_in(framed.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
     assert_eq!(status, 200, "{text}");
@@ -3027,6 +3033,26 @@ async fn a_read_with_an_unreadable_frame_drops_nothing() {
     page_read_in(whole.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
     assert_eq!(sighted(dir.path(), "Leave"), ["Save"]);
     assert!(mapped_area(dir.path(), "Leave").unwrap().explored_at.is_some());
+}
+
+/// A frame from another site (a badge, a chat widget) holds nothing Auto
+/// Run could ever reach, so a read with one is still the whole page: it
+/// drops what it does not show and stamps the area explored, with the
+/// frame's note line still printed.
+#[tokio::test]
+async fn a_page_whose_only_frame_is_from_another_site_is_explored() {
+    let dir = root_with_recipe_and_account();
+    let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier", "Older"]), exploring("Leave"));
+    page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, 1).await;
+    assert_eq!(mapped_area(dir.path(), "Leave").unwrap().explored_at, None);
+
+    let (mut framed, _) = slot(framed_page(&["Save"], true), exploring_anew("Leave"));
+    let (status, text) =
+        page_read_in(framed.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("frame contents could not be read"), "{text}");
+    assert_eq!(sighted(dir.path(), "Leave"), ["Help", "Save"], "a whole read kept what it did not show");
+    assert!(mapped_area(dir.path(), "Leave").unwrap().explored_at.is_some(), "the area was not stamped explored");
 }
 
 // ------------------------------------------------- several actions at once

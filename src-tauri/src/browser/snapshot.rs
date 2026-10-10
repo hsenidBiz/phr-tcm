@@ -69,6 +69,11 @@ pub struct FrameTree {
     pub nodes: Vec<AxNode>,
     /// Why the frame's tree could not be read; one line says so instead.
     pub unreadable: Option<String>,
+    /// The page itself said it cannot reach the frame's document (another
+    /// site, or sandboxed): nothing in it can ever be recorded or scripted,
+    /// so a read that could not show it still shows the whole page. Any
+    /// other unreadable frame leaves the read partial.
+    pub cross_origin: bool,
     pub frames: Vec<FrameTree>,
 }
 
@@ -224,9 +229,9 @@ struct Tree<'a> {
 /// reachable two ways): a node already visited anywhere in this walk is
 /// skipped rather than recursed into again, which would otherwise recurse
 /// forever on a malformed tree. `missed` is set when a frame's contents
-/// were not shown (a frame that could not be read, or one nested past
-/// `MAX_FRAME_DEPTH`): a read with such a frame does not show the whole
-/// page.
+/// were not shown (a frame that could not be read, other than one from
+/// another site, or one nested past `MAX_FRAME_DEPTH`): a read with such a
+/// frame does not show the whole page.
 fn walk(
     id: &str,
     depth: usize,
@@ -271,7 +276,9 @@ pub const DEEP_FRAMES_NOTE: &str = "(frames nested deeper than 3 are not shown)"
 fn walk_frame(frame: &FrameTree, depth: usize, path: &[Value], out: &mut Vec<Printed>, missed: &mut bool) {
     if let Some(why) = &frame.unreadable {
         out.push((format!("{}(frame contents could not be read: {})", " ".repeat(depth.min(12)), sanitize(why)), None));
-        *missed = true;
+        if !frame.cross_origin {
+            *missed = true;
+        }
         return;
     }
     let Some(root) = frame.nodes.first() else { return };
@@ -313,8 +320,9 @@ pub struct PageRead {
     pub text: String,
     pub lines: Vec<SnapLine>,
     /// True when the page had more lines than the read printed, or a frame
-    /// in it could not be read or sat deeper than `MAX_FRAME_DEPTH`: what
-    /// it shows is not the whole page.
+    /// in it could not be read (other than one from another site, which
+    /// nothing can reach) or sat deeper than `MAX_FRAME_DEPTH`: what it
+    /// shows is not the whole page.
     pub cut: bool,
 }
 
@@ -394,13 +402,25 @@ async fn frames_in<D: Driver>(d: &mut D, nodes: &[AxNode]) -> Vec<FrameTree> {
     let mut out = vec![];
     let iframes: Vec<&AxNode> = nodes.iter().filter(|n| n.role == "Iframe" && !n.ignored).collect();
     for (k, node) in iframes.iter().enumerate() {
-        let Some(backend) = node.backend else { continue };
-        let (step, read) = frame_tree(d, node, k, backend).await;
-        let (nodes, unreadable) = match read {
-            Ok(inner) => (inner, None),
-            Err(why) => (vec![], Some(why)),
+        let Some(backend) = node.backend else {
+            // Not followed, so the read did not see what it holds: one line
+            // says so, and the read counts as partial.
+            out.push(FrameTree {
+                iframe_id: node.id.clone(),
+                step: frame_step(&node.name, &Value::Null, k),
+                nodes: vec![],
+                unreadable: Some(NO_FRAME_NODE.to_string()),
+                cross_origin: false,
+                frames: vec![],
+            });
+            continue;
         };
-        out.push(FrameTree { iframe_id: node.id.clone(), step, nodes, unreadable, frames: vec![] });
+        let (step, read) = frame_tree(d, node, k, backend).await;
+        let (nodes, unreadable, cross_origin) = match read {
+            Ok(inner) => (inner, None, false),
+            Err(Unread { why, cross_origin }) => (vec![], Some(why), cross_origin),
+        };
+        out.push(FrameTree { iframe_id: node.id.clone(), step, nodes, unreadable, cross_origin, frames: vec![] });
     }
     out
 }
@@ -412,9 +432,29 @@ const IFRAME_INDEX_JS: &str = r#"function() {
   return Array.from(this.ownerDocument.querySelectorAll('iframe')).filter(seen).indexOf(this);
 }"#;
 
+/// Said under an iframe Chrome gave no DOM node for.
+pub const NO_FRAME_NODE: &str = "Chrome gave no node for it";
+
+/// Said under an iframe the page cannot reach into.
+pub const CROSS_ORIGIN_FRAME: &str =
+    "the frame holds a page from another site (or has not loaded), which Auto Run cannot reach";
+
+/// Why a frame's tree could not be read, and whether that is because the
+/// page cannot reach into it (`FrameTree::cross_origin`).
+struct Unread {
+    why: String,
+    cross_origin: bool,
+}
+
+impl From<String> for Unread {
+    fn from(why: String) -> Self {
+        Unread { why, cross_origin: false }
+    }
+}
+
 /// The step that reaches this iframe (see `frame_step`), and its tree - or
 /// why it could not be read.
-async fn frame_tree<D: Driver>(d: &mut D, node: &AxNode, k: usize, backend: i64) -> (Value, Result<Vec<AxNode>, String>) {
+async fn frame_tree<D: Driver>(d: &mut D, node: &AxNode, k: usize, backend: i64) -> (Value, Result<Vec<AxNode>, Unread>) {
     let described = d.call("DOM.describeNode", json!({ "backendNodeId": backend })).await;
     let attrs = described.as_ref().map(|v| v["node"]["attributes"].clone()).unwrap_or(Value::Null);
     let handle = page::resolve_backend(d, backend).await.ok();
@@ -430,14 +470,18 @@ async fn frame_tree<D: Driver>(d: &mut D, node: &AxNode, k: usize, backend: i64)
     }
     let step = frame_step(&node.name, &attrs, index);
     if reachable.as_deref() != Some("frame") {
-        return (step, Err("the frame holds a page from another site (or has not loaded), which Auto Run cannot reach".to_string()));
+        // Only the page's own answer that it cannot reach the document is
+        // another site; a frame that could not even be asked may still be
+        // loading, and leaves the read partial.
+        let cross_origin = reachable.as_deref() == Some("unreachable");
+        return (step, Err(Unread { why: CROSS_ORIGIN_FRAME.to_string(), cross_origin }));
     }
     let Some(frame_id) = described.ok().and_then(|v| v["node"]["frameId"].as_str().map(str::to_string)) else {
-        return (step, Err("Chrome gave no frame id for it".to_string()));
+        return (step, Err("Chrome gave no frame id for it".to_string().into()));
     };
     match d.call("Accessibility.getFullAXTree", json!({ "frameId": frame_id })).await {
         Ok(v) => (step, Ok(parse_nodes(&v))),
-        Err(e) => (step, Err(e.to_string())),
+        Err(e) => (step, Err(e.to_string().into())),
     }
 }
 
