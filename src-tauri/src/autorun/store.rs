@@ -334,12 +334,21 @@ pub fn list_scripts(root: &Path) -> Vec<CaseScript> {
             let script = std::fs::read_to_string(e.path())
                 .ok()
                 .and_then(|s| serde_json::from_str::<CaseScript>(&s).ok());
-            if script.is_none() {
+            // Read on every save's check: each damaged file is said once
+            // per run of the app, not once per read.
+            if script.is_none() && first_warning_for(&name) {
                 crate::applog::warn(format!("Auto Run: the script {name} could not be read, so it was skipped"));
             }
             script
         })
         .collect()
+}
+
+/// True the first time it is asked about this script file in this process.
+fn first_warning_for(name: &str) -> bool {
+    static WARNED: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
+    let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+    warned.get_or_insert_with(std::collections::HashSet::new).insert(name.to_string())
 }
 
 /// `Ok(None)` for a case nobody has scripted yet - that is the normal

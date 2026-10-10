@@ -1313,6 +1313,9 @@ pub fn save_script_from_editor(
         fail_on_unexpected_dialog: false,
         page_errors: None,
         ignore_page_errors: Vec::new(),
+        organization: None,
+        project: None,
+        checked: false,
     });
     let CaseScript {
         // The editor's own.
@@ -1331,8 +1334,12 @@ pub fn save_script_from_editor(
         // The store keeps the mark on disk whatever a save sends
         // (`store::save_scripts_atomically`).
         suspected_defect: _,
-        // Every save stamps its own time.
+        // Every save stamps its own time, and its project and whether it
+        // was checked, below.
         saved_at: _,
+        organization: _,
+        project: _,
+        checked: _,
         // The stored script's. Only the assistant writes a setup, so the
         // webview can never change a fixture or write an old one back over
         // an approval.
@@ -1345,6 +1352,11 @@ pub fn save_script_from_editor(
     script.fail_on_unexpected_dialog = fail_on_unexpected_dialog;
     script.page_errors = page_errors;
     script.ignore_page_errors = ignore_page_errors;
+    // The editor's save runs no seen check, so its locators vouch for
+    // nothing (`seen_check::vouches`), whatever an earlier save did.
+    script.organization = Some(organization.trim().to_string());
+    script.project = Some(project.trim().to_string());
+    script.checked = false;
     // The project's rules - no address while that is switched off, only
     // recorded areas - the same ones the import and the assistant's save
     // apply.
@@ -1592,6 +1604,11 @@ fn import_scripts(
         if !sc.no_save && store::load_script(root, sc.case_id)?.is_some_and(|old| old.no_save) {
             sc.no_save = true;
         }
+        // Every step of every imported script is checked below, so each
+        // vouches for its locators once it lands.
+        sc.organization = Some(organization.trim().to_string());
+        sc.project = Some(project.trim().to_string());
+        sc.checked = true;
     }
     // With a component in use, the check and the write hold the components
     // lock, so a component save cannot slip between them.

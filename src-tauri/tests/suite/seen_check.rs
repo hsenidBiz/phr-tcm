@@ -1066,7 +1066,7 @@ fn the_suggestion_comes_from_the_same_area() {
     );
     let in_area = |area: &str, selector: serde_json::Value| one_step(area, serde_json::json!([click(selector)]));
     let button = |n: &str| serde_json::json!({ "role": "button", "name": n });
-    // The same role before a closer name in another role; never Payroll's.
+    // Only the same role, though another role has a closer name; never Payroll's.
     assert_eq!(
         check_seen(&map, &none(), &in_area("Ratings", button("Publsh")), &[], None),
         Err(refusal_hinted(1, "button \"Publsh\"", "did you mean button \"Publish\"?"))
@@ -1438,8 +1438,12 @@ fn a_locator_used_by_a_saved_script_of_the_area_is_seen() {
     let dir = tempfile::tempdir().unwrap();
     let eval = "Step 2 of 9 \u{2014} Eval Rules";
     let open = serde_json::json!({ "role": "button", "name": "{{setup.cycle_name}} Open" });
-    // Case 7 as saved: the script about to be replaced.
-    let saved = one_step("Cycles", serde_json::json!([expect_bar(eval), click(open.clone())]));
+    // Case 7 as a checked save of this project left it: the script about
+    // to be replaced.
+    let mut saved = one_step("Cycles", serde_json::json!([expect_bar(eval), click(open.clone())]));
+    saved.organization = Some("Acme".to_string());
+    saved.project = Some("Web".to_string());
+    saved.checked = true;
     v2_lib::autorun::store::save_script(dir.path(), &saved).unwrap();
     let map = load_checked_map(dir.path(), "Acme", "Web").unwrap();
 
@@ -1502,4 +1506,108 @@ fn did_you_mean_keeps_to_the_same_role() {
     );
     let only_bar = map_with("Cycles", "/cycles", &[role("progressbar", "Step 3 of 9")]);
     assert_eq!(check_seen(&only_bar, &none(), &says("Step 2 of 9"), &[], None), Err(refusal(1, "text \"Step 2 of 9\"")));
+}
+
+// ------------------------------------- who vouches for a saved locator
+
+const EVAL: &str = "Step 2 of 9 \u{2014} Eval Rules";
+
+/// A script of `area` that looks for the Eval Rules bar, as case `id`.
+fn eval_script(id: i32, area: &str) -> CaseScript {
+    let mut s = one_step(area, serde_json::json!([expect_bar(EVAL)]));
+    s.case_id = id;
+    s
+}
+
+/// Saved as a checked save (the assistant's, or an import) of `org`/`project`.
+fn save_checked(root: &std::path::Path, id: i32, area: &str, org: &str, project: &str) {
+    let mut s = eval_script(id, area);
+    s.organization = Some(org.to_string());
+    s.project = Some(project.to_string());
+    s.checked = true;
+    v2_lib::autorun::store::save_script(root, &s).unwrap();
+}
+
+/// Records area `name` in `org`/`project`, as the Areas dialog does.
+fn record_area(root: &std::path::Path, org: &str, project: &str, name: &str) {
+    v2_lib::autorun::nav::put_path(
+        root,
+        org,
+        project,
+        v2_lib::autorun::nav::ModulePath {
+            area: name.to_string(),
+            module: name.to_string(),
+            clicks: vec![Target::One(role("link", name))],
+            arrived: "/cycles".to_string(),
+            recorded: "2026-10-10T10:00:00Z".to_string(),
+            start: String::new(),
+            made_by: v2_lib::autorun::nav::MadeBy::Person,
+        },
+    )
+    .unwrap();
+}
+
+/// Is the Eval Rules bar seen for a new script of `area` in `org`/`project`?
+fn eval_seen(root: &std::path::Path, org: &str, project: &str, area: &str) -> bool {
+    let map = v2_lib::autorun::seen_check::load_checked_map(root, org, project).unwrap();
+    check_seen(&map, &none(), &eval_script(99, area), &[], None).is_ok()
+}
+
+/// Two projects with an area of the same name: a checked script of one
+/// vouches nowhere in the other, and adds no area to its map. The project
+/// compares as its files are named, ignoring case and spaces at the ends.
+#[test]
+fn two_projects_sharing_an_area_name_do_not_share_seen_locators() {
+    let dir = tempfile::tempdir().unwrap();
+    save_checked(dir.path(), 7, "Cycles", "Acme", "Web");
+    assert!(eval_seen(dir.path(), "Acme", "Web", "Cycles"));
+    assert!(eval_seen(dir.path(), " acme", "WEB ", "Cycles"));
+    assert!(!eval_seen(dir.path(), "Acme", "Mobile", "Cycles"));
+    assert!(!eval_seen(dir.path(), "Other", "Web", "Cycles"));
+    let map = v2_lib::autorun::seen_check::load_checked_map(dir.path(), "Acme", "Mobile").unwrap();
+    assert!(map.areas.is_empty(), "another project's script made an area");
+}
+
+/// A script saved from the editor ran no seen check: its links vouch for
+/// nothing, even in its own project and area.
+#[test]
+fn an_editor_saved_script_does_not_vouch() {
+    let dir = tempfile::tempdir().unwrap();
+    record_area(dir.path(), "Acme", "Web", "Cycles");
+    v2_lib::commands::autorun::save_script_from_editor(dir.path(), "Acme", "Web", eval_script(7, "Cycles")).unwrap();
+    let saved = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!((saved.organization.as_deref(), saved.project.as_deref(), saved.checked), (Some("Acme"), Some("Web"), false));
+    assert!(!eval_seen(dir.path(), "Acme", "Web", "Cycles"));
+}
+
+/// A script that once vouched stops when a person saves it from the
+/// editor, whatever the editor sends.
+#[test]
+fn an_editor_save_of_a_checked_script_removes_its_vouching() {
+    let dir = tempfile::tempdir().unwrap();
+    record_area(dir.path(), "Acme", "Web", "Cycles");
+    save_checked(dir.path(), 7, "Cycles", "Acme", "Web");
+    assert!(eval_seen(dir.path(), "Acme", "Web", "Cycles"));
+    let mut sent = v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap();
+    sent.checked = true;
+    v2_lib::commands::autorun::save_script_from_editor(dir.path(), "Acme", "Web", sent).unwrap();
+    assert!(!v2_lib::autorun::store::load_script(dir.path(), 7).unwrap().unwrap().checked);
+    assert!(!eval_seen(dir.path(), "Acme", "Web", "Cycles"));
+}
+
+/// A script saved before scripts were stamped names no project: it counts
+/// only while exactly one project has recorded areas, and that project is
+/// the one being checked.
+#[test]
+fn legacy_unstamped_scripts_count_only_when_one_project_has_areas() {
+    let dir = tempfile::tempdir().unwrap();
+    v2_lib::autorun::store::save_script(dir.path(), &eval_script(7, "Cycles")).unwrap();
+    assert!(!eval_seen(dir.path(), "Acme", "Web", "Cycles"), "no project has areas");
+    record_area(dir.path(), "Acme", "Web", "Cycles");
+    assert!(eval_seen(dir.path(), "Acme", "Web", "Cycles"));
+    assert!(eval_seen(dir.path(), "ACME", "web", "Cycles"));
+    assert!(!eval_seen(dir.path(), "Acme", "Mobile", "Cycles"), "not the project with areas");
+    record_area(dir.path(), "Acme", "Mobile", "Cycles");
+    assert!(!eval_seen(dir.path(), "Acme", "Web", "Cycles"), "two projects have areas");
+    assert!(!eval_seen(dir.path(), "Acme", "Mobile", "Cycles"));
 }

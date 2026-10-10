@@ -600,6 +600,21 @@ export const commands = {
 	 *  only when there are any.
 	 */
 	ignore_page_errors?: string[],
+	/**
+	 *  The organization and project the script was saved in, stamped by
+	 *  every save whatever was sent. Absent on scripts saved before the
+	 *  stamp existed.
+	 */
+	organization?: string | null,
+	project?: string | null,
+	/**
+	 *  Whether the saves that wrote it checked its steps against the live
+	 *  app (the assistant's save and an import), so its own locators count
+	 *  as seen in its area (`seen_check::load_checked_map`). A save from
+	 *  the editor clears it. Set by the save, whatever was sent; written
+	 *  only when true.
+	 */
+	checked?: boolean,
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	autoRunSaveScript: (organization: string, project: string, script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { organization, project, script })),
 	/**
@@ -2479,6 +2494,21 @@ export type CaseScript_Deserialize = {
 	 *  only when there are any.
 	 */
 	ignore_page_errors?: string[],
+	/**
+	 *  The organization and project the script was saved in, stamped by
+	 *  every save whatever was sent. Absent on scripts saved before the
+	 *  stamp existed.
+	 */
+	organization?: string | null,
+	project?: string | null,
+	/**
+	 *  Whether the saves that wrote it checked its steps against the live
+	 *  app (the assistant's save and an import), so its own locators count
+	 *  as seen in its area (`seen_check::load_checked_map`). A save from
+	 *  the editor clears it. Set by the save, whatever was sent; written
+	 *  only when true.
+	 */
+	checked?: boolean,
 };
 
 /**
@@ -2589,6 +2619,21 @@ export type CaseScript_Serialize = {
 	 *  only when there are any.
 	 */
 	ignore_page_errors?: string[],
+	/**
+	 *  The organization and project the script was saved in, stamped by
+	 *  every save whatever was sent. Absent on scripts saved before the
+	 *  stamp existed.
+	 */
+	organization?: string | null,
+	project?: string | null,
+	/**
+	 *  Whether the saves that wrote it checked its steps against the live
+	 *  app (the assistant's save and an import), so its own locators count
+	 *  as seen in its area (`seen_check::load_checked_map`). A save from
+	 *  the editor clears it. Set by the save, whatever was sent; written
+	 *  only when true.
+	 */
+	checked?: boolean,
 };
 
 export type CellMatch = "exact" | "contains";

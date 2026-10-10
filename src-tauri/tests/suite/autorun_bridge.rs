@@ -2679,7 +2679,7 @@ fn scripted(case_id: i32) -> CaseScript {
         needs_unchanged: vec![],
         saved_at: None,
         fail_on_unexpected_dialog: false,
-        page_errors: None, ignore_page_errors: vec![],
+        page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
     }
 }
 
@@ -2944,4 +2944,63 @@ async fn a_try_answer_names_the_picture_by_a_path_that_exists() {
     assert!(path.is_absolute(), "{named}");
     assert!(path.is_file(), "{named}");
     assert_eq!(path.parent().unwrap(), dir.path().join("shots"), "{named}");
+}
+
+/// The assistant's save checks every step of a new script, so it stamps
+/// the project and vouches: a locator it saved counts as seen in its area
+/// after the map has let it go. A save from the editor takes that back.
+#[tokio::test]
+async fn a_bridge_saved_script_vouches_for_its_locators() {
+    use v2_lib::autorun::discovery_map::{forget_area, record_seen};
+    use v2_lib::autorun::seen_check::{check_seen, load_checked_map};
+    use v2_lib::browser::locator::{LocatorStep, Target};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(201, "Publish a rating", &[""])]).await;
+    let publish = LocatorStep { role: Some("button".into()), name: Some("Publish".into()), ..LocatorStep::default() };
+    v2_lib::autorun::nav::put_path(
+        dir.path(),
+        "acme",
+        "Web",
+        v2_lib::autorun::nav::ModulePath {
+            area: "Ratings".to_string(),
+            module: "Ratings".to_string(),
+            clicks: vec![Target::from("#ratings")],
+            arrived: "/ratings".to_string(),
+            recorded: "2026-10-10T10:00:00Z".to_string(),
+            start: String::new(),
+            made_by: v2_lib::autorun::nav::MadeBy::Person,
+        },
+    )
+    .unwrap();
+    let line = v2_lib::browser::snapshot::SnapLine {
+        role: "button".into(),
+        name: "Publish".into(),
+        locator: Target::One(publish.clone()),
+        required: false,
+    };
+    record_seen(dir.path(), "acme", "Web", Some("Ratings"), "/ratings", "Ratings", &[line], None, Some(1), 1).unwrap();
+    let script = |id: i32| {
+        serde_json::json!({
+            "case_id": id, "title": "Publish a rating", "area": "Ratings", "checked": false,
+            "steps": [{ "step_number": 1, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Publish" } }] }]
+        })
+    };
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &serde_json::json!([script(201)]).to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let saved = load_script(dir.path(), 201).unwrap().unwrap();
+    assert_eq!((saved.organization.as_deref(), saved.project.as_deref(), saved.checked), (Some("acme"), Some("Web"), true));
+
+    // The map lets the button go; the saved script still vouches for it.
+    forget_area(dir.path(), "acme", "Web", "Ratings").unwrap();
+    let another: CaseScript = serde_json::from_value(script(202)).unwrap();
+    let map = load_checked_map(dir.path(), "acme", "Web").unwrap();
+    let components = v2_lib::autorun::components::ComponentFile::default();
+    assert_eq!(check_seen(&map, &components, &another, &[], None), Ok(()));
+
+    // A person's save from the editor takes the vouching back.
+    v2_lib::commands::autorun::save_script_from_editor(dir.path(), "acme", "Web", saved).unwrap();
+    let map = load_checked_map(dir.path(), "acme", "Web").unwrap();
+    assert!(check_seen(&map, &components, &another, &[], None).is_err());
 }

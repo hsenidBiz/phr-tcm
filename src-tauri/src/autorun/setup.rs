@@ -501,6 +501,7 @@ fn check_filled_inputs(
     // One that cannot be read is logged by `list` and reads as none: then
     // no file name or size is the script's own.
     let files = crate::test_files::list(&crate::test_files::folder(root, org, project)).unwrap_or_default();
+    // Deliberately the map alone: saved scripts vouch only at save time.
     seen_check::check_resolved_inputs_with(&map, &components, &areas, before, saved, filled, &files)
 }
 
