@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.5",
+    date: "2026-10-10",
+    items: [
+      "Unattended runs no longer leave Edge windows behind. Each browser Auto Run opens is closed with everything it started, a browser that is still running is reused for the next case, and Stop or quitting the app closes them all. A program you open from the Auto Run browser, such as a downloaded file in Excel, is left open.",
+      "When your assistant asks to replay a case to a step while it is still exploring the site, the app ends its discovery first and keeps what it mapped, and the request you are asked to allow says so.",
+      "Discovery remembers every element it has seen on a screen, and a locator already used by a script the assistant saved for the same screen counts as seen, so a script that saved yesterday is not refused today.",
+    ],
+  },
+  {
     version: "2.1.3-beta.4",
     date: "2026-10-10",
     items: [
