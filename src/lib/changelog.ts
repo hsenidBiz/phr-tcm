@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.4",
+    date: "2026-10-10",
+    items: [
+      "The box beside Watch the browser is now called Pause before each action. It adds or removes the short wait before each click, fill and drag; the purple outline shows either way.",
+    ],
+  },
+  {
     version: "2.1.3-beta.3",
     date: "2026-10-10",
     items: [
