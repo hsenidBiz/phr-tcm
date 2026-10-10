@@ -109,6 +109,10 @@ pub fn account_leases() -> MutexGuard<'static, ()> {
 /// through `account_lease`), after `autorun`, `api_template_run` and
 /// `activity_log` where it takes those: it would close another test's held
 /// browser mid-test.
+///
+/// Also the registry of live browser trees (`browser::tree`), which
+/// `close_autorun_browsers` ends whole: taken by every test that puts a
+/// tree in it or reads it, so one test's exit path never ends another's.
 pub fn held_browsers() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)

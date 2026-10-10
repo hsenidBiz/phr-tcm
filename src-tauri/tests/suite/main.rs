@@ -95,6 +95,7 @@ mod browser_input;
 mod browser_keys_drag;
 mod browser_launch;
 mod browser_live;
+mod browser_live_tree;
 mod browser_locator;
 mod browser_page;
 mod browser_page_log;

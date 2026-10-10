@@ -60,8 +60,7 @@ struct Live {
 
 impl Drop for Live {
     fn drop(&mut self) {
-        let _ = self.browser.child.kill();
-        let _ = self.browser.child.wait();
+        self.browser.end();
         remove_profile_dir(&self.browser.profile_dir);
     }
 }
@@ -121,8 +120,7 @@ async fn open() -> Live {
     let Some(cdp) = connected else {
         // There is no `Live` yet, so nothing would tidy up after this.
         let port = browser.port;
-        let _ = browser.child.kill();
-        let _ = browser.child.wait();
+        browser.end();
         let _ = std::fs::remove_dir_all(&browser.profile_dir);
         panic!("could not reach Edge on port {port}: {last}");
     };
@@ -1103,8 +1101,7 @@ impl Browsers for LiveBrowsers {
     async fn close(&mut self, d: Cdp) {
         drop(d);
         if let Some(mut b) = self.current.take() {
-            let _ = b.child.kill();
-            let _ = b.child.wait();
+            b.end();
             remove_profile_dir(&b.profile_dir);
         }
     }
@@ -1116,8 +1113,7 @@ impl Drop for LiveBrowsers {
     /// throwaway profile, still on the machine.
     fn drop(&mut self) {
         if let Some(mut b) = self.current.take() {
-            let _ = b.child.kill();
-            let _ = b.child.wait();
+            b.end();
             remove_profile_dir(&b.profile_dir);
         }
     }
@@ -2915,8 +2911,7 @@ impl v2_lib::autorun::one_browser::Launcher for LiveLauncher {
                 Err(e) => last = e,
             }
         }
-        let _ = browser.child.kill();
-        let _ = browser.child.wait();
+        browser.end();
         remove_profile_dir(&browser.profile_dir);
         Err(last)
     }
@@ -2925,15 +2920,14 @@ impl v2_lib::autorun::one_browser::Launcher for LiveLauncher {
         Cdp::connect_browser(p.port).await
     }
 
-    fn alive(&mut self, p: &mut LaunchedBrowser) -> bool {
-        matches!(p.child.try_wait(), Ok(None))
+    async fn alive(&mut self, p: &mut LaunchedBrowser) -> bool {
+        let answered = Cdp::answers(p.port).await.is_ok();
+        v2_lib::browser::launch::still_alive(p.processes(), p.pid_ended(), answered)
     }
 
-    fn close(&mut self, mut p: LaunchedBrowser) {
-        let _ = p.child.kill();
-        let _ = p.child.wait();
-        remove_profile_dir(&p.profile_dir);
+    fn close(&mut self, p: LaunchedBrowser) -> Result<(), LaunchedBrowser> {
         self.closes.fetch_add(1, Ordering::SeqCst);
+        p.close()
     }
 }
 

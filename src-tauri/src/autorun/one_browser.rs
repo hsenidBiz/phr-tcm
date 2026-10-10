@@ -12,7 +12,13 @@
 //!
 //! A browser that dies mid-run takes only the case it was running with it:
 //! that case is recorded as any case whose browser stopped answering is,
-//! and the next case starts a new browser. A browser that will not make
+//! and the next case starts a new browser, but only once every process of
+//! the dead one is gone. One whose processes will not end blocks the case
+//! instead: a second browser is never started beside one still running.
+//! A browser is dead when its processes are gone or its DevTools port no
+//! longer answers, never because the one process the app spawned ended
+//! (`browser::launch::still_alive`): Edge can hand its browser to another
+//! process, and that browser is kept. A browser that will not make
 //! contexts at all (a policy can switch them off) gives the rest of the run
 //! a browser per case, as it was before contexts.
 
@@ -38,10 +44,12 @@ pub trait Launcher {
     fn launch(&mut self) -> impl Future<Output = Result<Self::Process, String>>;
     /// A new connection to the browser itself, with no page driven yet.
     fn connect(&mut self, p: &Self::Process) -> impl Future<Output = Result<Cdp<Self::T>, String>>;
-    /// Is its process still running?
-    fn alive(&mut self, p: &mut Self::Process) -> bool;
-    /// Stop it and delete its profile.
-    fn close(&mut self, p: Self::Process);
+    /// Is it still usable: does any of its processes still run, and does
+    /// its DevTools port answer?
+    fn alive(&mut self, p: &mut Self::Process) -> impl Future<Output = bool>;
+    /// End every process of it, wait until they are gone, and delete its
+    /// profile. A browser whose processes will not end is handed back.
+    fn close(&mut self, p: Self::Process) -> Result<(), Self::Process>;
 }
 
 /// Why a case's page could not be made.
@@ -74,9 +82,17 @@ impl<L: Launcher> OneBrowser<L> {
     }
 
     /// Close the browser, if one is open: the next case starts another.
-    fn retire(&mut self) {
-        if let Some(p) = self.current.take() {
-            self.launcher.close(p);
+    /// False when its processes would not end: it is kept, to be closed
+    /// again, and no other browser may be started while it is.
+    fn retire(&mut self) -> bool {
+        let Some(p) = self.current.take() else { return true };
+        match self.launcher.close(p) {
+            Ok(()) => true,
+            Err(p) => {
+                crate::applog::warn("unattended run: the browser's processes would not end - no other browser is started beside it");
+                self.current = Some(p);
+                false
+            }
         }
     }
 
@@ -115,9 +131,11 @@ impl<L: Launcher> Browsers for OneBrowser<L> {
     /// `NO_FRESH_PAGE` (a launch that failed says its own words).
     async fn open(&mut self) -> Result<Cdp<L::T>, String> {
         if let Some(p) = self.current.as_mut() {
-            if !self.launcher.alive(p) {
+            if !self.launcher.alive(p).await {
                 crate::applog::warn("unattended run: the browser closed during the run - a new one is started");
-                self.retire();
+                if !self.retire() {
+                    return Err(NO_FRESH_PAGE.to_string());
+                }
             }
         }
         for _ in 0..2 {
@@ -141,8 +159,7 @@ impl<L: Launcher> Browsers for OneBrowser<L> {
                 Err(NoPage::Failed(e)) => e,
             };
             crate::applog::warn(format!("unattended run: the browser gave no page for the case: {why}"));
-            self.retire();
-            if fresh {
+            if !self.retire() || fresh {
                 break;
             }
         }
@@ -170,6 +187,8 @@ impl<L: Launcher> Browsers for OneBrowser<L> {
 }
 
 /// A run that ends, errors out or panics never leaves its browser behind.
+/// One whose processes will not end is dropped all the same: dropping it
+/// closes its job, and Windows kills what is left.
 impl<L: Launcher> Drop for OneBrowser<L> {
     fn drop(&mut self) {
         self.retire();

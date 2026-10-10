@@ -10,10 +10,12 @@
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use v2_lib::autorun::one_browser::{Launcher, OneBrowser, NO_FRESH_PAGE};
+use v2_lib::browser::launch::still_alive;
+use v2_lib::browser::tree::{self, Ends};
 use v2_lib::autorun::replay::{run_selection, Browsers};
 use v2_lib::autorun::sessions::now_ms;
 use v2_lib::autorun::{store, CaseScript, LocalRun};
@@ -42,6 +44,21 @@ struct World {
     /// Each browser starts with its own blank page, as a launched Edge
     /// does, and reports it to `Target.getTargets`.
     launch_page: bool,
+    /// Launches and closes, in the order they happened ("launch 1",
+    /// "close 1").
+    events: Vec<String>,
+    /// Browsers whose spawned process ended while the browser itself
+    /// kept running and answering, as when Edge hands its browser to
+    /// another process.
+    pid_ended: Vec<usize>,
+    /// Browsers whose processes will not end when they are closed.
+    undying: Vec<usize>,
+    /// Browsers whose whole tree was ended (`Ends::end`).
+    ended: Vec<usize>,
+    /// Each started browser is kept in the app's registry of live trees.
+    register: bool,
+    /// A method that asks the run to stop when this browser is sent it.
+    cancel_on: Option<(usize, String, Arc<AtomicBool>)>,
     next: u32,
 }
 
@@ -73,6 +90,9 @@ impl Transport for FakeSocket {
         let id = v["id"].as_u64().unwrap();
         let method = v["method"].as_str().unwrap_or("").to_string();
         w.sent.push((self.browser, v.clone()));
+        if let Some((_, _, cancel)) = w.cancel_on.as_ref().filter(|(b, m, _)| *b == self.browser && *m == method) {
+            cancel.store(true, Ordering::SeqCst);
+        }
         if w.die_on.as_ref().is_some_and(|(b, m)| *b == self.browser && *m == method) {
             w.die_on = None;
             w.dead.push(self.browser);
@@ -121,10 +141,40 @@ impl Transport for FakeSocket {
     }
 }
 
-/// A started browser: which one, and its profile folder.
+/// A started browser: which one, its profile folder, and its process
+/// tree.
 struct FakeProcess {
     browser: usize,
     profile: PathBuf,
+    tree: Arc<FakeTree>,
+}
+
+/// A browser's processes, as the app's registry of live trees sees them.
+/// Ending them kills the browser (its sockets close) and removes its
+/// profile, unless they will not end.
+struct FakeTree {
+    browser: usize,
+    profile: PathBuf,
+    world: Arc<Mutex<World>>,
+}
+
+impl Ends for FakeTree {
+    fn terminate(&self) {}
+
+    fn end(&self) -> bool {
+        let mut w = self.world.lock().unwrap();
+        w.ended.push(self.browser);
+        w.dead.push(self.browser);
+        if w.undying.contains(&self.browser) {
+            return false;
+        }
+        let _ = std::fs::remove_dir_all(&self.profile);
+        true
+    }
+
+    fn profile_dir(&self) -> &std::path::Path {
+        &self.profile
+    }
 }
 
 struct FakeLauncher {
@@ -139,9 +189,15 @@ impl Launcher for FakeLauncher {
     async fn launch(&mut self) -> Result<FakeProcess, String> {
         let mut w = self.world.lock().unwrap();
         w.launches += 1;
-        let profile = self.profiles.join(format!("profile-{}", w.launches));
+        let browser = w.launches;
+        w.events.push(format!("launch {browser}"));
+        let profile = self.profiles.join(format!("profile-{browser}"));
         std::fs::create_dir_all(&profile).unwrap();
-        Ok(FakeProcess { browser: w.launches, profile })
+        let tree = Arc::new(FakeTree { browser, profile: profile.clone(), world: Arc::clone(&self.world) });
+        if w.register {
+            tree::register(&tree);
+        }
+        Ok(FakeProcess { browser, profile, tree })
     }
 
     async fn connect(&mut self, p: &FakeProcess) -> Result<Cdp<FakeSocket>, String> {
@@ -156,13 +212,24 @@ impl Launcher for FakeLauncher {
         Ok(Cdp::over(FakeSocket { browser: p.browser, world: Arc::clone(&self.world), incoming: VecDeque::new() }))
     }
 
-    fn alive(&mut self, p: &mut FakeProcess) -> bool {
-        !self.world.lock().unwrap().dead.contains(&p.browser)
+    /// What the real launcher asks: does the job still have processes,
+    /// and does DevTools answer? A dead browser that will not end still
+    /// has its processes; it just no longer answers.
+    async fn alive(&mut self, p: &mut FakeProcess) -> bool {
+        let w = self.world.lock().unwrap();
+        let dead = w.dead.contains(&p.browser);
+        let processes = if dead && !w.undying.contains(&p.browser) { 0 } else { 5 };
+        still_alive(Some(processes), w.pid_ended.contains(&p.browser), !dead)
     }
 
-    fn close(&mut self, p: FakeProcess) {
+    fn close(&mut self, p: FakeProcess) -> Result<(), FakeProcess> {
+        self.world.lock().unwrap().events.push(format!("close {}", p.browser));
+        if !p.tree.end() {
+            return Err(p);
+        }
+        assert!(!p.profile.exists(), "the profile went with the tree");
         self.world.lock().unwrap().closes += 1;
-        let _ = std::fs::remove_dir_all(&p.profile);
+        Ok(())
     }
 }
 
@@ -186,13 +253,17 @@ fn passing_script(case_id: i32) -> CaseScript {
 
 /// Run these cases through the unattended engine.
 async fn run(b: &mut OneBrowser<FakeLauncher>, root: &std::path::Path, ids: &[i32]) -> LocalRun {
+    run_until(b, root, ids, &AtomicBool::new(false)).await
+}
+
+/// The same, stopped when `cancel` is set, as Stop sets it.
+async fn run_until(b: &mut OneBrowser<FakeLauncher>, root: &std::path::Path, ids: &[i32], cancel: &AtomicBool) -> LocalRun {
     for id in ids {
         store::save_script(root, &passing_script(*id)).unwrap();
     }
     let cases: Vec<(i32, String)> = ids.iter().map(|id| (*id, format!("case {id}"))).collect();
     let mut run = new_run("run-1");
-    let cancel = AtomicBool::new(false);
-    run_selection(b, root, "Acme", "Web", &mut run, &cases, &crate::common::quick(), &cancel, &mut |_| {}).await.unwrap();
+    run_selection(b, root, "Acme", "Web", &mut run, &cases, &crate::common::quick(), cancel, &mut |_| {}).await.unwrap();
     run
 }
 
@@ -512,4 +583,128 @@ async fn a_socket_that_never_opens_is_given_up_on() {
     let err = got.err().expect("a socket that never opened must be an error");
     assert!(err.contains("did not open within"), "{err}");
     assert!(began.elapsed() < Duration::from_secs(3), "{:?}", began.elapsed());
+}
+
+// ------------------------------------------ a browser as a process tree
+
+/// Edge can hand its browser to another process: the pid the app spawned
+/// ends while the browser keeps running on the same profile and keeps
+/// answering. That browser is the run's browser still, not a dead one to
+/// be replaced (which left one Edge per case behind).
+#[tokio::test]
+async fn a_browser_whose_process_ended_but_still_answers_is_kept_for_the_next_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers(dir.path());
+    world.lock().unwrap().pid_ended.push(1);
+    let run = run(&mut b, dir.path(), &[1, 2, 3]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", run.cases);
+    let w = world.lock().unwrap();
+    assert_eq!(w.launches, 1, "one browser for the whole run: {:?}", w.events);
+    assert_eq!(w.closes, 0, "and it was never taken for closed");
+    assert_eq!(w.sent("Target.createBrowserContext").iter().filter(|(b, _)| *b == 1).count(), 3);
+}
+
+#[tokio::test]
+async fn a_dead_browser_is_closed_before_another_is_launched() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers(dir.path());
+    world.lock().unwrap().die_on = Some((1, "Runtime.callFunctionOn".to_string()));
+    let run = run(&mut b, dir.path(), &[1, 2]).await;
+    assert_eq!(run.cases[1].proposed, "Passed", "{:?}", run.cases[1]);
+    let w = world.lock().unwrap();
+    assert_eq!(w.events, vec!["launch 1", "close 1", "launch 2"], "the old tree is gone before the new browser starts");
+    assert_eq!(w.ended, vec![1], "the whole tree of the dead browser was ended");
+    assert!(!dir.path().join("profile-1").exists());
+}
+
+/// A dead browser whose processes will not end is never left running
+/// beside a new one: the case is Blocked in plain words instead.
+#[tokio::test]
+async fn a_browser_whose_tree_will_not_die_blocks_the_case_instead_of_launching_another() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers(dir.path());
+    {
+        let mut w = world.lock().unwrap();
+        w.die_on = Some((1, "Runtime.callFunctionOn".to_string()));
+        w.undying.push(1);
+    }
+    let run = run(&mut b, dir.path(), &[1, 2, 3]).await;
+    assert_eq!(run.cases.len(), 3);
+    for case in &run.cases[1..] {
+        assert_eq!(case.proposed, "Blocked", "{case:?}");
+        assert!(case.reason.contains(NO_FRESH_PAGE), "{}", case.reason);
+    }
+    {
+        let w = world.lock().unwrap();
+        assert_eq!(w.launches, 1, "no second browser beside the one still running: {:?}", w.events);
+        // Once as case 1's context could not be disposed, and again before
+        // each later case: it is never given up on, nor replaced.
+        let tries = w.events.iter().filter(|e| *e == "close 1").count();
+        assert!(tries >= 2, "it was tried again before a later case: {:?}", w.events);
+    }
+    drop(b);
+    let w = world.lock().unwrap();
+    assert_eq!(w.launches, 1);
+    assert_eq!(w.events.last().map(String::as_str), Some("close 1"), "tried once more as the run ends");
+}
+
+#[tokio::test]
+async fn stop_mid_case_closes_every_browser_the_run_started() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers(dir.path());
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut w = world.lock().unwrap();
+        // The first browser dies in case 1; Stop comes in the middle of
+        // case 2, in the second browser.
+        w.die_on = Some((1, "Runtime.callFunctionOn".to_string()));
+        w.cancel_on = Some((2, "Runtime.callFunctionOn".to_string(), Arc::clone(&cancel)));
+    }
+    let run = run_until(&mut b, dir.path(), &[1, 2, 3], &cancel).await;
+    assert!(run.cases.len() < 3, "the run stopped: {:?}", run.cases);
+    drop(b);
+    let w = world.lock().unwrap();
+    assert_eq!(w.launches, 2, "{:?}", w.events);
+    assert_eq!(w.closes, 2, "every browser the run started was closed: {:?}", w.events);
+    assert_eq!(w.ended, vec![1, 2]);
+    assert!(!dir.path().join("profile-1").exists() && !dir.path().join("profile-2").exists());
+}
+
+/// The app's exit closes the recorder, the supervised browser and the
+/// held template browsers by name, and then every browser still in the
+/// registry: an unattended run's, mid-case, which nothing else there
+/// reaches.
+#[tokio::test]
+async fn the_exit_path_closes_an_unattended_runs_browser() {
+    let _claims = crate::serial::autorun();
+    let _held = crate::serial::held_browsers();
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers(dir.path());
+    world.lock().unwrap().register = true;
+    let d = b.open().await.unwrap();
+    assert!(tree::held_profiles().contains(&dir.path().join("profile-1")), "the run's browser is registered");
+
+    tokio::time::timeout(Duration::from_secs(5), v2_lib::commands::autorun::close_autorun_browsers())
+        .await
+        .expect("closing on exit is bounded");
+    {
+        let w = world.lock().unwrap();
+        assert_eq!(w.ended, vec![1], "the run's browser was ended as the app exits");
+        assert!(!dir.path().join("profile-1").exists(), "and its profile removed");
+    }
+    // The run then winds down as a stopped run does, with nothing left to
+    // start or leak.
+    b.close(d).await;
+    drop(b);
+    assert_eq!(world.lock().unwrap().launches, 1);
+    assert!(!tree::held_profiles().contains(&dir.path().join("profile-1")), "dropped from the registry with the browser");
+}
+
+#[test]
+fn a_browser_is_alive_by_its_processes_and_devtools_never_by_its_first_pid() {
+    assert!(still_alive(Some(3), true, true), "the first pid ended, the browser runs on");
+    assert!(!still_alive(Some(3), false, false), "running but not answering is wedged");
+    assert!(!still_alive(Some(0), false, true), "no process left");
+    assert!(still_alive(None, false, true), "no job to ask: the first pid decides");
+    assert!(!still_alive(None, true, true));
 }

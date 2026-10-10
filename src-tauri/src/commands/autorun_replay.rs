@@ -10,7 +10,7 @@ use crate::autorun::replay::{self, Browsers, CaseToRun};
 use crate::autorun::reset_wait::{self, AppGate};
 use crate::autorun::{sessions, store, LocalRun};
 use crate::browser::cdp::{Cdp, WsTransport};
-use crate::browser::launch::{background_args, launch_with, Browser, LaunchedBrowser};
+use crate::browser::launch::{background_args, launch_with, pid_gone_line, still_alive, Browser, LaunchedBrowser};
 use crate::browser::timing::Timing;
 use crate::events::ReplayProgress;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -99,10 +99,18 @@ pub(crate) async fn open_real(which: Browser, visible: bool) -> Result<(Cdp, Lau
     Err(NEVER_ANSWERED.to_string())
 }
 
+/// How long a liveness check waits for DevTools to answer.
+const ANSWER_WITHIN: Duration = Duration::from_secs(3);
+
+/// Does the browser's DevTools port answer, within `ANSWER_WITHIN`?
+async fn devtools_answers(port: u16) -> bool {
+    matches!(tokio::time::timeout(ANSWER_WITHIN, Cdp::answers(port)).await, Ok(Ok(())))
+}
+
 /// How an unattended run starts its one browser (`OneBrowser`): headless
 /// unless the person asked to watch, with a throwaway profile that is
 /// deleted when the browser is closed.
-pub(crate) struct RealLauncher {
+pub struct RealLauncher {
     which: Browser,
     watch: bool,
 }
@@ -132,18 +140,26 @@ impl Launcher for RealLauncher {
         Cdp::connect_browser(p.port).await
     }
 
-    fn alive(&mut self, p: &mut LaunchedBrowser) -> bool {
-        matches!(p.child.try_wait(), Ok(None))
+    /// The browser's job still has processes and its DevTools port answers.
+    /// The pid the app spawned ending is logged once, with what the job and
+    /// DevTools said, and is otherwise no reason to give the browser up.
+    async fn alive(&mut self, p: &mut LaunchedBrowser) -> bool {
+        let answered = devtools_answers(p.port).await;
+        let processes = p.processes();
+        if p.pid_ended() && p.note_pid_gone() {
+            crate::applog::info(pid_gone_line(p.pid(), processes, answered));
+        }
+        still_alive(processes, p.pid_ended(), answered)
     }
 
-    fn close(&mut self, p: LaunchedBrowser) {
-        super::autorun::close_browser(p);
+    fn close(&mut self, p: LaunchedBrowser) -> Result<(), LaunchedBrowser> {
+        p.close()
     }
 }
 
 /// The `Browsers` an unattended run hands to `replay::run_cases`: one real
-/// browser for the run, a fresh context per case.
-pub(crate) fn run_browsers(which: Browser, watch: bool) -> OneBrowser<RealLauncher> {
+/// browser for the run, a fresh context per case. Public for the live tests.
+pub fn run_browsers(which: Browser, watch: bool) -> OneBrowser<RealLauncher> {
     OneBrowser::new(RealLauncher { which, watch })
 }
 
@@ -207,7 +223,7 @@ impl Keeps for RealBrowsers {
     /// Takes the process out of `current`, so dropping this value no
     /// longer ends it. One that has already ended stays to be closed.
     fn keep(&mut self, d: Cdp) -> Result<KeptBrowser, Cdp> {
-        let alive = self.current.as_mut().is_some_and(|b| matches!(b.child.try_wait(), Ok(None)));
+        let alive = self.current.as_mut().is_some_and(LaunchedBrowser::running);
         match self.current.take() {
             Some(browser) if alive => Ok(KeptBrowser { cdp: d, browser, which: self.which }),
             other => {
@@ -222,7 +238,7 @@ impl Keeps for RealBrowsers {
     /// whose process has ended while kept, or another kind of browser than
     /// this value opens, is handed back to be closed.
     fn adopt(&mut self, mut kept: KeptBrowser) -> Result<Cdp, KeptBrowser> {
-        if !self.same_kind(&kept) || !matches!(kept.browser.child.try_wait(), Ok(None)) {
+        if !self.same_kind(&kept) || !kept.browser.running() {
             return Err(kept);
         }
         if let Some(old) = self.current.replace(kept.browser) {
