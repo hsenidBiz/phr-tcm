@@ -601,6 +601,9 @@ async fn run_expanded<D: Driver>(
     // Until then a save the guard stopped was sent while the step before's
     // picture was still being taken: it is that step's, not this one's.
     let mut acted = false;
+    // Whether this step already signed in fresh after the application
+    // refused the session (`after_session_refused`): once, never twice.
+    let mut resigned = false;
     for action in &step.actions {
         if let Some(why) = blocked {
             out.push(ActionOutcome::failed(why));
@@ -789,6 +792,19 @@ async fn run_expanded<D: Driver>(
             }
         }
         unexpected_dialog(d, &mut dialogs_read, fail_on_unexpected, &mut outcome);
+        // The application refused the session the browser holds ("Cookie
+        // has been tampered", an empty 400): the account is signed in fresh
+        // once and the action tried again, rather than the case failing.
+        if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP && blocked != Some(AFTER_STOP) {
+            if let Some(key) = account.clone() {
+                if signin::session_refused(d).await.is_some() {
+                    let refused = Refused { key: &key, route, step: step.step_number };
+                    let (again, stop) = after_session_refused(d, &here, &refused, action, timing, account, &mut resigned).await;
+                    outcome = again;
+                    blocked = stop;
+                }
+            }
+        }
         // A Stop is no failure to picture.
         if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP {
             outcome.screenshot = picture(d, root).await;
@@ -903,6 +919,91 @@ struct Here<'a> {
     policy: &'a Policy,
     direct_urls: bool,
     step: i32,
+}
+
+/// The account whose session the application refused mid-case, the case's
+/// route, and the step it happened in.
+struct Refused<'a> {
+    key: &'a str,
+    route: Option<&'a Route>,
+    step: i32,
+}
+
+/// Can this action be carried out again as it is, through `plain`? The
+/// runner's own kinds (a sign-in, a trip, a check on what the step sent,
+/// a download, a guarded group, a dialog) are not tried twice.
+fn tried_again(action: &Action) -> bool {
+    !matches!(
+        action,
+        Action::SignIn { .. }
+            | Action::ReturnToArea { .. }
+            | Action::ExpectResponse { .. }
+            | Action::ApiRequest { .. }
+            | Action::ExpectDownload { .. }
+            | Action::WhenVisible { .. }
+            | Action::ExpectDialog { .. }
+            | Action::UseComponent { .. }
+    )
+}
+
+/// An action failed on a page that says the application no longer accepts
+/// the session (`signin::session_refused`). The account's saved session is
+/// dropped; the first time in the step, the account is signed in fresh
+/// (`sign_in_fresh`, which clears every cookie of the browser first), the
+/// case's area reached again, and the action tried once more. A second
+/// refusal fails with `signin::session_refused_again`, naming the account
+/// key, never a login.
+async fn after_session_refused<D: Driver>(
+    d: &mut D,
+    here: &Here<'_>,
+    refused: &Refused<'_>,
+    action: &Action,
+    timing: &Timing,
+    account: &mut Option<String>,
+    resigned: &mut bool,
+) -> (ActionOutcome, Option<&'static str>) {
+    let key = refused.key;
+    super::sessions::forget_session(here.root, key);
+    if std::mem::replace(resigned, true) {
+        return (ActionOutcome::failed(signin::session_refused_again(key)), Some(AFTER_FAILED_SIGN_IN));
+    }
+    crate::applog::info(format!(
+        "Auto Run, step {}: the application refused the session for {key}; it is signed in fresh once",
+        refused.step
+    ));
+    let (r, who) = match signin::prepare(here.root, here.organization, here.project, key) {
+        Ok(found) => found,
+        Err(why) => {
+            *account = None;
+            return (ActionOutcome::failed(why), Some(AFTER_FAILED_SIGN_IN));
+        }
+    };
+    let signed = signin::sign_in_fresh(d, here.root, &r, &who, timing).await;
+    if !signed.ok {
+        *account = None;
+        return (as_action_outcome(&signed), Some(AFTER_FAILED_SIGN_IN));
+    }
+    if let Some(rt) = refused.route {
+        let by = format!("Auto Run, step {}", refused.step);
+        let went = nav::reach_module(d, rt, nav::TripFrom::SignIn, timing, &by).await;
+        if !went.ok {
+            return (went, Some(AFTER_UNREACHED));
+        }
+    }
+    if !tried_again(action) {
+        return (
+            ActionOutcome::failed(format!(
+                "the application refused the session for account \"{key}\"; it was signed in fresh, and this action is not one that is tried again - run the step again"
+            )),
+            None,
+        );
+    }
+    let (again, stop) = plain(d, here, action, timing).await;
+    if !again.ok && !again.harness && signin::session_refused(d).await.is_some() {
+        super::sessions::forget_session(here.root, key);
+        return (ActionOutcome::failed(signin::session_refused_again(key)), Some(AFTER_FAILED_SIGN_IN));
+    }
+    (again, stop)
 }
 
 /// A plain action - one a `when_visible` may guard - carried out, and why

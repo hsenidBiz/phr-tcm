@@ -157,7 +157,7 @@ pub async fn unseed<D: Driver>(d: &mut D, ids: &[String]) {
 pub async fn clear<D: Driver>(d: &mut D, origins: &[String]) -> Result<(), CdpError> {
     d.call("Network.clearBrowserCookies", json!({})).await?;
     for origin in origins.iter().filter(|o| host_of(o).is_some()) {
-        d.call("Storage.clearDataForOrigin", json!({ "origin": origin, "storageTypes": "local_storage" })).await?;
+        d.call("Storage.clearDataForOrigin", json!({ "origin": origin, "storageTypes": "cookies,local_storage" })).await?;
     }
     Ok(())
 }

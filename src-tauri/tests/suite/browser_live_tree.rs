@@ -309,3 +309,32 @@ async fn release_closes_the_apps_browsers_and_nothing_else() {
     let _ = outside.wait();
     drop(b);
 }
+
+/// The clear a sign-in makes before the next account (`session::clear`),
+/// against a real Edge: a cookie of the account before, on the site's
+/// domain, is gone afterwards. Only cookie names are compared.
+#[tokio::test]
+#[ignore = "starts a real Edge"]
+async fn the_sign_in_clear_leaves_no_cookie_of_the_account_before() {
+    let _held = crate::serial::held_browsers();
+    let b = start().await;
+    let mut cdp = Cdp::connect(b.port).await.expect("connected");
+    cdp.call(
+        "Network.setCookies",
+        json!({ "cookies": [
+            { "name": "ehrm85", "value": "previous-user", "domain": "hr.example.internal", "path": "/" },
+            { "name": ".ASPXAUTH", "value": "previous-user", "domain": "hr.example.internal", "path": "/", "httpOnly": true }
+        ] }),
+    )
+    .await
+    .expect("cookies set");
+    let names = |v: &serde_json::Value| -> Vec<String> {
+        v["cookies"].as_array().into_iter().flatten().filter_map(|c| c["name"].as_str().map(str::to_string)).collect()
+    };
+    let before = cdp.call("Network.getAllCookies", json!({})).await.unwrap();
+    assert!(names(&before).contains(&"ehrm85".to_string()), "{:?}", names(&before));
+    v2_lib::browser::session::clear(&mut cdp, &["https://hr.example.internal".to_string()]).await.expect("cleared");
+    let after = cdp.call("Network.getAllCookies", json!({})).await.unwrap();
+    assert!(names(&after).is_empty(), "a cookie survived the clear: {:?}", names(&after));
+    assert!(b.close().is_ok());
+}
