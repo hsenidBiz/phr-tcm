@@ -322,8 +322,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_guide",
-            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. Locators come from what you saw on the live app, through discovery; every assertion comes from the test case's own expected result, never from what the code happens to do.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
+            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. Locators come from what you saw on the live app, through discovery; every assertion comes from the test case's own expected result, never from what the code happens to do. With `quick` true it answers only the Quick rules and this project's live sections, for work you have done before.",
+            "inputSchema": schema(serde_json::json!({
+                "quick": { "type": "boolean", "description": "true: answer only the Quick rules (the short form of the guide's rules) and the live sections: the active environment and whether get_accounts gives passwords, and this project's areas, areas to explore, components and quirks. Read the full guide, without quick, when something comes up that the quick rules do not cover." },
+            }), &[]),
         },
         {
             "name": "save_autorun_script",
@@ -982,7 +984,13 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // is structurally unable to drop `paths` or `output_path` - the
         // same pattern as `check_spec_coverage` above.
         "merge_case_files" => call("POST", "/merge-cases", &args.to_string()),
-        "get_autorun_guide" => call("GET", "/autorun-guide", ""),
+        "get_autorun_guide" => {
+            if args["quick"].as_bool().unwrap_or(false) {
+                call("GET", "/autorun-guide?quick=true", "")
+            } else {
+                call("GET", "/autorun-guide", "")
+            }
+        }
         "save_autorun_script" => {
             // The bridge takes the bare array, so a caller that wrapped it
             // in {scripts: [...]} and one that sent the list directly both

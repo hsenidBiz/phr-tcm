@@ -3190,3 +3190,53 @@ async fn a_dry_run_writes_and_records_nothing() {
     assert_eq!(kept.repairs, 0);
     assert!(load_quirks(dir.path(), "acme", "Web").unwrap().is_empty());
 }
+
+/// `?quick=true` answers the Quick rules and the live sections only: the
+/// active environment, the areas, the components and the quirks, and none
+/// of the full guide's other sections. Without it the full guide comes
+/// back, opening with the same Quick rules, and the same live sections.
+#[tokio::test]
+async fn the_quick_guide_holds_the_rules_and_the_live_sections() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    record_two_areas(dir.path());
+    let component: v2_lib::autorun::components::Component = serde_json::from_value(serde_json::json!({
+        "name": "Close the toast",
+        "description": "Closes the message in the corner, when one shows.",
+        "inputs": [],
+        "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Close" } }],
+        "version": 1
+    }))
+    .unwrap();
+    v2_lib::autorun::components::put(dir.path(), "acme", "Web", component).unwrap();
+    let body = serde_json::json!({ "text": "the grid loads after a spinner" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let (status, quick) = route(&ctx(), None, "GET", "/autorun-guide?quick=true", "", "1.0.0").await;
+    assert_eq!(status, 200, "{quick}");
+    let (status, full) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert_eq!(status, 200, "{full}");
+
+    assert!(quick.starts_with(&v2_lib::autorun::guide::quick_rules()), "{quick}");
+    for live in [
+        "## The active environment",
+        "## This project's areas",
+        "Cycle Setup",
+        "## This project's components",
+        "Close the toast",
+        "## Known quirks of this application",
+        "the grid loads after a spinner",
+    ] {
+        assert!(quick.contains(live), "the quick guide has no {live:?}: {quick}");
+        assert!(full.contains(live), "the full guide lost {live:?}");
+    }
+    for full_only in ["# Writing an Auto Run action script", "## The actions", "## Discovering the app", "## Saving it"] {
+        assert!(!quick.contains(full_only), "the quick guide carries {full_only:?}");
+        assert!(full.contains(full_only), "the full guide has no {full_only:?}");
+    }
+    assert!(full.starts_with(&autorun_guide()), "the full guide is answered as before");
+    assert!(full.contains("## Quick rules"), "the full guide opens with the Quick rules too");
+    assert!(quick.len() * 4 < full.len(), "the quick guide is not short: {} of {}", quick.len(), full.len());
+}

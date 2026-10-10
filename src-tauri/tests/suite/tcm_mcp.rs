@@ -1467,3 +1467,32 @@ fn the_guide_tool_no_longer_points_at_the_source() {
     assert!(!d.contains("You may read the application's source for SELECTORS"), "{d}");
     assert!(d.contains("every assertion comes from the test case's own expected result"), "{d}");
 }
+
+/// `get_autorun_guide` takes `quick`, says what it answers, and forwards it
+/// to the bridge as `?quick=true`; without it the full guide is asked for.
+#[test]
+fn the_guide_tool_takes_quick() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_autorun_guide").unwrap();
+    assert_eq!(tool["inputSchema"]["properties"]["quick"]["type"], "boolean", "{tool}");
+    assert!(tool["description"].as_str().unwrap().contains("Quick rules"), "{tool}");
+
+    for (args, want) in [
+        (r#"{"quick":true}"#, "/autorun-guide?quick=true"),
+        (r#"{"quick":false}"#, "/autorun-guide"),
+        ("{}", "/autorun-guide"),
+    ] {
+        let calls = std::cell::RefCell::new(vec![]);
+        let call = |method: &str, path: &str, _body: &str| {
+            calls.borrow_mut().push((method.to_string(), path.to_string()));
+            Ok((200, "{}".to_string()))
+        };
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"get_autorun_guide","arguments":{args}}}}}"#
+        );
+        handle_message(&req, "1.0.0", &call).unwrap();
+        let recorded = calls.borrow();
+        assert_eq!(recorded.last().unwrap(), &("GET".to_string(), want.to_string()), "{args}");
+    }
+}

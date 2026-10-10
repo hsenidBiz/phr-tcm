@@ -1819,3 +1819,28 @@ fn discover_and_heal_say_how_to_use_components() {
         assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");
     }
 }
+
+/// `/tcm:discover`, `/tcm:map-menus` and `/tcm:heal` read the quick guide
+/// first, and the full guide when something it does not cover comes up.
+#[test]
+fn the_commands_point_at_the_quick_guide() {
+    for stem in ["discover", "map-menus", "heal"] {
+        let c = COMMANDS.iter().find(|c| c.stem == stem).unwrap();
+        let flat = c.body.join("\n").split_whitespace().collect::<Vec<_>>().join(" ");
+        for said in [
+            "Call `get_autorun_guide` with `quick` true first and follow it.",
+            "Call it again without `quick` for the full guide when something the quick rules do not cover comes up",
+        ] {
+            assert!(flat.contains(said), "/tcm:{stem} never says {said:?}: {flat}");
+        }
+        let quick = flat.find("`get_autorun_guide` with `quick` true").unwrap();
+        let first_tool = ["get_test_cases", "start_autorun_discovery", "get_autorun_failures"]
+            .iter()
+            .filter_map(|t| flat.find(&format!("`{t}`")))
+            .min()
+            .unwrap();
+        assert!(quick < first_tool, "/tcm:{stem} reads the quick guide before it starts: {flat}");
+        assert!(!flat.contains("it holds every rule"), "/tcm:{stem} still sends the full guide first: {flat}");
+        assert!(!flat.contains('\u{2014}') && !flat.contains('\u{2013}'), "no em or en dashes");
+    }
+}

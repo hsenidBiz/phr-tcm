@@ -283,7 +283,10 @@ pub async fn route(
         // document a format, drive the browser the person opened, or read
         // files this machine already wrote - so none of them needs a
         // signed-in client. All were let through by the guard above.
-        ("GET", "/autorun-guide") => (200, autorun_guide_with_quirks(ctx)),
+        ("GET", "/autorun-guide") => {
+            let quick = matches!(q(target, "quick").as_deref(), Some("true") | Some("1"));
+            (200, autorun_guide_with_quirks(ctx, quick))
+        }
         ("POST", "/autorun-script") => save_autorun_scripts(ctx, client, body).await,
         ("GET", "/autorun-page") => autorun_page(ctx, target).await,
         ("POST", "/autorun-probe") => autorun_probe(ctx, body).await,
@@ -1605,8 +1608,12 @@ fn environment_database(ctx: &BridgeContext, env: &crate::environments::Environm
 /// project's components, then the recorded quirks. The constant (`autorun::guide::autorun_guide`)
 /// only says a quirks section exists; this reads what is actually on file,
 /// so the guide can never go stale on a live project.
-fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
-    let mut out = crate::autorun::guide::autorun_guide();
+///
+/// `quick` answers the Quick rules section in place of the full text, with
+/// the same live sections after it.
+fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool) -> String {
+    let mut out =
+        if quick { crate::autorun::guide::quick_rules() } else { crate::autorun::guide::autorun_guide() };
     let Some(root) = crate::autorun::store::configured_root() else {
         return out;
     };
