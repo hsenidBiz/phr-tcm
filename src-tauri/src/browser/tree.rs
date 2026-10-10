@@ -18,7 +18,8 @@
 //!
 //! Every live tree is kept in one registry (`register`), and the app's
 //! exit ends them all (`end_all`), including one an unattended run still
-//! holds.
+//! holds. `sweep_leftover_profiles` removes, at start, the profile folders
+//! a browser of an older version left behind.
 //!
 //! Off Windows there is no job: the tree is only its profile folder, and
 //! closing a browser kills the one process the app spawned, as before.
@@ -30,6 +31,10 @@ use std::time::{Duration, Instant};
 /// How long a closed browser's processes get to be gone. A headful tree
 /// takes a few seconds to unwind after its first process goes.
 pub const END_WITHIN: Duration = Duration::from_secs(5);
+
+/// The start of every profile folder a launched browser gets. The full
+/// name is this and the DevTools port, digits only.
+pub const PROFILE_PREFIX: &str = "tcm-autorun-";
 
 /// Something the app started that can be ended as a whole: a browser's
 /// process tree and its profile folder. The registry holds these, so the
@@ -80,6 +85,45 @@ pub fn end_all() -> usize {
 /// The profile folders of the trees alive now.
 pub fn held_profiles() -> Vec<PathBuf> {
     registered().iter().map(|t| t.profile_dir().to_path_buf()).collect()
+}
+
+/// Is this exactly a launched browser's profile folder name:
+/// `tcm-autorun-` and digits, nothing else? The test suite's own
+/// `tcm-autorun-bridge-*` and `-discovery-*` folders are not.
+pub fn is_profile_name(name: &str) -> bool {
+    name.strip_prefix(PROFILE_PREFIX).is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Remove, under `temp`, every folder named exactly like a launched
+/// browser's profile that no live tree of this app holds and that nothing
+/// has open. A folder in use is left as it is: it is renamed aside first,
+/// which Windows refuses while a file in it is open, so a browser still
+/// running on it never loses half its files. Never looks at processes.
+/// Returns the names removed.
+pub fn sweep_leftover_profiles(temp: &Path) -> Vec<String> {
+    let held = held_profiles();
+    let Ok(entries) = std::fs::read_dir(temp) else { return Vec::new() };
+    let mut removed = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !is_profile_name(&name) || !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let path = entry.path();
+        if held.iter().any(|h| h == &path) {
+            continue;
+        }
+        let aside = temp.join(format!("{name}.sweep"));
+        if std::fs::rename(&path, &aside).is_err() {
+            continue;
+        }
+        if std::fs::remove_dir_all(&aside).is_ok() {
+            removed.push(name);
+        } else {
+            let _ = std::fs::rename(&aside, &path);
+        }
+    }
+    removed
 }
 
 /// Remove a closed browser's profile folder. Windows can release a
