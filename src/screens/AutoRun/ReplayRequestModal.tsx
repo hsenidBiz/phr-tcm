@@ -46,6 +46,7 @@ export default function ReplayRequestModal() {
   }, []);
 
   if (!request) return null;
+  const discoveryLine = replayRequestDiscoveryLine(request);
 
   const answer = async (allow: boolean) => {
     if (inFlight.current) return;
@@ -70,9 +71,7 @@ export default function ReplayRequestModal() {
         Replay request
       </h2>
       <p className="text-xs leading-relaxed text-muted">{replayRequestText(request)}</p>
-      {replayRequestDiscoveryLine(request) && (
-        <p className="text-xs leading-relaxed text-muted">{replayRequestDiscoveryLine(request)}</p>
-      )}
+      {discoveryLine && <p className="text-xs leading-relaxed text-muted">{discoveryLine}</p>}
       <div className="flex shrink-0 items-center justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={() => void answer(false)} disabled={answering}>
           <IconCancel aria-hidden />

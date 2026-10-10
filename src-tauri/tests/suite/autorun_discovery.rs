@@ -2414,17 +2414,19 @@ async fn a_replay_requested_during_a_discovery_ends_it_and_replays() {
         .unwrap();
     let (mut browser, closed) = slot(menu_app(true, "/hr/leave"), exploring("Leave"));
 
-    assert!(end_discovery_for_replay(&mut browser), "the discovery was not ended");
+    let ended = end_discovery_for_replay(&mut browser);
+    assert!(ended.ended, "the discovery was not ended");
+    assert_eq!(ended.summary, None, "an ordinary discovery has no mapping summary");
     assert!(browser.is_none() && closed.load(Ordering::SeqCst), "the discovery's browser is still open");
     let kept = mapped_area(dir.path(), "Leave").expect("ending the discovery lost its map");
     assert_eq!(kept.outcomes, vec!["click Apply: moved to /hr/leave".to_string()]);
 
     // Nothing to end: the person's own browser, or none, is left alone.
     let (mut theirs, theirs_closed) = slot(FakePage::default().driver(), None);
-    assert!(!end_discovery_for_replay(&mut theirs));
+    assert!(!end_discovery_for_replay(&mut theirs).ended);
     assert!(theirs.is_some() && !theirs_closed.load(Ordering::SeqCst));
     let mut none: Option<FakeBrowser> = None;
-    assert!(!end_discovery_for_replay(&mut none));
+    assert_eq!(end_discovery_for_replay(&mut none), v2_lib::ai_bridge::DiscoveryEnded::default());
 
     // In the app: the assistant's replay ends it under the lock, says so
     // to the window, and only then opens and replays.
@@ -2433,9 +2435,10 @@ async fn a_replay_requested_during_a_discovery_ends_it_and_replays() {
     let replay = &replay[..replay.find("replay_to_traced(").unwrap()];
     let lock = replay.find("SESSION.lock().await").unwrap();
     let end = replay.find("end_discovery_for_replay(&mut slot)").expect("the assistant's replay does not end it");
+    let ended = replay.find("if discovery.ended {").expect("the window is told even when nothing ended");
     let publish = replay.find("publish_discovery(&slot)").expect("the window is not told");
     let open = replay.find("open_if_none(").unwrap();
-    assert!(lock < end && end < publish && publish < open, "the end is not under the replay's lock");
+    assert!(lock < end && end < ended && ended < publish && publish < open, "the end is not under the replay's lock");
     assert_eq!(replay.matches("SESSION.lock()").count(), 1, "the lock is let go between the end and the replay");
 }
 
@@ -2452,10 +2455,11 @@ async fn a_mapping_run_ended_by_a_replay_saves_its_summary() {
         discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
     assert_eq!(status, 200, "{body}");
 
-    assert!(end_discovery_for_replay(&mut browser));
-    assert!(closed.load(Ordering::SeqCst));
+    let ended = end_discovery_for_replay(&mut browser);
+    assert!(ended.ended && closed.load(Ordering::SeqCst));
     let kept = load_summary(dir.path(), ORG, PROJECT).unwrap().expect("the replay lost the run's summary");
     assert_eq!(kept.added, vec!["Leave Apply".to_string()]);
+    assert_eq!(ended.summary, Some(kept), "the replay does not hand back the summary it kept");
     assert!(find_area(&load_nav(dir.path(), ORG, PROJECT).unwrap(), "Leave Apply").is_some(), "the saved area went");
 }
 
@@ -2474,16 +2478,20 @@ async fn the_person_open_browser_is_still_refused_while_discovering() {
     assert!(open.contains("refuse_while_discovering(&mut slot)?"), "Open browser no longer refuses");
     assert!(!open.contains("end_discovery_for_replay"), "Open browser ends a discovery");
 
-    // The person's Replay to step passes may_lift = true, which refuses.
+    // The person's Replay to step is `ReplayBy::Person`, which refuses.
+    use v2_lib::commands::autorun::ReplayBy;
+    assert!(!ReplayBy::Person.ends_discovery() && ReplayBy::Person.may_lift());
+    assert!(ReplayBy::Assistant.ends_discovery() && !ReplayBy::Assistant.may_lift());
     let person = &source[source.find("pub async fn auto_run_replay_to_step").unwrap()..];
     let person = &person[..person.find("pub(crate) async fn replay_supervised").unwrap()];
-    assert!(person.contains("replay_supervised(&app, &organization, &project, req, true)"), "{person}");
+    assert!(person.contains("replay_supervised(&app, &organization, &project, req, ReplayBy::Person)"), "{person}");
     let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
     let replay = &replay[..replay.find("open_if_none(").unwrap()];
-    assert!(replay.contains("let by_assistant = !may_lift;"), "{replay}");
+    assert!(replay.contains("if by.ends_discovery() {"), "{replay}");
     assert!(replay.contains("} else if let Err(why) = crate::ai_bridge::refuse_while_discovering(&mut slot) {"));
-    // And the assistant's host is the only caller that passes false.
+    // And the assistant's host is the only caller that ends a discovery.
     let host = include_str!("../../src/commands/ai_bridge.rs");
-    assert!(host.contains("replay_supervised(&self.0, &organization, &project, req, false)"));
+    assert!(host.contains("replay_supervised(&self.0, &organization, &project, req, ReplayBy::Assistant)"));
+    assert_eq!(source.matches("ReplayBy::Assistant)").count(), 0, "a person's path replays as the assistant");
     assert_eq!(source.matches("refuse_while_discovering(&mut slot)").count(), 3, "a refusal went missing");
 }

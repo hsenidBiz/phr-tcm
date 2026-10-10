@@ -11,9 +11,10 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 use v2_lib::ai_bridge::{
-    autorun_guard_for, autorun_replay_with, route, AssistantReplay, BridgeContext, HostFuture, ReplayHost,
-    ENDED_DISCOVERY_FIRST,
+    after_ended_discovery, autorun_guard_for, autorun_replay_with, route, AssistantReplay, BridgeContext,
+    DiscoveryEnded, HostFuture, ReplayHost, ENDED_DISCOVERY_FIRST,
 };
+use v2_lib::autorun::mapping_summary::MappingSummary;
 use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::nav::{save_nav, ModulePath, NavFile};
 use v2_lib::autorun::recipe::save_recipe;
@@ -76,11 +77,22 @@ struct FakeHost {
     /// A discovery holds the browser: the prompt says so, and the replay
     /// ends it first.
     discovering: bool,
+    /// The ended discovery was a mapping run with this summary.
+    summary: Option<MappingSummary>,
+    /// The browser would not open: the replay answers this `Err`.
+    open_failed: Option<String>,
 }
 
 impl FakeHost {
     fn ending(end: ReplayEnd) -> Self {
-        FakeHost { notices: Mutex::new(vec![]), replays: Mutex::new(vec![]), end, discovering: false }
+        FakeHost {
+            notices: Mutex::new(vec![]),
+            replays: Mutex::new(vec![]),
+            end,
+            discovering: false,
+            summary: None,
+            open_failed: None,
+        }
     }
     fn ready() -> Self {
         Self::ending(ReplayEnd::Ready { case_id: ID, step: 3, notice: None })
@@ -115,7 +127,13 @@ impl ReplayHost for FakeHost {
     ) -> HostFuture<'_, Result<AssistantReplay, String>> {
         Box::pin(async move {
             self.replays.lock().unwrap().push((organization, project, req));
-            Ok(AssistantReplay { end: self.end.clone(), ended_discovery: self.discovering })
+            // As `replay_supervised` says a browser that would not open
+            // after it ended the discovery.
+            if let Some(why) = &self.open_failed {
+                return Err(after_ended_discovery(self.discovering, why));
+            }
+            let discovery = DiscoveryEnded { ended: self.discovering, summary: self.summary.clone() };
+            Ok(AssistantReplay { end: self.end.clone(), discovery })
         })
     }
     fn page(&self, _organization: String, _project: String) -> HostFuture<'_, (u16, String)> {
@@ -477,4 +495,65 @@ async fn the_replay_answer_says_the_discovery_was_ended() {
     let (_, text) = autorun_replay_with(&ctx(), &body(3), &host, &asks, Duration::from_secs(5)).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], ready);
+}
+
+/// A mapping run the replay ended hands back its summary beside the
+/// sentence, as `end_autorun_discovery` does; an ordinary one adds none.
+#[tokio::test]
+async fn a_replay_that_ended_a_mapping_run_answers_its_summary() {
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let summary: MappingSummary = serde_json::from_value(json!({
+        "ran_at": 1, "modules": ["Leave"], "added": ["Leave Apply"], "updated": [], "unchanged": [], "unreached": [], "blocked_writes": 0
+    }))
+    .unwrap();
+    let host = FakeHost { discovering: true, summary: Some(summary.clone()), ..FakeHost::ready() };
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), &host, &Asks::new(), Duration::from_secs(5)).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert!(v["sentence"].as_str().unwrap().starts_with(ENDED_DISCOVERY_FIRST), "{v}");
+    assert_eq!(v["summary"], serde_json::to_value(&summary).unwrap());
+    assert!(v["page"].is_string(), "{v}");
+
+    // A stop after the end carries it too.
+    let stopped = ReplayEnd::Stopped { step: 2 };
+    let host = FakeHost { discovering: true, summary: Some(summary.clone()), ..FakeHost::ending(stopped) };
+    let (_, text) = autorun_replay_with(&ctx(), &body(3), &host, &Asks::new(), Duration::from_secs(5)).await;
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["summary"], serde_json::to_value(&summary).unwrap());
+
+    let host = FakeHost { discovering: true, ..FakeHost::ready() };
+    let (_, text) = autorun_replay_with(&ctx(), &body(3), &host, &Asks::new(), Duration::from_secs(5)).await;
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert!(v.get("summary").is_none(), "{v}");
+}
+
+/// A browser that would not open after the replay ended the discovery
+/// still says the discovery was ended; with none ended, it says only why.
+#[tokio::test]
+async fn a_browser_that_would_not_open_after_the_end_still_says_the_discovery_was_ended() {
+    const WOULD_NOT_OPEN: &str = "the browser would not open - try again";
+    assert_eq!(after_ended_discovery(true, WOULD_NOT_OPEN), format!("{ENDED_DISCOVERY_FIRST} {WOULD_NOT_OPEN}"));
+    assert_eq!(after_ended_discovery(false, WOULD_NOT_OPEN), WOULD_NOT_OPEN);
+
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    for (discovering, said) in
+        [(true, format!("{ENDED_DISCOVERY_FIRST} {WOULD_NOT_OPEN}")), (false, WOULD_NOT_OPEN.to_string())]
+    {
+        let host = FakeHost { discovering, open_failed: Some(WOULD_NOT_OPEN.into()), ..FakeHost::ready() };
+        let (status, text) = autorun_replay_with(&ctx(), &body(3), &host, &Asks::new(), Duration::from_secs(5)).await;
+        assert_eq!((status, text), (503, said));
+    }
+
+    // The app's own replay says it the same way.
+    let source = include_str!("../../src/commands/autorun.rs");
+    let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
+    let open = &replay[replay.find("open_if_none(app, &mut slot)").unwrap()..];
+    let open = &open[..open.len().min(300)];
+    assert!(open.contains("after_ended_discovery(discovery.ended, &why)"), "{open}");
 }
