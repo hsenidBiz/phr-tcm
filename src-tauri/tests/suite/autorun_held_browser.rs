@@ -240,7 +240,9 @@ async fn the_assistant_releases_through_its_route() {
 /// beside a discovery, and the others' shared refusal.
 #[test]
 fn every_refusal_for_a_held_browser_asks_first_whether_it_is_alive() {
-    let source = include_str!("../../src/commands/autorun.rs");
+    // Line endings follow the checkout (CRLF on Windows), so read as LF.
+    let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+    let source = source.as_str();
     let body = |name: &str| {
         let at = source.find(name).unwrap_or_else(|| panic!("{name} is gone"));
         let rest = &source[at..];
@@ -252,7 +254,7 @@ fn every_refusal_for_a_held_browser_asks_first_whether_it_is_alive() {
     assert!(body("pub(crate) async fn replay_supervised").contains("let_go_if_gone(&mut slot)"));
     assert!(body("pub async fn auto_run_step").contains("let_go_if_gone(&mut slot)"));
     assert!(body("pub async fn open_session_refusal").contains("let_go_if_gone(&mut slot)"));
-    let bridge = include_str!("../../src/ai_bridge.rs");
+    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
     let page = &bridge[bridge.find("pub async fn supervised_page").unwrap()..];
     assert!(page[..page.find("\n}\n").unwrap()].contains("let_go_if_silent"), "the page read keeps a dead browser");
 }
