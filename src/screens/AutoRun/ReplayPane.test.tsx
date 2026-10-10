@@ -192,6 +192,27 @@ test("watching is a remembered choice", async () => {
   );
 });
 
+test("the highlight box saves the setting", async () => {
+  const saved: boolean[] = [];
+  mockIPC(
+    (cmd, args) => {
+      if (cmd === "get_app_settings") return { autorun_highlight: true };
+      if (cmd === "set_autorun_highlight") {
+        saved.push((args as { on: boolean }).on);
+        return { autorun_highlight: (args as { on: boolean }).on };
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  mountPane([{ id: 1, title: "A" }]);
+  const box = await screen.findByRole("checkbox", { name: "Highlight each action" });
+  expect(box).toHaveAttribute("aria-checked", "true");
+  fireEvent.click(box);
+  await waitFor(() => expect(saved).toEqual([false]));
+  expect(screen.getByRole("checkbox", { name: "Highlight each action" })).toHaveAttribute("aria-checked", "false");
+});
+
 test("progress moves the rows and the finished run is handed on", async () => {
   let resolveReplay: (run: { id: string }) => void = () => {};
   mockIPC(

@@ -300,6 +300,9 @@ pub struct Tab {
     /// Saves paused during a hold whose document is not known yet: answered
     /// once it is (`resolve_parked`).
     parked: Vec<Parked>,
+    /// Why its typed `Fetch.enable` was refused, while the catch-all sent in
+    /// its place is not answered yet (`on_setup_reply`).
+    typed_refusal: Option<String>,
 }
 
 /// A save paused during a hold, waiting to learn which document sent it.
@@ -512,6 +515,7 @@ impl Tab {
             request_loaders: HashMap::new(),
             request_order: VecDeque::new(),
             parked: Vec::new(),
+            typed_refusal: None,
         }
     }
 }
@@ -544,7 +548,9 @@ pub const TAB_OPEN_UNGUARDED: &str = "this script must not save, but a tab that 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SetupStep {
     Bypass,
-    Fetch,
+    /// `typed`: sent with the typed patterns, so a refusal is retried with
+    /// the catch-all.
+    Fetch { typed: bool },
     /// The page log, dialog handler or lifecycle events: a refusal only
     /// loses that, and is logged.
     Watch(&'static str),
@@ -639,6 +645,9 @@ pub struct Cdp<T: Transport = WsTransport> {
     hold_marker: Option<u64>,
     /// A stopped save from a tab that has since closed, not yet reported.
     blocked_elsewhere: Option<String>,
+    /// This browser refused `Fetch.enable` with the typed patterns once: it
+    /// is sent the catch-all from then on (`fetch_params`).
+    typed_refused: bool,
     /// Every save stopped since `take_saves_stopped` was last asked, as
     /// (method, path), at most `MAX_STOPPED_SAVES`.
     saves_stopped: Vec<(String, String)>,
@@ -661,6 +670,11 @@ pub struct Cdp<T: Transport = WsTransport> {
     seeds: Vec<(String, serde_json::Value)>,
     /// The setup frames of new tabs whose answers matter, by id.
     setup: HashMap<u64, (String, SetupStep)>,
+    /// Calls sent with `send_deferred` whose answers are collected later,
+    /// by id: the session each went to, and its answer once read. Whoever
+    /// reads frames next keeps the answer here, so the socket still has one
+    /// reader. Bounded by `MAX_DEFERRED`.
+    deferred: HashMap<u64, (String, Option<Result<serde_json::Value, String>>)>,
     /// Who answers each dialog, in any tab, and the dialogs seen
     /// (`dialogs`). One for the whole run, never per tab: an
     /// `expect_dialog` claims the next dialog wherever it opens.
@@ -696,6 +710,9 @@ struct EarlyEnd {
 
 /// How many early ends are remembered.
 const MAX_EARLY_ENDS: usize = 32;
+
+/// How many deferred calls (`send_deferred`) are kept waiting at once.
+const MAX_DEFERRED: usize = 16;
 
 /// What a guarded tab does with each paused request.
 struct SaveGuard {
@@ -790,12 +807,14 @@ impl<T: Transport> Cdp<T> {
             hold_tabs: HashSet::new(),
             hold_marker: None,
             blocked_elsewhere: None,
+            typed_refused: false,
             saves_stopped: Vec::new(),
             unsent_answers: VecDeque::new(),
             downloads: None,
             downloads_per_page: false,
             seeds: vec![],
             setup: HashMap::new(),
+            deferred: HashMap::new(),
             book: super::dialogs::DialogBook::default(),
             page_errors: super::page_errors::PageErrorBook::default(),
             context: None,
@@ -1025,12 +1044,46 @@ impl<T: Transport> Cdp<T> {
         Ok(())
     }
 
+    /// What `Fetch.enable` is sent in this browser: the typed patterns, or
+    /// the catch-all once it refused them.
+    fn fetch_params(&self) -> serde_json::Value {
+        if self.typed_refused {
+            super::save_guard::fetch_enable_all_params()
+        } else {
+            super::save_guard::fetch_enable_params()
+        }
+    }
+
+    /// The browser refused the typed patterns and then took the catch-all on
+    /// the same session: said once, with its reason, and the catch-all is
+    /// sent from now on.
+    fn typed_were_refused(&mut self, why: &str) {
+        if !self.typed_refused {
+            self.typed_refused = true;
+            crate::applog::warn(format!("{}{why}", super::save_guard::TYPED_REFUSED));
+        }
+    }
+
     async fn guard_tab(&mut self, session: &str, patterns: &[String]) -> Result<(), CdpError> {
         let limit = self.limit_now();
         self.call_on(Some(session.to_string()), "Network.setBypassServiceWorker", serde_json::json!({ "bypass": true }), limit)
             .await?;
+        let typed = !self.typed_refused;
         let limit = self.limit_now();
-        self.call_on(Some(session.to_string()), "Fetch.enable", super::save_guard::fetch_enable_params(), limit).await?;
+        match self.call_on(Some(session.to_string()), "Fetch.enable", self.fetch_params(), limit).await {
+            Ok(_) => {}
+            // A browser that does not know one of the types: every request
+            // is paused instead. Refused too, the guard fails closed.
+            // The browser is switched to the catch-all only once it took it
+            // on the same session: a closing tab's refusal is no type's.
+            Err(CdpError::Protocol { message, .. }) if typed => {
+                let limit = self.limit_now();
+                let all = super::save_guard::fetch_enable_all_params();
+                self.call_on(Some(session.to_string()), "Fetch.enable", all, limit).await?;
+                self.typed_were_refused(&message);
+            }
+            Err(e) => return Err(e),
+        }
         if let Some(t) = self.tabs.iter_mut().find(|t| t.session_id == session) {
             let blocked = t.guard.as_mut().and_then(|g| g.blocked.take());
             t.guard = Some(SaveGuard { patterns: patterns.to_vec(), hold: false, blocked });
@@ -1551,7 +1604,7 @@ impl<T: Transport> Cdp<T> {
             return self.send_unsent_answers().await;
         }
         let mut tab = Tab::new(session.clone(), target, None, info["url"].as_str().unwrap_or(""));
-        crate::applog::info(format!("a tab opened: {}", tab.url_without_query));
+        crate::applog::info(format!("a tab opened: {}", super::save_guard::path_of(&tab.url_without_query)));
         // Opened during a sign-in's hold: every document it loads is first
         // seen after the hold, so the sign-in's own.
         if self.hold || self.hold_pending {
@@ -1567,7 +1620,8 @@ impl<T: Transport> Cdp<T> {
         let s = session.as_str();
         if armed.is_some() {
             self.queue(s, "Network.setBypassServiceWorker", serde_json::json!({ "bypass": true }), Some(SetupStep::Bypass));
-            self.queue(s, "Fetch.enable", super::save_guard::fetch_enable_params(), Some(SetupStep::Fetch));
+            let typed = !self.typed_refused;
+            self.queue(s, "Fetch.enable", self.fetch_params(), Some(SetupStep::Fetch { typed }));
         }
         for (method, params) in [
             ("Network.enable", serde_json::json!({})),
@@ -1600,6 +1654,11 @@ impl<T: Transport> Cdp<T> {
     /// that, and is logged.
     async fn on_setup_reply(&mut self, id: u64, answer: Result<serde_json::Value, String>) -> Result<(), CdpError> {
         self.note_reply(id);
+        // A deferred call's answer, kept for `collect`.
+        if let Some((_, slot)) = self.deferred.get_mut(&id) {
+            *slot = Some(answer);
+            return Ok(());
+        }
         let Some((session, step)) = self.setup.remove(&id) else {
             return Ok(());
         };
@@ -1608,34 +1667,55 @@ impl<T: Transport> Cdp<T> {
         };
         let refused = answer.is_err();
         let unarmed = self.armed.is_none();
+        // The typed patterns refused while the run is still guarded: asked
+        // again with the catch-all, the tab still held until that answer.
+        // The browser is switched to the catch-all only once that answer is
+        // a yes (below).
+        if let (SetupStep::Fetch { typed: true }, Err(message), false) = (step, &answer, unarmed) {
+            self.tabs[i].typed_refusal = Some(message.clone());
+            let all = super::save_guard::fetch_enable_all_params();
+            self.queue(&session, "Fetch.enable", all, Some(SetupStep::Fetch { typed: false }));
+            return self.send_unsent_answers().await;
+        }
+        // Taken only by the catch-all's own answer: the tab's other setup
+        // answers arrive in between.
+        if matches!(step, SetupStep::Fetch { typed: false }) {
+            if let Some(why) = self.tabs[i].typed_refusal.take() {
+                if answer.is_ok() {
+                    self.typed_were_refused(&why);
+                }
+            }
+        }
         let tab = &mut self.tabs[i];
-        if step == SetupStep::Fetch {
+        if matches!(step, SetupStep::Fetch { .. }) {
             tab.guard_answered = true;
         }
         if let Err(message) = &answer {
             let (what, method) = match step {
                 SetupStep::Bypass => ("guard", "Network.setBypassServiceWorker"),
-                SetupStep::Fetch => ("guard", "Fetch.enable"),
+                SetupStep::Fetch { .. } => ("guard", "Fetch.enable"),
                 SetupStep::Watch(m) => ("watch", m),
             };
+            // The page's path only: never its host or query.
             crate::applog::warn(format!(
                 "Auto Run could not {what} a tab the page opened, {method} was refused ({message}): {}",
-                tab.url_without_query
+                super::save_guard::path_of(&tab.url_without_query)
             ));
         }
         match step {
             SetupStep::Watch(_) => return Ok(()),
             SetupStep::Bypass => tab.unguardable |= refused,
-            SetupStep::Fetch => {}
+            SetupStep::Fetch { .. } => {}
         }
-        if step == SetupStep::Fetch && !unarmed && (refused || tab.unguardable) {
+        let fetch = matches!(step, SetupStep::Fetch { .. });
+        if fetch && !unarmed && (refused || tab.unguardable) {
             let sentence = if tab.held { TAB_HELD_UNGUARDED } else { TAB_OPEN_UNGUARDED };
             if let Some(g) = tab.guard.as_mut() {
                 g.blocked.get_or_insert_with(|| sentence.to_string());
             }
             return Ok(());
         }
-        if tab.held && (step == SetupStep::Fetch || unarmed) {
+        if tab.held && (fetch || unarmed) {
             tab.held = false;
             self.queue(&session, "Runtime.runIfWaitingForDebugger", serde_json::json!({}), None);
             return self.send_unsent_answers().await;
@@ -2042,6 +2122,75 @@ impl<T: Transport> Cdp<T> {
         }
     }
 
+    /// Send a call to the current tab without waiting for its answer, and
+    /// return its id for `collect`. Nothing is read here: the answer is
+    /// kept by whichever read comes next, a later call's or `collect`'s.
+    /// At most `MAX_DEFERRED` are kept at once; the oldest is let go.
+    pub async fn send_deferred(&mut self, method: &str, params: serde_json::Value) -> Result<u64, CdpError> {
+        let session = self.current.clone();
+        if !self.has_tab(&session) {
+            return Err(self.gone(&session));
+        }
+        self.resolve_parked().await?;
+        self.send_unsent_answers().await?;
+        let id = self.next_id;
+        self.next_id += 1;
+        if self.hold_pending && self.hold_marker.is_none() {
+            self.hold_marker = Some(id);
+        }
+        if self.deferred.len() >= MAX_DEFERRED {
+            if let Some(oldest) = self.deferred.keys().min().copied() {
+                self.deferred.remove(&oldest);
+            }
+        }
+        self.deferred.insert(id, (session.clone(), None));
+        if let Err(e) = self.transport.send(frame_in(id, method, params, &session)).await {
+            self.deferred.remove(&id);
+            return Err(CdpError::Transport(e));
+        }
+        Ok(id)
+    }
+
+    /// The answer to a call `send_deferred` sent, read for at most `limit`
+    /// from now. A tab that closed first, or a socket that went away, is
+    /// `Closed`. Either way the call is forgotten.
+    pub async fn collect(&mut self, id: u64, method: &str, limit: Duration) -> Result<serde_json::Value, CdpError> {
+        let answer = tokio::time::timeout(limit, self.read_deferred(id)).await;
+        self.deferred.remove(&id);
+        match answer {
+            Err(_) => Err(CdpError::Timeout { what: method.to_string(), ms: limit.as_millis() as u64 }),
+            Ok(Err(e)) => Err(e),
+            Ok(Ok(Err(message))) => Err(CdpError::Protocol { method: method.to_string(), message }),
+            Ok(Ok(Ok(v))) => Ok(v),
+        }
+    }
+
+    /// Read frames until the deferred call `id` has its answer.
+    async fn read_deferred(&mut self, id: u64) -> Result<Result<serde_json::Value, String>, CdpError> {
+        loop {
+            let session = match self.deferred.get_mut(&id) {
+                None => return Err(CdpError::Closed),
+                Some((session, slot)) => match slot.take() {
+                    Some(answer) => return Ok(answer),
+                    None => session.clone(),
+                },
+            };
+            if !self.has_tab(&session) {
+                return Err(CdpError::Closed);
+            }
+            let Some(raw) = self.next_frame_or_park().await? else {
+                self.resolve_parked().await?;
+                continue;
+            };
+            match classify(&raw) {
+                Incoming::Reply { id: got, answer } => self.on_setup_reply(got, answer).await?,
+                Incoming::Event { session, ev } => self.route_event(session, ev).await?,
+                Incoming::Other => {}
+            }
+            self.resolve_parked().await?;
+        }
+    }
+
     async fn read_reply(
         &mut self,
         id: u64,
@@ -2398,11 +2547,24 @@ pub trait Driver {
     fn set_deadline(&mut self, deadline: Option<Instant>);
     /// See `Cdp::guard_saves`. A driver with no guard of its own (a test's
     /// fake) is asked for `Fetch.enable` like any other call, so it can
-    /// answer or refuse it.
+    /// answer or refuse it. A refusal of the typed patterns is asked again
+    /// with the catch-all, and logged only once that is a yes; unlike `Cdp`
+    /// it remembers nothing, so the next guard asks for the typed patterns
+    /// again (and logs again).
     fn guard_saves(&mut self, _patterns: &[String]) -> impl Future<Output = Result<(), CdpError>> {
         async move {
             self.call("Network.setBypassServiceWorker", serde_json::json!({ "bypass": true })).await?;
-            self.call("Fetch.enable", super::save_guard::fetch_enable_params()).await.map(|_| ())
+            // Typed patterns refused: every request is paused instead; that
+            // refused too fails closed, and says nothing about types.
+            match self.call("Fetch.enable", super::save_guard::fetch_enable_params()).await {
+                Ok(_) => Ok(()),
+                Err(CdpError::Protocol { message, .. }) => {
+                    self.call("Fetch.enable", super::save_guard::fetch_enable_all_params()).await?;
+                    crate::applog::warn(format!("{}{message}", super::save_guard::TYPED_REFUSED));
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
         }
     }
     /// See `Cdp::stop_guarding_saves`.
@@ -2497,6 +2659,24 @@ pub trait Driver {
     /// See `Cdp::close_other_tabs`.
     fn close_other_tabs(&mut self) -> impl Future<Output = ()> {
         async {}
+    }
+    /// See `Cdp::send_deferred`. `None`: this driver cannot send a call
+    /// and collect its answer later, so the caller makes the call as usual.
+    fn send_deferred(
+        &mut self,
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> impl Future<Output = Option<Result<u64, CdpError>>> {
+        async { None }
+    }
+    /// See `Cdp::collect`. Only ever asked for an id `send_deferred` gave.
+    fn collect(
+        &mut self,
+        _id: u64,
+        _method: &str,
+        _limit: Duration,
+    ) -> impl Future<Output = Result<serde_json::Value, CdpError>> {
+        async { Err(CdpError::Closed) }
     }
 }
 
@@ -2596,6 +2776,12 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     async fn expect_tab_closed(&mut self, name: &str, within: Duration) -> Result<(), CdpError> {
         Cdp::expect_tab_closed(self, name, within).await
+    }
+    async fn send_deferred(&mut self, method: &str, params: serde_json::Value) -> Option<Result<u64, CdpError>> {
+        Some(Cdp::send_deferred(self, method, params).await)
+    }
+    async fn collect(&mut self, id: u64, method: &str, limit: Duration) -> Result<serde_json::Value, CdpError> {
+        Cdp::collect(self, id, method, limit).await
     }
     async fn close_other_tabs(&mut self) {
         Cdp::close_other_tabs(self).await

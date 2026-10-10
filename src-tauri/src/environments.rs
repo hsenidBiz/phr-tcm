@@ -83,7 +83,7 @@ fn lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn file_path(root: &Path) -> PathBuf {
+pub(crate) fn file_path(root: &Path) -> PathBuf {
     root.join("environments.json")
 }
 

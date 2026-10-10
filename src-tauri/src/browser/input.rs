@@ -307,12 +307,23 @@ enum Look {
 }
 
 async fn look<D: Driver>(d: &mut D, target: &Target, need_editable: bool) -> Result<Look, CdpError> {
+    // A legacy css string clicks its first match, as it always did.
+    look_with(d, target, need_editable, !target.is_legacy()).await
+}
+
+/// `look`, with whether two or more matches are refused said outright.
+async fn look_with<D: Driver>(
+    d: &mut D,
+    target: &Target,
+    need_editable: bool,
+    refuse_many: bool,
+) -> Result<Look, CdpError> {
     let found = resolve_explained(d, target).await?;
     let handles = found.handles;
     if handles.is_empty() {
         return Ok(Look::NotYet(found.unreachable_frame.unwrap_or_else(|| NOT_FOUND.to_string())));
     }
-    if handles.len() > 1 && !target.is_legacy() {
+    if handles.len() > 1 && refuse_many {
         return Ok(Look::NotYet(matched_many(handles.len())));
     }
     let handle = handles.into_iter().next().expect("checked non-empty");
@@ -331,6 +342,16 @@ async fn look<D: Driver>(d: &mut D, target: &Target, need_editable: bool) -> Res
         x: p["x"].as_f64().unwrap_or(0.0),
         y: p["y"].as_f64().unwrap_or(0.0),
     }))
+}
+
+/// Could `target` be clicked right now? The readiness rule a click waits
+/// for (`wait_ready`), in one look with no waiting, except that two or
+/// more matches are always "no", a legacy css string's included: a click
+/// may take a legacy string's first match, but a guess is never a reason
+/// to leave a click out. A look that fails for any reason is "no".
+pub async fn clickable_now<D: Driver>(d: &mut D, target: &Target) -> bool {
+    page::release(d).await;
+    matches!(look_with(d, target, false, true).await, Ok(Look::Ready(_)))
 }
 
 /// What a wait loop says it last saw when its budget ran out inside a

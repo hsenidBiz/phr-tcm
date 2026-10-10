@@ -1275,6 +1275,11 @@ export const commands = {
 	 */
 	setStaySignedIn: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_stay_signed_in", { on })),
 	/**
+	 *  Whether Auto Run outlines and pauses before each action, in a watched run
+	 *  and in the supervised browser. Read when a run or a supervised step starts.
+	 */
+	setAutorunHighlight: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_autorun_highlight", { on })),
+	/**
 	 *  The saved style. The starting one is created on the first read when
 	 *  this machine has none yet.
 	 */
@@ -1939,6 +1944,15 @@ export type AppSettings = {
 	 *  into. Empty until the person picks one.
 	 */
 	playwright_clone?: string,
+	/**
+	 *  Auto Run points at each element (outline and a short pause) before it
+	 *  clicks, fills or drags, in a watched run and in the supervised
+	 *  browser, which covers the recording sign-in replays and the AI
+	 *  bridge's discovery and try-an-action paths too
+	 *  (`Timing::supervised`). Off skips them all. An unwatched run never
+	 *  highlights.
+	 */
+	autorun_highlight?: boolean,
 };
 
 /**  One area of the discovery map, as the Discovery card shows it. */

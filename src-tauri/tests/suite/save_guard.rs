@@ -21,7 +21,8 @@ use v2_lib::autorun::{CaseRecord, CaseScript, StepRecord};
 use v2_lib::browser::actions::ActionOutcome;
 use v2_lib::browser::cdp::{Cdp, CdpError, Transport};
 use v2_lib::browser::save_guard::{
-    blocked, check_words, is_blocked, is_save, path_of, setup_failed, SAVE_WORDS,
+    blocked, check_words, fetch_enable_all_params, fetch_enable_params, is_blocked, is_save, path_of, setup_failed,
+    SAVE_WORDS, TYPED_REFUSED, UNPAUSED_TYPES,
 };
 use v2_lib::browser::timing::Timing;
 use v2_lib::commands::autorun::guard_for_case;
@@ -223,7 +224,7 @@ async fn guarded(patterns: &[&str]) -> Cdp<FakeTransport> {
 }
 
 #[tokio::test]
-async fn guarding_bypasses_service_workers_then_intercepts_every_request() {
+async fn guarding_bypasses_service_workers_then_intercepts_every_request_that_can_save() {
     let cdp = guarded(&["recalc"]).await;
     let f = sent(&cdp);
     assert_eq!(f[0]["method"], "Network.setBypassServiceWorker");
@@ -231,7 +232,101 @@ async fn guarding_bypasses_service_workers_then_intercepts_every_request() {
     assert_eq!(f[1]["method"], "Fetch.enable");
     assert_eq!(f[1]["params"]["patterns"][0]["urlPattern"], "*");
     assert_eq!(f[1]["params"]["patterns"][0]["requestStage"], "Request");
+    assert_eq!(f[1]["params"], fetch_enable_params());
     assert!(cdp.is_guarding_saves());
+}
+
+/// Every resource type CDP's `Network.ResourceType` has, as Edge 155's own
+/// protocol lists it.
+const CDP_RESOURCE_TYPES: [&str; 19] = [
+    "Document", "Stylesheet", "Image", "Media", "Font", "Script", "TextTrack", "XHR", "Fetch", "Prefetch",
+    "EventSource", "WebSocket", "Manifest", "SignedExchange", "Ping", "CSPViolationReport", "Preflight", "FedCM",
+    "Other",
+];
+
+/// Only requests that can save are paused: every type that can carry a
+/// POST (a form post is a `Document`, a beacon a `Ping`), and none a page
+/// only reads. A pattern with no type would pause everything again.
+#[test]
+fn the_fetch_patterns_hold_save_capable_types_only() {
+    let params = fetch_enable_params();
+    let patterns = params["patterns"].as_array().expect("patterns");
+    let types: Vec<&str> = patterns
+        .iter()
+        .map(|p| p["resourceType"].as_str().expect("a pattern with no type pauses every request"))
+        .collect();
+    for t in ["Document", "XHR", "Fetch", "Ping", "EventSource", "Other"] {
+        assert!(types.contains(&t), "{t} is not paused: {types:?}");
+    }
+    for t in UNPAUSED_TYPES {
+        assert!(!types.contains(&t), "{t} is paused: {types:?}");
+    }
+    for t in ["Image", "Stylesheet", "Script", "Font", "Media", "Manifest", "TextTrack", "WebSocket", "CSPViolationReport"] {
+        assert!(!types.contains(&t), "{t} is paused: {types:?}");
+    }
+    // Edge refuses the whole `Fetch.enable` over a `FedCM` pattern, which
+    // would leave every Must not save case Blocked (`browser_live`).
+    assert!(!types.contains(&"FedCM"), "{types:?}");
+    for t in &types {
+        assert!(CDP_RESOURCE_TYPES.contains(t), "{t} is not a CDP resource type");
+    }
+    let mut once = types.clone();
+    once.sort();
+    once.dedup();
+    assert_eq!(once.len(), types.len(), "a type twice: {types:?}");
+    for p in patterns {
+        assert_eq!(p["urlPattern"], "*");
+        assert_eq!(p["requestStage"], "Request");
+    }
+}
+
+fn paused_as(id: &str, kind: &str, method: &str, url: &str) -> String {
+    json!({ "method": "Fetch.requestPaused", "params": {
+        "requestId": id, "resourceType": kind, "frameId": "F-main",
+        "request": { "method": method, "url": url, "headers": {} }
+    } })
+    .to_string()
+}
+
+/// Review focus 3: with static files no longer paused, a form post (a
+/// `Document` POST) and a `navigator.sendBeacon` (a `Ping`) on a Must not
+/// save case are still paused and stopped, a page read still goes through,
+/// and the log names neither the host nor the query.
+#[tokio::test]
+async fn a_beacon_and_a_form_post_are_still_blocked() {
+    let _log = crate::serial::log_tail();
+    let mut cdp = guarded(&[]).await;
+    let types: Vec<String> = sent(&cdp)[1]["params"]["patterns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["resourceType"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(types.iter().any(|t| t == "Document") && types.iter().any(|t| t == "Ping"), "{types:?}");
+    let frames = [
+        paused_as("form", "Document", "POST", "https://hr.example/api/Save?token=x"),
+        paused_as("beacon", "Ping", "POST", "https://hr.example/api/update/beacon?k=v"),
+        paused_as("read", "Document", "GET", "https://hr.example/api/Save"),
+        r#"{"id":3,"result":{"done":true}}"#.to_string(),
+    ];
+    cdp.transport_mut().incoming.extend(frames);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+
+    for id in ["form", "beacon"] {
+        let a = answer_to(&cdp, id).unwrap_or_else(|| panic!("{id} was never answered"));
+        assert_eq!(a["method"], "Fetch.failRequest", "{id} went through");
+        assert_eq!(a["params"]["errorReason"], "BlockedByClient");
+    }
+    assert_eq!(answer_to(&cdp, "read").unwrap()["method"], "Fetch.continueRequest");
+    assert_eq!(cdp.take_save_blocked().as_deref(), Some(SENTENCE), "the form post is what the case reports");
+    assert_eq!(
+        cdp.take_saves_stopped(),
+        vec![("POST".to_string(), "/api/Save".to_string()), ("POST".to_string(), "/api/update/beacon".to_string())]
+    );
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    let stopped: Vec<&String> = lines.iter().filter(|l| l.starts_with("Auto Run stopped a save")).collect();
+    assert!(stopped.iter().any(|l| l.ends_with("POST /api/update/beacon")), "{lines:?}");
+    assert!(stopped.iter().all(|l| !l.contains("hr.example") && !l.contains('?')), "{stopped:?}");
 }
 
 /// Fail closed: a browser that will not bypass its service workers is not
@@ -245,15 +340,75 @@ async fn a_refused_service_worker_bypass_leaves_the_client_unguarded() {
     assert_eq!(sent(&cdp).len(), 1, "Fetch.enable was asked for anyway");
 }
 
+/// Fail closed: the typed patterns refused and then the catch-all
+/// refused too leaves the client unguarded, with the catch-all's reason.
 #[tokio::test]
 async fn a_refused_interception_is_an_error_and_leaves_the_client_unguarded() {
+    let _log = crate::serial::log_tail();
     let mut cdp = Cdp::over(FakeTransport::new(&[
         r#"{"id":1,"result":{}}"#,
-        r#"{"id":2,"error":{"code":-32000,"message":"nope"}}"#,
+        r#"{"id":2,"error":{"code":-32000,"message":"no types"}}"#,
+        r#"{"id":3,"error":{"code":-32000,"message":"nope"}}"#,
     ]));
     let err = cdp.guard_saves(&[]).await.unwrap_err();
     assert!(err.to_string().contains("nope"), "{err}");
     assert!(!cdp.is_guarding_saves());
+    let f = sent(&cdp);
+    assert_eq!(f.len(), 3, "{f:?}");
+    assert_eq!(f[2]["method"], "Fetch.enable");
+    assert_eq!(f[2]["params"], fetch_enable_all_params());
+
+    // Review fix 1: a refusal the catch-all failed on too is no refusal of
+    // the request types: nothing says so, and the next guard asks for the
+    // typed patterns again.
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    assert!(!lines.iter().any(|l| *l == format!("{TYPED_REFUSED}no types")), "{lines:?}");
+    cdp.transport_mut().incoming.extend([r#"{"id":4,"result":{}}"#.to_string(), r#"{"id":5,"result":{}}"#.to_string()]);
+    cdp.guard_saves(&[]).await.unwrap();
+    let f = sent(&cdp);
+    assert_eq!(f[4]["method"], "Fetch.enable");
+    assert_eq!(f[4]["params"], fetch_enable_params());
+}
+
+/// A browser that does not know one of the request types refuses the
+/// typed patterns: it is guarded with the catch-all instead, said once in
+/// the log with no address, a save is still stopped, and the next guard on
+/// the same browser goes straight to the catch-all.
+#[tokio::test]
+async fn a_browser_that_refuses_a_request_type_is_guarded_by_the_catch_all() {
+    let _log = crate::serial::log_tail();
+    let why = "Unknown resource type in fetch filter: 'Ping'";
+    let refused = json!({ "id": 2, "error": { "code": -32000, "message": why } }).to_string();
+    let mut cdp = Cdp::over(FakeTransport::new(&[r#"{"id":1,"result":{}}"#, &refused, r#"{"id":3,"result":{}}"#]));
+    cdp.guard_saves(&[]).await.expect("the catch-all was not tried");
+    assert!(cdp.is_guarding_saves());
+    let f = sent(&cdp);
+    assert_eq!(f[1]["params"], fetch_enable_params());
+    assert_eq!(f[2]["method"], "Fetch.enable");
+    assert_eq!(f[2]["params"], fetch_enable_all_params());
+
+    cdp.transport_mut().incoming.extend([
+        paused("r1", "POST", "https://hr.example/api/Save?token=x"),
+        r#"{"id":4,"result":{}}"#.to_string(),
+    ]);
+    cdp.call("Runtime.evaluate", json!({})).await.unwrap();
+    assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
+    assert_eq!(cdp.take_save_blocked().as_deref(), Some(SENTENCE));
+
+    // Guarded again on the same browser: the catch-all at once.
+    let next = sent(&cdp).iter().map(|f| f["id"].as_u64().unwrap()).max().unwrap() + 1;
+    cdp.transport_mut().incoming.extend((next..next + 3).map(|id| json!({ "id": id, "result": {} }).to_string()));
+    cdp.stop_guarding_saves().await.unwrap();
+    cdp.guard_saves(&[]).await.unwrap();
+    let enables: Vec<serde_json::Value> =
+        sent(&cdp).into_iter().filter(|f| f["method"] == "Fetch.enable").map(|f| f["params"].clone()).collect();
+    assert_eq!(enables.len(), 3, "{enables:?}");
+    assert_eq!(enables[2], fetch_enable_all_params());
+
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    let line = format!("{TYPED_REFUSED}{why}");
+    assert_eq!(lines.iter().filter(|l| **l == line).count(), 1, "not said exactly once: {lines:?}");
+    assert!(lines.iter().filter(|l| l.starts_with(TYPED_REFUSED)).all(|l| !l.contains("hr.example") && !l.contains('?')));
 }
 
 /// Every paused request is answered inside the event handling, while
@@ -608,8 +763,10 @@ async fn a_script_without_the_flag_is_never_intercepted() {
     assert!(!d.methods().iter().any(|m| m.starts_with("Fetch.")), "{:?}", d.methods());
 }
 
+/// The typed patterns and the catch-all both refused: fail closed.
 #[tokio::test]
 async fn a_guard_that_cannot_start_blocks_the_case_before_step_1() {
+    let _log = crate::serial::log_tail();
     let dir = tempfile::tempdir().unwrap();
     let page = common::FakePage::default();
     let mut d = common::ScriptedDriver::new(move |method, params| match method {
@@ -619,8 +776,44 @@ async fn a_guard_that_cannot_start_blocks_the_case_before_step_1() {
     let rec = run_case(&mut d, dir.path(), "acme", "PMS", &no_save_script(one_click()), &quick(), &AtomicBool::new(false), &mut |_| {}).await;
     assert_eq!(rec.proposed, "Blocked");
     assert!(rec.reason.starts_with("the no-save guard could not be set up: "), "{}", rec.reason);
-    assert_eq!(d.methods(), vec!["Network.setBypassServiceWorker".to_string(), "Fetch.enable".to_string()], "nothing ran after the refusal");
+    assert_eq!(
+        d.methods(),
+        vec!["Network.setBypassServiceWorker".to_string(), "Fetch.enable".to_string(), "Fetch.enable".to_string()],
+        "nothing ran after the catch-all was refused too"
+    );
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    assert!(!lines.iter().any(|l| *l == format!("{TYPED_REFUSED}not allowed")), "said the types were refused: {lines:?}");
     assert!(rec.steps.iter().flat_map(|s| &s.outcomes).all(|o| o.detail.starts_with("not run:")));
+}
+
+/// A browser that refuses the typed patterns only: the case runs guarded
+/// by the catch-all, and a save the page tries still fails it.
+#[tokio::test]
+async fn a_refused_request_type_falls_back_to_the_catch_all_and_the_case_runs_guarded() {
+    let _log = crate::serial::log_tail();
+    let dir = tempfile::tempdir().unwrap();
+    let page = common::FakePage::default();
+    let mut d = common::ScriptedDriver::new(move |method, params| match method {
+        "Fetch.enable" if params["patterns"][0]["resourceType"].is_string() => Err(CdpError::Protocol {
+            method: "Fetch.enable".into(),
+            message: "Unknown resource type in fetch filter: 'Ping'".into(),
+        }),
+        _ => page.answer(method, params),
+    });
+    d.block_after = Some(("Input.dispatchMouseEvent".into(), SENTENCE.into()));
+    let rec = run_case(&mut d, dir.path(), "acme", "PMS", &no_save_script(one_click()), &quick(), &AtomicBool::new(false), &mut |_| {}).await;
+    let enables: Vec<serde_json::Value> = d
+        .calls
+        .iter()
+        .filter(|(m, _)| m == "Fetch.enable")
+        .map(|(_, p)| p.clone())
+        .collect();
+    assert_eq!(enables, vec![fetch_enable_params(), fetch_enable_all_params()]);
+    let m = d.methods();
+    let click = m.iter().position(|x| x == "Input.dispatchMouseEvent").expect("the case never ran");
+    assert_eq!(m[..click].iter().filter(|x| *x == "Fetch.enable").count(), 2, "{m:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+    assert!(rec.reason.ends_with(SENTENCE), "{}", rec.reason);
 }
 
 #[tokio::test]
@@ -1097,4 +1290,31 @@ async fn a_command_waiting_on_a_parked_save_returns_at_its_limit() {
     assert_eq!(got["done"], true);
     assert_eq!(answer_to(&cdp, "r1").unwrap()["method"], "Fetch.failRequest");
     assert!(took < Duration::from_secs(4), "the command waited {took:?}");
+}
+
+/// A step's picture is no longer waited for, so it no longer reads what
+/// the page sent after the step's last action. The cheap call made in its
+/// place does: a save the page sent then still fails that step's last
+/// outcome, read at the same point as before.
+#[tokio::test]
+async fn a_save_sent_after_the_last_action_fails_it_while_the_picture_is_still_taken() {
+    let dir = tempfile::tempdir().unwrap();
+    let page = common::FakePage::default();
+    let mut d = common::ScriptedDriver::new(move |method, params| match method {
+        "Page.captureScreenshot" => Ok(json!({ "data": "/9j/4AAQ" })),
+        _ => page.answer(method, params),
+    });
+    d.defers = true;
+    d.block_after = Some((v2_lib::autorun::runner::READ_WHAT_THE_PAGE_SENT.into(), SENTENCE.into()));
+    let script = no_save_script(json!([
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": "#save" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#next" }] }
+    ]));
+    let rec = run_case(&mut d, dir.path(), "acme", "PMS", &script, &quick(), &AtomicBool::new(false), &mut |_| {}).await;
+    let one = rec.steps.iter().find(|s| s.step_number == 1).expect("step 1 was not recorded");
+    assert_eq!(one.outcomes.last().map(|o| o.detail.as_str()), Some(SENTENCE), "{rec:?}");
+    assert!(one.screenshot.is_some(), "the step's picture was lost: {rec:?}");
+    let two = rec.steps.iter().find(|s| s.step_number == 2).expect("step 2 was not recorded");
+    assert!(two.outcomes.iter().all(|o| o.detail.starts_with("not run:")), "{rec:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
 }

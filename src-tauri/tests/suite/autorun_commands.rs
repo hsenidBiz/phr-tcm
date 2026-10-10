@@ -214,9 +214,80 @@ fn only_one_unattended_run_at_a_time_and_the_claim_is_given_back() {
 /// where it is about to click - a watched one still does.
 #[test]
 fn nobody_is_watching_a_background_run_so_it_does_not_pause_to_point() {
+    let _settings = crate::serial::app_settings();
+    let _on = Highlight::set(true);
     assert_eq!(replay_timing(false).highlight_ms, 0);
     assert!(replay_timing(true).highlight_ms > 0);
     assert_eq!(replay_timing(false).action_ms, v2_lib::browser::timing::Timing::default().action_ms);
+}
+
+/// Highlight each action, turned through its own setter for one test and
+/// put back as it was when the test ends, passed or not. The settings
+/// folder is set once for the binary and removed after each test (the
+/// next save makes it again).
+struct Highlight {
+    was: bool,
+}
+
+impl Highlight {
+    fn dir() -> &'static std::path::PathBuf {
+        static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        DIR.get_or_init(|| {
+            let dir = std::env::temp_dir().join(format!("tcm-suite-app-settings-{}", std::process::id()));
+            v2_lib::app_settings::init(dir.clone());
+            dir
+        })
+    }
+
+    fn set(on: bool) -> Highlight {
+        Highlight::dir();
+        let was = v2_lib::app_settings::current().autorun_highlight;
+        let now = v2_lib::commands::app_settings::set_autorun_highlight(on).expect("the setting was not saved");
+        assert_eq!(now.autorun_highlight, on);
+        Highlight { was }
+    }
+}
+
+impl Drop for Highlight {
+    fn drop(&mut self) {
+        let _ = v2_lib::commands::app_settings::set_autorun_highlight(self.was);
+        let _ = std::fs::remove_dir_all(Highlight::dir());
+    }
+}
+
+/// Highlight each action off: a watched run keeps its waits but loses the
+/// outline pause; on keeps it.
+#[test]
+fn highlight_off_skips_the_pause_for_a_watched_run() {
+    use v2_lib::browser::timing::Timing;
+    let _browser = crate::serial::autorun();
+    let _settings = crate::serial::app_settings();
+    {
+        let _off = Highlight::set(false);
+        assert_eq!(replay_timing(true).highlight_ms, 0);
+        assert_eq!(replay_timing(true).action_ms, Timing::default().action_ms);
+        assert_eq!(replay_timing(false).highlight_ms, 0);
+    }
+    let _on = Highlight::set(true);
+    assert!(replay_timing(true).highlight_ms > 0);
+    assert_eq!(replay_timing(false).highlight_ms, 0);
+}
+
+/// The supervised browser (and the recording sign-in replays and the AI
+/// bridge's discovery and try paths that share its timing) follows the
+/// same switch.
+#[test]
+fn highlight_off_skips_the_pause_in_the_supervised_browser() {
+    use v2_lib::browser::timing::Timing;
+    let _browser = crate::serial::autorun();
+    let _settings = crate::serial::app_settings();
+    {
+        let _off = Highlight::set(false);
+        assert_eq!(Timing::supervised().highlight_ms, 0);
+        assert_eq!(Timing::supervised().action_ms, Timing::default().action_ms);
+    }
+    let _on = Highlight::set(true);
+    assert!(Timing::supervised().highlight_ms > 0);
 }
 
 // ---- Clearing scripts and results (dev-only Auto Run toolbar) ----------

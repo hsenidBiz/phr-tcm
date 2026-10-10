@@ -330,6 +330,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             app_settings::set_autostart,
             app_settings::set_beta_updates,
             app_settings::set_stay_signed_in,
+            app_settings::set_autorun_highlight,
             writing_style::writing_style_get,
             writing_style::writing_style_save,
             writing_style::writing_style_read_file,

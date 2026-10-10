@@ -10,6 +10,7 @@ use super::lease::Held;
 use super::nav::{self, Route};
 use super::api_checks;
 use super::recipe::{self, SignInRecipe};
+use super::run_files::RunFiles;
 use super::signin::{self, SignInOutcome};
 use super::components::{self, ComponentUse};
 use super::{store, PageErrors, StepDialog, StepScript};
@@ -68,10 +69,19 @@ pub fn area_routes(root: &Path, organization: &str, project: &str, names: &[&str
     }
     let nav_file = nav::load_nav(root, organization, project);
     let home = recipe::load_effective_recipe_if_any(root, organization, project);
+    routes_from(&nav_file, &home, names)
+}
+
+/// `area_routes` from files already read.
+fn routes_from(
+    nav_file: &Result<nav::NavFile, String>,
+    home: &Result<Option<SignInRecipe>, String>,
+    names: &[&str],
+) -> NamedAreas {
     names
         .iter()
         .map(|name| {
-            let route = match (&nav_file, &home) {
+            let route = match (nav_file, home) {
                 (Err(why), _) | (_, Err(why)) => Err(why.clone()),
                 (Ok(nav_file), Ok(home)) => match nav::find_area(nav_file, name) {
                     None => Err(nav::unrecorded_area(name)),
@@ -167,7 +177,165 @@ pub(crate) async fn picture<D: Driver>(d: &mut D, root: &Path) -> Option<String>
         .await
         .ok()?
         .ok()?;
-    store::save_shot(root, &bytes).ok()
+    write_shot(root, bytes).await.ok().flatten()
+}
+
+/// Write a picture off the step loop. Its file name once written; `None`
+/// when the write failed.
+fn write_shot(root: &Path, bytes: Vec<u8>) -> tokio::task::JoinHandle<Option<String>> {
+    let root = root.to_path_buf();
+    tokio::task::spawn_blocking(move || store::save_shot(&root, &bytes).ok())
+}
+
+/// A step's own picture, of the page as its step left it, on its way to
+/// disk without holding up the next step. Asked of the browser at once;
+/// where the browser allows it (`Driver::send_deferred`) its answer is read
+/// later, and the file is always written off the step loop.
+///
+/// The next step's first action that changes the page settles it first
+/// (`settle`), so the picture never shows that action's work; a check or
+/// a read runs while it is taken. `finish` gives the file name once it is
+/// on disk, or `None` when the capture failed, timed out, or the browser
+/// went away: a record never names a file that is not there.
+///
+/// A save the guard stopped while the picture was still being taken was
+/// sent before anything after its step changed the page: it is its step's
+/// (`late_save`), not the next step's.
+pub struct Picture {
+    root: std::path::PathBuf,
+    shot: Shot,
+    /// A save stopped while this picture was outstanding, as the case's
+    /// sentence: read as its answer was collected, or taken by the next
+    /// step before that step changed the page. Charged to this picture's
+    /// step by whoever holds it.
+    pub late_save: Option<String>,
+}
+
+enum Shot {
+    /// Asked of the browser; its answer not read yet.
+    Asked { id: u64, at: Instant },
+    /// Being written.
+    Writing(tokio::task::JoinHandle<Option<String>>),
+    /// No picture.
+    Nothing,
+}
+
+impl Picture {
+    /// Ask for a picture of the page as it is now. A browser that cannot
+    /// answer later is asked and waited for here, as before; only its
+    /// write is left to run on.
+    pub async fn take<D: Driver>(d: &mut D, root: &Path) -> Picture {
+        let limit = Duration::from_millis(SHOT_TIMEOUT_MS);
+        let shot = match d.send_deferred(page::SCREENSHOT, page::screenshot_params()).await {
+            Some(Ok(id)) => Shot::Asked { id, at: Instant::now() },
+            Some(Err(_)) => Shot::Nothing,
+            None => match tokio::time::timeout(limit, page::screenshot(d)).await {
+                Ok(Ok(bytes)) => Shot::Writing(write_shot(root, bytes)),
+                _ => Shot::Nothing,
+            },
+        };
+        Picture { root: root.to_path_buf(), shot, late_save: None }
+    }
+
+    /// Still waiting on the browser's answer.
+    pub fn is_outstanding(&self) -> bool {
+        matches!(self.shot, Shot::Asked { .. })
+    }
+
+    /// Read the browser's answer, when it is still to come, within what is
+    /// left of `SHOT_TIMEOUT_MS` since it was asked, and start writing it.
+    /// A save read on the way is this picture's step's (`late_save`).
+    pub async fn settle<D: Driver>(&mut self, d: &mut D) {
+        let Shot::Asked { id, at } = self.shot else {
+            return;
+        };
+        let left = Duration::from_millis(SHOT_TIMEOUT_MS).saturating_sub(at.elapsed());
+        let bytes = d.collect(id, page::SCREENSHOT, left).await.and_then(|r| page::image_of(&r));
+        if let Some(sentence) = d.take_save_blocked() {
+            self.late_save.get_or_insert(sentence);
+        }
+        self.shot = match bytes {
+            Ok(bytes) => Shot::Writing(write_shot(&self.root, bytes)),
+            Err(_) => Shot::Nothing,
+        };
+    }
+
+    /// The picture's file name once it is written, or `None`, and a save
+    /// stopped while it was taken (`late_save`).
+    pub async fn finish<D: Driver>(mut self, d: &mut D) -> (Option<String>, Option<String>) {
+        self.settle(d).await;
+        let file = match self.shot {
+            Shot::Writing(h) => h.await.ok().flatten(),
+            _ => None,
+        };
+        (file, self.late_save)
+    }
+}
+
+/// The cheap call `step_picture` makes where the step's picture used to be
+/// waited for.
+pub const READ_WHAT_THE_PAGE_SENT: &str = "Target.getTargetInfo";
+
+/// One cheap round trip to the browser, made where a picture used to be
+/// waited for: the browser writes every event it sent before the call
+/// ahead of the answer, so a save the page sent after a step's last action
+/// is read here, as the picture's answer used to read it. Its answer, or a
+/// refusal, does not matter.
+async fn read_what_the_page_sent<D: Driver>(d: &mut D) {
+    let limit = Duration::from_millis(SHOT_TIMEOUT_MS);
+    let _ = d.call_within(READ_WHAT_THE_PAGE_SENT, serde_json::json!({}), limit).await;
+}
+
+/// A step's own picture (`Picture::take`), with what the page sent up to
+/// that moment read, so `Driver::take_save_blocked` sees a save the page
+/// sent after the step's last action.
+pub async fn step_picture<D: Driver>(d: &mut D, root: &Path) -> Picture {
+    let p = Picture::take(d, root).await;
+    if p.is_outstanding() {
+        read_what_the_page_sent(d).await;
+    }
+    p
+}
+
+/// What the rest of a step records when a save the guard stopped turned
+/// out to be the step before's: the step before failed. The same sentence
+/// a later step of a failed case records.
+pub const AFTER_STEP_BEFORE_FAILED: &str = "not run: an earlier step of this case failed";
+
+/// The step before's picture, while nothing of this step has changed the
+/// page yet (`acted`): a save stopped now is that step's.
+fn step_before<'p>(run: &'p mut InRun<'_>, acted: bool) -> Option<&'p mut Picture> {
+    if acted {
+        return None;
+    }
+    run.picture.as_deref_mut()
+}
+
+/// Whether an action may change the page, so a picture still being taken
+/// of the step before is settled first. Checks and reads do not.
+pub fn changes_the_page(action: &Action) -> bool {
+    !matches!(
+        action,
+        Action::WaitFor { .. }
+            | Action::CheckText { .. }
+            | Action::CheckUrl { .. }
+            | Action::ExpectVisible { .. }
+            | Action::ExpectHidden { .. }
+            | Action::ExpectText { .. }
+            | Action::ExpectContainsText { .. }
+            | Action::ExpectCount { .. }
+            | Action::ExpectAttribute { .. }
+            | Action::ExpectResponse { .. }
+            | Action::ExpectFocused { .. }
+            | Action::ExpectDownload { .. }
+            | Action::ExpectTab { .. }
+            | Action::ExpectTabClosed { .. }
+            | Action::ExpectDialog { .. }
+            | Action::ExpectRow { .. }
+            | Action::ExpectNoRow { .. }
+            | Action::ExpectSorted { .. }
+            | Action::ExpectRowCount { .. }
+    )
 }
 
 /// Run one step's actions in order and report every outcome.
@@ -266,6 +434,12 @@ pub struct InRun<'a> {
     /// run counts its stopped saves instead (`Driver::take_saves_stopped`).
     /// The stopped save's sentence is still taken, so it never carries over.
     pub saves_only_counted: bool,
+    /// The run's recipe and areas file, read once and again only when they
+    /// changed (`RunFiles`). `None` reads them afresh for this step.
+    pub files: Option<&'a RunFiles>,
+    /// The step before's picture, maybe still being taken: settled before
+    /// this step's first action that changes the page.
+    pub picture: Option<&'a mut Picture>,
 }
 
 /// The longest an `expect_download` waits in a watched run or a try, which
@@ -333,7 +507,10 @@ pub async fn run_step_in_run<D: Driver>(
         .collect();
     let merged: Option<NamedAreas> = (!missing.is_empty()).then(|| {
         let mut all = run.areas.cloned().unwrap_or_default();
-        all.extend(area_routes(root, organization, project, &missing));
+        all.extend(match run.files {
+            Some(f) => routes_from(&f.nav(root, organization, project), &f.recipe(root, organization, project), &missing),
+            None => area_routes(root, organization, project, &missing),
+        });
         all
     });
     let areas = merged.as_ref().or(run.areas);
@@ -367,11 +544,18 @@ async fn run_expanded<D: Driver>(
 ) -> Result<Vec<ActionOutcome>, String> {
     // No recipe to run (none saved, no site address): navigation is open,
     // as before the built-in existed; the sign-in itself is what refuses.
-    let recipe = recipe::load_effective_recipe_if_any(root, organization, project)?;
+    // Looked at per step, the recipe and the areas file alike: a person may
+    // flip the switch between two steps of a supervised run. Within a run
+    // (`run.files`) a file is read again only when it changed.
+    let recipe = match run.files {
+        Some(f) => f.recipe(root, organization, project)?,
+        None => recipe::load_effective_recipe_if_any(root, organization, project)?,
+    };
     let policy = policy_for(recipe.as_ref());
-    // Read per step, like the recipe: a person may flip the switch between
-    // two steps of a supervised run.
-    let nav_file = nav::load_nav(root, organization, project)?;
+    let nav_file = match run.files {
+        Some(f) => f.nav(root, organization, project)?,
+        None => nav::load_nav(root, organization, project)?,
+    };
     // Where the step began in the browser's network record: an
     // `expect_response` looks only at requests that started after it. What
     // the browser has already sent is read first, so a request the page
@@ -413,6 +597,10 @@ async fn run_expanded<D: Driver>(
         Here { root, organization, project, policy: &policy, direct_urls: nav_file.direct_urls, step: step.step_number };
     let mut out = Vec::with_capacity(step.actions.len());
     let mut blocked: Option<&'static str> = None;
+    // Whether an action of this step that changes the page has begun.
+    // Until then a save the guard stopped was sent while the step before's
+    // picture was still being taken: it is that step's, not this one's.
+    let mut acted = false;
     for action in &step.actions {
         if let Some(why) = blocked {
             out.push(ActionOutcome::failed(why));
@@ -421,11 +609,34 @@ async fn run_expanded<D: Driver>(
         // A save stopped before this action began - while the page loaded,
         // or between two steps - fails the step here, before it acts.
         if let Some(sentence) = d.take_save_blocked().filter(|_| saves_fail) {
-            let mut stopped = ActionOutcome::failed(sentence);
-            stopped.screenshot = picture(d, root).await;
-            out.push(stopped);
-            blocked = Some(AFTER_SAVE_BLOCKED);
+            match step_before(run, acted) {
+                Some(p) => {
+                    p.late_save.get_or_insert(sentence);
+                    out.push(ActionOutcome::failed(AFTER_STEP_BEFORE_FAILED));
+                    blocked = Some(AFTER_STEP_BEFORE_FAILED);
+                }
+                None => {
+                    let mut stopped = ActionOutcome::failed(sentence);
+                    stopped.screenshot = picture(d, root).await;
+                    out.push(stopped);
+                    blocked = Some(AFTER_SAVE_BLOCKED);
+                }
+            }
             continue;
+        }
+        // The step before's picture shows the page as that step left it. A
+        // save read while it was settled fails that step, and this one
+        // stops before it acts.
+        if changes_the_page(action) && !acted {
+            acted = true;
+            if let Some(p) = run.picture.as_deref_mut() {
+                p.settle(d).await;
+                if p.late_save.is_some() {
+                    out.push(ActionOutcome::failed(AFTER_STEP_BEFORE_FAILED));
+                    blocked = Some(AFTER_STEP_BEFORE_FAILED);
+                    continue;
+                }
+            }
         }
         // An `expect_dialog` judges once the step's other actions are done:
         // its place is kept, and filled then.
@@ -562,10 +773,20 @@ async fn run_expanded<D: Driver>(
             }
         };
         // A save the page tried while this action ran is the step's
-        // failure, whatever the action itself made of the page.
+        // failure, whatever the action itself made of the page - unless
+        // nothing of this step has changed the page yet: then it is the
+        // step before's, and the rest of this step does not run.
         if let Some(sentence) = d.take_save_blocked().filter(|_| saves_fail) {
-            outcome = ActionOutcome::failed(sentence);
-            blocked = Some(AFTER_SAVE_BLOCKED);
+            match step_before(run, acted) {
+                Some(p) => {
+                    p.late_save.get_or_insert(sentence);
+                    blocked = Some(AFTER_STEP_BEFORE_FAILED);
+                }
+                None => {
+                    outcome = ActionOutcome::failed(sentence);
+                    blocked = Some(AFTER_SAVE_BLOCKED);
+                }
+            }
         }
         unexpected_dialog(d, &mut dialogs_read, fail_on_unexpected, &mut outcome);
         // A Stop is no failure to picture.
@@ -573,6 +794,15 @@ async fn run_expanded<D: Driver>(
             outcome.screenshot = picture(d, root).await;
         }
         out.push(outcome);
+    }
+    // Judging a dialog answers it, which changes the page.
+    if !deferred.is_empty() && !acted {
+        if let Some(p) = run.picture.as_deref_mut() {
+            p.settle(d).await;
+            if p.late_save.is_some() {
+                blocked = blocked.or(Some(AFTER_STEP_BEFORE_FAILED));
+            }
+        }
     }
     // Each `expect_dialog`, in order, now the rest of the step has run.
     for (slot, id) in deferred {

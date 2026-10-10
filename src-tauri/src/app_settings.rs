@@ -39,6 +39,13 @@ pub struct AppSettings {
     /// Folder of the PHR-PLAYWRIGHT-AUTOMATION clone Auto Run scripts export
     /// into. Empty until the person picks one.
     pub playwright_clone: String,
+    /// Auto Run points at each element (outline and a short pause) before it
+    /// clicks, fills or drags, in a watched run and in the supervised
+    /// browser, which covers the recording sign-in replays and the AI
+    /// bridge's discovery and try-an-action paths too
+    /// (`Timing::supervised`). Off skips them all. An unwatched run never
+    /// highlights.
+    pub autorun_highlight: bool,
 }
 
 impl Default for AppSettings {
@@ -51,6 +58,7 @@ impl Default for AppSettings {
             db_auto_approve: false,
             stay_signed_in: true,
             playwright_clone: String::new(),
+            autorun_highlight: true,
         }
     }
 }

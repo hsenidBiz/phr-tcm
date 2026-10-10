@@ -3114,7 +3114,7 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
         &ctx.project,
         &account,
         area.as_deref(),
-        &crate::browser::timing::Timing::default(),
+        &crate::browser::timing::Timing::supervised(),
     )
     .await;
     // A sign-in that failed closed the browser, and the discovery with it.
@@ -3417,7 +3417,7 @@ async fn autorun_discover_area(ctx: &BridgeContext, body: &str) -> (u16, String)
         &name,
         &module,
         clicks,
-        &crate::browser::timing::Timing::default(),
+        &crate::browser::timing::Timing::supervised(),
     )
     .await
 }
@@ -3659,7 +3659,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         organization,
         project,
         &step,
-        &crate::browser::timing::Timing::default(),
+        &crate::browser::timing::Timing::supervised(),
         account,
         lease,
         None,

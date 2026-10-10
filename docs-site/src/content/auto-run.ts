@@ -595,7 +595,7 @@ export const autoRun: Screen = {
       group: "unattended",
       locate: { role: "checkbox", name: "Watch the browser" },
       name: "Watch the browser",
-      does: "Off: the browser runs out of sight and you can keep working. On: a window opens for every case.",
+      does: "Off: the browser runs out of sight and you can keep working. On: a window opens for every case. **Highlight each action**, beside it, outlines where each click, fill or drag lands and pauses a moment first; turn it off to skip both, here and in the Auto Run browser you drive yourself.",
     },
     {
       id: "retry-transient",

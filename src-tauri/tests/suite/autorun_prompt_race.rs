@@ -20,7 +20,7 @@ use v2_lib::autorun::nav::{load_home, Home};
 use v2_lib::autorun::recipe::SignInRecipe;
 use v2_lib::autorun::sessions::{now_ms, save_session};
 use v2_lib::autorun::signin::sign_in;
-use v2_lib::autorun::timing::{FRESH_LOGIN_WINDOW_MS, PROMPT_WINDOW_MS};
+use v2_lib::autorun::timing::{FRESH_LOGIN_WINDOW_MS, HOME_PROMPT_WINDOW_MS, PROMPT_WINDOW_MS};
 use v2_lib::browser::cdp::{CdpError, Event};
 use v2_lib::browser::input::{HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
@@ -279,8 +279,56 @@ async fn a_trip_home_uses_the_short_window() {
     let out = load_home(&mut d, &Home::of(&r), &quick()).await;
     assert!(out.ok, "{}", out.detail);
     assert_eq!(app.clicked(), vec!["#cookie"], "the modal 3 s in is past the short window");
-    assert!(app.now() >= PROMPT_WINDOW_MS, "the rest of the window was not watched: {} ms", app.now());
-    assert!(app.now() <= PROMPT_WINDOW_MS + MARGIN_MS, "waited {} ms", app.now());
+    assert!(app.now() >= HOME_PROMPT_WINDOW_MS, "the rest of the window was not watched: {} ms", app.now());
+    assert!(app.now() <= HOME_PROMPT_WINDOW_MS + MARGIN_MS, "waited {} ms", app.now());
+}
+
+/// Spec B: after a trip home reloads the page, its prompts are watched for
+/// half a second, not the saved session's 1.5 s. A prompt that would show
+/// 0.8 s in is past it; one already showing is still dismissed.
+#[tokio::test]
+async fn a_trip_home_watches_prompts_for_half_a_second() {
+    assert_eq!(HOME_PROMPT_WINDOW_MS, 500);
+    let r = prompt_recipe(form());
+    let (mut d, app) = prompt_app(&[]);
+    let out = load_home(&mut d, &Home::of(&r), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(app.now() >= HOME_PROMPT_WINDOW_MS, "the window was not watched out: {} ms", app.now());
+    assert!(app.now() <= HOME_PROMPT_WINDOW_MS + MARGIN_MS, "waited {} ms after a trip home", app.now());
+
+    let (mut d, app) = prompt_app(&[("#cookie", 0), ("#modal", 800)]);
+    let out = load_home(&mut d, &Home::of(&r), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(app.clicked(), vec!["#cookie"], "the modal 0.8 s in is past the home window");
+}
+
+/// Spec B, what stays the same: a fresh credential login still watches for
+/// five seconds, so a session modal that comes late is still dismissed; a
+/// saved session reuse still watches for 1.5 s.
+#[tokio::test]
+async fn a_fresh_login_still_watches_for_five_seconds() {
+    assert_eq!(FRESH_LOGIN_WINDOW_MS, 5000);
+    assert_eq!(PROMPT_WINDOW_MS, 1500);
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, app) = prompt_app(&[]);
+    let out = sign_in(&mut d, dir.path(), &prompt_recipe(form()), &account(), &quick()).await;
+    assert!(out.ok && !out.used_saved_session, "{}", out.detail);
+    assert!(app.now() >= FRESH_LOGIN_WINDOW_MS, "the fresh-login window was cut short: {} ms", app.now());
+    assert!(app.now() <= FRESH_LOGIN_WINDOW_MS + MARGIN_MS, "waited {} ms after a fresh login", app.now());
+
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, app) = prompt_app(&[("#modal", 4000)]);
+    let out = sign_in(&mut d, dir.path(), &prompt_recipe(form()), &account(), &quick()).await;
+    assert!(out.ok && !out.used_saved_session, "{}", out.detail);
+    assert_eq!(app.clicked(), vec!["#go", "#modal"], "the modal 4 s in was dismissed");
+
+    let dir = tempfile::tempdir().unwrap();
+    with_saved_session(dir.path());
+    let (mut d, app) = prompt_app(&[]);
+    let out = sign_in(&mut d, dir.path(), &prompt_recipe(form()), &account(), &quick()).await;
+    assert!(out.ok && out.used_saved_session, "{}", out.detail);
+    assert!(app.now() >= PROMPT_WINDOW_MS, "the saved-session window was cut short: {} ms", app.now());
+    assert!(app.now() <= PROMPT_WINDOW_MS + MARGIN_MS, "waited {} ms after a saved session", app.now());
 }
 
 /// A sign-in step's optional prompt is looked for once, not waited out,

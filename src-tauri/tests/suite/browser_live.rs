@@ -2145,6 +2145,31 @@ async fn a_guarded_browser_answers_requests_made_between_calls() {
     assert_eq!(out.as_str(), Some("searched"));
 }
 
+/// Review focus 3 against real Edge: only the types that can save are
+/// paused now, and a form post (a `Document`) and a beacon (a `Ping`) from
+/// the guarded page itself still never reach the server.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_beacon_and_a_form_post_from_a_guarded_page_never_reach_the_server() {
+    let _log = crate::serial::log_tail();
+    let server = SaveServer::start();
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "navigate", "url": server.page("") })).await);
+    live.cdp.guard_saves(&[]).await.expect("the guard did not start");
+    page::eval_value(&mut live.cdp, "navigator.sendBeacon('/api/SaveBeacon', 'draft'); postForm(); 1").await.unwrap();
+    live.cdp.idle(Duration::from_millis(1500)).await;
+    assert!(!server.got("POST /api/Save"), "a save reached the server: {:?}", server.seen.lock().unwrap());
+    let stopped = live.cdp.take_saves_stopped();
+    for path in ["/api/SaveBeacon", "/api/Save"] {
+        assert!(stopped.iter().any(|(m, p)| m == "POST" && p == path), "{path} was not stopped: {stopped:?}");
+    }
+    // Edge takes the typed patterns as they are: no fall back to pausing
+    // every request, which would hide a type it does not know.
+    let refused = v2_lib::browser::save_guard::TYPED_REFUSED;
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    assert!(!lines.iter().any(|l| l.starts_with(refused)), "{lines:?}");
+}
+
 /// A tab the page opens (a `target=_blank` link) is attached and guarded
 /// before it runs: the form it posts the moment it opens is stopped, the
 /// case hears of it, and the script still acts in the first tab.

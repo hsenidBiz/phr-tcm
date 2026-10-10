@@ -289,3 +289,55 @@ async fn eval_round_trips_against_a_real_browser() {
     assert_eq!(v["result"]["value"], 2);
     let _ = b.child.kill();
 }
+
+// ---- Calls answered later (send_deferred / collect) ----------------------
+
+/// A later call reads the deferred call's answer on its way to its own;
+/// the answer is kept, and `collect` hands it over without reading again.
+#[tokio::test]
+async fn a_deferred_answer_read_by_a_later_call_is_kept_for_collect() {
+    let t = FakeTransport::new(&[r#"{"id":1,"result":{"data":"A"}}"#, r#"{"id":2,"result":{"ok":true}}"#]);
+    let mut cdp = Cdp::over(t);
+    let id = cdp.send_deferred("Page.captureScreenshot", serde_json::json!({})).await.unwrap();
+    assert_eq!(id, 1);
+    let got = cdp.call("Runtime.evaluate", serde_json::json!({})).await.unwrap();
+    assert_eq!(got["ok"], true);
+    let shot = cdp.collect(id, "Page.captureScreenshot", Duration::from_millis(50)).await.unwrap();
+    assert_eq!(shot["data"], "A");
+    assert_eq!(cdp.transport().sent.len(), 2);
+}
+
+#[tokio::test]
+async fn collect_reads_the_socket_for_an_answer_still_to_come() {
+    let t = FakeTransport::new(&[r#"{"method":"Page.loadEventFired","params":{}}"#, r#"{"id":1,"result":{"data":"B"}}"#]);
+    let mut cdp = Cdp::over(t);
+    let id = cdp.send_deferred("Page.captureScreenshot", serde_json::json!({})).await.unwrap();
+    let shot = cdp.collect(id, "Page.captureScreenshot", Duration::from_millis(50)).await.unwrap();
+    assert_eq!(shot["data"], "B");
+}
+
+#[tokio::test]
+async fn a_deferred_call_on_a_closed_socket_or_one_never_answered_is_no_answer() {
+    let mut cdp = Cdp::over(FakeTransport::new(&[]));
+    let id = cdp.send_deferred("Page.captureScreenshot", serde_json::json!({})).await.unwrap();
+    assert!(matches!(cdp.collect(id, "Page.captureScreenshot", Duration::from_millis(50)).await, Err(CdpError::Closed)));
+    let mut cdp = Cdp::over(FakeTransport::hanging(&[]));
+    let id = cdp.send_deferred("Page.captureScreenshot", serde_json::json!({})).await.unwrap();
+    assert!(matches!(
+        cdp.collect(id, "Page.captureScreenshot", Duration::from_millis(30)).await,
+        Err(CdpError::Timeout { .. })
+    ));
+}
+
+/// The tab a deferred call went to closes before its answer comes: the
+/// wait ends at once with `Closed`, not at its time limit.
+#[tokio::test]
+async fn a_tab_that_closes_before_its_deferred_answer_is_no_answer_at_once() {
+    let t = FakeTransport::hanging(&[r#"{"method":"Target.detachedFromTarget","params":{"sessionId":""}}"#]);
+    let mut cdp = Cdp::over(t);
+    let id = cdp.send_deferred("Page.captureScreenshot", serde_json::json!({})).await.unwrap();
+    let began = Instant::now();
+    let got = cdp.collect(id, "Page.captureScreenshot", Duration::from_secs(5)).await;
+    assert!(matches!(got, Err(CdpError::Closed)), "{got:?}");
+    assert!(began.elapsed() < Duration::from_secs(2), "waited for the time limit");
+}

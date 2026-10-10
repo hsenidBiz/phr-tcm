@@ -217,7 +217,7 @@ pub async fn auto_run_record_sign_in_start(
     forget_draft();
     let which = Browser::from_name(&browser_name);
     let (mut cdp, browser) = open_browser(which, true).await?;
-    rec::prepare(&mut cdp, &start_url, &Timing::default()).await?;
+    rec::prepare(&mut cdp, &start_url, &Timing::supervised()).await?;
 
     let about = SignInFor { organization, project, start_url };
     open_the_recording(claim, about, move |claim, stop, cancel, pick| {

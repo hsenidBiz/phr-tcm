@@ -96,7 +96,33 @@ pub struct ScriptedDriver {
     /// shows this 3 s in" without spending 3 s, and reads back how long a
     /// wait loop idled.
     pub idle_clock: Option<Arc<AtomicU64>>,
+    /// Answers a call sent with `send_deferred` later, as `Cdp` does: the
+    /// call is made (and recorded) when it is sent, and its collection is
+    /// recorded as `COLLECTED` followed by the method. Off: `send_deferred`
+    /// says it cannot, as every other fake.
+    pub defers: bool,
+    /// The browser goes away before a deferred answer is collected: every
+    /// `collect` is `Closed`.
+    pub dies_before_collect: bool,
+    /// The deferred answers not collected yet, by id. At most
+    /// `DEFERRED_CAP`, the oldest let go first, as `Cdp` keeps them.
+    pub deferred: std::collections::HashMap<u64, Result<serde_json::Value, CdpError>>,
+    /// The page sends a save the guard stops as a deferred answer is
+    /// collected: this sentence is taken next. Fires once.
+    pub block_on_collect: Option<String>,
+    /// The page sends a save the guard stops as the first call this says
+    /// yes to is made: the sentence is taken next. Fires once.
+    pub block_when: Option<(SaysYes, String)>,
 }
+
+/// A test's yes or no to a call, by method and parameters.
+pub type SaysYes = Box<dyn FnMut(&str, &serde_json::Value) -> bool + Send>;
+
+/// How many deferred answers `ScriptedDriver` keeps, as `Cdp` does.
+pub const DEFERRED_CAP: usize = 16;
+
+/// How `ScriptedDriver` records collecting a deferred call's answer.
+pub const COLLECTED: &str = "collected ";
 
 /// A small model of a browser's tabs for `ScriptedDriver`: `main`, the
 /// tabs a script named, and tabs the page opened that nobody named yet.
@@ -169,6 +195,11 @@ impl ScriptedDriver {
             dialogs_on_call: vec![],
             page_errors: PageErrorBook::default(),
             idle_clock: None,
+            defers: false,
+            dies_before_collect: false,
+            deferred: std::collections::HashMap::new(),
+            block_on_collect: None,
+            block_when: None,
         }
     }
 
@@ -219,6 +250,9 @@ impl Driver for ScriptedDriver {
         self.calls.push((method.to_string(), params.clone()));
         if self.block_after.as_ref().is_some_and(|(m, _)| m == method) {
             self.save_blocked = self.block_after.take().map(|(_, s)| s);
+        }
+        if self.block_when.as_mut().is_some_and(|(says, _)| says(method, &params)) {
+            self.save_blocked = self.block_when.take().map(|(_, s)| s);
         }
         if self.is_guarding_saves() {
             let mut saves = vec![];
@@ -433,6 +467,31 @@ impl Driver for ScriptedDriver {
             return Err(CdpError::Tab(tab_did_not_close(name, within)));
         }
         Err(CdpError::Tab(no_tab(name)))
+    }
+    async fn send_deferred(&mut self, method: &str, params: serde_json::Value) -> Option<Result<u64, CdpError>> {
+        if !self.defers {
+            return None;
+        }
+        let answer = self.call(method, params).await;
+        let id = self.calls.len() as u64;
+        if self.deferred.len() >= DEFERRED_CAP {
+            if let Some(oldest) = self.deferred.keys().min().copied() {
+                self.deferred.remove(&oldest);
+            }
+        }
+        self.deferred.insert(id, answer);
+        Some(Ok(id))
+    }
+    async fn collect(&mut self, id: u64, method: &str, _limit: Duration) -> Result<serde_json::Value, CdpError> {
+        self.calls.push((format!("{COLLECTED}{method}"), serde_json::json!({})));
+        if let Some(sentence) = self.block_on_collect.take() {
+            self.save_blocked = Some(sentence);
+        }
+        let answer = self.deferred.remove(&id).unwrap_or(Err(CdpError::Closed));
+        if self.dies_before_collect {
+            return Err(CdpError::Closed);
+        }
+        answer
     }
     async fn close_other_tabs(&mut self) {
         self.tabs.closed_others += 1;

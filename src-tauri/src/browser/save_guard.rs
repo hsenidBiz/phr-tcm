@@ -2,11 +2,12 @@
 //!
 //! A script marked `no_save` works on a shared draft, so the page it drives
 //! must never be allowed to change it. Its browser intercepts every request
-//! (`Fetch.enable`, answered in `cdp`), and this module decides, purely, which
-//! requests are saves: a POST, PUT, PATCH or DELETE whose path, lowercased
-//! and with the query left out, contains a built-in save word or one of the
-//! project's own words. A save is failed inside the browser, so it never
-//! reaches the server, and the case fails with `blocked`'s sentence.
+//! that can save (`Fetch.enable`, answered in `cdp`; `PAUSED_TYPES`), and
+//! this module decides, purely, which requests are saves: a POST, PUT,
+//! PATCH or DELETE whose path, lowercased and with the query left out,
+//! contains a built-in save word or one of the project's own words. A save
+//! is failed inside the browser, so it never reaches the server, and the
+//! case fails with `blocked`'s sentence.
 //!
 //! Nothing here keeps a host, a query string or a body: the sentence names
 //! the method and the path only.
@@ -78,10 +79,42 @@ pub fn setup_failed(why: &str) -> String {
     format!("{SETUP_FAILED}{why}")
 }
 
-/// What `Fetch.enable` is sent: every request, paused before it is sent.
+/// The resource types (CDP's `Network.ResourceType`) whose requests are
+/// paused: every type that can carry a POST, PUT, PATCH or DELETE. A form
+/// post is a `Document` (an iframe's too), a beacon a `Ping`, which the
+/// sign-in guard judges by type (`cdp`). `WebSocket` cannot be paused by
+/// `Fetch`, and Edge refuses a `FedCM` pattern (the whole `Fetch.enable`
+/// with it), so neither is here.
+pub const PAUSED_TYPES: [&str; 6] = ["Document", "XHR", "Fetch", "Ping", "EventSource", "Other"];
+
+/// Never paused: a page only reads these, with a GET, so `is_save` would
+/// let every one through anyway. `Prefetch`, `SignedExchange` and
+/// `Preflight`, also left out, are a GET or an OPTIONS too, and `is_save`
+/// lets every GET, HEAD and OPTIONS through, so pausing them would only
+/// cost time. A `CSPViolationReport` is never a save.
+pub const UNPAUSED_TYPES: [&str; 7] = ["Image", "Stylesheet", "Script", "Font", "Media", "Manifest", "TextTrack"];
+
+/// What `Fetch.enable` is sent: every request of a `PAUSED_TYPES` type,
+/// paused before it is sent.
 pub fn fetch_enable_params() -> Value {
+    let patterns: Vec<Value> = PAUSED_TYPES
+        .iter()
+        .map(|t| json!({ "urlPattern": "*", "resourceType": t, "requestStage": "Request" }))
+        .collect();
+    json!({ "patterns": patterns })
+}
+
+/// What `Fetch.enable` is sent when a browser refused `fetch_enable_params`
+/// (one that does not know a type): every request, paused. Slower, never
+/// less guarded. Refused too, the guard fails closed.
+pub fn fetch_enable_all_params() -> Value {
     json!({ "patterns": [{ "urlPattern": "*", "requestStage": "Request" }] })
 }
+
+/// What the log says when a browser refused the typed patterns, followed by
+/// the browser's own reason (about the patterns, never an address).
+pub const TYPED_REFUSED: &str =
+    "Auto Run's Must not save guard pauses every request in this browser, which refused the request types: ";
 
 /// A project's own save words as they are kept: trimmed, lowercased, in the
 /// order given, once each. Refused with a sentence that names the word.

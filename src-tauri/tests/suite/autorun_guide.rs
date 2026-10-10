@@ -735,7 +735,7 @@ fn the_guide_teaches_tabs_with_one_example_per_scenario() {
         "there is no tab <name>",
         "no new tab opened within <n> seconds",
         "the new tab's address does not contain \"<text>\"",
-        "a tab opened: <address>",
+        "a tab opened: <path>",
         "every tab but `main` is closed",
         "A replay to step N opens\nthe tabs again",
         "**Follow a new tab.**",

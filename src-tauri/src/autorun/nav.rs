@@ -12,6 +12,7 @@
 
 use super::accounts::Account;
 use super::recipe::{origin_of, project_slug, RecipeStep, SignInRecipe};
+use super::timing::QUICK_TRY_MS;
 use super::CaseScript;
 use crate::browser::actions::{execute_in, failed_by, Action, ActionOutcome, Policy};
 use crate::browser::cdp::Driver;
@@ -596,20 +597,78 @@ async fn on_the_starting_page<D: Driver>(d: &mut D, route: &Route) -> bool {
     if route.path.start.is_empty() {
         return false;
     }
-    match page::eval_value(d, "location.href").await {
-        Ok(v) => {
-            let href = v.as_str().unwrap_or("");
-            origin_of(href).is_some()
-                && origin_of(href) == origin_of(&route.home.start_url)
-                && path_of(href) == route.path.start
-        }
-        Err(_) => false,
+    match page_on_home_origin(d, route).await {
+        Some(href) => path_of(&href) == route.path.start,
+        None => false,
     }
+}
+
+/// The page's address, when it is on one of the application's origins: the
+/// home page's, or one the recipe allows (one read of `location.href`).
+/// None for any other origin, a page with none (`about:blank`) or one that
+/// does not answer.
+async fn page_on_home_origin<D: Driver>(d: &mut D, route: &Route) -> Option<String> {
+    let v = page::eval_value(d, "location.href").await.ok()?;
+    let href = v.as_str().unwrap_or("");
+    let origin = origin_of(href)?;
+    let ours = Some(&origin) == origin_of(&route.home.start_url).as_ref() || route.home.origins.contains(&origin);
+    ours.then(|| href.to_string())
+}
+
+/// A trip to the route's module. Ok carries the address path it reached.
+///
+/// Anywhere but right after a sign-in, it first tries the path's clicks
+/// from wherever the page already is: a module screen usually shows the
+/// menu, and going home costs a page load, the signed-in check and
+/// `after_sign_in`. A click is skipped when the click after it can
+/// already be made, so a toggle never closes a menu that is open. Each of
+/// those clicks, and the arrival check after them, gets `QUICK_TRY_MS` at
+/// most. If any of it fails, the trip says so once in the log and goes
+/// the old way, whose failure is the one reported: `the_old_way` when the
+/// quick try clicked nothing, and a reload home (`load_home`) then the
+/// full path when it tried any click, one that failed included.
+///
+/// Right after a sign-in it goes the old way at once, as it always did,
+/// and so does a page on another origin than the route's home (a fresh
+/// browser's `about:blank`, say): no click of the path is there to make.
+pub async fn go_to_module<D: Driver>(
+    d: &mut D,
+    route: &Route,
+    from: TripFrom,
+    timing: &Timing,
+) -> Result<String, PathFailure> {
+    if from == TripFrom::Elsewhere && page_on_home_origin(d, route).await.is_some() {
+        let quick = Timing {
+            action_ms: timing.action_ms.min(QUICK_TRY_MS),
+            nav_ms: timing.nav_ms.min(QUICK_TRY_MS),
+            ..timing.clone()
+        };
+        let mut made = 0;
+        // Any failure falls back, a browser that seemed silent included:
+        // under the 3 s cap a busy page can look silent, which is no proof
+        // the browser is gone (`reach_module` still sees a real one).
+        if let Ok(at) = click_path(d, route, &quick, Skip::WhenNextIsReady, &mut made).await {
+            return Ok(at);
+        }
+        crate::applog::info(format!("went home and tried {} again", route.path.name()));
+        if made > 0 {
+            // The quick try may have changed the page (a menu opened, a
+            // screen left), even by a click that then failed. `go_home` keeps a page whose address reads home, and
+            // the full path would then click a toggle on a menu already
+            // open: reload, so the page is what `after_sign_in` promises.
+            let home = load_home(d, &route.home, timing).await;
+            if !home.ok {
+                return Err(PathFailure { at: Where::Home, reason: home.detail, harness: home.harness });
+            }
+            return click_path(d, route, timing, Skip::Never, &mut 0).await;
+        }
+    }
+    the_old_way(d, route, from, timing).await
 }
 
 /// Home, then each recorded click with the runner's own click (so each
 /// must find exactly one visible element), then wait up to `nav_ms` for
-/// the address path to equal `arrived`. Ok carries the path it reached.
+/// the address path to equal `arrived`.
 ///
 /// Right after a sign-in that left the browser on the page the recording
 /// began on, there is no going home: that would reload the application -
@@ -617,7 +676,7 @@ async fn on_the_starting_page<D: Driver>(d: &mut D, route: &Route) -> bool {
 /// the same page and run after_sign_in a second time (PeoplesHR,
 /// 2026-10-01). Anywhere else it goes home, since an address that reads
 /// like home can still be showing a module screen.
-pub async fn go_to_module<D: Driver>(
+async fn the_old_way<D: Driver>(
     d: &mut D,
     route: &Route,
     from: TripFrom,
@@ -631,8 +690,43 @@ pub async fn go_to_module<D: Driver>(
     if !home.ok {
         return Err(PathFailure { at: Where::Home, reason: home.detail, harness: home.harness });
     }
+    click_path(d, route, timing, Skip::Never, &mut 0).await
+}
+
+/// Whether `click_path` may leave a click out.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Skip {
+    Never,
+    /// Leave a click out when the click after it can be made right now:
+    /// the menu it would open is already open, and a toggle clicked again
+    /// would close it. The last click is never left out, and two or more
+    /// matches for the next click never count as ready
+    /// (`input::clickable_now`).
+    WhenNextIsReady,
+}
+
+/// Each of the path's clicks from where the page is, then wait up to
+/// `nav_ms` for the address path to equal `arrived`. `made` counts the
+/// clicks tried, whether or not they went through: a click that failed
+/// may still have sent its events.
+async fn click_path<D: Driver>(
+    d: &mut D,
+    route: &Route,
+    timing: &Timing,
+    skip: Skip,
+    made: &mut usize,
+) -> Result<String, PathFailure> {
     let policy = Policy::only(route.home.origins.clone());
-    for (i, click) in route.path.clicks.iter().enumerate() {
+    let clicks = &route.path.clicks;
+    for (i, click) in clicks.iter().enumerate() {
+        if skip == Skip::WhenNextIsReady {
+            if let Some(next) = clicks.get(i + 1) {
+                if crate::browser::input::clickable_now(d, next).await {
+                    continue;
+                }
+            }
+        }
+        *made += 1;
         let out = execute_in(d, &Action::Click { selector: click.clone() }, timing, &policy).await;
         if !out.ok {
             return Err(PathFailure {
@@ -642,8 +736,8 @@ pub async fn go_to_module<D: Driver>(
             });
         }
     }
-    let at = match route.path.clicks.last() {
-        Some(c) => Where::Click { n: route.path.clicks.len(), locator: c.describe() },
+    let at = match clicks.last() {
+        Some(c) => Where::Click { n: clicks.len(), locator: c.describe() },
         None => Where::Home,
     };
     let deadline = Instant::now() + Duration::from_millis(timing.nav_ms);

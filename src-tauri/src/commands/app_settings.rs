@@ -79,6 +79,17 @@ pub fn set_start_minimized(on: bool) -> Result<AppSettings, String> {
     })
 }
 
+/// Whether Auto Run outlines and pauses before each action, in a watched run
+/// and in the supervised browser. Read when a run or a supervised step starts.
+#[tauri::command]
+#[specta::specta]
+pub fn set_autorun_highlight(on: bool) -> Result<AppSettings, String> {
+    app_settings::update(|s| s.autorun_highlight = on).map_err(|e| {
+        crate::applog::warn(format!("saving the highlight setting failed: {e}"));
+        "The setting could not be saved. Settings → Logs has the details.".to_string()
+    })
+}
+
 /// Stay signed in. Off removes the kept sign-in from Credential Manager at
 /// once; on keeps the current one, so the very next launch goes straight in.
 #[tauri::command]

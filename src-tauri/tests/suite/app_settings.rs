@@ -22,6 +22,7 @@ fn a_missing_file_is_the_defaults() {
             db_auto_approve: false,
             stay_signed_in: true,
             playwright_clone: String::new(),
+            autorun_highlight: true,
         }
     );
 }
@@ -49,6 +50,7 @@ fn missing_fields_take_their_defaults_and_unknown_fields_are_ignored() {
             db_auto_approve: false,
             stay_signed_in: true,
             playwright_clone: String::new(),
+            autorun_highlight: true,
         }
     );
 }
@@ -64,6 +66,7 @@ fn saved_settings_read_back() {
         db_auto_approve: true,
         stay_signed_in: false,
         playwright_clone: "C:/clone".into(),
+        autorun_highlight: false,
     };
     save(d.path(), &s).unwrap();
     assert_eq!(load(d.path()), s);
@@ -102,4 +105,13 @@ fn an_older_file_stays_signed_in() {
     let d = dir();
     std::fs::write(d.path().join("app-settings.json"), r#"{"close_to_tray":true,"beta_updates":false,"start_minimized":true}"#).unwrap();
     assert!(load(d.path()).stay_signed_in);
+}
+
+#[test]
+fn highlight_defaults_on() {
+    assert!(AppSettings::default().autorun_highlight);
+    // A file written before the setting existed reads as on.
+    let d = dir();
+    std::fs::write(d.path().join("app-settings.json"), r#"{"beta_updates":true}"#).unwrap();
+    assert!(load(d.path()).autorun_highlight);
 }

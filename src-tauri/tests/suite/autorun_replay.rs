@@ -2340,3 +2340,312 @@ async fn protected_shots_survive_the_end_of_run_prune() {
     assert_eq!(left.len(), 1001, "the budget plus the one protected picture");
     assert!(!left.contains(&"shot-1-000001.jpg".to_string()), "an unprotected old one went, even on Stop");
 }
+
+// ---- Step pictures not waited for ----------------------------------------
+
+/// A page whose pictures are asked for and collected later, as a real
+/// browser's are.
+fn deferring_page() -> common::ScriptedDriver {
+    let page = common::FakePage::default();
+    let mut d = common::ScriptedDriver::new(move |method, params| match method {
+        "Page.captureScreenshot" => Ok(serde_json::json!({ "data": "/9j/4AAQ" })),
+        _ => page.answer(method, params),
+    });
+    d.defers = true;
+    d
+}
+
+fn clicks(steps: &[&str]) -> CaseScript {
+    let steps: Vec<serde_json::Value> = steps
+        .iter()
+        .enumerate()
+        .map(|(i, css)| serde_json::json!({ "step_number": i + 1, "actions": [{ "kind": "click", "selector": { "css": css } }] }))
+        .collect();
+    script(1, None, serde_json::Value::Array(steps))
+}
+
+async fn run_one(d: &mut common::ScriptedDriver, root: &Path, case: &CaseScript) -> v2_lib::autorun::CaseRecord {
+    let cancel = AtomicBool::new(false);
+    v2_lib::autorun::replay::run_case(d, root, "Acme", "Web", case, &quick(), &cancel, &mut |_| {}).await
+}
+
+fn collected() -> String {
+    format!("{}Page.captureScreenshot", common::COLLECTED)
+}
+
+fn shots_on_disk(root: &Path) -> usize {
+    std::fs::read_dir(root.join("shots")).map(|r| r.count()).unwrap_or(0)
+}
+
+/// Review focus 4: step 1's picture is the page step 1 left. Step 2's
+/// click waits for it, so nothing of the click runs between asking for the
+/// picture and reading it.
+#[tokio::test]
+async fn the_next_click_waits_for_the_outstanding_picture() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    let rec = run_one(&mut d, dir.path(), &clicks(&["#one", "#two"])).await;
+    let m = d.methods();
+    let asked = m.iter().position(|x| x == "Page.captureScreenshot").expect("no picture was asked for");
+    let read = m.iter().position(|x| *x == collected()).expect("the picture was never read");
+    assert!(asked < read, "{m:?}");
+    assert!(
+        m[asked + 1..read].iter().all(|x| x == "Target.getTargetInfo"),
+        "step 2 acted before step 1's picture was read: {m:?}"
+    );
+    let second_click = m[read..].iter().position(|x| x == "Input.dispatchMouseEvent");
+    assert!(second_click.is_some(), "step 2 never clicked: {m:?}");
+    assert!(rec.steps.iter().all(|s| s.screenshot.is_some()), "{:?}", rec.steps);
+}
+
+/// A check is no page change: it runs while the step before's picture is
+/// still being taken, and the click after it still waits.
+#[tokio::test]
+async fn a_check_runs_while_the_picture_is_taken() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    let case = script(
+        1,
+        None,
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#one" } }] },
+            { "step_number": 2, "actions": [
+                { "kind": "check_text", "value": "ok" },
+                { "kind": "click", "selector": { "css": "#two" } }
+            ] },
+        ]),
+    );
+    let rec = run_one(&mut d, dir.path(), &case).await;
+    let m = d.methods();
+    let asked = m.iter().position(|x| x == "Page.captureScreenshot").expect("no picture was asked for");
+    let read = m.iter().position(|x| *x == collected()).expect("the picture was never read");
+    assert!(
+        m[asked + 1..read].iter().any(|x| x == "Runtime.callFunctionOn"),
+        "the check waited for the picture: {m:?}"
+    );
+    assert!(!m[asked + 1..read].iter().any(|x| x == "Input.dispatchMouseEvent"), "{m:?}");
+    assert!(m[read..].iter().any(|x| x == "Input.dispatchMouseEvent"), "{m:?}");
+    assert!(rec.steps.iter().all(|s| s.outcomes.iter().all(|o| o.ok)), "{:?}", rec.steps);
+}
+
+/// Every picture, the last step's included, is on disk when the record is
+/// made, and nothing is left asked for.
+#[tokio::test]
+async fn the_record_waits_for_every_picture() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut d = deferring_page();
+    let rec = run_one(&mut d, root, &clicks(&["#one", "#two", "#three"])).await;
+    assert_eq!(rec.steps.len(), 3);
+    for s in &rec.steps {
+        let name = s.screenshot.as_deref().unwrap_or_else(|| panic!("step {} has no picture", s.step_number));
+        assert!(store::shot_exists(root, name), "step {} names {name}, which is not on disk", s.step_number);
+    }
+    assert_eq!(shots_on_disk(root), 3);
+    assert_eq!(d.methods().iter().filter(|x| **x == collected()).count(), 3);
+    assert!(d.deferred.is_empty(), "a picture was left asked for");
+}
+
+/// Review focus 5: the browser goes away with the last step's picture
+/// still to be read. The record is saved, that step has no picture, and no
+/// file is left behind.
+#[tokio::test]
+async fn a_dead_browser_with_a_picture_outstanding_saves_a_clean_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &clicks(&["#one"])).unwrap();
+    let mut d = deferring_page();
+    d.dies_before_collect = true;
+    let mut browsers = FakeBrowsers { queue: [Some(d)].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-dead");
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "case 1".to_string())], &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    let saved = store::load_run(root, "run-dead").unwrap().expect("the run was not saved");
+    let step = saved.cases[0].steps.iter().find(|s| s.step_number == 1).expect("step 1 was not recorded");
+    assert_eq!(step.screenshot, None);
+    assert_eq!(shots_on_disk(root), 0);
+    assert!(browsers.returned[0].deferred.is_empty(), "a picture was left asked for");
+    assert_eq!(browsers.closed, 1);
+}
+
+/// A capture the browser refuses leaves its step with no picture, and the
+/// steps still run.
+#[tokio::test]
+async fn a_failed_capture_leaves_no_picture() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let page = common::FakePage::default();
+    let mut d = common::ScriptedDriver::new(move |method, params| match method {
+        "Page.captureScreenshot" => Err(CdpError::Protocol { method: method.into(), message: "busy".into() }),
+        _ => page.answer(method, params),
+    });
+    d.defers = true;
+    let rec = run_one(&mut d, root, &clicks(&["#one", "#two"])).await;
+    assert!(rec.steps.iter().all(|s| s.screenshot.is_none()), "{:?}", rec.steps);
+    assert!(rec.steps.iter().all(|s| s.outcomes.iter().all(|o| o.ok)), "{:?}", rec.steps);
+    assert_eq!(shots_on_disk(root), 0);
+}
+
+/// At most one picture is still being taken: a long run of check-only
+/// steps after a click never piles them up past what the browser keeps.
+#[tokio::test]
+async fn every_step_keeps_its_picture_through_seventeen_check_only_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut steps = vec![serde_json::json!({ "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#one" } }] })];
+    for n in 2..=18 {
+        steps.push(serde_json::json!({ "step_number": n, "actions": [{ "kind": "check_text", "value": "ok" }] }));
+    }
+    let case = script(1, None, serde_json::Value::Array(steps));
+    let mut d = deferring_page();
+    let rec = run_one(&mut d, root, &case).await;
+    assert_eq!(rec.steps.len(), 18);
+    for s in &rec.steps {
+        let name = s.screenshot.as_deref().unwrap_or_else(|| panic!("step {} has no picture", s.step_number));
+        assert!(store::shot_exists(root, name), "step {} names {name}, which is not on disk", s.step_number);
+    }
+    assert_eq!(rec.proposed, "Passed", "{rec:?}");
+}
+
+const LATE_SAVE: &str = "the page tried to save after its step";
+
+const AFTER_AN_EARLIER_STEP: &str = "not run: an earlier step of this case failed";
+
+/// A save read as step 1's picture is collected, at step 2's click, is
+/// step 1's: step 1 fails, and step 2 stops before it clicks.
+#[tokio::test]
+async fn a_save_read_as_the_picture_is_collected_fails_its_own_step_and_the_next_never_acts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    d.block_on_collect = Some(LATE_SAVE.into());
+    let rec = run_one(&mut d, dir.path(), &clicks(&["#one", "#two"])).await;
+    let one = &rec.steps[0];
+    assert_eq!(one.outcomes.last().map(|o| o.detail.as_str()), Some(LATE_SAVE), "{rec:?}");
+    assert!(one.screenshot.is_some(), "{rec:?}");
+    let two = &rec.steps[1];
+    assert!(two.outcomes.iter().all(|o| o.detail == AFTER_AN_EARLIER_STEP), "{rec:?}");
+    let m = d.methods();
+    let read = m.iter().position(|x| *x == collected()).expect("the picture was never read");
+    assert!(!m[read..].iter().any(|x| x == "Input.dispatchMouseEvent"), "step 2 clicked: {m:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
+
+/// The same save read as the last step's picture is finished, at the end
+/// of the case, still fails the case.
+#[tokio::test]
+async fn a_save_read_as_the_last_picture_is_finished_fails_the_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    d.block_on_collect = Some(LATE_SAVE.into());
+    let rec = run_one(&mut d, dir.path(), &clicks(&["#one"])).await;
+    assert_eq!(rec.steps[0].outcomes.last().map(|o| o.detail.as_str()), Some(LATE_SAVE), "{rec:?}");
+    assert!(rec.steps[0].screenshot.is_some(), "{rec:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
+
+/// A save taken during a check-only step, while the step before's picture
+/// is still being taken, was sent before this step changed anything: the
+/// step before is blamed, and the case goes no further.
+#[tokio::test]
+async fn a_save_taken_during_a_check_only_step_is_the_step_befores() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    d.block_when = Some((
+        Box::new(|method: &str, params: &serde_json::Value| {
+            method == "Runtime.callFunctionOn" && params["functionDeclaration"] == v2_lib::browser::actions::CHECK_TEXT_JS
+        }),
+        LATE_SAVE.into(),
+    ));
+    let case = script(
+        1,
+        None,
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#one" } }] },
+            { "step_number": 2, "actions": [{ "kind": "check_text", "value": "ok" }] },
+            { "step_number": 3, "actions": [{ "kind": "click", "selector": { "css": "#three" } }] },
+        ]),
+    );
+    let rec = run_one(&mut d, dir.path(), &case).await;
+    assert_eq!(rec.steps[0].outcomes.last().map(|o| o.detail.as_str()), Some(LATE_SAVE), "{rec:?}");
+    assert!(rec.steps[1].outcomes.iter().all(|o| o.ok), "step 2 was blamed: {rec:?}");
+    assert!(rec.steps[2].outcomes.iter().all(|o| o.detail == AFTER_AN_EARLIER_STEP), "{rec:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
+
+/// A step with no actions (a manual step) still gets a picture. A save
+/// stopped during the next step's check, while that picture is still being
+/// taken, is the manual step's: it has no outcome to fail, so the save is
+/// recorded as one and the case fails rather than passing.
+#[tokio::test]
+async fn a_save_charged_to_a_step_with_no_actions_still_fails_the_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    d.block_when = Some((
+        Box::new(|method: &str, params: &serde_json::Value| {
+            method == "Runtime.callFunctionOn" && params["functionDeclaration"] == v2_lib::browser::actions::CHECK_TEXT_JS
+        }),
+        LATE_SAVE.into(),
+    ));
+    let case = script(
+        1,
+        None,
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#one" } }] },
+            { "step_number": 2, "actions": [] },
+            { "step_number": 3, "actions": [{ "kind": "check_text", "value": "ok" }] },
+        ]),
+    );
+    let rec = run_one(&mut d, dir.path(), &case).await;
+    let details: Vec<&str> = rec.steps[1].outcomes.iter().map(|o| o.detail.as_str()).collect();
+    assert_eq!(details, vec![LATE_SAVE], "{rec:?}");
+    assert!(!rec.steps[1].outcomes[0].ok, "{rec:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
+
+/// A save read just after the last step's picture is asked for, when that
+/// step is a manual one, is still that step's and fails the case.
+#[tokio::test]
+async fn a_save_read_after_a_last_manual_steps_picture_is_asked_for_fails_the_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    let mut asked = 0;
+    d.block_when = Some((
+        Box::new(move |method: &str, _: &serde_json::Value| {
+            if method == "Page.captureScreenshot" {
+                asked += 1;
+            }
+            asked == 2
+        }),
+        LATE_SAVE.into(),
+    ));
+    let case = script(
+        1,
+        None,
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "css": "#one" } }] },
+            { "step_number": 2, "actions": [] },
+        ]),
+    );
+    let rec = run_one(&mut d, dir.path(), &case).await;
+    assert!(rec.steps[0].outcomes.iter().all(|o| o.ok), "step 1 was blamed: {rec:?}");
+    let details: Vec<&str> = rec.steps[1].outcomes.iter().map(|o| o.detail.as_str()).collect();
+    assert_eq!(details, vec![LATE_SAVE], "{rec:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
+
+/// The same save read as a last manual step's picture is finished, at the
+/// end of the case, still fails the case.
+#[tokio::test]
+async fn a_save_read_as_a_last_manual_steps_picture_is_finished_fails_the_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = deferring_page();
+    d.block_on_collect = Some(LATE_SAVE.into());
+    let case = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [] }]));
+    let rec = run_one(&mut d, dir.path(), &case).await;
+    assert!(rec.steps[0].screenshot.is_some(), "{rec:?}");
+    let details: Vec<&str> = rec.steps[0].outcomes.iter().map(|o| o.detail.as_str()).collect();
+    assert_eq!(details, vec![LATE_SAVE], "{rec:?}");
+    assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
