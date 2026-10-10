@@ -895,6 +895,7 @@ fn the_guide_names_the_discovery_tools_and_the_three_exceptions() {
         "up to 20 actions in order",
         "unless `stop_on_failure` is false",
         "then the page once",
+        "if any would be refused, none runs",
     ] {
         assert!(flat.contains(said), "the discovery section never says {said:?}: {flat}");
     }

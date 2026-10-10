@@ -1333,7 +1333,7 @@ fn discover_autorun_actions_documents_its_list_its_limit_and_stopping() {
     assert_eq!(props["area"]["type"], "string");
     assert_eq!(props["draft"]["type"], "object");
     let d = tool["description"].as_str().unwrap();
-    for said in ["At most 20 actions", "stop_on_failure", "the page once", "discover_autorun_action calls", "start_autorun_discovery"] {
+    for said in ["At most 20 actions", "stop_on_failure", "the page once", "if any would be refused, none runs", "A `draft` that no use_component action names is refused", "start_autorun_discovery"] {
         assert!(d.contains(said), "the description never says {said}: {d}");
     }
 }

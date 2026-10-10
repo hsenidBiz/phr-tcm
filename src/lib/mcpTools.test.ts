@@ -217,7 +217,7 @@ test("the two database tools are one switchable row in either build kind", async
 
 /// With DEV stubbed true, the Auto Run group is offered as one row and its
 /// switch moves every tool in it together, the same as any other pair.
-test("with DEV stubbed true, the Auto Run scripts row carries all twenty tools", async () => {
+test("with DEV stubbed true, the Auto Run scripts row carries all twenty-two tools", async () => {
   vi.stubEnv("DEV", true);
   vi.resetModules();
   const mod = await import("./mcpTools");

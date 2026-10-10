@@ -320,6 +320,9 @@ pub(crate) async fn open_for_discovery(browser_name: &str, mapping: Option<Mappi
 /// End the discovery under way, closing its browser. A browser the person
 /// opened is left alone, and with no discovery going this does nothing.
 pub(crate) async fn end_discovery() -> (u16, String) {
+    // A batch of actions holding the browser gives way before its next
+    // action, so this is not kept waiting behind it.
+    crate::ai_bridge::stop_batch();
     let mut slot = SESSION.lock().await;
     // A discovery browser that has gone ends with it, as any other does.
     let gone = slot.as_ref().is_some_and(|s| s.discovery.is_some()) && let_go_if_gone(&mut slot).await;
@@ -760,6 +763,7 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
     // case's setup still running is stopped between its template steps.
     crate::autorun::replay_to::stop();
     crate::autorun::setup::stop();
+    crate::ai_bridge::stop_batch();
     // A discovery going in it ends with it: its state lives in the session.
     let mut slot = SESSION.lock().await;
     if crate::ai_bridge::close_browser_in(&mut slot) {
@@ -795,6 +799,7 @@ pub async fn release_autorun_browsers() -> Result<String, String> {
     // without the lock, and ends at its next look.
     crate::autorun::replay_to::stop();
     crate::autorun::setup::stop();
+    crate::ai_bridge::stop_batch();
     let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, SESSION.lock()).await else {
         return Err(BROWSER_BUSY.to_string());
     };
@@ -887,6 +892,7 @@ pub async fn release_for_assistant() -> (u16, String) {
     if crate::autorun::replay_to::is_running() {
         return (409, crate::autorun::replay_to::ALREADY_RUNNING.to_string());
     }
+    crate::ai_bridge::stop_batch();
     let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, SESSION.lock()).await else {
         return (409, BROWSER_BUSY.to_string());
     };
@@ -940,6 +946,7 @@ pub async fn close_autorun_browsers() {
     }
     crate::autorun::replay_to::stop();
     crate::autorun::setup::stop();
+    crate::ai_bridge::stop_batch();
     let mut slot = SESSION.lock().await;
     // A mapping run going keeps its summary, as any other ending does.
     crate::ai_bridge::finish_mapping(&mut slot);

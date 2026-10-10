@@ -409,7 +409,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "discover_autorun_actions",
-            "description": "Carry out SEVERAL script actions in the discovery browser in one call, in order, exactly as the same number of discover_autorun_action calls would: the same refusals, the same blocked saves in a mapping run, and what each action's page showed is recorded as seen. Use it for a run of steps you already know, such as a menu path or filling a form. At most 20 actions. It stops at the first action that fails unless `stop_on_failure` is false. The answer is one line per action that ran, ok or failed with the reason, then the page once, after the last action. Needs start_autorun_discovery first.",
+            "description": "Carry out SEVERAL script actions in the discovery browser in one call, in order, each as discover_autorun_action would carry it out: the same blocked saves in a mapping run, and what each action's page showed is recorded as seen. Every action is checked first: if any would be refused, none runs and the answer names it. A `draft` that no use_component action names is refused. Use it for a run of steps you already know, such as a menu path or filling a form. At most 20 actions. It stops at the first action that fails unless `stop_on_failure` is false. The answer is one line per action that ran, ok or failed with the reason, then the page once, after the last action. Needs start_autorun_discovery first.",
             "inputSchema": schema(serde_json::json!({
                 "actions": {
                     "type": "array",

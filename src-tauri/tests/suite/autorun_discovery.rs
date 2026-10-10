@@ -82,13 +82,14 @@ fn root_with_recipe_and_account() -> TempDir {
 
 /// The Auto Run browser as the `_in` functions see it: a driver, its lease,
 /// its signed-in account and the discovery under way. `closed` says
-/// whether the slot closed it.
+/// whether the slot closed it; `gone` makes it a browser that has gone.
 struct FakeBrowser {
     d: ScriptedDriver,
     lease: Held,
     account: Option<String>,
     discovery: Option<DiscoveryState>,
     closed: Arc<AtomicBool>,
+    gone: Arc<AtomicBool>,
 }
 
 impl DiscoveryBrowser for FakeBrowser {
@@ -104,13 +105,17 @@ impl DiscoveryBrowser for FakeBrowser {
     fn close(self) {
         self.closed.store(true, Ordering::SeqCst);
     }
+    async fn alive(&mut self) -> bool {
+        !self.gone.load(Ordering::SeqCst)
+    }
 }
 
 /// A browser slot holding `d`, opened for a discovery (no account yet)
 /// when `discovering`, else the person's own browser.
 fn slot(d: ScriptedDriver, discovery: Option<DiscoveryState>) -> (Option<FakeBrowser>, Arc<AtomicBool>) {
     let closed = Arc::new(AtomicBool::new(false));
-    let b = FakeBrowser { d, lease: Held::supervised(), account: None, discovery, closed: closed.clone() };
+    let gone = Arc::new(AtomicBool::new(false));
+    let b = FakeBrowser { d, lease: Held::supervised(), account: None, discovery, closed: closed.clone(), gone };
     (Some(b), closed)
 }
 
@@ -2949,9 +2954,15 @@ use v2_lib::ai_bridge::{discover_actions_in, BATCH_EMPTY, BATCH_TOO_LONG};
 /// and `/hr/leave/second` showing "Second" after that. Its address carries
 /// a query string, which nothing may keep.
 fn stepping_page() -> ScriptedDriver {
+    ScriptedDriver::new(stepping_answers()).with_net_record()
+}
+
+/// What `stepping_page` answers, for a page that wraps it.
+fn stepping_answers(
+) -> impl FnMut(&str, &Value) -> Result<Value, v2_lib::browser::cdp::CdpError> + Send + 'static {
     let page = FakePage::default();
     let clicks = std::sync::atomic::AtomicUsize::new(0);
-    ScriptedDriver::new(move |method, params| {
+    move |method: &str, params: &Value| {
         if method == "Input.dispatchMouseEvent" && params["type"] == "mouseReleased" {
             clicks.fetch_add(1, Ordering::SeqCst);
         }
@@ -2967,8 +2978,7 @@ fn stepping_page() -> ScriptedDriver {
             } })),
             _ => page.answer(method, params),
         }
-    })
-    .with_net_record()
+    }
 }
 
 fn click(css: &str) -> Action {
@@ -2998,7 +3008,7 @@ async fn a_batch_runs_in_order_and_answers_the_page_once() {
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
     let (status, text) =
-        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a"), click("#b")], None, None, true).await;
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a"), click("#b")], None, None, true, &no_stop()).await;
     assert_eq!(status, 200, "{text}");
 
     let lines = batch_lines(&text);
@@ -3025,7 +3035,7 @@ async fn a_batch_stops_on_the_first_failure() {
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
     let actions = [click("#a"), nowhere(), click("#b"), click("#c")];
-    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true).await;
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
     assert_eq!(status, 200, "{text}");
 
     let lines = batch_lines(&text);
@@ -3046,7 +3056,7 @@ async fn a_batch_can_carry_on_past_a_failure() {
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
     let actions = [click("#a"), nowhere(), click("#b")];
-    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, false).await;
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, false, &no_stop()).await;
     assert_eq!(status, 200, "{text}");
 
     let lines = batch_lines(&text);
@@ -3071,7 +3081,7 @@ async fn a_batch_of_more_than_twenty_is_refused() {
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
     let many: Vec<Action> = (0..21).map(|_| click("#a")).collect();
-    let (status, out) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &many, None, None, true).await;
+    let (status, out) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &many, None, None, true, &no_stop()).await;
     assert_eq!((status, out.as_str()), (400, BATCH_TOO_LONG));
     assert!(browser.as_ref().unwrap().d.calls.is_empty(), "the browser was touched");
 }
@@ -3089,7 +3099,7 @@ async fn an_empty_batch_is_refused() {
 
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
-    let (status, out) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[], None, None, true).await;
+    let (status, out) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[], None, None, true, &no_stop()).await;
     assert_eq!((status, out.as_str()), (400, BATCH_EMPTY));
 }
 
@@ -3126,7 +3136,7 @@ async fn a_batch_needs_a_discovery() {
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), None);
     let (status, out) =
-        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a")], None, None, true).await;
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a")], None, None, true, &no_stop()).await;
     assert_eq!((status, out.as_str()), (409, NO_DISCOVERY));
     assert!(browser.as_ref().unwrap().d.calls.is_empty(), "the browser was touched");
 }
@@ -3169,7 +3179,7 @@ async fn a_batch_blocks_saves_like_single_actions() {
 
     let mut batch = saving_mapping_browser().await;
     let (status, text) =
-        discover_actions_in(&mut batch, dir.path(), ORG, PROJECT, &[save.clone(), save.clone()], None, None, true).await;
+        discover_actions_in(&mut batch, dir.path(), ORG, PROJECT, &[save.clone(), save.clone()], None, None, true, &no_stop()).await;
     assert_eq!(status, 200, "{text}");
     let lines = batch_lines(&text);
     assert!(lines[0].starts_with("1. ok: ") && lines[1].starts_with("2. ok: "), "a blocked save failed an action: {text}");
@@ -3185,7 +3195,7 @@ async fn a_batch_records_what_each_action_read() {
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
     let (status, text) =
-        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a"), click("#b")], None, None, true).await;
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a"), click("#b")], None, None, true, &no_stop()).await;
     assert_eq!(status, 200, "{text}");
 
     assert_eq!(sighted(dir.path(), "Leave"), ["First", "Second"]);
@@ -3203,10 +3213,210 @@ async fn a_refused_action_in_a_batch_is_one_failed_line() {
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
     let actions = [pick_a_date_use(), click("#a")];
-    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, false).await;
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, false, &no_stop()).await;
     assert_eq!(status, 200, "{text}");
     let lines = batch_lines(&text);
     assert_eq!(lines[0], format!("1. failed: {}", v2_lib::ai_bridge::not_saved_try_draft("pick a DATE")), "{text}");
     assert!(lines[1].starts_with("2. ok: "), "{text}");
     assert!(text.ends_with(&format!("{}\n\nRecorded 1 element as seen on Leave.", page_with("First").await)), "{text}");
+}
+
+// --------------------------------- a batch's area, a gone browser, a stop
+
+use v2_lib::ai_bridge::{ended_line, BROWSER_GONE};
+
+/// No stop asked for: what a batch gets in place of the route's flag.
+fn no_stop() -> AtomicBool {
+    AtomicBool::new(false)
+}
+
+/// `area` moves the discovery before the first action, even when that
+/// action is refused before the browser is touched (a component not saved):
+/// what the batch then reads is filed under the named area, not the one the
+/// discovery was in.
+#[tokio::test]
+async fn a_batch_moves_to_its_area_before_its_first_action() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let (status, text) = discover_actions_in(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        &[pick_a_date_use(), click("#a")],
+        None,
+        Some("Payroll"),
+        true,
+        &no_stop(),
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    assert!(batch_lines(&text)[0].starts_with("1. failed: "), "{text}");
+    assert!(text.ends_with("\n\nRecorded 1 element as seen on Payroll."), "{text}");
+    assert_eq!(browser.as_ref().unwrap().discovery.as_ref().unwrap().area.as_deref(), Some("Payroll"));
+    assert_eq!(sighted(dir.path(), "Payroll"), ["Start"]);
+    assert!(sighted(dir.path(), "Leave").is_empty(), "the batch filed under the area it left");
+}
+
+/// A page that works as `stepping_page` until its second click, when the
+/// browser goes: that call and every one after it is `Closed`, and `gone`
+/// is set, as the browser's own liveness check would find it.
+fn dying_page(gone: Arc<AtomicBool>) -> ScriptedDriver {
+    let mut answer = stepping_answers();
+    let clicks = std::sync::atomic::AtomicUsize::new(0);
+    ScriptedDriver::new(move |method, params| {
+        if gone.load(Ordering::SeqCst) {
+            return Err(v2_lib::browser::cdp::CdpError::Closed);
+        }
+        if method == "Input.dispatchMouseEvent" && params["type"] == "mousePressed" {
+            if clicks.fetch_add(1, Ordering::SeqCst) == 1 {
+                gone.store(true, Ordering::SeqCst);
+                return Err(v2_lib::browser::cdp::CdpError::Closed);
+            }
+        }
+        answer(method, params)
+    })
+    .with_net_record()
+}
+
+/// A browser that goes partway through a batch is let go right there, and
+/// the answer keeps the lines of the actions that did run, ending with the
+/// sentence a single call would have answered.
+#[tokio::test]
+async fn a_browser_gone_mid_batch_keeps_the_lines_that_ran() {
+    let dir = root_with_recipe_and_account();
+    let gone = Arc::new(AtomicBool::new(false));
+    let (mut browser, closed) = slot(dying_page(gone.clone()), exploring("Leave"));
+    browser.as_mut().unwrap().gone = gone.clone();
+    let actions = [click("#a"), click("#b"), click("#c")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, false, &no_stop()).await;
+    assert_eq!(status, 409, "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].starts_with("1. ok: "), "the line of the action that ran was lost: {text}");
+    assert!(lines.iter().any(|l| l.starts_with("2. failed: ")), "{text}");
+    assert_eq!(*lines.last().unwrap(), BROWSER_GONE, "{text}");
+    assert!(browser.is_none(), "the gone browser is still held");
+    assert!(closed.load(Ordering::SeqCst), "it was not let go through its normal close");
+}
+
+/// A stop asked for while a batch runs (End discovery, Close browser or a
+/// release, before they wait for the browser) is heard before the next
+/// action: the batch answers what ran, says how many were not run, reads
+/// nothing more, and the stop is used up.
+#[tokio::test]
+async fn a_batch_gives_way_to_a_stop_before_its_next_action() {
+    let dir = root_with_recipe_and_account();
+    let stop = Arc::new(AtomicBool::new(false));
+    let pressed = stop.clone();
+    let mut inner = stepping_answers();
+    let d = ScriptedDriver::new(move |method, params| {
+        if method == "Input.dispatchMouseEvent" && params["type"] == "mouseReleased" {
+            pressed.store(true, Ordering::SeqCst);
+        }
+        inner(method, params)
+    })
+    .with_net_record();
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let actions = [click("#a"), click("#b"), click("#c")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &stop).await;
+    assert_eq!(status, 409, "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(lines[0].starts_with("1. ok: "), "{text}");
+    assert_eq!(lines[1], ended_line(2));
+    assert_eq!(ended_line(2), "Stopped: 2 not run - the discovery was ended.");
+    assert!(!stop.load(Ordering::SeqCst), "the stop was not used up");
+    let b = browser.as_ref().unwrap();
+    assert_eq!(b.d.calls_to("Accessibility.getFullAXTree").len(), 1, "the batch read on after the stop");
+}
+
+/// End discovery is not kept waiting behind a long batch: it asks the batch
+/// to stop and then waits for the browser, as `end_discovery` does, and gets
+/// it after the action under way rather than after all twenty.
+#[tokio::test(flavor = "multi_thread")]
+async fn end_discovery_is_not_stuck_behind_a_long_batch() {
+    let dir = root_with_recipe_and_account();
+    let stop = Arc::new(AtomicBool::new(false));
+    let started = Arc::new(AtomicBool::new(false));
+    let seen = started.clone();
+    let mut inner = stepping_answers();
+    let d = ScriptedDriver::new(move |method, params| {
+        if method == "Input.dispatchMouseEvent" && params["type"] == "mouseReleased" {
+            seen.store(true, Ordering::SeqCst);
+            // Each click takes a while: twenty of them far outlast the wait below.
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        }
+        inner(method, params)
+    })
+    .with_net_record();
+    let session = Arc::new(tokio::sync::Mutex::new(slot(d, exploring("Leave")).0));
+
+    let (held, flag, root) = (session.clone(), stop.clone(), dir.path().to_path_buf());
+    let batch = tokio::spawn(async move {
+        let mut slot = held.lock().await;
+        let many: Vec<Action> = (0..20).map(|_| click("#a")).collect();
+        discover_actions_in(&mut slot, &root, ORG, PROJECT, &many, None, None, true, &flag).await
+    });
+    while !started.load(Ordering::SeqCst) {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    // The End discovery order: ask the batch to stop, then wait.
+    stop.store(true, Ordering::SeqCst);
+    let mut slot = tokio::time::timeout(std::time::Duration::from_secs(4), session.lock())
+        .await
+        .expect("End discovery waited behind the whole batch");
+    let (status, ended) = end_discovery_in(&mut slot);
+    assert_eq!(status, 200, "{ended}");
+    assert!(slot.is_none(), "the discovery's browser is still held");
+    drop(slot);
+    let (status, text) = batch.await.unwrap();
+    assert_eq!(status, 409, "{text}");
+    assert!(text.ends_with("not run - the discovery was ended."), "{text}");
+
+    // Each way the person or the assistant ends the discovery asks a batch
+    // to give way before it waits for the browser.
+    let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+    for start in [
+        "pub(crate) async fn end_discovery()",
+        "pub async fn auto_run_close_browser()",
+        "pub async fn release_autorun_browsers()",
+        "pub async fn release_for_assistant()",
+        "pub async fn close_autorun_browsers()",
+    ] {
+        let body = &source[source.find(start).unwrap_or_else(|| panic!("{start} is gone"))..];
+        let body = &body[..body.find("SESSION.lock()").unwrap()];
+        assert!(body.contains("crate::ai_bridge::stop_batch();"), "{start} does not stop a batch before it waits");
+    }
+    // And the route clears an earlier stop before it takes the browser.
+    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let route = &bridge[bridge.find("async fn autorun_discover_actions(").unwrap()..];
+    let route = &route[..route.find("supervised().lock()").unwrap()];
+    assert!(route.contains("BATCH_STOP.store(false"), "an old stop would end the next batch");
+}
+
+/// A draft is tried only by the `use_component` that names it: another
+/// component in the same batch runs as saved.
+#[tokio::test]
+async fn a_draft_leaves_another_component_to_run_as_saved() {
+    let dir = root_with_recipe_and_account();
+    put(dir.path(), ORG, PROJECT, pick_a_date()).unwrap();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let mut other = pick_a_date();
+    other.name = "Pick a time".into();
+    let (status, text) = discover_actions_in(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        &[pick_a_date_use()],
+        Some(&other),
+        None,
+        true,
+        &no_stop(),
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    assert!(batch_lines(&text)[0].starts_with("1. ok: "), "{text}");
+    let state = browser.as_ref().unwrap().discovery.as_ref().unwrap();
+    assert_eq!(state.tried, vec![draft_fingerprint(&pick_a_date())], "the saved one was not what ran");
 }

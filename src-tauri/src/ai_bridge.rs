@@ -2868,7 +2868,8 @@ fn draft_for<'a>(
 /// One line of a batch's answer for an action that ran, from its single
 /// answer (`discover_action_in`'s JSON): ok or failed with the detail, the
 /// dialogs it raised, the writes it set off (method and path only), the
-/// page path when it changed, and where its picture is.
+/// page path when it changed, whether its own page read failed, and where
+/// its picture is.
 fn batch_line(n: usize, action: &crate::browser::actions::Action, v: &serde_json::Value, last_path: &mut Option<String>) -> String {
     let ok = v["ok"].as_bool().unwrap_or(false);
     let detail = v["detail"].as_str().map(str::trim).filter(|d| !d.is_empty());
@@ -2886,6 +2887,9 @@ fn batch_line(n: usize, action: &crate::browser::actions::Action, v: &serde_json
             *last_path = Some(path.to_string());
         }
     }
+    if v.get("page_unavailable").is_some() {
+        said.push_str("; page unreadable");
+    }
     if let Some(picture) = v["picture"].as_str() {
         said.push_str(&format!("; picture {picture}"));
     }
@@ -2898,19 +2902,61 @@ fn not_run_line(n: usize) -> String {
     format!("Stopped at the failure: {n} {what} not run.")
 }
 
+/// Said when a batch gave way to End discovery, Close browser or a
+/// release: how many actions were not run.
+pub fn ended_line(n: usize) -> String {
+    format!("Stopped: {n} not run - the discovery was ended.")
+}
+
+/// The batch's stop control: set by End discovery, Close browser and both
+/// releases before they wait for the browser, so a batch holding it gives
+/// way before its next action instead of keeping them waiting. Cleared
+/// when a batch hears it, and before each batch starts.
+pub static BATCH_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ask the batch going, if any, to stop before its next action.
+pub fn stop_batch() {
+    BATCH_STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// A batch's answer when the browser failed under it: `lines` so far, and
+/// when the browser has gone (`let_go_if_silent` lets it go right here)
+/// `BROWSER_GONE` after them, with 409. A browser still there keeps the
+/// failure's own status.
+async fn batch_ended_by_the_browser<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    failure: (u16, String),
+    mut lines: Vec<String>,
+) -> (u16, String) {
+    let (status, said) = let_go_if_silent(slot, failure).await;
+    if said == BROWSER_GONE {
+        lines.push(BROWSER_GONE.to_string());
+        return (409, lines.join("\n"));
+    }
+    (status, lines.join("\n"))
+}
+
 /// Several actions in the discovery's browser, in order, each exactly as
 /// `discover_action_in` runs one: its own blocking and counting in a
 /// mapping run, its own page read and the sightings that read records, and
 /// a `use_component` naming `draft` tried with it. `area`, when named,
-/// moves the discovery there before the first action. The caller holds
-/// the browser for the whole batch, so nothing comes between its actions.
+/// moves the discovery there once, before the first action, so even a
+/// first action refused before the browser is touched leaves the batch in
+/// the named area. The caller holds the browser for the whole batch, so
+/// nothing comes between its actions; `stop` (`BATCH_STOP` from the route)
+/// is checked before each action, and when it is set the batch answers what
+/// ran and lets the browser go at once.
 ///
 /// It stops at the first action that fails unless `stop_on_failure` is
-/// false; a browser that fails stops it either way. The answer is one line
-/// per action that ran (`N. ok: ...` or `N. failed: ...`), a line for the
-/// actions not run, the saves a mapping run blocked when there were any,
-/// and then the page once, as `get_autorun_page` answers it after the last
-/// action (`page_read_in`).
+/// false; a browser that fails stops it either way, and a browser that has
+/// gone is let go here, keeping the lines of the actions that ran. The
+/// answer is one line per action that ran (`N. ok: ...` or `N. failed:
+/// ...`), a line for the actions not run, the saves a mapping run blocked
+/// when there were any, and then the page once, as `get_autorun_page`
+/// answers it after the last action (`page_read_in`). As a whole read, that
+/// last read replaces the page's elements just as `get_autorun_page` after
+/// a single action does: something only the last action's own read saw (a
+/// message that has since gone) is dropped.
 #[allow(clippy::too_many_arguments)]
 pub async fn discover_actions_in<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
@@ -2921,32 +2967,39 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
     draft: Option<&crate::autorun::components::Component>,
     area: Option<&str>,
     stop_on_failure: bool,
+    stop: &std::sync::atomic::AtomicBool,
 ) -> (u16, String) {
     if let Err(refused) = refuse_batch_size(actions.len()) {
         return refused;
     }
-    if !slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
+    let Some(state) = slot.as_mut().and_then(|b| b.parts().discovery.as_mut()) else {
         return (409, NO_DISCOVERY.to_string());
+    };
+    if let Some(moved) = named(area) {
+        state.area = Some(crate::autorun::discovery_map::canonical_area(root, organization, project, &moved));
     }
     let mut lines = Vec::new();
     let mut blocked = 0usize;
     let mut last_path = None;
     let mut ran = 0;
     for (i, action) in actions.iter().enumerate() {
-        let moved = if i == 0 { area } else { None };
+        if stop.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            lines.push(ended_line(actions.len() - i));
+            return (409, lines.join("\n"));
+        }
         let (status, body) =
-            discover_action_in(slot, root, organization, project, action, draft_for(action, draft), moved).await;
+            discover_action_in(slot, root, organization, project, action, draft_for(action, draft), None).await;
         ran = i + 1;
         if status != 200 {
             // The browser failed or the discovery is gone: nothing after
-            // it can run, and the route lets a gone browser go.
+            // it can run.
             let stopped = said_browser_failed(&(status, body.clone())) || body == NO_DISCOVERY;
             lines.push(format!("{}. failed: {}", i + 1, one_short_line(&body)));
             if stopped {
                 if ran < actions.len() {
                     lines.push(not_run_line(actions.len() - ran));
                 }
-                return (status, lines.join("\n"));
+                return batch_ended_by_the_browser(slot, (status, body), lines).await;
             }
             if stop_on_failure {
                 break;
@@ -2973,8 +3026,8 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
     let (status, page) =
         page_read_in(browser, filing, organization, project, None, crate::browser::snapshot::DEFAULT_LIMIT).await;
     if status != 200 {
-        lines.push(format!("The page could not be read: {page}"));
-        return (status, lines.join("\n"));
+        lines.push(format!("The page could not be read: {}", one_short_line(&page)));
+        return batch_ended_by_the_browser(slot, (status, page), lines).await;
     }
     (200, format!("{}\n\n{page}", lines.join("\n")))
 }
@@ -3711,8 +3764,12 @@ async fn autorun_discover_actions(ctx: &BridgeContext, body: &str) -> (u16, Stri
             return (status, format!("action {}: {why}", i + 1));
         }
     }
+    // A stop asked for before this batch is not this batch's.
+    BATCH_STOP.store(false, std::sync::atomic::Ordering::SeqCst);
     // Held for the whole batch: nothing else drives the browser between
-    // its actions.
+    // its actions. End discovery, Close browser or a release asks it to
+    // give way (`BATCH_STOP`). A gone browser is let go inside, keeping
+    // the lines of the actions that ran.
     let mut slot = crate::commands::autorun::supervised().lock().await;
     let answer = discover_actions_in(
         &mut slot,
@@ -3723,9 +3780,9 @@ async fn autorun_discover_actions(ctx: &BridgeContext, body: &str) -> (u16, Stri
         draft.as_ref(),
         area.as_deref(),
         stop_on_failure,
+        &BATCH_STOP,
     )
     .await;
-    let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery(&slot);
     answer
 }
