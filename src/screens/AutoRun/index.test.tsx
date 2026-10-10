@@ -578,6 +578,41 @@ test("end_discovery_shows_while_discovery_is_active_and_ends_it", async () => {
   await waitFor(() => expect(ended).toEqual(["auto_run_end_discovery"]));
 });
 
+test("release_auto_run_browser_is_always_offered_and_releases_without_a_confirm", async () => {
+  const released: string[] = [];
+  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) => {
+    if (cmd === "auto_run_discovery_active") return false;
+    if (cmd === "auto_run_release_browser") {
+      released.push(cmd);
+      return "the Auto Run browser is released and closed";
+    }
+    return null;
+  });
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+  openSetup();
+  // Offered with no discovery going: a browser held after it closed is the
+  // one nothing on screen shows.
+  const release = await within(row("Discovery")).findByRole("button", { name: "Release Auto Run browser" });
+  fireEvent.click(release);
+  // No confirm, as Close browser and End discovery ask none.
+  await waitFor(() => expect(released).toEqual(["auto_run_release_browser"]));
+  expect(await screen.findByText("The Auto Run browser is released and closed.")).toBeInTheDocument();
+});
+
+test("release_auto_run_browser_says_why_it_was_refused", async () => {
+  mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) => {
+    if (cmd === "auto_run_discovery_active") return false;
+    if (cmd === "auto_run_release_browser") throw "an unattended run is going - wait for it, or stop it first";
+    return null;
+  });
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+  openSetup();
+  fireEvent.click(await within(row("Discovery")).findByRole("button", { name: "Release Auto Run browser" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("an unattended run is going - wait for it, or stop it first");
+});
+
 test("end_discovery_is_not_offered_while_no_discovery_is_going", async () => {
   mockList([caseRow(1, "Login - valid credentials")], [1], [], (cmd) =>
     cmd === "auto_run_discovery_active" ? false : null,

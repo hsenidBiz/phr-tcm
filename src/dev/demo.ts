@@ -1733,6 +1733,7 @@ function applyPatches() {
     // here lets the run pane be walked through, with every action passing.
     autoRunOpenBrowser: () => ok(null),
     autoRunCloseBrowser: () => ok(null),
+    autoRunReleaseBrowser: () => ok("no Auto Run browser was held, and none of the app's own browsers was open - nothing to release"),
     autoRunSignIn: (_o: string, _p: string, accountKey: string) =>
       ok({ ok: true, detail: `Signed in as ${accountKey}`, used_saved_session: false, steps: [] }),
     autoRunForgetSession: () => ok(null),

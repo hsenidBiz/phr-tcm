@@ -80,8 +80,8 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the thirty-one dev-only
-    // tools (Auto Run's twenty, then the API templates row's eleven) are listed
+    // debug assertions on), so with nothing disabled the thirty-two dev-only
+    // tools (Auto Run's twenty-one, then the API templates row's eleven) are listed
     // like any other switchable tool - between merge_case_files and
     // db_lookup, where they sit in the source.
     assert_eq!(
@@ -105,6 +105,7 @@ fn tools_list_names_every_tool() {
             "discover_autorun_action",
             "save_autorun_area",
             "end_autorun_discovery",
+            "release_autorun_browser",
             "save_autorun_component",
             "remove_autorun_component",
             "get_autorun_failures",
@@ -439,10 +440,10 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 48 in this development build: nothing is disabled by an unreachable
-    // bridge, including the thirty-one dev-only tools, which default to ON here
+    // 49 in this development build: nothing is disabled by an unreachable
+    // bridge, including the thirty-two dev-only tools, which default to ON here
     // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 48, "an unreachable bridge must not disable anything, dev-only tools included");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 49, "an unreachable bridge must not disable anything, dev-only tools included");
 }
 
 /// The description is the only thing an assistant reads. It used to name
@@ -613,7 +614,7 @@ fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordina
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","save_autorun_area","end_autorun_discovery","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1004,7 +1005,7 @@ fn with_auto_run_off_and_api_templates_on_the_app_quirk_tools_stay() {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","save_autorun_area","end_autorun_discovery","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
             ));
         }
         calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
@@ -1064,7 +1065,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","save_autorun_area","end_autorun_discovery","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1278,14 +1279,14 @@ fn the_order_tool_rides_with_the_auto_run_tools() {
     assert!(!d.contains('\u{2014}'), "{d}");
 }
 
-/// The four discovery tools ride with the Auto Run tools, exactly as
+/// The four discovery tools, and Release, ride with the Auto Run tools, exactly as
 /// `probe_autorun_locator` does: listed where Auto Run is offered, gone and
 /// refused "switched off" when the person's list names them, refused "not
 /// available" where Auto Run is not offered. Each call forwards its
 /// arguments whole to its own bridge route.
 #[test]
 fn the_discovery_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
-    let tools: [(&str, &str, serde_json::Value, serde_json::Value); 4] = [
+    let tools: [(&str, &str, serde_json::Value, serde_json::Value); 5] = [
         (
             "start_autorun_discovery",
             "/autorun-discover-start",
@@ -1305,6 +1306,7 @@ fn the_discovery_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
             serde_json::json!(["name", "module", "clicks"]),
         ),
         ("end_autorun_discovery", "/autorun-discover-end", serde_json::json!({}), serde_json::json!([])),
+        ("release_autorun_browser", "/autorun-release", serde_json::json!({}), serde_json::json!([])),
     ];
     rides_with_the_auto_run_tools(&tools);
 }

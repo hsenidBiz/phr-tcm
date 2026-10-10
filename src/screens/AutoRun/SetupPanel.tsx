@@ -27,6 +27,7 @@ import {
   IconModulePaths,
   IconRecipe,
   IconRecord,
+  IconRelease,
   IconSaveWords,
   IconShowDetails,
   IconSiteAddress,
@@ -386,6 +387,26 @@ export default function SetupPanel({
     }
     setEnding(false);
   };
+  // Release Auto Run browser: the way out of a browser the app still holds
+  // after it closed (refused with "close the supervised browser first" while
+  // none is open). It clears every Auto Run browser record and closes only
+  // the browsers the app itself opened, so, like Close browser and End
+  // discovery, it asks no confirm. Always offered: a held browser that has
+  // gone is exactly the one nothing on screen shows.
+  const [releasing, setReleasing] = useState(false);
+  const [released, setReleased] = useState<string | null>(null);
+  const releaseBrowser = async () => {
+    setEndProblem(null);
+    setReleased(null);
+    setReleasing(true);
+    try {
+      const said = await unwrapStr(commands.autoRunReleaseBrowser());
+      setReleased(said ? `${said.charAt(0).toUpperCase()}${said.slice(1)}.` : null);
+    } catch (e) {
+      setEndProblem(e instanceof Error ? e.message : String(e));
+    }
+    setReleasing(false);
+  };
 
   const { setupReady, recipe, envs, accounts, nav, testFiles, site, activeEnv } = s;
   const needsProject = setupReady ? undefined : "Pick an organization and project first";
@@ -633,6 +654,16 @@ export default function SetupPanel({
                 <Button
                   size="sm"
                   variant="outline"
+                  disabled={releasing}
+                  title="Let go of an Auto Run browser the app still holds after it closed, and close the browsers the app opened"
+                  onClick={() => void releaseBrowser()}
+                >
+                  <IconRelease aria-hidden />
+                  Release Auto Run browser
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
                   aria-label="View discovery"
                   disabled={!setupReady}
                   title={needsProject}
@@ -645,6 +676,11 @@ export default function SetupPanel({
               {endProblem && (
                 <p role="alert" className="text-xs text-danger">
                   {endProblem}
+                </p>
+              )}
+              {released && (
+                <p role="status" className="text-xs text-muted">
+                  {released}
                 </p>
               )}
 

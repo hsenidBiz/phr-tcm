@@ -111,7 +111,7 @@ async fn clear_wipes_cookies_and_each_web_origins_storage() {
     let cleared = d.calls_to("Storage.clearDataForOrigin");
     assert_eq!(cleared.len(), 1, "file:// has no storage origin to clear");
     assert_eq!(cleared[0]["origin"], "https://hr.example.internal");
-    assert_eq!(cleared[0]["storageTypes"], "local_storage");
+    assert_eq!(cleared[0]["storageTypes"], "cookies,local_storage");
 }
 
 #[test]

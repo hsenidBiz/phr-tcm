@@ -341,3 +341,25 @@ async fn a_tab_that_closes_before_its_deferred_answer_is_no_answer_at_once() {
     assert!(matches!(got, Err(CdpError::Closed)), "{got:?}");
     assert!(began.elapsed() < Duration::from_secs(2), "waited for the time limit");
 }
+
+/// The pages `Cdp::connect` and `drive_new_page` may drive: never one of
+/// the browser's own, nor an `about:` page but `about:blank`.
+#[test]
+fn only_an_application_page_is_driven() {
+    use v2_lib::browser::cdp::is_app_page;
+    for own in [
+        "edge://sync-confirmation-dialog/",
+        "EDGE://newtab/",
+        "chrome://welcome",
+        "devtools://devtools/bundled/inspector.html",
+        "chrome-extension://abc/page.html",
+        "edge-extension://abc/page.html",
+        "about:newtab",
+        "about:srcdoc",
+    ] {
+        assert!(!is_app_page(own), "{own} would be driven");
+    }
+    for app in ["about:blank", "https://hr.example.internal/hr/home/index", "file:///C:/fixture.html", "http://127.0.0.1:8080/"] {
+        assert!(is_app_page(app), "{app} would be skipped");
+    }
+}

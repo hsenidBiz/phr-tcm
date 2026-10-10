@@ -59,6 +59,12 @@ pub struct AreaMap {
     /// by the seen check (`seen_check::add_saved_scripts`), never saved.
     #[serde(skip)]
     pub saved_links: Vec<LocatorStep>,
+    /// The page the area's recorded route arrives on (`page_path` of its
+    /// `arrived`), empty when it is not known: read in memory by the seen
+    /// check (`seen_check::add_area_pages`) to prefer a "did you mean" seen
+    /// on that page, never saved.
+    #[serde(skip)]
+    pub area_page: String,
 }
 
 /// One distinct link an area has seen.
@@ -541,6 +547,32 @@ fn sightings_in<'a>(map: &'a DiscoveryMap, areas: &[&str]) -> impl Iterator<Item
             key.is_empty() || wanted.contains(&key)
         })
         .flat_map(|a| a.sightings.iter())
+}
+
+/// The pages (`page_path`) each key was seen on, in the named areas and in
+/// the unattributed bucket: an element's page, and a sighting's.
+pub fn seen_pages(map: &DiscoveryMap, areas: &[&str]) -> std::collections::HashMap<SeenKey, HashSet<String>> {
+    let wanted: Vec<String> = areas.iter().map(|a| area_key(a)).collect();
+    let mut out: std::collections::HashMap<SeenKey, HashSet<String>> = std::collections::HashMap::new();
+    for a in map.areas.iter().filter(|a| {
+        let key = area_key(&a.area);
+        key.is_empty() || wanted.contains(&key)
+    }) {
+        for p in &a.pages {
+            let page = page_path(&p.path);
+            for e in &p.elements {
+                let mut keys: Vec<SeenKey> = e.locator.links().iter().filter_map(LocatorStep::seen_key).collect();
+                keys.push(e.key.clone());
+                for k in keys {
+                    out.entry(k).or_default().insert(page.clone());
+                }
+            }
+        }
+        for s in &a.sightings {
+            out.entry(s.key.clone()).or_default().insert(page_path(&s.page));
+        }
+    }
+    out
 }
 
 /// Every key seen in the named areas and in the unattributed bucket.

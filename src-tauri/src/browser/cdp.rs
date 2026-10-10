@@ -724,20 +724,45 @@ struct SaveGuard {
     blocked: Option<String>,
 }
 
+/// Can a page at this address be driven as the application's? Never one of
+/// the browser's own pages (`edge://`, `chrome://`, `devtools://`, an
+/// extension's) nor an `about:` page other than `about:blank`, which a new
+/// page starts on. Anything else - the application, a file, a blank page -
+/// can.
+pub fn is_app_page(url: &str) -> bool {
+    let u = url.trim().to_ascii_lowercase();
+    const BROWSERS_OWN: [&str; 5] = ["edge://", "chrome://", "devtools://", "chrome-extension://", "edge-extension://"];
+    if BROWSERS_OWN.iter().any(|p| u.starts_with(p)) {
+        return false;
+    }
+    if u.starts_with("about:") {
+        return u == "about:blank";
+    }
+    true
+}
+
 impl Cdp<WsTransport> {
     /// Open the browser's own socket and drive its first page over it
-    /// (`drive_first_page`). The page is the first one `/json/list` names,
-    /// as it always was.
+    /// (`drive_first_page`). The page is the first application page
+    /// `/json/list` names (`is_app_page`); with none, a new blank one
+    /// (`drive_new_page`).
     pub async fn connect(port: u16) -> Result<Cdp<WsTransport>, String> {
         let tabs = Self::ask(port, "list").await?;
-        let page = tabs
-            .as_array()
-            .and_then(|a| a.iter().find(|t| t["type"] == "page"))
-            .ok_or_else(|| "the browser reported no page to drive".to_string())?;
-        let target = page["id"].as_str().unwrap_or("").to_string();
-        let url = page["url"].as_str().unwrap_or("").to_string();
+        // Only an application page: never one of the browser's own (a sync
+        // dialog Edge lists first on a fresh profile, say).
+        let page = tabs.as_array().and_then(|a| {
+            a.iter().find(|t| t["type"] == "page" && is_app_page(t["url"].as_str().unwrap_or("")))
+        });
         let mut cdp = Self::connect_browser(port).await?;
-        cdp.drive_first_page(&target, &url).await.map_err(|e| e.to_string())?;
+        match page {
+            Some(page) => {
+                let target = page["id"].as_str().unwrap_or("").to_string();
+                let url = page["url"].as_str().unwrap_or("").to_string();
+                cdp.drive_first_page(&target, &url).await.map_err(|e| e.to_string())?;
+            }
+            // None left: a new blank page is made and driven.
+            None => cdp.drive_new_page().await.map_err(|e| e.to_string())?,
+        }
         Ok(cdp)
     }
 
@@ -910,7 +935,11 @@ impl<T: Transport> Cdp<T> {
     pub async fn drive_new_page(&mut self) -> Result<(), CdpError> {
         let listed = self.call_on(None, "Target.getTargets", serde_json::json!({}), CALL_TIMEOUT).await?;
         let started_with = listed["targetInfos"].as_array().and_then(|all| {
-            all.iter().find(|t| t["type"] == "page" && !t["attached"].as_bool().unwrap_or(false))
+            all.iter().find(|t| {
+                t["type"] == "page"
+                    && !t["attached"].as_bool().unwrap_or(false)
+                    && is_app_page(t["url"].as_str().unwrap_or(""))
+            })
         });
         if let Some(page) = started_with {
             let target = page["targetId"].as_str().unwrap_or("").to_string();

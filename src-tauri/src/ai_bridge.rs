@@ -294,6 +294,10 @@ pub async fn route(
         ("POST", "/autorun-discover-start") => autorun_discover_start(ctx, body).await,
         ("POST", "/autorun-discover-action") => autorun_discover_action(ctx, body).await,
         ("POST", "/autorun-discover-end") => crate::commands::autorun::end_discovery().await,
+        // Release: every Auto Run browser record the app holds is cleared
+        // and the app's own browsers closed, for a browser held after it
+        // is gone. Never a process outside the app's own jobs.
+        ("POST", "/autorun-release") => crate::commands::autorun::release_for_assistant().await,
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body).await,
         ("POST", "/autorun-replay") => autorun_replay(ctx, body).await,
         ("GET", "/autorun-failures") => autorun_failures(ctx, target),
@@ -1670,7 +1674,11 @@ pub async fn supervised_page(organization: &str, project: &str, limit: usize) ->
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
     let at = supervised_sighting(session, organization, project);
-    read_page(&mut session.cdp, limit, at.as_ref()).await
+    let answer = read_page(&mut session.cdp, limit, at.as_ref()).await;
+    // A browser that has gone is let go here, not kept to answer 503 again.
+    let answer = let_go_if_silent(&mut slot, answer).await;
+    crate::commands::autorun::publish_discovery(&slot);
+    answer
 }
 
 /// Where what the live page shows is filed in the discovery map
@@ -2076,7 +2084,10 @@ async fn autorun_probe(ctx: &BridgeContext, body: &str) -> (u16, String) {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
     let at = supervised_sighting(session, &ctx.org, &ctx.project);
-    probe_page(&mut session.cdp, &target, at.as_ref()).await
+    let answer = probe_page(&mut session.cdp, &target, at.as_ref()).await;
+    let answer = let_go_if_silent(&mut slot, answer).await;
+    crate::commands::autorun::publish_discovery(&slot);
+    answer
 }
 
 /// The applog line for a tried action: its kind, what it points at (a
@@ -2236,7 +2247,7 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
         return (409, why);
     }
     let discovery_area = session.discovery.as_ref().and_then(|s| s.area.clone());
-    try_for_case(
+    let answer = try_for_case(
         &mut session.cdp,
         &mut session.tabs_case,
         &mut session.account,
@@ -2248,7 +2259,10 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
         discovery_area.as_deref(),
         &action,
     )
-    .await
+    .await;
+    let answer = let_go_if_silent(&mut slot, answer).await;
+    crate::commands::autorun::publish_discovery(&slot);
+    answer
 }
 
 /// `try_in` for a case in the supervised browser, whose tabs belong to the
@@ -2293,6 +2307,76 @@ pub trait DiscoveryBrowser {
     fn parts(&mut self) -> DiscoveryParts<'_, Self::D>;
     /// Close the browser, and with it the discovery and its lease.
     fn close(self);
+    /// Is the browser still there to drive: its processes run and its own
+    /// connection still answers (`commands::autorun::held_browser_alive`)?
+    /// A browser the app holds that has gone is let go
+    /// (`forget_gone_browser`) rather than kept as busy. A test's fake is
+    /// alive unless it says otherwise.
+    fn alive(&mut self) -> impl std::future::Future<Output = bool> + Send {
+        async { true }
+    }
+}
+
+/// Said in place of an answer from a held browser that had gone: the app
+/// has closed it the normal way and let it go, and none is open now.
+pub const BROWSER_GONE: &str = "the Auto Run browser had closed, so the app let it go: no Auto Run browser is open now - start a discovery with start_autorun_discovery, or the person opens one with Open browser on the Auto Run tab";
+
+/// Let go of the browser `slot` holds when it has gone (`alive` says no):
+/// a mapping run's summary is kept (`finish_mapping`), the browser is
+/// closed through its normal close (which ends what is left of its job and
+/// removes its profile) and the slot is emptied. True when it did; a live
+/// browser, or none, is left as it is. Called before anything is refused
+/// only because a browser is held, and when a held browser fails to
+/// answer.
+pub async fn forget_gone_browser<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
+    match slot.as_mut() {
+        None => return false,
+        Some(b) => {
+            if b.alive().await {
+                return false;
+            }
+        }
+    }
+    let discovering = slot.as_mut().is_some_and(|b| b.parts().discovery.is_some());
+    finish_mapping(slot);
+    if let Some(b) = slot.take() {
+        crate::browser::tree::blocking(|| b.close());
+    }
+    let what = if discovering { "discovery browser" } else { "browser" };
+    crate::applog::info(format!("Auto Run: the held {what} had closed or stopped answering; it is let go"));
+    true
+}
+
+/// Refused only while `slot` holds a browser that is really there, with
+/// the busy sentence (`busy_browser_sentence`): one that has gone is let go
+/// first (`forget_gone_browser`), and nothing is refused for it. Before a
+/// discovery opens.
+pub async fn refuse_while_held<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Result<(), String> {
+    forget_gone_browser(slot).await;
+    match slot.as_mut() {
+        Some(b) => Err(crate::commands::autorun::busy_browser_sentence(b.parts().discovery.is_some()).to_string()),
+        None => Ok(()),
+    }
+}
+
+/// Does this answer from a held browser say the browser failed, rather
+/// than the page: a 503, or the words of a closed browser or a failed
+/// DevTools socket?
+fn said_browser_failed(answer: &(u16, String)) -> bool {
+    answer.0 == 503
+        || answer.1.contains(&crate::browser::cdp::CdpError::Closed.to_string())
+        || answer.1.contains("DevTools socket failed")
+}
+
+/// `answer`, from the browser `slot` holds - unless it says the browser
+/// failed and the browser has indeed gone: then it is let go right here
+/// (`forget_gone_browser`) and the answer is `BROWSER_GONE`, so the next
+/// call does not meet the same dead browser.
+pub async fn let_go_if_silent<B: DiscoveryBrowser>(slot: &mut Option<B>, answer: (u16, String)) -> (u16, String) {
+    if said_browser_failed(&answer) && forget_gone_browser(slot).await {
+        return (409, BROWSER_GONE.to_string());
+    }
+    answer
 }
 
 /// Said to a discovery action, or a page read for one, with no discovery
@@ -2537,14 +2621,19 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     let (mut steps, mut writes, mut dialogs) = (Vec::new(), Vec::new(), Vec::new());
     let mut last = None;
     let mut after = String::new();
-    for one in runs.iter().copied() {
-        let ran =
+    for (i, one) in runs.iter().copied().enumerate() {
+        let mut ran =
             match discover_one(d, p.signed_in, p.lease, root, organization, project, area_name.as_deref(), mapping, one)
                 .await
             {
                 Ok(ran) => ran,
                 Err(refused) => return refused,
             };
+        // A component that fails on its first action says where the
+        // browser is: most often it stands on another screen.
+        if component.is_some() && i == 0 && !ran.outcome.ok {
+            ran.outcome.detail = with_page_where(&ran.outcome.detail, &ran.after);
+        }
         steps.push(serde_json::json!({
             "action": describe_action(one),
             "ok": ran.outcome.ok,
@@ -2596,6 +2685,26 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     (200, answer.to_string())
 }
 
+/// Said to a discovery's `use_component` naming a component the project
+/// has not saved, sent without a `draft`: how a new one is tried.
+pub fn not_saved_try_draft(name: &str) -> String {
+    format!("\"{}\" is not saved in this project - to try a new one, send it as draft", name.trim())
+}
+
+/// A component's first action that failed in a discovery, with where the
+/// browser is: the page's path only, never its host or query. A failure
+/// there is often the browser on another screen than the component starts
+/// on, not a wrong locator.
+pub fn with_page_where(detail: &str, path: &str) -> String {
+    // Unknown (the address could not be read): no hint at all, rather
+    // than the "/" `path_only` makes of nothing.
+    if path.trim().is_empty() {
+        return detail.to_string();
+    }
+    let path = crate::autorun::discovery_map::path_only(path);
+    format!("{detail} (the page is {path})")
+}
+
 /// The component a discovery's `use_component` tries, and its actions with
 /// the inputs put in: `draft` when given (it must be the component the
 /// action names), else the saved one. Each expanded action is refused as a
@@ -2618,7 +2727,7 @@ fn component_to_try(
         }
         None => {
             let file = components::load_components(root, organization, project).map_err(|why| (409, why))?;
-            components::find(&file, name).cloned().ok_or_else(|| (400, components::not_saved(name)))?
+            components::find(&file, name).cloned().ok_or_else(|| (400, not_saved_try_draft(name)))?
         }
     };
     let actions = components::expand(&c, inputs).map_err(|why| (400, why))?;
@@ -3231,7 +3340,10 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
         return refused;
     }
     let mut slot = crate::commands::autorun::supervised().lock().await;
-    discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, draft.as_ref(), area.as_deref()).await
+    let answer = discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, draft.as_ref(), area.as_deref()).await;
+    let answer = let_go_if_silent(&mut slot, answer).await;
+    crate::commands::autorun::publish_discovery(&slot);
+    answer
 }
 
 /// `/autorun-component-save`: a component, under every save rule
@@ -3614,7 +3726,7 @@ pub async fn autorun_replay_with(
             };
             (200, with_summary(answer))
         }
-        ReplayEnd::StoppedAt { .. } | ReplayEnd::Stopped { .. } => {
+        ReplayEnd::StoppedAt { .. } | ReplayEnd::Stopped { .. } | ReplayEnd::BrowserGone { .. } => {
             (200, with_summary(serde_json::json!({ "sentence": sentence })))
         }
     }

@@ -963,6 +963,7 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     "probe_autorun_locator",
     "propose_accounts",
     "record_autorun_quirk",
+    "release_autorun_browser",
     "remove_autorun_component",
     "replay_autorun_to_step",
     "retire_autorun_quirk",
