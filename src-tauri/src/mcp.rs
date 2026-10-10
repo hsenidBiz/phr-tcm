@@ -426,7 +426,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "release_autorun_browser",
-            "description": "Let go of every Auto Run browser the app holds (the supervised one, a discovery's, a replay's) and close the app's own browsers. Use it when the app still refuses with 'close the supervised browser first' or answers 'the browser did not answer' while no Auto Run browser is really open, instead of asking the person to restart the app. It only ever closes browsers the app itself opened; refused while an unattended run, a recording or an API template run is going.",
+            "description": "Let go of an Auto Run browser the app still holds after it closed. Use it when the app refuses with 'close the supervised browser first' or answers 'the browser did not answer' while no Auto Run browser is really open, instead of asking the person to restart the app. It frees a held browser that has gone, and ends your own discovery as end_autorun_discovery does (what it mapped is kept). It never closes the person's own browser while it is open and answering: then it answers that the person must close it or press Release Auto Run browser. It never stops a replay that is going.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {

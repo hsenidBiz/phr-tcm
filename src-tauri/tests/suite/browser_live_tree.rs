@@ -258,13 +258,20 @@ async fn a_held_browser_is_alive_only_while_its_own_page_answers() {
     use v2_lib::commands::autorun::held_browser_alive;
     let _held = crate::serial::held_browsers();
     let mut b = start().await;
-    let mut cdp = Cdp::connect(b.port).await.expect("connected");
+    // A page of its own to drive: the first page Edge lists can be one of
+    // its own dialogs.
+    let mut cdp = Cdp::connect_browser(b.port).await.expect("connected");
+    cdp.drive_new_page().await.expect("a page to drive");
     assert!(held_browser_alive(&mut b, &mut cdp).await, "a browser that answers was taken for gone");
 
     // Another tab keeps the browser running; the page the app drives closes.
     let mut other = Cdp::connect_browser(b.port).await.expect("a second connection");
     other.call("Target.createTarget", json!({ "url": "about:blank" })).await.expect("a second tab");
-    let _ = cdp.call("Page.close", json!({})).await;
+    // The page the app drives is closed from outside, as the person
+    // closing its tab would.
+    let main = cdp.current().expect("a main tab").target_id.clone();
+    other.call("Target.closeTarget", json!({ "targetId": main })).await.expect("closed");
+    tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(b.processes().unwrap() > 0, "the browser itself should still run");
     assert!(
         !held_browser_alive(&mut b, &mut cdp).await,

@@ -72,8 +72,10 @@ pub enum ReplayEnd {
     /// The browser closed under the replay before step `step` finished: its
     /// window was closed, or it crashed or stopped answering. The replay
     /// lets it go (`commands::autorun::replay_supervised`), so the next
-    /// replay or discovery opens a new one.
-    BrowserGone { step: i32 },
+    /// replay or discovery opens a new one. A replay that had stopped on a
+    /// failure first (`StoppedAt`) keeps that failure's `why` and
+    /// `outcomes` here, so the pane still shows the failed step's rows.
+    BrowserGone { step: i32, why: Option<String>, outcomes: Vec<ActionOutcome> },
     /// Nothing was replayed: the sentence says why.
     Refused(String),
 }
@@ -96,7 +98,10 @@ impl ReplayEnd {
             }
             ReplayEnd::Blocked(why) => why.clone(),
             ReplayEnd::Stopped { step } => format!("the replay was stopped at step {step}: {ASKED_TO_STOP}"),
-            ReplayEnd::BrowserGone { step } => format!("replay stopped at step {step}: {BROWSER_CLOSED}"),
+            ReplayEnd::BrowserGone { step, why: None, .. } => format!("replay stopped at step {step}: {BROWSER_CLOSED}"),
+            ReplayEnd::BrowserGone { step, why: Some(why), .. } => {
+                format!("replay stopped at step {step}: {why}; then {BROWSER_CLOSED}")
+            }
             ReplayEnd::Refused(why) => why.clone(),
         }
     }
@@ -435,7 +440,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
         };
         let mut one = runner::as_action_outcome(&out);
         if closed(&one) {
-            return ReplayEnd::BrowserGone { step: 1 };
+            return ReplayEnd::BrowserGone { step: 1, why: None, outcomes: Vec::new() };
         }
         if !one.ok {
             if !one.harness {
@@ -453,7 +458,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     let from = if signed_now { TripFrom::SignIn } else { TripFrom::Elsewhere };
     let went = replay::trip_to_module(d, root, &route, from, timing, &who(id)).await;
     if closed(&went) {
-        return ReplayEnd::BrowserGone { step: 1 };
+        return ReplayEnd::BrowserGone { step: 1, why: None, outcomes: Vec::new() };
     }
     if !went.ok {
         return ReplayEnd::StoppedAt { phase: ReplayPhase::Area, step: 1, why: went.detail.clone(), outcomes: vec![went] };
@@ -508,7 +513,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
             return ReplayEnd::Stopped { step: k };
         }
         if outcomes.iter().any(closed) {
-            return ReplayEnd::BrowserGone { step: k };
+            return ReplayEnd::BrowserGone { step: k, why: None, outcomes: Vec::new() };
         }
         // A save the page sent after the step's last action passed is
         // still this step's.

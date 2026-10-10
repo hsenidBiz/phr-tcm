@@ -360,7 +360,7 @@ async fn a_replay_that_stops_answers_its_sentence_without_a_page() {
         (ReplayEnd::Stopped { step: 2 }, "the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)"),
         // The browser closing under it says so, and why, at step 1 too.
         (
-            ReplayEnd::BrowserGone { step: 1 },
+            ReplayEnd::BrowserGone { step: 1, why: None, outcomes: vec![] },
             "replay stopped at step 1: the Auto Run browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens",
         ),
     ] {

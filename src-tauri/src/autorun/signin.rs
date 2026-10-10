@@ -122,11 +122,30 @@ pub enum SessionRefusal {
 /// An expression this app wrote, with no input in it: `tampered` for the
 /// PeoplesHR error page, `empty400` for an empty 400 page, else empty. It
 /// hands back a word, never the page's text.
+///
+/// The error page is ASP.NET's own: its title is the message, and its body
+/// says "Server Error in '/hr' Application." above it. Either the title
+/// holding "Cookie has been tampered", or the body holding both that phrase
+/// and "Server Error in", counts - a page that only mentions the phrase
+/// does not. The top document is read, then each same-origin frame (an
+/// error page loaded into one); a frame of another origin cannot be read
+/// and says nothing.
 pub const SESSION_REFUSED_JS: &str = r#"(() => {
+  const PHRASE = 'Cookie has been tampered';
+  const tampered = (doc) => {
+    try {
+      const t = (doc.body && doc.body.innerText) || '';
+      return (doc.title || '').includes(PHRASE) || (t.includes(PHRASE) && t.includes('Server Error in'));
+    } catch (e) { return false; }
+  };
   try {
+    if (tampered(document)) return 'tampered';
+    for (const f of Array.from(document.querySelectorAll('iframe, frame'))) {
+      let inner = null;
+      try { inner = f.contentDocument; } catch (e) { inner = null; }
+      if (inner && tampered(inner)) return 'tampered';
+    }
     const t = (document.body && document.body.innerText) || '';
-    const html = document.documentElement ? document.documentElement.outerHTML : '';
-    if (t.includes('Cookie has been tampered') || html.includes('SecureCookieModule')) return 'tampered';
     const nav = (performance.getEntriesByType('navigation') || [])[0];
     if (nav && nav.responseStatus === 400 && t.trim() === '') return 'empty400';
     return '';
@@ -161,6 +180,10 @@ pub fn session_refused_again(account_key: &str) -> String {
 /// (a site that uses neither). One without the other is a sign-in caught
 /// halfway, which every restore would then meet as "Cookie has been
 /// tampered". Only names are looked at, never values.
+///
+/// The pair rule is PeoplesHR's own: a site that sets `.ASPXAUTH` but never
+/// `ehrm85` is never saved by it, and signs in through its form every time.
+/// That costs time, never a wrong session, and is accepted.
 pub fn session_complete(s: &crate::browser::session::SavedSession) -> bool {
     let has = |name: &str| s.cookies.iter().any(|c| c["name"].as_str() == Some(name));
     !s.cookies.is_empty() && has(".ASPXAUTH") == has("ehrm85")

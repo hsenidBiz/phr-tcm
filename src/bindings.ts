@@ -4387,10 +4387,14 @@ export type ReplayEnd_Deserialize =
  *  The browser closed under the replay before step `step` finished: its
  *  window was closed, or it crashed or stopped answering. The replay
  *  lets it go (`commands::autorun::replay_supervised`), so the next
- *  replay or discovery opens a new one.
+ *  replay or discovery opens a new one. A replay that had stopped on a
+ *  failure first (`StoppedAt`) keeps that failure's `why` and
+ *  `outcomes` here, so the pane still shows the failed step's rows.
  */
 { kind: "browser_gone"; detail: {
 	step: number,
+	why: string | null,
+	outcomes: ActionOutcome_Deserialize[],
 } } | 
 /**  Nothing was replayed: the sentence says why. */
 { kind: "refused"; detail: string };
@@ -4437,10 +4441,14 @@ export type ReplayEnd_Serialize =
  *  The browser closed under the replay before step `step` finished: its
  *  window was closed, or it crashed or stopped answering. The replay
  *  lets it go (`commands::autorun::replay_supervised`), so the next
- *  replay or discovery opens a new one.
+ *  replay or discovery opens a new one. A replay that had stopped on a
+ *  failure first (`StoppedAt`) keeps that failure's `why` and
+ *  `outcomes` here, so the pane still shows the failed step's rows.
  */
 { kind: "browser_gone"; detail: {
 	step: number,
+	why: string | null,
+	outcomes: ActionOutcome_Serialize[],
 } } | 
 /**  Nothing was replayed: the sentence says why. */
 { kind: "refused"; detail: string };

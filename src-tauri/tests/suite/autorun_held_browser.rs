@@ -18,7 +18,8 @@ use v2_lib::autorun::lease::Held;
 use v2_lib::browser::cdp::CdpError;
 use v2_lib::browser::tree::{self, Ends};
 use v2_lib::commands::autorun::{
-    busy_browser_sentence, release_autorun_browsers, released_sentence, DiscoveryState, TEMPLATE_RUN_GOING,
+    busy_browser_sentence, release_autorun_browsers, release_for_assistant, release_in_for_assistant, released_sentence,
+    DiscoveryState, PERSONS_BROWSER_OPEN, TEMPLATE_RUN_GOING,
 };
 
 /// A held browser as the slot sees it: alive or not as `alive` says, and
@@ -254,4 +255,109 @@ fn every_refusal_for_a_held_browser_asks_first_whether_it_is_alive() {
     let bridge = include_str!("../../src/ai_bridge.rs");
     let page = &bridge[bridge.find("pub async fn supervised_page").unwrap()..];
     assert!(page[..page.find("\n}\n").unwrap()].contains("let_go_if_silent"), "the page read keeps a dead browser");
+}
+
+/// A registered browser whose end tries to start each kind of run, as a
+/// person pressing Run while Release is closing browsers would: every one
+/// must find its claim taken.
+struct StartsDuringRelease {
+    dir: PathBuf,
+    started: std::sync::Mutex<Vec<&'static str>>,
+}
+
+impl Ends for StartsDuringRelease {
+    fn terminate(&self) {}
+    fn end(&self) -> bool {
+        let mut started = self.started.lock().unwrap();
+        if v2_lib::commands::autorun_replay::OneAtATime::claim().is_some() {
+            started.push("unattended");
+        }
+        if v2_lib::commands::autorun_record::RecorderClaim::claim().is_some() {
+            started.push("recording");
+        }
+        if v2_lib::api_templates::runner::claim().is_some() {
+            started.push("template");
+        }
+        true
+    }
+    fn profile_dir(&self) -> &Path {
+        &self.dir
+    }
+}
+
+/// Release never races a run: it holds the unattended, recorder and
+/// template claims until every browser is ended, so nothing starts in
+/// between; and a run that already holds its claim refuses Release.
+#[tokio::test(flavor = "multi_thread")]
+async fn release_holds_the_run_claims_until_every_browser_is_ended() {
+    let _a = crate::serial::autorun();
+    let _t = crate::serial::api_template_run();
+    let _h = crate::serial::held_browsers();
+    let racer = Arc::new(StartsDuringRelease {
+        dir: std::env::temp_dir().join("tcm-autorun-release-race"),
+        started: std::sync::Mutex::new(Vec::new()),
+    });
+    tree::register(&racer);
+    release_autorun_browsers().await.expect("release refused");
+    let started = racer.started.lock().unwrap().clone();
+    assert!(started.is_empty(), "a run started mid-release: {started:?}");
+    drop(racer);
+    // Free again once Release is done.
+    assert!(v2_lib::commands::autorun_replay::OneAtATime::claim().is_some());
+
+    // A start that holds its claim first refuses Release.
+    let run = v2_lib::commands::autorun_replay::OneAtATime::claim().unwrap();
+    assert_eq!(
+        release_autorun_browsers().await,
+        Err("an unattended run is going - wait for it, or stop it first".to_string())
+    );
+    drop(run);
+    let recording = v2_lib::commands::autorun_record::RecorderClaim::claim().unwrap();
+    assert_eq!(release_autorun_browsers().await, Err(v2_lib::commands::autorun_record::RECORDING_BUSY.to_string()));
+    drop(recording);
+}
+
+/// The assistant's release lets go only of what is truly gone, or its own:
+/// a dead browser is let go; a live discovery is ended as
+/// end_autorun_discovery ends it; a live browser the person opened is kept,
+/// and the answer asks for the person.
+#[tokio::test]
+async fn the_assistants_release_keeps_a_live_persons_browser() {
+    let (mut slot, closed) = held(true, None);
+    let (status, said) = release_in_for_assistant(&mut slot).await;
+    assert_eq!((status, said.as_str()), (409, PERSONS_BROWSER_OPEN));
+    assert!(!said.contains('\u{2014}') && !said.contains('\u{2013}'), "{said}");
+    assert!(slot.is_some() && !closed.load(Ordering::SeqCst), "the person's browser was closed");
+
+    let (mut slot, closed) = held(false, None);
+    assert_eq!(release_in_for_assistant(&mut slot).await.0, 200);
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst), "a dead browser was kept");
+
+    let (mut slot, closed) = held(true, discovering());
+    let (status, said) = release_in_for_assistant(&mut slot).await;
+    assert_eq!(status, 200, "{said}");
+    assert!(said.contains("discovery is over"), "{said}");
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst));
+
+    let mut none: Option<HeldOne> = None;
+    assert_eq!(release_in_for_assistant(&mut none).await.0, 200);
+}
+
+/// The assistant's release never stops a replay going: it waits for it.
+#[tokio::test]
+async fn the_assistants_release_never_stops_a_replay() {
+    let _a = crate::serial::autorun();
+    let replay = v2_lib::autorun::replay_to::OneReplay::claim().unwrap();
+    let (status, said) = release_for_assistant().await;
+    assert_eq!((status, said.as_str()), (409, v2_lib::autorun::replay_to::ALREADY_RUNNING));
+    assert!(!v2_lib::autorun::replay_to::CANCEL.load(Ordering::SeqCst), "the replay was asked to stop");
+    drop(replay);
+}
+
+/// An unknown page gives no hint, never "(the page is /)".
+#[test]
+fn an_unknown_page_gives_no_page_hint() {
+    use v2_lib::ai_bridge::with_page_where;
+    assert_eq!(with_page_where("button \"Go\" not found", ""), "button \"Go\" not found");
+    assert_eq!(with_page_where("x", "https://h.example/hr/home/index?id=1"), "x (the page is /hr/home/index)");
 }

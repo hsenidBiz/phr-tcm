@@ -2696,12 +2696,13 @@ pub fn not_saved_try_draft(name: &str) -> String {
 /// there is often the browser on another screen than the component starts
 /// on, not a wrong locator.
 pub fn with_page_where(detail: &str, path: &str) -> String {
-    let path = crate::autorun::discovery_map::path_only(path);
+    // Unknown (the address could not be read): no hint at all, rather
+    // than the "/" `path_only` makes of nothing.
     if path.trim().is_empty() {
-        detail.to_string()
-    } else {
-        format!("{detail} (the page is {path})")
+        return detail.to_string();
     }
+    let path = crate::autorun::discovery_map::path_only(path);
+    format!("{detail} (the page is {path})")
 }
 
 /// The component a discovery's `use_component` tries, and its actions with

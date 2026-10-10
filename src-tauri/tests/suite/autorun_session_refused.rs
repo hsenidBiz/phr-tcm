@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use v2_lib::autorun::accounts::{save_accounts, session_path};
 use v2_lib::autorun::recipe::save_recipe;
-use v2_lib::autorun::runner::run_step;
+use v2_lib::autorun::runner::{run_step, session_refused_mid_case, AFTER_SESSION_REFUSED};
 use v2_lib::autorun::sessions::{load_fresh_session, now_ms, save_session};
 use v2_lib::autorun::signin::{session_complete, session_refused_again, sign_in, SESSION_REFUSED_JS};
 use v2_lib::autorun::StepScript;
@@ -198,10 +198,12 @@ async fn a_mid_case_sign_in_clears_the_origins_cookies_first() {
     assert!(cleared_origin < at("Page.navigate"), "{calls:?}");
 }
 
-/// Mid-case, an action that fails on the refused page signs the account in
-/// fresh once and is tried again, rather than failing the case.
+/// Mid-case, an action that fails on the refused page is never tried again
+/// (what the earlier actions built is gone): the account is signed in fresh
+/// so its saved session is repaired, the action fails saying to run the
+/// case again, and the rest of the step does not run.
 #[tokio::test]
-async fn a_mid_case_refusal_signs_in_fresh_once_and_tries_the_action_again() {
+async fn a_mid_case_refusal_signs_in_fresh_and_fails_the_action_without_trying_it_again() {
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     project(dir.path());
@@ -209,16 +211,35 @@ async fn a_mid_case_refusal_signs_in_fresh_once_and_tries_the_action_again() {
     let mut d = App::new(false, true, false);
     let mut acc = Some("admin".to_string());
     let marker: Action = serde_json::from_value(json!({ "kind": "expect_visible", "selector": { "css": "#marker" } })).unwrap();
-    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![marker.clone()]), &quick(), &mut acc).await.unwrap();
-    assert!(out[0].ok, "{:?}", out[0]);
+    let after: Action = serde_json::from_value(json!({ "kind": "check_text", "value": "Saved" })).unwrap();
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![marker.clone(), after]), &quick(), &mut acc)
+        .await
+        .unwrap();
+    assert!(!out[0].ok);
+    assert_eq!(out[0].detail, session_refused_mid_case("admin"));
+    assert!(!out[0].detail.contains("kim"), "{}", out[0].detail);
     assert!(d.state.typed_password.load(Ordering::SeqCst), "never signed in fresh");
     assert_eq!(acc.as_deref(), Some("admin"));
+    assert_eq!(out[1].detail, AFTER_SESSION_REFUSED, "the rest of the step ran on the landing page");
+    // The #marker look ran once, never again after the fresh sign-in.
+    let saved = load_fresh_session(dir.path(), "admin", 60, now_ms()).expect("the saved session was not repaired");
+    assert_eq!(saved.cookies[0]["value"], "abc");
 
-    // Refused again after the fresh sign-in: the account-key sentence.
+    // Refused again by the fresh sign-in: the account-key sentence.
     let mut d = App::new(false, true, true);
     let mut acc = Some("admin".to_string());
     let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![marker]), &quick(), &mut acc).await.unwrap();
     assert!(!out[0].ok);
     assert_eq!(out[0].detail, session_refused_again("admin"));
     assert!(!session_path(dir.path(), "admin").unwrap().exists());
+}
+
+/// The refusal check needs the ASP.NET error page's shape - its title, or
+/// "Server Error in" beside the phrase - and reads same-origin frames too.
+#[test]
+fn the_tampered_check_needs_the_error_pages_shape() {
+    assert!(SESSION_REFUSED_JS.contains("Server Error in"));
+    assert!(SESSION_REFUSED_JS.contains("doc.title"));
+    assert!(SESSION_REFUSED_JS.contains("contentDocument"));
+    assert!(!SESSION_REFUSED_JS.contains("outerHTML"), "a page merely mentioning the module would count");
 }

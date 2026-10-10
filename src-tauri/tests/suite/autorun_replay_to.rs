@@ -339,7 +339,7 @@ async fn the_browser_closing_mid_replay_ends_it_saying_the_browser_closed() {
         }
     })
     .await;
-    assert_eq!(end, ReplayEnd::BrowserGone { step: 2 });
+    assert_eq!(end, ReplayEnd::BrowserGone { step: 2, why: None, outcomes: vec![] });
     assert!(end.sentence().starts_with("replay stopped at step 2: the Auto Run browser closed"), "{}", end.sentence());
     assert!(clicked(&app, "#s1") && !clicked(&app, "#s2"), "{:?}", log(&app));
 }
@@ -791,4 +791,15 @@ async fn a_replay_closes_the_tabs_left_from_before_and_recreates_the_cases_own()
     // The sign-in ran in main, not in the tab left from before.
     let first_call = d.tabs.calls.first().map(|(t, _)| t.clone());
     assert_eq!(first_call.as_deref(), Some("main"));
+}
+
+/// A replay that stopped on a failure and then found its browser gone says
+/// both, and keeps the failed step's rows.
+#[test]
+fn a_browser_gone_after_a_failure_keeps_the_failure() {
+    let rows = vec![v2_lib::browser::actions::ActionOutcome::failed("button \"Save\" not found")];
+    let end = ReplayEnd::BrowserGone { step: 2, why: Some("button \"Save\" not found".into()), outcomes: rows.clone() };
+    let said = end.sentence();
+    assert!(said.starts_with("replay stopped at step 2: button \"Save\" not found; then the Auto Run browser closed"), "{said}");
+    assert!(matches!(end, ReplayEnd::BrowserGone { outcomes, .. } if outcomes == rows));
 }

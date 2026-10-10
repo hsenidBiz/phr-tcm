@@ -599,18 +599,23 @@ pub async fn held_browser_alive<T: crate::browser::cdp::Transport>(
 ) -> bool {
     use crate::browser::cdp::CdpError;
     let processes = crate::browser::tree::blocking(|| browser.processes());
-    let pid_ended = browser.pid_ended();
+    // On Windows the job is the word on whether it runs; when the job
+    // cannot be listed (`None`) the first process says nothing - Edge may
+    // have handed it on - so the socket is asked instead.
+    let pid_ended = if cfg!(windows) && processes.is_none() { false } else { browser.pid_ended() };
     // Nothing of it runs: gone, without asking.
     if !crate::browser::launch::still_alive(processes, pid_ended, true) {
         return false;
     }
-    let asked = cdp
-        .call_within(
-            "Runtime.evaluate",
-            serde_json::json!({ "expression": "1", "returnByValue": true }),
-            ALIVE_WITHIN,
-        )
-        .await;
+    let ask = serde_json::json!({ "expression": "1", "returnByValue": true });
+    let mut asked = cdp.call_within("Runtime.evaluate", ask.clone(), ALIVE_WITHIN).await;
+    // A refusal can be a page between two documents, or the answer to a
+    // page that has just closed read before the browser's word that it
+    // closed: asked once more a moment later, by when that word is read.
+    if matches!(asked, Err(CdpError::Protocol { .. })) {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        asked = cdp.call_within("Runtime.evaluate", ask, ALIVE_WITHIN).await;
+    }
     let answered = !matches!(asked, Err(CdpError::Closed) | Err(CdpError::Transport(_)));
     crate::browser::launch::still_alive(processes, pid_ended, answered)
 }
@@ -626,6 +631,7 @@ pub(crate) async fn let_go_if_gone(slot: &mut Option<Session>) -> bool {
     let gone = crate::ai_bridge::forget_gone_browser(slot).await;
     if gone {
         publish_discovery(slot);
+        tell_panes_closed();
     }
     gone
 }
@@ -763,56 +769,74 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
     Ok(())
 }
 
-/// Release Auto Run browser, on Auto Run's Setup card and the assistant's
-/// `release_autorun_browser`: for a browser the app still holds after it
-/// is gone, so a restart is never needed. A replay going is stopped and a
-/// case's setup between its template steps; then every Auto Run browser
-/// record is cleared - the supervised browser, the discovery in it (a
-/// mapping run keeps its summary) and the replay's, which is that same
-/// browser - and the browser closed through its normal close; then the
-/// signed-in template browsers held for API templates; then every browser
-/// still in the app's registry (`browser::tree::end_all`). Each is ended
-/// through the job the app put it in, so nothing outside the app's own
-/// jobs - the person's own Edge or Chrome, or any other program - is ever
-/// touched.
+/// Release Auto Run browser, on Auto Run's Setup card: for a browser the
+/// app still holds after it is gone, so a restart is never needed. A replay
+/// going is stopped and a case's setup between its template steps; then
+/// every Auto Run browser record is cleared - the supervised browser, the
+/// discovery in it (a mapping run keeps its summary) and the replay's,
+/// which is that same browser - and the browser closed through its normal
+/// close; then the signed-in template browsers held for API templates; then
+/// every browser still in the app's registry (`browser::tree::end_all`).
+/// Each is ended through the job the app put it in, so nothing outside the
+/// app's own jobs - the person's own Edge or Chrome, or any other program -
+/// is ever touched.
 ///
-/// Refused while an unattended run, a recording or check, or an API
-/// template run is going: each has its own Stop, and its browser is in use.
-/// The answer says what was released.
+/// It never races a run: the unattended run's, the recorder's and the API
+/// template run's claims are TAKEN, not only looked at, and held with the
+/// session's lock until `end_all` has returned, so nothing can start a
+/// browser between the checks and the end. A claim another holds refuses
+/// it with that run's sentence. The answer says what was released.
 pub async fn release_autorun_browsers() -> Result<String, String> {
-    if crate::commands::autorun_replay::replay_is_running() {
-        return Err(UNATTENDED_GOING.to_string());
-    }
-    crate::commands::autorun_record::refuse_while_recording()?;
-    if crate::api_templates::runner::is_running() {
-        return Err(TEMPLATE_RUN_GOING.to_string());
-    }
+    let _unattended = crate::commands::autorun_replay::OneAtATime::claim().ok_or_else(|| UNATTENDED_GOING.to_string())?;
+    let _recorder = crate::commands::autorun_record::RecorderClaim::claim()
+        .ok_or_else(|| crate::commands::autorun_record::RECORDING_BUSY.to_string())?;
+    let _template = crate::api_templates::runner::claim().ok_or_else(|| TEMPLATE_RUN_GOING.to_string())?;
     // A replay holds the session's lock while it goes: it is stopped first,
     // without the lock, and ends at its next look.
     crate::autorun::replay_to::stop();
     crate::autorun::setup::stop();
     let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, SESSION.lock()).await else {
-        return Err(REPLAY_STILL_ENDING.to_string());
+        return Err(BROWSER_BUSY.to_string());
     };
     let held = crate::ai_bridge::close_browser_in(&mut slot);
     publish_discovery(&slot);
-    drop(slot);
     crate::browser::tree::blocking(crate::api_templates::held::close_all);
     let others = crate::browser::tree::held_profiles().len();
     let left = crate::browser::tree::blocking(crate::browser::tree::end_all);
+    // The lock and the claims go only now: nothing could start a browser
+    // that `end_all` would then have ended.
+    drop(slot);
+    tell_panes_closed();
     let answer = released_sentence(held, others, left);
     crate::applog::info(format!("Auto Run: {answer}"));
     Ok(answer)
 }
 
-/// How long Release waits for a replay to stop and let the browser go.
+/// How long Release waits for the browser's lock: a replay to stop, or a
+/// supervised step or an assistant's call to finish.
 const RELEASE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Said when Release is pressed while an API template run is going.
 pub const TEMPLATE_RUN_GOING: &str = "an API template run is going - wait for it, or stop it first";
 
-/// Said when a replay did not stop within `RELEASE_WAIT`.
-pub const REPLAY_STILL_ENDING: &str = "a replay is still stopping - press Release Auto Run browser again in a moment";
+/// Said when the browser's lock did not come free within `RELEASE_WAIT`: a
+/// replay still stopping, or a long step or call still going in it.
+pub const BROWSER_BUSY: &str = "the Auto Run browser is busy - press Release Auto Run browser again in a moment";
+
+/// Said to the assistant's release while the person's own Auto Run browser
+/// is open and answering: only the person closes it.
+pub const PERSONS_BROWSER_OPEN: &str =
+    "the person's Auto Run browser is open - ask them to close it, or to press Release Auto Run browser";
+
+/// Tell the panes the supervised browser is gone (`AutorunSessionChanged`
+/// with `opened: false`), so a Run Tests pane stops calling it its own.
+/// Nothing to tell in the test binaries, which set up no window.
+pub(crate) fn tell_panes_closed() {
+    use tauri_specta::Event as _;
+    if let Some(app) = DISCOVERY_EVENTS.get() {
+        let _ = crate::events::AutorunSessionChanged { opened: false, account: None }.emit(app);
+    }
+}
 
 /// What Release says it did: whether it let a held Auto Run browser go
 /// (`held`), how many other browsers of the app's own it found running
@@ -847,12 +871,43 @@ pub async fn auto_run_release_browser() -> Result<String, String> {
     release_autorun_browsers().await
 }
 
-/// `/autorun-release`, the assistant's `release_autorun_browser`.
+/// `/autorun-release`, the assistant's `release_autorun_browser`: only what
+/// is truly gone, or the assistant's own. A held browser that has gone is
+/// let go (`forget_gone_browser`); a live discovery is ended exactly as
+/// `end_autorun_discovery` ends it (the map and a mapping run's summary
+/// kept); a live browser the person opened is never closed - the answer
+/// asks for the person. A replay going is never stopped: one going holds
+/// the lock, and the answer says to wait.
 pub async fn release_for_assistant() -> (u16, String) {
-    match release_autorun_browsers().await {
-        Ok(said) => (200, said),
-        Err(why) => (409, why),
+    if crate::autorun::replay_to::is_running() {
+        return (409, crate::autorun::replay_to::ALREADY_RUNNING.to_string());
     }
+    let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, SESSION.lock()).await else {
+        return (409, BROWSER_BUSY.to_string());
+    };
+    let answer = release_in_for_assistant(&mut slot).await;
+    publish_discovery(&slot);
+    if slot.is_none() {
+        tell_panes_closed();
+    }
+    crate::applog::info(format!("Auto Run: the assistant's release: {}", answer.1));
+    answer
+}
+
+/// The assistant's release over `slot` (`release_for_assistant`), for any
+/// held browser, a test's fake included.
+pub async fn release_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
+    if crate::ai_bridge::forget_gone_browser(slot).await {
+        return (200, "the Auto Run browser had already closed; the app let it go, and none is held now".to_string());
+    }
+    let discovering = match slot.as_mut() {
+        None => return (200, "no Auto Run browser was held - nothing to release".to_string()),
+        Some(b) => b.parts().discovery.is_some(),
+    };
+    if discovering {
+        return crate::ai_bridge::end_discovery_in(slot);
+    }
+    (409, PERSONS_BROWSER_OPEN.to_string())
 }
 
 /// Auto Run's browsers go with the app. A recording - or a Start, a check or
@@ -1154,9 +1209,12 @@ pub(crate) async fn replay_supervised(
         _ => let_go_if_gone(&mut slot).await,
     };
     if gone {
-        if let ReplayEnd::StoppedAt { step, .. } | ReplayEnd::Stopped { step } = end {
-            end = ReplayEnd::BrowserGone { step };
-        }
+        // Said as the browser closing, keeping a failure's reason and rows.
+        end = match end {
+            ReplayEnd::StoppedAt { step, why, outcomes, .. } => ReplayEnd::BrowserGone { step, why: Some(why), outcomes },
+            ReplayEnd::Stopped { step } => ReplayEnd::BrowserGone { step, why: None, outcomes: Vec::new() },
+            other => other,
+        };
         let _ = crate::events::AutorunSessionChanged { opened: false, account: None }.emit(app);
     }
     let how = match &end {
@@ -1166,7 +1224,7 @@ pub(crate) async fn replay_supervised(
         ReplayEnd::StoppedAt { step, .. } => format!("stopped at step {step}"),
         ReplayEnd::Blocked(_) => "blocked before signing in".to_string(),
         ReplayEnd::Stopped { step } => format!("stopped before step {step} finished"),
-        ReplayEnd::BrowserGone { step } => format!("stopped at step {step}: the browser had closed, and it is let go"),
+        ReplayEnd::BrowserGone { step, .. } => format!("stopped at step {step}: the browser had closed, and it is let go"),
         ReplayEnd::Refused(_) => "refused".to_string(),
     };
     let who = match by {
