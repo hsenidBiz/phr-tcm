@@ -346,7 +346,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_page",
-            "description": "Read the page in the Auto Run browser, the one the person opened on the Auto Run tab or your discovery browser, as text: Chrome's own accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script - what a password field holds is never shown. Needs a supervised or discovery browser to be open.",
+            "description": "Read the page in the Auto Run browser, the one the person opened on the Auto Run tab or your discovery browser, as text: Chrome's own accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script - what a password field holds is never shown. During a discovery with an area, a read records what it shows as seen under that area, and the answer ends with a line saying what was recorded. Needs a supervised or discovery browser to be open.",
             "inputSchema": schema(serde_json::json!({
                 "limit": { "type": "number", "description": "How many lines before the snapshot stops (default 300). Raise it for a long page, or probe one locator instead of reading the whole tree." },
             }), &[]),
@@ -796,7 +796,7 @@ pub const BUNDLE_EDITS_NOT_A_LIST: &str = "the bundle sent as \"scripts\" has an
 pub const BESIDE_EDITS_NOT_A_LIST: &str = "the \"edits\" sent beside the bundle in \"scripts\" is not a list - send one \"edits\" list beside \"scripts\", one entry per case";
 
 /// What `dry_run` does on `save_autorun_script`.
-const DRY_RUN_SCRIPT: &str = "true: run every check a save makes, the seen check included, and answer \"would save\" or every refusal, writing nothing and recording nothing.";
+const DRY_RUN_SCRIPT: &str = "true: run every check a save makes, the seen check included, and answer would save, or the refusal a save would give (every locator never seen, listed at once), writing nothing and recording nothing.";
 
 /// What `dry_run` does on `save_autorun_component`.
 const DRY_RUN_COMPONENT: &str = "true: run every rule a save makes and answer would_save or the refusal, writing nothing and recording nothing. It is not a try of the component.";

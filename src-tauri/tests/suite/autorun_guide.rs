@@ -1218,9 +1218,26 @@ fn the_guide_opens_with_the_quick_rules() {
     for banned in ["read the source", "application's source", "source-derived"] {
         assert!(!lower.contains(banned), "the quick rules say {banned:?}");
     }
-    // docs-site/src/guard.test.ts: hidden features are never named.
-    for hidden in ["konami", "unlock", "extras", "dev panel", "demo data", "game"] {
-        assert!(!lower.contains(hidden), "the quick rules name {hidden:?}");
+    // docs-site/src/guard.test.ts: hidden features are never named. Its
+    // whole FORBIDDEN list, and the `\bdemo\b` its page check adds, case
+    // ignored as there.
+    for hidden in [
+        r"konami",
+        r"\bunlock",
+        r"\bextras\b",
+        r"dev panel",
+        r"demo data",
+        r"\bgames?\b",
+        r"api_template",
+        r"save_api_flow",
+        r"risk-tiered",
+        r"Test design rules",
+        r"get_api_flow_progress",
+        r"in dev(elopment)?\b",
+        r"\bdemo\b",
+    ] {
+        let re = regex::Regex::new(&format!("(?i){hidden}")).unwrap();
+        assert!(!re.is_match(&quick), "the quick rules name {hidden:?}");
     }
     assert!(quick.contains("call `get_autorun_guide`\nwithout `quick` and read the full guide"), "{quick}");
 }

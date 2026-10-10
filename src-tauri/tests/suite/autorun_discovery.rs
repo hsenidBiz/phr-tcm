@@ -2234,13 +2234,16 @@ use v2_lib::browser::snapshot::PROBE_SUMMARY_JS;
 /// each `visible` or not. Anything a probe never sends (a click, a key)
 /// fails the test.
 fn cycles_page(found: usize, visible: bool) -> ScriptedDriver {
+    cycles_page_at("https://hr.example.internal/hr/cycles?page=2", found, visible)
+}
+
+/// `cycles_page`, at `href`.
+fn cycles_page_at(href: &'static str, found: usize, visible: bool) -> ScriptedDriver {
     ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         match method {
             "Runtime.evaluate" if params["expression"] == "document" => Ok(json!({ "result": { "objectId": "doc" } })),
-            "Runtime.evaluate" if params["expression"] == "location.href" => {
-                Ok(json!({ "result": { "value": "https://hr.example.internal/hr/cycles?page=2" } }))
-            }
+            "Runtime.evaluate" if params["expression"] == "location.href" => Ok(json!({ "result": { "value": href } })),
             "Runtime.evaluate" if params["expression"] == "document.title" => Ok(json!({ "result": { "value": "Cycles" } })),
             "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": visible } })),
             "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(json!({
@@ -2802,23 +2805,7 @@ async fn the_answer_names_the_area_as_the_map_files_it() {
 
 // ------------------------- every refused locator at once, and a dry run
 
-/// Every file under `root`, by its path, with its bytes.
-fn every_file(root: &std::path::Path) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
-    let mut out = std::collections::BTreeMap::new();
-    let mut dirs = vec![root.to_path_buf()];
-    while let Some(dir) = dirs.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-        for e in entries.flatten() {
-            let path = e.path();
-            if path.is_dir() {
-                dirs.push(path);
-            } else {
-                out.insert(path.clone(), std::fs::read(&path).unwrap());
-            }
-        }
-    }
-    out
-}
+use crate::common::every_file;
 
 /// "Three pages": one click on each of three pager buttons, none seen.
 fn three_pages() -> Component {
@@ -2931,6 +2918,7 @@ async fn a_component_dry_run_writes_and_records_nothing() {
     assert_eq!(parsed(&body), json!({ "would_save": "Next page", "version": 1, "changes": 0, "cap_reached": false }));
     assert_eq!(every_file(dir.path()), seen, "a dry run changed a file");
     assert!(!components_path(dir.path(), ORG, PROJECT).exists());
+    assert!(browser.as_ref().unwrap().d.calls.is_empty(), "a dry run reached the page");
 
     // Not tried in this discovery: refused as a save is, and a dry run
     // does not make it a try.
@@ -2944,9 +2932,106 @@ async fn a_component_dry_run_writes_and_records_nothing() {
     assert_eq!(every_file(dir.path()), seen);
 }
 
+/// The component save route reads `dry_run` as true or false only, and a
+/// dry run with no discovery going gives the save's own refusal, writing
+/// nothing, as the save itself does.
+#[tokio::test]
+async fn the_component_save_route_takes_a_dry_run() {
+    let dir = TempDir::new();
+    let _g = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let with = |dry_run: Value| {
+        let mut body = serde_json::to_value(next_page()).unwrap();
+        body["dry_run"] = dry_run;
+        body.to_string()
+    };
+    let before = every_file(dir.path());
+
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-component-save", &with(json!("yes")), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "\"dry_run\" is true or false."));
+
+    let (dry_status, dry) = route(&ctx(), None, "POST", "/autorun-component-save", &with(json!(true)), "1.0.0").await;
+    assert_ne!(dry_status, 200, "{dry}");
+    assert_eq!(every_file(dir.path()), before, "a dry run changed a file");
+    let (status, saved) = route(&ctx(), None, "POST", "/autorun-component-save", &with(json!(false)), "1.0.0").await;
+    assert_eq!((dry_status, dry.as_str()), (status, saved.as_str()), "a dry run answered unlike the save");
+    assert_eq!(every_file(dir.path()), before, "a refused save changed a file");
+}
+
+/// The page check a refused save makes files nothing from a page off the
+/// application's origins: the answer says nothing was recorded, the map
+/// stays empty, and the save's own refusal follows.
+#[tokio::test]
+async fn record_on_page_off_the_app_records_nothing() {
+    let dir = root_with_recipe_and_account();
+    let c = next_page();
+    let (mut browser, _) = slot(cycles_page_at("https://elsewhere.example/sso?ticket=abc", 1, true), tried_in("Cycles", &c));
+    let (status, body) =
+        save_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default())).await;
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        body.starts_with(
+            "Recorded on the current page: nothing - no refused locator matched exactly one visible element.\nAction 1: #pager-2 was never seen on the live app"
+        ),
+        "{body}"
+    );
+    assert!(!body.contains("elsewhere.example") && !body.contains("ticket"), "{body}");
+    assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty(), "an off-site page was recorded");
+}
+
+/// A page at `/hr/leave` holding a button for each of `names` and an iframe
+/// whose contents cannot be read (another site, or not loaded yet).
+fn framed_page(names: &[&str]) -> ScriptedDriver {
+    let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+    ScriptedDriver::new(move |method, params| {
+        Ok(match method {
+            "Accessibility.getFullAXTree" => {
+                let mut tree = buttons_tree(&names);
+                let nodes = tree["nodes"].as_array_mut().unwrap();
+                nodes[0]["childIds"].as_array_mut().unwrap().push(json!("help"));
+                nodes.push(json!({
+                    "nodeId": "help", "ignored": false, "role": { "value": "Iframe" },
+                    "name": { "value": "Help" }, "backendDOMNodeId": 77, "childIds": []
+                }));
+                tree
+            }
+            "Runtime.evaluate" if params["expression"] == "location.href" => json!({ "result": { "value": LEAVE_PAGE } }),
+            "Runtime.evaluate" if params["expression"] == "document.title" => json!({ "result": { "value": "Leave" } }),
+            _ => json!({}),
+        })
+    })
+}
+
+/// A read with a frame it could not read did not see the whole page: like a
+/// read cut at its limit, it files what it showed, keeps what the area saw
+/// on the page before, and does not stamp the area explored.
+#[tokio::test]
+async fn a_read_with_an_unreadable_frame_drops_nothing() {
+    let dir = root_with_recipe_and_account();
+    let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier", "Older"]), exploring("Leave"));
+    page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, 1).await;
+    assert_eq!(sighted(dir.path(), "Leave"), ["Earlier"]);
+    assert_eq!(mapped_area(dir.path(), "Leave").unwrap().explored_at, None);
+
+    let (mut framed, _) = slot(framed_page(&["Save"]), exploring_anew("Leave"));
+    let (status, text) =
+        page_read_in(framed.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("frame contents could not be read"), "{text}");
+    assert!(!text.contains("... and"), "the read was cut by its limit: {text}");
+    assert_eq!(sighted(dir.path(), "Leave"), ["Earlier", "Help", "Save"], "a read missing a frame dropped a sighting");
+    assert_eq!(mapped_area(dir.path(), "Leave").unwrap().explored_at, None, "a read missing a frame stamped the area");
+
+    // The same page with every frame read is whole, and does drop it.
+    let (mut whole, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), exploring_anew("Leave"));
+    page_read_in(whole.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(sighted(dir.path(), "Leave"), ["Save"]);
+    assert!(mapped_area(dir.path(), "Leave").unwrap().explored_at.is_some());
+}
+
 // ------------------------------------------------- several actions at once
 
-use v2_lib::ai_bridge::{discover_actions_in, BATCH_EMPTY, BATCH_TOO_LONG};
+use v2_lib::ai_bridge::{discover_actions_in, BATCH_EMPTY, BATCH_TOO_LONG, MAX_BATCH};
 
 /// A page on which every locator finds one ready element, and whose address
 /// and one button move on with each click: `/hr/leave/start` showing
@@ -3072,11 +3157,13 @@ async fn a_batch_can_carry_on_past_a_failure() {
 /// the route and by the batch itself.
 #[tokio::test]
 async fn a_batch_of_more_than_twenty_is_refused() {
+    let _g = crate::serial::autorun();
     let one = json!({ "kind": "click", "selector": "#a" });
     let body = json!({ "actions": vec![one.clone(); 21] }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
     assert_eq!((status, out.as_str()), (400, BATCH_TOO_LONG));
     assert_eq!(BATCH_TOO_LONG, "at most 20 actions in one call");
+    assert_eq!(BATCH_TOO_LONG, format!("at most {MAX_BATCH} actions in one call"), "the cap and its sentence differ");
 
     let dir = root_with_recipe_and_account();
     let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
@@ -3089,6 +3176,7 @@ async fn a_batch_of_more_than_twenty_is_refused() {
 /// An empty batch is refused, and so is one whose actions are not a list.
 #[tokio::test]
 async fn an_empty_batch_is_refused() {
+    let _g = crate::serial::autorun();
     let body = json!({ "actions": [] }).to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
     assert_eq!((status, out.as_str()), (400, BATCH_EMPTY));
@@ -3109,6 +3197,7 @@ async fn an_empty_batch_is_refused() {
 /// draft no action uses.
 #[tokio::test]
 async fn a_batch_with_a_refused_action_runs_none() {
+    let _g = crate::serial::autorun();
     let body = json!({ "actions": [
         { "kind": "click", "selector": "#a" },
         { "kind": "sign_in", "account": "admin" }
@@ -3128,6 +3217,42 @@ async fn a_batch_with_a_refused_action_runs_none() {
     let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(out.contains("use_component"), "{out}");
+}
+
+/// A `use_component` is expanded before the browser is touched too: a
+/// component that is not saved (and sent with no draft) refuses the whole
+/// batch, naming its action, so the click before it never runs. The same
+/// batch without it gets past every check, to the browser that is not
+/// there.
+#[tokio::test]
+async fn a_batch_with_an_unsaved_component_runs_none() {
+    let dir = root_with_recipe_and_account();
+    let _g = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let click = json!({ "kind": "click", "selector": "#a" });
+    let unsaved = serde_json::to_value(pick_a_date_use()).unwrap();
+    let before = every_file(dir.path());
+
+    let body = json!({ "actions": [click.clone(), unsaved.clone()] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    let want = format!("action 2: {}", v2_lib::ai_bridge::not_saved_try_draft("pick a  DATE"));
+    assert_eq!((status, out.as_str()), (400, want.as_str()));
+    assert!(!out.contains("Secret-Day-17"), "a typed input came back: {out}");
+    assert_eq!(every_file(dir.path()), before, "a refused batch changed a file");
+
+    // A draft of another component does not stand in for it.
+    let mut other = pick_a_date();
+    other.name = "Another one".into();
+    let another = json!({ "kind": "use_component", "component": "Another one",
+                          "inputs": { "field": { "css": "#day" }, "day": "1" } });
+    let body = json!({ "actions": [click.clone(), unsaved, another], "draft": serde_json::to_value(other).unwrap() })
+        .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, want.as_str()));
+
+    let body = json!({ "actions": [click] }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-discover-actions", &body, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (409, NO_DISCOVERY), "the batch did not reach the browser stage");
 }
 
 /// Outside a discovery the batch is refused as a single action is.
@@ -3207,7 +3332,10 @@ async fn a_batch_records_what_each_action_read() {
 }
 
 /// An action the browser never gets to (a component not saved, with no
-/// draft) is a failed line like any other, not the end of the batch.
+/// draft) is a failed line like any other, not the end of the batch. The
+/// route refuses such a batch before running any of it
+/// (`a_batch_with_an_unsaved_component_runs_none`); this is the batch's own
+/// defence should one reach it.
 #[tokio::test]
 async fn a_refused_action_in_a_batch_is_one_failed_line() {
     let dir = root_with_recipe_and_account();
@@ -3324,7 +3452,7 @@ async fn a_batch_gives_way_to_a_stop_before_its_next_action() {
     assert_eq!(lines.len(), 2, "{text}");
     assert!(lines[0].starts_with("1. ok: "), "{text}");
     assert_eq!(lines[1], ended_line(2));
-    assert_eq!(ended_line(2), "Stopped: 2 not run - the discovery was ended.");
+    assert_eq!(ended_line(2), "Stopped: 2 not run - End discovery, Close browser or a release asked the batch to stop.");
     assert!(!stop.load(Ordering::SeqCst), "the stop was not used up");
     let b = browser.as_ref().unwrap();
     assert_eq!(b.d.calls_to("Accessibility.getFullAXTree").len(), 1, "the batch read on after the stop");
@@ -3371,7 +3499,7 @@ async fn end_discovery_is_not_stuck_behind_a_long_batch() {
     drop(slot);
     let (status, text) = batch.await.unwrap();
     assert_eq!(status, 409, "{text}");
-    assert!(text.ends_with("not run - the discovery was ended."), "{text}");
+    assert!(text.ends_with("not run - End discovery, Close browser or a release asked the batch to stop."), "{text}");
 
     // Each way the person or the assistant ends the discovery asks a batch
     // to give way before it waits for the browser.

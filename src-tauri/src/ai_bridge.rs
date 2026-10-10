@@ -1932,10 +1932,7 @@ pub async fn read_and_file<D: crate::browser::cdp::Driver>(
         unrecorded("the page's address could not be read");
         return (200, read.text, Filed::Unrecorded);
     }
-    // Only a page of the application counts: an address that is not an
-    // http, https or file page (about:blank, a browser error page) is never
-    // filed, even when no recipe limits the origins.
-    if crate::autorun::recipe::origin_of(&href).is_none() || !at.policy.allows(&href) {
+    if !may_record(&href, &at.policy) {
         crate::applog::info(format!(
             "Discovery map: a page read was not filed, as the page is not on {}",
             crate::browser::actions::ALLOWED_ORIGINS
@@ -1964,24 +1961,45 @@ pub async fn read_and_file<D: crate::browser::cdp::Driver>(
     }
 }
 
-/// Files each locator in `targets` at `at` under the page at `path`.
-fn record_matched_targets(at: &Sighting, path: &str, targets: &[&crate::browser::locator::Target]) {
+/// Can a page at `href` (its full address) be filed as seen: only a page
+/// of the application counts. An address that is not an http, https or
+/// file page (about:blank, a browser error page) never is, even when no
+/// recipe limits the origins; one `policy` does not allow never is either.
+pub fn may_record(href: &str, policy: &crate::browser::actions::Policy) -> bool {
+    crate::autorun::recipe::origin_of(href).is_some() && policy.allows(href)
+}
+
+/// Files each locator in `targets` at `at` under the page at `href` (its
+/// full address, cut to its path here), only when `may_record` allows that
+/// page. Says whether every locator was filed.
+fn record_matched_targets(at: &Sighting, href: &str, targets: &[&crate::browser::locator::Target]) -> bool {
     if targets.is_empty() || at.project.trim().is_empty() {
-        return;
+        return false;
     }
-    if path.is_empty() {
+    if href.trim().is_empty() {
         unrecorded("the page's address could not be read");
-        return;
+        return false;
     }
+    if !may_record(href, &at.policy) {
+        crate::applog::info(format!(
+            "Discovery map: a matched locator was not filed, as the page is not on {}",
+            crate::browser::actions::ALLOWED_ORIGINS
+        ));
+        return false;
+    }
+    let path = crate::autorun::discovery_map::path_only(href);
     let now = crate::autorun::sessions::now_ms();
+    let mut filed = true;
     for target in targets {
         let area = at.area.as_deref();
         if let Err(why) =
-            crate::autorun::discovery_map::record_matched(&at.root, &at.org, &at.project, area, path, target, now)
+            crate::autorun::discovery_map::record_matched(&at.root, &at.org, &at.project, area, &path, target, now)
         {
             unrecorded(&why);
+            filed = false;
         }
     }
+    filed
 }
 
 /// The locators an action that WORKED must have matched at least once.
@@ -2082,8 +2100,8 @@ pub async fn probe_page<D: crate::browser::cdp::Driver>(
         Err(e) => return (503, format!("the browser did not answer: {e}")),
     };
     if let Some(at) = at.filter(|_| probe_matches(&text) > 0) {
-        let (path, _) = current_page(d).await;
-        record_matched_targets(at, &path, &[target]);
+        let (href, _) = page_address(d).await;
+        record_matched_targets(at, &href, &[target]);
     }
     (200, text)
 }
@@ -2139,11 +2157,13 @@ pub async fn record_refused_in<B: DiscoveryBrowser>(
         if !one_visible_match(&text) {
             continue;
         }
-        if let Some(at) = at.as_ref() {
-            let (path, _) = current_page(p.driver).await;
-            record_matched_targets(at, &path, &[target]);
+        let Some(at) = at.as_ref() else {
+            continue;
+        };
+        let (href, _) = page_address(p.driver).await;
+        if record_matched_targets(at, &href, &[target]) {
+            recorded.push(described);
         }
-        recorded.push(described);
     }
     if unchecked > 0 {
         crate::applog::warn(format!("Auto Run save: {unchecked} refused locator(s) could not be checked on the page"));
@@ -2839,11 +2859,19 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     (200, answer.to_string())
 }
 
+/// The batch cap as a literal, so `MAX_BATCH` and the sentences that name
+/// it are built from the one number.
+macro_rules! max_batch {
+    () => {
+        20
+    };
+}
+
 /// The most actions `discover_autorun_actions` runs in one call.
-pub const MAX_BATCH: usize = 20;
+pub const MAX_BATCH: usize = max_batch!();
 
 /// Said to a batch of more than `MAX_BATCH` actions.
-pub const BATCH_TOO_LONG: &str = "at most 20 actions in one call";
+pub const BATCH_TOO_LONG: &str = concat!("at most ", max_batch!(), " actions in one call");
 
 /// Said to a batch with no actions in it.
 pub const BATCH_EMPTY: &str = "send at least one action in \"actions\"";
@@ -2910,9 +2938,11 @@ fn not_run_line(n: usize) -> String {
 }
 
 /// Said when a batch gave way to End discovery, Close browser or a
-/// release: how many actions were not run.
+/// release: how many actions were not run, and what may have asked. A
+/// release that timed out still asked, so the line never claims the
+/// discovery ended.
 pub fn ended_line(n: usize) -> String {
-    format!("Stopped: {n} not run - the discovery was ended.")
+    format!("Stopped: {n} not run - End discovery, Close browser or a release asked the batch to stop.")
 }
 
 /// The batch's stop control: set by End discovery, Close browser and both
@@ -3707,7 +3737,7 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
 /// `draft` is tried by each `use_component` that names it; `area` moves the
 /// discovery before the first action.
 async fn autorun_discover_actions(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    const SHAPE: &str = "{ \"actions\": [<script actions, at most 20>], \"stop_on_failure\": <true or false, optional, true by default>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional> }";
+    const SHAPE: &str = concat!("{ \"actions\": [<script actions, at most ", max_batch!(), ">], \"stop_on_failure\": <true or false, optional, true by default>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional> }");
     let raw = match body_field(body, "actions", SHAPE) {
         Ok(v) => v,
         Err(refused) => return refused,
@@ -3769,6 +3799,18 @@ async fn autorun_discover_actions(ctx: &BridgeContext, body: &str) -> (u16, Stri
     for (i, action) in actions.iter().enumerate() {
         if let Err((status, why)) = refuse_outside_the_recipe(&policy, action) {
             return (status, format!("action {}: {why}", i + 1));
+        }
+    }
+    // Every component expanded as its action would expand it, so one that
+    // is not saved, misses an input or leads outside the recipe refuses
+    // the batch before any earlier action drives the browser.
+    for (i, action) in actions.iter().enumerate() {
+        if let crate::browser::actions::Action::UseComponent { component, inputs } = action {
+            if let Err((status, why)) =
+                component_to_try(&root, &ctx.org, &ctx.project, component, inputs, draft_for(action, draft.as_ref()))
+            {
+                return (status, format!("action {}: {why}", i + 1));
+            }
         }
     }
     // A stop asked for before this batch is not this batch's.
@@ -4337,7 +4379,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // The page the try starts on: a click that navigates was matched on
     // this page, not the one it leads to.
     let matched = matched_targets(action);
-    let started_on = if matched.is_empty() { String::new() } else { current_page(d).await.0 };
+    let started_on = if matched.is_empty() { String::new() } else { page_address(d).await.0 };
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
     let mut run = InRun { areas: Some(&areas), saves_only_counted, ..Default::default() };
     let outcomes = match crate::autorun::runner::run_step_in_run(
@@ -4374,9 +4416,8 @@ async fn try_action<D: crate::browser::cdp::Driver>(
             area: recording_area(root, discovery_area, Some(case_id)),
             account: None,
             discovering: None,
-            // Filing what a try matched (`record_matched_targets`) reads no
-            // page address, so no policy applies there.
-            policy: crate::browser::actions::Policy::open(),
+            // Only the application's own pages count (`may_record`).
+            policy: recording_policy(root, organization, project),
         };
         record_matched_targets(&at, &started_on, &matched);
     }

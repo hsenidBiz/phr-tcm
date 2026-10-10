@@ -7,7 +7,7 @@ use common::ScriptedDriver;
 use serde_json::json;
 use v2_lib::browser::cdp::CdpError;
 use v2_lib::browser::locator::{Target, VISIBLE_JS};
-use v2_lib::browser::snapshot::{parse_nodes, probe, render, render_frames, render_frames_with_lines, snapshot, AxNode, FrameTree, DEFAULT_LIMIT, PROBE_SUMMARY_JS};
+use v2_lib::browser::snapshot::{parse_nodes, probe, render, render_frames, render_frames_read, render_frames_with_lines, snapshot, AxNode, FrameTree, DEFAULT_LIMIT, PROBE_SUMMARY_JS};
 
 /// A plain, printable node with no value/ignored/disabled/focusable
 /// wrinkles - tests override the fields they care about with `..`.
@@ -622,6 +622,35 @@ fn a_frame_deeper_than_three_says_it_is_not_shown() {
     let indent = |l: &str| l.len() - l.trim_start().len();
     assert!(indent(note) > indent(lines[deep]), "the note sits under the frame's line: {out}");
     assert_eq!(out.matches("nested deeper than 3").count(), 1, "{out}");
+}
+
+/// A frame whose contents were not shown (unreadable, or past the depth
+/// the snapshot follows) makes the read not the whole page, as the line
+/// limit does: `cut` is set. A read whose every frame was shown is whole.
+#[test]
+fn a_read_missing_a_frame_is_cut() {
+    let (parent, frame) = page_with_frame(1);
+    assert!(!render_frames_read(&parent, &[frame], DEFAULT_LIMIT).cut, "a whole read with its frame was cut");
+
+    let (parent, mut unreadable) = page_with_frame(0);
+    unreadable.nodes.clear();
+    unreadable.unreadable = Some("no frame id".to_string());
+    let read = render_frames_read(&parent, &[unreadable.clone()], DEFAULT_LIMIT);
+    assert!(read.cut, "{}", read.text);
+    assert!(!read.text.contains("... and"), "{}", read.text);
+
+    // An unreadable frame inside a readable one counts too.
+    let outer = nested("f1", "One", vec![FrameTree { iframe_id: "inner".into(), ..unreadable }]);
+    let parent = vec![node("1", "RootWebArea", "Frames", &["f1"]), node("f1", "Iframe", "One", &[])];
+    let read = render_frames_read(&parent, &[outer], DEFAULT_LIMIT);
+    assert!(read.text.contains("frame contents could not be read"), "{}", read.text);
+    assert!(read.cut, "{}", read.text);
+
+    let three = nested("inner", "Three", vec![]);
+    let deep = nested("f1", "One", vec![nested("inner", "Two", vec![three])]);
+    let read = render_frames_read(&parent, &[deep], DEFAULT_LIMIT);
+    assert!(read.text.contains("nested deeper than 3"), "{}", read.text);
+    assert!(read.cut, "{}", read.text);
 }
 
 /// Shallower frames that were not followed (no tree for them) print no note.

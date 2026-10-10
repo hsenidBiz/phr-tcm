@@ -210,12 +210,6 @@ fn format_line(node: &AxNode, depth: usize, frames: &[Value]) -> String {
     line
 }
 
-/// Depth-first, skipping folded nodes but still visiting their children -
-/// at the folded node's own depth, since it never printed a line to
-/// indent under. `seen` guards against a `childIds` cycle (or the same id
-/// reachable two ways): a node already visited anywhere in this walk is
-/// skipped rather than recursed into again, which would otherwise recurse
-/// forever on a malformed tree.
 /// One tree being walked: its nodes by id, the frames inside it by their
 /// iframe's id, and the steps of the frames it itself sits in.
 struct Tree<'a> {
@@ -224,7 +218,23 @@ struct Tree<'a> {
     path: Vec<Value>,
 }
 
-fn walk(id: &str, depth: usize, tree: &Tree<'_>, out: &mut Vec<Printed>, seen: &mut std::collections::HashSet<String>) {
+/// Depth-first, skipping folded nodes but still visiting their children -
+/// at the folded node's own depth, since it never printed a line to
+/// indent under. `seen` guards against a `childIds` cycle (or the same id
+/// reachable two ways): a node already visited anywhere in this walk is
+/// skipped rather than recursed into again, which would otherwise recurse
+/// forever on a malformed tree. `missed` is set when a frame's contents
+/// were not shown (a frame that could not be read, or one nested past
+/// `MAX_FRAME_DEPTH`): a read with such a frame does not show the whole
+/// page.
+fn walk(
+    id: &str,
+    depth: usize,
+    tree: &Tree<'_>,
+    out: &mut Vec<Printed>,
+    seen: &mut std::collections::HashSet<String>,
+    missed: &mut bool,
+) {
     if !seen.insert(id.to_string()) {
         return;
     }
@@ -232,20 +242,21 @@ fn walk(id: &str, depth: usize, tree: &Tree<'_>, out: &mut Vec<Printed>, seen: &
     let folded = node.ignored || FOLDED_ROLES.contains(&node.role.as_str());
     if folded {
         for child in &node.children {
-            walk(child, depth, tree, out, seen);
+            walk(child, depth, tree, out, seen, missed);
         }
         return;
     }
     out.push((format_line(node, depth, &tree.path), Some(snap_line(node, &tree.path))));
     for child in &node.children {
-        walk(child, depth + 1, tree, out, seen);
+        walk(child, depth + 1, tree, out, seen, missed);
     }
     if let Some(frame) = tree.frames.get(id) {
-        walk_frame(frame, depth + 1, &tree.path, out);
+        walk_frame(frame, depth + 1, &tree.path, out, missed);
     } else if node.role == "Iframe" && tree.path.len() >= MAX_FRAME_DEPTH {
         // `snapshot` follows frames only so deep: say so rather than let a
         // deeper frame's contents be silently missing.
         out.push((format!("{}{DEEP_FRAMES_NOTE}", " ".repeat((depth + 1).min(12))), None));
+        *missed = true;
     }
 }
 
@@ -257,9 +268,10 @@ pub const DEEP_FRAMES_NOTE: &str = "(frames nested deeper than 3 are not shown)"
 
 /// A frame's own tree, under its iframe's line, every locator behind the
 /// frame's step.
-fn walk_frame(frame: &FrameTree, depth: usize, path: &[Value], out: &mut Vec<Printed>) {
+fn walk_frame(frame: &FrameTree, depth: usize, path: &[Value], out: &mut Vec<Printed>, missed: &mut bool) {
     if let Some(why) = &frame.unreadable {
         out.push((format!("{}(frame contents could not be read: {})", " ".repeat(depth.min(12)), sanitize(why)), None));
+        *missed = true;
         return;
     }
     let Some(root) = frame.nodes.first() else { return };
@@ -270,7 +282,7 @@ fn walk_frame(frame: &FrameTree, depth: usize, path: &[Value], out: &mut Vec<Pri
         frames: frame.frames.iter().map(|f| (f.iframe_id.as_str(), f)).collect(),
         path: inner,
     };
-    walk(&root.id, depth, &tree, out, &mut std::collections::HashSet::new());
+    walk(&root.id, depth, &tree, out, &mut std::collections::HashSet::new(), missed);
 }
 
 /// Pure rendering: every rule (folding, password redaction, the locator
@@ -300,8 +312,9 @@ pub fn render_frames_with_lines(nodes: &[AxNode], frames: &[FrameTree], limit: u
 pub struct PageRead {
     pub text: String,
     pub lines: Vec<SnapLine>,
-    /// True when the page had more lines than the read printed: what it
-    /// shows is not the whole page.
+    /// True when the page had more lines than the read printed, or a frame
+    /// in it could not be read or sat deeper than `MAX_FRAME_DEPTH`: what
+    /// it shows is not the whole page.
     pub cut: bool,
 }
 
@@ -319,7 +332,8 @@ pub fn render_frames_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize) 
     };
     let mut lines = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    walk(&root.id, 0, &tree, &mut lines, &mut seen);
+    let mut missed = false;
+    walk(&root.id, 0, &tree, &mut lines, &mut seen, &mut missed);
     if lines.is_empty() {
         return empty();
     }
@@ -332,7 +346,7 @@ pub fn render_frames_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize) 
         }
         out.push_str(&format!("... and {} more (raise the limit, or scope the probe)", total - limit));
     }
-    PageRead { text: out, lines: data, cut: total > limit }
+    PageRead { text: out, lines: data, cut: total > limit || missed }
 }
 
 /// `Accessibility.getFullAXTree`, retried once after `Accessibility.enable`
