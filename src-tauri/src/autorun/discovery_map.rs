@@ -340,7 +340,8 @@ pub fn record_seen(
 /// since the discovery started. A read the line limit cut short (`whole`
 /// false) never counts as exploring the page: it adds and refreshes what it
 /// returned and drops nothing, because the lines past the cut were never
-/// looked at.
+/// looked at, and it leaves the area's `explored_at`, `failed_since` and
+/// `account` as they were.
 #[allow(clippy::too_many_arguments)]
 pub fn record_read(
     root: &Path,
@@ -361,8 +362,10 @@ pub fn record_read(
     update(root, org, project, |map| {
         let a = area_mut(map, &area);
         // Only what a discovery sees in a named area marks that area
-        // explored: the bucket for no area is never explored.
-        if discovery.is_some() && !area.is_empty() {
+        // explored: the bucket for no area is never explored. A read the
+        // limit cut short saw only part of a page, so it never freshens the
+        // area either: no stamp, no clearing a failure, no account.
+        if discovery.is_some() && whole && !area.is_empty() {
             a.explored_at = Some(now);
             a.failed_since = false;
             a.account = account.map(str::to_string);

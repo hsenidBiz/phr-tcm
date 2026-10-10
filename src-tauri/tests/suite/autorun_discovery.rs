@@ -2725,3 +2725,72 @@ async fn a_page_read_off_the_app_records_nothing() {
     assert_eq!(status, 200, "{body}");
     assert!(sighted(dir.path(), "Leave").is_empty(), "an action's read of an off-site page was recorded");
 }
+
+/// A read the limit cut short saw only part of the page: it never stamps
+/// the area explored, never clears a failure and never sets the account.
+/// A whole read of the same page does all three.
+#[tokio::test]
+async fn a_cut_read_does_not_freshen_the_area() {
+    let dir = root_with_recipe_and_account();
+    v2_lib::autorun::discovery_map::mark_failed(dir.path(), ORG, PROJECT, "Leave").unwrap();
+    let (mut cut, _) = slot(buttons_page(LEAVE_PAGE, &["Save", "Cancel"]), exploring("Leave"));
+    let (_, text) = page_read_in(cut.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, 1).await;
+    assert!(text.ends_with("Recorded 1 element as seen on Leave."), "{text}");
+    let area = mapped_area(dir.path(), "Leave").unwrap();
+    assert_eq!(area.explored_at, None, "a cut read stamped the area explored");
+    assert!(area.failed_since, "a cut read cleared the area's failure");
+    assert_eq!(area.account, None, "a cut read set the account");
+
+    let (mut whole, _) = slot(buttons_page(LEAVE_PAGE, &["Save", "Cancel"]), exploring("Leave"));
+    page_read_in(whole.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    let area = mapped_area(dir.path(), "Leave").unwrap();
+    assert!(area.explored_at.is_some() && !area.failed_since, "{area:?}");
+    assert_eq!(area.account.as_deref(), Some("admin"));
+}
+
+/// A page on an origin the recipe allows besides its own start page is the
+/// application's, and is recorded.
+#[tokio::test]
+async fn a_page_on_an_extra_allowed_origin_is_recorded() {
+    let dir = TempDir::new();
+    let mut with_files = recipe();
+    with_files.allowed_origins = vec!["https://files.example.internal".to_string()];
+    save_recipe(dir.path(), ORG, PROJECT, &with_files).unwrap();
+    let (mut held, _) = slot(buttons_page("https://files.example.internal/docs/list", &["Upload"]), exploring("Leave"));
+    let (status, text) =
+        page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.ends_with("Recorded 1 element as seen on Leave."), "{text}");
+    assert_eq!(sighted(dir.path(), "Leave"), ["Upload"]);
+}
+
+/// A browser on about:blank, or on its own error page, is not on the
+/// application, whether or not a recipe limits the origins: nothing is
+/// filed, and the area is not stamped.
+#[tokio::test]
+async fn a_blank_or_error_page_records_nothing_with_or_without_a_recipe() {
+    for with_recipe in [true, false] {
+        for href in ["about:blank", "chrome-error://chromewebdata/"] {
+            let dir = if with_recipe { root_with_recipe_and_account() } else { TempDir::new() };
+            let (mut held, _) = slot(buttons_page(href, &["Reload"]), exploring("Leave"));
+            let (status, text) =
+                page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+            assert_eq!(status, 200, "{text}");
+            assert!(text.ends_with(&format!("\n\n{READ_OFF_THE_APP}")), "{href}, recipe {with_recipe}: {text}");
+            let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+            assert!(map.areas.is_empty(), "{href}, recipe {with_recipe}: {map:?}");
+        }
+    }
+}
+
+/// The answer names the area as the map files it: the recorded area's own
+/// spelling, not the one the discovery was given.
+#[tokio::test]
+async fn the_answer_names_the_area_as_the_map_files_it() {
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Person, vec![css("#leave")], "/hr/leave/apply")).unwrap();
+    let (mut held, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), exploring("leave   apply"));
+    let (_, text) = page_read_in(held.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
+    assert!(text.ends_with("Recorded 1 element as seen on Leave Apply."), "{text}");
+    assert_eq!(sighted(dir.path(), "Leave Apply"), ["Save"]);
+}

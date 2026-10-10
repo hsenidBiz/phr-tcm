@@ -1742,6 +1742,11 @@ pub async fn page_read_in<B: DiscoveryBrowser>(
     if status != 200 {
         return (status, text);
     }
+    // Named as the map files it.
+    let area = match root {
+        Some(root) => crate::autorun::discovery_map::canonical_area(root, organization, project, &area),
+        None => area,
+    };
     let line = match filed {
         Filed::Recorded(n) => recorded_on(n, &area),
         Filed::OffOrigin => READ_OFF_THE_APP.to_string(),
@@ -1777,7 +1782,10 @@ pub fn recording_policy(root: &std::path::Path, organization: &str, project: &st
     match crate::autorun::recipe::load_effective_recipe_if_any(root, organization, project) {
         Ok(recipe) => crate::autorun::runner::policy_for(recipe.as_ref()),
         Err(why) => {
-            unrecorded(&format!("the sign-in recipe could not be read: {why}"));
+            // The error itself can quote the file (an address in it), so
+            // only its kind is logged.
+            let kind = if why.starts_with("the sign-in recipe is not readable") { "not a valid recipe" } else { "a file error" };
+            unrecorded(&format!("the sign-in recipe could not be read ({kind}), so no page read is filed"));
             crate::browser::actions::Policy::only(vec![])
         }
     }
@@ -1916,7 +1924,10 @@ pub async fn read_and_file<D: crate::browser::cdp::Driver>(
         unrecorded("the page's address could not be read");
         return (200, read.text, Filed::Unrecorded);
     }
-    if !at.policy.allows(&href) {
+    // Only a page of the application counts: an address that is not an
+    // http, https or file page (about:blank, a browser error page) is never
+    // filed, even when no recipe limits the origins.
+    if crate::autorun::recipe::origin_of(&href).is_none() || !at.policy.allows(&href) {
         crate::applog::info(format!(
             "Discovery map: a page read was not filed, as the page is not on {}",
             crate::browser::actions::ALLOWED_ORIGINS
@@ -4015,7 +4026,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
             discovering: None,
             // Filing what a try matched (`record_matched_targets`) reads no
             // page address, so no policy applies there.
-            policy: crate::browser::actions::Policy::default(),
+            policy: crate::browser::actions::Policy::open(),
         };
         record_matched_targets(&at, &started_on, &matched);
     }
