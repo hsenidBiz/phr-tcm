@@ -133,7 +133,7 @@ pub fn writing_style() -> MutexGuard<'static, ()> {
 /// The app's settings (`app_settings::current` / `update`) and the folder
 /// `app_settings::init` points them at, set at most once for the whole
 /// binary. Taken by every test that turns a setting or reads one a test
-/// turns (Highlight each action, through `Timing::supervised` and
+/// turns (Pause before each action, through `Timing::supervised` and
 /// `replay_timing`), after `autorun` where it takes that.
 pub fn app_settings() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());

@@ -28,7 +28,7 @@ impl Timing {
         if highlight { t } else { Timing { highlight_ms: 0, ..t } }
     }
 
-    /// `watched`, with the person's Highlight each action choice.
+    /// `watched`, with the person's Pause before each action choice.
     pub fn supervised() -> Timing {
         Timing::watched(crate::app_settings::current().autorun_highlight)
     }
