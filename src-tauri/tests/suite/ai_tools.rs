@@ -1844,3 +1844,15 @@ fn the_commands_point_at_the_quick_guide() {
         assert!(!flat.contains('\u{2014}') && !flat.contains('\u{2013}'), "no em or en dashes");
     }
 }
+
+/// Setup and discovery both prompt for the marks and the run order.
+#[test]
+fn setup_and_discover_prompt_for_marks_and_the_run_order() {
+    for stem in ["setup", "discover"] {
+        let body = COMMANDS.iter().find(|c| c.stem == stem).unwrap().body.join("\n");
+        for word in ["changes", "needs_unchanged", "`set_autorun_order`", "reset points"] {
+            assert!(body.contains(word), "/tcm:{stem} never mentions {word}");
+        }
+        assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "/tcm:{stem} has a dash");
+    }
+}

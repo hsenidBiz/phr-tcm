@@ -117,6 +117,11 @@ without `quick` and read the full guide.
 - `release_autorun_browser` lets go of a browser the app still holds after
   it closed, and ends your own discovery. Never ask the person to restart
   the app.
+- When a case creates, deletes, publishes or submits shared data, or needs
+  the site in a particular state, mark it `changes` or `needs_unchanged`,
+  reusing one name for one change across the PBI. Once its scripts are
+  written, call `set_autorun_order` if an order is needed and report the
+  order and any reset points. State needed before a run: a precondition.
 "##;
 
 const GUIDE_BODY: &str = r##"An action script drives ONE test case through a real, visible browser -
@@ -958,6 +963,22 @@ does not change Run Tests' order. Without a saved order, Auto Run already
 works out a suggested order from the marks. A saved order replaces the
 suggestion for every later run until the person picks Use suggested order,
 so set one only when a particular order is wanted.
+
+A case that needs the site in a particular state is marked the same way.
+Case 136479 needs no cycles to exist, so it carries
+`"needs_unchanged": ["a cycle exists"]`, and every case that creates a
+cycle carries `"changes": ["a cycle exists"]`:
+
+    { "case_id": 136479, "title": "...", "needs_unchanged": ["a cycle exists"], "steps": [ ... ] }
+    { "case_id": 136480, "title": "...", "changes": ["a cycle exists"], "steps": [ ... ] }
+
+Then 136479 runs before the cases that create a cycle, and the environment
+does not need setting up again. When a case creates, deletes, publishes or
+submits shared data, or needs the site in a particular state, mark it
+`changes` or `needs_unchanged`, reusing one name for one change across the
+PBI. Once its scripts are written, call `set_autorun_order` if an order is
+needed and report the order and any reset points. State needed before a
+run: a precondition, declared in the case's `preconditions`, not a mark.
 
 ## Every expected result is checked
 

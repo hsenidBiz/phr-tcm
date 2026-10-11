@@ -1295,8 +1295,24 @@ fn every_quick_rule_is_in_the_full_guide() {
         ("stop and report to the person; never try again in a loop", "Discovering the app"),
         ("the app still holds after it closed", "Discovering the app"),
         ("Never ask the person to restart the app", "Discovering the app"),
+        ("creates, deletes, publishes or submits shared data, or needs the site in a particular state", "Shared state a case changes"),
+        ("reusing one name for one change across the PBI", "Shared state a case changes"),
+        ("call `set_autorun_order` if an order is needed", "Shared state a case changes"),
+        ("report the order and any reset points", "Shared state a case changes"),
+        ("State needed before a run: a precondition", "Shared state a case changes"),
     ] {
         assert!(quick.contains(phrase), "the quick rules never say {phrase:?}: {quick}");
         assert!(section(home).contains(phrase), "\"{home}\" never says {phrase:?}");
+    }
+}
+
+/// The quick rules prompt an assistant to mark the state a case changes or
+/// needs, and to set the run order once a PBI's scripts are written.
+#[test]
+fn the_quick_rules_prompt_marks_and_the_run_order() {
+    use v2_lib::autorun::guide::quick_rules;
+    let quick = quick_rules();
+    for word in ["`changes`", "`needs_unchanged`", "`set_autorun_order`", "reset points", "precondition"] {
+        assert!(quick.contains(word), "the quick rules never mention {word}");
     }
 }
