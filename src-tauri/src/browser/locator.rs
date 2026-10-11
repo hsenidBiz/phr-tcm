@@ -344,6 +344,29 @@ pub const LEGACY_JS: &str = r#"function(sel) {
   return el ? [el] : [];
 }"#;
 
+/// How many elements a legacy selector string could take, the same way
+/// `LEGACY_JS` looks for them but counting every one rather than keeping
+/// the first (css) or the last (`text=`): what a legacy target is filed as
+/// seen matching. `LEGACY_JS` itself is unchanged, so a run resolves the
+/// same element it always did. No visibility filter.
+pub const LEGACY_COUNT_JS: &str = r#"function(sel) {
+  if (sel.startsWith('text=')) {
+    const want = sel.slice(5).trim().toLowerCase();
+    const all = Array.from(this.querySelectorAll(
+      'button,a,[role=button],label,input,textarea,select,td,th,li,summary,h1,h2,h3,span,div'));
+    return all.filter((e) => ((e.innerText || e.value || '') + '').trim().toLowerCase().includes(want)).length;
+  }
+  return this.querySelectorAll(sel).length;
+}"#;
+
+/// How many elements the legacy selector string `sel` could take on the
+/// page (`LEGACY_COUNT_JS`), hidden ones included.
+pub async fn legacy_count<D: Driver>(d: &mut D, sel: &str) -> Result<usize, CdpError> {
+    let doc = page::document(d).await?;
+    let n = page::call_value(d, &doc, LEGACY_COUNT_JS, &[json!(sel)]).await?;
+    Ok(n.as_u64().map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX)))
+}
+
 /// `this` is the element.
 pub const VISIBLE_JS: &str = r#"function() {
   const r = this.getBoundingClientRect();

@@ -2237,11 +2237,20 @@ fn cycles_page(found: usize, visible: bool) -> ScriptedDriver {
     cycles_page_at("https://hr.example.internal/hr/cycles?page=2", found, visible)
 }
 
-/// `cycles_page`, at `href`.
+/// `cycles_page`, at `href`. A legacy string resolves as `LEGACY_JS`
+/// does, to its first match only, and `LEGACY_COUNT_JS` counts every one.
 fn cycles_page_at(href: &'static str, found: usize, visible: bool) -> ScriptedDriver {
+    let mut legacy_next = false;
     ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         match method {
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_JS => {
+                legacy_next = true;
+                Ok(json!({ "result": { "objectId": "arr" } }))
+            }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_COUNT_JS => {
+                Ok(json!({ "result": { "value": found } }))
+            }
             "Runtime.evaluate" if params["expression"] == "document" => Ok(json!({ "result": { "objectId": "doc" } })),
             "Runtime.evaluate" if params["expression"] == "location.href" => Ok(json!({ "result": { "value": href } })),
             "Runtime.evaluate" if params["expression"] == "document.title" => Ok(json!({ "result": { "value": "Cycles" } })),
@@ -2250,9 +2259,12 @@ fn cycles_page_at(href: &'static str, found: usize, visible: bool) -> ScriptedDr
                 "result": { "value": { "tag": "button", "text": "2", "rect": [10.0, 20.0, 30.0, 24.0] } }
             })),
             "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
-            "Runtime.getProperties" => Ok(json!({ "result": (0..found)
-                .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
-                .collect::<Vec<_>>() })),
+            "Runtime.getProperties" => {
+                let n = if std::mem::take(&mut legacy_next) { found.min(1) } else { found };
+                Ok(json!({ "result": (0..n)
+                    .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                    .collect::<Vec<_>>() }))
+            }
             other => panic!("a probe never sends {other} {params}"),
         }
     })

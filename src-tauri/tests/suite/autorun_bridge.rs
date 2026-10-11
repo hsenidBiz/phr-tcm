@@ -1569,9 +1569,17 @@ fn probed_page(found: usize) -> crate::common::ScriptedDriver {
 
 /// `probed_page`, at `href`.
 fn probed_page_at(href: &'static str, found: usize) -> crate::common::ScriptedDriver {
+    let mut legacy_next = false;
     crate::common::ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         match method {
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_JS => {
+                legacy_next = true;
+                Ok(serde_json::json!({ "result": { "objectId": "arr" } }))
+            }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_COUNT_JS => {
+                Ok(serde_json::json!({ "result": { "value": found } }))
+            }
             "Runtime.evaluate" if params["expression"] == "document" => {
                 Ok(serde_json::json!({ "result": { "objectId": "doc" } }))
             }
@@ -1588,9 +1596,12 @@ fn probed_page_at(href: &'static str, found: usize) -> crate::common::ScriptedDr
                 "result": { "value": { "tag": "button", "text": "Archive", "rect": [10.0, 20.0, 80.0, 24.0] } }
             })),
             "Runtime.callFunctionOn" => Ok(serde_json::json!({ "result": { "objectId": "arr" } })),
-            "Runtime.getProperties" => Ok(serde_json::json!({ "result": (0..found)
-                .map(|i| serde_json::json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
-                .collect::<Vec<_>>() })),
+            "Runtime.getProperties" => {
+                let n = if std::mem::take(&mut legacy_next) { found.min(1) } else { found };
+                Ok(serde_json::json!({ "result": (0..n)
+                    .map(|i| serde_json::json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                    .collect::<Vec<_>>() }))
+            }
             other => panic!("unexpected {other} {params}"),
         }
     })
@@ -1665,9 +1676,17 @@ async fn a_probe_with_no_match_records_nothing() {
 /// `probed_page`, every element found but only those whose index is in
 /// `shown` visible.
 fn probed_page_showing(found: usize, shown: &'static [usize]) -> crate::common::ScriptedDriver {
+    let mut legacy_next = false;
     crate::common::ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         match method {
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_JS => {
+                legacy_next = true;
+                Ok(serde_json::json!({ "result": { "objectId": "arr" } }))
+            }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_COUNT_JS => {
+                Ok(serde_json::json!({ "result": { "value": found } }))
+            }
             "Runtime.evaluate" if params["expression"] == "document" => {
                 Ok(serde_json::json!({ "result": { "objectId": "doc" } }))
             }
@@ -1686,9 +1705,12 @@ fn probed_page_showing(found: usize, shown: &'static [usize]) -> crate::common::
                 "result": { "value": { "tag": "button", "text": "Archive", "rect": [10.0, 20.0, 80.0, 24.0] } }
             })),
             "Runtime.callFunctionOn" => Ok(serde_json::json!({ "result": { "objectId": "arr" } })),
-            "Runtime.getProperties" => Ok(serde_json::json!({ "result": (0..found)
-                .map(|i| serde_json::json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
-                .collect::<Vec<_>>() })),
+            "Runtime.getProperties" => {
+                let n = if std::mem::take(&mut legacy_next) { found.min(1) } else { found };
+                Ok(serde_json::json!({ "result": (0..n)
+                    .map(|i| serde_json::json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                    .collect::<Vec<_>>() }))
+            }
             other => panic!("unexpected {other} {params}"),
         }
     })
@@ -1724,8 +1746,9 @@ async fn a_probe_that_matched_only_hidden_elements_records_nothing() {
 }
 
 /// One visible match beside a hidden one is filed as one; two visible are
-/// filed as two. A legacy string target counts the hidden one too, as a
-/// run does not leave it out.
+/// filed as two. A legacy string target resolves to its first match only:
+/// filed with every match, hidden ones included, when that first one is
+/// visible, and not at all when it is hidden, as a run would act on it.
 #[tokio::test]
 async fn a_probe_with_one_visible_and_one_hidden_records_one() {
     let dir = TempDir::new();
@@ -1739,9 +1762,14 @@ async fn a_probe_with_one_visible_and_one_hidden_records_one() {
     assert_eq!(archive_matched(both.path()), Some((2, 2)));
 
     let legacy = TempDir::new();
-    let (status, _) = probe_page(&mut probed_page_showing(2, &[1]), &archive(), Some(&sighting(legacy.path(), None))).await;
+    let (status, _) = probe_page(&mut probed_page_showing(2, &[0]), &archive(), Some(&sighting(legacy.path(), None))).await;
     assert_eq!(status, 200);
     assert_eq!(archive_matched(legacy.path()), Some((2, 2)));
+    let first_hidden = TempDir::new();
+    let (status, _) =
+        probe_page(&mut probed_page_showing(2, &[1]), &archive(), Some(&sighting(first_hidden.path(), None))).await;
+    assert_eq!(status, 200);
+    assert_eq!(archive_matched(first_hidden.path()), None, "a legacy target whose first match is hidden was filed");
 }
 
 /// A tried legacy string target is probed once the try worked and filed

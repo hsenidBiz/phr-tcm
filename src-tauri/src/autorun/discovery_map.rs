@@ -38,6 +38,12 @@
 //! `NOT_ONE`. A probe, a try or the record-on-page check of a refused save
 //! matches a locator against the page and files the number it found.
 //!
+//! A sighting and an element also keep `all`: how many elements the key
+//! matched hidden ones included, which is what a legacy string target
+//! acts on (`querySelector` takes the first match, hidden or not). It is
+//! left out when it equals `matched`, so a map written before it was kept
+//! reads it as `matched`. A count that is not known is `NOT_ONE`.
+//!
 //! Once a locator has been seen matching exactly one element it stays
 //! `1`; a later sighting matching several never undoes it. A map written
 //! before this was kept loads as `1`. The seen check lets a check that can
@@ -95,6 +101,11 @@ pub struct AreaMap {
     /// memory by the seen check for such checks alone, never saved.
     #[serde(skip)]
     pub saved_check_links: Vec<LocatorStep>,
+    /// The chains and narrowed locators the area's saved scripts use
+    /// outside such a check, whole, as written: read in memory by the seen
+    /// check, which takes them only written the same way, never saved.
+    #[serde(skip)]
+    pub saved_wholes: Vec<Vec<LocatorStep>>,
     /// The page the area's recorded route arrives on (`page_path` of its
     /// `arrived`), empty when it is not known: read in memory by the seen
     /// check (`seen_check::add_area_pages`) to prefer a "did you mean" seen
@@ -119,6 +130,22 @@ pub struct Sighting {
     /// matched. A map written before this was kept loads as `1`.
     #[serde(default = "one_match")]
     pub matched: u32,
+    /// How many it matched hidden ones included, when that is not
+    /// `matched` (see the module's notes): read through `all_matched`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all: Option<u32>,
+}
+
+impl Sighting {
+    /// How many it matched hidden ones included: `all`, else `matched`.
+    pub fn all_matched(&self) -> u32 {
+        self.all.unwrap_or(self.matched)
+    }
+}
+
+/// `all` as it is kept: left out when it is `matched`.
+fn kept_all(matched: u32, all: u32) -> Option<u32> {
+    (all != matched).then_some(all)
 }
 
 /// A chain or a narrowed locator seen whole: what that exact locator
@@ -142,10 +169,13 @@ fn one_match() -> u32 {
 }
 
 /// The `matched` a sighting holds after one more sighting matching `new`:
-/// one when either is one, else the newer number.
+/// one when either is one, else the newer number, unless that one is not
+/// known (`NOT_ONE`) and the older is.
 fn merged_matches(old: u32, new: u32) -> u32 {
     if old == 1 || new == 1 {
         1
+    } else if new == NOT_ONE {
+        old
     } else {
         new
     }
@@ -157,10 +187,16 @@ pub fn only_many(matched: u32) -> bool {
     matched > 1
 }
 
-/// What a link is filed as when all that is known is that its key may
-/// match more than the one element it found: a scope link of a chain, or a
-/// narrowed link (see the module's notes).
-pub const NOT_ONE: u32 = 2;
+/// What a link is filed as when its count is not known: a scope link of a
+/// chain, a narrowed link, a line of a read cut short, or the hidden
+/// matches of a structured locator (see the module's notes). It is never
+/// one, and is told apart from a real count of several (`counted`).
+pub const NOT_ONE: u32 = u32::MAX;
+
+/// Is `matched` a number actually counted, rather than `NOT_ONE`?
+pub fn counted(matched: u32) -> bool {
+    matched != NOT_ONE
+}
 
 /// Is `link` a whole locator on its own that names exactly what its key
 /// names: no `nth`, no `exact` and no `visible` narrowing it?
@@ -227,6 +263,23 @@ pub struct SeenElement {
     /// (`Sighting::matched`).
     #[serde(default = "one_match")]
     pub matched: u32,
+    /// Hidden ones included, kept as a sighting keeps it (`Sighting::all`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all: Option<u32>,
+}
+
+impl SeenElement {
+    /// How many it matched hidden ones included: `all`, else `matched`.
+    pub fn all_matched(&self) -> u32 {
+        self.all.unwrap_or(self.matched)
+    }
+
+    /// Takes one more sighting matching `matched`, `all` hidden included.
+    fn merge(&mut self, matched: u32, all: u32) {
+        let old_all = self.all_matched();
+        self.matched = merged_matches(self.matched, matched);
+        self.all = kept_all(self.matched, merged_matches(old_all, all));
+    }
 }
 
 #[derive(Serialize, Deserialize, specta::Type, Clone, Debug, PartialEq)]
@@ -523,7 +576,7 @@ pub fn record_read(
             // The full locator is the identity: the same name in two frames
             // is two elements.
             if let Some(e) = page.elements.iter_mut().find(|e| e.locator == line.locator) {
-                e.matched = merged_matches(e.matched, count);
+                e.merge(count, count);
                 continue;
             }
             let seen_at = old.iter().find(|e| e.locator == line.locator).map_or(0, |e| e.seen_at);
@@ -536,6 +589,7 @@ pub fn record_read(
                 required: line.required,
                 seen_at,
                 matched: count,
+                all: None,
             });
         }
         if let Some(started) = explores {
@@ -556,7 +610,7 @@ pub fn record_read(
             for link in line.locator.links() {
                 if let Some(key) = link.seen_key() {
                     shown.insert(key.clone());
-                    note_sighting(a, key, link, &path, now, discovery.is_some(), link_count);
+                    note_sighting(a, key, link, &path, now, discovery.is_some(), link_count, link_count);
                 }
             }
         }
@@ -573,20 +627,36 @@ pub fn record_read(
 /// when its key is there already and `refresh` is set, stamps it seen at
 /// `now` on `page`. A sighting matching one makes it one either way
 /// (`merged_matches`).
-fn note_sighting(a: &mut AreaMap, key: SeenKey, link: LocatorStep, page: &str, now: u64, refresh: bool, matched: u32) {
+#[allow(clippy::too_many_arguments)]
+fn note_sighting(
+    a: &mut AreaMap,
+    key: SeenKey,
+    link: LocatorStep,
+    page: &str,
+    now: u64,
+    refresh: bool,
+    matched: u32,
+    all: u32,
+) {
     match a.sightings.iter_mut().find(|s| s.key == key) {
-        Some(s) if refresh && now >= s.last_seen => {
-            s.last_seen = now;
-            s.link = link;
-            s.page = page.to_string();
-            s.matched = merged_matches(s.matched, matched);
-        }
         Some(s) => {
-            if matched == 1 {
-                s.matched = 1;
+            if refresh && now >= s.last_seen {
+                s.last_seen = now;
+                s.link = link;
+                s.page = page.to_string();
             }
+            let old_all = s.all_matched();
+            s.matched = merged_matches(s.matched, matched);
+            s.all = kept_all(s.matched, merged_matches(old_all, all));
         }
-        None => a.sightings.push(Sighting { key, link, page: page.to_string(), last_seen: now, matched }),
+        None => a.sightings.push(Sighting {
+            key,
+            link,
+            page: page.to_string(),
+            last_seen: now,
+            matched,
+            all: kept_all(matched, all),
+        }),
     }
 }
 
@@ -641,12 +711,8 @@ pub fn record_matched(
     record_matched_count(root, org, project, area, page_path, target, 1, now)
 }
 
-/// [`record_matched`] for a target that matched `matched` elements. `0`
-/// files nothing: a locator that matched nothing was never seen. A plain
-/// one-link target (`plain_target`) files that number on its link; any
-/// other files each link as `NOT_ONE` and keeps the whole target as an
-/// element of its own with that number. A link already seen matching one
-/// stays one (see the module's notes).
+/// [`record_matched_counts`] for a target whose hidden matches are the
+/// same as its visible ones (`all` is `matched`).
 #[allow(clippy::too_many_arguments)]
 pub fn record_matched_count(
     root: &Path,
@@ -658,19 +724,43 @@ pub fn record_matched_count(
     matched: usize,
     now: u64,
 ) -> Result<(), String> {
+    record_matched_counts(root, org, project, area, page_path, target, matched, matched, now)
+}
+
+/// [`record_matched`] for a target that matched `matched` elements, `all`
+/// of them with hidden ones included (`NOT_ONE` when that is not known).
+/// `0` files nothing: a locator that matched nothing was never seen. A
+/// plain one-link target (`plain_target`) files those numbers on its link;
+/// any other files each link as `NOT_ONE` and keeps the whole target in
+/// the area's `wholes` with `matched`. A link already seen matching one
+/// stays one (see the module's notes).
+#[allow(clippy::too_many_arguments)]
+pub fn record_matched_counts(
+    root: &Path,
+    org: &str,
+    project: &str,
+    area: Option<&str>,
+    page_path: &str,
+    target: &Target,
+    matched: usize,
+    all: usize,
+    now: u64,
+) -> Result<(), String> {
     if matched == 0 {
         return Ok(());
     }
-    let matched = u32::try_from(matched).unwrap_or(u32::MAX);
+    let matched = u32::try_from(matched).unwrap_or(NOT_ONE);
+    let all = u32::try_from(all.max(1)).unwrap_or(NOT_ONE);
     let plain = plain_target(target);
     let link_count = if plain { matched } else { NOT_ONE };
+    let link_all = if plain { all } else { NOT_ONE };
     let path = self::page_path(page_path);
     let area = canonical_area(root, org, project, area.unwrap_or(""));
     update(root, org, project, |map| {
         let a = area_mut(map, &area);
         for link in target.links() {
             if let Some(key) = link.seen_key() {
-                note_sighting(a, key, link, &path, now, true, link_count);
+                note_sighting(a, key, link, &path, now, true, link_count, link_all);
             }
         }
         trim_sightings(a);
@@ -683,7 +773,7 @@ pub fn record_matched_count(
                 // Only an element that is a plain link of this key takes the
                 // link's count: a chain keyed by it says nothing of the key.
                 if plain_target(&e.locator) {
-                    e.matched = merged_matches(e.matched, link_count);
+                    e.merge(link_count, link_all);
                 }
                 held = true;
             }
@@ -700,6 +790,7 @@ pub fn record_matched_count(
                 required: false,
                 seen_at: now,
                 matched: link_count,
+                all: kept_all(link_count, link_all),
                 locator: Target::One(link),
             });
         }

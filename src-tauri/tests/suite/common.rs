@@ -591,6 +591,10 @@ impl FakePage {
                 json!({ "result": { "value": self.probes[i] } })
             }
             "Runtime.callFunctionOn" if f == VISIBLE_JS => json!({ "result": { "value": self.visible } }),
+            // A legacy string's count of every match (`LEGACY_COUNT_JS`).
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_COUNT_JS => {
+                json!({ "result": { "value": self.found } })
+            }
             "Runtime.callFunctionOn" if f == HIGHLIGHT_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" if f == FOCUS_JS => json!({ "result": { "value": self.fill_kind } }),
             "Runtime.callFunctionOn" if f == HAS_FOCUS_JS => {

@@ -33,6 +33,7 @@ fn map_with(area: &str, path: &str, links: &[LocatorStep]) -> DiscoveryMap {
             required: false,
             seen_at: 0,
             matched: 1,
+            all: None,
         })
         .collect();
     DiscoveryMap {
@@ -881,6 +882,7 @@ fn a_not_filter_needs_its_inner_part_seen() {
         required: false,
         seen_at: 0,
         matched: 1,
+        all: None,
     });
     assert_eq!(check_seen(&chained, &none(), &with(has_badge), &[], None), Ok(()));
     let badge_elsewhere = joined(base_only.clone(), map_with("Payroll", "/payroll", &[css(".phr-mc-card .badge-draft")]));
@@ -1024,6 +1026,7 @@ fn only_a_picked_date_is_exempt() {
         required: false,
         seen_at: 0,
         matched: 1,
+        all: None,
     });
     let cell = one_step("Leave", serde_json::json!([click(serde_json::json!([
         { "role": "table", "name": "Due date" }, { "role": "cell", "name": "15/01/2027" }
@@ -1541,7 +1544,7 @@ fn did_you_mean_prefers_the_steps_area_page() {
     assert_eq!(check_seen(&map, &none(), &says("Step 2 of 9"), &[], None), hinted("did you mean text \"Step 4 of 99\"?"));
 
     // Kept sightings, by the page each was last seen on.
-    let sighting = |t: &str, page: &str| Sighting { key: text(t).seen_key().unwrap(), link: text(t), page: page.to_string(), last_seen: 1, matched: 1 };
+    let sighting = |t: &str, page: &str| Sighting { key: text(t).seen_key().unwrap(), link: text(t), page: page.to_string(), last_seen: 1, matched: 1, all: None };
     let mut kept = DiscoveryMap {
         areas: vec![AreaMap {
             area: "Cycles".into(),
@@ -1844,6 +1847,7 @@ fn sighted_matching(area: &str, link: LocatorStep, matched: u32) -> DiscoveryMap
                 page: "/cycles".to_string(),
                 last_seen: 1,
                 matched,
+                all: None,
             }],
             ..AreaMap::default()
         }],
@@ -2044,4 +2048,70 @@ fn a_change_broken_by_a_several_match_says_so() {
         format!("step 2: .row-edit {SEEN_ONLY_MANY} This change would break it.")
     );
     assert_eq!(u.broken_by_change(), "step 2: .row-edit was never seen on the live app; this change would break it.");
+}
+
+// ------------------------- saved chains, legacy counts, wording
+
+/// A saved script's chain vouches only as that whole chain: neither its
+/// scope nor its last link alone passes for a click.
+#[test]
+fn a_saved_chain_vouches_only_as_a_whole() {
+    let chain = serde_json::json!([{ "css": ".card" }, { "role": "button", "name": "Edit" }]);
+    let mut map = DiscoveryMap::default();
+    add_saved_scripts(&mut map, &[clicks(chain.clone())]);
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": ".card" })), &[], None).is_err());
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "role": "button", "name": "Edit" })), &[], None).is_err());
+    assert_eq!(check_seen(&map, &none(), &clicks(chain), &[], None), Ok(()));
+    // A check that may match several still takes its links.
+    let hidden = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".card" } }]));
+    assert_eq!(check_seen(&map, &none(), &hidden, &[], None), Ok(()));
+}
+
+/// A structured css probe with one visible match and a hidden one vouches
+/// for a structured click, never for a legacy one on the same key: the
+/// legacy string acts on the first match, which may be the hidden one.
+#[test]
+fn a_visible_one_with_a_hidden_twin_does_not_vouch_for_a_legacy_click() {
+    let filed_counts = |matched: usize, all: usize| {
+        let dir = tempfile::tempdir().unwrap();
+        let t: Target = serde_json::from_value(serde_json::json!({ "css": "#save" })).unwrap();
+        v2_lib::autorun::discovery_map::record_matched_counts(dir.path(), "Acme", "Web", Some("Cycles"), "/cycles", &t, matched, all, 1)
+            .unwrap();
+        v2_lib::autorun::discovery_map::load_map(dir.path(), "Acme", "Web").unwrap()
+    };
+    let structured = clicks(serde_json::json!({ "css": "#save" }));
+    let legacy = clicks(serde_json::json!("#save"));
+
+    let twin = filed_counts(1, 2);
+    assert_eq!(check_seen(&twin, &none(), &structured, &[], None), Ok(()));
+    assert_eq!(check_seen(&twin, &none(), &legacy, &[], None), Err(many_refusal(1, "#save")));
+
+    let alone = filed_counts(1, 1);
+    assert_eq!(check_seen(&alone, &none(), &legacy, &[], None), Ok(()));
+
+    // Hidden matches not known: the legacy click is refused as never
+    // counted, the structured one passes.
+    let unknown = filed_counts(1, v2_lib::autorun::discovery_map::NOT_ONE as usize);
+    assert_eq!(check_seen(&unknown, &none(), &structured, &[], None), Ok(()));
+    let refused = check_seen(&unknown, &none(), &legacy, &[], None).unwrap_err();
+    assert!(refused.contains("probe it as written"), "{refused}");
+
+    // A map written before `all` was kept reads it as `matched`.
+    let old = sighted_matching("Cycles", css("#save"), 1);
+    assert_eq!(check_seen(&old, &none(), &legacy, &[], None), Ok(()));
+}
+
+/// A link seen but never counted matching one (a chain's scope) is told to
+/// be probed as written; one counted matching several says so.
+#[test]
+fn a_link_never_counted_says_probe_it_as_written() {
+    let chain = filed(serde_json::json!([{ "css": ".card" }, { "role": "button", "name": "Edit" }]), 1);
+    let refused = check_seen(&chain, &none(), &clicks(serde_json::json!({ "css": ".card" })), &[], None).unwrap_err();
+    assert_eq!(
+        refused,
+        "Step 1: .card was seen on the live app, but never counted as matching exactly one element: probe it as written, then save again. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+    );
+    let three = filed(serde_json::json!({ "css": ".card" }), 3);
+    let refused = check_seen(&three, &none(), &clicks(serde_json::json!({ "css": ".card" })), &[], None).unwrap_err();
+    assert_eq!(refused, many_refusal(1, ".card"));
 }
