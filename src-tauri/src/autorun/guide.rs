@@ -965,14 +965,14 @@ suggestion for every later run until the person picks Use suggested order,
 so set one only when a particular order is wanted.
 
 A case that needs the site in a particular state is marked the same way.
-Case 136479 needs no cycles to exist, so it carries
+A case that checks an empty list needs no cycles to exist, so it carries
 `"needs_unchanged": ["a cycle exists"]`, and every case that creates a
 cycle carries `"changes": ["a cycle exists"]`:
 
-    { "case_id": 136479, "title": "...", "needs_unchanged": ["a cycle exists"], "steps": [ ... ] }
-    { "case_id": 136480, "title": "...", "changes": ["a cycle exists"], "steps": [ ... ] }
+    { "case_id": 601, "title": "...", "needs_unchanged": ["a cycle exists"], "steps": [ ... ] }
+    { "case_id": 602, "title": "...", "changes": ["a cycle exists"], "steps": [ ... ] }
 
-Then 136479 runs before the cases that create a cycle, and the environment
+Then case 601 runs before the cases that create a cycle, and the environment
 does not need setting up again. When a case creates, deletes, publishes or
 submits shared data, or needs the site in a particular state, mark it
 `changes` or `needs_unchanged`, reusing one name for one change across the
