@@ -1913,10 +1913,12 @@ fn check_imported_seen(
         for (u, hint) in crate::autorun::seen_check::check_seen_all_hinted(&map, &components, sc, text, None, &files) {
             lines.push(match (&u.refused, hint) {
                 (Some(why), _) => format!("Case {}, step {}: {why}.", sc.case_id, u.step),
-                (None, Some(hint)) => {
-                    format!("Case {}, step {}: {} was never seen on the live app; {hint}", sc.case_id, u.step, u.locator)
-                }
-                (None, None) => format!("Case {}, step {}: {} was never seen on the live app.", sc.case_id, u.step, u.locator),
+                (None, hint) => format!(
+                    "Case {}, step {}: {}",
+                    sc.case_id,
+                    u.step,
+                    crate::autorun::seen_check::never_seen(&u.locator, hint.as_deref())
+                ),
             });
         }
     }
