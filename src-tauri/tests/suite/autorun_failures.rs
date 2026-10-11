@@ -284,7 +284,6 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
     let expected = [
         "## Case 7 \"Leave request\" (run run-1700000000000, proposed Failed, verdict Failed)",
         "account: hr.admin",
-        "repairs so far: 1 of 3",
         "step 2, action 1: { \"kind\": \"click\", \"selector\": { \"role\": \"button\", \"name\": \"Save\" } }",
         "  page said: button \"Save\" not found",
         "  picture: shot-1-000002.jpg",
@@ -630,7 +629,9 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
     };
     let text = describe_failures(&run, std::slice::from_ref(&script));
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines[1..4], ["account: hr.admin", "area: Manage Cycle", "repairs so far: 0 of 3"], "{text}");
+    assert_eq!(lines[1..3], ["account: hr.admin", "area: Manage Cycle"], "{text}");
+    // Repairs have no limit, so the count is not something to act on.
+    assert!(!text.contains("repairs so far"), "{text}");
 
     for none in [None, Some("  ".to_string())] {
         script.area = none;

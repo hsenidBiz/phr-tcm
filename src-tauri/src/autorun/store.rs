@@ -323,15 +323,6 @@ fn write_script(root: &Path, script: &CaseScript) -> Result<(), String> {
     Ok(())
 }
 
-/// When the script's file was last written, as ISO 8601 UTC - what stands in
-/// for `saved_at` on a script saved before that field existed. `None` when
-/// there is no such file or the filesystem cannot say.
-pub fn script_modified(root: &Path, case_id: i32) -> Option<String> {
-    let path = scripts_dir(root).join(format!("case-{case_id}.json"));
-    let t = std::fs::metadata(path).ok()?.modified().ok()?;
-    Some(crate::applog::iso_of(t))
-}
-
 /// Every saved script that reads; one that does not is skipped, with a
 /// warning that names its file and never what is in it.
 pub fn list_scripts(root: &Path) -> Vec<CaseScript> {

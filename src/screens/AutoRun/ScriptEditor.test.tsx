@@ -82,7 +82,7 @@ test("a repaired script shows how many times and, when known, why", async () => 
     [],
   );
   await screen.findByText(
-    "Repaired 2 of 3 times by an assistant since you last saved. Last reason: the locator moved after a redesign",
+    "Repaired 2 times by an assistant since you last saved. Last reason: the locator moved after a redesign",
   );
 });
 

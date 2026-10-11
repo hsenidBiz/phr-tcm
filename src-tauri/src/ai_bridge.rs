@@ -3950,7 +3950,6 @@ pub fn dry_run_component_in<B: DiscoveryBrowser>(
                 "would_save": would.saved,
                 "version": would.version,
                 "changes": would.changes,
-                "cap_reached": would.cap_reached,
             })
             .to_string(),
         ),
@@ -5226,7 +5225,7 @@ fn repair_source(
 /// through the gate rather than around it. `repairs` is deliberately
 /// not compared: it is never the sender's to set. Nor are the marks
 /// (`changes`, `needs_unchanged`): they affect order, not safety, so
-/// marking a saved script is no repair and uses none of its count. The
+/// marking a saved script is no repair and does not add to its count. The
 /// sent marks are what is saved.
 fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::CaseScript) -> bool {
     old.title == sent.title
@@ -5242,47 +5241,6 @@ fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::Cas
                     == crate::autorun::edits::step_signature(b)
         })
 }
-/// The steps of `old`'s test case that the case itself changed or dropped
-/// since the script was saved: the case read as of the script's `saved_at`
-/// (or, for a script saved before that existed, its file's modified time)
-/// against the case now. Empty when there is no signed-in client or either
-/// read fails - the gate then judges the repair exactly as before.
-async fn steps_the_case_changed(
-    client: Option<&crate::ado::AdoClient>,
-    organization: &str,
-    root: &std::path::Path,
-    old: &crate::autorun::CaseScript,
-) -> std::collections::BTreeSet<i32> {
-    let none = std::collections::BTreeSet::new;
-    let Some(client) = client else { return none() };
-    let Some(as_of) = old
-        .saved_at
-        .clone()
-        .or_else(|| crate::autorun::store::script_modified(root, old.case_id))
-    else {
-        return none();
-    };
-    let before = match client.get_test_case_steps_as_of(organization, old.case_id, &as_of).await {
-        Ok(steps) => steps,
-        Err(e) => {
-            crate::applog::info(format!(
-                "Auto Run: case {} could not be read as of {as_of} to see what the case changed: {e:?}",
-                old.case_id
-            ));
-            return none();
-        }
-    };
-    let now = match client.get_test_cases_by_ids(organization, &[old.case_id], None, None).await {
-        Ok(cases) => match cases.into_iter().find(|c| c.id == old.case_id) {
-            Some(c) => c.steps,
-            None => return none(),
-        },
-        Err(_) => return none(),
-    };
-    crate::autorun::edits::steps_changed_by_case(&before, &now)
-}
-
-
 /// Save one or many Auto Run action scripts, as an assistant writes them.
 ///
 /// A BUNDLE by design: the body is an array, so a whole PBI's worth of
@@ -5291,8 +5249,7 @@ async fn steps_the_case_changed(
 ///
 /// ALL OR NOTHING, for real. Every gate below runs for every script
 /// before a single byte is written: the body parses, each change to a
-/// script that already exists is declared and takes a repair off the
-/// cap, and each script meets its test case's expected results. Only
+/// script that already exists is declared, and each script meets its test case's expected results. Only
 /// then does `store::save_scripts_atomically` run - and it validates and
 /// serialises every entry before writing any of them, so a bad case id
 /// or a filesystem error on entry 16 of 30 can never leave the other 29
@@ -5300,11 +5257,10 @@ async fn steps_the_case_changed(
 /// mid-run, with the browser already open in front of them.
 ///
 /// `repairs` NEVER comes from the body. It is the count of changes made
-/// without a person looking, and a sender that could set it could also
-/// set it back to zero, which is the whole of what the cap prevents. A
-/// script that comes back word for word unchanged costs nothing from
-/// that count: re-saving a whole PBI after fixing one case is exactly
-/// that, for every other case in the bundle.
+/// without a person looking, shown to the person in the script editor, and
+/// only a person's own save sets it back to zero. A script that comes back
+/// word for word unchanged does not add to it: re-saving a whole PBI after
+/// fixing one case is exactly that, for every other case in the bundle.
 async fn save_autorun_scripts(
     ctx: &BridgeContext,
     client: Option<&crate::ado::AdoClient>,
@@ -5401,7 +5357,7 @@ async fn save_autorun_scripts(
             // is of changes made without a person looking, so an
             // identical bundle - which is what saving a whole PBI again
             // after fixing one case IS, for every other case in it -
-            // must neither raise it nor run into the cap. A declaration
+            // must not raise it. A declaration
             // for such a case is still refused, by `check_edits`' own
             // rule 2: it names a step nothing happened to.
             Some(old) if unchanged_script(&old, sent) => {
@@ -5417,19 +5373,7 @@ async fn save_autorun_scripts(
                 lines.push(format!("case {} ({said})", script.case_id));
             }
             Some(old) => {
-                let mut verdict = crate::autorun::edits::check_edits(&old, sent, declared);
-                // Refused for losing checks: the test case itself may have
-                // changed or dropped those steps since the script was saved,
-                // and a repair that follows it is not weakening it. Only
-                // then is the case's history read - an ordinary repair costs
-                // no extra request.
-                if verdict.as_ref().err().is_some_and(|w| w.contains(crate::autorun::edits::NEVER_WEAKENED)) {
-                    let changed_by_case = steps_the_case_changed(client, &ctx.org, &root, &old).await;
-                    if !changed_by_case.is_empty() {
-                        verdict = crate::autorun::edits::check_edits_following_case(&old, sent, declared, &changed_by_case);
-                    }
-                }
-                if let Err(why) = verdict {
+                if let Err(why) = crate::autorun::edits::check_edits(&old, sent, declared) {
                     // A body with no declarations at all, refused for
                     // something a declaration would cover (the sentences
                     // that point at "edits"): say first that the list
@@ -5449,10 +5393,7 @@ async fn save_autorun_scripts(
                     }
                     return (400, why);
                 }
-                match crate::autorun::edits::next_repairs(&old) {
-                    Ok(n) => script.repairs = n,
-                    Err(why) => return (400, why),
-                }
+                script.repairs = old.repairs.saturating_add(1);
                 // `check_edits` above only returns Ok when a real change
                 // was fully declared, so `declared` is always Some here -
                 // there is no path where a script actually differs from
@@ -5476,12 +5417,7 @@ async fn save_autorun_scripts(
                         repair_sources.push(repair_source(&root, &old, e));
                     }
                 }
-                lines.push(format!(
-                    "case {} (repaired, {} of {} used)",
-                    script.case_id,
-                    script.repairs,
-                    crate::autorun::edits::MAX_REPAIRS
-                ));
+                lines.push(format!("case {} (repaired)", script.case_id));
             }
             None => {
                 if declared.is_some() {

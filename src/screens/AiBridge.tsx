@@ -1046,8 +1046,8 @@ export default function AiBridge() {
               at the page in the browser you opened, tries a locator or a single
               action there, reads what failed in a run, saves the scripts back one
               call for a whole PBI&apos;s cases, and notes what it learned about your
-              application. It never signs in, never removes a check you had, and
-              a script it has repaired three times comes back to you. Off, Auto Run stays
+              application. It never signs in, and the script editor shows how often
+              it has repaired a script since you last saved it. Off, Auto Run stays
               something you drive by hand.
             </li>
           )}

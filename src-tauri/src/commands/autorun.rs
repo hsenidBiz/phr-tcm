@@ -496,9 +496,6 @@ pub struct ComponentView {
     pub version: u32,
     /// How many times it has been changed so far.
     pub changes: u32,
-    /// After this many changes the assistant stops and asks the person
-    /// before changing it again.
-    pub cap: u32,
     /// The saved scripts that use it, by case id. While any do, it stays.
     pub used_by_cases: Vec<i32>,
 }
@@ -510,7 +507,7 @@ pub struct ComponentsView {
 
 /// The project's components, each with the scripts that use it.
 pub fn components_view(root: &std::path::Path, org: &str, project: &str) -> Result<ComponentsView, String> {
-    use crate::autorun::components::{load_components, users_of, CHANGE_CAP};
+    use crate::autorun::components::{load_components, users_of};
     let file = load_components(root, org, project)?;
     let components = file
         .components
@@ -524,7 +521,6 @@ pub fn components_view(root: &std::path::Path, org: &str, project: &str) -> Resu
             tried_area: c.tried_area,
             version: c.version,
             changes: c.changes,
-            cap: CHANGE_CAP,
         })
         .collect();
     Ok(ComponentsView { components })

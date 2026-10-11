@@ -10,7 +10,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { commands, type ComponentsView } from "../../bindings";
-import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { IconCancel, IconClear, IconRemove } from "../../lib/actionIcons";
@@ -132,14 +131,6 @@ export default function ComponentsDialog({
               <li key={c.name} aria-label={c.name} className="space-y-1 py-2">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span className="id-mono min-w-0 flex-1 break-words text-sm font-medium text-text">{c.name}</span>
-                  {c.changes >= c.cap && (
-                    <Badge
-                      className="bg-warning/15 text-warning"
-                      title={`Changed ${c.cap} times or more: the assistant stops and asks you before changing it again`}
-                    >
-                      Needs a look
-                    </Badge>
-                  )}
                   {removing === c.name ? (
                     <span role="group" aria-label={`Remove ${c.name}?`} className="flex flex-wrap items-center gap-2">
                       <span className="text-xs text-muted">Remove {c.name}? Scripts no longer use it.</span>
@@ -184,9 +175,8 @@ export default function ComponentsDialog({
                 <p className="flex flex-wrap gap-x-3 text-xs text-muted">
                   <span>Version {c.version}</span>
                   {c.changes > 0 && (
-                    <span className={c.changes >= c.cap ? "text-warning" : undefined}>
+                    <span>
                       Changed {c.changes} {c.changes === 1 ? "time" : "times"}
-                      {c.changes >= c.cap && "; the assistant stops and asks you before changing it again"}
                     </span>
                   )}
                 </p>

@@ -333,7 +333,7 @@ fn a_missing_input_is_named() {
 
 // ---- saving and removing ----
 
-use v2_lib::autorun::components::{draft_fingerprint, remove_unused, save_tried, TriedIn, CHANGE_CAP};
+use v2_lib::autorun::components::{draft_fingerprint, remove_unused, save_tried, TriedIn};
 use v2_lib::autorun::discovery_map::record_matched;
 
 /// "Pick a date": a target input for the field the calendar opens from, a
@@ -402,7 +402,7 @@ fn an_untried_component_is_refused() {
     described.description = "Picks a day in the calendar".into();
     let prints = tried(&[&c]);
     let saved = save_tried(dir.path(), "o", "p", described, None, session(&prints), 50, no_users()).unwrap();
-    assert_eq!((saved.saved.as_str(), saved.version, saved.changes, saved.cap_reached), ("Pick a date", 1, 0, false));
+    assert_eq!((saved.saved.as_str(), saved.version, saved.changes), ("Pick a date", 1, 0));
     let f = load_components(dir.path(), "o", "p").unwrap();
     let kept = find(&f, "pick a date").unwrap();
     assert_eq!((kept.tried_at, kept.tried_area.as_str(), kept.version), (50, "Leave", 1));
@@ -527,32 +527,62 @@ fn an_unseen_fixed_locator_is_refused() {
 }
 
 #[test]
-fn a_change_needs_why_and_may_not_weaken() {
+fn a_change_needs_why() {
     let dir = tempfile::tempdir().unwrap();
     calendar_seen(dir.path());
     let first = pick_a_date();
     let mut more = pick_a_date();
     more.actions.push(Action::CheckText { value: "picked".into() });
-    let mut weaker = pick_a_date();
-    weaker.actions.remove(1);
-    let prints = tried(&[&first, &more, &weaker]);
+    let prints = tried(&[&first, &more]);
     let save = |c: Component, why: Option<&str>| save_tried(dir.path(), "o", "p", c, why, session(&prints), 50, no_users());
 
     save(first, None).unwrap();
     let needs_why = "Pick a date is already saved: say why it changes in \"why\".";
     assert_eq!(save(more.clone(), None).unwrap_err(), needs_why);
     assert_eq!(save(more.clone(), Some("  ")).unwrap_err(), needs_why);
-    let err = save(weaker, Some("the calendar check is flaky")).unwrap_err();
-    assert_eq!(err, "Pick a date had 1 checks and now has 0 - an assertion is never removed or weakened by a repair");
     assert_eq!(find(&load_components(dir.path(), "o", "p").unwrap(), "pick a date").unwrap().version, 1);
     save(more, Some("checks the day was picked")).unwrap();
 }
 
+/// The owner's call: a change may drop a check, or turn one into an action
+/// that checks nothing. It still needs `why` and a live try first.
 #[test]
-fn a_change_bumps_version_and_counts_toward_the_cap() {
+fn a_component_change_may_remove_a_check() {
     let dir = tempfile::tempdir().unwrap();
     calendar_seen(dir.path());
-    let drafts: Vec<Component> = (0..5)
+    let first = pick_a_date();
+    // The calendar check dropped.
+    let mut dropped = pick_a_date();
+    dropped.actions.remove(1);
+    // The calendar check turned into a click that judges nothing.
+    let mut non_check = pick_a_date();
+    non_check.actions[1] = serde_json::from_value(json!({ "kind": "click", "selector": { "role": "dialog", "name": "Calendar" } })).unwrap();
+    assert!(!non_check.actions[1].is_check(), "the replacement checks nothing");
+    let prints = tried(&[&first, &dropped, &non_check]);
+    let save = |c: Component, why: Option<&str>| save_tried(dir.path(), "o", "p", c, why, session(&prints), 50, no_users());
+
+    save(first, None).unwrap();
+    assert_eq!(save(dropped.clone(), None).unwrap_err(), "Pick a date is already saved: say why it changes in \"why\".");
+    let s = save(dropped, Some("the calendar check is flaky")).unwrap();
+    assert_eq!((s.version, s.changes), (2, 1));
+    let s = save(non_check.clone(), Some("only click into the calendar")).unwrap();
+    assert_eq!((s.version, s.changes), (3, 2));
+    let kept = load_components(dir.path(), "o", "p").unwrap();
+    assert_eq!(find(&kept, "pick a date").unwrap().actions, non_check.actions);
+
+    // Untried, a change is still refused.
+    let mut untried = pick_a_date();
+    untried.actions.remove(1);
+    untried.actions.push(Action::CheckText { value: "never tried".into() });
+    let err = save(untried, Some("a check nobody tried")).unwrap_err();
+    assert!(err.contains("Try the component live in discovery first"), "{err}");
+}
+
+#[test]
+fn a_component_can_change_any_number_of_times() {
+    let dir = tempfile::tempdir().unwrap();
+    calendar_seen(dir.path());
+    let drafts: Vec<Component> = (0..8)
         .map(|n| {
             let mut c = pick_a_date();
             for _ in 0..n {
@@ -566,15 +596,13 @@ fn a_change_bumps_version_and_counts_toward_the_cap() {
     for (i, c) in drafts.into_iter().enumerate() {
         let why = (i > 0).then_some("one more check");
         let s = save_tried(dir.path(), "o", "p", c, why, session(&prints), 50 + i as u64, no_users()).unwrap();
-        got.push((s.version, s.changes, s.cap_reached));
+        got.push((s.version, s.changes));
     }
-    assert_eq!(CHANGE_CAP, 3);
-    // Past the cap a change still saves: the guide tells the assistant to
-    // stop and report.
-    assert_eq!(got, vec![(1, 0, false), (2, 1, false), (3, 2, false), (4, 3, true), (5, 4, true)]);
+    // Every change saves and is counted, with no limit.
+    assert_eq!(got, (1..=8).map(|v| (v, v - 1)).collect::<Vec<_>>());
     let kept = load_components(dir.path(), "o", "p").unwrap();
     let kept = find(&kept, "Pick a date").unwrap();
-    assert_eq!((kept.version, kept.changes, kept.tried_at), (5, 4, 54));
+    assert_eq!((kept.version, kept.changes, kept.tried_at), (8, 7, 57));
 }
 
 #[test]
@@ -652,7 +680,6 @@ fn load_components_command_counts_users() {
     assert_eq!(pick.tried_at, Some(1_759_000_000_000));
     assert_eq!(pick.version, 1);
     assert_eq!(pick.changes, 2);
-    assert_eq!(pick.cap, v2_lib::autorun::components::CHANGE_CAP);
     let unused = view.components.iter().find(|c| c.name == "unused").unwrap();
     assert!(unused.used_by_cases.is_empty());
 
@@ -905,4 +932,58 @@ fn an_input_link_with_other_fields_is_refused() {
         let err = chain.validate().unwrap_err();
         assert!(err.contains("an input placeholder stands alone"), "{err}");
     }
+}
+
+// ---- files written while repairs and changes were capped ----
+
+/// A script repaired past the old cap of 3, with its last reason, and a
+/// component changed past it, still load as they are, and both can be
+/// changed again.
+#[test]
+fn old_script_and_component_files_with_counts_still_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let scripts = dir.path().join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("case-31.json"),
+        serde_json::to_string_pretty(&json!({
+            "case_id": 31, "title": "Old", "repairs": 7, "last_repair": "the Save button moved",
+            "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "Saved" }] }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let old = v2_lib::autorun::store::load_script(dir.path(), 31).unwrap().unwrap();
+    assert_eq!((old.repairs, old.last_repair.as_deref()), (7, Some("the Save button moved")));
+    let mut repaired = old.clone();
+    repaired.steps[0].actions = vec![Action::Click { selector: serde_json::from_value(json!({ "css": "#save" })).unwrap() }];
+    let declared = v2_lib::autorun::edits::Edit {
+        case_id: 31,
+        steps: vec![1],
+        why: "the step only saves".into(),
+        quirk: None,
+        area: false,
+    };
+    assert_eq!(v2_lib::autorun::edits::check_edits(&old, &repaired, Some(&declared)), Ok(()));
+
+    calendar_seen(dir.path());
+    let mut stored = serde_json::to_value(pick_a_date()).unwrap();
+    stored["version"] = json!(6);
+    stored["changes"] = json!(5);
+    stored["tried_at"] = json!(40);
+    stored["tried_area"] = json!("Leave");
+    let path = components_path(dir.path(), "o", "p");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, serde_json::to_string_pretty(&json!({ "components": [stored] })).unwrap()).unwrap();
+    let file = load_components(dir.path(), "o", "p").unwrap();
+    let kept = find(&file, "pick a date").unwrap();
+    assert_eq!((kept.version, kept.changes), (6, 5));
+    let view = v2_lib::commands::autorun::components_view(dir.path(), "o", "p").unwrap();
+    assert_eq!((view.components[0].version, view.components[0].changes), (6, 5));
+
+    let mut more = pick_a_date();
+    more.actions.push(Action::CheckText { value: "picked".into() });
+    let prints = tried(&[&more]);
+    let s = save_tried(dir.path(), "o", "p", more, Some("checks the day"), session(&prints), 60, no_users()).unwrap();
+    assert_eq!((s.version, s.changes), (7, 6));
 }

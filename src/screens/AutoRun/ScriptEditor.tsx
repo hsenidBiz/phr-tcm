@@ -290,7 +290,8 @@ export default function ScriptEditor({
 
           {existing.data && (existing.data.repairs ?? 0) > 0 && (
             <p className="text-xs text-warning">
-              Repaired {existing.data.repairs} of 3 times by an assistant since you last saved.
+              Repaired {existing.data.repairs} {existing.data.repairs === 1 ? "time" : "times"} by an assistant since you
+              last saved.
               {existing.data.last_repair && ` Last reason: ${existing.data.last_repair}`}
             </p>
           )}

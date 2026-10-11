@@ -1,14 +1,13 @@
 //! The declared-edit gate: what an assistant must say before it may change
-//! an existing Auto Run script, and how many unsupervised repairs a script
-//! may take before a person has to look at it again.
+//! an existing Auto Run script.
 //!
 //! Pure functions over `CaseScript` - no browser, no filesystem. Nothing
 //! here judges whether an edit is a GOOD idea, only whether it was
-//! honestly declared and never quietly removed an assertion.
+//! honestly declared: a declared step may change in any way, a check
+//! dropped included, and an undeclared one stays exactly as it was.
 
 use super::nav::module_key;
 use super::{CaseScript, StepScript};
-use crate::browser::actions::Action;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What an assistant declares before it may change an existing script.
@@ -43,14 +42,6 @@ pub const PRECONDITIONS_KEPT: &str =
 pub const SETUP_KEPT: &str =
     "a repair cannot add, change or remove a script's setup - save the script itself to change it";
 
-/// The end of Rule 3's refusal - the save route looks for it to decide
-/// whether the test case's own history could excuse the change.
-pub const NEVER_WEAKENED: &str = "an assertion is never removed or weakened by a repair";
-
-/// How many times a script may be repaired by an assistant before a person
-/// must open it in the app and save it there, which resets the count.
-pub const MAX_REPAIRS: u32 = 3;
-
 /// A step's actions as the text the gate compares. Order matters (a
 /// reordered script is a different script); JSON formatting does not. The
 /// `unchecked` reason is folded in too, so changing just the reason still
@@ -61,21 +52,6 @@ pub fn step_signature(step: &StepScript) -> String {
         serde_json::to_string(&step.actions).unwrap_or_default(),
         step.unchecked.as_deref().unwrap_or("")
     )
-}
-
-/// How many of these actions JUDGE the page, rather than drive or wait
-/// for it.
-fn checks(actions: &[Action]) -> usize {
-    actions.iter().filter(|a| a.is_check()).count()
-}
-
-/// Rule 3's comparison, for any list of actions a repair changes (a
-/// script step's, or a component's): `None` when `new` judges the page at
-/// least as many times as `old`, else why not, to follow the step or the
-/// component it belongs to.
-pub fn weakens(old: &[Action], new: &[Action]) -> Option<String> {
-    let (before, after) = (checks(old), checks(new));
-    (after < before).then(|| format!("had {before} checks and now has {after} - {NEVER_WEAKENED}"))
 }
 
 /// Rule 1's sentence, for one or several undeclared steps together, sorted
@@ -100,7 +76,7 @@ fn declared_but_unchanged_sentence(nums: &BTreeSet<i32>) -> String {
 }
 
 /// The lowest step number that appears more than once in a script's steps,
-/// if any. A duplicate step number is what let a weakened copy hide behind
+/// if any. A duplicate step number is what let a changed copy hide behind
 /// an untouched one in the `BTreeMap` this module used to build straight
 /// from `old.steps` / `new.steps` - the map keeps only the last entry, but
 /// the runner still executes every entry in the `Vec`.
@@ -115,37 +91,8 @@ fn duplicate_step_number(steps: &[StepScript]) -> Option<i32> {
     dupes.into_iter().next()
 }
 
-/// The test case's steps that changed between two readings of it: the
-/// position (1-based, as a script numbers its steps) of every step whose
-/// action or expected result differs, and of every step `before` had that
-/// `now` no longer has. A step only `now` has changes nothing a script
-/// already checked, so it is not counted.
-pub fn steps_changed_by_case(before: &[crate::steps_xml::Step], now: &[crate::steps_xml::Step]) -> BTreeSet<i32> {
-    before
-        .iter()
-        .enumerate()
-        .filter(|(i, b)| now.get(*i) != Some(*b))
-        .map(|(i, _)| i as i32 + 1)
-        .collect()
-}
-
-/// Refuses an undeclared or weakening change. `old` is the script on disk.
+/// Refuses an undeclared change. `old` is the script on disk.
 pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) -> Result<(), String> {
-    check_edits_following_case(old, new, declared, &BTreeSet::new())
-}
-
-/// `check_edits`, for a repair that follows its test case: `changed_by_case`
-/// is the steps the case itself changed or dropped since the script was
-/// saved (`steps_changed_by_case`). Those steps may lose checks - the case
-/// no longer asks for them - and every other rule still holds: each one is
-/// still declared, and the save's expected-result floor still checks the
-/// script against the case as it is now.
-pub fn check_edits_following_case(
-    old: &CaseScript,
-    new: &CaseScript,
-    declared: Option<&Edit>,
-    changed_by_case: &BTreeSet<i32>,
-) -> Result<(), String> {
     // A duplicated step number defeats every check below it (the map built
     // from the Vec would silently keep only one of the two entries while
     // the runner executes both), so it is refused before anything else is
@@ -286,27 +233,5 @@ pub fn check_edits_following_case(
         return Err(declared_but_unchanged_sentence(&over_declared));
     }
 
-    // Rule 3: a repair never removes or weakens an assertion, declared or
-    // not - unless the test case itself changed or dropped that step since
-    // the script was saved: following the case is not weakening it.
-    for n in changed.iter().filter(|n| !changed_by_case.contains(n)) {
-        let old_actions = old_map.get(n).map_or(&[][..], |s| &s.actions[..]);
-        let new_actions = new_map.get(n).map_or(&[][..], |s| &s.actions[..]);
-        if let Some(why) = weakens(old_actions, new_actions) {
-            return Err(format!("step {n} {why}"));
-        }
-    }
-
     Ok(())
-}
-
-/// The repair count to write: one more than before, or a refusal once the
-/// cap is reached.
-pub fn next_repairs(old: &CaseScript) -> Result<u32, String> {
-    if old.repairs >= MAX_REPAIRS {
-        return Err(format!(
-            "this script has been repaired {MAX_REPAIRS} times without a person looking at it - open it in the app, save it there, and the count starts again"
-        ));
-    }
-    Ok(old.repairs + 1)
 }

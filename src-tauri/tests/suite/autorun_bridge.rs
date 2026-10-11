@@ -2,7 +2,7 @@
 //! the action-script format, look at the page in the browser the person
 //! opened, try a locator or a single action, read a run's failures,
 //! record a quirk - and save scripts back under the expected-result
-//! floor, the declared-edit gate and the repair cap.
+//! floor and the declared-edit gate.
 //!
 //! Only one of these routes reaches Azure DevOps, and only to read: the
 //! save route looks the test cases up so the floor has something to
@@ -141,7 +141,7 @@ async fn an_assistant_repair_may_add_preconditions_but_never_drop_or_change_one(
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &send(serde_json::json!([publish])), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired)");
 
     // Sent back as it is, with one more beside it: another repair.
     let (status, out) = route(
@@ -154,7 +154,7 @@ async fn an_assistant_repair_may_add_preconditions_but_never_drop_or_change_one(
     )
     .await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 2 of 3 used)");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired)");
 
     // Dropped, or changed: refused, and the saved script keeps both.
     let kept = v2_lib::autorun::edits::PRECONDITIONS_KEPT;
@@ -374,9 +374,8 @@ async fn a_new_script_needs_no_declaration_but_must_meet_the_floor() {
 
     // `repairs` is never the sender's to set: a bundle claiming 99 lands
     // as a new script at 0, and a declared repair lands at one more than
-    // the file had - not at whatever the body asked for. A sender that
-    // could write this field could also write it back to zero, which is
-    // the whole of what the cap prevents.
+    // the file had - not at whatever the body asked for. The count is what
+    // the person sees in the editor, so only a person's save resets it.
     let mut body = case_7("#toast", "Saved");
     body[0]["repairs"] = serde_json::json!(99);
     see_scripts(dir.path(), &body.to_string());
@@ -398,7 +397,7 @@ async fn a_new_script_needs_no_declaration_but_must_meet_the_floor() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out, "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
+    assert_eq!(out, "saved 1 script(s): case 7 (repaired)");
     assert_eq!(
         load_script(dir.path(), 7).unwrap().unwrap().repairs,
         1,
@@ -505,10 +504,11 @@ async fn a_case_the_organization_does_not_have_is_named() {
 // ------------------------------------------ the declared-edit gate on a save
 
 /// Changing a script that already exists is a REPAIR: every step touched
-/// has to be named, an assertion may never go, and the count of repairs
-/// taken since a person last saved it goes up by one.
+/// has to be named, and the count of repairs taken since a person last
+/// saved it goes up by one. A declared step may drop its check; the save
+/// still holds the script to its test case's expected results.
 #[tokio::test]
-async fn an_edit_must_be_declared_and_a_check_may_not_go() {
+async fn an_edit_must_be_declared_and_may_drop_a_check() {
     let dir = TempDir::new();
     let _root = crate::serial::autorun();
     set_root(dir.path().to_path_buf());
@@ -544,28 +544,45 @@ async fn an_edit_must_be_declared_and_a_check_may_not_go() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired)");
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
 
-    // Declared or not, the check itself may never be dropped.
-    let weakened = serde_json::json!({
-        "scripts": [{
-            "case_id": 7,
-            "title": "Save a rating",
-            "steps": [
-                { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
-                { "step_number": 2, "actions": [{ "kind": "click", "selector": "#save" }] }
-            ]
-        }],
-        "edits": [edit_step_2("the toast never appears in my run")],
-    })
-    .to_string();
-    see_scripts(dir.path(), &weakened);
-    let (status, out) =
-        route(&ctx(), Some(&client), "POST", "/autorun-script", &weakened, "1.0.0").await;
+    // The check dropped from a declared step: the gate lets it through,
+    // and the expected-result floor still asks for the toast.
+    let dropped = |unchecked: Option<&str>| {
+        let mut step_2 = serde_json::json!({ "step_number": 2, "actions": [{ "kind": "click", "selector": "#save" }] });
+        if let Some(why) = unchecked {
+            step_2["unchecked"] = serde_json::json!(why);
+        }
+        serde_json::json!({
+            "scripts": [{
+                "case_id": 7,
+                "title": "Save a rating",
+                "steps": [
+                    { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+                    step_2
+                ]
+            }],
+            "edits": [edit_step_2("the toast never appears in my run")],
+        })
+        .to_string()
+    };
+    let floor = dropped(None);
+    see_scripts(dir.path(), &floor);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &floor, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
-    assert!(out.contains("an assertion is never removed"), "{out}");
+    assert!(out.contains("step 2 expects"), "{out}");
+    assert!(!out.contains("never removed"), "{out}");
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1, "still one repair in");
+
+    let said = dropped(Some("the toast closes before it can be read"));
+    see_scripts(dir.path(), &said);
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &said, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired)");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.repairs, 2);
+    assert!(!on_disk.steps[1].actions.iter().any(|a| a.is_check()), "the check is gone");
 }
 
 /// A repair's `why` is persisted on the script itself, not just in the
@@ -680,7 +697,7 @@ async fn every_payload_shape_of_a_repair_keeps_its_edits() {
         see_scripts(dir.path(), &body);
         let (status, out) =
             route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
-        if status != 200 || !out.contains("case 7 (repaired, 1 of 3 used)") {
+        if status != 200 || !out.contains("case 7 (repaired)") {
             lost.push(format!("{name}: {status} {out}\n    body: {body}"));
         }
     }
@@ -803,7 +820,7 @@ async fn two_different_declarations_for_one_case_are_refused() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &same_twice.to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert!(out.contains("case 7 (repaired, 1 of 3 used)"), "{out}");
+    assert!(out.contains("case 7 (repaired)"), "{out}");
 }
 
 /// A top-level `edits` that is one object is a one-entry list, the same
@@ -829,7 +846,7 @@ async fn a_single_top_level_edit_object_is_a_one_entry_list() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert!(out.contains("case 7 (repaired, 1 of 3 used)"), "{out}");
+    assert!(out.contains("case 7 (repaired)"), "{out}");
 
     // Anything else that is not a list is still refused.
     let body = serde_json::json!({ "scripts": case_7("#toast", "Saved"), "edits": "two steps" }).to_string();
@@ -884,11 +901,12 @@ async fn a_bundles_own_edits_that_are_not_a_list_refuse_the_edits_beside_it() {
     assert_eq!(sent["edits"], beside, "{body}");
 }
 
-/// Three repairs without a person looking is the cap. Saving the script
-/// from the app's own editor (which writes `repairs: 0`) is what starts
+/// The owner's call: an assistant may repair a script as often as it
+/// needs. Each repair saves and is counted for the person to see; saving
+/// the script from the app's own editor (which writes `repairs: 0`) starts
 /// the count again.
 #[tokio::test]
-async fn the_fourth_repair_is_refused_until_a_person_saves() {
+async fn a_script_can_be_repaired_any_number_of_times() {
     let dir = TempDir::new();
     let _root = crate::serial::autorun();
     set_root(dir.path().to_path_buf());
@@ -907,9 +925,9 @@ async fn the_fourth_repair_is_refused_until_a_person_saves() {
     .await;
     assert_eq!(status, 200, "{out}");
 
-    for (n, value) in [(1u32, "v1"), (2, "v2"), (3, "v3")] {
+    for n in 1u32..=6 {
         let body = serde_json::json!({
-            "scripts": case_7("#toast", value),
+            "scripts": case_7("#toast", &format!("v{n}")),
             "edits": [edit_step_2("the toast wording changed again")],
         })
         .to_string();
@@ -917,23 +935,12 @@ async fn the_fourth_repair_is_refused_until_a_person_saves() {
         let (status, out) =
             route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
         assert_eq!(status, 200, "repair {n}: {out}");
-        assert!(out.contains(&format!("repaired, {n} of 3 used")), "repair {n}: {out}");
+        assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired)", "repair {n}");
+        assert!(!out.contains(" of 3"), "repair {n}: {out}");
         assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, n);
     }
-
-    let fourth = serde_json::json!({
-        "scripts": case_7("#toast", "v4"),
-        "edits": [edit_step_2("one more try")],
-    })
-    .to_string();
-    see_scripts(dir.path(), &fourth);
-    let (status, out) =
-        route(&ctx(), Some(&client), "POST", "/autorun-script", &fourth, "1.0.0").await;
-    assert_eq!(status, 400, "{out}");
-    assert!(out.contains("repaired 3 times without a person looking at it"), "{out}");
     let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
-    assert_eq!(on_disk.repairs, 3, "the refused fourth repair changed nothing");
-    assert_eq!(on_disk.steps[1].actions.len(), 2);
+    assert_eq!(serde_json::to_value(&on_disk.steps[1].actions[1]).unwrap()["value"], "v6");
 
     // What the app's editor does when the person saves: the same script,
     // written straight to the store with the count back at zero.
@@ -941,7 +948,7 @@ async fn the_fourth_repair_is_refused_until_a_person_saves() {
     save_scripts_atomically(dir.path(), &[reset]).unwrap();
 
     let again = serde_json::json!({
-        "scripts": case_7("#toast", "v5"),
+        "scripts": case_7("#toast", "v7"),
         "edits": [edit_step_2("the toast wording changed once more")],
     })
     .to_string();
@@ -949,7 +956,6 @@ async fn the_fourth_repair_is_refused_until_a_person_saves() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &again, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert!(out.contains("repaired, 1 of 3 used"), "{out}");
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
 }
 
@@ -1046,8 +1052,7 @@ fn case_9(value: &str) -> serde_json::Value {
 
 /// Saving a whole PBI again after fixing ONE case sends every other case
 /// back exactly as it was. That is not a repair of those cases, so it
-/// costs nothing from their count and can never run into the cap - which
-/// would otherwise lock a bundle after three fixes to any case in it.
+/// does not add to their count.
 #[tokio::test]
 async fn an_unchanged_script_costs_no_repair() {
     let dir = TempDir::new();
@@ -1087,7 +1092,7 @@ async fn an_unchanged_script_costs_no_repair() {
     assert_eq!(status, 200, "{out}");
     assert_eq!(
         out,
-        "saved 2 script(s): case 7 (repaired, 1 of 3 used), case 9 (unchanged)"
+        "saved 2 script(s): case 7 (repaired), case 9 (unchanged)"
     );
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
     assert_eq!(load_script(dir.path(), 9).unwrap().unwrap().repairs, 0, "case 9 paid nothing");
@@ -1105,7 +1110,7 @@ async fn an_unchanged_script_costs_no_repair() {
     assert_eq!(status, 400, "{out}");
     assert!(out.contains("declared but not changed"), "{out}");
 
-    // Case 7 all the way to the cap, then four identical re-sends of it.
+    // Case 7 repaired twice more, then four identical re-sends of it.
     for value in ["Saved!!", "Saved!!!"] {
         let body = serde_json::json!({
             "scripts": case_7("#toast", value),
@@ -1117,7 +1122,7 @@ async fn an_unchanged_script_costs_no_repair() {
             route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
         assert_eq!(status, 200, "{out}");
     }
-    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 3, "at the cap");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 3);
 
     for round in 1..=4 {
         see_scripts(dir.path(), &case_7("#toast", "Saved!!!").to_string());
@@ -2365,7 +2370,7 @@ fn record_two_areas(root: &std::path::Path) {
 
 /// Review of Task 8, finding 1: where a case starts is part of the script.
 /// A re-send that only moves it to another area is a change - refused
-/// undeclared, counted against the repair cap once declared - never
+/// undeclared, counted as a repair once declared - never
 /// "(unchanged)".
 #[tokio::test]
 async fn a_resend_that_only_changes_the_area_is_a_repair() {
@@ -2397,7 +2402,7 @@ async fn a_resend_that_only_changes_the_area_is_a_repair() {
     see_scripts(dir.path(), &declared);
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired)");
     let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(on_disk.area.as_deref(), Some("Manage Cycle"));
     assert_eq!(on_disk.repairs, 1);
@@ -2542,43 +2547,7 @@ fn the_active_environment_says_when_its_database_is_gone() {
     assert!(!text.contains("It has no database set."), "{text}");
 }
 
-/// Azure DevOps after case `id` was edited: the batch read returns its
-/// steps `now`, and reading the work item as of `as_of` (the script's own
-/// `saved_at`) returns what it said `before`. The as-of read answers only
-/// when asked for exactly that moment.
-async fn client_with_changed_case(id: i32, now: &[&str], before: &[&str], as_of: &str) -> (MockServer, AdoClient) {
-    let steps = |expected: &[&str]| -> String {
-        let s: Vec<Step> = expected
-            .iter()
-            .enumerate()
-            .map(|(i, e)| Step { action: format!("Step {}", i + 1), expected: (*e).to_string(), shared: None })
-            .collect();
-        build_steps_xml(&s)
-    };
-    let server = MockServer::start().await;
-    Mock::given(wm_method("GET"))
-        .and(wm_path("/acme/_apis/wit/workitems"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [{
-            "id": id,
-            "fields": { "System.Title": "Save a rating", "Microsoft.VSTS.TCM.Steps": steps(now) }
-        }] })))
-        .mount(&server)
-        .await;
-    Mock::given(wm_method("GET"))
-        .and(wm_path(format!("/acme/_apis/wit/workitems/{id}")))
-        .and(wiremock::matchers::query_param("asOf", as_of))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": id,
-            "fields": { "Microsoft.VSTS.TCM.Steps": steps(before) }
-        })))
-        .mount(&server)
-        .await;
-    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
-    (server, client)
-}
-
-/// Every save stamps the script with when it was saved: the moment a later
-/// repair reads the test case as of, to see what the case itself changed.
+/// Every save stamps the script with when it was saved.
 #[tokio::test]
 async fn a_saved_script_records_when_it_was_saved() {
     let dir = TempDir::new();
@@ -2590,14 +2559,14 @@ async fn a_saved_script_records_when_it_was_saved() {
         route(&ctx(), Some(&client), "POST", "/autorun-script", &case_7("#toast", "Saved").to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     let saved_at = load_script(dir.path(), 7).unwrap().unwrap().saved_at.expect("no saved_at");
-    // UTC, to the second, as Azure DevOps' asOf takes it: 2026-10-05T09:35:09Z
+    // UTC, to the second: 2026-10-05T09:35:09Z
     assert_eq!(saved_at.len(), 20, "{saved_at}");
     assert!(saved_at.ends_with('Z') && saved_at.as_bytes()[10] == b'T', "{saved_at}");
 }
 
 /// The case's step 2 dropped its expected result after the script was
-/// saved. A repair that follows it - step 2 no longer checks the toast - is
-/// a repair, not a weakening: it is accepted, declared, and counted.
+/// saved. A repair that follows it, step 2 no longer checking the toast, is
+/// accepted, declared and counted, like any repair that drops a check.
 #[tokio::test]
 async fn a_repair_may_follow_what_the_case_itself_changed() {
     let dir = TempDir::new();
@@ -2608,9 +2577,8 @@ async fn a_repair_may_follow_what_the_case_itself_changed() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &case_7("#toast", "Saved").to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    let saved_at = load_script(dir.path(), 7).unwrap().unwrap().saved_at.expect("no saved_at");
 
-    let (_changed, client) = client_with_changed_case(7, &["", ""], &["", "A toast says Saved"], &saved_at).await;
+    let (_changed, client) = client_with_cases(&[(7, "Save a rating", &["", ""])]).await;
     let following = serde_json::json!({
         "scripts": [{
             "case_id": 7,
@@ -2627,46 +2595,12 @@ async fn a_repair_may_follow_what_the_case_itself_changed() {
     let (status, out) =
         route(&ctx(), Some(&client), "POST", "/autorun-script", &following, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
-    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
-}
-
-/// The as-of read says the case is exactly as it was: nothing the case
-/// changed excuses a dropped check, so the old refusal stands.
-#[tokio::test]
-async fn a_repair_against_an_unchanged_case_still_may_not_drop_a_check() {
-    let dir = TempDir::new();
-    let _root = crate::serial::autorun();
-    set_root(dir.path().to_path_buf());
-    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
-    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
-    let (status, out) =
-        route(&ctx(), Some(&client), "POST", "/autorun-script", &case_7("#toast", "Saved").to_string(), "1.0.0").await;
-    assert_eq!(status, 200, "{out}");
-    let saved_at = load_script(dir.path(), 7).unwrap().unwrap().saved_at.expect("no saved_at");
-
-    let (_same, client) =
-        client_with_changed_case(7, &["", "A toast says Saved"], &["", "A toast says Saved"], &saved_at).await;
-    let weakened = serde_json::json!({
-        "scripts": [{
-            "case_id": 7,
-            "title": "Save a rating",
-            "steps": [
-                { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
-                { "step_number": 2, "actions": [{ "kind": "click", "selector": "#save" }] }
-            ]
-        }],
-        "edits": [edit_step_2("the toast never appears in my run")],
-    })
-    .to_string();
-    see_scripts(dir.path(), &weakened);
-    let (status, out) =
-        route(&ctx(), Some(&client), "POST", "/autorun-script", &weakened, "1.0.0").await;
-    assert_eq!(status, 400, "{out}");
-    assert!(out.contains("an assertion is never removed"), "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired)");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
 }
 
 /// Marks affect order, not safety: an assistant marking a saved script
-/// needs no "edits", uses none of the repair count, and the save says the
+/// needs no "edits", does not add to the repair count, and the save says the
 /// marks changed. A re-send with the same marks is unchanged again, and
 /// one that leaves them out drops them.
 #[tokio::test]
@@ -3240,7 +3174,7 @@ async fn a_dry_run_writes_and_records_nothing() {
     see_scripts(dir.path(), &case_7(".toast", "Saved").to_string());
     let seen = every_file(dir.path());
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry(".toast", true), "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (repaired, 1 of 3 used)"));
+    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (repaired)"));
     assert_eq!(every_file(dir.path()), seen, "a dry run that passed changed a file");
     let kept = load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(kept.repairs, 0);
