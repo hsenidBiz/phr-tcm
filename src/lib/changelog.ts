@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.9",
+    date: "2026-10-11",
+    items: [
+      "Your assistant can repair an Auto Run script, or change a component, as often as it needs to, and a repair may drop a check that no longer applies. A step it leaves unchecked still says why, and the script editor shows how often a script was repaired since you last saved it.",
+    ],
+  },
+  {
     version: "2.1.3-beta.8",
     date: "2026-10-11",
     items: [
