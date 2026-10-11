@@ -1036,7 +1036,8 @@ the action fails and says how many: narrow it with a list, `"exact"`, or
 `"nth"` (zero-based: `{ "css": "tbody tr", "nth": 0 }` is the first row).
 `nth` picks from THAT entry's matches across everything the previous
 entry matched, taken in page order, not from the matches inside one of
-them. Only `expect_count` and `expect_hidden` are happy with many.
+them. Only `expect_count`, `expect_hidden` and `wait_for` are happy with
+many.
 
 A misspelt field is rejected, not ignored. Each entry takes exactly one
 of `role`, `text` or `css`.
