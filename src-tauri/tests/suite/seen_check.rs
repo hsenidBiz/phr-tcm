@@ -2115,3 +2115,32 @@ fn a_link_never_counted_says_probe_it_as_written() {
     let refused = check_seen(&three, &none(), &clicks(serde_json::json!({ "css": ".card" })), &[], None).unwrap_err();
     assert_eq!(refused, many_refusal(1, ".card"));
 }
+
+/// A saved structured css click vouched for its one visible match, which
+/// says nothing of a hidden twin: it never vouches for a legacy click on
+/// the same selector. A saved legacy click does.
+#[test]
+fn a_saved_structured_click_does_not_vouch_for_a_legacy_click() {
+    let legacy = clicks(serde_json::json!("#save"));
+    let mut structured = DiscoveryMap::default();
+    add_saved_scripts(&mut structured, &[clicks(serde_json::json!({ "css": "#save" }))]);
+    assert_eq!(check_seen(&structured, &none(), &clicks(serde_json::json!({ "css": "#save" })), &[], None), Ok(()));
+    assert!(check_seen(&structured, &none(), &legacy, &[], None).is_err());
+
+    let mut saved_legacy = DiscoveryMap::default();
+    add_saved_scripts(&mut saved_legacy, &[clicks(serde_json::json!("#save"))]);
+    assert_eq!(check_seen(&saved_legacy, &none(), &legacy, &[], None), Ok(()));
+}
+
+/// Filed knowing only the count the target gives, a structured css
+/// locator leaves its hidden matches not known, so it vouches for a
+/// structured click and not a legacy one; a legacy string's count is
+/// every match, so it vouches for a legacy click.
+#[test]
+fn a_structured_css_count_never_stands_for_its_hidden_matches() {
+    let structured = filed(serde_json::json!({ "css": "#save" }), 1);
+    assert_eq!(check_seen(&structured, &none(), &clicks(serde_json::json!({ "css": "#save" })), &[], None), Ok(()));
+    assert!(check_seen(&structured, &none(), &clicks(serde_json::json!("#save")), &[], None).is_err());
+    let legacy = filed(serde_json::json!("#save"), 1);
+    assert_eq!(check_seen(&legacy, &none(), &clicks(serde_json::json!("#save")), &[], None), Ok(()));
+}

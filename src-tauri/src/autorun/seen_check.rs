@@ -102,7 +102,8 @@
 //! A legacy string target acts on the first match, hidden or not, so its
 //! use that needs one needs its key seen matching exactly one element
 //! with hidden ones included (`Sighting::all_matched`); a structured one
-//! needs exactly one visible match.
+//! needs exactly one visible match. A saved script's link vouches for a
+//! legacy use only when that script wrote it as a legacy string too.
 //!
 //! Only exactly the locator that was seen matching one counts as one. A
 //! plain one-link locator (`discovery_map::plain_link`) is compared by its
@@ -267,6 +268,11 @@ fn one_only(map: &DiscoveryMap, legacy: bool) -> DiscoveryMap {
     let mut out = map.clone();
     for a in &mut out.areas {
         a.sightings.retain(|s| !only_many(if legacy { s.all_matched() } else { s.matched }));
+        // A legacy use takes only what a saved script wrote as a legacy
+        // string: a structured css locator vouched for its visible match.
+        if legacy {
+            a.saved_links = std::mem::take(&mut a.saved_legacy_links);
+        }
         for p in &mut a.pages {
             // A chain or a narrowed locator counts only as a whole
             // (`whole_matched`), never by the keys of its links.
@@ -995,6 +1001,9 @@ pub fn add_saved_scripts(map: &mut DiscoveryMap, scripts: &[CaseScript]) {
             }
             for link in links {
                 if !many && plain {
+                    if target.is_legacy() && !a.saved_legacy_links.contains(&link) {
+                        a.saved_legacy_links.push(link.clone());
+                    }
                     if !a.saved_links.contains(&link) {
                         a.saved_check_links.retain(|l| *l != link);
                         a.saved_links.push(link);

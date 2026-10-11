@@ -106,6 +106,12 @@ pub struct AreaMap {
     /// check, which takes them only written the same way, never saved.
     #[serde(skip)]
     pub saved_wholes: Vec<Vec<LocatorStep>>,
+    /// Of `saved_links`, those a saved script wrote as a legacy string
+    /// target: the only ones the seen check takes for a legacy use, as a
+    /// structured css locator says nothing of its hidden matches. Read in
+    /// memory, never saved.
+    #[serde(skip)]
+    pub saved_legacy_links: Vec<LocatorStep>,
     /// The page the area's recorded route arrives on (`page_path` of its
     /// `arrived`), empty when it is not known: read in memory by the seen
     /// check (`seen_check::add_area_pages`) to prefer a "did you mean" seen
@@ -711,8 +717,12 @@ pub fn record_matched(
     record_matched_count(root, org, project, area, page_path, target, 1, now)
 }
 
-/// [`record_matched_counts`] for a target whose hidden matches are the
-/// same as its visible ones (`all` is `matched`).
+/// [`record_matched_counts`] knowing only the count `target` itself gives:
+/// a legacy string counts hidden matches already, so its `all` is that
+/// count; a structured one-link css locator counts only visible ones, and
+/// its key is a legacy string's too, so its hidden matches are left not
+/// known (`NOT_ONE`); any other locator's `all` is never read for a legacy
+/// use, and is that count.
 #[allow(clippy::too_many_arguments)]
 pub fn record_matched_count(
     root: &Path,
@@ -724,7 +734,9 @@ pub fn record_matched_count(
     matched: usize,
     now: u64,
 ) -> Result<(), String> {
-    record_matched_counts(root, org, project, area, page_path, target, matched, matched, now)
+    let structured_css = !target.is_legacy() && plain_target(target) && target.links().first().is_some_and(|l| l.css.is_some());
+    let all = if structured_css { NOT_ONE as usize } else { matched };
+    record_matched_counts(root, org, project, area, page_path, target, matched, all, now)
 }
 
 /// [`record_matched`] for a target that matched `matched` elements, `all`

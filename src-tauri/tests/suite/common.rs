@@ -547,6 +547,9 @@ pub struct FakePage {
     pub looks: Cell<usize>,
     pub probed: Cell<usize>,
     pub read: Cell<usize>,
+    /// Was the last locator function `LEGACY_JS`? Its next element list
+    /// then holds the first match only, as the real one returns.
+    pub legacy_next: Cell<bool>,
 }
 
 impl Default for FakePage {
@@ -567,6 +570,7 @@ impl Default for FakePage {
             looks: Cell::new(0),
             probed: Cell::new(0),
             read: Cell::new(0),
+            legacy_next: Cell::new(false),
         }
     }
 }
@@ -591,6 +595,11 @@ impl FakePage {
                 json!({ "result": { "value": self.probes[i] } })
             }
             "Runtime.callFunctionOn" if f == VISIBLE_JS => json!({ "result": { "value": self.visible } }),
+            // A legacy string resolves to its first match only.
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_JS => {
+                self.legacy_next.set(true);
+                json!({ "result": { "objectId": "arr" } })
+            }
             // A legacy string's count of every match (`LEGACY_COUNT_JS`).
             "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_COUNT_JS => {
                 json!({ "result": { "value": self.found } })
@@ -617,6 +626,7 @@ impl FakePage {
             "Runtime.getProperties" => {
                 self.looks.set(self.looks.get() + 1);
                 let n = if self.looks.get() >= self.appears_on_look { self.found } else { 0 };
+                let n = if self.legacy_next.replace(false) { n.min(1) } else { n };
                 json!({ "result": (0..n)
                     .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
                     .collect::<Vec<_>>() })
