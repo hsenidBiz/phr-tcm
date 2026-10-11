@@ -1449,11 +1449,36 @@ fn the_component_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
     assert!(discover["inputSchema"]["properties"]["draft"].is_object(), "{discover}");
     let save = tool("save_autorun_component");
     let d = save["description"].as_str().unwrap();
-    for said in ["discover_autorun_action", "draft", "why", "3"] {
+    for said in ["discover_autorun_action", "draft", "why", "tried live again"] {
         assert!(d.contains(said), "the save tool never says {said:?}: {d}");
     }
     let d = tool("remove_autorun_component")["description"].as_str().unwrap().to_string();
     assert!(d.contains("uses it"), "{d}");
+}
+
+/// The owner's call: scripts are repaired and components changed as often
+/// as needed, and either may drop a check. Neither save tool names a cap
+/// or a rule against dropping a check; the script save still says steps
+/// left out of `edits` stay as they were.
+#[test]
+fn the_save_tools_name_no_cap_and_let_a_check_go() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let description = |name: &str| {
+        v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap()["description"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let script = description("save_autorun_script");
+    assert!(script.contains("Steps you leave out of `edits` must stay exactly as they were"), "{script}");
+    assert!(script.contains("removing a check included"), "{script}");
+    let component = description("save_autorun_component");
+    for d in [&script, &component] {
+        for gone in ["three repairs", "never removed or weakened", "cap_reached", "may not remove a check", "accepted changes"] {
+            assert!(!d.contains(gone), "a save tool still says {gone:?}: {d}");
+        }
+    }
 }
 
 /// `get_autorun_guide` no longer sends the assistant to the source: the

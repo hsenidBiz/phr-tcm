@@ -11,7 +11,6 @@
 //! script alone.
 
 use super::components::{ran_actions, ComponentFile, Ran};
-use super::edits::MAX_REPAIRS;
 use super::nav;
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
 use super::{store, CaseRecord, CaseScript, LocalRun, StepRecord};
@@ -231,8 +230,8 @@ fn push_downloads(step: &StepRecord, out: &mut Vec<String>) {
     }
 }
 
-/// One failed case's whole block: header, account and repair count when
-/// known, the stop reason when there is one, every failed or skipped
+/// One failed case's whole block: header, account and area when known,
+/// the stop reason when there is one, every failed or skipped
 /// step, and the person's own note last.
 fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, components: &ComponentFile, root: Option<&Path>) -> String {
     let mut lines: Vec<String> = Vec::new();
@@ -255,9 +254,6 @@ fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, c
     }
     if let Some(area) = script.and_then(CaseScript::area_name) {
         lines.push(format!("area: {area}"));
-    }
-    if let Some(s) = script {
-        lines.push(format!("repairs so far: {} of {MAX_REPAIRS}", s.repairs));
     }
     if let Some(m) = script.and_then(|s| s.suspected_defect.as_ref()) {
         lines.push(format!("suspected defect at step {}: {}", m.step_number, m.note));

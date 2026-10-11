@@ -294,7 +294,6 @@ fn the_guide_teaches_the_floor_the_gate_and_the_page_tools() {
         "unchecked",
         "edits",
         "STOP",
-        "never removed",
     ] {
         assert!(g.contains(term), "the guide never mentions `{term}`");
     }
@@ -339,6 +338,37 @@ fn the_guide_lists_every_refusal_the_edit_gate_can_give() {
     ] {
         assert!(g.contains(term), "the guide never mentions `{term}`");
     }
+}
+
+/// The owner's call: a repair may change a declared step in any way,
+/// removing a check included, and a script may be repaired as often as it
+/// needs. The guide says so, and no longer names a cap on repairs or
+/// changes, or a rule against dropping a check.
+#[test]
+fn the_guide_lets_a_repair_drop_a_check_and_names_no_repair_cap() {
+    let g = autorun_guide();
+    let flat = g.split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "removing one or turning it into an action that checks nothing included",
+        "Every step it does not declare stays exactly as it was",
+        "A script may be repaired as often as it needs.",
+    ] {
+        assert!(flat.contains(said), "the guide never says {said:?}");
+    }
+    for gone in [
+        "repair cap",
+        "never removed or weakened",
+        "repaired 3 times",
+        "a script's 3 repairs",
+        "a component's 3 changes",
+        "accepted changes",
+        "never weaker",
+    ] {
+        assert!(!flat.contains(gone), "the guide still says {gone:?}");
+    }
+    let quick = v2_lib::autorun::guide::quick_rules();
+    assert!(quick.contains("you reach a cap"), "the quick rules lost their stop-at-a-cap rule");
+    assert!(!quick.contains("repair cap") && !quick.contains("3 changes"), "{quick}");
 }
 
 /// Every `STOP:` line `failures::stop_reason` can give is listed in the
@@ -954,7 +984,7 @@ fn areas_without_a_map_or_stale_are_listed() {
 /// Writing a script follows the generator pattern: each step is carried
 /// out live while it is written, and the script is saved once, after every
 /// step has run. A replay comes only after the save, and a fix then is a
-/// repair - the repair cap is not spent on first drafts.
+/// repair, declared in `edits`.
 #[test]
 fn the_guide_saves_a_script_only_after_every_step_was_carried_out() {
     let g = autorun_guide();
@@ -963,7 +993,7 @@ fn the_guide_saves_a_script_only_after_every_step_was_carried_out() {
     for said in [
         "carry each step's actions out live with `discover_autorun_action` as you write them",
         "Save with `save_autorun_script` only once every step has been carried out",
-        "any fix after the save is a repair: declared in `edits`, and counted toward the repair cap",
+        "any fix after the save is a repair, declared in `edits`",
     ] {
         assert!(flat.contains(said), "the discovery section never says {said:?}: {flat}");
     }
@@ -1013,7 +1043,7 @@ fn the_areas_section_and_the_guide_give_one_rule_for_area() {
 }
 
 /// Two components as a project might hold them: one with both kinds of
-/// input, changed up to the cap, and one with none.
+/// input, changed a few times, and one with none.
 fn sample_components() -> v2_lib::autorun::components::ComponentFile {
     serde_json::from_value(serde_json::json!({ "components": [
         {
@@ -1044,11 +1074,10 @@ fn sample_components() -> v2_lib::autorun::components::ComponentFile {
 /// The guide teaches components: what one is, its two kinds of input with
 /// a "Pick a date" example that is a real component and a real use of it,
 /// when to make one, to use one already saved, how a draft is tried live
-/// before the save, the save rules, the change rule and the cap, and
-/// removal.
+/// before the save, the save rules, the change rule, and removal.
 #[test]
 fn the_guide_teaches_components() {
-    use v2_lib::autorun::components::{check_component, expand, Component, CHANGE_CAP};
+    use v2_lib::autorun::components::{check_component, expand, Component};
     let g = autorun_guide();
     let at = g.find("\n## Components\n").expect("the guide has no Components section");
     let section = g[at + 1..].split("\n## ").next().unwrap();
@@ -1077,9 +1106,8 @@ fn the_guide_teaches_components() {
         "cannot hold `{{` or `}}`",
         // Changing one.
         "`why`",
-        "never weaker",
+        "It may change anything, dropping a check included.",
         "tried live again",
-        "stop and report to the person",
         // Removing one.
         "`remove_autorun_component`",
         "while a saved script uses it",
@@ -1088,7 +1116,9 @@ fn the_guide_teaches_components() {
     ] {
         assert!(flat.contains(said), "the Components section never says {said:?}: {flat}");
     }
-    assert!(flat.contains(&format!("{CHANGE_CAP} accepted changes")), "{flat}");
+    for gone in ["never weaker", "accepted changes", "stop and report to the person"] {
+        assert!(!flat.contains(gone), "the Components section still says {gone:?}: {flat}");
+    }
     assert!(!section.contains('\u{2013}') && !section.contains('\u{2014}'), "a dash crept in");
 
     // The example is a component the save would take, and a use of it the
@@ -1111,8 +1141,8 @@ fn the_guide_teaches_components() {
 }
 
 /// The live guide lists this project's components: each one's name, its
-/// inputs as `name: kind`, and its description; a component at the change
-/// cap says so. With none saved, nothing is added.
+/// inputs as `name: kind`, and its description. A component changed many
+/// times is listed like any other. With none saved, nothing is added.
 #[test]
 fn the_live_guide_lists_this_projects_components() {
     use v2_lib::autorun::components::{guide_section, ComponentFile};
@@ -1123,12 +1153,11 @@ fn the_live_guide_lists_this_projects_components() {
     for said in [
         "- Pick a date (field: target, day: text): Picks a day in a date field's calendar.",
         "- Close the toast (no inputs): Closes the message in the corner, when one shows.",
-        "Pick a date has had 3 accepted changes: stop and report to the person before changing it again.",
         "use_component",
     ] {
         assert!(flat.contains(said), "the list never says {said:?}: {section}");
     }
-    assert!(!flat.contains("Close the toast has had"), "{section}");
+    assert!(!flat.contains("accepted changes"), "{section}");
     assert!(!section.contains('\u{2013}') && !section.contains('\u{2014}'), "a dash crept in");
 }
 

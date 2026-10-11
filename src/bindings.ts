@@ -582,11 +582,8 @@ export const commands = {
 	needs_unchanged?: string[],
 	/**
 	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
-	 *  every save (`store::save_scripts_atomically`), whatever was sent. A
-	 *  repair reads the test case as of this moment to see which steps the
-	 *  case itself has changed since (`edits::check_edits_following_case`).
-	 *  Absent on scripts saved before it existed; the file's own modified
-	 *  time stands in for it then.
+	 *  every save (`store::save_scripts_atomically`), whatever was sent.
+	 *  Absent on scripts saved before it existed.
 	 */
 	saved_at?: string | null,
 	/**
@@ -2476,11 +2473,8 @@ export type CaseScript_Deserialize = {
 	needs_unchanged?: string[],
 	/**
 	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
-	 *  every save (`store::save_scripts_atomically`), whatever was sent. A
-	 *  repair reads the test case as of this moment to see which steps the
-	 *  case itself has changed since (`edits::check_edits_following_case`).
-	 *  Absent on scripts saved before it existed; the file's own modified
-	 *  time stands in for it then.
+	 *  every save (`store::save_scripts_atomically`), whatever was sent.
+	 *  Absent on scripts saved before it existed.
 	 */
 	saved_at?: string | null,
 	/**
@@ -2601,11 +2595,8 @@ export type CaseScript_Serialize = {
 	needs_unchanged?: string[],
 	/**
 	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
-	 *  every save (`store::save_scripts_atomically`), whatever was sent. A
-	 *  repair reads the test case as of this moment to see which steps the
-	 *  case itself has changed since (`edits::check_edits_following_case`).
-	 *  Absent on scripts saved before it existed; the file's own modified
-	 *  time stands in for it then.
+	 *  every save (`store::save_scripts_atomically`), whatever was sent.
+	 *  Absent on scripts saved before it existed.
 	 */
 	saved_at?: string | null,
 	/**
@@ -2743,11 +2734,6 @@ export type ComponentView = {
 	version: number,
 	/**  How many times it has been changed so far. */
 	changes: number,
-	/**
-	 *  After this many changes the assistant stops and asks the person
-	 *  before changing it again.
-	 */
-	cap: number,
 	/**  The saved scripts that use it, by case id. While any do, it stays. */
 	used_by_cases: number[],
 };

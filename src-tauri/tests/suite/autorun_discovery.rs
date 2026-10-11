@@ -2915,7 +2915,7 @@ async fn a_component_dry_run_writes_and_records_nothing() {
     let (status, body) =
         dry_run_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default()));
     assert_eq!(status, 200, "{body}");
-    assert_eq!(parsed(&body), json!({ "would_save": "Next page", "version": 1, "changes": 0, "cap_reached": false }));
+    assert_eq!(parsed(&body), json!({ "would_save": "Next page", "version": 1, "changes": 0 }));
     assert_eq!(every_file(dir.path()), seen, "a dry run changed a file");
     assert!(!components_path(dir.path(), ORG, PROJECT).exists());
     assert!(browser.as_ref().unwrap().d.calls.is_empty(), "a dry run reached the page");

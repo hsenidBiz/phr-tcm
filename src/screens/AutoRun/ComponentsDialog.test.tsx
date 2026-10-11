@@ -25,7 +25,6 @@ function component(over: Partial<ComponentView> & { name: string }): ComponentVi
     tried_at: TRIED,
     version: 1,
     changes: 0,
-    cap: 3,
     used_by_cases: [],
     ...over,
   };
@@ -83,11 +82,10 @@ test("lists_components_with_inputs_users_and_changes", async () => {
   const date = new Date(TRIED).toLocaleDateString();
   expect(within(pick).getByText(`Tried ${date} in Leave`)).toBeInTheDocument();
   expect(within(pick).getByText("Version 4")).toBeInTheDocument();
-  expect(within(pick).getByText("Changed 3 times; the assistant stops and asks you before changing it again")).toBeInTheDocument();
+  // Changes are counted for the person to see; there is no limit on them.
+  expect(within(pick).getByText("Changed 3 times")).toBeInTheDocument();
   expect(within(pick).getByText("Used by cases 4, 12")).toBeInTheDocument();
-  // At the cap, an assistant can change it no more: a person has to look.
-  const cap = within(pick).getByText("Needs a look");
-  expect(cap.closest("[class*='bg-warning']")).not.toBeNull();
+  expect(within(pick).queryByText("Needs a look")).not.toBeInTheDocument();
 
   const toast = screen.getByRole("listitem", { name: "close-toast" });
   expect(within(toast).getByText("Not tried yet")).toBeInTheDocument();

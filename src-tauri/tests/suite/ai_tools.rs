@@ -1666,7 +1666,7 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
     for said in [
         "carrying each step's actions out live with `discover_autorun_action` as you write them",
         "Only once every step has been carried out, save it",
-        "Any fix after the save is a repair, declared in `edits`, and counts toward the repair cap",
+        "Any fix after the save is a repair, declared in `edits`.",
         "ask the person to record the area in Auto Run",
         "test name prefix",
         "delete only records carrying that prefix",
@@ -1811,9 +1811,15 @@ fn discover_and_heal_say_how_to_use_components() {
         "fix it in the component",
         "`save_autorun_component`",
         "`why`",
-        "3 changes",
     ] {
         assert!(heal.contains(said), "/tcm:heal never says {said:?}: {heal}");
+    }
+    // Scripts are repaired, and components changed, as often as needed,
+    // and a repair may drop a check: no command names a cap on either.
+    for body in [&discover, &heal] {
+        for gone in ["repair cap", "3 changes", "weaken a check"] {
+            assert!(!body.contains(gone), "a command still says {gone:?}: {body}");
+        }
     }
     for body in [&discover, &heal] {
         assert!(!body.contains('\u{2014}') && !body.contains('\u{2013}'), "no em or en dashes");

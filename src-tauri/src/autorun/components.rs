@@ -13,10 +13,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// How many changes a component can have before the guide tells the
-/// assistant to stop and ask the person instead of changing it again.
-pub const CHANGE_CAP: u32 = 3;
-
 #[derive(Serialize, Deserialize, specta::Type, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum InputKind {
@@ -47,7 +43,8 @@ pub struct Component {
     pub tried_area: String,
     #[serde(default)]
     pub version: u32,
-    /// How many times it has been changed so far (see `CHANGE_CAP`).
+    /// How many times it has been changed so far, shown in the Components
+    /// window.
     #[serde(default)]
     pub changes: u32,
 }
@@ -580,9 +577,6 @@ pub struct Saved {
     pub saved: String,
     pub version: u32,
     pub changes: u32,
-    /// The component has been changed `CHANGE_CAP` times or more: the
-    /// a person looking at it.
-    pub cap_reached: bool,
 }
 
 /// Said when a component's string has a `{{` with no `}}` after it, or a
@@ -700,14 +694,12 @@ pub fn check_component(c: &Component) -> Result<(), String> {
 /// discovery going (`session`); its fixed locators seen in that
 /// discovery's area (`check_component_seen`); tried in that discovery
 /// exactly as it is sent; when a
-/// component of that name is saved already, a reason (`why`) and no check
-/// lost (`edits::weakens`), which makes it the next version and one more
-/// change toward `CHANGE_CAP`; and, saved already or not, every saved
-/// script of this project that uses the name still seen as it would run
-/// (`check_users`, with `cases`, the users' test cases; `None` when they
-/// could not be read). A change past the cap still saves: `cap_reached`
-/// says the assistant should stop and ask the person. `now` is when it
-/// was tried, in milliseconds since the epoch.
+/// component of that name is saved already, a reason (`why`), which makes
+/// it the next version and one more change (a change may drop a check);
+/// and, saved already or not, every saved script of this project that
+/// uses the name still seen as it would run (`check_users`, with `cases`,
+/// the users' test cases; `None` when they could not be read). `now` is
+/// when it was tried, in milliseconds since the epoch.
 #[allow(clippy::too_many_arguments)]
 pub fn save_tried(
     root: &Path,
@@ -774,9 +766,6 @@ fn tried(
                 if why.is_none_or(|w| w.trim().is_empty()) {
                     return Err(format!("{name} is already saved: say why it changes in \"why\"."));
                 }
-                if let Some(weaker) = super::edits::weakens(&old.actions, &draft.actions) {
-                    return Err(format!("{name} {weaker}"));
-                }
                 (old.version + 1, old.changes + 1)
             }
         };
@@ -795,7 +784,7 @@ fn tried(
         put_in(&mut after, saved.clone());
         check_users(root, &map, &after, &name, cases)?;
         put_in(file, saved);
-        Ok(Saved { saved: name.clone(), version, changes, cap_reached: changes >= CHANGE_CAP })
+        Ok(Saved { saved: name.clone(), version, changes })
     };
     if write {
         update_with(root, org, project, change)
@@ -826,8 +815,7 @@ pub fn remove_unused(root: &Path, org: &str, project: &str, name: &str) -> Resul
 }
 
 /// The live guide's list of this project's components: each one's name,
-/// its inputs as `name: kind`, and its description, then a line for each
-/// one changed `CHANGE_CAP` times or more. Empty with none saved.
+/// its inputs as `name: kind`, and its description. Empty with none saved.
 pub fn guide_section(file: &ComponentFile) -> String {
     if file.components.is_empty() {
         return String::new();
@@ -852,17 +840,6 @@ pub fn guide_section(file: &ComponentFile) -> String {
         };
         let description = c.description.split_whitespace().collect::<Vec<_>>().join(" ");
         out.push_str(&format!("- {} ({inputs}): {description}\n", c.name.trim()));
-    }
-    let capped: Vec<&Component> = file.components.iter().filter(|c| c.changes >= CHANGE_CAP).collect();
-    if !capped.is_empty() {
-        out.push('\n');
-        for c in capped {
-            out.push_str(&format!(
-                "{} has had {} accepted changes: stop and report to the person before changing it again.\n",
-                c.name.trim(),
-                c.changes
-            ));
-        }
     }
     out
 }
