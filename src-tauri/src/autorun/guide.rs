@@ -1197,8 +1197,8 @@ What a save checks:
   check that can pass with several matches (`expect_hidden`,
   `expect_count`, `wait_for`) may use a locator seen matching several
   elements. Every other use needs a locator seen matching exactly one: an
-  action (click, fill, upload, press_key, drag), `when_visible`, and
-  the checks that read one element (`expect_visible`, `expect_text`,
+  action (click, fill, upload, press_key, drag), the selector a
+  `when_visible` waits for, and the checks that read one element (`expect_visible`, `expect_text`,
   `expect_contains_text`, `expect_attribute`, `expect_focused`, and the
   table checks, whose table must be one). A locator never seen matching
   anything is refused for every use, `expect_hidden` included: probe it

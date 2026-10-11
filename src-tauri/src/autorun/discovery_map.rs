@@ -21,15 +21,28 @@
 //! the least recently seen sightings go first.
 //!
 //! A sighting and an element also keep how many elements they `matched`
-//! on the live page. A page read lists elements one by one, so what it
-//! shows matched one. A probe, a try or the record-on-page check of a
-//! refused save matches a locator against the page and can find several:
-//! that is kept as their number. Once a locator has been seen matching
-//! exactly one element it stays `1`; a later sighting matching several
-//! never undoes it. A map written before this was kept loads as `1`. The
-//! seen check lets a check that can pass with several matches use a
-//! locator seen matching several, and holds every other use to one
-//! (`seen_check`).
+//! on the live page. `1` is filed only for exactly the locator that
+//! matched one element: a single link with no `nth`, `exact` or `visible`
+//! (`plain_link`). Such a link's key names every element it could match,
+//! so a link that only matched one inside a scope, or once narrowed, says
+//! nothing about how many its key matches: each link of a chain, and a
+//! narrowed link, is filed as `NOT_ONE`. The whole locator, chain or
+//! narrowed, is kept in the area's `wholes` with the number it matched, so
+//! that exact locator can be vouched for as a whole.
+//!
+//! A page read counts, for each line, the listed lines in the same frame
+//! its locator would match: the same role, and a name holding its name
+//! (`locator::name_matches`). Two rows' "Edit" buttons are two; "Save"
+//! beside "Save draft" is two. A read the line limit cut short may not
+//! have listed every match, so there a count of one is filed as
+//! `NOT_ONE`. A probe, a try or the record-on-page check of a refused save
+//! matches a locator against the page and files the number it found.
+//!
+//! Once a locator has been seen matching exactly one element it stays
+//! `1`; a later sighting matching several never undoes it. A map written
+//! before this was kept loads as `1`. The seen check lets a check that can
+//! pass with several matches use a locator seen matching several, and
+//! holds every other use to one (`seen_check`).
 
 use super::recipe::project_slug;
 use crate::browser::locator::{LocatorStep, SeenKey, Target};
@@ -67,6 +80,12 @@ pub struct AreaMap {
     /// module's notes). A map written before these were kept has none.
     #[serde(default)]
     pub sightings: Vec<Sighting>,
+    /// Each chain or narrowed locator a probe or a try matched, whole, with
+    /// how many elements it matched (see the module's notes). Kept and let
+    /// go as `sightings` are. A map written before these were kept has
+    /// none.
+    #[serde(default)]
+    pub wholes: Vec<WholeSighting>,
     /// The links the area's saved scripts use, as written: read in memory
     /// by the seen check (`seen_check::add_saved_scripts`), never saved.
     #[serde(skip)]
@@ -102,6 +121,20 @@ pub struct Sighting {
     pub matched: u32,
 }
 
+/// A chain or a narrowed locator seen whole: what that exact locator
+/// matched.
+#[derive(Serialize, Deserialize, specta::Type, Clone, Debug, PartialEq)]
+pub struct WholeSighting {
+    pub locator: Target,
+    /// The page (`page_path`) it was last seen on.
+    pub page: String,
+    /// When it was last seen, in milliseconds since the epoch.
+    #[specta(type = f64)]
+    pub last_seen: u64,
+    /// How many elements it matched, kept as a sighting keeps it.
+    pub matched: u32,
+}
+
 /// What a sighting or an element written before `matched` was kept loads
 /// as: one element, the only kind that was recorded then.
 fn one_match() -> u32 {
@@ -122,6 +155,49 @@ fn merged_matches(old: u32, new: u32) -> u32 {
 /// exactly one?
 pub fn only_many(matched: u32) -> bool {
     matched > 1
+}
+
+/// What a link is filed as when all that is known is that its key may
+/// match more than the one element it found: a scope link of a chain, or a
+/// narrowed link (see the module's notes).
+pub const NOT_ONE: u32 = 2;
+
+/// Is `link` a whole locator on its own that names exactly what its key
+/// names: no `nth`, no `exact` and no `visible` narrowing it?
+pub fn plain_link(link: &LocatorStep) -> bool {
+    link.nth.is_none() && !link.exact && link.visible.is_none()
+}
+
+/// Is `target` one plain link (`plain_link`), so that the number it
+/// matched is the number its key matches? A legacy string is one css link.
+pub fn plain_target(target: &Target) -> bool {
+    match target {
+        Target::Legacy(_) => true,
+        Target::One(l) => plain_link(l),
+        Target::Chain(v) => v.len() == 1 && plain_link(&v[0]),
+    }
+}
+
+/// How many listed lines in the same frame as `line` its locator would
+/// match: the same role, and a name holding its name, as a role locator
+/// matches (`locator::name_matches`, not exact). A line whose locator is
+/// not a role and a name counts as one.
+fn read_count(line: &SnapLine, lines: &[SnapLine]) -> u32 {
+    let links = line.locator.links();
+    let Some((own, frames)) = links.split_last() else { return 1 };
+    let Some(role) = own.role.as_deref() else { return 1 };
+    let want = own.name.as_deref().unwrap_or("");
+    let n = lines
+        .iter()
+        .filter(|other| {
+            let theirs = other.locator.links();
+            let Some((o, f)) = theirs.split_last() else { return false };
+            f == frames
+                && o.role.as_deref() == Some(role)
+                && (want.is_empty() || crate::browser::locator::name_matches(o.name.as_deref().unwrap_or(""), want, own.exact))
+        })
+        .count();
+    u32::try_from(n.max(1)).unwrap_or(u32::MAX)
 }
 
 #[derive(Serialize, Deserialize, specta::Type, Clone, Debug, Default, PartialEq)]
@@ -432,13 +508,22 @@ pub fn record_read(
             }
         }
         recorded = shown_locators.len();
-        for line in lines {
+        // How many listed elements each line's locator matches; a count of
+        // one from a read cut short is not known to be one.
+        let counts: Vec<u32> = lines
+            .iter()
+            .map(|l| match read_count(l, lines) {
+                1 if !whole => NOT_ONE,
+                n => n,
+            })
+            .collect();
+        for (line, &count) in lines.iter().zip(&counts) {
             // The last link names the element; earlier links are frames.
             let Some(key) = line.locator.links().last().and_then(LocatorStep::seen_key) else { continue };
             // The full locator is the identity: the same name in two frames
-            // is two elements. A read lists it on its own, so it matched one.
+            // is two elements.
             if let Some(e) = page.elements.iter_mut().find(|e| e.locator == line.locator) {
-                e.matched = 1;
+                e.matched = merged_matches(e.matched, count);
                 continue;
             }
             let seen_at = old.iter().find(|e| e.locator == line.locator).map_or(0, |e| e.seen_at);
@@ -450,7 +535,7 @@ pub fn record_read(
                 kind: kind_for(&line.role).to_string(),
                 required: line.required,
                 seen_at,
-                matched: 1,
+                matched: count,
             });
         }
         if let Some(started) = explores {
@@ -463,17 +548,21 @@ pub fn record_read(
         }
         // A discovery's read refreshes what it shows; any other read only
         // adds what is new, so a read that shows nothing new writes nothing.
+        // Each link on its own: a plain one-link line with its count, every
+        // link of a chain (a frame and what is inside it) as `NOT_ONE`.
         let mut shown: HashSet<SeenKey> = HashSet::new();
-        for line in lines {
+        for (line, &count) in lines.iter().zip(&counts) {
+            let link_count = if plain_target(&line.locator) { count } else { NOT_ONE };
             for link in line.locator.links() {
                 if let Some(key) = link.seen_key() {
                     shown.insert(key.clone());
-                    note_sighting(a, key, link, &path, now, discovery.is_some(), 1);
+                    note_sighting(a, key, link, &path, now, discovery.is_some(), link_count);
                 }
             }
         }
         if let Some(started) = explores {
             a.sightings.retain(|s| s.page != path || s.last_seen >= started || shown.contains(&s.key));
+            a.wholes.retain(|w| w.page != path || w.last_seen >= started);
         }
         trim_sightings(a);
     })?;
@@ -519,6 +608,24 @@ fn trim_sightings(a: &mut AreaMap) {
     });
 }
 
+/// Keeps the area's `wholes` within `MAX_SIGHTINGS`, the least recently
+/// seen going first, as `trim_sightings` does.
+fn trim_wholes(a: &mut AreaMap) {
+    let over = a.wholes.len().saturating_sub(MAX_SIGHTINGS);
+    if over == 0 {
+        return;
+    }
+    let mut order: Vec<usize> = (0..a.wholes.len()).collect();
+    order.sort_by_key(|&i| (a.wholes[i].last_seen, i));
+    let gone: HashSet<usize> = order.into_iter().take(over).collect();
+    let mut i = 0;
+    a.wholes.retain(|_| {
+        let keep = !gone.contains(&i);
+        i += 1;
+        keep
+    });
+}
+
 /// Adds each link of a target a probe or try matched, unless the page
 /// already has it, and stamps it matched at `now` (`seen_at`) either way:
 /// [`record_matched_count`] for a target that matched exactly one element.
@@ -534,10 +641,12 @@ pub fn record_matched(
     record_matched_count(root, org, project, area, page_path, target, 1, now)
 }
 
-/// [`record_matched`] for a target that matched `matched` elements (at
-/// least one; `0` is taken as one). Every link of a chain is filed with
-/// that number, as only the whole chain's is known; a link already seen
-/// matching one stays one (see the module's notes).
+/// [`record_matched`] for a target that matched `matched` elements. `0`
+/// files nothing: a locator that matched nothing was never seen. A plain
+/// one-link target (`plain_target`) files that number on its link; any
+/// other files each link as `NOT_ONE` and keeps the whole target as an
+/// element of its own with that number. A link already seen matching one
+/// stays one (see the module's notes).
 #[allow(clippy::too_many_arguments)]
 pub fn record_matched_count(
     root: &Path,
@@ -549,14 +658,19 @@ pub fn record_matched_count(
     matched: usize,
     now: u64,
 ) -> Result<(), String> {
-    let matched = u32::try_from(matched.max(1)).unwrap_or(u32::MAX);
+    if matched == 0 {
+        return Ok(());
+    }
+    let matched = u32::try_from(matched).unwrap_or(u32::MAX);
+    let plain = plain_target(target);
+    let link_count = if plain { matched } else { NOT_ONE };
     let path = self::page_path(page_path);
     let area = canonical_area(root, org, project, area.unwrap_or(""));
     update(root, org, project, |map| {
         let a = area_mut(map, &area);
         for link in target.links() {
             if let Some(key) = link.seen_key() {
-                note_sighting(a, key, link, &path, now, true, matched);
+                note_sighting(a, key, link, &path, now, true, link_count);
             }
         }
         trim_sightings(a);
@@ -566,7 +680,11 @@ pub fn record_matched_count(
             let mut held = false;
             for e in page.elements.iter_mut().filter(|e| e.key == key) {
                 e.seen_at = e.seen_at.max(now);
-                e.matched = merged_matches(e.matched, matched);
+                // Only an element that is a plain link of this key takes the
+                // link's count: a chain keyed by it says nothing of the key.
+                if plain_target(&e.locator) {
+                    e.matched = merged_matches(e.matched, link_count);
+                }
                 held = true;
             }
             if held {
@@ -581,9 +699,23 @@ pub fn record_matched_count(
                 kind: kind.to_string(),
                 required: false,
                 seen_at: now,
-                matched,
+                matched: link_count,
                 locator: Target::One(link),
             });
+        }
+        if !plain {
+            // The whole locator: what that exact locator matched.
+            match a.wholes.iter_mut().find(|w| w.locator == *target) {
+                Some(w) => {
+                    if now >= w.last_seen {
+                        w.last_seen = now;
+                        w.page = path.clone();
+                    }
+                    w.matched = merged_matches(w.matched, matched);
+                }
+                None => a.wholes.push(WholeSighting { locator: target.clone(), page: path.clone(), last_seen: now, matched }),
+            }
+            trim_wholes(a);
         }
     })
 }

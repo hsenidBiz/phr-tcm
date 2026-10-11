@@ -1960,3 +1960,88 @@ fn a_saved_check_link_vouches_only_for_a_check() {
     add_saved_scripts(&mut map, &[acted]);
     assert_eq!(check_seen(&map, &none(), &clicked, &[], None), Ok(()));
 }
+
+// ------------------------- one match only for exactly that locator
+
+/// A map under a fresh folder with `target` filed as matching `matched`
+/// elements on `/cycles` in Cycles, as a probe or a try files it.
+fn filed(target: serde_json::Value, matched: usize) -> DiscoveryMap {
+    let dir = tempfile::tempdir().unwrap();
+    let t: Target = serde_json::from_value(target).unwrap();
+    v2_lib::autorun::discovery_map::record_matched_count(dir.path(), "Acme", "Web", Some("Cycles"), "/cycles", &t, matched, 1)
+        .unwrap();
+    v2_lib::autorun::discovery_map::load_map(dir.path(), "Acme", "Web").unwrap()
+}
+
+fn clicks(target: serde_json::Value) -> CaseScript {
+    one_step("Cycles", serde_json::json!([click(target)]))
+}
+
+#[test]
+fn a_chain_matching_one_does_not_let_its_scope_vouch_for_a_click() {
+    let chain = serde_json::json!([{ "css": ".card" }, { "role": "button", "name": "Edit" }]);
+    let map = filed(chain.clone(), 1);
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": ".card" })), &[], None).is_err());
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "role": "button", "name": "Edit" })), &[], None).is_err());
+    // The whole chain, written the same way, is seen matching one.
+    assert_eq!(check_seen(&map, &none(), &clicks(chain), &[], None), Ok(()));
+    // A check that may match several still takes its scope.
+    let hidden = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".card" } }]));
+    assert_eq!(check_seen(&map, &none(), &hidden, &[], None), Ok(()));
+}
+
+#[test]
+fn an_nth_locator_matching_one_does_not_let_its_key_vouch_for_a_click() {
+    let first = serde_json::json!({ "css": "tbody tr", "nth": 0 });
+    let map = filed(first.clone(), 1);
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "tbody tr" })), &[], None).is_err());
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "tbody tr", "nth": 1 })), &[], None).is_err());
+    assert_eq!(check_seen(&map, &none(), &clicks(first), &[], None), Ok(()));
+}
+
+#[test]
+fn an_exact_locator_matching_one_does_not_let_its_key_vouch_for_a_click() {
+    let exact = serde_json::json!({ "role": "button", "name": "Save", "exact": true });
+    let map = filed(exact.clone(), 1);
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "role": "button", "name": "Save" })), &[], None).is_err());
+    assert_eq!(check_seen(&map, &none(), &clicks(exact), &[], None), Ok(()));
+}
+
+#[test]
+fn a_checked_selector_matching_one_does_not_let_its_base_vouch_for_a_click() {
+    let checked = serde_json::json!({ "css": "input.agree:checked" });
+    let map = filed(checked.clone(), 1);
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "input.agree" })), &[], None).is_err());
+    assert_eq!(check_seen(&map, &none(), &clicks(checked), &[], None), Ok(()));
+}
+
+/// Nothing matched: nothing is filed, never a sighting matching one.
+#[test]
+fn a_target_matching_nothing_files_nothing() {
+    let map = filed(serde_json::json!({ "css": ".gone" }), 0);
+    assert!(map.areas.is_empty(), "{map:?}");
+}
+
+/// A saved check that alone vouches for a locator says so when an action
+/// uses it.
+#[test]
+fn a_locator_only_a_saved_check_vouches_for_is_refused_for_a_click_saying_so() {
+    let mut map = DiscoveryMap::default();
+    let saved = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".row-edit" } }]));
+    add_saved_scripts(&mut map, &[saved]);
+    let refused = check_seen(&map, &none(), &clicks(serde_json::json!({ "css": ".row-edit" })), &[], None).unwrap_err();
+    assert!(refused.contains("was used only in saved checks that may match several elements"), "{refused}");
+}
+
+/// A component change that breaks a use only matching several says so,
+/// as a save's refusal does.
+#[test]
+fn a_change_broken_by_a_several_match_says_so() {
+    use v2_lib::autorun::seen_check::SEEN_ONLY_MANY;
+    let u = Unseen { step: 2, locator: ".row-edit".to_string(), refused: None };
+    assert_eq!(
+        u.broken_by_change_hinted(Some(SEEN_ONLY_MANY)),
+        format!("step 2: .row-edit {SEEN_ONLY_MANY} This change would break it.")
+    );
+    assert_eq!(u.broken_by_change(), "step 2: .row-edit was never seen on the live app; this change would break it.");
+}

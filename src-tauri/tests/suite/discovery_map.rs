@@ -803,3 +803,35 @@ fn a_sighting_keeps_how_many_elements_it_matched() {
     record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &Target::from(".one"), 5).unwrap();
     assert_eq!(matched(".one"), (Some(1), Some(1)));
 }
+
+/// A page read counts, for each line, the listed lines in its frame its
+/// locator would match: the same role and a name holding its name.
+#[test]
+fn a_page_read_files_how_many_lines_each_locator_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    let lines = [line("button", "Edit"), line("button", "Edit"), line("button", "Save"), line("button", "Save draft")];
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &lines, None, None, 0).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let area = &map.areas[0];
+    let matched = |name: &str| {
+        let key = role_key("button", name);
+        let s = area.sightings.iter().find(|s| s.key == key).map(|s| s.matched);
+        let e = area.pages[0].elements.iter().find(|e| e.key == key).map(|e| e.matched);
+        (s, e)
+    };
+    assert_eq!(matched("Edit"), (Some(2), Some(2)), "two rows' Edit buttons");
+    assert_eq!(matched("Save"), (Some(2), Some(2)), "Save beside Save draft");
+    assert_eq!(matched("Save draft"), (Some(1), Some(1)));
+}
+
+/// A read the line limit cut short may not have listed every match, so a
+/// line it counted once is not filed as one.
+#[test]
+fn a_cut_read_does_not_file_one_match() {
+    use v2_lib::autorun::discovery_map::{record_read, NOT_ONE};
+    let dir = tempfile::tempdir().unwrap();
+    record_read(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Edit")], None, None, false, 0).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas[0].sightings[0].matched, NOT_ONE);
+    assert_eq!(map.areas[0].pages[0].elements[0].matched, NOT_ONE);
+}

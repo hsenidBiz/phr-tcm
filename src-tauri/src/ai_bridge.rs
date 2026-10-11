@@ -2012,8 +2012,9 @@ fn record_matched_targets(at: &Sighting, href: &str, targets: &[(&crate::browser
 /// several, so theirs matched one; an `expect_count` matched the number it
 /// counted. A `wait_for` passes on one or more and its outcome does not
 /// say how many, so it is left out here and probed once the try worked
-/// (`try_action`). Matched without a catch-all, so a new kind will not
-/// compile until it is classified here.
+/// (`try_action`), as is any legacy string target: a run takes its first
+/// match, so it passes on several too. Matched without a catch-all, so a
+/// new kind will not compile until it is classified here.
 fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::browser::locator::Target, usize)> {
     use crate::browser::actions::Action;
     match action {
@@ -2089,16 +2090,21 @@ fn read_probe_answer(text: &str) -> ProbeAnswer {
     ProbeAnswer { matches, listed, visible }
 }
 
-/// How many VISIBLE elements a probe's answer says matched: what a locator
-/// is filed as seen matching. `None` when none of them is visible, which
-/// files nothing. A hidden match never counts, so one visible beside any
-/// number of hidden ones is one. When the probe matched more than it lists
-/// and one listed is visible, the ones it left out may be visible too, so
-/// that is at least two: never one, which would let it vouch for an action.
-fn visible_matches(text: &str) -> Option<usize> {
+/// How many elements a probe of `target` says matched, as the target is
+/// filed as seen matching. `None` when none of them is visible, which
+/// files nothing. A structured locator counts only its visible matches, as
+/// a run finds only those: one visible beside any number of hidden ones is
+/// one. When the probe matched more than it lists and one listed is
+/// visible, the ones it left out may be visible too, so that is at least
+/// two, never one. A legacy string target counts every match, hidden
+/// included, as a run does not leave hidden ones out.
+fn visible_matches(target: &crate::browser::locator::Target, text: &str) -> Option<usize> {
     let answer = read_probe_answer(text);
     if answer.visible == 0 {
         return None;
+    }
+    if target.is_legacy() {
+        return Some(answer.matches);
     }
     if answer.matches > answer.listed {
         return Some(answer.visible.max(2));
@@ -2118,7 +2124,7 @@ pub async fn probe_page<D: crate::browser::cdp::Driver>(
         Ok(text) => text,
         Err(e) => return (503, format!("the browser did not answer: {e}")),
     };
-    if let (Some(at), Some(matched)) = (at, visible_matches(&text)) {
+    if let (Some(at), Some(matched)) = (at, visible_matches(target, &text)) {
         let (href, _) = page_address(d).await;
         record_matched_targets(at, &href, &[(target, matched)]);
     }
@@ -2180,7 +2186,7 @@ pub async fn record_refused_in<B: DiscoveryBrowser>(
             unchecked += 1;
             continue;
         };
-        let Some(matched) = visible_matches(&text) else {
+        let Some(matched) = visible_matches(target, &text) else {
             continue;
         };
         let Some(at) = at.as_ref() else {
@@ -4403,17 +4409,17 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // anything a recipe would have substituted.
     // The page the try starts on: a click that navigates was matched on
     // this page, not the one it leads to.
-    let matched = matched_targets(action);
-    // A `wait_for` passes on one match or several and does not say which,
-    // so once it worked its selector is probed, as `probe_autorun_locator`
-    // does, and filed with the visible matches the probe counts. It never
-    // clicks or types.
-    let waited = match action {
-        crate::browser::actions::Action::WaitFor { selector, .. } => Some(selector),
-        _ => None,
-    };
+    // A `wait_for`, and any legacy string target, passes on one match or
+    // several and does not say which, so once the try worked each is
+    // probed, as `probe_autorun_locator` does, and filed with the count the
+    // probe gives (`visible_matches`). The probe never clicks or types.
+    let (matched, mut to_probe): (Vec<_>, Vec<_>) = matched_targets(action).into_iter().partition(|(t, _)| !t.is_legacy());
+    let mut to_probe: Vec<&crate::browser::locator::Target> = to_probe.drain(..).map(|(t, _)| t).collect();
+    if let crate::browser::actions::Action::WaitFor { selector, .. } = action {
+        to_probe.push(selector);
+    }
     let started_on =
-        if matched.is_empty() && waited.is_none() { String::new() } else { page_address(d).await.0 };
+        if matched.is_empty() && to_probe.is_empty() { String::new() } else { page_address(d).await.0 };
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
     let mut run = InRun { areas: Some(&areas), saves_only_counted, ..Default::default() };
     let outcomes = match crate::autorun::runner::run_step_in_run(
@@ -4454,12 +4460,12 @@ async fn try_action<D: crate::browser::cdp::Driver>(
             policy: recording_policy(root, organization, project),
         };
         let mut matched = matched;
-        if let Some(selector) = waited {
-            match crate::browser::snapshot::probe(d, selector).await.ok().as_deref().and_then(visible_matches) {
-                Some(n) => matched.push((selector, n)),
+        for target in to_probe {
+            match crate::browser::snapshot::probe(d, target).await.ok().and_then(|t| visible_matches(target, &t)) {
+                Some(n) => matched.push((target, n)),
                 // Nothing visible now, or the browser did not answer: it was
-                // never seen, so nothing is filed for it.
-                None => crate::applog::info("Auto Run try: a wait_for that worked was not filed, as the probe after it saw nothing visible"),
+                // not seen, so nothing is filed for it.
+                None => crate::applog::info("Auto Run try: a tried locator was not filed, as the probe after it saw nothing visible"),
             }
         }
         record_matched_targets(&at, &started_on, &matched);

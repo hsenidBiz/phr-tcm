@@ -1704,30 +1704,65 @@ fn archive_matched(root: &std::path::Path) -> Option<(u32, u32)> {
     Some((s, e))
 }
 
+/// `#archive` as a structured css locator, which a run finds only visible.
+fn archive_css() -> v2_lib::browser::locator::Target {
+    serde_json::from_value(serde_json::json!({ "css": "#archive" })).unwrap()
+}
+
 /// A probe counts only visible matches: one that found only hidden
-/// elements files nothing.
+/// elements files nothing, a legacy string target included.
 #[tokio::test]
 async fn a_probe_that_matched_only_hidden_elements_records_nothing() {
     let dir = TempDir::new();
-    let (status, text) = probe_page(&mut probed_page_showing(2, &[]), &archive(), Some(&sighting(dir.path(), None))).await;
+    let (status, _) = probe_page(&mut probed_page_showing(2, &[]), &archive(), Some(&sighting(dir.path(), None))).await;
+    assert_eq!(status, 200);
+    assert!(load_map(dir.path(), "acme", "Web").unwrap().areas.is_empty(), "a hidden legacy match was filed");
+    let (status, text) = probe_page(&mut probed_page_showing(2, &[]), &archive_css(), Some(&sighting(dir.path(), None))).await;
     assert_eq!(status, 200, "{text}");
     assert!(text.starts_with("matches: 2"), "{text}");
     assert!(load_map(dir.path(), "acme", "Web").unwrap().areas.is_empty(), "a hidden match was filed");
 }
 
 /// One visible match beside a hidden one is filed as one; two visible are
-/// filed as two.
+/// filed as two. A legacy string target counts the hidden one too, as a
+/// run does not leave it out.
 #[tokio::test]
 async fn a_probe_with_one_visible_and_one_hidden_records_one() {
     let dir = TempDir::new();
-    let (status, text) = probe_page(&mut probed_page_showing(2, &[1]), &archive(), Some(&sighting(dir.path(), None))).await;
+    let (status, text) = probe_page(&mut probed_page_showing(2, &[1]), &archive_css(), Some(&sighting(dir.path(), None))).await;
     assert_eq!(status, 200, "{text}");
     assert_eq!(archive_matched(dir.path()), Some((1, 1)));
 
     let both = TempDir::new();
-    let (status, _) = probe_page(&mut probed_page_showing(2, &[0, 1]), &archive(), Some(&sighting(both.path(), None))).await;
+    let (status, _) = probe_page(&mut probed_page_showing(2, &[0, 1]), &archive_css(), Some(&sighting(both.path(), None))).await;
     assert_eq!(status, 200);
     assert_eq!(archive_matched(both.path()), Some((2, 2)));
+
+    let legacy = TempDir::new();
+    let (status, _) = probe_page(&mut probed_page_showing(2, &[1]), &archive(), Some(&sighting(legacy.path(), None))).await;
+    assert_eq!(status, 200);
+    assert_eq!(archive_matched(legacy.path()), Some((2, 2)));
+}
+
+/// A tried legacy string target is probed once the try worked and filed
+/// with every match the probe counts (a run does not leave hidden ones
+/// out), never stamped as one.
+#[tokio::test]
+async fn a_tried_legacy_target_is_filed_with_every_match() {
+    let wait = Action::WaitFor { selector: "#save".into(), timeout_ms: 1000 };
+    for (action, found) in [(click_save(), 1), (wait, 3)] {
+        let dir = TempDir::new();
+        let mut account = None;
+        let mut lease = v2_lib::autorun::lease::Held::supervised();
+        let mut d = crate::common::FakePage { found, ..crate::common::FakePage::default() }.driver();
+        let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &action).await;
+        assert_eq!(status, 200, "{text}");
+        assert!(text.starts_with("ok:"), "{found}: {text}");
+        let area = mapped_area(dir.path(), "").expect("nothing was recorded");
+        let key = v2_lib::browser::locator::SeenKey::Css("#save".into());
+        let filed = area.sightings.iter().find(|s| s.key == key).map(|s| s.matched);
+        assert_eq!(filed, Some(found as u32), "{found}");
+    }
 }
 
 /// A tried `wait_for` passes on several matches without saying how many,
