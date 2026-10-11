@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.10",
+    date: "2026-10-12",
+    items: [
+      "A check that can pass with several matches, such as waiting for something to disappear or counting items, now accepts a locator your assistant saw matching more than one element, so a check like \"no Edit button other than the shared draft's\" saves. Clicks and fills still need a locator seen matching exactly one element.",
+      "Auto Run counts how many elements a locator matched more carefully: only the exact locator that matched gets credit, a page read counts duplicates, and older plain-text locators are counted including hidden elements.",
+    ],
+  },
+  {
     version: "2.1.3-beta.9",
     date: "2026-10-11",
     items: [
