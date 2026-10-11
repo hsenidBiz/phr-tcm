@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.8",
+    date: "2026-10-11",
+    items: [
+      "When your assistant writes a PBI's Auto Run scripts, it marks the cases that change shared data or need the site in a particular state (for example, no cycles yet), and sets the run order so those cases run without setting up the environment again. It tells you the order and any point where a reset cannot be avoided.",
+    ],
+  },
+  {
     version: "2.1.3-beta.7",
     date: "2026-10-10",
     items: [
