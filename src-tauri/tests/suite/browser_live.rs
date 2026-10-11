@@ -185,6 +185,67 @@ async fn a_role_locator_ignores_the_hidden_twin_and_really_clicks() {
     must(run(&mut live, json!({ "kind": "expect_text", "selector": "#count", "equals": "clicked 1" })).await);
 }
 
+/// A legacy string resolves to its first match only (the real
+/// `LEGACY_JS`), so its probe never shows more than one. It is counted for
+/// real (`LEGACY_COUNT_JS`), hidden ones included, and filed with that
+/// count: the fixture's two "Save changes" buttons, one `display:none`,
+/// are two. A structured probe of the same selector files one visible
+/// and two with the hidden one, so it vouches for a structured click and
+/// never for a legacy one, which could take the hidden twin.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_legacy_locator_is_counted_with_every_match_hidden_included() {
+    use v2_lib::ai_bridge::{probe_page, Sighting};
+    use v2_lib::autorun::discovery_map::load_map;
+    use v2_lib::browser::locator::{legacy_count, SeenKey};
+    let mut live = open().await;
+    // `#save` and the hidden twin right after it, in that order.
+    let sel = "#save, #save + button";
+    let legacy = Target::Legacy(sel.to_string());
+    let text = probe(&mut live.cdp, &legacy).await.expect("the probe failed");
+    assert!(text.starts_with("matches: 1"), "LEGACY_JS handed back more than its first match: {text}");
+    assert_eq!(legacy_count(&mut live.cdp, sel).await.expect("the count failed"), 2);
+
+    let at = |root: &Path| Sighting {
+        root: root.to_path_buf(),
+        org: "acme".into(),
+        project: "Web".into(),
+        area: None,
+        account: None,
+        discovering: None,
+        policy: v2_lib::browser::actions::Policy::open(),
+    };
+    let filed = |root: &Path| {
+        let map = load_map(root, "acme", "Web").unwrap();
+        let key = SeenKey::Css(sel.to_string());
+        map.areas.iter().flat_map(|a| &a.sightings).find(|s| s.key == key).map(|s| (s.matched, s.all_matched()))
+    };
+
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let (status, _) = probe_page(&mut live.cdp, &legacy, Some(&at(legacy_dir.path()))).await;
+    assert_eq!(status, 200);
+    assert_eq!(filed(legacy_dir.path()), Some((2, 2)));
+
+    let structured = action_target(json!({ "css": sel }));
+    let structured_dir = tempfile::tempdir().unwrap();
+    let (status, _) = probe_page(&mut live.cdp, &structured, Some(&at(structured_dir.path()))).await;
+    assert_eq!(status, 200);
+    assert_eq!(filed(structured_dir.path()), Some((1, 2)));
+
+    let map = load_map(structured_dir.path(), "acme", "Web").unwrap();
+    let none = v2_lib::autorun::components::ComponentFile::default();
+    let script = |selector: serde_json::Value| -> CaseScript {
+        serde_json::from_value(json!({
+            "case_id": 7, "title": "T",
+            "steps": [{ "step_number": 1, "actions": [{ "kind": "click", "selector": selector }] }]
+        }))
+        .unwrap()
+    };
+    let check = v2_lib::autorun::seen_check::check_seen;
+    assert_eq!(check(&map, &none, &script(json!({ "css": sel })), &[], None), Ok(()));
+    assert!(check(&map, &none, &script(json!(sel)), &[], None).is_err(), "a legacy click took a count that left out the hidden twin");
+}
+
 /// A name or a text saved with an em dash finds the page's en dash and
 /// hyphen, through the real accessibility tree and the real `TEXT_JS`.
 #[tokio::test]

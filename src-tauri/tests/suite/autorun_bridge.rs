@@ -1569,9 +1569,17 @@ fn probed_page(found: usize) -> crate::common::ScriptedDriver {
 
 /// `probed_page`, at `href`.
 fn probed_page_at(href: &'static str, found: usize) -> crate::common::ScriptedDriver {
+    let mut legacy_next = false;
     crate::common::ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         match method {
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_JS => {
+                legacy_next = true;
+                Ok(serde_json::json!({ "result": { "objectId": "arr" } }))
+            }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_COUNT_JS => {
+                Ok(serde_json::json!({ "result": { "value": found } }))
+            }
             "Runtime.evaluate" if params["expression"] == "document" => {
                 Ok(serde_json::json!({ "result": { "objectId": "doc" } }))
             }
@@ -1588,9 +1596,12 @@ fn probed_page_at(href: &'static str, found: usize) -> crate::common::ScriptedDr
                 "result": { "value": { "tag": "button", "text": "Archive", "rect": [10.0, 20.0, 80.0, 24.0] } }
             })),
             "Runtime.callFunctionOn" => Ok(serde_json::json!({ "result": { "objectId": "arr" } })),
-            "Runtime.getProperties" => Ok(serde_json::json!({ "result": (0..found)
-                .map(|i| serde_json::json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
-                .collect::<Vec<_>>() })),
+            "Runtime.getProperties" => {
+                let n = if std::mem::take(&mut legacy_next) { found.min(1) } else { found };
+                Ok(serde_json::json!({ "result": (0..n)
+                    .map(|i| serde_json::json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                    .collect::<Vec<_>>() }))
+            }
             other => panic!("unexpected {other} {params}"),
         }
     })
@@ -1660,6 +1671,159 @@ async fn a_probe_with_no_match_records_nothing() {
     assert_eq!(status, 200, "{text}");
     assert!(text.starts_with("matches: 0"), "{text}");
     assert!(load_map(dir.path(), "acme", "Web").unwrap().areas.is_empty());
+}
+
+/// `probed_page`, every element found but only those whose index is in
+/// `shown` visible.
+fn probed_page_showing(found: usize, shown: &'static [usize]) -> crate::common::ScriptedDriver {
+    let mut legacy_next = false;
+    crate::common::ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_JS => {
+                legacy_next = true;
+                Ok(serde_json::json!({ "result": { "objectId": "arr" } }))
+            }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_COUNT_JS => {
+                Ok(serde_json::json!({ "result": { "value": found } }))
+            }
+            "Runtime.evaluate" if params["expression"] == "document" => {
+                Ok(serde_json::json!({ "result": { "objectId": "doc" } }))
+            }
+            "Runtime.evaluate" if params["expression"] == "location.href" => {
+                Ok(serde_json::json!({ "result": { "value": "https://app.example/hr/ratings" } }))
+            }
+            "Runtime.evaluate" if params["expression"] == "document.title" => {
+                Ok(serde_json::json!({ "result": { "value": "Ratings" } }))
+            }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS => {
+                let id = params["objectId"].as_str().unwrap_or("");
+                let visible = shown.iter().any(|i| id == format!("el-{i}"));
+                Ok(serde_json::json!({ "result": { "value": visible } }))
+            }
+            "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(serde_json::json!({
+                "result": { "value": { "tag": "button", "text": "Archive", "rect": [10.0, 20.0, 80.0, 24.0] } }
+            })),
+            "Runtime.callFunctionOn" => Ok(serde_json::json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => {
+                let n = if std::mem::take(&mut legacy_next) { found.min(1) } else { found };
+                Ok(serde_json::json!({ "result": (0..n)
+                    .map(|i| serde_json::json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                    .collect::<Vec<_>>() }))
+            }
+            other => panic!("unexpected {other} {params}"),
+        }
+    })
+}
+
+/// How many elements the map says `#archive` was seen matching, as a
+/// sighting and as an element: `None` when it was never filed.
+fn archive_matched(root: &std::path::Path) -> Option<(u32, u32)> {
+    let area = mapped_area(root, "")?;
+    let key = v2_lib::browser::locator::SeenKey::Css("#archive".into());
+    let s = area.sightings.iter().find(|s| s.key == key)?.matched;
+    let e = area.pages.iter().flat_map(|p| &p.elements).find(|e| e.key == key)?.matched;
+    Some((s, e))
+}
+
+/// `#archive` as a structured css locator, which a run finds only visible.
+fn archive_css() -> v2_lib::browser::locator::Target {
+    serde_json::from_value(serde_json::json!({ "css": "#archive" })).unwrap()
+}
+
+/// A probe counts only visible matches: one that found only hidden
+/// elements files nothing, a legacy string target included.
+#[tokio::test]
+async fn a_probe_that_matched_only_hidden_elements_records_nothing() {
+    let dir = TempDir::new();
+    let (status, _) = probe_page(&mut probed_page_showing(2, &[]), &archive(), Some(&sighting(dir.path(), None))).await;
+    assert_eq!(status, 200);
+    assert!(load_map(dir.path(), "acme", "Web").unwrap().areas.is_empty(), "a hidden legacy match was filed");
+    let (status, text) = probe_page(&mut probed_page_showing(2, &[]), &archive_css(), Some(&sighting(dir.path(), None))).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("matches: 2"), "{text}");
+    assert!(load_map(dir.path(), "acme", "Web").unwrap().areas.is_empty(), "a hidden match was filed");
+}
+
+/// One visible match beside a hidden one is filed as one; two visible are
+/// filed as two. A legacy string target resolves to its first match only:
+/// filed with every match, hidden ones included, when that first one is
+/// visible, and not at all when it is hidden, as a run would act on it.
+#[tokio::test]
+async fn a_probe_with_one_visible_and_one_hidden_records_one() {
+    let dir = TempDir::new();
+    let (status, text) = probe_page(&mut probed_page_showing(2, &[1]), &archive_css(), Some(&sighting(dir.path(), None))).await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(archive_matched(dir.path()), Some((1, 1)));
+
+    let both = TempDir::new();
+    let (status, _) = probe_page(&mut probed_page_showing(2, &[0, 1]), &archive_css(), Some(&sighting(both.path(), None))).await;
+    assert_eq!(status, 200);
+    assert_eq!(archive_matched(both.path()), Some((2, 2)));
+
+    let legacy = TempDir::new();
+    let (status, _) = probe_page(&mut probed_page_showing(2, &[0]), &archive(), Some(&sighting(legacy.path(), None))).await;
+    assert_eq!(status, 200);
+    assert_eq!(archive_matched(legacy.path()), Some((2, 2)));
+    let first_hidden = TempDir::new();
+    let (status, _) =
+        probe_page(&mut probed_page_showing(2, &[1]), &archive(), Some(&sighting(first_hidden.path(), None))).await;
+    assert_eq!(status, 200);
+    assert_eq!(archive_matched(first_hidden.path()), None, "a legacy target whose first match is hidden was filed");
+}
+
+/// A tried legacy string target is probed once the try worked and filed
+/// with every match the probe counts (a run does not leave hidden ones
+/// out), never stamped as one.
+#[tokio::test]
+async fn a_tried_legacy_target_is_filed_with_every_match() {
+    let wait = Action::WaitFor { selector: "#save".into(), timeout_ms: 1000 };
+    for (action, found) in [(click_save(), 1), (wait, 3)] {
+        let dir = TempDir::new();
+        let mut account = None;
+        let mut lease = v2_lib::autorun::lease::Held::supervised();
+        let mut d = crate::common::FakePage { found, ..crate::common::FakePage::default() }.driver();
+        let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &action).await;
+        assert_eq!(status, 200, "{text}");
+        assert!(text.starts_with("ok:"), "{found}: {text}");
+        let area = mapped_area(dir.path(), "").expect("nothing was recorded");
+        let key = v2_lib::browser::locator::SeenKey::Css("#save".into());
+        let filed = area.sightings.iter().find(|s| s.key == key).map(|s| s.matched);
+        assert_eq!(filed, Some(found as u32), "{found}");
+    }
+}
+
+/// A tried `wait_for` passes on several matches without saying how many,
+/// so it is probed once it worked and filed with the visible count: one
+/// that matched several vouches for a check that may match several, never
+/// for a click. One that matched one vouches for both.
+#[tokio::test]
+async fn a_tried_wait_for_that_matched_several_does_not_vouch_for_a_click() {
+    use v2_lib::autorun::components::ComponentFile;
+    use v2_lib::autorun::seen_check::check_seen;
+    let script = |action: serde_json::Value| -> CaseScript {
+        serde_json::from_value(serde_json::json!({
+            "case_id": 7, "title": "T", "steps": [{ "step_number": 1, "actions": [action] }]
+        }))
+        .unwrap()
+    };
+    let click = script(serde_json::json!({ "kind": "click", "selector": "#rows" }));
+    let hidden = script(serde_json::json!({ "kind": "expect_hidden", "selector": "#rows" }));
+    let wait = Action::WaitFor { selector: "#rows".into(), timeout_ms: 1000 };
+    let none = ComponentFile::default();
+
+    for (found, clicks) in [(2, false), (1, true)] {
+        let dir = TempDir::new();
+        let mut account = None;
+        let mut lease = v2_lib::autorun::lease::Held::supervised();
+        let mut d = crate::common::FakePage { found, ..crate::common::FakePage::default() }.driver();
+        let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &wait).await;
+        assert_eq!(status, 200, "{text}");
+        assert!(text.starts_with("ok:"), "{text}");
+        let map = load_map(dir.path(), "acme", "Web").unwrap();
+        assert_eq!(check_seen(&map, &none, &hidden, &[], None), Ok(()), "found {found}");
+        assert_eq!(check_seen(&map, &none, &click, &[], None).is_ok(), clicks, "found {found}");
+    }
 }
 
 /// A try that worked files what it acted on; one that failed files nothing:

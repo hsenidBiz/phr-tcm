@@ -1036,7 +1036,8 @@ the action fails and says how many: narrow it with a list, `"exact"`, or
 `"nth"` (zero-based: `{ "css": "tbody tr", "nth": 0 }` is the first row).
 `nth` picks from THAT entry's matches across everything the previous
 entry matched, taken in page order, not from the matches inside one of
-them. Only `expect_count` and `expect_hidden` are happy with many.
+them. Only `expect_count`, `expect_hidden` and `wait_for` are happy with
+many.
 
 A misspelt field is rejected, not ignored. Each entry takes exactly one
 of `role`, `text` or `css`.
@@ -1192,6 +1193,16 @@ What a save checks:
 - Every locator in the script must have been seen on the live app: every
   click, fill and check target, each link of a chained locator, the
   actions inside `when_visible`, and the tab actions.
+- How many elements it was seen matching depends on how it is used. A
+  check that can pass with several matches (`expect_hidden`,
+  `expect_count`, `wait_for`) may use a locator seen matching several
+  elements. Every other use needs a locator seen matching exactly one: an
+  action (click, fill, upload, press_key, drag), the selector a
+  `when_visible` waits for, and the checks that read one element (`expect_visible`, `expect_text`,
+  `expect_contains_text`, `expect_attribute`, `expect_focused`, and the
+  table checks, whose table must be one). A locator never seen matching
+  anything is refused for every use, `expect_hidden` included: probe it
+  while what it names is on the page.
 - A `navigate` or `open_tab` address must be one discovery has visited.
 - Three kinds of locator pass without a sighting:
   1. Text the script typed itself: a locator whose text or name contains,
@@ -1286,8 +1297,10 @@ Make it during discovery:
 What a save checks:
 
 - Every locator it fixes must have been seen on the live app in the area
-  you are exploring; one never seen is refused. A target input is not a
-  locator yet, so it passes.
+  you are exploring; one never seen is refused. As for a script, a check
+  that can pass with several matches may use a locator seen matching
+  several elements, and an action needs one seen matching exactly one. A
+  target input is not a locator yet, so it passes.
 - Every input it uses is declared, and every one declared is used.
 - It cannot sign in or type a username or password: a script signs in
   as its account. It cannot use another component, and an input cannot
@@ -1407,11 +1420,13 @@ Before every save:
   listed at once), writing nothing and recording nothing.
 - A save refused during a discovery only because some locators were never
   seen checks those locators on the discovery's current page once, on its
-  own: each one found there exactly once, and visible, is recorded, and
-  the save is checked again. The answer then starts with
-  `Recorded on the current page:` and the locators it recorded. A locator
-  holding a placeholder is not checked this way, and nothing is clicked or
-  typed.
+  own: each one found there visible is recorded with how many elements it
+  matched, and the save is checked again. The answer then starts with
+  `Recorded on the current page:` and the locators it recorded, with
+  `(matched N elements)` after one that matched several. A check that can
+  pass with several matches may use such a locator; an action still needs
+  one that matched exactly one. A locator holding a placeholder is not
+  checked this way, and nothing is clicked or typed.
 
 `save_autorun_script` does NOT take the steps array on its own - it takes
 a LIST of scripts, one entry per case, so a whole PBI can be saved in one

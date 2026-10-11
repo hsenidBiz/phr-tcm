@@ -1969,10 +1969,15 @@ pub fn may_record(href: &str, policy: &crate::browser::actions::Policy) -> bool 
     crate::autorun::recipe::origin_of(href).is_some() && policy.allows(href)
 }
 
+/// One locator to file, with how many elements it matched and how many
+/// with hidden ones included (`discovery_map::NOT_ONE` when not known).
+type Matched<'a> = (&'a crate::browser::locator::Target, usize, usize);
+
 /// Files each locator in `targets` at `at` under the page at `href` (its
-/// full address, cut to its path here), only when `may_record` allows that
-/// page. Says whether every locator was filed.
-fn record_matched_targets(at: &Sighting, href: &str, targets: &[&crate::browser::locator::Target]) -> bool {
+/// full address, cut to its path here), with how many elements it matched,
+/// only when `may_record` allows that page. Says whether every locator was
+/// filed.
+fn record_matched_targets(at: &Sighting, href: &str, targets: &[Matched]) -> bool {
     if targets.is_empty() || at.project.trim().is_empty() {
         return false;
     }
@@ -1990,11 +1995,11 @@ fn record_matched_targets(at: &Sighting, href: &str, targets: &[&crate::browser:
     let path = crate::autorun::discovery_map::path_only(href);
     let now = crate::autorun::sessions::now_ms();
     let mut filed = true;
-    for target in targets {
+    for (target, matched, all) in targets {
         let area = at.area.as_deref();
-        if let Err(why) =
-            crate::autorun::discovery_map::record_matched(&at.root, &at.org, &at.project, area, &path, target, now)
-        {
+        if let Err(why) = crate::autorun::discovery_map::record_matched_counts(
+            &at.root, &at.org, &at.project, area, &path, target, *matched, *all, now,
+        ) {
             unrecorded(&why);
             filed = false;
         }
@@ -2002,41 +2007,47 @@ fn record_matched_targets(at: &Sighting, href: &str, targets: &[&crate::browser:
     filed
 }
 
-/// The locators an action that WORKED must have matched at least once.
-/// Kinds that pass while matching nothing give none: `expect_hidden`, an
-/// `expect_count` of 0, `expect_no_row`, a `expect_row_count` with no
-/// positive bound, and `when_visible`, whose outcome does not say whether
-/// its selector was there. Matched without a catch-all, so a new kind will
-/// not compile until it is classified here.
-fn matched_targets(action: &crate::browser::actions::Action) -> Vec<&crate::browser::locator::Target> {
+/// The locators an action that WORKED must have matched at least once,
+/// each with how many elements it matched. Kinds that pass while matching
+/// nothing give none: `expect_hidden`, an `expect_count` of 0,
+/// `expect_no_row`, a `expect_row_count` with no positive bound, and
+/// `when_visible`, whose outcome does not say whether its selector was
+/// there. A click, a fill and the checks that read one element fail on
+/// several, so theirs matched one; an `expect_count` matched the number it
+/// counted. A `wait_for` passes on one or more and its outcome does not
+/// say how many, so it is left out here and probed once the try worked
+/// (`try_action`), as is any legacy string target: a run takes its first
+/// match, so it passes on several too. Matched without a catch-all, so a
+/// new kind will not compile until it is classified here.
+fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::browser::locator::Target, usize)> {
     use crate::browser::actions::Action;
     match action {
         Action::Click { selector }
         | Action::Fill { selector, .. }
         | Action::Upload { selector, .. }
-        | Action::WaitFor { selector, .. }
         | Action::ExpectVisible { selector, .. }
         | Action::ExpectText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectAttribute { selector, .. }
-        | Action::ExpectFocused { selector, .. } => vec![selector],
+        | Action::ExpectFocused { selector, .. } => vec![(selector, 1)],
         Action::ExpectCount { selector, equals, .. } => {
             if *equals >= 1 {
-                vec![selector]
+                vec![(selector, *equals as usize)]
             } else {
                 vec![]
             }
         }
-        Action::Drag { from, to, .. } => vec![from, to],
-        Action::ExpectRow { table, .. } | Action::ExpectSorted { table, .. } => vec![table],
+        Action::Drag { from, to, .. } => vec![(from, 1), (to, 1)],
+        Action::ExpectRow { table, .. } | Action::ExpectSorted { table, .. } => vec![(table, 1)],
         Action::ExpectRowCount { table, equals, at_least, .. } => {
             if equals.is_some_and(|n| n >= 1) || at_least.is_some_and(|n| n >= 1) {
-                vec![table]
+                vec![(table, 1)]
             } else {
                 vec![]
             }
         }
         Action::ExpectHidden { .. }
+        | Action::WaitFor { .. }
         | Action::UseComponent { .. }
         | Action::ExpectNoRow { .. }
         | Action::WhenVisible { .. }
@@ -2061,11 +2072,13 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<&crate::brow
 }
 
 /// A probe's answer read back (`snapshot::probe`): how many elements
-/// matched (`"matches: N ..."`), and whether the first one listed is
-/// visible (its line is `<tag> "<text>" visible at ...`).
+/// matched (`"matches: N ..."`), how many of them it listed (at most ten),
+/// and how many of those listed are visible (a line `<tag> "<text>" visible
+/// at ...`).
 struct ProbeAnswer {
     matches: usize,
-    first_visible: bool,
+    listed: usize,
+    visible: usize,
 }
 
 fn read_probe_answer(text: &str) -> ProbeAnswer {
@@ -2075,21 +2088,72 @@ fn read_probe_answer(text: &str) -> ProbeAnswer {
         .and_then(|n| n.parse().ok())
         .unwrap_or(0);
     // After the text's closing quote, which the text itself cannot follow.
-    let first_visible = text
-        .lines()
-        .nth(1)
-        .and_then(|line| line.rfind('"').map(|i| &line[i + 1..]))
-        .is_some_and(|rest| rest.starts_with(" visible "));
-    ProbeAnswer { matches, first_visible }
+    let shown = |line: &str| line.rfind('"').map(|i| &line[i + 1..]).is_some_and(|rest| rest.starts_with(" visible "));
+    let listed = matches.min(10);
+    let visible = text.lines().skip(1).take(listed).filter(|l| shown(l)).count();
+    ProbeAnswer { matches, listed, visible }
 }
 
-/// How many elements a probe's answer says matched.
-fn probe_matches(text: &str) -> usize {
-    read_probe_answer(text).matches
+/// How many visible elements a probe of a structured locator says
+/// matched. `None` when none of them is visible, which files nothing. One
+/// visible beside any number of hidden ones is one, as a run finds only
+/// visible ones. When the probe matched more than it lists and one listed
+/// is visible, the ones it left out may be visible too, so that is at
+/// least two, never one.
+fn visible_matches(text: &str) -> Option<usize> {
+    let answer = read_probe_answer(text);
+    if answer.visible == 0 {
+        return None;
+    }
+    if answer.matches > answer.listed {
+        return Some(answer.visible.max(2));
+    }
+    Some(answer.visible)
+}
+
+/// What a probe of `target` (its answer `text`) files the target as
+/// matching: how many elements, and how many with hidden ones included.
+/// `None` files nothing.
+///
+/// A legacy string target resolves to at most one element (`LEGACY_JS`
+/// keeps the first css match or the last `text=` one), so its probe never
+/// shows more than one: it is counted for real with `LEGACY_COUNT_JS`,
+/// hidden ones included, as a run does not leave them out. It is filed
+/// only when the element a run takes is visible.
+///
+/// A structured locator files its visible matches (`visible_matches`).
+/// When it is one plain css link, whose key a legacy string shares, the
+/// hidden ones are counted too by probing it with them included, so a
+/// legacy use of that key is held to every match; any other files the
+/// visible count for both.
+async fn counted<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    target: &crate::browser::locator::Target,
+    text: &str,
+) -> Option<(usize, usize)> {
+    use crate::autorun::discovery_map::{plain_target, NOT_ONE};
+    if let crate::browser::locator::Target::Legacy(sel) = target {
+        if read_probe_answer(text).visible == 0 {
+            return None;
+        }
+        let all = crate::browser::locator::legacy_count(d, sel).await.ok().filter(|n| *n > 0)?;
+        return Some((all, all));
+    }
+    let matched = visible_matches(text)?;
+    let css = plain_target(target) && target.links().first().is_some_and(|l| l.css.is_some());
+    if !css {
+        return Some((matched, matched));
+    }
+    let all = match crate::browser::snapshot::probe(d, &target.including_hidden()).await {
+        Ok(t) => read_probe_answer(&t).matches.max(matched),
+        Err(_) => NOT_ONE as usize,
+    };
+    Some((matched, all))
 }
 
 /// What a locator matches on the page, as the probe answers it; a locator
-/// that matched at least once is filed at `at`.
+/// that matched at least one visible element is filed at `at`, with how
+/// many visible ones it matched (`visible_matches`).
 pub async fn probe_page<D: crate::browser::cdp::Driver>(
     d: &mut D,
     target: &crate::browser::locator::Target,
@@ -2099,18 +2163,24 @@ pub async fn probe_page<D: crate::browser::cdp::Driver>(
         Ok(text) => text,
         Err(e) => return (503, format!("the browser did not answer: {e}")),
     };
-    if let Some(at) = at.filter(|_| probe_matches(&text) > 0) {
-        let (href, _) = page_address(d).await;
-        record_matched_targets(at, &href, &[target]);
+    if let Some(at) = at {
+        if let Some((matched, all)) = counted(d, target, &text).await {
+            let (href, _) = page_address(d).await;
+            record_matched_targets(at, &href, &[(target, matched, all)]);
+        }
     }
     (200, text)
 }
 
-/// Does a probe's answer say it matched exactly one element, and that one
-/// visible?
-fn one_visible_match(text: &str) -> bool {
-    let answer = read_probe_answer(text);
-    answer.matches == 1 && answer.first_visible
+/// How a locator recorded on the page is named in a save's answer: as it
+/// describes itself, with how many elements it matched when that was more
+/// than one.
+fn recorded_as(described: &str, matched: usize) -> String {
+    if matched > 1 {
+        format!("{described} (matched {matched} elements)")
+    } else {
+        described.to_string()
+    }
 }
 
 /// Can a locator be probed as it is written: no placeholder (`{{...}}`)
@@ -2124,10 +2194,13 @@ fn probeable(target: &crate::browser::locator::Target) -> bool {
 /// open: each refused locator in `targets` that can be probed as written
 /// is probed on the discovery browser's current page, as
 /// `probe_autorun_locator` probes it (it never clicks or types), and one
-/// that matches exactly one visible element is recorded under the
-/// discovery's current area. Hands back the locators recorded, as each
-/// describes itself; `None` when no discovery is going, and then nothing
-/// is probed.
+/// that matches one or more visible elements is recorded under the
+/// discovery's current area, with how many it matched. Whether that is
+/// enough for the save is the seen check's to say: a check that may match
+/// several takes it, any other use needs one (`seen_check::takes_many`).
+/// Hands back the locators recorded, as each describes itself, with
+/// "(matched N elements)" after one that matched several; `None` when no
+/// discovery is going, and then nothing is probed.
 pub async fn record_refused_in<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
     root: &std::path::Path,
@@ -2154,15 +2227,15 @@ pub async fn record_refused_in<B: DiscoveryBrowser>(
             unchecked += 1;
             continue;
         };
-        if !one_visible_match(&text) {
+        let Some((matched, all)) = counted(p.driver, target, &text).await else {
             continue;
-        }
+        };
         let Some(at) = at.as_ref() else {
             continue;
         };
         let (href, _) = page_address(p.driver).await;
-        if record_matched_targets(at, &href, &[target]) {
-            recorded.push(described);
+        if record_matched_targets(at, &href, &[(target, matched, all)]) {
+            recorded.push(recorded_as(&described, matched));
         }
     }
     if unchecked > 0 {
@@ -2219,7 +2292,7 @@ async fn record_refused_on_page(
 /// the page recorded.
 pub fn after_recording(recorded: &[String], (status, text): (u16, String)) -> (u16, String) {
     let line = if recorded.is_empty() {
-        "Recorded on the current page: nothing - no refused locator matched exactly one visible element.".to_string()
+        "Recorded on the current page: nothing - no refused locator matched a visible element.".to_string()
     } else {
         format!("Recorded on the current page: {}.", recorded.join(", "))
     };
@@ -4377,8 +4450,42 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // anything a recipe would have substituted.
     // The page the try starts on: a click that navigates was matched on
     // this page, not the one it leads to.
-    let matched = matched_targets(action);
-    let started_on = if matched.is_empty() { String::new() } else { page_address(d).await.0 };
+    // A `wait_for`, and any legacy string target, passes on one match or
+    // several and does not say which, so once the try worked each is
+    // probed, as `probe_autorun_locator` does, and filed with the count the
+    // probe gives (`visible_matches`). The probe never clicks or types.
+    // A legacy string target is probed BEFORE the try, on the page it acts
+    // on: a probe is read-only, and after a click that navigates it would
+    // count the wrong page. A structured target that is one plain css link
+    // matched one visible element, but its hidden matches are not known
+    // (`NOT_ONE`), so it never vouches for a legacy use of its key.
+    let (known, legacy): (Vec<_>, Vec<_>) = matched_targets(action).into_iter().partition(|(t, _)| !t.is_legacy());
+    let mut matched: Vec<Matched> = known
+        .into_iter()
+        .map(|(t, n)| {
+            let css = crate::autorun::discovery_map::plain_target(t) && t.links().first().is_some_and(|l| l.css.is_some());
+            (t, n, if css { crate::autorun::discovery_map::NOT_ONE as usize } else { n })
+        })
+        .collect();
+    for (target, _) in legacy {
+        let text = crate::browser::snapshot::probe(d, target).await.ok();
+        match text {
+            Some(text) => match counted(d, target, &text).await {
+                Some((n, all)) => matched.push((target, n, all)),
+                None => crate::applog::info("Auto Run try: a tried locator was not filed, as the probe before it saw nothing visible"),
+            },
+            None => crate::applog::info("Auto Run try: a tried locator was not filed, as the probe before it got no answer"),
+        }
+    }
+    // A `wait_for` passes on one match or several and does not say which,
+    // and what it waits for may not be there yet when the try starts: it is
+    // probed once the try worked. Waiting changes no page.
+    let waited = match action {
+        crate::browser::actions::Action::WaitFor { selector, .. } => Some(selector),
+        _ => None,
+    };
+    let started_on =
+        if matched.is_empty() && waited.is_none() { String::new() } else { page_address(d).await.0 };
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
     let mut run = InRun { areas: Some(&areas), saves_only_counted, ..Default::default() };
     let outcomes = match crate::autorun::runner::run_step_in_run(
@@ -4418,6 +4525,19 @@ async fn try_action<D: crate::browser::cdp::Driver>(
             // Only the application's own pages count (`may_record`).
             policy: recording_policy(root, organization, project),
         };
+        let mut matched = matched;
+        if let Some(target) = waited {
+            let found = match crate::browser::snapshot::probe(d, target).await {
+                Ok(text) => counted(d, target, &text).await,
+                Err(_) => None,
+            };
+            match found {
+                Some((n, all)) => matched.push((target, n, all)),
+                // Nothing visible now, or the browser did not answer: it was
+                // not seen, so nothing is filed for it.
+                None => crate::applog::info("Auto Run try: a tried locator was not filed, as the probe after it saw nothing visible"),
+            }
+        }
         record_matched_targets(&at, &started_on, &matched);
     }
     Ok(Tried { outcome, dialog: run.dialog })

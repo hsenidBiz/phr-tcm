@@ -559,8 +559,8 @@ fn check_users(
                 script.case_id
             ));
         };
-        for u in super::seen_check::check_component_uses(map, after, script, text, name) {
-            broken.push(format!("Case {}, {}", script.case_id, u.broken_by_change()));
+        for (u, hint) in super::seen_check::check_component_uses_hinted(map, after, script, text, name) {
+            broken.push(format!("Case {}, {}", script.case_id, u.broken_by_change_hinted(hint.as_deref())));
         }
     }
     if broken.is_empty() {

@@ -736,3 +736,102 @@ fn the_ceiling_evicts_the_least_recently_seen() {
     assert!(!has("n0"), "the least recently seen goes");
     assert!(has("n1") && has("new1") && has("new2"));
 }
+
+// ------------------------- how many elements a sighting matched
+
+/// A map written before sightings kept how many elements they matched
+/// loads with every sighting and element as one, the only kind recorded
+/// then.
+#[test]
+fn old_sightings_load_as_one_match() {
+    let dir = tempfile::tempdir().unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &Target::from("#id"), 3).unwrap();
+    // The same file with no `matched` anywhere, as an older map has it.
+    let path = map_path(dir.path(), "Acme", "Web");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    for area in v["areas"].as_array_mut().unwrap() {
+        for s in area["sightings"].as_array_mut().unwrap() {
+            s.as_object_mut().unwrap().remove("matched").expect("a sighting keeps matched");
+        }
+        for p in area["pages"].as_array_mut().unwrap() {
+            for e in p["elements"].as_array_mut().unwrap() {
+                e.as_object_mut().unwrap().remove("matched").expect("an element keeps matched");
+            }
+        }
+    }
+    let old = serde_json::to_string_pretty(&v).unwrap();
+    assert!(!old.contains("matched"));
+    std::fs::write(&path, old).unwrap();
+
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let area = &map.areas[0];
+    assert!(!area.sightings.is_empty() && area.sightings.iter().all(|s| s.matched == 1), "{:?}", area.sightings);
+    let elements = &area.pages[0].elements;
+    assert!(!elements.is_empty() && elements.iter().all(|e| e.matched == 1), "{elements:?}");
+}
+
+/// A target matched against the page keeps how many elements it matched.
+/// Seen matching one, it stays one; a later sighting matching several
+/// never undoes that. Seen only matching several, it keeps the latest
+/// number, until a sighting matching one or a page read showing it.
+#[test]
+fn a_sighting_keeps_how_many_elements_it_matched() {
+    use v2_lib::autorun::discovery_map::record_matched_count;
+    let dir = tempfile::tempdir().unwrap();
+    let matched = |css: &str| {
+        let map = load_map(dir.path(), "Acme", "Web").unwrap();
+        let key = SeenKey::Css(css.to_string());
+        let s = map.areas[0].sightings.iter().find(|s| s.key == key).map(|s| s.matched);
+        let e = map.areas[0].pages.iter().flat_map(|p| &p.elements).find(|e| e.key == key).map(|e| e.matched);
+        (s, e)
+    };
+    let record = |css: &str, n: usize, at: u64| {
+        record_matched_count(dir.path(), "Acme", "Web", Some("A"), "/p", &Target::from(css), n, at).unwrap()
+    };
+
+    record(".many", 2, 1);
+    assert_eq!(matched(".many"), (Some(2), Some(2)));
+    record(".many", 3, 2);
+    assert_eq!(matched(".many"), (Some(3), Some(3)));
+    record(".many", 1, 3);
+    assert_eq!(matched(".many"), (Some(1), Some(1)));
+    record(".many", 4, 4);
+    assert_eq!(matched(".many"), (Some(1), Some(1)), "a sighting matching several undid one matching one");
+
+    // `record_matched` is one element.
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &Target::from(".one"), 5).unwrap();
+    assert_eq!(matched(".one"), (Some(1), Some(1)));
+}
+
+/// A page read counts, for each line, the listed lines in its frame its
+/// locator would match: the same role and a name holding its name.
+#[test]
+fn a_page_read_files_how_many_lines_each_locator_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    let lines = [line("button", "Edit"), line("button", "Edit"), line("button", "Save"), line("button", "Save draft")];
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &lines, None, None, 0).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let area = &map.areas[0];
+    let matched = |name: &str| {
+        let key = role_key("button", name);
+        let s = area.sightings.iter().find(|s| s.key == key).map(|s| s.matched);
+        let e = area.pages[0].elements.iter().find(|e| e.key == key).map(|e| e.matched);
+        (s, e)
+    };
+    assert_eq!(matched("Edit"), (Some(2), Some(2)), "two rows' Edit buttons");
+    assert_eq!(matched("Save"), (Some(2), Some(2)), "Save beside Save draft");
+    assert_eq!(matched("Save draft"), (Some(1), Some(1)));
+}
+
+/// A read the line limit cut short may not have listed every match, so a
+/// line it counted once is not filed as one.
+#[test]
+fn a_cut_read_does_not_file_one_match() {
+    use v2_lib::autorun::discovery_map::{record_read, NOT_ONE};
+    let dir = tempfile::tempdir().unwrap();
+    record_read(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Edit")], None, None, false, 0).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(map.areas[0].sightings[0].matched, NOT_ONE);
+    assert_eq!(map.areas[0].pages[0].elements[0].matched, NOT_ONE);
+}

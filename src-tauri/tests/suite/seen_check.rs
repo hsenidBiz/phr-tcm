@@ -32,6 +32,8 @@ fn map_with(area: &str, path: &str, links: &[LocatorStep]) -> DiscoveryMap {
             kind: "other".to_string(),
             required: false,
             seen_at: 0,
+            matched: 1,
+            all: None,
         })
         .collect();
     DiscoveryMap {
@@ -879,6 +881,8 @@ fn a_not_filter_needs_its_inner_part_seen() {
         kind: "other".to_string(),
         required: false,
         seen_at: 0,
+        matched: 1,
+        all: None,
     });
     assert_eq!(check_seen(&chained, &none(), &with(has_badge), &[], None), Ok(()));
     let badge_elsewhere = joined(base_only.clone(), map_with("Payroll", "/payroll", &[css(".phr-mc-card .badge-draft")]));
@@ -1021,6 +1025,8 @@ fn only_a_picked_date_is_exempt() {
         kind: "table".to_string(),
         required: false,
         seen_at: 0,
+        matched: 1,
+        all: None,
     });
     let cell = one_step("Leave", serde_json::json!([click(serde_json::json!([
         { "role": "table", "name": "Due date" }, { "role": "cell", "name": "15/01/2027" }
@@ -1538,7 +1544,7 @@ fn did_you_mean_prefers_the_steps_area_page() {
     assert_eq!(check_seen(&map, &none(), &says("Step 2 of 9"), &[], None), hinted("did you mean text \"Step 4 of 99\"?"));
 
     // Kept sightings, by the page each was last seen on.
-    let sighting = |t: &str, page: &str| Sighting { key: text(t).seen_key().unwrap(), link: text(t), page: page.to_string(), last_seen: 1 };
+    let sighting = |t: &str, page: &str| Sighting { key: text(t).seen_key().unwrap(), link: text(t), page: page.to_string(), last_seen: 1, matched: 1, all: None };
     let mut kept = DiscoveryMap {
         areas: vec![AreaMap {
             area: "Cycles".into(),
@@ -1819,4 +1825,322 @@ fn a_component_refusal_lists_every_unseen_locator_in_order() {
         [line(1, "button \"Publsh\"", Some("did you mean button \"Publish\"?")), line(3, "button \"Archive\"", None)];
     assert_eq!(check_component_seen(&map, Some("Ratings"), &actions), Err(expected.join("\n")));
     assert_eq!(component_verdict(&map, Some("Ratings"), &actions), SeenVerdict::Unseen(expected.to_vec()));
+}
+
+// ------------------------- a locator seen matching several elements
+
+/// The selector from the refused save that started this: any Edit button
+/// but the shared draft's. Before the search filters the list it matches
+/// two buttons; after, none.
+const NOT_THE_DRAFT: &str = ".cycle-row:not([data-cycle-id=\"10301\"]) button[title=\"Edit\"]";
+
+/// A map whose area `area` holds `link` as one sighting that matched
+/// `matched` elements.
+fn sighted_matching(area: &str, link: LocatorStep, matched: u32) -> DiscoveryMap {
+    use v2_lib::autorun::discovery_map::Sighting;
+    DiscoveryMap {
+        areas: vec![AreaMap {
+            area: area.to_string(),
+            sightings: vec![Sighting {
+                key: link.seen_key().unwrap(),
+                link,
+                page: "/cycles".to_string(),
+                last_seen: 1,
+                matched,
+                all: None,
+            }],
+            ..AreaMap::default()
+        }],
+    }
+}
+
+fn many_refusal(step: i32, describe: &str) -> String {
+    format!(
+        "Step {step}: {describe} was seen on the live app only matching several elements, and this use needs one seen matching exactly one: narrow it with a name, \"exact\": true, a scope or \"nth\". Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+    )
+}
+
+#[test]
+fn a_two_match_locator_is_seen_for_expect_hidden() {
+    let map = sighted_matching("Cycles", css(NOT_THE_DRAFT), 2);
+    let hidden = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": NOT_THE_DRAFT } }]));
+    assert_eq!(check_seen(&map, &none(), &hidden, &[], None), Ok(()));
+
+    // A seen element filed with its count reads the same as a sighting.
+    let mut as_element = map_with("Cycles", "/cycles", &[css(NOT_THE_DRAFT)]);
+    as_element.areas[0].pages[0].elements[0].matched = 2;
+    assert_eq!(check_seen(&as_element, &none(), &hidden, &[], None), Ok(()));
+
+    // A chain checked this way may have had its scope seen matching
+    // several too: a run looks inside every element the scope matches.
+    let chain = serde_json::json!([{ "css": ".cycle-row" }, { "css": "button[title=\"Edit\"]" }]);
+    let mut both = sighted_matching("Cycles", css(".cycle-row"), 3);
+    both.areas[0].sightings.extend(sighted_matching("Cycles", css("button[title=\"Edit\"]"), 2).areas[0].sightings.clone());
+    let in_rows = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": chain.clone() }]));
+    assert_eq!(check_seen(&both, &none(), &in_rows, &[], None), Ok(()));
+    let click_in_rows = one_step("Cycles", serde_json::json!([click(chain.clone())]));
+    let described = serde_json::from_value::<Target>(chain).unwrap().describe();
+    assert_eq!(check_seen(&both, &none(), &click_in_rows, &[], None), Err(many_refusal(1, &described)));
+}
+
+#[test]
+fn a_two_match_locator_is_seen_for_a_count_check() {
+    let map = sighted_matching("Cycles", css(NOT_THE_DRAFT), 2);
+    for check in [
+        serde_json::json!({ "kind": "expect_count", "selector": { "css": NOT_THE_DRAFT }, "equals": 2 }),
+        serde_json::json!({ "kind": "expect_count", "selector": { "css": NOT_THE_DRAFT }, "equals": 0 }),
+        serde_json::json!({ "kind": "wait_for", "selector": { "css": NOT_THE_DRAFT }, "timeout_ms": 5000 }),
+    ] {
+        let s = one_step("Cycles", serde_json::json!([check.clone()]));
+        assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()), "{check}");
+    }
+}
+
+#[test]
+fn a_two_match_locator_is_refused_for_a_click() {
+    let map = sighted_matching("Cycles", css(NOT_THE_DRAFT), 2);
+    let described = Target::One(css(NOT_THE_DRAFT)).describe();
+    // An action, and every check that reads one element and fails on
+    // several, needs a locator seen matching exactly one.
+    for refused in [
+        click(serde_json::json!({ "css": NOT_THE_DRAFT })),
+        serde_json::json!({ "kind": "fill", "selector": { "css": NOT_THE_DRAFT }, "value": "x" }),
+        serde_json::json!({ "kind": "expect_visible", "selector": { "css": NOT_THE_DRAFT } }),
+        serde_json::json!({ "kind": "expect_text", "selector": { "css": NOT_THE_DRAFT }, "equals": "Edit" }),
+        serde_json::json!({ "kind": "expect_attribute", "selector": { "css": NOT_THE_DRAFT }, "name": "disabled", "equals": "true" }),
+    ] {
+        let s = one_step("Cycles", serde_json::json!([refused.clone()]));
+        assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(many_refusal(1, &described)), "{refused}");
+    }
+
+    // Seen matching one once: a later sighting matching several does not
+    // undo it, and the click passes.
+    let one = sighted_matching("Cycles", css(NOT_THE_DRAFT), 1);
+    let s = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "css": NOT_THE_DRAFT }))]));
+    assert_eq!(check_seen(&one, &none(), &s, &[], None), Ok(()));
+
+    // A component is held to the same rule.
+    let click_it: Vec<v2_lib::browser::actions::Action> =
+        serde_json::from_value(serde_json::json!([click(serde_json::json!({ "css": NOT_THE_DRAFT }))])).unwrap();
+    assert!(check_component_seen(&map, Some("Cycles"), &click_it).unwrap_err().contains("only matching several elements"));
+    let hide_it: Vec<v2_lib::browser::actions::Action> =
+        serde_json::from_value(serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": NOT_THE_DRAFT } }])).unwrap();
+    assert_eq!(check_component_seen(&map, Some("Cycles"), &hide_it), Ok(()));
+}
+
+#[test]
+fn a_locator_never_seen_matching_is_still_refused() {
+    // Nothing seen at all: refused for a check that may match several, as
+    // for any other use.
+    let empty = DiscoveryMap::default();
+    let described = Target::One(css(NOT_THE_DRAFT)).describe();
+    for check in [
+        serde_json::json!({ "kind": "expect_hidden", "selector": { "css": NOT_THE_DRAFT } }),
+        serde_json::json!({ "kind": "expect_count", "selector": { "css": NOT_THE_DRAFT }, "equals": 0 }),
+    ] {
+        let s = one_step("Cycles", serde_json::json!([check.clone()]));
+        assert_eq!(check_seen(&empty, &none(), &s, &[], None), Err(refusal(1, &described)), "{check}");
+    }
+    // Another selector seen matching several does not stand in for it.
+    let other = sighted_matching("Cycles", css("button[title=\"Edit\"]"), 2);
+    let s = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": NOT_THE_DRAFT } }]));
+    assert!(check_seen(&other, &none(), &s, &[], None).is_err());
+}
+
+/// A link a saved script used only in a check that may match several
+/// vouches for such a check, never for an action.
+#[test]
+fn a_saved_check_link_vouches_only_for_a_check() {
+    let mut map = DiscoveryMap::default();
+    let saved = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": NOT_THE_DRAFT } }]));
+    add_saved_scripts(&mut map, &[saved]);
+    let hidden = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": NOT_THE_DRAFT } }]));
+    assert_eq!(check_seen(&map, &none(), &hidden, &[], None), Ok(()));
+    let clicked = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "css": NOT_THE_DRAFT }))]));
+    assert!(check_seen(&map, &none(), &clicked, &[], None).is_err());
+
+    // Used by an action in a saved script too: it vouches for both.
+    let acted = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "css": NOT_THE_DRAFT }))]));
+    add_saved_scripts(&mut map, &[acted]);
+    assert_eq!(check_seen(&map, &none(), &clicked, &[], None), Ok(()));
+}
+
+// ------------------------- one match only for exactly that locator
+
+/// A map under a fresh folder with `target` filed as matching `matched`
+/// elements on `/cycles` in Cycles, as a probe or a try files it.
+fn filed(target: serde_json::Value, matched: usize) -> DiscoveryMap {
+    let dir = tempfile::tempdir().unwrap();
+    let t: Target = serde_json::from_value(target).unwrap();
+    v2_lib::autorun::discovery_map::record_matched_count(dir.path(), "Acme", "Web", Some("Cycles"), "/cycles", &t, matched, 1)
+        .unwrap();
+    v2_lib::autorun::discovery_map::load_map(dir.path(), "Acme", "Web").unwrap()
+}
+
+fn clicks(target: serde_json::Value) -> CaseScript {
+    one_step("Cycles", serde_json::json!([click(target)]))
+}
+
+#[test]
+fn a_chain_matching_one_does_not_let_its_scope_vouch_for_a_click() {
+    let chain = serde_json::json!([{ "css": ".card" }, { "role": "button", "name": "Edit" }]);
+    let map = filed(chain.clone(), 1);
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": ".card" })), &[], None).is_err());
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "role": "button", "name": "Edit" })), &[], None).is_err());
+    // The whole chain, written the same way, is seen matching one.
+    assert_eq!(check_seen(&map, &none(), &clicks(chain), &[], None), Ok(()));
+    // A check that may match several still takes its scope.
+    let hidden = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".card" } }]));
+    assert_eq!(check_seen(&map, &none(), &hidden, &[], None), Ok(()));
+}
+
+#[test]
+fn an_nth_locator_matching_one_does_not_let_its_key_vouch_for_a_click() {
+    let first = serde_json::json!({ "css": "tbody tr", "nth": 0 });
+    let map = filed(first.clone(), 1);
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "tbody tr" })), &[], None).is_err());
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "tbody tr", "nth": 1 })), &[], None).is_err());
+    assert_eq!(check_seen(&map, &none(), &clicks(first), &[], None), Ok(()));
+}
+
+#[test]
+fn an_exact_locator_matching_one_does_not_let_its_key_vouch_for_a_click() {
+    let exact = serde_json::json!({ "role": "button", "name": "Save", "exact": true });
+    let map = filed(exact.clone(), 1);
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "role": "button", "name": "Save" })), &[], None).is_err());
+    assert_eq!(check_seen(&map, &none(), &clicks(exact), &[], None), Ok(()));
+}
+
+#[test]
+fn a_checked_selector_matching_one_does_not_let_its_base_vouch_for_a_click() {
+    let checked = serde_json::json!({ "css": "input.agree:checked" });
+    let map = filed(checked.clone(), 1);
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": "input.agree" })), &[], None).is_err());
+    assert_eq!(check_seen(&map, &none(), &clicks(checked), &[], None), Ok(()));
+}
+
+/// Nothing matched: nothing is filed, never a sighting matching one.
+#[test]
+fn a_target_matching_nothing_files_nothing() {
+    let map = filed(serde_json::json!({ "css": ".gone" }), 0);
+    assert!(map.areas.is_empty(), "{map:?}");
+}
+
+/// A saved check that alone vouches for a locator says so when an action
+/// uses it.
+#[test]
+fn a_locator_only_a_saved_check_vouches_for_is_refused_for_a_click_saying_so() {
+    let mut map = DiscoveryMap::default();
+    let saved = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".row-edit" } }]));
+    add_saved_scripts(&mut map, &[saved]);
+    let refused = check_seen(&map, &none(), &clicks(serde_json::json!({ "css": ".row-edit" })), &[], None).unwrap_err();
+    assert!(refused.contains("was used only in saved checks that may match several elements"), "{refused}");
+}
+
+/// A component change that breaks a use only matching several says so,
+/// as a save's refusal does.
+#[test]
+fn a_change_broken_by_a_several_match_says_so() {
+    use v2_lib::autorun::seen_check::SEEN_ONLY_MANY;
+    let u = Unseen { step: 2, locator: ".row-edit".to_string(), refused: None };
+    assert_eq!(
+        u.broken_by_change_hinted(Some(SEEN_ONLY_MANY)),
+        format!("step 2: .row-edit {SEEN_ONLY_MANY} This change would break it.")
+    );
+    assert_eq!(u.broken_by_change(), "step 2: .row-edit was never seen on the live app; this change would break it.");
+}
+
+// ------------------------- saved chains, legacy counts, wording
+
+/// A saved script's chain vouches only as that whole chain: neither its
+/// scope nor its last link alone passes for a click.
+#[test]
+fn a_saved_chain_vouches_only_as_a_whole() {
+    let chain = serde_json::json!([{ "css": ".card" }, { "role": "button", "name": "Edit" }]);
+    let mut map = DiscoveryMap::default();
+    add_saved_scripts(&mut map, &[clicks(chain.clone())]);
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": ".card" })), &[], None).is_err());
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "role": "button", "name": "Edit" })), &[], None).is_err());
+    assert_eq!(check_seen(&map, &none(), &clicks(chain), &[], None), Ok(()));
+    // A check that may match several still takes its links.
+    let hidden = one_step("Cycles", serde_json::json!([{ "kind": "expect_hidden", "selector": { "css": ".card" } }]));
+    assert_eq!(check_seen(&map, &none(), &hidden, &[], None), Ok(()));
+}
+
+/// A structured css probe with one visible match and a hidden one vouches
+/// for a structured click, never for a legacy one on the same key: the
+/// legacy string acts on the first match, which may be the hidden one.
+#[test]
+fn a_visible_one_with_a_hidden_twin_does_not_vouch_for_a_legacy_click() {
+    let filed_counts = |matched: usize, all: usize| {
+        let dir = tempfile::tempdir().unwrap();
+        let t: Target = serde_json::from_value(serde_json::json!({ "css": "#save" })).unwrap();
+        v2_lib::autorun::discovery_map::record_matched_counts(dir.path(), "Acme", "Web", Some("Cycles"), "/cycles", &t, matched, all, 1)
+            .unwrap();
+        v2_lib::autorun::discovery_map::load_map(dir.path(), "Acme", "Web").unwrap()
+    };
+    let structured = clicks(serde_json::json!({ "css": "#save" }));
+    let legacy = clicks(serde_json::json!("#save"));
+
+    let twin = filed_counts(1, 2);
+    assert_eq!(check_seen(&twin, &none(), &structured, &[], None), Ok(()));
+    assert_eq!(check_seen(&twin, &none(), &legacy, &[], None), Err(many_refusal(1, "#save")));
+
+    let alone = filed_counts(1, 1);
+    assert_eq!(check_seen(&alone, &none(), &legacy, &[], None), Ok(()));
+
+    // Hidden matches not known: the legacy click is refused as never
+    // counted, the structured one passes.
+    let unknown = filed_counts(1, v2_lib::autorun::discovery_map::NOT_ONE as usize);
+    assert_eq!(check_seen(&unknown, &none(), &structured, &[], None), Ok(()));
+    let refused = check_seen(&unknown, &none(), &legacy, &[], None).unwrap_err();
+    assert!(refused.contains("probe it as written"), "{refused}");
+
+    // A map written before `all` was kept reads it as `matched`.
+    let old = sighted_matching("Cycles", css("#save"), 1);
+    assert_eq!(check_seen(&old, &none(), &legacy, &[], None), Ok(()));
+}
+
+/// A link seen but never counted matching one (a chain's scope) is told to
+/// be probed as written; one counted matching several says so.
+#[test]
+fn a_link_never_counted_says_probe_it_as_written() {
+    let chain = filed(serde_json::json!([{ "css": ".card" }, { "role": "button", "name": "Edit" }]), 1);
+    let refused = check_seen(&chain, &none(), &clicks(serde_json::json!({ "css": ".card" })), &[], None).unwrap_err();
+    assert_eq!(
+        refused,
+        "Step 1: .card was seen on the live app, but never counted as matching exactly one element: probe it as written, then save again. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+    );
+    let three = filed(serde_json::json!({ "css": ".card" }), 3);
+    let refused = check_seen(&three, &none(), &clicks(serde_json::json!({ "css": ".card" })), &[], None).unwrap_err();
+    assert_eq!(refused, many_refusal(1, ".card"));
+}
+
+/// A saved structured css click vouched for its one visible match, which
+/// says nothing of a hidden twin: it never vouches for a legacy click on
+/// the same selector. A saved legacy click does.
+#[test]
+fn a_saved_structured_click_does_not_vouch_for_a_legacy_click() {
+    let legacy = clicks(serde_json::json!("#save"));
+    let mut structured = DiscoveryMap::default();
+    add_saved_scripts(&mut structured, &[clicks(serde_json::json!({ "css": "#save" }))]);
+    assert_eq!(check_seen(&structured, &none(), &clicks(serde_json::json!({ "css": "#save" })), &[], None), Ok(()));
+    assert!(check_seen(&structured, &none(), &legacy, &[], None).is_err());
+
+    let mut saved_legacy = DiscoveryMap::default();
+    add_saved_scripts(&mut saved_legacy, &[clicks(serde_json::json!("#save"))]);
+    assert_eq!(check_seen(&saved_legacy, &none(), &legacy, &[], None), Ok(()));
+}
+
+/// Filed knowing only the count the target gives, a structured css
+/// locator leaves its hidden matches not known, so it vouches for a
+/// structured click and not a legacy one; a legacy string's count is
+/// every match, so it vouches for a legacy click.
+#[test]
+fn a_structured_css_count_never_stands_for_its_hidden_matches() {
+    let structured = filed(serde_json::json!({ "css": "#save" }), 1);
+    assert_eq!(check_seen(&structured, &none(), &clicks(serde_json::json!({ "css": "#save" })), &[], None), Ok(()));
+    assert!(check_seen(&structured, &none(), &clicks(serde_json::json!("#save")), &[], None).is_err());
+    let legacy = filed(serde_json::json!("#save"), 1);
+    assert_eq!(check_seen(&legacy, &none(), &clicks(serde_json::json!("#save")), &[], None), Ok(()));
 }

@@ -2237,11 +2237,20 @@ fn cycles_page(found: usize, visible: bool) -> ScriptedDriver {
     cycles_page_at("https://hr.example.internal/hr/cycles?page=2", found, visible)
 }
 
-/// `cycles_page`, at `href`.
+/// `cycles_page`, at `href`. A legacy string resolves as `LEGACY_JS`
+/// does, to its first match only, and `LEGACY_COUNT_JS` counts every one.
 fn cycles_page_at(href: &'static str, found: usize, visible: bool) -> ScriptedDriver {
+    let mut legacy_next = false;
     ScriptedDriver::new(move |method, params| {
         let f = params["functionDeclaration"].as_str().unwrap_or("");
         match method {
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_JS => {
+                legacy_next = true;
+                Ok(json!({ "result": { "objectId": "arr" } }))
+            }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_COUNT_JS => {
+                Ok(json!({ "result": { "value": found } }))
+            }
             "Runtime.evaluate" if params["expression"] == "document" => Ok(json!({ "result": { "objectId": "doc" } })),
             "Runtime.evaluate" if params["expression"] == "location.href" => Ok(json!({ "result": { "value": href } })),
             "Runtime.evaluate" if params["expression"] == "document.title" => Ok(json!({ "result": { "value": "Cycles" } })),
@@ -2250,9 +2259,12 @@ fn cycles_page_at(href: &'static str, found: usize, visible: bool) -> ScriptedDr
                 "result": { "value": { "tag": "button", "text": "2", "rect": [10.0, 20.0, 30.0, 24.0] } }
             })),
             "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
-            "Runtime.getProperties" => Ok(json!({ "result": (0..found)
-                .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
-                .collect::<Vec<_>>() })),
+            "Runtime.getProperties" => {
+                let n = if std::mem::take(&mut legacy_next) { found.min(1) } else { found };
+                Ok(json!({ "result": (0..n)
+                    .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                    .collect::<Vec<_>>() }))
+            }
             other => panic!("a probe never sends {other} {params}"),
         }
     })
@@ -2306,9 +2318,25 @@ async fn a_save_refused_in_discovery_records_a_locator_on_the_page_and_passes() 
         page.elements
     );
 
-    // Found twice, found hidden, or not found: nothing is recorded, and the
-    // save's own refusal follows the line that says so.
-    for (found, visible) in [(2, true), (1, false), (0, true)] {
+    // Found twice: recorded with its count, but a click needs a locator seen
+    // matching exactly one, so the save is still refused and says why.
+    let fresh = TempDir::new();
+    let (mut browser, _) = slot(cycles_page(2, true), tried_in("Cycles", &c));
+    let (status, body) =
+        save_component_in(&mut browser, fresh.path(), ORG, PROJECT, c.clone(), None, now, Some(&UserCases::default())).await;
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        body.starts_with(
+            "Recorded on the current page: #pager-2 (matched 2 elements).\nAction 1: #pager-2 was seen on the live app only matching several elements"
+        ),
+        "{body}"
+    );
+    let twice = mapped_area(fresh.path(), "Cycles").expect("nothing was recorded");
+    assert!(twice.sightings.iter().any(|s| s.matched == 2), "{:?}", twice.sightings);
+
+    // Found hidden, or not found: nothing is recorded, and the save's own
+    // refusal follows the line that says so.
+    for (found, visible) in [(1, false), (0, true)] {
         let fresh = TempDir::new();
         let (mut browser, _) = slot(cycles_page(found, visible), tried_in("Cycles", &c));
         let (status, body) =
@@ -2317,12 +2345,64 @@ async fn a_save_refused_in_discovery_records_a_locator_on_the_page_and_passes() 
         assert_eq!(status, 400, "{found} {visible}: {body}");
         assert!(
             body.starts_with(
-                "Recorded on the current page: nothing - no refused locator matched exactly one visible element.\nAction 1: #pager-2 was never seen on the live app"
+                "Recorded on the current page: nothing - no refused locator matched a visible element.\nAction 1: #pager-2 was never seen on the live app"
             ),
             "{found} {visible}: {body}"
         );
         assert!(load_map(fresh.path(), ORG, PROJECT).unwrap().areas.is_empty(), "{found} {visible}");
     }
+}
+
+/// During a discovery, a refused locator found on the page matching several
+/// visible elements is recorded with how many it matched, and the answer
+/// says so. Found matching several but none of them visible, it is not.
+#[tokio::test]
+async fn record_on_page_records_a_many_match_with_its_count() {
+    let dir = TempDir::new();
+    let (mut browser, _) = slot(cycles_page(2, true), exploring("Cycles"));
+    let probed = record_refused_in(&mut browser, dir.path(), ORG, PROJECT, &[Target::from("#pager-2")]).await;
+    assert_eq!(probed, Some(vec!["#pager-2 (matched 2 elements)".to_string()]));
+    let area = mapped_area(dir.path(), "Cycles").expect("nothing was recorded");
+    let key = v2_lib::browser::locator::SeenKey::Css("#pager-2".into());
+    assert_eq!(area.sightings.iter().find(|s| s.key == key).map(|s| s.matched), Some(2), "{:?}", area.sightings);
+    let page = area.pages.iter().find(|p| p.path == "/hr/cycles").expect("no page");
+    assert_eq!(page.elements.iter().find(|e| e.key == key).map(|e| e.matched), Some(2), "{:?}", page.elements);
+    assert_eq!(
+        v2_lib::ai_bridge::after_recording(probed.as_deref().unwrap(), (400, "refused".to_string())).1,
+        "Recorded on the current page: #pager-2 (matched 2 elements).\nrefused"
+    );
+
+    let hidden = TempDir::new();
+    let (mut browser, _) = slot(cycles_page(3, false), exploring("Cycles"));
+    let probed = record_refused_in(&mut browser, hidden.path(), ORG, PROJECT, &[Target::from("#pager-2")]).await;
+    assert_eq!(probed, Some(Vec::new()));
+    assert!(load_map(hidden.path(), ORG, PROJECT).unwrap().areas.is_empty());
+}
+
+/// The save that started this: a component whose `expect_hidden` names
+/// any Edit button but the shared draft's, with a `:not(...)` selector.
+/// Before the search filters the list that selector matches two buttons,
+/// so the refused save's page check records it matching two, and the save
+/// passes on its retry: a check that can pass with several matches may
+/// use a locator seen matching several.
+#[tokio::test]
+async fn a_component_expect_hidden_on_a_not_selector_seen_matching_two_saves() {
+    let dir = TempDir::new();
+    let selector = ".cycle-row:not([data-cycle-id=\"10301\"]) button[title=\"Edit\"]";
+    let c: Component = serde_json::from_value(json!({
+        "name": "Only the draft is editable",
+        "description": "Checks no other cycle offers Edit",
+        "inputs": [],
+        "actions": [{ "kind": "expect_hidden", "selector": { "css": selector } }]
+    }))
+    .unwrap();
+    let (mut browser, _) = slot(cycles_page(2, true), tried_in("Cycles", &c));
+    let (status, body) =
+        save_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default())).await;
+    assert_eq!(status, 200, "{body}");
+    let (said, saved) = body.split_once('\n').expect("the recorded line, then the save's answer");
+    assert_eq!(said, format!("Recorded on the current page: {selector} (matched 2 elements)."));
+    assert_eq!(parsed(saved)["version"], 1, "{body}");
 }
 
 /// With no discovery going, the save is refused as it always was: nothing
@@ -2852,7 +2932,7 @@ async fn record_on_page_runs_over_every_refused_locator() {
     assert_eq!(
         body,
         format!(
-            "Recorded on the current page: nothing - no refused locator matched exactly one visible element.\n{}\n{}\n{}",
+            "Recorded on the current page: nothing - no refused locator matched a visible element.\n{}\n{}\n{}",
             refused(1),
             refused(2),
             refused(3)
@@ -2971,7 +3051,7 @@ async fn record_on_page_off_the_app_records_nothing() {
     assert_eq!(status, 400, "{body}");
     assert!(
         body.starts_with(
-            "Recorded on the current page: nothing - no refused locator matched exactly one visible element.\nAction 1: #pager-2 was never seen on the live app"
+            "Recorded on the current page: nothing - no refused locator matched a visible element.\nAction 1: #pager-2 was never seen on the live app"
         ),
         "{body}"
     );
