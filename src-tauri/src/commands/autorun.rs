@@ -1251,21 +1251,6 @@ pub fn auto_run_stop_replay() {
     crate::autorun::replay_to::stop();
 }
 
-/// The person's Allow or Deny on the assistant's request to replay a
-/// must-not-save script (`autorun::replay_ask`). Refused with
-/// `that replay request is no longer waiting` for a request that already
-/// timed out or was answered: a late Allow starts nothing.
-#[tauri::command]
-#[specta::specta]
-pub fn auto_run_answer_replay_request(id: String, allow: bool) -> Result<(), String> {
-    let answered = crate::autorun::replay_ask::asks().answer(&id, allow);
-    if answered.is_ok() {
-        let what = if allow { "allowed" } else { "declined" };
-        crate::applog::info(format!("Auto Run: the person {what} the assistant's replay"));
-    }
-    answered
-}
-
 /// A supervised case's preconditions, checked where the case starts and
 /// before its sign-in. `blocked`: the case is Blocked, with the sentence
 /// as its reason, and the pane never signs it in. `notice`: said before

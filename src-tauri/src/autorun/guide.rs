@@ -1495,9 +1495,8 @@ be open: the app opens one, signs in as the case's account and goes to its
 area. A discovery of yours still open is ended first, keeping what it
 mapped, and the answer says so; start a new one to explore again.
 
-- You may replay without asking the person, except that a script marked
-  must not save asks the person in the app first, and runs only once they
-  press Allow. Its saves stay stopped throughout.
+- You may replay without asking the person. A script marked must not save
+  replays at once too, its saves stopped throughout.
 - Never replay past the failing step to "see what happens". The steps after
   it are not the failure, and they can change the application's data.
 

@@ -4224,12 +4224,6 @@ pub type HostFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = 
 /// bridge has no `AppHandle` of its own (see `INTAKE_SINK`). A test hands
 /// `autorun_replay_with` a fake one.
 pub trait ReplayHost: Send + Sync {
-    /// Tell the app's window: the Allow prompt for a must-not-save script,
-    /// and its end.
-    fn notify(&self, notice: crate::autorun::replay_ask::Notice<'_>);
-    /// Whether a discovery holds the Auto Run browser now, so the Allow
-    /// prompt can say the replay ends it first.
-    fn discovering(&self) -> bool;
     /// Run the replay in the supervised browser, by the same path as the
     /// person's Replay to step button, as the assistant's: it never lifts a
     /// guard held for another case, and a discovery holding the browser is
@@ -4269,23 +4263,21 @@ async fn autorun_replay(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let Some(host) = REPLAY_HOST.get() else {
         return (503, NO_REPLAY_HOST.to_string());
     };
-    let asks = crate::autorun::replay_ask::asks();
-    autorun_replay_with(ctx, body, host.as_ref(), asks, crate::autorun::replay_ask::WAIT).await
+    autorun_replay_with(ctx, body, host.as_ref()).await
 }
 
-/// `/autorun-replay`, body `{ case_id, step }`, with its host, its request
-/// registry and how long the person has to answer.
+/// `/autorun-replay`, body `{ case_id, step }`, with its host.
 ///
 /// Refused, with the sentence, before anything opens: a body without the
 /// two numbers, an unattended run going, a case with no saved script, a
-/// step outside it, a replay already running. A script marked must not
-/// save then asks the person and waits (`replay_ask`): Deny, no answer or
-/// another request waiting refuse it, and only Allow goes on. Database
+/// step outside it, a replay already running. Nothing asks the person
+/// first: a script marked must not save replays at once, its saves
+/// stopped throughout by its no-save guard (`guard_for_case`). Database
 /// Read Access is the `db_query` switch, as for the person's own replay.
 ///
 /// A discovery holding the browser does not refuse it: the replay ends it
-/// first (`end_discovery_for_replay`), the Allow prompt says it will, and
-/// the answer's sentence starts with `ENDED_DISCOVERY_FIRST`.
+/// first (`end_discovery_for_replay`), and the answer's sentence starts
+/// with `ENDED_DISCOVERY_FIRST`.
 ///
 /// The answer is `{ "sentence" }`, and once the browser stands before the
 /// step, `"page"` beside it: the page as `get_autorun_page` shows it, so the
@@ -4294,8 +4286,6 @@ pub async fn autorun_replay_with(
     ctx: &BridgeContext,
     body: &str,
     host: &dyn ReplayHost,
-    asks: &crate::autorun::replay_ask::Asks,
-    wait: std::time::Duration,
 ) -> (u16, String) {
     use crate::autorun::replay_to::{self, ReplayEnd, ReplayRequest};
     const SHAPE: &str = "{ \"case_id\": <number>, \"step\": <number> }";
@@ -4318,20 +4308,11 @@ pub async fn autorun_replay_with(
     };
     let db_read_access = !ctx.disabled_tools.iter().any(|t| t == "db_query");
     let req = ReplayRequest { case_id, step, db_read_access };
-    let checked = match replay_to::check(&root, &ctx.org, &ctx.project, &req) {
-        Ok(c) => c,
-        Err(why) => return (409, why),
-    };
+    if let Err(why) = replay_to::check(&root, &ctx.org, &ctx.project, &req) {
+        return (409, why);
+    }
     if replay_to::is_running() {
         return (409, replay_to::ALREADY_RUNNING.to_string());
-    }
-    if checked.script.no_save {
-        let notify = |n: crate::autorun::replay_ask::Notice<'_>| host.notify(n);
-        let ends_discovery = host.discovering();
-        if let Err(why) = asks.ask(case_id, &checked.script.title, step, ends_discovery, wait, &notify).await {
-            crate::applog::info(format!("Auto Run replay of case {case_id} for the assistant: {why}"));
-            return (409, why);
-        }
     }
     let (end, discovery) = match host.replay(ctx.org.clone(), ctx.project.clone(), req).await {
         Ok(AssistantReplay { end, discovery }) => (end, discovery),

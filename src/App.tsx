@@ -62,7 +62,6 @@ import { useFieldRefs } from "./hooks/useFieldRefs";
 import { isBetaVersion, markChangelogSeen, SHOW_CHANGELOG_EVENT, updatedFrom } from "./lib/changelogSeen";
 import type { ChangelogEntry } from "./lib/changelog";
 import SessionExpiredModal from "./components/SessionExpiredModal";
-import ReplayRequestModal from "./screens/AutoRun/ReplayRequestModal";
 import RunWindow from "./screens/AutoRun/ReplayPane";
 import RunPill from "./components/RunPill";
 import { clearReviewRequest } from "./lib/backgroundRun";
@@ -1388,11 +1387,6 @@ export default function App() {
           <ChangelogModal entries={changelog} onClose={dismissChangelog} />
         </Suspense>
       )}
-
-      {/* The assistant's request to replay a must-not-save script. Always
-          mounted and listening: a request that arrives while the window
-          is hidden in the tray is waiting here when it is shown again. */}
-      <ReplayRequestModal />
 
       {/* The unattended run's window: mounted here, not in Auto Run, so the
           run's progress and its pauses can be opened from any section (the
