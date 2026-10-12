@@ -1227,6 +1227,8 @@ pub(crate) async fn replay_supervised(
         return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING));
     }
     let (case_id, step, db_read_access) = (req.case_id, req.step, req.db_read_access);
+    // Its script is not deleted while the replay goes.
+    let _replaying = store::replaying(case_id);
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
     let mut slot = SESSION.lock().await;
     // A Close that took the lock first is respected: no browser is opened

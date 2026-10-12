@@ -830,6 +830,119 @@ pub fn clear_scripts(root: &Path, case_ids: &[i32]) -> Result<usize, String> {
     Ok(removed.len())
 }
 
+/// Where a deleted script is kept aside: beside the scripts, never among
+/// them, so nothing that lists or runs scripts sees it.
+fn deleted_dir(root: &Path) -> PathBuf {
+    root.join("deleted-scripts")
+}
+
+/// How long a deleted script is kept aside before it is purged.
+pub const DELETED_KEPT_DAYS: u64 = 30;
+
+const DAY_MS: u64 = 86_400_000;
+
+/// The cases a replay is running right now: a replay to a step, or a case
+/// of an unattended run. Their scripts are not deleted under them.
+static REPLAYING: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+
+/// A case being replayed, for as long as this is held (`replaying`).
+pub struct Replaying(i32);
+
+/// Note that case `case_id` is being replayed until the value is dropped.
+pub fn replaying(case_id: i32) -> Replaying {
+    REPLAYING.lock().unwrap_or_else(|e| e.into_inner()).push(case_id);
+    Replaying(case_id)
+}
+
+impl Drop for Replaying {
+    fn drop(&mut self) {
+        let mut going = REPLAYING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(at) = going.iter().position(|id| *id == self.0) {
+            going.remove(at);
+        }
+    }
+}
+
+/// Is case `case_id` being replayed right now?
+pub fn is_replaying(case_id: i32) -> bool {
+    REPLAYING.lock().unwrap_or_else(|e| e.into_inner()).contains(&case_id)
+}
+
+/// Said when a delete is asked for while the case is being replayed.
+pub fn replaying_refusal(case_id: i32) -> String {
+    format!("case {case_id} is being replayed right now - wait for its replay or run to end, then delete its script")
+}
+
+/// Said when a delete names a case with no script on this machine.
+pub fn no_script(case_id: i32) -> String {
+    format!("case {case_id} has no script on this machine")
+}
+
+/// Delete case `case_id`'s script: it is moved aside, out of the scripts,
+/// into the deleted-scripts folder beside them under a name that carries
+/// the deletion time (`now_ms`), and purged from there after
+/// `DELETED_KEPT_DAYS` (`purge_deleted_scripts`). A replay kept for the case
+/// goes with it, as with Clear scripts. Refused while the case is being
+/// replayed (`is_replaying`) and for a case with no script. A local file
+/// move only. Answers the name it was kept under.
+pub fn delete_script(root: &Path, case_id: i32, now_ms: u64) -> Result<String, String> {
+    let _held = scripts_lock();
+    if is_replaying(case_id) {
+        return Err(replaying_refusal(case_id));
+    }
+    let from = scripts_dir(root).join(format!("case-{case_id}.json"));
+    if !from.is_file() {
+        return Err(no_script(case_id));
+    }
+    let aside = deleted_dir(root);
+    std::fs::create_dir_all(&aside).map_err(|e| format!("the script could not be kept aside: {e}"))?;
+    // Two deletes of one case in the same millisecond still keep both.
+    let mut stamp = now_ms;
+    let to = loop {
+        let to = aside.join(format!("case-{case_id}-deleted-{stamp}.json"));
+        if !to.exists() {
+            break to;
+        }
+        stamp += 1;
+    };
+    std::fs::rename(&from, &to).map_err(|e| format!("the script could not be kept aside: {e}"))?;
+    super::replay_record::forget(root, case_id);
+    scripts_changed(root, &[case_id]);
+    Ok(to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
+}
+
+/// When a script kept aside was deleted, read from its name
+/// (`case-<id>-deleted-<ms>.json`). `None` for any other name: a file this
+/// store did not name is never purged.
+pub fn deleted_at(name: &str) -> Option<u64> {
+    let rest = name.strip_prefix("case-")?.strip_suffix(".json")?;
+    let (id, ms) = rest.split_once("-deleted-")?;
+    id.parse::<i32>().ok()?;
+    ms.parse().ok()
+}
+
+/// Remove every script kept aside more than `DELETED_KEPT_DAYS` before
+/// `now_ms`, and say how many went. Run when the app starts and before each
+/// delete. Anything else in the folder is left alone.
+pub fn purge_deleted_scripts(root: &Path, now_ms: u64) -> usize {
+    let Ok(entries) = std::fs::read_dir(deleted_dir(root)) else {
+        return 0;
+    };
+    let kept_for = DELETED_KEPT_DAYS * DAY_MS;
+    let mut purged = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(at) = deleted_at(&name) else { continue };
+        if now_ms.saturating_sub(at) > kept_for {
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => purged += 1,
+                Err(e) => crate::applog::warn(format!("Auto Run: the deleted script {name} could not be purged: {e}")),
+            }
+        }
+    }
+    purged
+}
+
 /// Delete every saved run, and every screenshot and download with it -
 /// including runs that were already sent to Azure DevOps. The record Azure DevOps holds
 /// is the durable one; the confirm the screen shows before calling this

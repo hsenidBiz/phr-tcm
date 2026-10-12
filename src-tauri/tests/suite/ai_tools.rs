@@ -601,6 +601,8 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
         [
             "get_autorun_guide",
             "save_autorun_script",
+            "get_autorun_script",
+            "delete_autorun_script",
             "get_autorun_page",
             "probe_autorun_locator",
             "try_autorun_action",

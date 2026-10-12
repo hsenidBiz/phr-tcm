@@ -552,6 +552,11 @@ pub fn run() {
                 // reads it from here, so a script an assistant saves lands
                 // where the Auto Run screen actually looks.
                 autorun::store::set_root(dir.join("autorun"));
+                // Scripts deleted more than 30 days ago go for good.
+                let purged = autorun::store::purge_deleted_scripts(&dir.join("autorun"), autorun::sessions::now_ms());
+                if purged > 0 {
+                    applog::info(format!("Auto Run: {purged} deleted script(s) older than 30 days purged"));
+                }
                 // Downloads whose run is gone, swept here, before any run can
                 // be started and saving into a folder its file does not
                 // name yet.

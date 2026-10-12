@@ -1557,14 +1557,18 @@ A case id must be a real, positive Azure DevOps work item id, cannot
 repeat within the same call, and its `steps` cannot be empty - a script
 with nothing to run does not earn a "Script ready" badge.
 
-The app does NOT necessarily pick this up right away. The Auto Run screen
-disables refetch-on-window-focus (alt-tabbing back to the app refetches
-nothing), so if it is already open when you save, its "Script ready"
-badges will not update until something in the app explicitly asks it to -
-switching PBI, reopening the screen, or an edit made from its own script
-editor. If the person watching says the badge has not changed, tell them
-to navigate away from Auto Run and back rather than just switching
-windows.
+The Auto Run screen shows what you save at once: every save, repair,
+mark and delete is read again there without a reload.
+
+`get_autorun_script` with a case id answers that case's saved script,
+whole, as one entry of `scripts` takes it. Read it before you repair a
+script you have not just written.
+
+`delete_autorun_script` with a case id deletes a case's script when the
+case no longer needs one. It is kept aside on this machine for 30 days
+and then purged, and it is refused while that case is being replayed or
+run. Never delete a script to write it again: a change is a repair, with
+`edits`.
 
 ## Repairing a script that failed
 
