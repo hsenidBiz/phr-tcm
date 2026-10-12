@@ -161,10 +161,16 @@ impl Launcher for RealLauncher {
     fn close(&mut self, p: LaunchedBrowser) -> Result<(), LaunchedBrowser> {
         p.close()
     }
+
+    /// A watched run's browser is not headless.
+    fn shows_window(&self) -> bool {
+        self.watch
+    }
 }
 
 /// The `Browsers` an unattended run hands to `replay::run_cases`: one real
-/// browser for the run, a fresh context per case. Public for the live tests.
+/// browser for the run, a fresh context per case; a browser per case when
+/// the person watches (`OneBrowser`). Public for the live tests.
 pub fn run_browsers(which: Browser, watch: bool) -> OneBrowser<RealLauncher> {
     OneBrowser::new(RealLauncher { which, watch })
 }
