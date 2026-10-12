@@ -3362,3 +3362,61 @@ async fn states_enabled_and_disabled_are_read_from_the_page() {
     must(run(&mut live, absent("aria-pressed")).await);
     refused(run(&mut live, absent("type")).await, "still has type=\"button\"");
 }
+
+/// A bare css `within`, as an assistant most often writes one, counts every
+/// visible match: "section" on a page of several sections is refused with
+/// the count, never read as its first match.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_a_bare_css_within_matching_several_is_refused() {
+    use v2_lib::ai_bridge::within_target;
+    use v2_lib::browser::snapshot::within_node;
+    let mut live = open_states().await;
+    let sections = within_target("section").unwrap();
+    let refused = within_node(&mut live.cdp, &sections).await.unwrap().unwrap_err();
+    assert!(refused.starts_with("within matched 5 elements: "), "{refused}");
+    let one = within_target("\"section[aria-label='Switches']\"").unwrap();
+    assert!(within_node(&mut live.cdp, &one).await.unwrap().is_ok());
+}
+
+/// The disabled rule on a real page, the one `expect_disabled` reads and a
+/// click waits out: a link and a `div role="button"` in a disabled
+/// fieldset are usable; a button in an inner disabled fieldset's legend is
+/// still held by the outer one; `aria-disabled` on an element around a
+/// button disables it, written with spaces and in capitals; a button in
+/// the first legend of a disabled fieldset is clicked at once.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_the_disabled_rule_follows_html_and_aria() {
+    let mut live = open_states().await;
+    let check = |kind: &str, css: &str| json!({ "kind": kind, "selector": { "css": css }, "timeout_ms": 300 });
+    must(run(&mut live, check("expect_enabled", "#fs-link")).await);
+    must(run(&mut live, check("expect_enabled", "#fs-div")).await);
+    let out = run(&mut live, check("expect_disabled", "#inner-legend")).await;
+    assert!(out.ok && out.detail.ends_with("is disabled: a disabled fieldset holds it"), "{}", out.detail);
+    let out = run(&mut live, check("expect_disabled", "#under-aria")).await;
+    assert!(out.ok && out.detail.ends_with("an element around it has aria-disabled=\"true\""), "{}", out.detail);
+    let started = std::time::Instant::now();
+    must(run(&mut live, json!({ "kind": "click", "selector": "#legend-button" })).await);
+    assert!(started.elapsed() < Duration::from_millis(2000), "the click waited {:?}", started.elapsed());
+    refused(run(&mut live, json!({ "kind": "click", "selector": "#inner-legend" })).await, "is disabled");
+}
+
+/// A checkbox drawn at no size is clicked through its label at a point the
+/// label's own link does not take, so the box is ticked and the link is
+/// never followed. A label that is nothing but a link leaves nowhere to
+/// click, and the click says so.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_a_label_click_never_lands_on_the_labels_link() {
+    use v2_lib::browser::input::NO_FREE_SPOT;
+    let mut live = open_states().await;
+    must(run(&mut live, json!({ "kind": "click", "selector": { "role": "checkbox", "name": "Accept terms" } })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#terms-state", "equals": "accepted" })).await);
+    must(run(&mut live, json!({ "kind": "check_url", "contains": "autorun-states.html" })).await);
+    let href = page::eval_value(&mut live.cdp, "location.hash").await.unwrap();
+    assert_eq!(href.as_str(), Some(""), "the label's link was followed");
+    let fast = Timing { action_ms: 800, ..timing() };
+    let out = run_with(&mut live, json!({ "kind": "click", "selector": { "role": "checkbox", "name": "Only a link" } }), &fast).await;
+    refused(out, NO_FREE_SPOT);
+}

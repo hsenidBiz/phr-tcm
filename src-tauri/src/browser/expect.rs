@@ -36,23 +36,16 @@ pub enum Check<'a> {
 }
 
 /// `this` is the element. Why it is disabled, in a few words, or `""` when
-/// it is not: its `disabled` property is set (a form control, a fieldset,
-/// an option), it carries `aria-disabled="true"`, or a disabled fieldset
-/// holds it and it is not inside that fieldset's first legend (HTML's own
-/// rule: a legend's controls stay usable). The same three things a click
-/// waits out (`input::PROBE_JS`'s `enabled`).
-pub const DISABLED_JS: &str = r#"function() {
-  if (this.disabled === true) return 'its disabled property is set';
-  if ((this.getAttribute('aria-disabled') || '').trim().toLowerCase() === 'true') return 'it has aria-disabled="true"';
-  const fs = this.parentElement ? this.parentElement.closest('fieldset[disabled]') : null;
-  if (fs) {
-    const legend = fs.querySelector(':scope > legend');
-    if (!(legend && legend.contains(this))) return 'a disabled fieldset holds it';
-  }
-  return '';
-}"#;
+/// it is not, by the one rule `disabled_why_js!` writes down (its own
+/// `disabled` property, `aria-disabled="true"` on it or around it, or a
+/// disabled fieldset holding a listed form control outside its first
+/// legend). A click waits out the same rule (`input::PROBE_JS`).
+pub const DISABLED_JS: &str = concat!("function() { return ", disabled_why_js!(), "(this); }");
 
-/// `expect_enabled` on a disabled element, followed by why.
+/// `expect_enabled` on a disabled element, followed by why: one of
+/// "its disabled property is set", "it has aria-disabled=\"true\"", "an
+/// element around it has aria-disabled=\"true\"" or "a disabled fieldset
+/// holds it".
 pub const IS_DISABLED: &str = "is disabled: ";
 /// `expect_disabled` on an element that is not.
 pub const IS_ENABLED: &str = "is enabled";

@@ -205,7 +205,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_count", "selector": ..., "equals": 3 }`
 - `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute
 - `{ "kind": "expect_enabled", "selector": ... }` - the element can be used
-- `{ "kind": "expect_disabled", "selector": ... }` - the element is disabled: its `disabled` property is set, it has `aria-disabled="true"`, or a disabled fieldset holds it
+- `{ "kind": "expect_disabled", "selector": ... }` - the element is disabled: its `disabled` property is set, it or an element around it has `aria-disabled="true"`, or it is a form control (button, input, select, textarea) a disabled fieldset holds outside that fieldset's first legend; a link in a disabled fieldset is not disabled. A click waits out the same rule
 - `{ "kind": "sign_in", "account": "hr.supervisor" }` - change who is signed in, in the middle of a case
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page (same-origin frames included), right now? A hidden frame is not searched, and a frame holding a page from another site is not searched.
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address, right now?
@@ -1083,16 +1083,14 @@ entry matched, taken in page order, not from the matches inside one of
 them. Only `expect_count`, `expect_hidden` and `wait_for` are happy with
 many.
 
-Use full names, and probe `nth` locators exactly as written. A save takes
-a part of a seen name in the same role ("Reviewer:" for the text
-"Reviewer: 30%", "Evaluators" for the progressbar "Step 4 of 9
-Evaluators"), as a run would find it: a check that may match several
-(`expect_hidden`, `expect_count`, `wait_for`) needs one seen name holding
-it, and any other use needs exactly one seen name of that role holding
-it, itself seen matching one element. A part of several names is refused
-for those: use the full name, or `"exact": true`, which always needs the
-whole name. An `nth` locator is seen only once it was probed with its
-`nth`.
+Use full names, and probe `nth` locators exactly as written. A check that
+may match several (`expect_hidden`, `expect_count`, `wait_for`) may name
+a part of a seen name in the same role, of at least 3 characters, on a
+plain locator (one entry, no `nth`, no `"visible": false`, not `"exact"`):
+"Reviewer:" for the text "Reviewer: 30%", "Evaluators" for the
+progressbar "Step 4 of 9 Evaluators". Every other use needs the full name
+as it was seen, and a refusal names the seen one that holds the part. An
+`nth` locator is seen only once it was probed with its `nth`.
 
 A misspelt field is rejected, not ignored. Each entry takes exactly one
 of `role`, `text` or `css`.
@@ -1123,12 +1121,13 @@ browser (see "Discovering the app"):
   of the page with `within`: a locator, written as a script writes one,
   that matches exactly one element, such as a dialog or a form. Only that
   element and what is inside it is listed; a `within` that matches none
-  or several is refused with the count. A replay's page and the page
-  `discover_autorun_actions` answers stop at 120 lines too.
+  or several is refused with the count; a css string counts every
+  visible match. A replay's page, and the page `discover_autorun_action`
+  and `discover_autorun_actions` answer, stop at 120 lines too.
 - A line with no locator on its end names nothing a script can act on:
-  the page itself, a list bullet, and the options of a closed native
-  list, which a script picks with `fill` on the list, by the option's
-  label.
+  the page itself, a list bullet, and the options of a native list
+  (a customizable one included), which a script picks with `fill` on the
+  list, by the option's label.
 - `probe_autorun_locator` says how many elements a locator matches right
   now, before it goes into a script.
 - `try_autorun_action` runs one action in that same browser and says what
@@ -1301,8 +1300,9 @@ line, each with a hint when a close one was seen and what that use needs:
 one seen matching exactly one element.` (at most 50, then how many more).
 A locator that was seen says instead why it does not count: seen only
 matching several elements, never counted as one (probe it as written,
-with its `nth` when it has one), a part of several names, or used only
-in saved checks. Find each on the page with
+with its `nth` when it has one), or used only in saved checks. A part
+of a seen name, where the full name is needed, is told to use the full
+name as seen. Find each on the page with
 `probe_autorun_locator` or `discover_autorun_action`, then save again.
 Never swap in a locator you did not see to get past the check.
 
@@ -1488,8 +1488,8 @@ Before every save:
 - Check a state with `expect_attribute` on the element you saw (`checked`,
   `aria-checked` or `disabled`), not by adding a state to its selector.
   Whether a control can be used is `expect_enabled` or `expect_disabled`,
-  which read the `disabled` property, `aria-disabled` and a disabled
-  fieldset together. An attribute that must not be there is
+  which read the `disabled` property, `aria-disabled` on it or around it,
+  and a disabled fieldset around a form control, together. An attribute that must not be there is
   `expect_attribute` with `"absent": true` instead of `equals`.
 - A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
   text (`{ "text": "Draft {{setup.cycle_name}} Pending" }`), in a quoted

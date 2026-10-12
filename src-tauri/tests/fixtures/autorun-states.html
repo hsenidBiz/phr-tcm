@@ -9,6 +9,10 @@
   .toggle { position: relative; display: inline-block; width: 40px; height: 20px; }
   .toggle input { opacity: 0; width: 0; height: 0; }
   .toggle .slider { position: absolute; inset: 0; background: #ccc; border-radius: 20px; }
+  /* A checkbox sized to nothing inside a label that also holds a link. */
+  .agree { position: relative; display: inline-block; padding: 4px; }
+  .agree input, .bare input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .bare { position: relative; display: inline-block; padding: 0; }
   /* Widgets drawn with no content of their own still take room. */
   [role=slider], [role=spinbutton], [role=combobox], [role=searchbox], [role=separator], [role=scrollbar], #div-switch {
     display: inline-block; width: 40px; height: 20px; background: #eee;
@@ -28,6 +32,28 @@
       <legend>Locked group <button id="legend-button" type="button">Legend action</button></legend>
       <input id="locked-field" type="text" aria-label="Locked field">
     </fieldset>
+  </section>
+
+  <section aria-label="Fieldsets">
+    <fieldset id="plain-locked" disabled>
+      <legend>Plain locked</legend>
+      <a id="fs-link" href="#fs">Fieldset link</a>
+      <div id="fs-div" role="button" tabindex="0">Fieldset div action</div>
+    </fieldset>
+    <fieldset id="outer" disabled>
+      <legend>Outer</legend>
+      <fieldset id="inner" disabled>
+        <legend><button id="inner-legend" type="button">Inner legend action</button></legend>
+      </fieldset>
+    </fieldset>
+    <div aria-disabled=" TRUE "><button id="under-aria" type="button">Under aria action</button></div>
+  </section>
+
+  <section aria-label="Labels">
+    <label class="agree"><input id="terms-box" type="checkbox" aria-label="Accept terms"
+      onchange="document.getElementById('terms-state').textContent = this.checked ? 'accepted' : 'not accepted'"><span>Accept the </span><a href="#terms">terms</a></label>
+    <p id="terms-state">not accepted</p>
+    <label class="bare"><input id="link-box" type="checkbox" aria-label="Only a link"><a href="#only">read this</a></label>
   </section>
 
   <section aria-label="Switches">

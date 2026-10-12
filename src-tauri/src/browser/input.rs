@@ -81,13 +81,24 @@ pub struct Ready {
 /// `locator::VISIBLE_JS` counts it as seen: the usual toggle switch, whose
 /// real `<input>` sits at 0 by 0 under a slider drawn in its label. A
 /// click there is what a person's click on the slider does.
-pub const PROBE_JS: &str = r#"async function(settle) {
+pub const PROBE_JS: &str = concat!(
+    "async function(settle) {\n  const disabledWhy = ",
+    disabled_why_js!(),
+    ";\n",
+    r#"
   // A control sized to nothing is aimed at through a label a person can
   // see (the usual toggle switch; see `locator::VISIBLE_JS`).
   const sized = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   const stand = sized(this) || !this.labels ? null
     : Array.from(this.labels).find((l) => l.checkVisibility({ visibilityProperty: true }) && sized(l)) || null;
   const el = stand || this;
+  // A link or a button inside that label ("I agree to the <a>terms</a>")
+  // takes a click aimed at it: never the control's.
+  const BLOCKS = 'a[href],button,input,select,textarea,[role=link],[role=button]';
+  const blocker = (e) => {
+    const b = e && e.closest ? e.closest(BLOCKS) : null;
+    return !!b && b !== this && !!stand && stand.contains(b);
+  };
   const measure = (scroll) => {
     if (scroll) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
     const b = el.getBoundingClientRect();
@@ -120,8 +131,24 @@ pub const PROBE_JS: &str = r#"async function(settle) {
     // The point is the middle of what is LEFT once every frame has clipped
     // the box, so a button half hidden by a frame's edge is aimed at in its
     // visible half. `lx`/`ly` is that point in this frame's own coordinates.
-    const lx = allOnscreen ? (cl + cr) / 2 - ox : (l + r) / 2;
-    const ly = allOnscreen ? (ct + cb) / 2 - oy : (t + bt) / 2;
+    let lx = allOnscreen ? (cl + cr) / 2 - ox : (l + r) / 2;
+    let ly = allOnscreen ? (ct + cb) / 2 - oy : (t + bt) / 2;
+    // Through a label: the first point of it, middle first, that a link or
+    // a button inside it does not take. With none, the control's own box
+    // is all that is left, and it has no size: `nospot`.
+    let nospot = false;
+    if (stand && onscreen) {
+      const x0 = Math.max(l, cl - ox), x1 = Math.min(r, cr - ox), y0 = Math.max(t, ct - oy), y1 = Math.min(bt, cb - oy);
+      const free = (x, y) => { const e = document.elementFromPoint(x, y); return !!e && (e === this || (stand.contains(e) && !blocker(e))); };
+      let found = null;
+      for (const fy of [0.5, 0.25, 0.75]) {
+        for (const fx of [0.5, 0.25, 0.75, 0.1, 0.9]) {
+          const x = x0 + (x1 - x0) * fx, y = y0 + (y1 - y0) * fy;
+          if (!found && free(x, y)) found = [x, y];
+        }
+      }
+      if (found) { lx = found[0]; ly = found[1]; } else { nospot = true; }
+    }
     const top = onscreen ? document.elementFromPoint(lx, ly) : null;
     const label = top && top.closest ? top.closest('label') : null;
     // Words that let a click through (pointer-events: none) to the row around
@@ -129,8 +156,9 @@ pub const PROBE_JS: &str = r#"async function(settle) {
     // those words reaches - it is not covering them. Only an ancestor counts;
     // anything else there really is in the way.
     const through = !!top && top !== this && top.contains(this) && getComputedStyle(this).pointerEvents === 'none';
-    const hit = onscreen && !!top && (top === this || this.contains(top) || through || (label && label.control === this) ||
-      (!!stand && (top === stand || stand.contains(top))));
+    const hit = onscreen && !!top && !nospot && !blocker(top) &&
+      (top === this || this.contains(top) || through || (label && label.control === this) ||
+        (!!stand && (top === stand || stand.contains(top))));
     const say = (e) => !e ? 'another element' : e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') +
       (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
     const editable =
@@ -148,9 +176,9 @@ pub const PROBE_JS: &str = r#"async function(settle) {
     const allHit = hit && allOnscreen && outer === null;
     return {
       visible: this.checkVisibility({ visibilityProperty: true }) && (!!stand || (b.width > 0 && b.height > 0)),
-      enabled: !this.disabled && this.getAttribute('aria-disabled') !== 'true' && !this.closest('fieldset[disabled]'),
+      enabled: disabledWhy(this) === '',
       editable: !!editable,
-      onscreen: allOnscreen, hit: allHit, x: lx + ox, y: ly + oy,
+      onscreen: allOnscreen, hit: allHit, nospot, x: lx + ox, y: ly + oy,
       rect: [b.left + ox, b.top + oy, b.width, b.height],
       covered_by: !allOnscreen || allHit ? '' : (outer !== null ? say(outer || null) : say(top)),
     };
@@ -189,7 +217,8 @@ pub const PROBE_JS: &str = r#"async function(settle) {
   const second = measure(false);
   second.stable = !moved && same(second.rect, first.rect);
   return second;
-}"#;
+}"#
+);
 
 /// `this` is the element. Argument: the value.
 ///
@@ -272,6 +301,10 @@ pub const DISABLED: &str = "is disabled";
 pub const NOT_EDITABLE: &str = "cannot be typed into";
 /// Followed by what is in the way (`tag#id.class`, or "another element").
 pub const COVERED_BY: &str = "is covered by ";
+/// A control drawn at no size whose label has no point a link or a button
+/// inside it does not take: nothing a click could aim at is the control's.
+pub const NO_FREE_SPOT: &str =
+    "is drawn at no size, and every point of its label is taken by a link or a button inside it, so there is nowhere to click it";
 /// It moved within the watch of every look (at least 2 frames and 50 ms).
 pub const STILL_MOVING: &str = "is still moving";
 /// The tail of [`matched_many`].
@@ -307,6 +340,8 @@ fn reason(p: &Value, need_editable: bool) -> Option<String> {
         Some(DISABLED.to_string())
     } else if need_editable && !flag("editable") {
         Some(NOT_EDITABLE.to_string())
+    } else if flag("nospot") {
+        Some(NO_FREE_SPOT.to_string())
     } else if !flag("hit") {
         Some(format!("{COVERED_BY}{}", p["covered_by"].as_str().unwrap_or("another element")))
     } else {
