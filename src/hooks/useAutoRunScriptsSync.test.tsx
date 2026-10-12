@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { commands } from "../bindings";
+import { setupViewKey } from "../screens/AutoRun/setupApproval";
 import { scriptQueryKey, useAutoRunScriptsSync } from "./useAutoRunScriptsSync";
 
 afterEach(() => {
@@ -105,4 +106,65 @@ test("an event naming no case reads every script again", async () => {
     await emit("autorun-scripts-changed", { case_ids: [] });
   });
   await waitFor(() => expect(loads).toBe(4));
+});
+
+/** A case's setup view, read the way the case card reads it. */
+function Setup({ caseId }: { caseId: number }) {
+  const q = useQuery({
+    queryKey: setupViewKey("acme", "proj", caseId),
+    queryFn: async () => {
+      const r = await commands.autoRunSetupView("acme", "proj", caseId);
+      return r.status === "ok" ? r.data : null;
+    },
+  });
+  return <p>{q.data ? `setup ${caseId} ${q.data.approval}` : `setup ${caseId} none`}</p>;
+}
+
+function SetupHost() {
+  useAutoRunScriptsSync();
+  return (
+    <>
+      <Setup caseId={1} />
+      <Setup caseId={2} />
+    </>
+  );
+}
+
+test("the case card's setup view is read again with the script, for the cases named", async () => {
+  const approval: Record<number, string> = { 1: "pending", 2: "pending" };
+  const reads: number[] = [];
+  mockIPC(
+    (cmd, args) => {
+      if (cmd === "auto_run_setup_view") {
+        const id = (args as { caseId: number }).caseId;
+        reads.push(id);
+        return { approval: approval[id] };
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <SetupHost />
+    </QueryClientProvider>,
+  );
+  await screen.findByText("setup 1 pending");
+  await screen.findByText("setup 2 pending");
+  approval[1] = "approved";
+  approval[2] = "approved";
+  reads.length = 0;
+  await act(async () => {
+    await emit("autorun-scripts-changed", { case_ids: [1] });
+  });
+  await screen.findByText("setup 1 approved");
+  expect(reads).toEqual([1]);
+  expect(screen.getByText("setup 2 pending")).toBeInTheDocument();
+
+  // No case named: every setup view is read again.
+  await act(async () => {
+    await emit("autorun-scripts-changed", { case_ids: [] });
+  });
+  await screen.findByText("setup 2 approved");
 });
