@@ -49,6 +49,9 @@ export const CACHE = {
   reference: { ttlMs: DAY, staleMs: DAY },
   /** Pipelines of a finished PR: they never change again. */
   finished: { ttlMs: 30 * DAY, staleMs: Infinity },
+  /** Choices a person made and expects back (the Playwright tab's ticks):
+   * kept for a year, never refetched. */
+  picks: { ttlMs: 365 * DAY, staleMs: Infinity },
 } as const;
 
 /** Every key the webview caches under. The strings are what earlier
@@ -73,6 +76,7 @@ export const cacheKeys = {
   suiteSeed: (org: string, pbiId: number) => `suite-seed:${org}/${pbiId}`,
   runOrder: (org: string, project: string, pbiId: number) => `run-order:${org}/${project}/${pbiId}`,
   sharedStepTitle: (org: string, id: number) => `shared-step:${org}/${id}`,
+  pwTicks: (clone: string) => `pw-ticks:${clone}`,
 };
 
 /** Non-reversible tag for an account, so the identity check never needs the

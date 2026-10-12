@@ -2,8 +2,8 @@
 // the clone folder Export to Playwright uses. Offered exactly where Auto Run
 // is (lib/extras); Rust refuses its commands everywhere else.
 //
-// Top to bottom: the clone folder, the health line, and what the clone
-// holds. Export to Playwright opens here, from Auto Run's menu item
+// Top to bottom: the clone folder, the health line, what the clone holds,
+// and the Runner (./Runner). Export to Playwright opens here, from Auto Run's menu item
 // (lib/playwrightExport).
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,6 +20,7 @@ import {
 } from "../../lib/playwrightExport";
 import HealthLine from "./HealthLine";
 import PlaywrightExportDialog from "./PlaywrightExportDialog";
+import Runner from "./Runner";
 
 const sectionTitle = "text-xs font-semibold uppercase tracking-wide text-muted";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -93,6 +94,9 @@ export default function Playwright({ org, project }: { org: string; project: str
 
   const s = structure.data;
   const usable = s && !s.health.includes("NotTheRepo");
+  // Nothing can run without the clone's node_modules and Node: the health
+  // line says so, and the Runner is not offered.
+  const runnable = usable && !s.health.includes("NoNodeModules") && !s.health.includes("NoNode");
 
   return (
     <div className="space-y-4">
@@ -135,6 +139,8 @@ export default function Playwright({ org, project }: { org: string; project: str
           )}
         </section>
       )}
+
+      {runnable && <Runner key={clone} clone={clone} />}
 
       {exportRequest && (
         <PlaywrightExportDialog

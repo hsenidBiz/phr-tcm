@@ -472,6 +472,14 @@ pub fn busy_sentence(label: &str) -> String {
 /// Start `launch` in a job of its own, streaming its output to `sink`.
 /// Refused while another run is going.
 pub fn start(launch: Launch, sink: Sink) -> Result<RunId, String> {
+    start_split(launch, sink.clone(), sink)
+}
+
+/// `start`, with stdout's lines and `Done` going to `out` and stderr's lines
+/// to `err`. The runner reads a listing's JSON from stdout this way while
+/// Playwright's warnings on stderr still reach the output panel.
+pub fn start_split(launch: Launch, out: Sink, err: Sink) -> Result<RunId, String> {
+    let sink = out;
     let mut current = slot();
     if let Some(c) = current.as_ref() {
         return Err(busy_sentence(&c.label));
@@ -514,16 +522,16 @@ pub fn start(launch: Launch, sink: Sink) -> Result<RunId, String> {
     // grace after the end is over says nothing after `Done`.
     let open = Arc::new(AtomicBool::new(true));
     let (read_done, readers_done) = std::sync::mpsc::channel::<()>();
-    let streams: Vec<Box<dyn Read + Send>> = [
-        child.stdout.take().map(|o| Box::new(o) as Box<dyn Read + Send>),
-        child.stderr.take().map(|e| Box::new(e) as Box<dyn Read + Send>),
+    let streams: Vec<(Box<dyn Read + Send>, Sink)> = [
+        child.stdout.take().map(|o| (Box::new(o) as Box<dyn Read + Send>, sink.clone())),
+        child.stderr.take().map(|e| (Box::new(e) as Box<dyn Read + Send>, err.clone())),
     ]
     .into_iter()
     .flatten()
     .collect();
     let readers = streams.len();
-    for stream in streams {
-        let (sink, open, read_done) = (sink.clone(), open.clone(), read_done.clone());
+    for (stream, sink) in streams {
+        let (open, read_done) = (open.clone(), read_done.clone());
         std::thread::spawn(move || {
             stream_lines(stream, |line| {
                 if open.load(Ordering::SeqCst) {

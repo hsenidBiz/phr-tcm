@@ -1279,6 +1279,25 @@ export const commands = {
 	label: string,
 } | null, string>(__TAURI_INVOKE("pw_repo_running")),
 	/**
+	 *  The clone's tests as a tree, from `npx playwright test --list`. The
+	 *  session's listing is reused unless `refresh`; ADO ids and last results
+	 *  are read again either way.
+	 */
+	pwList: (clone: string, refresh: boolean) => typedError<TestTree, string>(__TAURI_INVOKE("pw_list", { clone, refresh })),
+	/**
+	 *  Runs the picked tests, every test, or last time's failures, the way
+	 *  `npm run qa` does: the run list, the dry count, then the run. A count that
+	 *  disagrees refuses with both numbers. A debug run of more than one test
+	 *  answers `ConfirmDebug` until `confirm` is true.
+	 */
+	pwRun: (clone: string, picked: string[], action: RunAction, mode: BrowserMode, confirm: boolean) => typedError<RunStart, string>(__TAURI_INVOKE("pw_run", { clone, picked, action, mode, confirm })),
+	/**  The run list and the command a run would use, without running it. */
+	pwPreview: (clone: string, picked: string[], action: RunAction, mode: BrowserMode) => typedError<RunPreview, string>(__TAURI_INVOKE("pw_preview", { clone, picked, action, mode })),
+	/**  The clone's archived reports, newest first. */
+	pwReports: (clone: string) => typedError<PwReport[], string>(__TAURI_INVOKE("pw_reports", { clone })),
+	/**  Opens one archived report's `index.html` in the default browser. */
+	pwOpenReport: (clone: string, runId: string) => typedError<null, string>(__TAURI_INVOKE("pw_open_report", { clone, runId })),
+	/**
 	 *  Whether a start at sign-in stays hidden in the tray (on) or opens the
 	 *  window (off). Read at start-up, so the Windows startup entry itself never
 	 *  changes with it.
@@ -2195,6 +2214,11 @@ export type BridgeSwitches = {
 	/**  Proving and running API templates (see `BridgeContext::api_writes`). */
 	apiWrites: boolean,
 };
+
+/**  How the browser runs. */
+export type BrowserMode = "Hidden" | "Shown" | 
+/**  Playwright's Inspector, paused at the start of every test. */
+"Debug";
 
 /**  What the app hands the reporter. */
 export type BugReport = {
@@ -3372,6 +3396,35 @@ export type IterationRef = {
 	finish_date: string | null,
 };
 
+/**  A test's result in the newest report. */
+export type LastResult = "Passed" | "Failed" | "Flaky" | "Skipped";
+
+/**  One listed test, with the levels of the tree it hangs from. */
+export type ListedTest = {
+	/**  Unique and stable across listings: `["<file>", ...title path]`. */
+	id: string,
+	/**  `sl`, `ph`, `in`, or `common-components` for the shared tree. */
+	country: string,
+	/**  `self` or `admin`; empty under `common-components`. */
+	side: string,
+	/**  Empty under `common-components`. */
+	module: string,
+	/**  The feature folder, or the component under `common-components`. */
+	feature: string,
+	/**  The spec's file name without `.spec.ts`. */
+	spec: string,
+	/**  Relative to `suites/`, with `/`. */
+	file: string,
+	title: string,
+	/**  The describe titles, then the test's own. */
+	title_path: string[],
+	line: number,
+	/**  The project that runs it. */
+	project: string,
+	ado_id: number | null,
+	last_result: LastResult | null,
+};
+
 export type LocalRun = LocalRun_Serialize | LocalRun_Deserialize;
 
 export type LocalRun_Deserialize = {
@@ -4144,6 +4197,14 @@ export type PwOutput = {
 	line: string,
 };
 
+/**  One `reports/<runId>/` folder holding an `index.html`. */
+export type PwReport = {
+	/**  The folder's name: the run's local start time. */
+	run_id: string,
+	/**  From the sibling `<runId>.json`, when it reads. */
+	stats: ReportStats | null,
+};
+
 /**  The repo command going now: its run id and how it is named. */
 export type PwRunning = {
 	run: number,
@@ -4587,6 +4648,15 @@ export type ReportPalette = {
 	dark: boolean,
 };
 
+/**  One archived run's headline numbers. */
+export type ReportStats = {
+	passed: number,
+	failed: number,
+	flaky: number,
+	skipped: number,
+	duration_ms: number,
+};
+
 /**
  *  A reset point: before `before_case_id` runs, a person reverts `names`.
  *  `names` are display spellings, in the order the case lists them;
@@ -4658,6 +4728,15 @@ export type ResultFailureDetail = {
 	comment: string,
 	bug_ids: number[],
 };
+
+/**  What to run. */
+export type RunAction = 
+/**  The ticked tests. */
+"Picked" | 
+/**  Every test in the tree. */
+"All" | 
+/**  What failed last time (`--last-failed`). */
+"Failed";
 
 export type RunAttachment = {
 	file_name: string,
@@ -4765,6 +4844,16 @@ export type RunOutcome = {
 	run_by: string,
 };
 
+/**  What a run would do, without doing it. */
+export type RunPreview = {
+	/**  The run list's text; none for a re-run of failures. */
+	run_list: string | null,
+	command: string,
+	/**  How many tests it runs. */
+	expected: number,
+	warnings: string[],
+};
+
 /**
  *  One proving or running of a template: when, as who, whether it
  *  succeeded, and - on failure - which step and what the run reported.
@@ -4804,6 +4893,15 @@ export type RunReport = {
 	 */
 	failed: string | null,
 };
+
+/**  How a run start was answered. */
+export type RunStart = 
+/**  The run is going: its output comes as `PwOutput`, its end as `PwDone`. */
+{ kind: "Started"; run: number; command: string; 
+/**  `N selected · N matched`, or how many failures re-run. */
+summary: string; warnings: string[] } | 
+/**  Debug pauses at every test: `count` tests need `confirm`. */
+{ kind: "ConfirmDebug"; count: number };
 
 /**
  *  A live run's identity plus every point's result row, so the runner can
@@ -5739,6 +5837,15 @@ export type TestPoint = {
 	last_outcome: string,
 	last_run_id: number | null,
 	last_result_id: number | null,
+};
+
+/**  The clone's tests, in the tree's order. */
+export type TestTree = {
+	tests: ListedTest[],
+	/**  Every project a test belongs to, sorted. */
+	projects: string[],
+	/**  The report the results come from, if any. */
+	last_report: string | null,
 };
 
 /**

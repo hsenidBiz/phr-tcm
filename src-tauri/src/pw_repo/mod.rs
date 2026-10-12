@@ -8,10 +8,14 @@
 //! `process` runs a repo command (`npx playwright …` or `npm run users …`)
 //! in a Windows job of its own, one at a time, streaming its output.
 //!
+//! `runner` lists the tests, writes the run list, dry-counts and runs them
+//! the way the repo's `npm run qa` does.
+//!
 //! Offered exactly where Auto Run is (`ai_tools::autorun_offered`): with
 //! Advanced Features off every command of the tab is refused.
 
 pub mod process;
+pub mod runner;
 pub mod structure;
 
 /// The refusal every Playwright tab command gives where it is not offered.
