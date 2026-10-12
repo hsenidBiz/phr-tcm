@@ -51,16 +51,18 @@
 //! - Names and texts compare with whitespace collapsed, case folded, and
 //!   an em dash, an en dash and a hyphen as one dash, with no space beside
 //!   it (`norm_name`).
-//! - A role or text locator whose name (or text) is a part of a seen one
-//!   of the same role (a text of a seen text), folded the same way, counts
-//!   as seen, as a run matches a name that contains it
-//!   (`locator::name_matches`). For a check that may match several
-//!   (`takes_many`) one seen name holding it is enough. Any other use
-//!   needs exactly one seen name of that role holding it, among everything
-//!   seen in the areas read, and that one seen matching exactly one
-//!   element: a part of two names could match either. An `"exact": true`
-//!   locator still needs its whole name, and a name holding a data
-//!   placeholder is not read as a part.
+//! - For a check that may match several (`takes_many`), a role or text
+//!   locator whose name (or text) is a part of a seen one of the same role
+//!   (a text of a seen text), folded the same way, counts as seen, as a run
+//!   matches a name that contains it (`locator::name_matches`). Only for a
+//!   plain one-link locator (no `nth`, no `"visible": false`, not
+//!   `"exact": true`), whose part is at least `MIN_TYPED_LEN` characters
+//!   once folded, and never one holding a data placeholder. Every other use
+//!   needs the whole name, as seen: the map holds only what reads listed,
+//!   and a read cut at its limit or listing one element may have left out
+//!   a second name holding the part, so "one seen name holds it" can never
+//!   say a run would match one element. Its refusal says to use the full
+//!   name as seen, and names a seen one that holds the part.
 //!
 //! A link a checked saved script of one of the checked areas uses, written
 //! exactly as it is there, counts as seen (`load_checked_map`): the save
@@ -85,8 +87,9 @@
 //! particular it says that instead: seen only matching several
 //! (`SEEN_ONLY_MANY`), never counted (`NEVER_COUNTED`, or
 //! `NEVER_COUNTED_NTH` for a locator with an `nth`, which is counted only
-//! as written), a part of several seen names (`PART_OF_SEVERAL`), or seen
-//! only in saved checks (`SEEN_ONLY_IN_CHECKS`).
+//! as written), or seen only in saved checks (`SEEN_ONLY_IN_CHECKS`). A
+//! part of a seen name, refused for a use that needs one, says to use the
+//! full name as seen (`use_full_name`).
 //!
 //! A `when_visible` guards what may not show up where a run is: a cookie
 //! banner, a session prompt, both of which appear on the sign-in page and
@@ -242,21 +245,28 @@ pub const SEEN_ONLY_IN_CHECKS: &str = "was used only in saved checks that may ma
 /// `nth` included, is counted when it is probed.
 pub const NEVER_COUNTED_NTH: &str = "was seen on the live app, but never counted as matching exactly one element: probe it with its nth as written, then save again.";
 
-/// [`SEEN_ONLY_MANY`] for a name that is a part of several names seen in
-/// its role: a run would match each of them.
-pub const PART_OF_SEVERAL: &str = "is a part of several names seen on the live app, and this use needs one seen matching exactly one: use the full name, or \"exact\": true.";
-
 /// Is `hint` one of the sentences said after the locator in place of "was
 /// never seen on the live app" (`never_seen`), rather than a clause after
 /// it?
 pub fn is_own_sentence(hint: &str) -> bool {
-    [SEEN_ONLY_MANY, SEEN_ONLY_IN_CHECKS, NEVER_COUNTED, NEVER_COUNTED_NTH, PART_OF_SEVERAL].contains(&hint)
+    [SEEN_ONLY_MANY, SEEN_ONLY_IN_CHECKS, NEVER_COUNTED, NEVER_COUNTED_NTH].contains(&hint)
 }
 
 /// What a use of a locator needs, in one clause, for a refusal of one never
 /// seen: `kind` is the action's own word, `many` whether it may match
 /// several (`takes_many`), `everywhere` whether it is a `when_visible`'s
 /// locator, checked against every area.
+/// The hint for a part of a name refused for a use that needs one: the
+/// seen name holding it, as `seen` was written, to use in its place.
+pub fn use_full_name(seen: &LocatorStep) -> String {
+    let quoted = |s: &str| s.replace('"', "\\\"");
+    match (&seen.role, &seen.text) {
+        (Some(r), _) => format!("use the full name as seen, such as {r} \"{}\".", quoted(seen.name.as_deref().unwrap_or(""))),
+        (None, Some(t)) => format!("use the full text as seen, such as text \"{}\".", quoted(t)),
+        _ => "use the full name as seen.".to_string(),
+    }
+}
+
 pub fn wants(kind: &str, many: bool, everywhere: bool) -> String {
     let anywhere = if everywhere { ", in any area" } else { "" };
     if many {
@@ -420,15 +430,11 @@ impl SeenBoth {
         // elements sit, not how many a locator matched: every seen chain.
         let chains = Sightings::new_strict(map, areas).chains;
         let any = Sightings::new(map, areas);
-        // A part of a name is read against every name seen, however many
-        // elements it matched: a part of two is a part of two.
         let mut one = Sightings::new_strict(&one_only(map, false), areas);
         one.whole = whole_matched(map, areas);
         one.chains = chains.clone();
-        one.names = any.names.clone();
         let mut one_legacy = Sightings::new_strict(&one_only(map, true), areas);
         one_legacy.chains = chains;
-        one_legacy.names = any.names.clone();
         let mut without_checks = map.clone();
         for a in &mut without_checks.areas {
             a.saved_check_links.clear();
@@ -464,9 +470,11 @@ impl SeenBoth {
     /// The hint for `link` (one of `links`), refused for a use (`many`) of
     /// the action `kind`: when every one of `links` was seen but this use
     /// needs one, why it was not one (`SEEN_ONLY_IN_CHECKS`,
-    /// `PART_OF_SEVERAL`, `SEEN_ONLY_MANY`, `NEVER_COUNTED_NTH` or
-    /// `NEVER_COUNTED`); else the closest seen locator, for that use, if
-    /// there is one, followed by what this use needs (`wants`).
+    /// `SEEN_ONLY_MANY`, `NEVER_COUNTED_NTH` or `NEVER_COUNTED`); for a use
+    /// that needs one, a seen name holding the refused one as a part
+    /// (`use_full_name`); else the closest seen locator, for that use, if
+    /// there is one. Each but the first kind is followed by what this use
+    /// needs (`wants`).
     #[allow(clippy::too_many_arguments)]
     fn hint(
         &self,
@@ -482,14 +490,8 @@ impl SeenBoth {
             if !links.iter().all(|l| self.vouched.has(l, true)) {
                 return Some(SEEN_ONLY_IN_CHECKS.to_string());
             }
-            // The seen name a part of a name stands for, when it is not
-            // seen whole: one, or several.
-            let keys = if self.any.has_whole(link) { link.seen_key().into_iter().collect() } else { self.any.holding(link) };
-            if keys.len() > 1 {
-                return Some(PART_OF_SEVERAL.to_string());
-            }
             let several = if legacy { &self.many_legacy } else { &self.many };
-            if keys.first().is_some_and(|k| several.contains(k)) {
+            if link.seen_key().is_some_and(|k| several.contains(&k)) {
                 return Some(SEEN_ONLY_MANY.to_string());
             }
             if links.iter().any(|l| l.nth.is_some()) {
@@ -498,7 +500,8 @@ impl SeenBoth {
             return Some(NEVER_COUNTED.to_string());
         }
         let needs = wants(kind, many, everywhere);
-        Some(match self.for_use(many, legacy).closest(link, page) {
+        let full = if many { None } else { self.any.holders(link).first().map(|l| use_full_name(l)) };
+        Some(match full.or_else(|| self.for_use(many, legacy).closest(link, page)) {
             Some(closest) => format!("{closest} {}{}", needs[..1].to_uppercase(), &needs[1..]),
             None => needs,
         })
@@ -585,12 +588,12 @@ struct Sightings {
     /// Chains and narrowed locators seen as a whole matching one, as their
     /// links (`whole_matched`): read only by a use that needs one.
     whole: Vec<Vec<LocatorStep>>,
-    /// Every name seen in the areas, however many elements it matched: its
-    /// role folded (`"text"` for a text), its name as `norm_name` makes
-    /// it, and its key. What a part of a name is read against (`part_of`).
-    names: Vec<(String, String, SeenKey)>,
-    /// Whether one seen name holding a part of a name is enough (a use that
-    /// may match several), or exactly one, seen matching one, is needed.
+    /// Every name seen in the areas: its role folded (`"text"` for a
+    /// text), its name as `norm_name` makes it, and the link as seen. What
+    /// a part of a name is read against (`holders`).
+    names: Vec<(String, String, LocatorStep)>,
+    /// Whether a part of a seen name counts at all: only for a use that may
+    /// match several (`part_of`).
     parts_many: bool,
 }
 
@@ -634,15 +637,11 @@ impl Sightings {
                 s.css.push(states(c));
             }
         }
-        for (r, n, l) in &s.roles {
-            if let Some(k) = l.seen_key().filter(|_| !n.is_empty()) {
-                s.names.push((r.clone(), n.clone(), k));
-            }
+        for (r, n, l) in s.roles.iter().filter(|(_, n, _)| !n.is_empty()) {
+            s.names.push((r.clone(), n.clone(), l.clone()));
         }
-        for (n, l) in &s.texts {
-            if let Some(k) = l.seen_key().filter(|_| !n.is_empty()) {
-                s.names.push(("text".to_string(), n.clone(), k));
-            }
+        for (n, l) in s.texts.iter().filter(|(n, _)| !n.is_empty()) {
+            s.names.push(("text".to_string(), n.clone(), l.clone()));
         }
         for t in seen_locators(map, areas) {
             let links = t.links();
@@ -655,19 +654,8 @@ impl Sightings {
 
     /// Was `link` seen: its exact key, or a sighting its name or selector
     /// matches. With `wild`, a data placeholder in it stands for a seen
-    /// value.
-    /// A part of a seen name counts too (`part_of`).
+    /// value. A part of a seen name is not this (`part_of`).
     fn has(&self, link: &LocatorStep, wild: bool) -> bool {
-        self.has_whole_with(link, wild) || self.part_of(link)
-    }
-
-    /// [`Sightings::has`] with a data placeholder standing for a seen
-    /// value, and no part of a name counted.
-    fn has_whole(&self, link: &LocatorStep) -> bool {
-        self.has_whole_with(link, true)
-    }
-
-    fn has_whole_with(&self, link: &LocatorStep, wild: bool) -> bool {
         if link.seen_key().is_some_and(|k| self.keys.contains(&k)) || self.saved.contains(link) {
             return true;
         }
@@ -685,42 +673,45 @@ impl Sightings {
         link.css.as_deref().is_some_and(|c| self.css_seen(c, wild, 0))
     }
 
-    /// The keys of the distinct seen names of `link`'s role (or texts, for a
-    /// text) that hold its name as a part, folded by `norm_name`, the way a
-    /// run matches a name (`locator::name_matches`). None for an exact
-    /// locator, a css one, an empty name, or one holding a data
-    /// placeholder.
-    fn holding(&self, link: &LocatorStep) -> Vec<SeenKey> {
+    /// The distinct seen names of `link`'s role (or texts, for a text) that
+    /// hold its name as a part, folded by `norm_name`, the way a run
+    /// matches a name (`locator::name_matches`), as they were seen. None
+    /// for a css link, an empty name, or one holding a data placeholder.
+    fn holders(&self, link: &LocatorStep) -> Vec<&LocatorStep> {
         let (kind, raw) = match (&link.role, &link.name, &link.text) {
             (Some(r), Some(n), _) => (fold_name(r), n.as_str()),
             (None, _, Some(t)) => ("text".to_string(), t.as_str()),
             _ => return Vec::new(),
         };
         let want = norm_name(raw);
-        if link.exact || want.is_empty() || holds_data_placeholder(raw) {
+        if want.is_empty() || holds_data_placeholder(raw) {
             return Vec::new();
         }
-        let mut out: Vec<SeenKey> = Vec::new();
+        let mut out: Vec<&LocatorStep> = Vec::new();
         let mut held: Vec<&str> = Vec::new();
-        for (k, n, key) in &self.names {
+        for (k, n, l) in &self.names {
             if *k == kind && n.contains(&want) && !held.contains(&n.as_str()) {
                 held.push(n);
-                out.push(key.clone());
+                out.push(l);
             }
         }
         out
     }
 
-    /// Is `link`'s name a part of a seen name of its role that counts for
-    /// this use: any one for a use that may match several, else exactly one
-    /// among all names seen, itself seen matching one element?
-    fn part_of(&self, link: &LocatorStep) -> bool {
-        let keys = self.holding(link);
-        if self.parts_many {
-            return !keys.is_empty();
-        }
-        let [key] = keys.as_slice() else { return false };
-        self.keys.contains(key)
+    /// Does `chain`, a plain one-link locator (no `nth`, no `"visible":
+    /// false`, not `"exact"`) whose name or text is at least
+    /// `MIN_TYPED_LEN` characters once folded, name a part of a seen name
+    /// of its role? Only for a use that may match several (`parts_many`):
+    /// any other needs the whole name (see the module's notes).
+    fn part_of(&self, chain: &[LocatorStep]) -> bool {
+        let [link] = chain else { return false };
+        let raw = link.name.as_deref().or(link.text.as_deref()).unwrap_or("");
+        self.parts_many
+            && link.nth.is_none()
+            && link.visible != Some(false)
+            && !link.exact
+            && norm_name(raw).chars().count() >= MIN_TYPED_LEN
+            && !self.holders(link).is_empty()
     }
 
     /// Does the selector `base` (state pseudo-classes and filters already
@@ -1007,7 +998,12 @@ fn in_seen_date_picker(link: &LocatorStep, chain: &[LocatorStep], seen: &Sightin
 }
 
 /// The first of `links` (links of `chain`) neither seen nor exempt.
+/// A plain one-link locator naming a part of a seen name counts for a use
+/// that may match several (`Sightings::part_of`).
 fn first_unseen<'a>(links: &'a [LocatorStep], chain: &[LocatorStep], seen: &Sightings, own: &Own) -> Option<&'a LocatorStep> {
+    if links.len() == chain.len() && seen.part_of(chain) {
+        return None;
+    }
     links.iter().find(|l| !seen.has(l, true) && !exempt(l, own) && !in_seen_date_picker(l, chain, seen))
 }
 

@@ -2174,75 +2174,89 @@ fn a_structured_css_count_never_stands_for_its_hidden_matches() {
 
 // ---- a part of a seen name, a when_visible seen anywhere, what a use needs
 
-/// A part of a seen name of the same role counts as seen, folded the way a
-/// run folds a name: "Evaluators" in the seen wizard title, and the title
-/// with its dash cut, either kind of dash. The title was counted as one,
-/// and no other progressbar holds the part, so a check that reads one
-/// element takes it.
+/// A part of a seen name of the same role counts for a check that may
+/// match several, folded the way a run folds a name: "Evaluators" in the
+/// seen wizard title, and the title with its dash cut, either kind of
+/// dash, all for a `wait_for`. A check that reads one element needs the
+/// full name, and its refusal names the seen one that holds the part.
 #[test]
-fn a_part_of_one_seen_name_counts_as_seen() {
+fn a_part_of_a_seen_name_counts_only_for_a_check_that_may_match_several() {
     let map = map_with(
         "Cycles",
         "/cycles",
         &[role("progressbar", "Step 4 of 9 Evaluators"), role("progressbar", "Step 3 of 9 \u{2014} Eval Rules")],
     );
-    for part in ["Evaluators", "of 9 evaluators", "\u{2014} Eval Rules", "\u{2013} eval rules", "- Eval Rules"] {
-        let s = one_step("Cycles", serde_json::json!([expect_bar(part)]));
-        assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()), "{part}");
-    }
-    // A part in another role is not one.
-    let heading = one_step("Cycles", serde_json::json!([{ "kind": "expect_visible", "selector": { "role": "heading", "name": "Evaluators" } }]));
-    assert!(check_seen(&map, &none(), &heading, &[], None).is_err());
-    // exact: true still needs the whole name.
-    let exact = one_step(
-        "Cycles",
-        serde_json::json!([{ "kind": "expect_visible", "selector": { "role": "progressbar", "name": "Evaluators", "exact": true } }]),
-    );
-    assert_eq!(check_seen(&map, &none(), &exact, &[], None), Err(refusal_as(1, "progressbar \"Evaluators\"", "expect_visible")));
-}
-
-/// A text the check looks for that is a part of a seen text counts too: an
-/// `expect_hidden` on "Reviewer:" with "Reviewer: 30%" seen.
-#[test]
-fn a_part_of_a_seen_text_counts_for_expect_hidden() {
-    let map = map_with("Evaluators", "/cycles", &[text("Reviewer: 30%")]);
-    let hidden = one_step("Evaluators", serde_json::json!([{ "kind": "expect_hidden", "selector": { "text": "Reviewer:" } }]));
-    assert_eq!(check_seen(&map, &none(), &hidden, &[], None), Ok(()));
-    let other = one_step("Evaluators", serde_json::json!([{ "kind": "expect_hidden", "selector": { "text": "Approver:" } }]));
-    assert_eq!(check_seen(&map, &none(), &other, &[], None), Err(refusal_as(1, "text \"Approver:\"", "expect_hidden")));
-}
-
-/// A part of two seen names could match either: refused for a click, which
-/// needs one, with what to do about it; taken by `expect_count`, which may
-/// match several. A part of one name seen only matching several elements,
-/// or never counted, says so.
-#[test]
-fn a_part_of_several_names_is_refused_for_a_click_and_taken_for_a_count() {
-    use v2_lib::autorun::seen_check::{NEVER_COUNTED, PART_OF_SEVERAL, SEEN_ONLY_MANY};
-    let map = map_with("Cycles", "/cycles", &[role("button", "Save draft"), role("button", "Save and close")]);
-    let clicked = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": "Save" }))]));
-    let refused = check_seen(&map, &none(), &clicked, &[], None).unwrap_err();
-    assert_eq!(
-        refused,
-        format!(
-            "Step 1: button \"Save\" {PART_OF_SEVERAL} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+    let waits = |name: &str| {
+        one_step(
+            "Cycles",
+            serde_json::json!([{ "kind": "wait_for", "selector": { "role": "progressbar", "name": name }, "timeout_ms": 500 }]),
         )
+    };
+    for part in ["Evaluators", "of 9 evaluators", "\u{2014} Eval Rules", "\u{2013} eval rules", "- Eval Rules"] {
+        assert_eq!(check_seen(&map, &none(), &waits(part), &[], None), Ok(()), "{part}");
+    }
+    let shown = one_step("Cycles", serde_json::json!([expect_bar("Evaluators")]));
+    assert_eq!(
+        check_seen(&map, &none(), &shown, &[], None),
+        Err(refusal_hinted_as(
+            1,
+            "progressbar \"Evaluators\"",
+            "use the full name as seen, such as progressbar \"Step 4 of 9 Evaluators\".",
+            "expect_visible"
+        ))
     );
-    assert!(refused.contains("use the full name, or \"exact\": true"), "{refused}");
+    // A part in another role is not one.
+    let heading = one_step(
+        "Cycles",
+        serde_json::json!([{ "kind": "wait_for", "selector": { "role": "heading", "name": "Evaluators" }, "timeout_ms": 500 }]),
+    );
+    assert!(check_seen(&map, &none(), &heading, &[], None).is_err());
+    // Only a plain one-link locator: not exact, not narrowed, not a chain.
+    for narrowed in [
+        serde_json::json!({ "role": "progressbar", "name": "Evaluators", "exact": true }),
+        serde_json::json!({ "role": "progressbar", "name": "Evaluators", "nth": 0 }),
+        serde_json::json!({ "role": "progressbar", "name": "Evaluators", "visible": false }),
+        serde_json::json!([{ "role": "progressbar", "name": "Step 4 of 9 Evaluators" }, { "role": "progressbar", "name": "Evaluators" }]),
+    ] {
+        let s = one_step("Cycles", serde_json::json!([{ "kind": "wait_for", "selector": narrowed.clone(), "timeout_ms": 500 }]));
+        assert!(check_seen(&map, &none(), &s, &[], None).is_err(), "{narrowed}");
+    }
+}
+
+/// A text the check looks for that is a part of a seen text counts for a
+/// check that may match several: an `expect_hidden` on "Reviewer:" with
+/// "Reviewer: 30%" seen. A part of two characters counts for nothing.
+#[test]
+fn a_part_of_a_seen_text_counts_for_expect_hidden_and_two_characters_do_not() {
+    let map = map_with("Evaluators", "/cycles", &[text("Reviewer: 30%")]);
+    let hidden = |t: &str| one_step("Evaluators", serde_json::json!([{ "kind": "expect_hidden", "selector": { "text": t } }]));
+    assert_eq!(check_seen(&map, &none(), &hidden("Reviewer:"), &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &hidden("Approver:"), &[], None), Err(refusal_as(1, "text \"Approver:\"", "expect_hidden")));
+    assert_eq!(check_seen(&map, &none(), &hidden("30"), &[], None), Err(refusal_as(1, "text \"30\"", "expect_hidden")));
+    assert_eq!(check_seen(&map, &none(), &hidden("30%"), &[], None), Ok(()));
+}
+
+/// A read cut at its 120-line limit files only what it listed: here
+/// "Save draft", seen matching one, while a "Save" button past the cut was
+/// never filed. A click on "Save" must not be vouched for by "Save draft":
+/// it needs its own name seen, and is told to use the full name.
+#[test]
+fn a_twin_past_the_read_limit_cannot_let_a_part_vouch_for_a_click() {
+    let map = map_with("Cycles", "/cycles", &[role("button", "Save draft")]);
+    let clicked = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": "Save" }))]));
+    assert_eq!(
+        check_seen(&map, &none(), &clicked, &[], None),
+        Err(refusal_hinted(1, "button \"Save\"", "use the full name as seen, such as button \"Save draft\"."))
+    );
+    // The same part for a count, which may match several, is taken.
     let counted = one_step(
         "Cycles",
         serde_json::json!([{ "kind": "expect_count", "selector": { "role": "button", "name": "Save" }, "equals": 2 }]),
     );
     assert_eq!(check_seen(&map, &none(), &counted, &[], None), Ok(()));
-    // The whole name of one of them is still one.
+    // The whole name is still one.
     let whole = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": "Save draft" }))]));
     assert_eq!(check_seen(&map, &none(), &whole, &[], None), Ok(()));
-
-    let several = sighted_matching("Cycles", role("button", "Edit cycle"), 3);
-    let part = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": "Edit" }))]));
-    assert!(check_seen(&several, &none(), &part, &[], None).unwrap_err().contains(SEEN_ONLY_MANY));
-    let uncounted = sighted_matching("Cycles", role("button", "Edit cycle"), v2_lib::autorun::discovery_map::NOT_ONE);
-    assert!(check_seen(&uncounted, &none(), &part, &[], None).unwrap_err().contains(NEVER_COUNTED));
 }
 
 /// An `nth` locator never counted with its `nth` is told to be probed with
