@@ -168,3 +168,25 @@ fn every_replay_notes_its_end() {
     let replay = &replay[..replay.find("\n}\n").unwrap()];
     assert!(replay.contains("crate::autorun::replay_record::note(&root, case_id, &title, step, &end,"), "{replay}");
 }
+
+/// A kept replay is written whole (no half-written file is left beside
+/// it), and goes with Clear runs and with its case's cleared script.
+#[test]
+fn a_kept_replay_goes_with_clear_runs_and_its_cleared_script() {
+    let dir = tempfile::tempdir().unwrap();
+    store::save_script(dir.path(), &script()).unwrap();
+    note(dir.path(), ID, "Leave request", 3, &stopped_at_2(), None, 5);
+    note(dir.path(), 78, "Other", 3, &stopped_at_2(), None, 5);
+    let names: Vec<String> = std::fs::read_dir(v2_lib::autorun::replay_record::dir(dir.path()))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(names.iter().all(|n| n.ends_with(".json")), "a temporary file was left: {names:?}");
+
+    store::clear_scripts(dir.path(), &[ID]).unwrap();
+    assert!(load(dir.path(), ID).is_none(), "the cleared script's replay was kept");
+    assert!(load(dir.path(), 78).is_some(), "another case's replay went too");
+
+    store::clear_runs(dir.path()).unwrap();
+    assert!(load(dir.path(), 78).is_none(), "Clear runs kept a replay");
+}

@@ -789,6 +789,8 @@ pub fn clear_scripts(root: &Path, case_ids: &[i32]) -> Result<usize, String> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(format!("could not remove {}: {e}", path.display())),
         }
+        // A replay kept for the case goes with its script.
+        super::replay_record::forget(root, *id);
     }
     Ok(removed)
 }
@@ -816,6 +818,9 @@ pub fn clear_runs(root: &Path) -> Result<usize, String> {
     sweep_files(&reports_dir(root), None, &mut problems);
     // And the files the runs' browsers downloaded.
     sweep_downloads(root, &mut problems);
+    // And the failing replays kept beside the runs: with the runs gone one
+    // would become its case's newest word, pointing at a removed picture.
+    sweep_files(&super::replay_record::dir(root), None, &mut problems);
     if problems.is_empty() {
         Ok(removed)
     } else {

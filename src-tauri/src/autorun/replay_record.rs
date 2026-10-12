@@ -42,8 +42,22 @@ pub struct ReplayRecord {
     pub account: Option<String>,
 }
 
-fn dir(root: &Path) -> PathBuf {
+/// Where the kept replays are: `replays/` under the Auto Run folder.
+pub fn dir(root: &Path) -> PathBuf {
     root.join("replays")
+}
+
+/// Let go of the replay kept for case `case_id`, if any: its script was
+/// cleared. Best effort; a file that will not go is logged by case only.
+pub fn forget(root: &Path, case_id: i32) {
+    match std::fs::remove_file(file(root, case_id)) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => crate::applog::warn(format!(
+            "Auto Run: the replay kept for case {case_id} could not be removed: {}",
+            e.kind()
+        )),
+    }
 }
 
 fn file(root: &Path, case_id: i32) -> PathBuf {
@@ -60,14 +74,7 @@ pub fn note(root: &Path, case_id: i32, title: &str, to_step: i32, end: &ReplayEn
         ReplayEnd::StoppedAt { phase, step, why, outcomes } => (*phase, *step, why, outcomes),
         ReplayEnd::BrowserGone { step, why: Some(why), outcomes } => (ReplayPhase::Step, *step, why, outcomes),
         ReplayEnd::Ready { .. } => {
-            match std::fs::remove_file(file(root, case_id)) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => crate::applog::warn(format!(
-                    "Auto Run: the earlier replay failure of case {case_id} could not be removed: {}",
-                    e.kind()
-                )),
-            }
+            forget(root, case_id);
             return;
         }
         _ => return,
@@ -88,10 +95,18 @@ pub fn note(root: &Path, case_id: i32, title: &str, to_step: i32, end: &ReplayEn
         outcomes: outcomes.clone(),
         account,
     };
+    // Written beside its place and renamed into it, as the other stores
+    // write: a reader never meets half a file.
+    let path = file(root, case_id);
+    let tmp = path.with_extension("json.tmp");
     let written = std::fs::create_dir_all(dir(root))
         .map_err(|e| e.to_string())
         .and_then(|()| serde_json::to_string_pretty(&record).map_err(|e| e.to_string()))
-        .and_then(|json| std::fs::write(file(root, case_id), json).map_err(|e| e.to_string()));
+        .and_then(|json| std::fs::write(&tmp, json).map_err(|e| e.to_string()))
+        .and_then(|()| std::fs::rename(&tmp, &path).map_err(|e| e.to_string()));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
     if written.is_err() {
         crate::applog::warn(format!("Auto Run: the replay failure of case {case_id} could not be kept"));
     }
