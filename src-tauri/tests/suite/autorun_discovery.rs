@@ -2762,7 +2762,8 @@ async fn a_cut_action_read_records_only_returned_lines() {
     let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier"]), exploring("Leave"));
     page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
 
-    let names: Vec<String> = (0..DEFAULT_LIMIT + 5).map(|i| format!("Row {i:03}")).collect();
+    let limit = v2_lib::browser::snapshot::PAGE_LINES_DEFAULT;
+    let names: Vec<String> = (0..limit + 5).map(|i| format!("Row {i:03}")).collect();
     let d = acting_page("https://hr.example.internal/hr/leave", names);
     let (mut browser, _) = slot(d, exploring_anew("Leave"));
     let click = Action::Click { selector: "#save".into() };
@@ -2774,8 +2775,8 @@ async fn a_cut_action_read_records_only_returned_lines() {
 
     let seen = sighted(dir.path(), "Leave");
     assert!(seen.contains(&"Earlier".to_string()), "a cut action read dropped an earlier sighting: {seen:?}");
-    assert!(seen.contains(&"Row 000".to_string()) && seen.contains(&format!("Row {:03}", DEFAULT_LIMIT - 1)));
-    assert!(!seen.contains(&format!("Row {:03}", DEFAULT_LIMIT)), "a line past the cut was recorded");
+    assert!(seen.contains(&"Row 000".to_string()) && seen.contains(&format!("Row {:03}", limit - 1)));
+    assert!(!seen.contains(&format!("Row {:03}", limit)), "a line past the cut was recorded");
 }
 
 /// With no current area, nothing is recorded, and the answer ends by

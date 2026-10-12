@@ -1398,7 +1398,11 @@ fn a_page_reads_limit_and_within_are_read_from_the_query() {
     assert_eq!(page_limit(Some("abc")), 120);
     assert_eq!(page_limit(Some(" 40 ")), 40);
     assert_eq!(page_limit(Some("999999")), 3000);
-    assert_eq!(within_target("#form").unwrap(), Target::Legacy("#form".to_string()));
+    // A css string, bare or quoted, is a structured css link: it counts
+    // every visible match, where a legacy string takes the first.
+    let css = Target::One(v2_lib::browser::locator::LocatorStep { css: Some("#form".to_string()), ..Default::default() });
+    assert_eq!(within_target("#form").unwrap(), css);
+    assert_eq!(within_target("\"#form\"").unwrap(), css);
     assert!(matches!(within_target(r#"{"role":"dialog","name":"Edit"}"#).unwrap(), Target::One(_)));
     assert!(matches!(within_target(r#"[{"role":"dialog"},{"css":"form"}]"#).unwrap(), Target::Chain(_)));
     assert!(within_target(r#"{"role":"dialog","colour":"red"}"#).unwrap_err().starts_with("within is not a locator"));

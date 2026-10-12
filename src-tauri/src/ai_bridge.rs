@@ -1731,13 +1731,23 @@ pub fn page_limit(asked: Option<&str>) -> usize {
 }
 
 /// A `within` locator from its text: JSON (an object, a chain, or a quoted
-/// string), or a bare css selector. Checked as a script's locator is.
+/// string), or a bare css selector. Checked as a script's locator is. A
+/// css string, bare or quoted, becomes a structured css link, never a
+/// legacy string target: a legacy target resolves to its first match,
+/// hidden or not, so "within matched 3" could never be said of it, and a
+/// hidden template could be listed in place of the dialog a person sees.
+/// A structured css link counts every visible match.
 pub fn within_target(raw: &str) -> Result<crate::browser::locator::Target, String> {
+    use crate::browser::locator::{LocatorStep, Target};
     let t = raw.trim();
     let target = if t.starts_with('{') || t.starts_with('[') || t.starts_with('"') {
-        serde_json::from_str::<crate::browser::locator::Target>(t).map_err(|e| format!("within is not a locator: {e}"))?
+        serde_json::from_str::<Target>(t).map_err(|e| format!("within is not a locator: {e}"))?
     } else {
-        crate::browser::locator::Target::Legacy(t.to_string())
+        Target::Legacy(t.to_string())
+    };
+    let target = match target {
+        Target::Legacy(css) => Target::One(LocatorStep { css: Some(css), ..LocatorStep::default() }),
+        structured => structured,
     };
     target.validate().map_err(|e| format!("within is not a locator: {e}"))?;
     Ok(target)
@@ -3106,7 +3116,7 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
         }
     }
     let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref());
-    let (status, page) = read_page(d, crate::browser::snapshot::DEFAULT_LIMIT, at.as_ref()).await;
+    let (status, page) = read_page(d, crate::browser::snapshot::PAGE_LINES_DEFAULT, at.as_ref()).await;
     let blocked = count_blocked_writes(d, p.discovery.as_mut(), &runs);
     let mut answer = serde_json::json!({
         "ok": outcome.ok,

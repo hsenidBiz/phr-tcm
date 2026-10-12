@@ -18,8 +18,8 @@ pub const DEFAULT_LIMIT: usize = 300;
 
 /// The line count an assistant's page read stops at unless it asks for
 /// more: `get_autorun_page`, the page a replay answers once it stands
-/// before its step, and the page `discover_autorun_actions` answers after
-/// its last action. A whole page's tree runs to thousands of tokens on
+/// before its step, the page `discover_autorun_action` answers after its
+/// action, and the page `discover_autorun_actions` answers after its last. A whole page's tree runs to thousands of tokens on
 /// every read; the rest is one call away (`more_lines`), with a larger
 /// `limit` or a `within` that lists one part of the page.
 pub const PAGE_LINES_DEFAULT: usize = 120;
@@ -38,7 +38,10 @@ const FOLDED_ROLES: [&str; 5] = ["generic", "none", "presentation", "InlineTextB
 /// element), a list item's bullet (`ListMarker`, a pseudo-element), and a
 /// native list's closed popup (`MenuListPopup`), whose options are lines
 /// too. Those options are no elements a person can see or click: a script
-/// picks one with `fill` on the list, by its label. Every other line's
+/// picks one with `fill` on the list, by its label. A customizable select
+/// (`appearance: base-select`) draws real options a person clicks, in the
+/// top layer; if Chrome lists them under `MenuListPopup` they print here
+/// with no locator too, and a script still picks one with `fill`. Every other line's
 /// locator is one the resolver can find (`locator::resolve`), which
 /// `browser_live::states_every_line_the_page_read_prints_resolves` holds
 /// against a real page.
