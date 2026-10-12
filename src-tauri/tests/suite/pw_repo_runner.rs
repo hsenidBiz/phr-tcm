@@ -622,3 +622,115 @@ fn the_runner_writes_only_through_one_atomic_write() {
     assert!(!src.contains("fs::write("));
     assert!(!src.contains("File::create"));
 }
+
+// ---- Fix round: a stale listing, one run prepared at a time, the clone ------
+
+#[test]
+fn the_fingerprint_follows_the_specs_and_the_config() {
+    let d = clone();
+    let first = runner::fingerprint(d.path());
+    assert_eq!(runner::fingerprint(d.path()), first, "nothing changed");
+    // Files that are not specs do not count.
+    fs::write(d.path().join("suites/sl/admin/performance/rating-methods/data/extra.json"), "{}").unwrap();
+    fs::create_dir_all(d.path().join("node_modules/x/suites")).unwrap();
+    assert_eq!(runner::fingerprint(d.path()), first);
+    // A new spec does.
+    let added = d.path().join("suites/sl/self/smoke/framework-smoke/specs/added.spec.ts");
+    fs::write(&added, "test('added', async () => {});\n").unwrap();
+    let second = runner::fingerprint(d.path());
+    assert_ne!(second, first);
+    // So does an edited config.
+    fs::write(d.path().join("playwright.config.ts"), "export default { changed: true };\n").unwrap();
+    assert_ne!(runner::fingerprint(d.path()), second);
+}
+
+#[test]
+fn only_the_chosen_clone_is_used() {
+    assert_eq!(runner::chosen_clone(r" C:\repo\ ", r"C:\repo").unwrap(), PathBuf::from(r"C:\repo"));
+    assert_eq!(runner::chosen_clone("C:/repo", r"C:\repo").unwrap(), PathBuf::from(r"C:\repo"));
+    for (asked, configured) in [(r"C:\other", r"C:\repo"), (r"C:\repo", ""), ("", ""), (r"C:\repo\..\x", r"C:\repo")] {
+        assert_eq!(runner::chosen_clone(asked, configured).unwrap_err(), runner::NOT_THE_CHOSEN_CLONE, "{asked:?} {configured:?}");
+    }
+}
+
+#[test]
+fn a_mismatch_says_to_list_again() {
+    assert!(explain_mismatch(3, 2).ends_with("If the specs changed, use List again, then run again."));
+    assert!(explain_mismatch(3, 0).ends_with("If the specs changed, use List again, then run again."));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_spec_added_after_listing_is_listed_again() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let d = clone();
+    let fake = Fake::new("dry-two.json");
+    let (show, rx) = collect();
+    let picked = rating_methods(&tree_of(d.path()));
+    let wait = |run| while !matches!(rx.recv_timeout(Duration::from_secs(20)).unwrap(), RunEvent::Done { run: r, .. } if r == run) {};
+
+    let RunStart::Started { run, .. } =
+        runner::run(d.path(), &picked, RunAction::Picked, BrowserMode::Hidden, false, &show, &|a| fake.launch(a)).unwrap()
+    else {
+        panic!()
+    };
+    wait(run);
+
+    // A spec is added after the listing: the next run lists again, so Run
+    // all includes it.
+    let file = "sl/self/smoke/framework-smoke/specs/added.spec.ts";
+    fs::write(d.path().join("suites").join(file), "test('added later', async () => {});\n").unwrap();
+    let mut listing: serde_json::Value = serde_json::from_str(&saved("list.json")).unwrap();
+    let suite = serde_json::json!({
+        "title": file.replace('/', "\\"), "file": file, "column": 0, "line": 0,
+        "specs": [{ "title": "added later", "ok": true, "tags": [], "id": "a1-1", "file": file, "line": 1, "column": 1,
+                    "tests": [{ "projectId": "SL", "projectName": "SL", "results": [], "status": "skipped" }] }]
+    });
+    listing["suites"].as_array_mut().unwrap().push(suite);
+    let listing = serde_json::to_string_pretty(&listing).unwrap();
+    let fake = Fake::new("dry-two.json");
+    fs::write(fake.dir.path().join("list.json"), &listing).unwrap();
+    fs::write(fake.dir.path().join("dry.json"), &listing).unwrap();
+
+    let RunStart::Started { run, summary, .. } =
+        runner::run(d.path(), &[], RunAction::All, BrowserMode::Hidden, false, &show, &|a| fake.launch(a)).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(summary, "6 selected · 6 matched");
+    assert!(fake.asked.lock().unwrap().iter().any(|a| *a == list_args()), "it listed again");
+    assert!(fs::read_to_string(d.path().join(RUN_LIST)).unwrap().contains(file));
+    wait(run);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_second_run_cannot_rewrite_the_run_list_while_one_is_prepared() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let d = clone();
+    let other = clone();
+    let fake = Fake::new("dry-two.json");
+    let (show, rx) = collect();
+    let picked = rating_methods(&tree_of(d.path()));
+    let second: Mutex<Option<Result<RunStart, String>>> = Mutex::new(None);
+
+    // While the first run is being prepared (its dry count starting), a
+    // second one is asked for.
+    let launch = |a: &[String]| {
+        if a.iter().any(|x| x.starts_with("--test-list")) && second.lock().unwrap().is_none() {
+            let r = runner::run(other.path(), &[], RunAction::All, BrowserMode::Hidden, false, &show, &|b| fake.launch(b));
+            *second.lock().unwrap() = Some(r);
+        }
+        fake.launch(a)
+    };
+    let RunStart::Started { run, .. } =
+        runner::run(d.path(), &picked, RunAction::Picked, BrowserMode::Hidden, false, &show, &launch).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(second.lock().unwrap().clone().unwrap().unwrap_err(), runner::PREPARING_ALREADY);
+    assert!(!other.path().join(RUN_LIST).exists());
+    while !matches!(rx.recv_timeout(Duration::from_secs(20)).unwrap(), RunEvent::Done { run: r, .. } if r == run) {}
+}

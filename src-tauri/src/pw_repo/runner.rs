@@ -51,6 +51,30 @@ pub const RUN_LIST_NOT_WRITTEN: &str = "The run list could not be written in the
 pub const NO_SUCH_REPORT: &str = "That report is not in the clone's reports folder.";
 pub const REPORT_NOT_OPENED: &str = "The report could not be opened in your browser. Settings → Logs has the details.";
 
+/// The refusal for a second run while one is being prepared.
+pub const PREPARING_ALREADY: &str = "Another run is being prepared. Wait for it to start, or stop it, then try again.";
+/// The refusal for a clone that is not the one the tab is set to.
+pub const NOT_THE_CHOSEN_CLONE: &str = "That folder is not the clone chosen in the Playwright tab. Choose it again, then try again.";
+
+/// Held from a run's listing to its start (see `run`).
+static PREPARING: Mutex<()> = Mutex::new(());
+
+/// `asked` (the webview's clone path) if it is `configured` (the app's
+/// clone setting), as a path; refused otherwise. Compared without
+/// surrounding space, trailing separators, the kind of slash, or case on
+/// Windows.
+pub fn chosen_clone(asked: &str, configured: &str) -> Result<PathBuf, String> {
+    let norm = |p: &str| {
+        let p = p.trim().replace('\\', "/");
+        let p = p.trim_end_matches('/').to_string();
+        if cfg!(windows) { p.to_lowercase() } else { p }
+    };
+    if configured.trim().is_empty() || norm(asked) != norm(configured) {
+        return Err(NOT_THE_CHOSEN_CLONE.to_string());
+    }
+    Ok(PathBuf::from(configured.trim()))
+}
+
 /// Builds the launch for Playwright arguments (`playwright …`): in the app
 /// `Launch::repo` with npx, in the tests a fake.
 pub type Starter<'a> = &'a dyn Fn(&[String]) -> Result<Launch, String>;
@@ -737,13 +761,14 @@ pub fn describe_command(args: &[String]) -> String {
 
 /// The refusal for a dry count that disagrees, naming both numbers.
 pub fn explain_mismatch(expected: usize, matched: usize) -> String {
-    if matched == 0 {
+    let refusal = if matched == 0 {
         format!(
             "{expected} selected, but Playwright matched none of them. The run was stopped: a run list that matches nothing exits successfully while running no tests, so this would have looked like a pass."
         )
     } else {
         format!("{expected} selected, but Playwright matched {matched}. The run was stopped rather than silently running the wrong set.")
-    }
+    };
+    format!("{refusal} If the specs changed, use List again, then run again.")
 }
 
 /// How many tests failed last time (`test-results/.last-run.json`).
@@ -816,7 +841,9 @@ fn capture(args: &[String], show: &Sink, launch: Starter) -> Result<String, Stri
     loop {
         match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(RunEvent::Output { line, .. }) => lines.push(line),
-            Ok(RunEvent::Done { code, .. }) => {
+            Ok(RunEvent::Done { run: done, code }) => {
+                // The panel hears it end too: a tab opened since knows it.
+                show(RunEvent::Done { run: done, code });
                 if timed_out {
                     return Err(LIST_TIMED_OUT.to_string());
                 }
@@ -843,16 +870,53 @@ fn capture(args: &[String], show: &Sink, launch: Starter) -> Result<String, Stri
 /// one. The ADO ids and results are read again either way.
 pub fn list(clone: &Path, refresh: bool, show: &Sink, launch: Starter) -> Result<TestTree, String> {
     let key = keys::pw_list(&clone.to_string_lossy());
-    let cached = if refresh { None } else { cache::session_fresh::<Arc<Value>>(&key, keys::PW_LIST_TTL) };
+    let print = fingerprint(clone);
+    let cached = if refresh { None } else { cache::session_fresh::<(String, Arc<Value>)>(&key, keys::PW_LIST_TTL) };
     let raw = match cached {
-        Some(v) => v,
-        None => {
+        Some((was, v)) if was == print => v,
+        _ => {
             let v = Arc::new(parse_list_stdout(&capture(&list_args(), show, launch)?)?);
-            cache::session_put(&key, v.clone());
+            cache::session_put(&key, (print, v.clone()));
             v
         }
     };
     Ok(build_tree(clone, &raw))
+}
+
+/// What decides what `--list` returns, as the repo's `cli/inventory/cache.mjs`
+/// fingerprints it: every `*.spec.ts` under `suites/` (skipping
+/// `node_modules`) and `playwright.config.ts`, each by path, size and
+/// modified time, sorted. Adding, editing or deleting a spec changes it.
+pub fn fingerprint(clone: &Path) -> String {
+    fn stamp(file: &Path, rel: &Path) -> String {
+        let name = file.strip_prefix(rel).unwrap_or(file).to_string_lossy().replace('\\', "/");
+        match std::fs::metadata(file) {
+            Ok(m) => {
+                let at = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0);
+                format!("{name}:{}:{at}", m.len())
+            }
+            Err(_) => format!("{name}:missing"),
+        }
+    }
+    fn specs(dir: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                if e.file_name() != "node_modules" {
+                    specs(&path, out);
+                }
+            } else if e.file_name().to_string_lossy().ends_with(".spec.ts") {
+                out.push(path);
+            }
+        }
+    }
+    let suites = clone.join("suites");
+    let mut found = Vec::new();
+    specs(&suites, &mut found);
+    let mut parts: Vec<String> = found.iter().map(|f| stamp(f, &suites)).collect();
+    parts.push(stamp(&clone.join("playwright.config.ts"), clone));
+    parts.sort();
+    parts.join("\n")
 }
 
 /// The run list and command a run would use. Writes nothing.
@@ -890,6 +954,10 @@ pub fn run(
     show: &Sink,
     launch: Starter,
 ) -> Result<RunStart, String> {
+    // One run prepared at a time: no second `pw_run` rewrites the run list
+    // between this one's write, its dry count and its start. An `npm run qa`
+    // someone runs on the same clone outside the app is not covered.
+    let _preparing = PREPARING.try_lock().map_err(|_| PREPARING_ALREADY.to_string())?;
     let tree = list(clone, false, show, launch)?;
     let read = read_options(clone);
     let p = plan(clone, &tree, picked, action, mode, &read.options)?;

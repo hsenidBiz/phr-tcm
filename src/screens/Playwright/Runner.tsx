@@ -34,7 +34,8 @@ export const REPORTS_KEY = "pw-reports";
 /** The most output lines the panel keeps; older ones fall off the top. */
 export const OUTPUT_CAP = 5000;
 
-type Ask = { action: RunAction; count: number };
+/** The debug question: the run it is about, in the mode it was asked in. */
+type Ask = { action: RunAction; count: number; mode: BrowserMode };
 
 function readTicks(clone: string): Set<string> {
   return new Set(cacheRead<string[]>(cacheKeys.pwTicks(clone), CACHE.picks.ttlMs) ?? []);
@@ -52,11 +53,16 @@ export default function Runner({ clone }: { clone: string }) {
   const tests = useQuery({
     queryKey: [TESTS_KEY, clone],
     queryFn: () => unwrapStr(commands.pwList(clone, false)),
+    // A failed listing is a repo command that failed: running it again
+    // unasked would only take the run slot again. List again is the retry.
+    retry: false,
   });
   const reports = useQuery({
     queryKey: [REPORTS_KEY, clone],
     queryFn: () => unwrapStr(commands.pwReports(clone)),
+    retry: false,
   });
+  const fetchReports = () => qc.fetchQuery({ queryKey: [REPORTS_KEY, clone], queryFn: () => unwrapStr(commands.pwReports(clone)), retry: false });
 
   const [ticked, setTicked] = useState<Set<string>>(() => readTicks(clone));
   const [mode, setMode] = useState<BrowserMode>("Hidden");
@@ -88,7 +94,8 @@ export default function Runner({ clone }: { clone: string }) {
     void (async () => {
       void qc.invalidateQueries({ queryKey: [TESTS_KEY, clone] });
       try {
-        const now = await qc.fetchQuery({ queryKey: [REPORTS_KEY, clone], queryFn: () => unwrapStr(commands.pwReports(clone)) });
+        const now = await fetchReports();
+        // Only a report this run made: one that was not listed before it.
         const fresh = now.find((r) => !before.has(r.run_id));
         if (fresh) await unwrapStr(commands.pwOpenReport(clone, fresh.run_id));
       } catch (err) {
@@ -117,8 +124,11 @@ export default function Runner({ clone }: { clone: string }) {
 
   useEffect(() => {
     const output = events.pwOutput.listen((e) => {
+      // Once the run's id is known, only its lines. Before that (the listing
+      // and the dry count, whose ids are not exposed) only while this
+      // screen is itself starting something.
       const { busy, running } = live.current;
-      if (!busy && running === null) return;
+      if (running !== null ? e.payload.run !== running : !busy) return;
       setOutput((o) => {
         const next = [...o, e.payload.line];
         return next.length > OUTPUT_CAP ? next.slice(next.length - OUTPUT_CAP) : next;
@@ -128,9 +138,29 @@ export default function Runner({ clone }: { clone: string }) {
       if (e.payload.run === live.current.running) finish.current(e.payload.code);
       else live.current.ended.set(e.payload.run, e.payload.code);
     });
+    // A run started before this screen was (the tab was left and come back
+    // to) is still this Runner's: Stop works, the actions wait, and its
+    // output and end arrive here.
+    let gone = false;
+    void (async () => {
+      try {
+        const now = await unwrapStr(commands.pwRepoRunning());
+        if (gone || !now || !now.label.startsWith("npx playwright")) return;
+        if (live.current.busy || live.current.running !== null || live.current.ended.has(now.run)) return;
+        live.current.reportsBefore = new Set((await fetchReports()).map((r) => r.run_id));
+        if (gone || live.current.ended.has(now.run)) return;
+        live.current.running = now.run;
+        setRunning(now.run);
+      } catch {
+        // Nothing to adopt.
+      }
+    })();
     return () => {
+      gone = true;
       for (const un of [output, done]) un.then((f) => f()).catch(() => {});
     };
+    // Mount only: `live` and `finish` carry the current values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const begin = () => {
@@ -154,14 +184,16 @@ export default function Runner({ clone }: { clone: string }) {
     }
   };
 
-  const run = async (action: RunAction, confirm = false) => {
+  const run = async (action: RunAction, confirm = false, as: BrowserMode = mode) => {
     begin();
     setOutput([]);
-    live.current.reportsBefore = new Set((reports.data ?? []).map((r) => r.run_id));
     try {
-      const r = await unwrapStr(commands.pwRun(clone, picked, action, mode, confirm));
+      // What was listed before the run, so its end opens only its own report.
+      const before = reports.data ?? (await fetchReports());
+      live.current.reportsBefore = new Set(before.map((r) => r.run_id));
+      const r = await unwrapStr(commands.pwRun(clone, picked, action, as, confirm));
       if (r.kind === "ConfirmDebug") {
-        setAsk({ action, count: r.count });
+        setAsk({ action, count: r.count, mode: as });
         return;
       }
       setWarnings(r.warnings);
@@ -231,7 +263,12 @@ export default function Runner({ clone }: { clone: string }) {
           <IconReview aria-hidden />
           Preview
         </Button>
-        <Select aria-label="Browser" value={mode} onChange={(e) => setMode(e.target.value as BrowserMode)}>
+        <Select
+          aria-label="Browser"
+          value={mode}
+          disabled={active || ask !== null}
+          onChange={(e) => setMode(e.target.value as BrowserMode)}
+        >
           <option value="Hidden">Browser hidden</option>
           <option value="Shown">Browser shown</option>
           <option value="Debug">Debug</option>
@@ -247,7 +284,7 @@ export default function Runner({ clone }: { clone: string }) {
           <span className="text-sm text-text">
             {`Debug pauses at the start of every test, and this runs ${ask.count}. Run them all in debug mode?`}
           </span>
-          <Button size="sm" onClick={() => void run(ask.action, true)}>
+          <Button size="sm" onClick={() => void run(ask.action, true, ask.mode)}>
             <IconConfirm aria-hidden />
             Run in debug
           </Button>
@@ -305,6 +342,7 @@ export default function Runner({ clone }: { clone: string }) {
 
       <div className="space-y-1" aria-label="Reports">
         <h4 className={sectionTitle}>Reports</h4>
+        {reports.isError && <p className="text-xs text-danger">{reports.error.message}</p>}
         {reports.data && reports.data.length === 0 && <p className="text-xs text-muted">No report yet. Run something first.</p>}
         <ul className="space-y-1">
           {(reports.data ?? []).map((r) => (

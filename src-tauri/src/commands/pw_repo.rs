@@ -22,15 +22,21 @@ fn emitter(app: tauri::AppHandle) -> process::Sink {
     })
 }
 
+/// Refused where the tab is not offered; else the app's own clone setting,
+/// if `clone` is it: the webview's path is never trusted on its own.
+fn chosen(clone: &str) -> Result<PathBuf, String> {
+    crate::pw_repo::ensure_offered(crate::ai_tools::autorun_offered())?;
+    runner::chosen_clone(clone, &crate::app_settings::current().playwright_clone)
+}
+
 /// Runs `body` off the async workers with the clone's path and a starter
 /// for `npx playwright …` there: it waits on repo commands.
 async fn blocking<T: Send + 'static>(
     clone: String,
     body: impl FnOnce(&std::path::Path, runner::Starter) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    crate::pw_repo::ensure_offered(crate::ai_tools::autorun_offered())?;
+    let clone = chosen(&clone)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let clone = PathBuf::from(clone.trim());
         let start = |args: &[String]| Launch::repo(&clone, "npx", args, process::resolve_here);
         body(&clone, &start)
     })
@@ -129,16 +135,14 @@ pub async fn pw_preview(
 #[tauri::command]
 #[specta::specta]
 pub fn pw_reports(clone: String) -> Result<Vec<PwReport>, String> {
-    crate::pw_repo::ensure_offered(crate::ai_tools::autorun_offered())?;
-    Ok(runner::reports(&PathBuf::from(clone.trim())))
+    Ok(runner::reports(&chosen(&clone)?))
 }
 
 /// Opens one archived report's `index.html` in the default browser.
 #[tauri::command]
 #[specta::specta]
 pub fn pw_open_report(clone: String, run_id: String) -> Result<(), String> {
-    crate::pw_repo::ensure_offered(crate::ai_tools::autorun_offered())?;
-    let index = runner::report_index(&PathBuf::from(clone.trim()), &run_id)?;
+    let index = runner::report_index(&chosen(&clone)?, &run_id)?;
     tauri_plugin_opener::open_path(&index, None::<&str>).map_err(|e| {
         crate::applog::warn(format!("pw-repo: a report could not be opened: {e}"));
         runner::REPORT_NOT_OPENED.to_string()
