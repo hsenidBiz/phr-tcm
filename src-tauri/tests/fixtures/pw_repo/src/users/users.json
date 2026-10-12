@@ -1,0 +1,12 @@
+{
+  "FixtureSL.performance.general": {
+    "username": "fixture.general@example.test",
+    "password": "not-a-real-password-1",
+    "displayName": "Fixture General"
+  },
+  "FixtureSL.performance.supervisor": {
+    "username": "fixture.supervisor@example.test",
+    "password": "not-a-real-password-2",
+    "employeeNo": "E0001"
+  }
+}

@@ -65,6 +65,7 @@ import SessionExpiredModal from "./components/SessionExpiredModal";
 import RunWindow from "./screens/AutoRun/ReplayPane";
 import RunPill from "./components/RunPill";
 import { clearReviewRequest } from "./lib/backgroundRun";
+import { useOpenOnExportRequest } from "./lib/playwrightExport";
 import { useBackgroundRunHost } from "./hooks/useBackgroundRunHost";
 import { useAutoRunScriptsSync } from "./hooks/useAutoRunScriptsSync";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
@@ -132,6 +133,8 @@ const AiBridge = lazy(() => import("./screens/AiBridge"));
 const AutoRun = lazy(() => import("./screens/AutoRun"));
 // Offered exactly where Auto Run is, and lazy for the same reason.
 const ApiTemplates = lazy(() => import("./screens/ApiTemplates"));
+// The team's Playwright repo, offered exactly where Auto Run is.
+const Playwright = lazy(() => import("./screens/Playwright"));
 const Settings = lazy(() => import("./screens/Settings"));
 const Suites = lazy(() => import("./screens/Suites"));
 const ManageCases = lazy(() => import("./screens/ManageCases"));
@@ -185,6 +188,7 @@ const TITLES: Record<Section, string> = {
   manage: "Suite Management",
   ai: "AI Bridge",
   apitemplates: "API Templates",
+  playwright: "Playwright",
   settings: "Settings",
 };
 
@@ -459,6 +463,11 @@ export default function App() {
     setWorkMode(false); // any tab click exits Work Manager mode
     setCaseSelection(null); // direct navigation returns Edit to PBI mode
   };
+  // Auto Run's Export to Playwright is a shortcut to the Playwright tab,
+  // which holds the Export dialog (lib/playwrightExport).
+  useOpenOnExportRequest(() => {
+    if (section !== "playwright" || workMode) goToSection("playwright");
+  });
   // A script saved, repaired or deleted anywhere shows on Auto Run at once.
   useAutoRunScriptsSync();
   // The unattended run outlives the Auto Run screen (lib/backgroundRun):
@@ -1375,6 +1384,7 @@ export default function App() {
                 {autoRunShown && section === "apitemplates" && (
                   <ApiTemplates org={org} project={project} onOpenAiBridge={() => goToSection("ai")} />
                 )}
+                {autoRunShown && section === "playwright" && <Playwright org={org} project={project} />}
                 {section === "settings" && <Settings org={org} project={project} />}
               </div>
             )}

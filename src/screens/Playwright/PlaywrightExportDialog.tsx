@@ -23,7 +23,7 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import { Select } from "../../components/ui/select";
-import { MODAL_LARGE } from "./modalWidths";
+import { MODAL_LARGE } from "../AutoRun/modalWidths";
 import { IconBrowse, IconCancel, IconConfirm, IconCopy, IconExport } from "../../lib/actionIcons";
 import { copyText } from "../../lib/clipboard";
 import { useFieldRefs } from "../../hooks/useFieldRefs";

@@ -7,7 +7,7 @@ import { cn } from "../lib/cn";
  * button leaves its box. A lucide icon is one opaque <svg>, so all it can do
  * is move as a whole - which read as the picture warping. These draw the
  * same geometry as the lucide icon they replace (Pen Line, File Up, Rotate
- * Ccw, Eye, Square Play, Radar, Folder Tree, List Ordered, Bot, Braces, and Work
+ * Ccw, Eye, Square Play, Radar, Folder Tree, List Ordered, Bot, Braces, Drama, and Work
  * Manager's Git Pull Request, Square Kanban, File Plus Corner, and the context
  * bar's Bell; lucide is ISC), split
  * into the parts the animation needs, plus a few pieces that only show
@@ -170,6 +170,23 @@ export function GlyphApiTemplates(p: GlyphProps) {
       <path className="ng-arg ng-arg-1" d="M9 12h.01" />
       <path className="ng-arg ng-arg-2" d="M12 12h.01" />
       <path className="ng-arg ng-arg-3" d="M15 12h.01" />
+    </Glyph>
+  );
+}
+
+/** Playwright: lucide's Drama, the theatre masks of Playwright's own logo.
+ *  Still for now: it has no hover motion of its own. */
+export function GlyphPlaywright(p: GlyphProps) {
+  return (
+    <Glyph kind="playwright" {...p}>
+      <path d="M10 11h.01" />
+      <path d="M14 6h.01" />
+      <path d="M18 6h.01" />
+      <path d="M6.5 13.1h.01" />
+      <path d="M22 5c0 9-4 12-6 12s-6-3-6-12c0-2 2-3 6-3s6 1 6 3" />
+      <path d="M17.4 9.9c-.8.8-2 .8-2.8 0" />
+      <path d="M10.1 7.1C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6 4.5 7.8 9.5 8.4 11.2 7.4.9-.5 1.9-2.1 1.9-4.7" />
+      <path d="M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4" />
     </Glyph>
   );
 }

@@ -1262,6 +1262,8 @@ export const commands = {
 	 *  write picks the same areas the preview showed.
 	 */
 	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, moduleRef, preconditionsRef })),
+	/**  What the clone at `clone` holds, and the health line. Read only. */
+	pwRepoStructure: (clone: string) => typedError<RepoStructure, string>(__TAURI_INVOKE("pw_repo_structure", { clone })),
 	/**
 	 *  Whether a start at sign-in stays hidden in the tray (on) or opens the
 	 *  window (off). Read at start-up, so the Windows startup entry itself never
@@ -3296,6 +3298,20 @@ export type GuideStatus = {
  */
 export type HeadersSpec = ({ exact: string[] }) & { contains?: never } | ({ contains: string[] }) & { exact?: never };
 
+/**
+ *  One thing that stops the tab working, in the order the health line shows
+ *  them.
+ */
+export type HealthIssue = 
+/**  The folder is not a PHR-PLAYWRIGHT-AUTOMATION clone (or none is set). */
+"NotTheRepo" | 
+/**  The clone has no `node_modules`: `npm install` has not been run there. */
+"NoNodeModules" | 
+/**  No `node` on PATH. */
+"NoNode" | 
+/**  No `qa-options.json` at the clone's root: the runner uses its defaults. */
+"NoQaOptions";
+
 export type ImportResult = ImportResult_Serialize | ImportResult_Deserialize;
 
 export type ImportResult_Deserialize = {
@@ -4481,9 +4497,37 @@ export type ReplayedTab = {
 	tab: string,
 };
 
+/**  One `suites/<country>/<side>/<module>/<feature>/` folder. */
+export type RepoFeature = {
+	country: string,
+	side: string,
+	module: string,
+	feature: string,
+	/**  `*.spec.ts` files in its `specs/`. */
+	spec_count: number,
+	/**  Test case sections (`## <id>` headings) in its `test-cases/*.md`. */
+	case_count: number,
+	/**  Those sections' ids, in file order, each once. */
+	case_ids: number[],
+};
+
 export type RepoRef = {
 	id: string,
 	name: string,
+};
+
+/**  The clone as the Playwright tab shows it. */
+export type RepoStructure = {
+	/**  Sorted by country, side, module, feature. */
+	features: RepoFeature[],
+	/**  The ids `suites/_generated/index.json` maps to a raw spec, in its order. */
+	generated_ids: number[],
+	/**  The account keys of `users.json`. Keys only. */
+	user_keys: string[],
+	/**  The entries of `navigation.json`. */
+	navigation_keys: string[],
+	/**  Empty when everything the tab needs is there. */
+	health: HealthIssue[],
 };
 
 /**  One scheme's worth of colour, named for the app's own tokens. */

@@ -18,6 +18,8 @@ export default defineConfig({
     // `**/` because a worktree can sit under a subdirectory too: one at
     // `v2/.claude/worktrees/` slipped past a root-anchored `.claude/**`
     // and failed the gate on untouched main with that same React error.
-    exclude: [...configDefaults.exclude, "**/.claude/**"],
+    // The Rust tests' fixture clone of the team's Playwright repo holds
+    // `.spec.ts` files that are Playwright tests, not vitest ones.
+    exclude: [...configDefaults.exclude, "**/.claude/**", "src-tauri/tests/fixtures/**"],
   },
 });

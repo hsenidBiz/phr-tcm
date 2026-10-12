@@ -168,9 +168,10 @@ export function useAutoRunVisible(): boolean {
   return AUTO_RUN_DEV || on;
 }
 
-/** The tabs offered exactly where Auto Run is: Auto Run itself, and API
- * Templates, whose tools and runs are gated the same way. */
-const HIDDEN_WITH_AUTO_RUN = new Set(["autorun", "apitemplates"]);
+/** The tabs offered exactly where Auto Run is: Auto Run itself, API
+ * Templates, whose tools and runs are gated the same way, and Playwright,
+ * which works on the scripts Auto Run writes. */
+const HIDDEN_WITH_AUTO_RUN = new Set(["autorun", "apitemplates", "playwright"]);
 
 /** Whether the App shell's redirect off a tab that stopped being offered
  * while it was open (Auto Run or API Templates) should fire right now.

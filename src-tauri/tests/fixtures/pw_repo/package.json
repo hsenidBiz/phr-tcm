@@ -1,0 +1,8 @@
+{
+  "name": "pw-repo-fixture",
+  "private": true,
+  "scripts": {
+    "qa": "node cli/qa.mjs",
+    "users": "node cli/users/users.mjs"
+  }
+}
