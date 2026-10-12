@@ -414,6 +414,10 @@ not appear. Guard the click with `when_visible` instead:
   records no consent.
 - Use it only for something that genuinely may not appear. A step the
   test always expects belongs in the script as a plain action.
+- A save checks the `when_visible` selector, and any `then` action on
+  that same locator, against what was seen in every area of the project,
+  not only the script's: a banner seen on the sign-in page counts. It
+  still needs one seen matching exactly one element.
 
 ## Checking the API
 
@@ -1079,10 +1083,16 @@ entry matched, taken in page order, not from the matches inside one of
 them. Only `expect_count`, `expect_hidden` and `wait_for` are happy with
 many.
 
-Use full names, and probe `nth` locators exactly as written. A save checks
-a name as it was seen, so a part of a name ("Reviewer" for "Reviewer:
-30%") is refused even though a run would find it; and an `nth` locator is
-seen only once it was probed with its `nth`.
+Use full names, and probe `nth` locators exactly as written. A save takes
+a part of a seen name in the same role ("Reviewer:" for the text
+"Reviewer: 30%", "Evaluators" for the progressbar "Step 4 of 9
+Evaluators"), as a run would find it: a check that may match several
+(`expect_hidden`, `expect_count`, `wait_for`) needs one seen name holding
+it, and any other use needs exactly one seen name of that role holding
+it, itself seen matching one element. A part of several names is refused
+for those: use the full name, or `"exact": true`, which always needs the
+whole name. An `nth` locator is seen only once it was probed with its
+`nth`.
 
 A misspelt field is rejected, not ignored. Each entry takes exactly one
 of `role`, `text` or `css`.
@@ -1255,7 +1265,10 @@ What a save checks:
 
 - Every locator in the script must have been seen on the live app: every
   click, fill and check target, each link of a chained locator, the
-  actions inside `when_visible`, and the tab actions.
+  actions inside `when_visible`, and the tab actions. A part of a seen
+  name counts as described under "Selectors", and a `when_visible`'s own
+  locator may have been seen in any area (see "Dismissing what may not
+  show up").
 - How many elements it was seen matching depends on how it is used. A
   check that can pass with several matches (`expect_hidden`,
   `expect_count`, `wait_for`) may use a locator seen matching several
@@ -1283,9 +1296,13 @@ A new script is checked in full. A script saved before is checked again
 only when it is next changed.
 
 A refused save lists every locator never seen, in step order, one to a
-line, each with a hint when a close one was seen: `Step N: <the locator>
-was never seen on the live app.` (at most 50, then how many more). Find
-each on the page with
+line, each with a hint when a close one was seen and what that use needs:
+`Step N: <the locator> was never seen on the live app; this click needs
+one seen matching exactly one element.` (at most 50, then how many more).
+A locator that was seen says instead why it does not count: seen only
+matching several elements, never counted as one (probe it as written,
+with its `nth` when it has one), a part of several names, or used only
+in saved checks. Find each on the page with
 `probe_autorun_locator` or `discover_autorun_action`, then save again.
 Never swap in a locator you did not see to get past the check.
 

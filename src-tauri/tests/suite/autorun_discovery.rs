@@ -2911,7 +2911,7 @@ fn three_pages() -> Component {
 async fn record_on_page_runs_over_every_refused_locator() {
     let c = three_pages();
     let refused = |i: usize| {
-        format!("Action {i}: #pager-{i} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.")
+        format!("Action {i}: #pager-{i} was never seen on the live app; this click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.")
     };
 
     let dir = TempDir::new();
@@ -2983,7 +2983,7 @@ async fn a_component_dry_run_writes_and_records_nothing() {
         dry_run_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default()));
     assert_eq!(
         (status, body.as_str()),
-        (400, "Action 1: #pager-2 was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.")
+        (400, "Action 1: #pager-2 was never seen on the live app; this click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.")
     );
     assert_eq!(every_file(dir.path()), before);
     assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty());

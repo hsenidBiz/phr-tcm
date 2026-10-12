@@ -503,9 +503,9 @@ fn an_import_with_an_unseen_locator_is_refused_listing_every_one_and_writes_noth
     assert_eq!(
         err,
         [
-            "Case 8, step 1: button \"Publish\" was never seen on the live app.",
+            "Case 8, step 1: button \"Publish\" was never seen on the live app; this click needs one seen matching exactly one element.",
             "Case 8, step 2: /elsewhere was never seen on the live app.",
-            "Case 9, step 3: button \"Archive\" was never seen on the live app.",
+            "Case 9, step 3: button \"Archive\" was never seen on the live app; this click needs one seen matching exactly one element.",
             "Case 10: Azure DevOps has no test case with this id.",
             IMPORT_UNSEEN_THEN,
         ]
@@ -590,7 +590,7 @@ fn an_import_names_a_component_it_cannot_use() {
         err,
         [
             "Case 7, step 1: Ghost is not saved in this project.",
-            "Case 7, step 2: button \"Publish\" was never seen on the live app.",
+            "Case 7, step 2: button \"Publish\" was never seen on the live app; this click needs one seen matching exactly one element.",
             IMPORT_UNSEEN_THEN,
         ]
         .join("\n")
