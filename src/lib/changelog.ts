@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.12",
+    date: "2026-10-13",
+    items: [
+      "Every line your assistant reads from a page now leads to a working locator, page reads are shorter, and a switch drawn behind its label is no longer seen as hidden. A page with such a switch can now count one more match than before.",
+      "New checks: a control is enabled, a control is disabled, and an attribute is absent. A control counts as disabled the same way Playwright counts it, for checks and clicks alike.",
+      "Saving a script is stricter about what the assistant has seen: a part of a name it saw is enough only for checks that may match several elements, and a narrowed area must match exactly one element.",
+      "Clicking a checkbox or switch through its label no longer follows a link inside that label.",
+    ],
+  },
+  {
     version: "2.1.3-beta.11",
     date: "2026-10-13",
     items: [
