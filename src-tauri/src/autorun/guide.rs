@@ -79,49 +79,49 @@ pub fn quick_rules() -> String {
 
 const QUICK_RULES: &str = r##"## Quick rules
 
-The short form of this guide, for work you have done before. When
-something comes up that these do not cover, call `get_autorun_guide`
+Short form: for anything these rules do not cover, call `get_autorun_guide`
 without `quick` and read the full guide.
 
-- Discover the live app; never read the application's code to write scripts. A save refuses
-  any locator the app has not seen.
-- During a discovery with an area, `get_autorun_page` records what it shows as seen under that
-  area.
-- `discover_autorun_actions` carries out up to 20 actions in order and answers the page once.
-  If any would be refused, none runs. It stops at the first action that fails unless
-  `stop_on_failure` is false, and ending the discovery stops it before its next action.
-- Probe every final locator with `probe_autorun_locator`, exactly as it is written in the
-  script, immediately before saving.
-- Use full names, and probe `nth` locators exactly as written. Use `exact: true` when a name
-  is part of another, such as "Continue" and "Save & Continue".
-- After typing in a search box, wait for the list to settle (the other rows gone, the target
-  visible) before clicking.
-- Save with `"dry_run": true` to check a save without making it: writing nothing and recording
-  nothing. A refused save lists every locator never seen, each with a hint when a close one
-  was seen.
-- Try a component with `use_component` and `draft` before `save_autorun_component`, then save
-  it unchanged from the draft that worked.
-- A step is either `unchecked` (no checks at all, and the reason) or checked, never both.
-- Check a state with `expect_attribute` (`checked`, `aria-checked` or `disabled`), not by
-  adding a state to its selector.
-- A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a text, in a quoted
-  attribute value, or next to fixed text in an id or class. `{{prefix}}` and `{{now:...}}` are
-  refused.
-- A picture is named by its full path: open it directly with the file reader. Never search the
-  disk for a picture.
-- Set `"no_save": true` on any script that works on a shared draft and must not change it. A
-  repair can turn `no_save` on, never off.
-- `end_autorun_discovery` closes the browser when you are done. A replay to a failing step
-  ends your own discovery first, keeping what it mapped.
-- When the sign-in fails, the session expires or you reach a cap, stop and report to the
-  person; never try again in a loop.
-- `release_autorun_browser` lets go of a browser the app still holds after it closed, ends
-  your own discovery, and closes a browser your replay left open (never the person's), as
-  starting a discovery does. Never ask the person to restart the app.
-- When a case creates, deletes, publishes or submits shared data, or needs the site in a
-  particular state, mark it `changes` or `needs_unchanged`, reusing one name for one change
-  across the PBI. Once its scripts are written, call `set_autorun_order` if an order is needed
-  and report the order and any reset points. State needed before a run: a precondition.
+- Discover the live app; never read the application's code to write scripts.
+  A save refuses any locator the app has not seen. During a discovery with
+  an area, `get_autorun_page` records what it shows as seen under that area.
+- `discover_autorun_actions` carries out up to 20 actions in order and
+  answers the page once. If any would be refused, none runs. It stops at the
+  first action that fails unless `stop_on_failure` is false, and ending the
+  discovery stops it before its next action.
+- Probe every final locator with `probe_autorun_locator`, exactly as it is
+  written in the script, immediately before saving. Use full names, and
+  probe `nth` locators exactly as written. Use `exact: true` when a name is
+  part of another, such as "Continue" and "Save & Continue".
+- After typing in a search box, wait for the list to settle (the other rows
+  gone, the target visible) before clicking.
+- Save with `"dry_run": true` to check a save without making it: writing
+  nothing and recording nothing. A refused save lists every locator never
+  seen, each with a hint when a close one was seen.
+- Try a component with `use_component` and `draft` before
+  `save_autorun_component`, then save it unchanged from the draft that
+  worked.
+- A step is either `unchecked` (no checks at all, and the reason) or
+  checked, never both. Check a state with `expect_attribute` (`checked`,
+  `aria-checked` or `disabled`), not by adding a state to its selector.
+- A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
+  text, in a quoted attribute value, or next to fixed text in an id or
+  class. `{{prefix}}` and `{{now:...}}` are refused.
+- A picture: open it directly with the file reader. Never search the disk
+  for a picture. Set `"no_save": true` on any script that works on a shared
+  draft and must not change it. A repair can turn `no_save` on, never off.
+- `end_autorun_discovery` closes the browser when you are done. A replay to
+  a failing step ends your own discovery first, keeping what it mapped. When
+  the sign-in fails, the session expires or you reach a cap, stop and report
+  to the person; never try again in a loop.
+- `release_autorun_browser` lets go of a browser the app still holds after
+  it closed, ends your own discovery, and closes a browser your replay left
+  open (never the person's). Never ask the person to restart the app.
+- If a case creates, deletes, publishes or submits shared data, or needs the
+  site in a particular state, mark it `changes` or `needs_unchanged`,
+  reusing one name for one change across the PBI. Then call
+  `set_autorun_order` if an order is needed and report the order and any
+  reset points. State needed before a run: a precondition.
 "##;
 
 const GUIDE_BODY: &str = r##"An action script drives ONE test case through a real, visible browser -
@@ -600,11 +600,11 @@ page to the rows the case is about first. Rows in a table's footer
 (`tfoot`) are not read. Column spans are not followed: cells are matched
 to headers by their position in the row.
 
-
 After typing in a search box, wait for the list to settle (the other rows
 gone, the target visible) before clicking. A click sent while the list
 redraws for the filter is lost: a `wait_for` on the target's own control,
 and an `expect_hidden` on the rows the filter removes, come first.
+
 ## Browser dialogs
 
 A page's own `alert`, `confirm` and `prompt`, and the browser's "Leave
@@ -1046,9 +1046,9 @@ them. Only `expect_count`, `expect_hidden` and `wait_for` are happy with
 many.
 
 Use full names, and probe `nth` locators exactly as written. A save checks
-a name as it was seen, so a part of a name ("Evaluators" for "Step 4 of
-9 - Evaluators") is refused even though a run would find it; and an `nth`
-locator is seen only once it was probed with its `nth`.
+a name as it was seen, so a part of a name ("Reviewer" for "Reviewer:
+30%") is refused even though a run would find it; and an `nth` locator is
+seen only once it was probed with its `nth`.
 
 A misspelt field is rejected, not ignored. Each entry takes exactly one
 of `role`, `text` or `css`.
@@ -1150,7 +1150,6 @@ You open and drive a browser of your own to find what a script needs:
   the person to restart the app for any of this.
 - `start_autorun_discovery` closes a browser your replay left open and
   says "Closed the browser your replay left open." before it signs in.
-  Starting a discovery closes one your replay left open too.
 
 When the sign-in fails, the session expires or you reach a cap (a mapping
 run's 150 screens), stop and report to the person; never try again in a
