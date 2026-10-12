@@ -691,6 +691,8 @@ fn the_guide_teaches_replaying_to_the_failing_step() {
     assert!(flat.contains("still running, now at step N of M"), "{flat}");
     assert!(flat.contains("again with the same case and step to keep waiting"), "{flat}");
     assert!(flat.contains("The replay leaves the Auto Run browser open on that step"), "{flat}");
+    assert!(flat.contains("carries on from where your last replay of it stood"), "{flat}");
+    assert!(flat.contains("\"Carried on from step K\" or \"Started from the beginning\""), "{flat}");
     assert!(flat.contains("`release_autorun_browser` closes a browser your replay opened, and starting a discovery closes it"), "{flat}");
     assert!(flat.contains("Never replay past the failing step to \"see what happens\"."), "{flat}");
     assert!(flat.contains("No browser needs to be open"), "{flat}");

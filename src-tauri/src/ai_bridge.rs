@@ -2535,6 +2535,8 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
+    // A try uses the browser: no replay carries on from where it stood.
+    session.replay_stand = None;
     // Another case's tabs go first, before its unreported stop is read by
     // the guard below (`try_for_case` does this too).
     crate::autorun::runner::tabs_for_case(&mut session.cdp, &mut session.tabs_case, case_id).await;
@@ -4325,6 +4327,9 @@ pub struct AssistantReplay {
     /// The supervised browser the replay leaves open, if it does: its
     /// answer says what that blocks (`replay_to::left_open_line`).
     pub left_open: Option<crate::autorun::replay_to::LeftOpen>,
+    /// Where the replay started (`replay_to::carry_from`): its answer says
+    /// it first.
+    pub from: crate::autorun::replay_to::ReplayFrom,
 }
 
 static REPLAY_HOST: std::sync::OnceLock<Box<dyn ReplayHost>> = std::sync::OnceLock::new();
@@ -4525,13 +4530,21 @@ async fn run_assistant_replay(
     project: String,
     req: crate::autorun::replay_to::ReplayRequest,
 ) -> (u16, String) {
-    use crate::autorun::replay_to::ReplayEnd;
-    let (end, discovery, left_open) = match host.replay(org.clone(), project.clone(), req).await {
-        Ok(AssistantReplay { end, discovery, left_open }) => (end, discovery, left_open),
+    use crate::autorun::replay_to::{ReplayEnd, ReplayFrom};
+    let (case_id, step) = (req.case_id, req.step);
+    let (end, discovery, left_open, from) = match host.replay(org.clone(), project.clone(), req).await {
+        Ok(AssistantReplay { end, discovery, left_open, from }) => (end, discovery, left_open, from),
         Err(why) => return (503, why),
     };
-    // Said first when the replay ended the assistant's own discovery.
-    let mut sentence = after_ended_discovery(discovery.ended, &end.sentence());
+    // Where it started, said first: carried on, from the beginning, or
+    // already there (then nothing ran, and that is all there is to say).
+    let said = match (&end, from) {
+        (ReplayEnd::Refused(_) | ReplayEnd::Blocked(_), _) => end.sentence(),
+        (_, ReplayFrom::AlreadyThere) => from.said(case_id, step),
+        _ => format!("{} {}", from.said(case_id, step), end.sentence()),
+    };
+    // Said before that when the replay ended the assistant's own discovery.
+    let mut sentence = after_ended_discovery(discovery.ended, &said);
     // A browser the replay leaves open, on a line of its own after it.
     if let (Some(left), false) = (&left_open, matches!(end, ReplayEnd::Refused(_) | ReplayEnd::Blocked(_))) {
         sentence.push('\n');

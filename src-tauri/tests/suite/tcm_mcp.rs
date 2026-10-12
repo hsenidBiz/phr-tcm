@@ -1227,6 +1227,7 @@ fn the_replay_tool_rides_with_the_auto_run_tools() {
     assert!(!d.contains("Allow"), "{d}");
     assert!(d.contains("call again with the same case and step to keep waiting"), "{d}");
     assert!(d.contains("release_autorun_browser closes a browser your replay opened"), "{d}");
+    assert!(d.contains("carries on from there; the answer starts with Carried on from step K, or Started from the beginning"), "{d}");
     assert!(d.contains("never past it"), "{d}");
     assert!(d.contains("try_autorun_action"), "{d}");
     assert!(!d.contains('\u{2014}'), "{d}");

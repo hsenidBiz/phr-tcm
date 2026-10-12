@@ -1521,6 +1521,11 @@ mapped, and the answer says so; start a new one to explore again.
   template runs as the case's account are refused. `release_autorun_browser`
   closes a browser your replay opened, and starting a discovery closes it.
   So explore, probe and save components first, and replay last.
+- Replaying the same case to a later step carries on from where your last
+  replay of it stood, when that browser is yours and nothing (a step, a
+  try, a discovery action or another replay) has used it since; the
+  answer starts with "Carried on from step K" or "Started from the
+  beginning". Already standing before the step, nothing runs.
 - A replay still going after about 45 seconds answers "still running, now
   at step N of M". Call `replay_autorun_to_step` again with the same case
   and step to keep waiting on that same replay; it is never started twice.

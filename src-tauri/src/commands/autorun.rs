@@ -47,6 +47,11 @@ pub(crate) struct Session {
     /// Who opened this browser (`OpenedBy`): the assistant's release and
     /// its discovery close only one the assistant opened.
     pub(crate) opened_by: OpenedBy,
+    /// Where the assistant's last replay in this browser left it, while
+    /// nothing has used the browser since (`replay_to::ReplayStand`): its
+    /// next replay of that case carries on from there. Any other use - a
+    /// step, a try, a sign-in, a start or another replay - clears it.
+    pub(crate) replay_stand: Option<crate::autorun::replay_to::ReplayStand>,
 }
 
 /// Who opened the supervised browser. The assistant: its replay or its
@@ -734,6 +739,7 @@ async fn open_into(
         tabs_case: None,
         discovery: None,
         opened_by: by,
+        replay_stand: None,
     });
     // A tab the page opens waits, paused, until this connection reads that
     // it opened and sets it up: read between commands too, or a popup a
@@ -1052,8 +1058,10 @@ pub async fn auto_run_step(
     }
     crate::ai_bridge::refuse_while_discovering(&mut slot)?;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
-    // A browser the person runs a step in is theirs from now on.
+    // A browser the person runs a step in is theirs from now on, and no
+    // replay carries on from where it stood.
     session.opened_by = OpenedBy::Person;
+    session.replay_stand = None;
     // Another case's tabs do not carry over into this one.
     // The saved script's own choices about dialogs nobody expected and the
     // page's own errors, and which of its steps comes first.
@@ -1119,7 +1127,7 @@ pub async fn auto_run_replay_to_step(
     let req = crate::autorun::replay_to::ReplayRequest { case_id, step, db_read_access };
     // The person's own replay, as their own step: it may lift an earlier
     // case's guard. The tabs its steps ran in go to the pane beside them.
-    let (end, tabs, _, _) = replay_supervised(&app, &organization, &project, req, ReplayBy::Person).await?;
+    let (end, tabs, _, _, _) = replay_supervised(&app, &organization, &project, req, ReplayBy::Person).await?;
     Ok(crate::autorun::replay_to::ReplayAnswer::with_tabs(end, tabs))
 }
 
@@ -1178,20 +1186,22 @@ pub(crate) async fn replay_supervised(
         Vec<crate::autorun::replay_to::ReplayedTab>,
         crate::ai_bridge::DiscoveryEnded,
         Option<crate::autorun::replay_to::LeftOpen>,
+        crate::autorun::replay_to::ReplayFrom,
     ),
     String,
 > {
     use crate::ai_bridge::DiscoveryEnded;
-    use crate::autorun::replay_to::{self, OneReplay, ReplayEnd};
+    use crate::autorun::replay_to::{self, OneReplay, ReplayEnd, ReplayFrom};
     use tauri_specta::Event;
+    const BEGINNING: ReplayFrom = ReplayFrom::Beginning;
     let _one = match OneReplay::claim() {
         Ok(one) => one,
-        Err(why) => return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None)),
+        Err(why) => return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING)),
     };
     let root = root(app)?;
     // Refused before anything opens.
     if let Err(why) = replay_to::check(&root, organization, project, &req) {
-        return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None));
+        return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING));
     }
     let (case_id, step, db_read_access) = (req.case_id, req.step, req.db_read_access);
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
@@ -1199,7 +1209,7 @@ pub(crate) async fn replay_supervised(
     // A Close that took the lock first is respected: no browser is opened
     // again for a replay the person has already stopped.
     if let Some(stopped) = replay_to::stopped_before_opening(&replay_to::CANCEL) {
-        return Ok((stopped, Vec::new(), DiscoveryEnded::default(), None));
+        return Ok((stopped, Vec::new(), DiscoveryEnded::default(), None, BEGINNING));
     }
     // A replay never runs inside a discovery's browser. The person's is
     // refused; the assistant's ends its own discovery first, the way End
@@ -1215,7 +1225,7 @@ pub(crate) async fn replay_supervised(
             publish_discovery(&slot);
         }
     } else if let Err(why) = crate::ai_bridge::refuse_while_discovering(&mut slot) {
-        return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None));
+        return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING));
     }
     let had_browser = slot.is_some();
     if let Err(why) = open_if_none(app, &mut slot, by.opens_as()).await {
@@ -1232,6 +1242,18 @@ pub(crate) async fn replay_supervised(
     if by == ReplayBy::Person {
         session.opened_by = OpenedBy::Person;
     }
+    // Where it starts: the assistant's own browser, open and alive, that
+    // its last replay of this case left before an earlier step, with
+    // nothing used in it since, carries on from there; anything else
+    // starts from the beginning. The stand is used up either way.
+    let stand = session.replay_stand.take();
+    let from = match (by, had_browser, session.opened_by) {
+        (ReplayBy::Assistant, true, OpenedBy::Assistant) => match store::load_script(&root, case_id) {
+            Ok(Some(saved)) => replay_to::carry_from(stand.as_ref(), &saved, step),
+            _ => BEGINNING,
+        },
+        _ => BEGINNING,
+    };
     let account_before = session.account.clone();
     // The replay starts the case afresh, closing every tab but `main`
     // first (`replay_to_checked`): the tabs left are this case's.
@@ -1242,26 +1264,59 @@ pub(crate) async fn replay_supervised(
         false,
     );
     let mut tabs = Vec::new();
-    let mut end = replay_to::replay_to_traced(
-        &mut session.cdp,
-        &mut setup_browsers,
-        &root,
-        organization,
-        project,
-        &req,
-        &mut session.account,
-        &mut session.lease,
-        &mut session.guarded_case,
-        by.may_lift(),
-        &crate::browser::timing::Timing::supervised(),
-        &replay_to::CANCEL,
-        || crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access),
-        |k, of| {
-            let _ = crate::events::AutorunReplayProgress { case_id, step: k, of }.emit(app);
-        },
-        &mut tabs,
-    )
-    .await;
+    let mut end = match from {
+        ReplayFrom::AlreadyThere => ReplayEnd::Ready { case_id, step, notice: None },
+        ReplayFrom::CarriedOn(k) => {
+            replay_to::carry_on(
+                &mut session.cdp,
+                &root,
+                organization,
+                project,
+                &req,
+                k,
+                &mut session.account,
+                &mut session.lease,
+                &session.guarded_case,
+                &crate::browser::timing::Timing::supervised(),
+                &replay_to::CANCEL,
+                |k, of| {
+                    let _ = crate::events::AutorunReplayProgress { case_id, step: k, of }.emit(app);
+                },
+                &mut tabs,
+            )
+            .await
+        }
+        ReplayFrom::Beginning => {
+            replay_to::replay_to_traced(
+                &mut session.cdp,
+                &mut setup_browsers,
+                &root,
+                organization,
+                project,
+                &req,
+                &mut session.account,
+                &mut session.lease,
+                &mut session.guarded_case,
+                by.may_lift(),
+                &crate::browser::timing::Timing::supervised(),
+                &replay_to::CANCEL,
+                || crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access),
+                |k, of| {
+                    let _ = crate::events::AutorunReplayProgress { case_id, step: k, of }.emit(app);
+                },
+                &mut tabs,
+            )
+            .await
+        }
+    };
+    // An assistant's replay that reached its step leaves its stand, for its
+    // next replay of this case to carry on from; any other end leaves none.
+    session.replay_stand = match (&end, by) {
+        (ReplayEnd::Ready { .. }, ReplayBy::Assistant) => {
+            store::load_script(&root, case_id).ok().flatten().map(|saved| replay_to::ReplayStand::of(&saved, step))
+        }
+        _ => None,
+    };
     if let Some(changed) = replay_to::signed_in_event(&account_before, &session.account) {
         let _ = changed.emit(app);
     }
@@ -1291,7 +1346,11 @@ pub(crate) async fn replay_supervised(
         let _ = crate::events::AutorunSessionChanged { opened: false, account: None }.emit(app);
     }
     let how = match &end {
-        ReplayEnd::Ready { .. } => "ready".to_string(),
+        ReplayEnd::Ready { .. } => match from {
+            ReplayFrom::Beginning => "ready".to_string(),
+            ReplayFrom::CarriedOn(k) => format!("ready, carried on from step {k}"),
+            ReplayFrom::AlreadyThere => "already there, nothing ran".to_string(),
+        },
         ReplayEnd::StoppedAt { phase: replay_to::ReplayPhase::SignIn, .. } => "stopped while signing in".to_string(),
         ReplayEnd::StoppedAt { phase: replay_to::ReplayPhase::Area, .. } => "stopped going to the area".to_string(),
         ReplayEnd::StoppedAt { step, .. } => format!("stopped at step {step}"),
@@ -1310,7 +1369,7 @@ pub(crate) async fn replay_supervised(
         account: s.lease.account().map(str::to_string),
         by_assistant: s.opened_by == OpenedBy::Assistant,
     });
-    Ok((end, tabs, discovery, left_open))
+    Ok((end, tabs, discovery, left_open, from))
 }
 
 /// The replay's stop control: the replay going, if any, ends at its next
@@ -1347,6 +1406,7 @@ pub async fn auto_run_check_preconditions(
     if let Some(session) = SESSION.lock().await.as_mut() {
         session.cdp.close_other_tabs().await;
         session.tabs_case = Some(case_id);
+        session.replay_stand = None;
     }
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
     let mut checked = crate::autorun::preconditions::check_script(&root, &organization, &project, case_id, || {
@@ -1388,6 +1448,7 @@ pub async fn auto_run_check_preconditions(
 pub async fn make_way_for_setup(key: String, timing: &crate::browser::timing::Timing) {
     let mut slot = SESSION.lock().await;
     if let Some(s) = slot.as_mut() {
+        s.replay_stand = None;
         crate::autorun::setup::make_way(&mut s.cdp, &mut s.account, &mut s.lease, &key, timing).await;
     }
 }
@@ -2428,6 +2489,7 @@ pub async fn auto_run_sign_in(
     crate::autorun::signin::prepare(&root, &organization, &project, &account_key)?;
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
+    session.replay_stand = None;
     crate::autorun::signin::sign_in_leased(
         &mut session.cdp,
         &root,

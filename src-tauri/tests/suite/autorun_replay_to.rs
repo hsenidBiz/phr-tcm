@@ -803,3 +803,129 @@ fn a_browser_gone_after_a_failure_keeps_the_failure() {
     assert!(said.starts_with("replay stopped at step 2: button \"Save\" not found; then the Auto Run browser closed"), "{said}");
     assert!(matches!(end, ReplayEnd::BrowserGone { outcomes, .. } if outcomes == rows));
 }
+
+// ---- carrying on from where the last replay stood ---------------------------
+
+use v2_lib::autorun::replay_to::{carry_from, carry_on, ReplayFrom, ReplayStand};
+
+/// `carry_on` with the test's timing.
+async fn carry(
+    d: &mut impl Driver,
+    root: &Path,
+    r: &ReplayRequest,
+    from: i32,
+    account: &mut Option<String>,
+    held: &mut Held,
+) -> ReplayEnd {
+    let cancel = AtomicBool::new(false);
+    carry_on(d, root, "acme", "Web", r, from, account, held, &None, &quick(), &cancel, |_, _| {}, &mut Vec::new()).await
+}
+
+/// A replay that stood before step 2 is carried on from there: only steps
+/// 2 and 3 run, with no second sign-in, trip or step 1.
+#[tokio::test]
+async fn a_replay_carries_on_from_where_the_last_one_stood() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let saved = script(three_steps());
+    project(dir.path(), &saved);
+    let (mut d, app) = app();
+    let mut held = Held::supervised();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = {
+        let mut held_first = Held::supervised();
+        std::mem::swap(&mut held, &mut held_first);
+        let end = replay_to_checked(
+            &mut d,
+            &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
+            dir.path(),
+            "acme",
+            "Web",
+            &req(2),
+            &mut account,
+            &mut held_first,
+            &mut guarded,
+            true,
+            &quick(),
+            &cancel,
+            || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
+            |_, _| {},
+        )
+        .await;
+        held = held_first;
+        end
+    };
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None });
+    let stand = ReplayStand::of(&saved, 2);
+    assert_eq!(carry_from(Some(&stand), &saved, 4), ReplayFrom::CarriedOn(2));
+
+    let before = log(&app).len();
+    let end = carry(&mut d, dir.path(), &req(4), 2, &mut account, &mut held).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None });
+    let after: Vec<String> = log(&app)[before..].to_vec();
+    assert!(after.contains(&"click #s2".to_string()) && after.contains(&"click #s3".to_string()), "{after:?}");
+    for not_again in ["click #go", "click Leave", "click #s1"] {
+        assert!(!after.contains(&not_again.to_string()), "{not_again} ran again: {after:?}");
+    }
+    assert_eq!(ReplayFrom::CarriedOn(2).said(ID, 4), "Carried on from step 2.");
+    assert_eq!(ReplayFrom::Beginning.said(ID, 4), "Started from the beginning.");
+}
+
+/// Already standing before the step asked for: nothing runs.
+#[test]
+fn a_replay_already_standing_before_the_step_runs_nothing() {
+    let saved = script(three_steps());
+    let stand = ReplayStand::of(&saved, 3);
+    assert_eq!(carry_from(Some(&stand), &saved, 3), ReplayFrom::AlreadyThere);
+    assert_eq!(
+        ReplayFrom::AlreadyThere.said(ID, 3),
+        "The browser is already standing before step 3 of case 77: nothing ran."
+    );
+}
+
+/// Anything else starts from the beginning: no stand (a try, a step, a
+/// sign-in or a start in between cleared it, or the browser was closed and
+/// a new one opened with none), another case, a browser that moved past
+/// the step, or a script whose earlier steps changed since.
+#[test]
+fn a_replay_starts_over_for_another_case_a_later_stand_or_a_changed_script() {
+    let saved = script(three_steps());
+    assert_eq!(carry_from(None, &saved, 3), ReplayFrom::Beginning);
+    let mut other = saved.clone();
+    other.case_id = 78;
+    assert_eq!(carry_from(Some(&ReplayStand::of(&other, 2)), &saved, 3), ReplayFrom::Beginning);
+    assert_eq!(carry_from(Some(&ReplayStand::of(&saved, 3)), &saved, 2), ReplayFrom::Beginning, "the browser moved on");
+    let stand = ReplayStand::of(&saved, 3);
+    let mut changed = saved.clone();
+    changed.steps[0].actions = vec![serde_json::from_value(click("#other")).unwrap()];
+    assert_eq!(carry_from(Some(&stand), &changed, 4), ReplayFrom::Beginning, "carried on past a changed step 1");
+    // A later step changing does not matter: it has not run.
+    let mut later = saved.clone();
+    later.steps[2].actions = vec![serde_json::from_value(click("#other")).unwrap()];
+    assert_eq!(carry_from(Some(&stand), &later, 4), ReplayFrom::CarriedOn(3));
+}
+
+/// The wiring: only the assistant's replay in a browser that was already
+/// open, the assistant's own, carries on; a try, a step, a sign-in and a
+/// start clear the stand; a browser opened anew (after one was closed)
+/// starts with none; only an assistant's replay that reached its step
+/// leaves one.
+#[test]
+fn every_other_use_of_the_browser_clears_the_stand() {
+    let norm = |s: &str| s.replace("\r\n", "\n");
+    let source = norm(include_str!("../../src/commands/autorun.rs"));
+    let bridge = norm(include_str!("../../src/ai_bridge.rs"));
+    let body = |text: &str, start: &str| -> String {
+        let from = &text[text.find(start).unwrap_or_else(|| panic!("{start} is gone"))..];
+        from[..from.find("\n}\n").unwrap()].to_string()
+    };
+    for f in ["pub async fn auto_run_step", "pub async fn auto_run_check_preconditions", "pub async fn make_way_for_setup", "pub async fn auto_run_sign_in"] {
+        assert!(body(&source, f).contains("replay_stand = None;"), "{f} does not clear the stand");
+    }
+    assert!(body(&bridge, "async fn autorun_try(").contains("session.replay_stand = None;"), "a try does not clear the stand");
+    assert!(body(&source, "async fn open_into").contains("replay_stand: None,"), "a new browser starts with a stand");
+    let replay = body(&source, "pub(crate) async fn replay_supervised");
+    assert!(replay.contains("let stand = session.replay_stand.take();"), "{replay}");
+    assert!(replay.contains("(ReplayBy::Assistant, true, OpenedBy::Assistant) =>"), "{replay}");
+    assert!(replay.contains("(ReplayEnd::Ready { .. }, ReplayBy::Assistant) =>"), "{replay}");
+}

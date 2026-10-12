@@ -81,6 +81,8 @@ struct FakeHost {
     release: Option<tokio::sync::Notify>,
     /// The browser the replay leaves open, as the app says it.
     left_open: Option<v2_lib::autorun::replay_to::LeftOpen>,
+    /// Where the app says the replay started.
+    from: v2_lib::autorun::replay_to::ReplayFrom,
 }
 
 impl FakeHost {
@@ -93,6 +95,7 @@ impl FakeHost {
             open_failed: None,
             release: None,
             left_open: None,
+            from: v2_lib::autorun::replay_to::ReplayFrom::Beginning,
         }
     }
     fn ready() -> Self {
@@ -122,7 +125,7 @@ impl ReplayHost for FakeHost {
                 return Err(after_ended_discovery(self.discovering, why));
             }
             let discovery = DiscoveryEnded { ended: self.discovering, summary: self.summary.clone() };
-            Ok(AssistantReplay { end: self.end.clone(), discovery, left_open: self.left_open.clone() })
+            Ok(AssistantReplay { end: self.end.clone(), discovery, left_open: self.left_open.clone(), from: self.from })
         })
     }
     fn page(&self, _organization: String, _project: String) -> HostFuture<'_, (u16, String)> {
@@ -156,7 +159,7 @@ async fn a_must_not_save_script_replays_without_asking() {
     let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["sentence"], "replayed case 77 to step 3 - the browser is on the page before step 3 runs");
+    assert_eq!(v["sentence"], "Started from the beginning. replayed case 77 to step 3 - the browser is on the page before step 3 runs");
     assert_eq!(v["page"], "- button \"Submit\" [role=button name=\"Submit\"]");
     assert_eq!(host.replays(), vec![ReplayRequest { case_id: ID, step: 3, db_read_access: true }]);
     let replays = host.replays.lock().unwrap();
@@ -208,13 +211,13 @@ async fn a_replay_that_stops_answers_its_sentence_without_a_page() {
                 why: "nothing matched #s2".into(),
                 outcomes: vec![],
             },
-            "replay stopped at step 2: nothing matched #s2",
+            "Started from the beginning. replay stopped at step 2: nothing matched #s2",
         ),
-        (ReplayEnd::Stopped { step: 2 }, "the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)"),
+        (ReplayEnd::Stopped { step: 2 }, "Started from the beginning. the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)"),
         // The browser closing under it says so, and why, at step 1 too.
         (
             ReplayEnd::BrowserGone { step: 1, why: None, outcomes: vec![] },
-            "replay stopped at step 1: the Auto Run browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens",
+            "Started from the beginning. replay stopped at step 1: the Auto Run browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens",
         ),
     ] {
         let host = leak(FakeHost::ending(end));
@@ -303,7 +306,7 @@ async fn the_replay_answer_says_the_discovery_was_ended() {
         ENDED_DISCOVERY_FIRST,
         "Ended your discovery first (what it mapped is kept); start a new one to explore again."
     );
-    let ready = "replayed case 77 to step 3 - the browser is on the page before step 3 runs";
+    let ready = "Started from the beginning. replayed case 77 to step 3 - the browser is on the page before step 3 runs";
 
     let host = leak(FakeHost { discovering: true, ..FakeHost::ready() });
     let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
@@ -318,7 +321,7 @@ async fn the_replay_answer_says_the_discovery_was_ended() {
     let host = leak(FakeHost { discovering: true, ..FakeHost::ending(stopped) });
     let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)"));
+    assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} Started from the beginning. the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)"));
 
     let host = leak(FakeHost::ready());
     let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
@@ -434,7 +437,7 @@ async fn a_replay_past_the_wait_answers_still_running_and_a_second_call_attaches
     });
     assert_eq!(answered.0, 200, "{}", answered.1);
     let v: Value = serde_json::from_str(&answered.1).unwrap();
-    assert!(v["sentence"].as_str().unwrap().starts_with("replayed case 77 to step 3"), "{v}");
+    assert!(v["sentence"].as_str().unwrap().starts_with("Started from the beginning. replayed case 77 to step 3"), "{v}");
     assert_eq!(host.replays().len(), 1, "the second call started another replay");
 }
 
@@ -517,7 +520,7 @@ async fn a_replay_that_leaves_the_browser_open_says_what_it_blocks() {
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(
         v["sentence"],
-        format!("replayed case 77 to step 3 - the browser is on the page before step 3 runs\n{}", left_open_line(&mine))
+        format!("Started from the beginning. replayed case 77 to step 3 - the browser is on the page before step 3 runs\n{}", left_open_line(&mine))
     );
 
     let stopped = ReplayEnd::StoppedAt {
@@ -534,4 +537,34 @@ async fn a_replay_that_leaves_the_browser_open_says_what_it_blocks() {
     let host = leak(FakeHost { left_open: Some(mine), ..FakeHost::ending(ReplayEnd::Refused("no".into())) });
     let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     assert_eq!((status, text.as_str()), (409, "no"));
+}
+
+// ---- carrying on from where the last replay stood ---------------------------
+
+/// The answer says where the replay started: carried on from step K, or
+/// from the beginning; already standing before the step, it says so and
+/// that nothing ran, with the page.
+#[tokio::test]
+async fn the_answer_says_where_the_replay_started() {
+    use v2_lib::autorun::replay_to::ReplayFrom;
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+
+    let host = leak(FakeHost { from: ReplayFrom::CarriedOn(2), ..FakeHost::ready() });
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["sentence"],
+        "Carried on from step 2. replayed case 77 to step 3 - the browser is on the page before step 3 runs"
+    );
+
+    let host = leak(FakeHost { from: ReplayFrom::AlreadyThere, ..FakeHost::ready() });
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["sentence"], "The browser is already standing before step 3 of case 77: nothing ran.");
+    assert!(v["page"].is_string(), "{v}");
 }

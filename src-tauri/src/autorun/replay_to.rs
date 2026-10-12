@@ -508,19 +508,53 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
         return ReplayEnd::StoppedAt { phase: ReplayPhase::Area, step: 1, why: went.detail.clone(), outcomes: vec![went] };
     }
 
-    // Steps 1 to N-1, in the script's order. The other areas their
-    // `return_to_area` actions name are read once, before the first.
-    let names = runner::named_areas(script.steps.iter().filter(|s| s.step_number < n).flat_map(|s| s.actions.iter()));
+    // Steps 1 to N-1, in the script's order.
+    if let Some(stopped) =
+        run_steps(d, root, organization, project, &script, &route, 1, n, account, lease, timing, cancel, &mut progress, tabs, guarding_other)
+            .await
+    {
+        return stopped;
+    }
+    ReplayEnd::Ready { case_id: id, step: n, notice: checked.notice }
+}
+
+/// Run case `script`'s steps `from` to `n` - 1, in its order, in the
+/// browser `d`, as a replay runs them: `Some` is where it stopped, `None`
+/// that every one passed. `guarding_other` is a no-save guard held for
+/// another case (`guarding_other_case`).
+#[allow(clippy::too_many_arguments)]
+async fn run_steps<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    script: &CaseScript,
+    route: &Route,
+    from: i32,
+    n: i32,
+    account: &mut Option<String>,
+    lease: &mut Held,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    progress: &mut impl FnMut(i32, i32),
+    tabs: &mut Vec<ReplayedTab>,
+    guarding_other: Option<i32>,
+) -> Option<ReplayEnd> {
+    let stopped = || cancel.load(Ordering::SeqCst);
+    let in_range = |k: i32| k >= from && k < n;
+    // The other areas their `return_to_area` actions name are read once,
+    // before the first.
+    let names = runner::named_areas(script.steps.iter().filter(|s| in_range(s.step_number)).flat_map(|s| s.actions.iter()));
     let areas = runner::area_routes(root, organization, project, &names);
     // The recipe and the areas file each step looks at: read once, and
     // again only when one changed.
     let files = super::run_files::RunFiles::default();
-    // What the page met before step 1 is no step's error.
+    // What the page met before the first of them is no step's error.
     super::page_errors::drop_all(d);
-    for step in script.steps.iter().filter(|s| s.step_number < n) {
+    for step in script.steps.iter().filter(|s| in_range(s.step_number)) {
         let k = step.step_number;
         if stopped() {
-            return ReplayEnd::Stopped { step: k };
+            return Some(ReplayEnd::Stopped { step: k });
         }
         note_progress(k, n - 1);
         progress(k, n - 1);
@@ -542,8 +576,8 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
             timing,
             account,
             lease,
-            Some(&route),
-            AreaRoute::To(&route),
+            Some(route),
+            AreaRoute::To(route),
             &mut in_run,
         )
         .await;
@@ -552,13 +586,13 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
         }
         let mut outcomes = match ran {
             Ok(o) => o,
-            Err(why) => return ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step: k, why, outcomes: Vec::new() },
+            Err(why) => return Some(ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step: k, why, outcomes: Vec::new() }),
         };
         if outcomes.iter().any(|o| o.detail == AFTER_STOP) {
-            return ReplayEnd::Stopped { step: k };
+            return Some(ReplayEnd::Stopped { step: k });
         }
         if outcomes.iter().any(closed) {
-            return ReplayEnd::BrowserGone { step: k, why: None, outcomes: Vec::new() };
+            return Some(ReplayEnd::BrowserGone { step: k, why: None, outcomes: Vec::new() });
         }
         // A save the page sent after the step's last action passed is
         // still this step's.
@@ -574,8 +608,142 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
             if let Some(other) = guarding_other.filter(|_| crate::browser::save_guard::is_blocked(&why)) {
                 why = guarding_other_case(other);
             }
-            return ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step: k, why, outcomes };
+            return Some(ReplayEnd::StoppedAt { phase: ReplayPhase::Step, step: k, why, outcomes });
         }
     }
-    ReplayEnd::Ready { case_id: id, step: n, notice: checked.notice }
+    None
+}
+
+/// Where an assistant's replay left its own browser: on the page before
+/// step `before` of case `case_id`, every step before it run. Kept on the
+/// supervised session while nothing else has used that browser since
+/// (no step, try, sign-in, start or other replay); `steps` is a
+/// fingerprint of the script's steps before `before`, so a script changed
+/// since is never carried on from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayStand {
+    pub case_id: i32,
+    pub before: i32,
+    pub steps: u64,
+}
+
+impl ReplayStand {
+    /// The stand of a replay of `script` that reached step `before`.
+    pub fn of(script: &CaseScript, before: i32) -> Self {
+        ReplayStand { case_id: script.case_id, before, steps: steps_before(script, before) }
+    }
+}
+
+/// A fingerprint of `script`'s steps before `before`.
+fn steps_before(script: &CaseScript, before: i32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for step in script.steps.iter().filter(|s| s.step_number < before) {
+        serde_json::to_string(step).unwrap_or_default().hash(&mut h);
+    }
+    h.finish()
+}
+
+/// Where an assistant's replay starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayFrom {
+    /// From the beginning: preconditions, setup, sign-in, the area and
+    /// step 1 on.
+    Beginning,
+    /// From step K: the browser already stood before it, so only steps K
+    /// to N - 1 run.
+    CarriedOn(i32),
+    /// The browser already stands before the step asked for: nothing runs.
+    AlreadyThere,
+}
+
+impl ReplayFrom {
+    /// Said before the replay's own sentence.
+    pub fn said(self, case_id: i32, step: i32) -> String {
+        match self {
+            ReplayFrom::Beginning => "Started from the beginning.".to_string(),
+            ReplayFrom::CarriedOn(k) => format!("Carried on from step {k}."),
+            ReplayFrom::AlreadyThere => {
+                format!("The browser is already standing before step {step} of case {case_id}: nothing ran.")
+            }
+        }
+    }
+}
+
+/// Where a replay of case `case_id` to `step` starts, from the stand the
+/// browser's last replay left (`None` when it left none, or something used
+/// the browser since). `script` is the case's saved script now. The same
+/// case, stood before step K with its steps before K unchanged: before
+/// step `step` already, nothing runs; K earlier, it carries on from K. Any
+/// other stand - another case, a K past `step`, a script changed since -
+/// starts from the beginning.
+pub fn carry_from(stand: Option<&ReplayStand>, script: &CaseScript, step: i32) -> ReplayFrom {
+    match stand {
+        Some(s) if s.case_id == script.case_id && s.before <= step && s.steps == steps_before(script, s.before) => {
+            if s.before == step {
+                ReplayFrom::AlreadyThere
+            } else {
+                ReplayFrom::CarriedOn(s.before)
+            }
+        }
+        _ => ReplayFrom::Beginning,
+    }
+}
+
+/// Carry case `req.case_id` on in `d` from the page before step `from`,
+/// where its last replay left it, to the page before step `req.step`: only
+/// steps `from` to `req.step` - 1 run, each with its fixture values filled
+/// in as a person's step is (`setup::resolve_step`). No preconditions,
+/// setup, sign-in or trip to the area: the browser is already past them.
+#[allow(clippy::too_many_arguments)]
+pub async fn carry_on<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    req: &ReplayRequest,
+    from: i32,
+    account: &mut Option<String>,
+    lease: &mut Held,
+    guarded_case: &Option<i32>,
+    timing: &Timing,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(i32, i32),
+    tabs: &mut Vec<ReplayedTab>,
+) -> ReplayEnd {
+    let Checked { script, route } = match check(root, organization, project, req) {
+        Ok(c) => c,
+        Err(why) => return ReplayEnd::Refused(why),
+    };
+    let (id, n) = (req.case_id, req.step);
+    let mut filled = script.clone();
+    for step in filled.steps.iter_mut().filter(|s| s.step_number >= from && s.step_number < n) {
+        match setup::resolve_step(root, organization, project, id, step) {
+            Ok(resolved) => *step = resolved,
+            Err(why) => return ReplayEnd::Refused(why),
+        }
+    }
+    let guarding_other = guarded_case.filter(|c| *c != id);
+    if let Some(stopped) = run_steps(
+        d,
+        root,
+        organization,
+        project,
+        &filled,
+        &route,
+        from,
+        n,
+        account,
+        lease,
+        timing,
+        cancel,
+        &mut progress,
+        tabs,
+        guarding_other,
+    )
+    .await
+    {
+        return stopped;
+    }
+    ReplayEnd::Ready { case_id: id, step: n, notice: None }
 }
