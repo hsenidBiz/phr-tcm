@@ -1311,8 +1311,8 @@ pub(crate) async fn replay_supervised(
     };
     // An assistant's replay that reached its step leaves its stand, for its
     // next replay of this case to carry on from; any other end leaves none.
-    session.replay_stand = match (&end, by) {
-        (ReplayEnd::Ready { .. }, ReplayBy::Assistant) => {
+    session.replay_stand = match &end {
+        ReplayEnd::Ready { .. } if by == ReplayBy::Assistant => {
             store::load_script(&root, case_id).ok().flatten().map(|saved| replay_to::ReplayStand::of(&saved, step))
         }
         _ => None,

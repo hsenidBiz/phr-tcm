@@ -927,5 +927,5 @@ fn every_other_use_of_the_browser_clears_the_stand() {
     let replay = body(&source, "pub(crate) async fn replay_supervised");
     assert!(replay.contains("let stand = session.replay_stand.take();"), "{replay}");
     assert!(replay.contains("(ReplayBy::Assistant, true, OpenedBy::Assistant) =>"), "{replay}");
-    assert!(replay.contains("(ReplayEnd::Ready { .. }, ReplayBy::Assistant) =>"), "{replay}");
+    assert!(replay.contains("ReplayEnd::Ready { .. } if by == ReplayBy::Assistant =>"), "{replay}");
 }
