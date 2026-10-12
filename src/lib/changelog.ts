@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.13",
+    date: "2026-10-13",
+    items: [
+      "With Watch on, an unattended run now shows one browser window for each case instead of a second, blank one beside it.",
+      "Auto Run now shows scripts you or your assistant save, repair or delete without reloading the screen.",
+      "Your assistant can read a saved script and delete one. A deleted script is kept aside for 30 days, and a script cannot be deleted while its case is running.",
+      "The Setup panel on Auto Run now follows you down the page.",
+      "How To Use shows Auto Run and API Templates only when Advanced Features is on.",
+    ],
+  },
+  {
     version: "2.1.3-beta.12",
     date: "2026-10-13",
     items: [
