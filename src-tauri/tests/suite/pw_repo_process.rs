@@ -13,8 +13,8 @@ use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 use std::time::Duration;
 use v2_lib::pw_repo::process::{
-    self, busy_sentence, clean_line, resolve, start, start_repo, strip_ansi, Launch, Program, Resolved, RunEvent, RunId,
-    Sink, NODE_NOT_FOUND, NO_NODE_MODULES, ONLY_NPX_AND_NPM,
+    self, busy_sentence, clean_line, resolve, start, start_repo, stream_lines, strip_ansi, Launch, Program, Resolved,
+    RunEvent, RunId, Sink, CUT_MARK, LINE_CAP, NODE_NOT_FOUND, NO_NODE_MODULES, ONLY_NPX_AND_NPM, OUTSIDE_THE_CLONE,
 };
 use v2_lib::pw_repo::NOT_OFFERED;
 
@@ -68,6 +68,14 @@ fn only_npx_and_npm_are_allowed() {
         ("npm", vec!["run"]),
         ("npm", vec!["run", "qa"]),
         ("npm", vec!["exec", "users"]),
+        // npm reads an option before `--` as its own config.
+        ("npm", vec!["run", "users"]),
+        ("npm", vec!["run", "users", "list"]),
+        ("npm", vec!["run", "users", "--script-shell=C:\\x.exe", "--", "list"]),
+        ("npm", vec!["run", "users", "--node-options=--require=C:\\evil.js", "--", "list"]),
+        ("npm", vec!["run", "users", "--prefix", "C:\\elsewhere", "--", "list"]),
+        ("npm", vec!["run", "--prefix", "C:\\elsewhere", "users", "--", "list"]),
+        ("npm", vec!["--prefix", "C:\\elsewhere", "run", "users", "--", "list"]),
     ] {
         let e = Launch::repo(d.path(), program, &strings(&args), fake_node).unwrap_err();
         assert_eq!(e, ONLY_NPX_AND_NPM, "{program} {args:?} was not refused");
@@ -80,8 +88,93 @@ fn only_npx_and_npm_are_allowed() {
     assert_eq!(npx.label(), "npx playwright test");
 
     let npm = Launch::repo(d.path(), "npm", &strings(&["run", "users", "--", "list", "--json"]), fake_node).unwrap();
-    assert_eq!(npm.args(), ["C:/node/cli.js", "run", "users", "--", "list", "--json"].map(OsString::from));
+    // The app's own `--silent`: npm prints no banner carrying the arguments.
+    assert_eq!(npm.args(), ["C:/node/cli.js", "run", "--silent", "users", "--", "list", "--json"].map(OsString::from));
     assert_eq!(npm.label(), "npm run users");
+    // Options after `--` are the users script's, not npm's.
+    let npm = Launch::repo(d.path(), "npm", &strings(&["run", "users", "--", "--prefix", "x"]), fake_node).unwrap();
+    assert_eq!(npm.args(), ["C:/node/cli.js", "run", "--silent", "users", "--", "--prefix", "x"].map(OsString::from));
+}
+
+#[test]
+fn a_playwright_config_or_reporter_file_must_be_inside_the_clone() {
+    let d = clone_with_node_modules();
+    let outside = tempfile::tempdir().unwrap();
+    let evil = outside.path().join("evil.config.ts");
+    fs::write(&evil, "").unwrap();
+    let evil = evil.to_string_lossy().to_string();
+    let escape = format!("..{}{}", std::path::MAIN_SEPARATOR, "x.config.ts");
+    fs::write(d.path().join("other.config.ts"), "").unwrap();
+    fs::create_dir_all(d.path().join("reporters")).unwrap();
+    fs::write(d.path().join("reporters/mine.js"), "").unwrap();
+
+    let (config_eq, tsconfig_eq) = (format!("--config={evil}"), format!("--tsconfig={evil}"));
+    let (reporter_eq, attached) = (format!("--reporter=list,{evil}"), format!("-c{evil}"));
+    let refused: [Vec<&str>; 16] = [
+        vec!["-c", &evil],
+        vec!["--config", &evil],
+        vec![&config_eq],
+        vec!["--tsconfig", &evil],
+        vec![&tsconfig_eq],
+        vec!["--reporter", &evil],
+        vec![&reporter_eq],
+        vec!["-c", &escape],
+        vec!["-c", "missing.config.ts"],
+        vec!["-c", "suites"],
+        vec!["-c"],
+        vec!["--config"],
+        vec!["-c="],
+        vec![&attached],
+        vec!["-xc", &evil],
+        vec!["test", "--list", "--config", &evil],
+    ];
+    for extra in refused {
+        let mut args = vec!["playwright".to_string()];
+        args.extend(extra.iter().map(|s| s.to_string()));
+        let e = Launch::repo(d.path(), "npx", &args, fake_node).unwrap_err();
+        assert_eq!(e, OUTSIDE_THE_CLONE, "{extra:?} was not refused");
+    }
+
+    let allowed = [
+        vec!["test", "-c", "playwright.config.ts"],
+        vec!["test", "--config", "other.config.ts"],
+        vec!["test", "--config=other.config.ts"],
+        vec!["test", "--reporter=json"],
+        vec!["test", "--reporter", "list,reporters/mine.js"],
+        vec!["test", "--list", "--test-list", ".qa-cli/run.list", "-x"],
+        // After `--`, Playwright reads filters, never a file it loads.
+        vec!["test", "--", "-c", "anything"],
+    ];
+    for extra in allowed {
+        let mut args = vec!["playwright".to_string()];
+        args.extend(extra.iter().map(|s| s.to_string()));
+        assert!(Launch::repo(d.path(), "npx", &args, fake_node).is_ok(), "{extra:?} was refused");
+    }
+}
+
+#[test]
+fn a_long_line_is_cut_and_every_line_is_passed_on() {
+    let mut text = Vec::new();
+    text.extend_from_slice(b"first\r\n");
+    text.extend(std::iter::repeat_n(b'a', LINE_CAP + 10_000));
+    text.extend_from_slice(b"\nexactly\n");
+    text.extend(std::iter::repeat_n(b'b', LINE_CAP));
+    text.extend_from_slice(b"\n\x1b[1mlast\x1b[0m");
+    let mut lines = Vec::new();
+    stream_lines(std::io::Cursor::new(text), |l| lines.push(l));
+    assert_eq!(lines.len(), 5);
+    assert_eq!(lines[0], "first");
+    assert_eq!(lines[1], format!("{}{CUT_MARK}", "a".repeat(LINE_CAP)));
+    assert_eq!(lines[2], "exactly");
+    assert_eq!(lines[3], "b".repeat(LINE_CAP), "a line of exactly the cap is whole");
+    assert_eq!(lines[4], "last");
+
+    // A cut inside a character leaves no half of it behind.
+    let mut text = vec![b'a'; LINE_CAP - 1];
+    text.extend_from_slice("\u{e9}\u{e9}\n".as_bytes());
+    let mut lines = Vec::new();
+    stream_lines(std::io::Cursor::new(text), |l| lines.push(l));
+    assert_eq!(lines, [format!("{}{CUT_MARK}", "a".repeat(LINE_CAP - 1))]);
 }
 
 #[test]
@@ -91,6 +184,10 @@ fn the_label_never_carries_an_option_or_a_value() {
     assert_eq!(l.unwrap().label(), "npm run users");
     let l = Launch::repo(d.path(), "npx", &strings(&["playwright", "--list"]), fake_node);
     assert_eq!(l.unwrap().label(), "npx playwright");
+    let l = Launch::repo(d.path(), "npx", &strings(&["playwright", "suites/a b.spec.ts"]), fake_node);
+    assert_eq!(l.unwrap().label(), "npx playwright");
+    let l = Launch::repo(d.path(), "npx", &strings(&["playwright", "test", "--reporter=json"]), fake_node);
+    assert_eq!(l.unwrap().label(), "npx playwright test");
     let l = Launch::repo(d.path(), "npx", &strings(&["playwright", "suites/a b.spec.ts"]), fake_node);
     assert_eq!(l.unwrap().label(), "npx playwright");
 }
@@ -302,6 +399,7 @@ mod running {
 
     #[test]
     fn stop_ends_the_whole_run() {
+        let _held_browsers = crate::serial::held_browsers();
         let _slot = crate::serial::pw_repo();
         let (sink, rx) = collect();
         let run = start(cmd_then_ping(60), sink).unwrap();
@@ -342,6 +440,7 @@ mod running {
 
     #[test]
     fn a_second_start_is_refused_with_a_sentence_naming_the_running_one() {
+        let _held_browsers = crate::serial::held_browsers();
         let _slot = crate::serial::pw_repo();
         let (sink, rx) = collect();
         let run = start(cmd_then_ping(60), sink.clone()).unwrap();
@@ -362,6 +461,7 @@ mod running {
 
     #[test]
     fn output_streams_line_by_line_stripped_then_done_with_the_exit_code() {
+        let _held_browsers = crate::serial::held_browsers();
         let _slot = crate::serial::pw_repo();
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("out.txt");
@@ -408,6 +508,7 @@ mod running {
             println!("ARGS:{}", serde_json::to_string(&mine[after..]).unwrap());
             return;
         }
+        let _held_browsers = crate::serial::held_browsers();
         let _slot = crate::serial::pw_repo();
         let mut args: Vec<OsString> = [NAME, "--exact", "--nocapture", "--test-threads=1", CHILD].map(OsString::from).to_vec();
         args.extend(tricky.iter().map(OsString::from));

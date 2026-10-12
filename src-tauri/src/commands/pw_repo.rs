@@ -37,7 +37,11 @@ pub async fn pw_repo_start(app: tauri::AppHandle, clone: String, program: String
             let _ = crate::events::PwDone { run, code }.emit(&app);
         }
     });
-    process::start_repo(crate::ai_tools::autorun_offered(), &clone, &program, &args, sink)
+    // Off the async workers: it looks at the clone and PATH, and spawns.
+    let offered = crate::ai_tools::autorun_offered();
+    tauri::async_runtime::spawn_blocking(move || process::start_repo(offered, &clone, &program, &args, sink))
+        .await
+        .map_err(|_| process::COULD_NOT_START.to_string())?
 }
 
 /// End run `run` and every process it started. A run already over is fine.

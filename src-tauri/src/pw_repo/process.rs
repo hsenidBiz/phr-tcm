@@ -1,16 +1,26 @@
 //! Running one command in the clone: `npx playwright …` or `npm run users …`,
 //! and nothing else.
 //!
-//! - **What runs.** Only `npx` and `npm`, found on PATH, and only as
-//!   `npx playwright …` (with `--no`, so npx never downloads a package the
-//!   repo does not have) and `npm run users …`. The clone must be the repo
-//!   and have its `node_modules`.
-//! - **No shell.** On Windows `npx` and `npm` are `.cmd` shims, which only
-//!   `cmd.exe` can run, and `cmd.exe` would read `&`, `^`, `%` and `"` in an
-//!   argument. So a shim is never run: the `node.exe` beside it runs npm's
-//!   own `npx-cli.js` or `npm-cli.js` directly, which is what the shim
-//!   does, and every argument reaches Node as it was given. Where that
-//!   layout is not found, nothing is started.
+//! - **What runs.** Only `npx` and `npm`, found on PATH, and only as:
+//!   - `npx playwright …`, with `--no` so npx never downloads a package the
+//!     repo does not have. A config, tsconfig or reporter file Playwright
+//!     would load must be inside the clone (`confine_playwright_args`).
+//!   - `npm run users -- …`, exactly: nothing between `users` and `--`,
+//!     where npm would read an option as its own config (a script shell, a
+//!     prefix, node options). The app adds `--silent` itself, so npm prints
+//!     no `> node … <args>` banner that would carry the arguments into the
+//!     output.
+//!
+//!   The clone must be the repo and have its `node_modules`.
+//! - **No shell of the app's own.** On Windows `npx` and `npm` are `.cmd`
+//!   shims, which only `cmd.exe` can run, and `cmd.exe` would read `&`,
+//!   `^`, `%` and `"` in an argument. So a shim is never run: the
+//!   `node.exe` beside it runs npm's own `npx-cli.js` or `npm-cli.js`
+//!   directly, which is what the shim does, and every argument reaches
+//!   Node as it was given. Where that layout is not found, nothing is
+//!   started. npx then starts Playwright without a shell. `npm run` is
+//!   different: npm runs the `users` script through `cmd.exe` itself, with
+//!   its own escaping of the arguments after `--`.
 //! - **One job.** Each run starts suspended inside a Windows job of its own
 //!   (`browser::tree`'s job) and every process it starts lands in the same
 //!   job. Stop, and the app exiting (`stop_all`, from
@@ -19,8 +29,10 @@
 //! - **One at a time.** A second start is refused with a sentence naming
 //!   the running one.
 //! - **Output.** stdout and stderr stream line by line, ANSI escapes
-//!   stripped, as `RunEvent::Output`; `RunEvent::Done` comes after the last
-//!   line. The arguments are never logged: they can hold a password.
+//!   stripped and each line cut at `LINE_CAP`, as `RunEvent::Output`;
+//!   `RunEvent::Done` comes after the last line, and always comes: the
+//!   output is waited for at most `OUTPUT_GRACE` once the run has ended.
+//!   The arguments are never logged: they can hold a password.
 
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader, Read};
@@ -52,6 +64,16 @@ pub const ONLY_NPX_AND_NPM: &str = "Only npx playwright and npm run users can be
 /// The refusal for a clone without `node_modules`.
 pub const NO_NODE_MODULES: &str =
     "The clone has no node_modules folder, so nothing was started. Run npm install in the clone, then try again.";
+/// The refusal for a Playwright config, tsconfig or reporter file outside
+/// the clone, or a short option form that could hide one.
+pub const OUTSIDE_THE_CLONE: &str =
+    "A Playwright config, tsconfig or reporter file must be a file inside the clone, so nothing was started.";
+/// The longest output line passed on; the rest of a longer one is cut.
+pub const LINE_CAP: usize = 64 * 1024;
+/// What ends a line cut at `LINE_CAP`.
+pub const CUT_MARK: &str = " [line cut: over 64 KiB]";
+/// How long the output is waited for once the run has ended.
+pub const OUTPUT_GRACE: Duration = Duration::from_secs(5);
 /// The refusal when npx or npm cannot be found.
 pub const NODE_NOT_FOUND: &str =
     "Node.js (npx and npm) was not found on PATH, so nothing was started. Install Node.js, then restart the app.";
@@ -155,10 +177,11 @@ pub struct Launch {
 }
 
 impl Launch {
-    /// A repo command: `npx playwright …` or `npm run users …` in the clone
-    /// at `clone`. Refused for any other program or command, a folder that
-    /// is not the repo, a clone without `node_modules`, or when `resolve`
-    /// finds no way to run the program.
+    /// A repo command: `npx playwright …` or `npm run users -- …` in the
+    /// clone at `clone`. Refused for any other program or command, a
+    /// Playwright file outside the clone, a folder that is not the repo, a
+    /// clone without `node_modules`, or when `resolve` finds no way to run
+    /// the program.
     pub fn repo(
         clone: &Path,
         program: &str,
@@ -168,7 +191,8 @@ impl Launch {
         let program = Program::parse(program)?;
         let allowed = match program {
             Program::Npx => args.first().is_some_and(|a| a == "playwright"),
-            Program::Npm => args.len() >= 2 && args[0] == "run" && args[1] == "users",
+            // Exactly `run users --`: an option before `--` is npm's config.
+            Program::Npm => args.len() >= 3 && args[0] == "run" && args[1] == "users" && args[2] == "--",
         };
         if !allowed {
             return Err(ONLY_NPX_AND_NPM.to_string());
@@ -180,14 +204,24 @@ impl Launch {
         if !clone.join("node_modules").is_dir() {
             return Err(NO_NODE_MODULES.to_string());
         }
+        if program == Program::Npx {
+            confine_playwright_args(clone, &args[1..])?;
+        }
         let resolved = resolve(program).ok_or_else(|| NODE_NOT_FOUND.to_string())?;
 
         let mut all = resolved.lead;
-        if program == Program::Npx {
-            // Never download a package the repo does not have.
-            all.push("--no".into());
+        match program {
+            Program::Npx => {
+                // Never download a package the repo does not have.
+                all.push("--no".into());
+                all.extend(args.iter().map(OsString::from));
+            }
+            Program::Npm => {
+                // `--silent`: no `> node … <args>` banner in the output.
+                all.extend(["run", "--silent", "users"].map(OsString::from));
+                all.extend(args[2..].iter().map(OsString::from));
+            }
         }
-        all.extend(args.iter().map(OsString::from));
         Ok(Launch { exe: resolved.exe, args: all, cwd: clone.to_path_buf(), label: label(program, args) })
     }
 
@@ -219,9 +253,109 @@ impl Launch {
     }
 }
 
+/// Reporters Playwright has built in, which load no file.
+const BUILT_IN_REPORTERS: &[&str] = &["list", "line", "dot", "json", "junit", "html", "blob", "github", "null"];
+
+/// Refuse Playwright arguments (those after `playwright`) that would load a
+/// file from outside the clone: `-c`/`--config` and `--tsconfig`, as
+/// `--name=value` or with the value as the next argument, and `--reporter`
+/// values that are not built in. Such a file must exist inside the clone.
+/// A single-dash argument longer than two characters (`-cfile`, `-xc`) is
+/// refused: it could hide `-c`. Nothing after `--` is looked at; Playwright
+/// reads that as filters.
+pub fn confine_playwright_args(clone: &Path, args: &[String]) -> Result<(), String> {
+    let refuse = || OUTSIDE_THE_CLONE.to_string();
+    let root = clone.canonicalize().map_err(|_| refuse())?;
+    let inside = |value: &str| {
+        let p = Path::new(value);
+        let p = if p.is_absolute() { p.to_path_buf() } else { clone.join(p) };
+        !value.is_empty() && p.canonicalize().is_ok_and(|c| c.starts_with(&root) && c.is_file())
+    };
+    let reporters = |value: &str| value.split(',').all(|r| BUILT_IN_REPORTERS.contains(&r.trim()) || inside(r.trim()));
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if a == "--" {
+            break;
+        }
+        let (name, value) = match a.split_once('=') {
+            Some((n, v)) if n.starts_with("--") => (n, Some(v)),
+            _ => (a, None),
+        };
+        if name.starts_with('-') && !name.starts_with("--") && name.chars().count() > 2 {
+            return Err(refuse());
+        }
+        let is_reporter = match name {
+            "-c" | "--config" | "--tsconfig" => false,
+            "--reporter" => true,
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        let (v, used) = match value {
+            Some(v) => (v, 1),
+            None => (args.get(i + 1).ok_or_else(refuse)?.as_str(), 2),
+        };
+        let ok = if is_reporter { reporters(v) } else { inside(v) };
+        if !ok {
+            return Err(refuse());
+        }
+        i += used;
+    }
+    Ok(())
+}
+
 fn label(program: Program, args: &[String]) -> String {
     let words = args.iter().take(2).take_while(|a| !a.starts_with('-') && a.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
     std::iter::once(program.name()).chain(words.map(String::as_str)).collect::<Vec<_>>().join(" ")
+}
+
+/// Read `reader` to its end, passing each line to `emit` through
+/// `clean_line`. A line longer than `LINE_CAP` bytes is cut there and ends
+/// in `CUT_MARK`; the rest of it is dropped. A last line without a line
+/// ending is passed on too.
+pub fn stream_lines(reader: impl Read, mut emit: impl FnMut(String)) {
+    let finish = |buf: &[u8], cut: bool| {
+        let mut s = clean_line(buf);
+        if cut {
+            // A character the cut split in two.
+            s.truncate(s.trim_end_matches('\u{fffd}').len());
+            s.push_str(CUT_MARK);
+        }
+        s
+    };
+    let mut r = BufReader::new(reader);
+    let mut buf = Vec::new();
+    let mut cut = false;
+    loop {
+        let avail = match r.fill_buf() {
+            Ok(a) => a,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        if avail.is_empty() {
+            if !buf.is_empty() || cut {
+                emit(finish(&buf, cut));
+            }
+            break;
+        }
+        let (take, content, ends) = match avail.iter().position(|&b| b == b'\n') {
+            Some(at) => (at + 1, at, true),
+            None => (avail.len(), avail.len(), false),
+        };
+        if !cut {
+            let room = LINE_CAP - buf.len();
+            buf.extend_from_slice(&avail[..content.min(room)]);
+            cut = content > room;
+        }
+        r.consume(take);
+        if ends {
+            emit(finish(&buf, cut));
+            buf.clear();
+            cut = false;
+        }
+    }
 }
 
 /// A line of output as the person sees it: ANSI escapes stripped, the line
@@ -277,16 +411,34 @@ pub fn strip_ansi(s: &str) -> String {
 struct Current {
     id: RunId,
     label: String,
-    stopped: AtomicBool,
+    state: Mutex<RunState>,
     #[cfg(windows)]
     job: crate::browser::tree::job::Job,
     #[cfg(not(windows))]
     child: Arc<Mutex<std::process::Child>>,
 }
 
+/// Whether the run's process was seen to end, and whether Stop came first.
+/// One lock, so a Stop after the process ended (but before `Done`) leaves
+/// its exit code alone.
+#[derive(Default)]
+struct RunState {
+    finished: bool,
+    stopped: bool,
+}
+
 impl Current {
+    fn state(&self) -> std::sync::MutexGuard<'_, RunState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// End the whole run, unless its process has already ended.
     fn end(&self) {
-        self.stopped.store(true, Ordering::SeqCst);
+        let mut state = self.state();
+        if state.finished {
+            return;
+        }
+        state.stopped = true;
         #[cfg(windows)]
         {
             if !self.job.terminate_all() {
@@ -358,30 +510,36 @@ pub fn start(launch: Launch, sink: Sink) -> Result<RunId, String> {
     }
 
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst) + 1;
-    let readers: Vec<_> = [child.stdout.take().map(|o| Box::new(o) as Box<dyn Read + Send>), child.stderr.take().map(|e| Box::new(e) as Box<dyn Read + Send>)]
-        .into_iter()
-        .flatten()
-        .map(|stream| {
-            let sink = sink.clone();
-            std::thread::spawn(move || {
-                let mut reader = BufReader::new(stream);
-                let mut buf = Vec::new();
-                loop {
-                    buf.clear();
-                    match reader.read_until(b'\n', &mut buf) {
-                        Ok(0) | Err(_) => break,
-                        Ok(_) => sink(RunEvent::Output { run: id, line: clean_line(&buf) }),
-                    }
+    // Output passes only while this is set: a reader still going once the
+    // grace after the end is over says nothing after `Done`.
+    let open = Arc::new(AtomicBool::new(true));
+    let (read_done, readers_done) = std::sync::mpsc::channel::<()>();
+    let streams: Vec<Box<dyn Read + Send>> = [
+        child.stdout.take().map(|o| Box::new(o) as Box<dyn Read + Send>),
+        child.stderr.take().map(|e| Box::new(e) as Box<dyn Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let readers = streams.len();
+    for stream in streams {
+        let (sink, open, read_done) = (sink.clone(), open.clone(), read_done.clone());
+        std::thread::spawn(move || {
+            stream_lines(stream, |line| {
+                if open.load(Ordering::SeqCst) {
+                    sink(RunEvent::Output { run: id, line });
                 }
-            })
-        })
-        .collect();
+            });
+            let _ = read_done.send(());
+        });
+    }
+    drop(read_done);
 
     let child = Arc::new(Mutex::new(child));
     let run = Arc::new(Current {
         id,
         label: launch.label.clone(),
-        stopped: AtomicBool::new(false),
+        state: Mutex::new(RunState::default()),
         #[cfg(windows)]
         job,
         #[cfg(not(windows))]
@@ -400,14 +558,25 @@ pub fn start(launch: Launch, sink: Sink) -> Result<RunId, String> {
                 Err(_) => break None,
             }
         };
+        let stopped = {
+            let mut state = run.state();
+            state.finished = true;
+            state.stopped
+        };
         // Whatever it left running goes with it, which also closes the
         // output pipes those processes held.
         #[cfg(windows)]
         run.job.terminate_all();
-        for r in readers {
-            let _ = r.join();
+        // The rest of the output, for a while: Done always comes.
+        let deadline = std::time::Instant::now() + OUTPUT_GRACE;
+        for _ in 0..readers {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if readers_done.recv_timeout(left).is_err() {
+                crate::applog::warn(format!("pw-repo: run {id}'s output was still open {} s after it ended", OUTPUT_GRACE.as_secs()));
+                break;
+            }
         }
-        let stopped = run.stopped.load(Ordering::SeqCst);
+        open.store(false, Ordering::SeqCst);
         let code = if stopped { None } else { status.and_then(|s| s.code()) };
         {
             let mut current = slot();
