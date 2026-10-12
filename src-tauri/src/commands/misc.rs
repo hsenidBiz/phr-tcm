@@ -300,11 +300,11 @@ pub fn set_advanced_features(on: bool) -> Result<(), String> {
 #[specta::specta]
 pub async fn open_help(app: tauri::AppHandle) -> Result<(), String> {
     if crate::ai_tools::dev_build() {
-        return crate::help::open_index(std::path::Path::new(crate::help::DEV_INDEX));
+        return crate::help::open_guide(std::path::Path::new(crate::help::DEV_INDEX));
     }
     let help_root = crate::commands::guide::help_root(&app).ok_or_else(|| crate::help::OPEN_ERROR.to_string())?;
     let index = crate::guide::installed_index(&help_root).ok_or_else(|| crate::guide::NOT_DOWNLOADED.to_string())?;
-    crate::help::open_index(&index)
+    crate::help::open_guide(&index)
 }
 
 /// Whether the Boards route probe may run, and the refusal when it may

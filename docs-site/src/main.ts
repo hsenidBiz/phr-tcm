@@ -10,6 +10,7 @@ import { render } from "./render/layout";
 import { initialTheme } from "./render/theme";
 import appIcon from "../../src-tauri/icons/64x64.png";
 import type { Positions, SiteContent } from "./types";
+import { advancedFrom, forFeatures } from "./advanced";
 
 document.documentElement.dataset.theme = initialTheme();
 
@@ -27,6 +28,10 @@ async function boot() {
   if (import.meta.env.DEV && new URLSearchParams(location.search).has("sample")) {
     content = (await import("./dev/sample")).sample;
   }
+
+  // Only what the app shows: the app says in the address whether Enable
+  // Advanced Features is on, and a guide opened without it hides those parts.
+  content = forFeatures(content, advancedFrom(location.search));
 
   const root = document.getElementById("app");
   if (root) render(root, content);

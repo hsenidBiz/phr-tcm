@@ -47,7 +47,7 @@ const PROGRESS_STEP: u64 = 256 * 1024;
 #[specta::specta]
 pub async fn guide_download(app: tauri::AppHandle) -> Result<(), String> {
     if crate::ai_tools::dev_build() {
-        return crate::help::open_index(std::path::Path::new(crate::help::DEV_INDEX));
+        return crate::help::open_guide(std::path::Path::new(crate::help::DEV_INDEX));
     }
     let root = help_root(&app).ok_or_else(|| guide::DOWNLOAD_FAILED.to_string())?;
     let emitter = app.clone();
@@ -67,5 +67,5 @@ pub async fn guide_download(app: tauri::AppHandle) -> Result<(), String> {
         }
     })
     .await?;
-    crate::help::open_index(&index)
+    crate::help::open_guide(&index)
 }

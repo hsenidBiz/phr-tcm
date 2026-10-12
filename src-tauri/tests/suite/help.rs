@@ -4,7 +4,7 @@
 //! development build opens straight from the repository.
 
 use v2_lib::guide::{DAMAGED, DOWNLOAD_FAILED, NOT_DOWNLOADED, NOT_PUBLISHED};
-use v2_lib::help::{DEV_INDEX, OPEN_ERROR};
+use v2_lib::help::{guide_address, launcher_html, DEV_INDEX, OPEN_ERROR};
 
 /// No sentence the guide's buttons can show names a URL or a path.
 #[test]
@@ -32,4 +32,40 @@ fn the_site_is_not_embedded() {
     assert!(!cargo.contains("include_dir"), "the include_dir dependency is back");
     let help = include_str!("../../src/help.rs");
     assert!(!help.contains("include_dir!"), "help.rs embeds the site again");
+}
+
+/// The guide is told whether Enable Advanced Features is on through its
+/// address: `?advanced=1` while on, nothing while off, and the guide hides
+/// Auto Run and API Templates unless it is there.
+#[test]
+fn the_guide_address_says_whether_advanced_features_are_on() {
+    let index = std::path::Path::new(DEV_INDEX);
+    let on = guide_address(index, true).expect("a file URL");
+    let off = guide_address(index, false).expect("a file URL");
+    assert!(on.starts_with("file:///") && on.ends_with("/help/index.html?advanced=1"), "{on}");
+    assert!(off.starts_with("file:///") && off.ends_with("/help/index.html"), "{off}");
+    assert!(!off.contains('?'), "{off}");
+    // A path with spaces (this repository's own) is encoded, not cut short.
+    assert!(!on.contains(' '), "{on}");
+}
+
+/// The launcher sends the browser on to that address, by script and by a
+/// meta refresh, and carries nothing else.
+#[test]
+fn the_launcher_goes_on_to_the_guide() {
+    let address = "file:///C:/a%20b/help/index.html?advanced=1";
+    let page = launcher_html(address);
+    assert!(page.contains(&format!("location.replace(\"{address}\")")), "{page}");
+    assert!(page.contains(&format!("url={address}")), "{page}");
+    let odd = launcher_html("file:///x/index.html?a=1&b=\"2\"");
+    assert!(odd.contains("url=file:///x/index.html?a=1&amp;b=&quot;2&quot;"), "{odd}");
+}
+
+/// Every way the app opens the guide goes through the launcher.
+#[test]
+fn every_opening_tells_the_guide() {
+    for src in [include_str!("../../src/commands/misc.rs"), include_str!("../../src/commands/guide.rs")] {
+        assert!(!src.contains("help::open_index("), "an opening skips the launcher");
+        assert!(src.contains("help::open_guide("));
+    }
 }
