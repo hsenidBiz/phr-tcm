@@ -4,7 +4,7 @@
 //! development build opens straight from the repository.
 
 use v2_lib::guide::{DAMAGED, DOWNLOAD_FAILED, NOT_DOWNLOADED, NOT_PUBLISHED};
-use v2_lib::help::{guide_address, launcher_html, DEV_INDEX, OPEN_ERROR};
+use v2_lib::help::{guide_address, guide_opening, launcher_html, GuideOpening, DEV_INDEX, OPEN_ERROR};
 
 /// No sentence the guide's buttons can show names a URL or a path.
 #[test]
@@ -67,5 +67,17 @@ fn every_opening_tells_the_guide() {
     for src in [include_str!("../../src/commands/misc.rs"), include_str!("../../src/commands/guide.rs")] {
         assert!(!src.contains("help::open_index("), "an opening skips the launcher");
         assert!(src.contains("help::open_guide("));
+    }
+}
+
+/// Off, the index opens as it is: no launcher is written. On, the launcher
+/// carries the flag.
+#[test]
+fn off_opens_the_index_itself_and_on_goes_through_the_launcher() {
+    let index = std::path::Path::new(DEV_INDEX);
+    assert_eq!(guide_opening(index, false), GuideOpening::Index);
+    match guide_opening(index, true) {
+        GuideOpening::Launcher(page) => assert!(page.contains("index.html?advanced=1"), "{page}"),
+        other => panic!("{other:?}"),
     }
 }

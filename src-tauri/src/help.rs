@@ -52,17 +52,37 @@ fn launcher_path() -> std::path::PathBuf {
     std::env::temp_dir().join("tcm-how-to-use.html")
 }
 
+/// How the guide is opened: its index itself while Enable Advanced
+/// Features is off (no query needed: the guide hides those parts without
+/// one), or through a launcher page carrying `?advanced=1` while it is on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuideOpening {
+    Index,
+    Launcher(String),
+}
+
+/// `GuideOpening` for this index and setting. A path that is no file URL
+/// opens the index itself.
+pub fn guide_opening(index: &std::path::Path, advanced: bool) -> GuideOpening {
+    if !advanced {
+        return GuideOpening::Index;
+    }
+    match guide_address(index, true) {
+        Some(address) => GuideOpening::Launcher(launcher_html(&address)),
+        None => GuideOpening::Index,
+    }
+}
+
 /// Open the guide at `index`, telling it whether Enable Advanced Features
 /// is on (as the app decides what it shows: `ai_tools::autorun_offered`).
 /// Falls back to opening `index` itself, which shows the guide with those
 /// parts hidden, if the launcher cannot be written.
 pub fn open_guide(index: &std::path::Path) -> Result<(), String> {
-    let advanced = crate::ai_tools::autorun_offered();
-    let Some(address) = guide_address(index, advanced) else {
+    let GuideOpening::Launcher(page) = guide_opening(index, crate::ai_tools::autorun_offered()) else {
         return open_index(index);
     };
     let launcher = launcher_path();
-    match std::fs::write(&launcher, launcher_html(&address)) {
+    match std::fs::write(&launcher, page) {
         Ok(()) => open_index(&launcher),
         Err(e) => {
             crate::applog::warn(format!("could not write the help launcher: {e}"));
