@@ -52,6 +52,11 @@ pub(crate) struct Session {
     /// next replay of that case carries on from there. Any other use - a
     /// step, a try, a sign-in, a start or another replay - clears it.
     pub(crate) replay_stand: Option<crate::autorun::replay_to::ReplayStand>,
+    /// The case a watched step-by-step run is on in this browser
+    /// (`auto_run_step`): its script is not deleted until the run ends
+    /// (`release_stepped_run`), another case is stepped, or the browser
+    /// closes.
+    pub(crate) stepping: Option<store::Replaying>,
 }
 
 /// How many times the supervised browser has been used for anything but
@@ -757,6 +762,7 @@ async fn open_into(
         discovery: None,
         opened_by: by,
         replay_stand: None,
+        stepping: None,
     });
     note_session_use();
     // A tab the page opens waits, paused, until this connection reads that
@@ -1067,6 +1073,9 @@ pub async fn auto_run_step(
     step: StepScript,
 ) -> Result<StepRun, String> {
     let root = root(&app)?;
+    // The case's script is not deleted while it is run step by step: noted
+    // before anything reads it, and kept by the browser below.
+    let replaying = store::replaying(case_id);
     // The step's fixture values: shared drafts' current outputs, and what
     // the case's setup gave at its start. The step the pane holds is never
     // changed; a value still missing refuses the step with its sentence.
@@ -1084,6 +1093,7 @@ pub async fn auto_run_step(
     // replay carries on from where it stood.
     session.opened_by = OpenedBy::Person;
     session.replay_stand = None;
+    hold_stepped_run(&mut session.stepping, replaying);
     note_session_use();
     // Another case's tabs do not carry over into this one.
     // The saved script's own choices about dialogs nobody expected and the
@@ -1222,13 +1232,15 @@ pub(crate) async fn replay_supervised(
         Err(why) => return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING)),
     };
     let root = root(app)?;
+    // Its script is not deleted while the replay goes: noted before the
+    // check reads the script, so a delete is either done already (the
+    // check finds no script) or refused.
+    let _replaying = store::replaying(req.case_id);
     // Refused before anything opens.
     if let Err(why) = replay_to::check(&root, organization, project, &req) {
         return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING));
     }
     let (case_id, step, db_read_access) = (req.case_id, req.step, req.db_read_access);
-    // Its script is not deleted while the replay goes.
-    let _replaying = store::replaying(case_id);
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
     let mut slot = SESSION.lock().await;
     // A Close that took the lock first is respected: no browser is opened
@@ -2089,7 +2101,39 @@ fn check_imported_seen(
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_save_run(app: tauri::AppHandle, run: LocalRun) -> Result<(), String> {
-    save_run_at(&root(&app)?, run)
+    let root = root(&app)?;
+    let ids: Vec<i32> = run.cases.iter().map(|c| c.case_id).collect();
+    save_run_at(&root, run)?;
+    release_stepped_run(&ids);
+    Ok(())
+}
+
+/// A watched run's result was saved: the run has ended, and the case it
+/// was stepping (one of `case_ids`) may have its script deleted again. A
+/// browser busy with something else right now keeps its note until it
+/// closes.
+pub fn release_stepped_run(case_ids: &[i32]) {
+    if let Ok(mut slot) = SESSION.try_lock() {
+        if let Some(s) = slot.as_mut() {
+            release_saved(&mut s.stepping, case_ids);
+        }
+    }
+}
+
+/// A step of `guard`'s case runs: the browser keeps the note for that
+/// case, and one for another case it held is let go.
+pub fn hold_stepped_run(held: &mut Option<store::Replaying>, guard: store::Replaying) {
+    if held.as_ref().map(store::Replaying::case_id) != Some(guard.case_id()) {
+        *held = Some(guard);
+    }
+}
+
+/// A run naming `case_ids` was saved: the note is let go when its case is
+/// one of them.
+pub fn release_saved(held: &mut Option<store::Replaying>, case_ids: &[i32]) {
+    if held.as_ref().is_some_and(|g| case_ids.contains(&g.case_id())) {
+        *held = None;
+    }
 }
 
 /// `auto_run_save_run` for a given data root. The first save of a run - a

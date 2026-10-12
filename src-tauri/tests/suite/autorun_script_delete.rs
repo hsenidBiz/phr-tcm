@@ -179,3 +179,129 @@ fn both_tools_are_listed_and_neither_sends_a_delete() {
         std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/autorun/store.rs")).unwrap();
     assert!(!store_src.contains("reqwest") && !store_src.contains("AdoClient"), "the store sends nothing");
 }
+
+/// A replay notes its case before it reads the script, and the note and a
+/// delete are one after the other: once noted, the script stays where it
+/// is until the note goes. Run against a delete looping beside it.
+#[test]
+fn a_noted_replay_and_a_delete_never_interleave() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    store::save_script(&root, &script(18)).unwrap();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let deleter = {
+        let (root, stop) = (root.clone(), Arc::clone(&stop));
+        std::thread::spawn(move || {
+            let mut deleted = 0;
+            let mut now = NOW;
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                if store::delete_script(&root, 18, now).is_ok() {
+                    deleted += 1;
+                    now += 1;
+                    store::save_script(&root, &script(18)).unwrap();
+                }
+            }
+            deleted
+        })
+    };
+    let path = root.join("scripts").join("case-18.json");
+    for _ in 0..300 {
+        let note = store::replaying(18);
+        let there = path.exists() && store::load_script(&root, 18).ok().flatten().is_some();
+        std::thread::yield_now();
+        if there {
+            assert!(path.exists(), "the script was moved aside under a noted replay");
+            assert!(store::load_script(&root, 18).unwrap().is_some());
+        }
+        drop(note);
+        std::thread::yield_now();
+    }
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    let deleted = deleter.join().unwrap();
+    assert!(deleted > 0, "the delete ran between the replays");
+}
+
+/// A delete that came first wins: the replay noted after it finds no script.
+#[test]
+fn a_replay_noted_after_a_delete_finds_no_script() {
+    let dir = tempfile::tempdir().unwrap();
+    store::save_script(dir.path(), &script(19)).unwrap();
+    store::delete_script(dir.path(), 19, NOW).unwrap();
+    let _note = store::replaying(19);
+    assert!(store::load_script(dir.path(), 19).unwrap().is_none());
+}
+
+/// A watched step-by-step run keeps its case noted for as long as it runs:
+/// a delete is refused until its result is saved, another case is stepped
+/// or the browser closes (the note is dropped with it).
+#[test]
+fn a_watched_stepped_run_keeps_its_case_from_being_deleted() {
+    use v2_lib::commands::autorun::{hold_stepped_run, release_saved};
+    let dir = tempfile::tempdir().unwrap();
+    for id in [20, 21] {
+        store::save_script(dir.path(), &script(id)).unwrap();
+    }
+    let mut held = None;
+    hold_stepped_run(&mut held, store::replaying(20));
+    // A second step of the same case keeps the one note.
+    hold_stepped_run(&mut held, store::replaying(20));
+    assert_eq!(autorun_script_delete_at(dir.path(), r#"{"case_id": 20}"#, NOW).0, 409);
+    // A result saved for another case leaves it.
+    release_saved(&mut held, &[21]);
+    assert_eq!(autorun_script_delete_at(dir.path(), r#"{"case_id": 20}"#, NOW).0, 409);
+    // The run moves on to case 21: case 20 is free, 21 is held.
+    hold_stepped_run(&mut held, store::replaying(21));
+    assert!(!store::is_replaying(20));
+    assert_eq!(autorun_script_delete_at(dir.path(), r#"{"case_id": 21}"#, NOW).0, 409);
+    // Its result is saved: the run has ended.
+    release_saved(&mut held, &[20, 21]);
+    assert!(held.is_none());
+    assert_eq!(autorun_script_delete_at(dir.path(), r#"{"case_id": 21}"#, NOW).0, 200);
+    assert_eq!(autorun_script_delete_at(dir.path(), r#"{"case_id": 20}"#, NOW).0, 200);
+    // And the browser closing drops a note it still holds.
+    store::save_script(dir.path(), &script(20)).unwrap();
+    hold_stepped_run(&mut held, store::replaying(20));
+    drop(held);
+    assert!(!store::is_replaying(20));
+}
+
+/// The step command notes its case before anything reads the script, and
+/// the replay to a step notes it before its check reads it.
+#[test]
+fn the_notes_are_taken_before_the_script_is_read() {
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/commands/autorun.rs"))
+        .unwrap()
+        .replace("\r\n", "\n");
+    let end = "\n}\n";
+    let step = &src[src.find("pub async fn auto_run_step(").unwrap()..];
+    let step = &step[..step.find(end).unwrap()];
+    let noted = step.find("store::replaying(case_id)").expect("the step notes its case");
+    assert!(noted < step.find("resolve_step(").unwrap());
+    assert!(noted < step.find("load_script(").unwrap());
+    assert!(step.contains("hold_stepped_run(&mut session.stepping, replaying)"));
+    let replay = &src[src.find("pub(crate) async fn replay_supervised(").unwrap()..];
+    let noted = replay.find("store::replaying(req.case_id)").expect("the replay notes its case");
+    assert!(noted < replay.find("replay_to::check(").unwrap());
+    let save = &src[src.find("pub fn auto_run_save_run(").unwrap()..];
+    assert!(save[..save.find(end).unwrap()].contains("release_stepped_run("));
+}
+
+/// A listener runs with no lock of the store held: one that registers
+/// another listener, or reads the store, does not hang.
+#[test]
+fn a_listener_may_use_the_store_and_register_another() {
+    let dir = tempfile::tempdir().unwrap();
+    let mine = dir.path().to_path_buf();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let tx = Mutex::new(tx);
+    store::on_scripts_changed(move |at, _| {
+        if at == mine {
+            store::on_scripts_changed(|_, _| {});
+            let _ = store::list_scripts(at);
+            let _ = tx.lock().unwrap().send(());
+        }
+    });
+    let root = dir.path().to_path_buf();
+    std::thread::spawn(move || store::save_script(&root, &script(22)).unwrap());
+    rx.recv_timeout(std::time::Duration::from_secs(5)).expect("the listener ran and returned");
+}

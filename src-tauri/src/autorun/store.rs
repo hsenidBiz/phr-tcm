@@ -44,7 +44,7 @@ fn scripts_dir(root: &Path) -> PathBuf {
 
 /// Told of every change to the scripts on disk: the store's root and the
 /// cases whose script was written or removed.
-type ChangeListener = Box<dyn Fn(&Path, &[i32]) + Send + Sync>;
+type ChangeListener = std::sync::Arc<dyn Fn(&Path, &[i32]) + Send + Sync>;
 
 /// Everyone told of a change to the scripts (`on_scripts_changed`). The app
 /// adds one at startup that says so to the window, so the Auto Run screen
@@ -55,7 +55,7 @@ static LISTENERS: Mutex<Vec<ChangeListener>> = Mutex::new(Vec::new());
 /// Be told of every script written or removed from now on, as the store's
 /// root and the cases it touched.
 pub fn on_scripts_changed(f: impl Fn(&Path, &[i32]) + Send + Sync + 'static) {
-    LISTENERS.lock().unwrap_or_else(|e| e.into_inner()).push(Box::new(f));
+    LISTENERS.lock().unwrap_or_else(|e| e.into_inner()).push(std::sync::Arc::new(f));
 }
 
 /// Tell every listener that these cases' scripts changed. Nothing is said
@@ -64,7 +64,10 @@ fn scripts_changed(root: &Path, case_ids: &[i32]) {
     if case_ids.is_empty() {
         return;
     }
-    for listener in LISTENERS.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+    // Copied out first: a listener runs with no lock of this module held,
+    // so one that registers another or reads the store cannot deadlock.
+    let listeners: Vec<ChangeListener> = LISTENERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    for listener in listeners {
         listener(root, case_ids);
     }
 }
@@ -841,15 +844,29 @@ pub const DELETED_KEPT_DAYS: u64 = 30;
 
 const DAY_MS: u64 = 86_400_000;
 
-/// The cases a replay is running right now: a replay to a step, or a case
-/// of an unattended run. Their scripts are not deleted under them.
+/// The cases a replay is running right now: a replay to a step, a case of
+/// an unattended run, or the case a watched step-by-step run is on. Their
+/// scripts are not deleted under them.
 static REPLAYING: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 
 /// A case being replayed, for as long as this is held (`replaying`).
 pub struct Replaying(i32);
 
+impl Replaying {
+    /// The case it holds.
+    pub fn case_id(&self) -> i32 {
+        self.0
+    }
+}
+
 /// Note that case `case_id` is being replayed until the value is dropped.
+///
+/// Taken under the scripts lock, so it and a delete are one after the
+/// other: a delete that got in first has already moved the script aside
+/// (the replay then finds none), and one that comes after is refused.
+/// Take it before the script is read.
 pub fn replaying(case_id: i32) -> Replaying {
+    let _held = scripts_lock();
     REPLAYING.lock().unwrap_or_else(|e| e.into_inner()).push(case_id);
     Replaying(case_id)
 }
