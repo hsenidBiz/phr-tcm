@@ -489,8 +489,9 @@ impl Drop for Tree {
 }
 
 #[cfg(windows)]
-mod job {
-    //! The Windows job object a browser runs in.
+pub(crate) mod job {
+    //! The Windows job object a browser runs in. The Playwright tab's repo
+    //! commands (`pw_repo::process`) each run in one too.
 
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
     use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessCommandLineInformation};
@@ -501,7 +502,7 @@ mod job {
         CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
     };
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectBasicProcessIdList,
+        AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectBasicProcessIdList, TerminateJobObject,
         JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
         JOBOBJECT_BASIC_PROCESS_ID_LIST, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
@@ -743,6 +744,14 @@ mod job {
                 // SAFETY: a valid process handle.
                 unsafe { TerminateProcess(p.0, 1) };
             }
+        }
+
+        /// End every process in the job at once. Only for a job whose every
+        /// process is the app's own (a repo command's): a browser's job can
+        /// hold a program the person opened, so it is never ended whole.
+        pub fn terminate_all(&self) -> bool {
+            // SAFETY: a valid job handle.
+            unsafe { TerminateJobObject(self.raw(), 1) != 0 }
         }
 
         /// Is the process with this pid in this job?

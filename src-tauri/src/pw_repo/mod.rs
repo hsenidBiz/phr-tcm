@@ -3,11 +3,15 @@
 //! uses, `pw_export::clone`).
 //!
 //! `structure` reads what is in the clone and whether it can be used. It
-//! only reads: nothing here writes in the clone or starts a process.
+//! only reads: nothing there writes in the clone or starts a process.
+//!
+//! `process` runs a repo command (`npx playwright …` or `npm run users …`)
+//! in a Windows job of its own, one at a time, streaming its output.
 //!
 //! Offered exactly where Auto Run is (`ai_tools::autorun_offered`): with
 //! Advanced Features off every command of the tab is refused.
 
+pub mod process;
 pub mod structure;
 
 /// The refusal every Playwright tab command gives where it is not offered.

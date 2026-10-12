@@ -1265,6 +1265,20 @@ export const commands = {
 	/**  What the clone at `clone` holds, and the health line. Read only. */
 	pwRepoStructure: (clone: string) => typedError<RepoStructure, string>(__TAURI_INVOKE("pw_repo_structure", { clone })),
 	/**
+	 *  Start `npx playwright …` or `npm run users …` in the clone, in a job of
+	 *  its own. Its output comes as `PwOutput` events and its end as `PwDone`.
+	 *  Any other program or command is refused, and so is a second start while
+	 *  one runs, with a sentence naming it.
+	 */
+	pwRepoStart: (clone: string, program: string, args: string[]) => typedError<number, string>(__TAURI_INVOKE("pw_repo_start", { clone, program, args })),
+	/**  End run `run` and every process it started. A run already over is fine. */
+	pwRepoStop: (run: number) => typedError<null, string>(__TAURI_INVOKE("pw_repo_stop", { run })),
+	/**  The repo command going now, if any. */
+	pwRepoRunning: () => typedError<{
+	run: number,
+	label: string,
+} | null, string>(__TAURI_INVOKE("pw_repo_running")),
+	/**
 	 *  Whether a start at sign-in stays hidden in the tray (on) or opens the
 	 *  window (off). Read at start-up, so the Windows startup entry itself never
 	 *  changes with it.
@@ -1382,6 +1396,8 @@ export const events = {
 	guideProgress: makeEvent<GuideProgress>("guide-progress"),
 	intakeOutputPath: makeEvent<IntakeOutputPath>("intake-output-path"),
 	planCreated: makeEvent<PlanCreated>("plan-created"),
+	pwDone: makeEvent<PwDone>("pw-done"),
+	pwOutput: makeEvent<PwOutput>("pw-output"),
 	recordingEvent: makeEvent<RecordingEvent>("recording-event"),
 	replayProgress: makeEvent<ReplayProgress>("replay-progress"),
 	runOrderNotSaved: makeEvent<RunOrderNotSaved>("run-order-not-saved"),
@@ -4108,6 +4124,30 @@ export type PullRequest = {
 	my_vote: number,
 	reviewers: PrReviewer[],
 	web_url: string,
+};
+
+/**
+ *  A Playwright tab repo command ended, after its last `PwOutput`. `code`
+ *  is its exit code; `None` when it was stopped, or ended without one.
+ */
+export type PwDone = {
+	run: number,
+	code: number | null,
+};
+
+/**
+ *  One line of a Playwright tab repo command's output (`pw_repo::process`),
+ *  ANSI escapes stripped.
+ */
+export type PwOutput = {
+	run: number,
+	line: string,
+};
+
+/**  The repo command going now: its run id and how it is named. */
+export type PwRunning = {
+	run: number,
+	label: string,
 };
 
 /**

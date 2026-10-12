@@ -143,6 +143,7 @@ mod pw_export_test_case;
 mod pw_export_translate;
 mod pw_export_write;
 mod pw_export_ts;
+mod pw_repo_process;
 mod pw_repo_structure;
 mod relink;
 mod report;

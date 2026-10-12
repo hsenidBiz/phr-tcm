@@ -248,6 +248,22 @@ pub struct AutorunScriptsChanged {
     pub case_ids: Vec<i32>,
 }
 
+/// One line of a Playwright tab repo command's output (`pw_repo::process`),
+/// ANSI escapes stripped.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct PwOutput {
+    pub run: u32,
+    pub line: String,
+}
+
+/// A Playwright tab repo command ended, after its last `PwOutput`. `code`
+/// is its exit code; `None` when it was stopped, or ended without one.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct PwDone {
+    pub run: u32,
+    pub code: Option<i32>,
+}
+
 /// Emitted while How To Use downloads, so Settings can show "12 of 31 MB".
 /// Bytes; u32 because specta refuses u64, and the zip is capped at 200 MB.
 /// `total` is the zip's size (the server's, else the release's json).

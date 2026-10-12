@@ -105,7 +105,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::ApiTemplatesChanged,
             events::AutorunScriptsChanged,
             events::AutorunCleanupProgress,
-            events::GuideProgress
+            events::GuideProgress,
+            events::PwOutput,
+            events::PwDone
         ])
         .commands(collect_commands![
             misc::ping,
@@ -326,6 +328,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             pw_export::pw_export_save_map,
             pw_export::pw_export_write,
             pw_repo::pw_repo_structure,
+            pw_repo::pw_repo_start,
+            pw_repo::pw_repo_stop,
+            pw_repo::pw_repo_running,
             app_settings::set_start_minimized,
             app_settings::get_autostart,
             app_settings::set_autostart,
