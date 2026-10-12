@@ -69,6 +69,34 @@ pub fn autorun_guide() -> String {
     out
 }
 
+/// The `##` section titles of `guide` (the live guide, its project
+/// sections included), in order.
+pub fn section_titles(guide: &str) -> Vec<&str> {
+    guide.lines().filter_map(|l| l.strip_prefix("## ")).map(str::trim).collect()
+}
+
+/// What `get_autorun_guide` with `section` answers: the Quick rules, then
+/// the one `##` section of `guide` whose title is `title` (case and the
+/// space around it ignored), down to the next `##` heading, its `###`
+/// parts included. The Quick rules asked for by name come once. An
+/// unknown title is refused with every title there is, one to a line.
+pub fn guide_section(guide: &str, title: &str) -> Result<String, String> {
+    let want = title.trim().to_lowercase();
+    let lines: Vec<&str> = guide.lines().collect();
+    let at = lines.iter().position(|l| l.strip_prefix("## ").is_some_and(|t| t.trim().to_lowercase() == want));
+    let Some(at) = at else {
+        let titles: Vec<String> = section_titles(guide).iter().map(|t| format!("- {t}")).collect();
+        return Err(format!("The guide has no section called \"{}\". Its sections are:\n{}", title.trim(), titles.join("\n")));
+    };
+    let end = lines[at + 1..].iter().position(|l| l.starts_with("## ")).map_or(lines.len(), |e| at + 1 + e);
+    let section = lines[at..end].join("\n");
+    let quick = quick_rules();
+    if lines[at].trim() == "## Quick rules" {
+        return Ok(quick);
+    }
+    Ok(format!("{}\n\n{}\n", quick.trim_end(), section.trim_end()))
+}
+
 /// The Quick rules section alone: what `get_autorun_guide` with
 /// `quick: true` answers before the project's live sections. Every rule
 /// here is also in the full guide, in the section it belongs to;
@@ -1017,8 +1045,8 @@ is CALLED:
 - `{ "text": "Step 1 of 6" }` - the deepest element showing those words
 - `{ "css": "#save" }` - for a real id or data-testid
 
-`role` is the ARIA role (button, link, textbox, checkbox, combobox,
-searchbox, dialog, heading, row, cell...) and `name` is the
+`role` is the ARIA role (button, link, textbox, checkbox, switch,
+combobox, searchbox, dialog, heading, row, cell...) and `name` is the
 accessible name: a button's words, a field's label. Both come from the browser's own
 accessibility tree, so they match what a screen reader would announce.
 
@@ -1035,7 +1063,9 @@ before it:
 
 Only what a person could SEE is matched. Applications keep hidden copies
 of dialogs and menus in the page; they are ignored unless an entry says
-`"visible": false`.
+`"visible": false`. A form control drawn at no size under a widget of
+its own, such as a toggle switch's input under its slider, counts as
+seen when its label can be seen, and a click on it clicks that label.
 
 A locator must end up meaning exactly one element. If it matches several,
 the action fails and says how many: narrow it with a list, `"exact"`, or
@@ -1074,7 +1104,17 @@ browser (see "Discovering the app"):
 
 - `get_autorun_page` shows what the accessibility tree calls things, one
   element per line, with the locator that reaches it on the end of the
-  line.
+  line. It answers the first 120 lines, then a line saying how many more
+  there are. Ask for more with `limit` (at most 3000), or list one part
+  of the page with `within`: a locator, written as a script writes one,
+  that matches exactly one element, such as a dialog or a form. Only that
+  element and what is inside it is listed; a `within` that matches none
+  or several is refused with the count. A replay's page and the page
+  `discover_autorun_actions` answers stop at 120 lines too.
+- A line with no locator on its end names nothing a script can act on:
+  the page itself, a list bullet, and the options of a closed native
+  list, which a script picks with `fill` on the list, by the option's
+  label.
 - `probe_autorun_locator` says how many elements a locator matches right
   now, before it goes into a script.
 - `try_autorun_action` runs one action in that same browser and says what
@@ -1121,7 +1161,11 @@ You open and drive a browser of your own to find what a script needs:
   the discovery browser too. During a discovery with an area,
   `get_autorun_page` records what it shows as seen under that area, and
   its answer ends with how many elements it recorded; with no area named
-  it records nothing and says how to name one.
+  it records nothing and says how to name one. Only a read of the whole
+  page marks the area explored: a read cut short by its limit, or one
+  `within` an element, records what it listed and drops nothing, and
+  each line it listed counts the elements its locator matches on the
+  whole page.
 - `discover_autorun_actions` carries out up to 20 actions in order, each
   carried out as `discover_autorun_action` would, and what each one's page
   showed is recorded as seen. Every action is checked first: if any would

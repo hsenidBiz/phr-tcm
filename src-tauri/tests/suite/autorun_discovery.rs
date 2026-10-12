@@ -2740,7 +2740,7 @@ async fn a_limited_read_records_only_returned_lines() {
     let (mut cut, _) = slot(buttons_page(LEAVE_PAGE, &["Save", "Cancel", "Delete"]), exploring_anew("Leave"));
     let (status, text) = page_read_in(cut.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, 1).await;
     assert_eq!(status, 200, "{text}");
-    assert!(text.contains("... and 2 more"), "the read was not cut: {text}");
+    assert!(text.contains("2 more lines - call get_autorun_page"), "the read was not cut: {text}");
     assert!(text.ends_with("\n\nRecorded 1 element as seen on Leave."), "{text}");
     assert_eq!(sighted(dir.path(), "Leave"), ["Earlier", "Older", "Save"], "a cut read dropped or overreached");
     let area = mapped_area(dir.path(), "Leave").unwrap();
@@ -2770,7 +2770,7 @@ async fn a_cut_action_read_records_only_returned_lines() {
     assert_eq!(status, 200, "{body}");
     let v = parsed(&body);
     assert_eq!(v["ok"], true, "{body}");
-    assert!(v["page"].as_str().unwrap_or("").contains("... and 5 more"), "the action's read was not cut");
+    assert!(v["page"].as_str().unwrap_or("").contains("5 more lines - "), "the action's read was not cut");
 
     let seen = sighted(dir.path(), "Leave");
     assert!(seen.contains(&"Earlier".to_string()), "a cut action read dropped an earlier sighting: {seen:?}");

@@ -322,9 +322,10 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_guide",
-            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. Locators come from what you saw on the live app, through discovery; every assertion comes from the test case's own expected result, never from what the code happens to do. With `quick` true it answers only the Quick rules and this project's live sections, for work you have done before.",
+            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. Locators come from what you saw on the live app, through discovery; every assertion comes from the test case's own expected result, never from what the code happens to do. The full guide is long: with `quick` true it answers only the Quick rules and this project's live sections, for work you have done before; with `section` it answers the Quick rules and that one section.",
             "inputSchema": schema(serde_json::json!({
                 "quick": { "type": "boolean", "description": "true: answer only the Quick rules (the short form of the guide's rules) and the live sections: the active environment and whether get_accounts gives passwords, and this project's areas, areas to explore, components and quirks. Read the full guide, without quick, when something comes up that the quick rules do not cover." },
+                "section": { "type": "string", "description": "The title of one section of the guide, such as \"Selectors\" or \"Saving it\" (case ignored): answers the Quick rules and that section, down to the next one. An unknown title answers the list of section titles." },
             }), &[]),
         },
         {
@@ -346,9 +347,14 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_page",
-            "description": "Read the page in the Auto Run browser, the one the person opened on the Auto Run tab or your discovery browser, as text: Chrome's own accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script - what a password field holds is never shown. During a discovery with an area, a read records what it shows as seen under that area, and the answer ends with a line saying what was recorded. Needs a supervised or discovery browser to be open.",
+            "description": "Read the page in the Auto Run browser, the one the person opened on the Auto Run tab or your discovery browser, as text: Chrome's own accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script - what a password field holds is never shown. It answers the first 120 lines, then a line saying how many more there are: ask for more with `limit`, or list one part of the page with `within`. During a discovery with an area, a read records what it shows as seen under that area, and the answer ends with a line saying what was recorded; only a read of the whole page marks the area explored. Needs a supervised or discovery browser to be open.",
             "inputSchema": schema(serde_json::json!({
-                "limit": { "type": "number", "description": "How many lines before the snapshot stops (default 300). Raise it for a long page, or probe one locator instead of reading the whole tree." },
+                "limit": { "type": "number", "description": "How many lines before the snapshot stops (default 120, at most 3000)." },
+                "within": {
+                    "type": ["object", "string", "array"],
+                    "items": { "type": "object" },
+                    "description": "A locator, written as a script writes one (a css string, a role-and-name object, or a chain): list only what is inside the one element it matches, such as a dialog or a form. Refused, naming the count, when it matches none or several.",
+                },
             }), &[]),
         },
         {
@@ -985,13 +991,11 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // is structurally unable to drop `paths` or `output_path` - the
         // same pattern as `check_spec_coverage` above.
         "merge_case_files" => call("POST", "/merge-cases", &args.to_string()),
-        "get_autorun_guide" => {
-            if args["quick"].as_bool().unwrap_or(false) {
-                call("GET", "/autorun-guide?quick=true", "")
-            } else {
-                call("GET", "/autorun-guide", "")
-            }
-        }
+        "get_autorun_guide" => match args["section"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(section) => call("GET", &format!("/autorun-guide?section={}", percent_encode(section)), ""),
+            None if args["quick"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide?quick=true", ""),
+            None => call("GET", "/autorun-guide", ""),
+        },
         "save_autorun_script" => {
             // The bridge takes the bare array, so a caller that wrapped it
             // in {scripts: [...]} and one that sent the list directly both
@@ -1049,10 +1053,17 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             }
         }
         "get_autorun_page" => {
-            let target = match args["limit"].as_u64() {
-                Some(n) => format!("/autorun-page?limit={n}"),
-                None => "/autorun-page".to_string(),
-            };
+            let mut params: Vec<String> = Vec::new();
+            if let Some(n) = args["limit"].as_u64() {
+                params.push(format!("limit={n}"));
+            }
+            // A locator travels as its JSON text; a css string as itself.
+            match &args["within"] {
+                serde_json::Value::Null => {}
+                serde_json::Value::String(s) => params.push(format!("within={}", percent_encode(s))),
+                other => params.push(format!("within={}", percent_encode(&other.to_string()))),
+            }
+            let target = if params.is_empty() { "/autorun-page".to_string() } else { format!("/autorun-page?{}", params.join("&")) };
             call("GET", &target, "")
         }
         // The bridge reads one named field out of the body, so forwarding

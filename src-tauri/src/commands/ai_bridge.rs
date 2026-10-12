@@ -113,7 +113,7 @@ impl crate::ai_bridge::ReplayHost for AppReplayHost {
 
     fn page(&self, organization: String, project: String) -> crate::ai_bridge::HostFuture<'_, (u16, String)> {
         Box::pin(async move {
-            crate::ai_bridge::supervised_page(&organization, &project, crate::browser::snapshot::DEFAULT_LIMIT).await
+            crate::ai_bridge::supervised_page(&organization, &project, crate::browser::snapshot::PAGE_LINES_DEFAULT).await
         })
     }
 }

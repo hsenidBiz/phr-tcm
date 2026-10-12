@@ -159,7 +159,7 @@ fn the_output_is_capped_and_says_how_many_more() {
         "listitem \"Item 1\"{}\n\
          listitem \"Item 2\"{}\n\
          listitem \"Item 3\"{}\n\
-         ... and 2 more (raise the limit, or scope the probe)",
+         2 more lines - call get_autorun_page with a larger limit or within",
         locator("listitem", "Item 1"),
         locator("listitem", "Item 2"),
         locator("listitem", "Item 3"),
@@ -171,7 +171,7 @@ fn the_output_is_capped_and_says_how_many_more() {
 #[test]
 fn a_zero_limit_shows_only_the_count() {
     let nodes = vec![node("1", "listitem", "Item 1", &[])];
-    assert_eq!(render(&nodes, 0), "... and 1 more (raise the limit, or scope the probe)");
+    assert_eq!(render(&nodes, 0), "1 more lines - call get_autorun_page with a larger limit or within");
 }
 
 /// M6: exactly at the limit, there is nothing more to report.
@@ -586,7 +586,7 @@ fn the_line_limit_counts_frame_lines() {
     let out = render_frames(&parent, &[frame], 4);
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 5, "{out}");
-    assert!(lines[4].starts_with("... and 4 more"), "{out}");
+    assert!(lines[4].starts_with("4 more lines - "), "{out}");
 }
 
 #[test]
@@ -779,4 +779,89 @@ fn lines_past_the_limit_are_not_returned() {
     assert_eq!(lines.len(), 2);
     assert_eq!(text, render_frames(&nodes, &[], 2));
     assert_eq!(lines[1].name, "A");
+}
+
+// --- lines no locator can act on, and reads of one element ---------------
+
+/// The page itself, a list bullet and a closed native list (with what it
+/// holds) print as lines, for what they say, but with no locator: the
+/// document and a pseudo-element are not elements, and a native list's
+/// options are picked with `fill` on the list. Each role in
+/// `NO_LOCATOR_ROLES` is held here; every other role keeps its locator.
+#[test]
+fn lines_nothing_can_act_on_print_without_a_locator() {
+    use v2_lib::browser::snapshot::NO_LOCATOR_ROLES;
+    let nodes = vec![
+        node("1", "RootWebArea", "Page", &["2", "3", "6"]),
+        node("2", "ListMarker", "1. ", &[]),
+        node("3", "combobox", "Colour", &["4"]),
+        node("4", "MenuListPopup", "", &["5"]),
+        node("5", "option", "Red", &[]),
+        node("6", "switch", "Email alerts", &[]),
+    ];
+    let read = render_frames_read(&nodes, &[], DEFAULT_LIMIT);
+    let expected = format!(
+        "RootWebArea \"Page\"\n ListMarker \"1. \"\n combobox \"Colour\"{}\n  MenuListPopup \"\"\n   option \"Red\"\n switch \"Email alerts\"{}",
+        locator("combobox", "Colour"),
+        locator("switch", "Email alerts"),
+    );
+    assert_eq!(read.text, expected);
+    let roles: Vec<&str> = read.lines.iter().map(|l| l.role.as_str()).collect();
+    assert_eq!(roles, vec!["combobox", "switch"], "only lines with a locator are data");
+    for role in NO_LOCATOR_ROLES {
+        assert!(nodes.iter().any(|n| n.role == role), "{role} is not held by this test");
+    }
+}
+
+/// A read cut short by its limit ends with how many lines it left out and
+/// how to see them, and still knows every line of the page, so what it
+/// lists can be counted against the whole page.
+#[test]
+fn a_cut_read_says_how_many_more_lines_and_keeps_the_page_lines() {
+    let nodes = vec![
+        node("1", "main", "", &["2", "3", "4"]),
+        node("2", "button", "One", &[]),
+        node("3", "button", "Two", &[]),
+        node("4", "button", "Three", &[]),
+    ];
+    let read = render_frames_read(&nodes, &[], 2);
+    assert!(read.cut);
+    assert!(
+        read.text.ends_with("\n2 more lines - call get_autorun_page with a larger limit or within"),
+        "{}",
+        read.text
+    );
+    assert_eq!(read.lines.len(), 2, "the two lines listed");
+    assert_eq!(read.page_lines.as_ref().map(Vec::len), Some(4), "every line of the page is known");
+}
+
+/// `within` lists the subtree of the one element behind a DOM node, from
+/// its own line down, at depth 0, with locators written as the whole read
+/// writes them; it is always cut (never the whole page) and still knows
+/// the page's lines. A folded element (a plain `div`) lists its children.
+/// An element the tree does not list says it holds nothing.
+#[test]
+fn a_within_read_lists_one_elements_subtree() {
+    use v2_lib::browser::snapshot::render_frames_read_within;
+    let mut dialog = node("2", "dialog", "Edit", &["3"]);
+    dialog.backend = Some(20);
+    let mut div = node("4", "generic", "", &["5"]);
+    div.backend = Some(40);
+    let nodes = vec![
+        node("1", "RootWebArea", "Page", &["2", "4", "6"]),
+        dialog,
+        node("3", "button", "Save", &[]),
+        div,
+        node("5", "button", "Save", &[]),
+        node("6", "link", "Home", &[]),
+    ];
+    let read = render_frames_read_within(&nodes, &[], DEFAULT_LIMIT, 20);
+    assert_eq!(read.text, format!("dialog \"Edit\"{}\n button \"Save\"{}", locator("dialog", "Edit"), locator("button", "Save")));
+    assert!(read.cut, "a within read is never the whole page");
+    assert_eq!(read.page_lines.as_ref().map(Vec::len), Some(4), "{:?}", read.page_lines);
+    let folded = render_frames_read_within(&nodes, &[], DEFAULT_LIMIT, 40);
+    assert_eq!(folded.text, format!("button \"Save\"{}", locator("button", "Save")));
+    let none = render_frames_read_within(&nodes, &[], DEFAULT_LIMIT, 99);
+    assert_eq!(none.text, "that element holds nothing a locator could name");
+    assert!(none.lines.is_empty());
 }

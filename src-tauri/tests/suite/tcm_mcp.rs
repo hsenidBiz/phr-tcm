@@ -1525,3 +1525,44 @@ fn the_guide_tool_takes_quick() {
         assert_eq!(recorded.last().unwrap(), &("GET".to_string(), want.to_string()), "{args}");
     }
 }
+
+/// `get_autorun_guide` takes `section` and forwards it percent-encoded
+/// (it wins over `quick`); `get_autorun_page` takes `limit` and `within`,
+/// a locator forwarded as its JSON text (a css string as itself), and says
+/// it answers 120 lines by default.
+#[test]
+fn the_guide_takes_a_section_and_the_page_takes_within() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let guide = tools.iter().find(|t| t["name"] == "get_autorun_guide").unwrap();
+    assert_eq!(guide["inputSchema"]["properties"]["section"]["type"], "string", "{guide}");
+    let page = tools.iter().find(|t| t["name"] == "get_autorun_page").unwrap();
+    assert!(page["inputSchema"]["properties"]["within"].is_object(), "{page}");
+    let d = page["description"].as_str().unwrap();
+    assert!(d.contains("first 120 lines") && d.contains("`within`"), "{d}");
+
+    for (tool, args, want) in [
+        ("get_autorun_guide", r#"{"section":"Saving it"}"#, "/autorun-guide?section=Saving%20it"),
+        ("get_autorun_guide", r#"{"section":"Selectors","quick":true}"#, "/autorun-guide?section=Selectors"),
+        ("get_autorun_guide", r#"{"section":"  ","quick":true}"#, "/autorun-guide?quick=true"),
+        ("get_autorun_page", "{}", "/autorun-page"),
+        ("get_autorun_page", r#"{"limit":40}"#, "/autorun-page?limit=40"),
+        ("get_autorun_page", r##"{"within":"#form"}"##, "/autorun-page?within=%23form"),
+        (
+            "get_autorun_page",
+            r#"{"limit":10,"within":{"role":"dialog","name":"Edit"}}"#,
+            "/autorun-page?limit=10&within=%7B%22role%22%3A%22dialog%22%2C%22name%22%3A%22Edit%22%7D",
+        ),
+    ] {
+        let calls = std::cell::RefCell::new(vec![]);
+        let call = |method: &str, path: &str, _body: &str| {
+            calls.borrow_mut().push((method.to_string(), path.to_string()));
+            Ok((200, "{}".to_string()))
+        };
+        let req = format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"{tool}","arguments":{args}}}}}"#);
+        handle_message(&req, "1.0.0", &call).unwrap();
+        let recorded = calls.borrow();
+        assert_eq!(recorded.last().unwrap(), &("GET".to_string(), want.to_string()), "{tool} {args}");
+    }
+}

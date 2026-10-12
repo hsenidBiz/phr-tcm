@@ -75,11 +75,23 @@ pub struct Ready {
 /// bounding box, which is what the holding-still comparison reads. The
 /// second measurement does not scroll: re-centring the element would hide
 /// the very movement it is looking for.
+///
+/// A form control sized to nothing, with a label a person can see, is
+/// measured, aimed at and hit-tested through that label, the way
+/// `locator::VISIBLE_JS` counts it as seen: the usual toggle switch, whose
+/// real `<input>` sits at 0 by 0 under a slider drawn in its label. A
+/// click there is what a person's click on the slider does.
 pub const PROBE_JS: &str = r#"async function(settle) {
+  // A control sized to nothing is aimed at through a label a person can
+  // see (the usual toggle switch; see `locator::VISIBLE_JS`).
+  const sized = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const stand = sized(this) || !this.labels ? null
+    : Array.from(this.labels).find((l) => l.checkVisibility({ visibilityProperty: true }) && sized(l)) || null;
+  const el = stand || this;
   const measure = (scroll) => {
-    if (scroll) this.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
-    const b = this.getBoundingClientRect();
-    const drawn = Array.from(this.getClientRects()).find((c) =>
+    if (scroll) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    const b = el.getBoundingClientRect();
+    const drawn = Array.from(el.getClientRects()).find((c) =>
       c.width > 0 && c.height > 0 && c.right > 0 && c.left < innerWidth && c.bottom > 0 && c.top < innerHeight);
     const a = drawn || b;
     const l = Math.max(a.left, 0), r = Math.min(a.right, innerWidth), t = Math.max(a.top, 0), bt = Math.min(a.bottom, innerHeight);
@@ -117,7 +129,8 @@ pub const PROBE_JS: &str = r#"async function(settle) {
     // those words reaches - it is not covering them. Only an ancestor counts;
     // anything else there really is in the way.
     const through = !!top && top !== this && top.contains(this) && getComputedStyle(this).pointerEvents === 'none';
-    const hit = onscreen && !!top && (top === this || this.contains(top) || through || (label && label.control === this));
+    const hit = onscreen && !!top && (top === this || this.contains(top) || through || (label && label.control === this) ||
+      (!!stand && (top === stand || stand.contains(top))));
     const say = (e) => !e ? 'another element' : e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') +
       (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
     const editable =
@@ -134,7 +147,7 @@ pub const PROBE_JS: &str = r#"async function(settle) {
     }
     const allHit = hit && allOnscreen && outer === null;
     return {
-      visible: this.checkVisibility({ visibilityProperty: true }) && b.width > 0 && b.height > 0,
+      visible: this.checkVisibility({ visibilityProperty: true }) && (!!stand || (b.width > 0 && b.height > 0)),
       enabled: !this.disabled && this.getAttribute('aria-disabled') !== 'true' && !this.closest('fieldset[disabled]'),
       editable: !!editable,
       onscreen: allOnscreen, hit: allHit, x: lx + ox, y: ly + oy,
@@ -153,7 +166,7 @@ pub const PROBE_JS: &str = r#"async function(settle) {
   // longer than the first frame it moves on. A page that paints no frames
   // (a hidden tab) never calls back, so a timer ends the watch instead and
   // the second measurement still comes 100 ms after the first.
-  const box = () => { const r = this.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; };
+  const box = () => { const r = el.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; };
   const same = (p, q) => p.every((v, i) => v === q[i]);
   const from = box(), start = performance.now();
   let moved = false, over = false;

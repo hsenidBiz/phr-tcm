@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>States and roles</title>
+<style>
+  /* The usual toggle: the real control is sized to nothing and a styled
+     slider is drawn over it, as the evaluator toggles are built. */
+  .toggle { position: relative; display: inline-block; width: 40px; height: 20px; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle .slider { position: absolute; inset: 0; background: #ccc; border-radius: 20px; }
+  /* Widgets drawn with no content of their own still take room. */
+  [role=slider], [role=spinbutton], [role=combobox], [role=searchbox], [role=separator], [role=scrollbar], #div-switch {
+    display: inline-block; width: 40px; height: 20px; background: #eee;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>States and roles</h1>
+
+  <section aria-label="Buttons">
+    <button id="enabled" type="button">Enabled action</button>
+    <button id="disabled" type="button" disabled>Disabled action</button>
+    <button id="aria-disabled" type="button" aria-disabled="true">Unavailable action</button>
+    <button id="no-pressed" type="button">No state</button>
+    <fieldset id="locked" disabled>
+      <legend>Locked group <button id="legend-button" type="button">Legend action</button></legend>
+      <input id="locked-field" type="text" aria-label="Locked field">
+    </fieldset>
+  </section>
+
+  <section aria-label="Switches">
+    <input id="email-switch" type="checkbox" role="switch" aria-label="Email alerts">
+    <button id="dark-switch" type="button" role="switch" aria-checked="false">Dark mode</button>
+    <label class="toggle"><input id="evaluator-switch" type="checkbox" role="switch" aria-label="Evaluator included"
+      onchange="document.getElementById('switch-state').textContent = this.checked ? 'included' : 'left out'"><span class="slider"></span></label>
+    <p id="switch-state">left out</p>
+    <div id="div-switch" role="switch" tabindex="0" aria-checked="true" aria-label="Weekly digest"></div>
+  </section>
+
+  <section aria-label="Other roles">
+    <a href="#top">Top link</a>
+    <input type="checkbox" aria-label="Plain checkbox">
+    <input type="radio" name="r" aria-label="Plain radio">
+    <input type="search" aria-label="Find things">
+    <input type="range" aria-label="Volume">
+    <input type="number" aria-label="Count">
+    <select aria-label="Colour"><option>Red</option><option>Blue</option></select>
+    <select aria-label="Sizes" multiple size="2"><option>Small</option><option>Large</option></select>
+    <textarea aria-label="Notes"></textarea>
+    <progress aria-label="Upload progress" value="30" max="100"></progress>
+    <meter aria-label="Disk use" value="0.6"></meter>
+    <img alt="Company logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+    <ul aria-label="Fruit"><li>Apple</li><li>Pear</li></ul>
+    <nav aria-label="Side menu"><a href="#a">Alpha</a></nav>
+    <div role="tablist" aria-label="Tabs"><div role="tab" aria-selected="true">First tab</div></div>
+    <div role="tabpanel" aria-label="First panel">Panel text</div>
+    <div role="menubar" aria-label="Menu bar"><div role="menuitem">File</div><div role="menuitemcheckbox" aria-checked="false">Wrap</div><div role="menuitemradio" aria-checked="true">Plain</div></div>
+    <div role="tree" aria-label="Folders"><div role="treeitem">Root folder</div></div>
+    <div role="alert">Saved alert</div>
+    <div role="status">Status text</div>
+    <div role="dialog" aria-label="Small dialog"><p>Inside</p></div>
+    <div role="tooltip">Tip text</div>
+    <div role="toolbar" aria-label="Tools"><button type="button">Tool</button></div>
+    <div role="slider" aria-label="Brightness" aria-valuenow="5" tabindex="0"></div>
+    <div role="spinbutton" aria-label="Steps" aria-valuenow="1" tabindex="0"></div>
+    <div role="combobox" aria-label="Picker" aria-expanded="false" tabindex="0"></div>
+    <div role="listbox" aria-label="Choices"><div role="option">Choice one</div></div>
+    <div role="grid" aria-label="People"><div role="row"><div role="columnheader">Name</div></div><div role="row"><div role="gridcell">Ann</div></div></div>
+    <table aria-label="Plain table"><thead><tr><th>Col</th></tr></thead><tbody><tr><td>Cell</td></tr></tbody></table>
+    <div role="region" aria-label="A region">Region text</div>
+    <div role="group" aria-label="A group">Group text</div>
+    <div role="note">A note</div>
+    <div role="log" aria-label="Activity">Log line</div>
+    <div role="marquee" aria-label="Ticker">News</div>
+    <div role="timer" aria-label="Clock">00:01</div>
+    <div role="feed" aria-label="Posts"><article aria-label="Post one">Post</article></div>
+    <figure aria-label="A figure"><figcaption>Caption</figcaption></figure>
+    <form aria-label="A form"><button type="button">Form button</button></form>
+    <details><summary>More details</summary>Hidden part</details>
+    <div role="searchbox" aria-label="Role searchbox" tabindex="0"></div>
+    <div role="radiogroup" aria-label="Choice group"><div role="radio" aria-checked="false" tabindex="0">Choice A</div></div>
+    <div role="separator" aria-label="Divider"></div>
+    <div role="scrollbar" aria-label="Scroller" aria-valuenow="0" aria-controls="x" tabindex="0"></div>
+    <div role="math" aria-label="Formula">x</div>
+    <div role="definition" aria-label="Meaning">A meaning</div>
+    <div role="term" aria-label="Word">Word</div>
+    <div role="banner" aria-label="Top banner">Banner</div>
+    <div role="contentinfo" aria-label="Footer info">Footer</div>
+    <div role="complementary" aria-label="Aside">Aside</div>
+    <div role="application" aria-label="An app">App</div>
+    <div role="document" aria-label="A document">Doc</div>
+    <div role="article" aria-label="An article">Article</div>
+    <div role="search" aria-label="Search area"><input type="text" aria-label="Query"></div>
+  </section>
+</main>
+</body>
+</html>

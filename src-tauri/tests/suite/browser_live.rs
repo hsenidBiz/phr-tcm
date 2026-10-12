@@ -3177,3 +3177,157 @@ async fn one_browser_gives_each_case_a_context_of_its_own() {
     drop(browsers);
     assert_eq!(closes.load(Ordering::SeqCst), 1, "closed once, at the end of the run");
 }
+
+/// The page with enabled, disabled and `aria-disabled` buttons, switches
+/// built three ways, and one element of most roles the page read prints.
+fn states_fixture_url() -> String {
+    fixture_url().replace("autorun-live.html", "autorun-states.html")
+}
+
+/// `open()`, then on to the states fixture.
+async fn open_states() -> Live {
+    let mut live = open().await;
+    let out = run(&mut live, json!({ "kind": "navigate", "url": states_fixture_url() })).await;
+    assert!(out.ok, "the states fixture did not load: {}", out.detail);
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": { "css": "#enabled" } })).await);
+    live
+}
+
+/// Every line the page read prints is a locator a script may copy, so each
+/// must find its element: the read's role and the resolver's role are the
+/// same word for the same element. The table names the roles this page is
+/// built to show (a switch three ways among them, the toggle sized to
+/// nothing under its slider), each of which the read must print and the
+/// resolver must find exactly once; then every other line the read printed
+/// must resolve too. Lines with no locator (`NO_LOCATOR_ROLES`, a closed
+/// native list's options) carry no locator to resolve.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_every_line_the_page_read_prints_resolves() {
+    use v2_lib::browser::snapshot::snapshot_with_lines;
+    let mut live = open_states().await;
+    let (text, lines) = snapshot_with_lines(&mut live.cdp, 2000).await.expect("the page read failed");
+    for (role, name) in [
+        ("switch", "Email alerts"),
+        ("switch", "Dark mode"),
+        ("switch", "Evaluator included"),
+        ("switch", "Weekly digest"),
+        ("button", "Enabled action"),
+        ("button", "Disabled action"),
+        ("checkbox", "Plain checkbox"),
+        ("radio", "Plain radio"),
+        ("searchbox", "Find things"),
+        ("slider", "Volume"),
+        ("spinbutton", "Count"),
+        ("combobox", "Colour"),
+        ("listbox", "Sizes"),
+        ("textbox", "Notes"),
+        ("progressbar", "Upload progress"),
+        ("meter", "Disk use"),
+        ("image", "Company logo"),
+        ("list", "Fruit"),
+        ("navigation", "Side menu"),
+        ("tablist", "Tabs"),
+        ("tab", "First tab"),
+        ("tabpanel", "First panel"),
+        ("menubar", "Menu bar"),
+        ("menuitem", "File"),
+        ("menuitemcheckbox", "Wrap"),
+        ("menuitemradio", "Plain"),
+        ("tree", "Folders"),
+        ("treeitem", "Root folder"),
+        ("dialog", "Small dialog"),
+        ("toolbar", "Tools"),
+        ("slider", "Brightness"),
+        ("spinbutton", "Steps"),
+        ("combobox", "Picker"),
+        ("option", "Choice one"),
+        ("grid", "People"),
+        ("columnheader", "Name"),
+        ("gridcell", "Ann"),
+        ("table", "Plain table"),
+        ("region", "A region"),
+        ("group", "A group"),
+        ("log", "Activity"),
+        ("marquee", "Ticker"),
+        ("timer", "Clock"),
+        ("feed", "Posts"),
+        ("article", "Post one"),
+        ("figure", "A figure"),
+        ("form", "A form"),
+        ("searchbox", "Role searchbox"),
+        ("radiogroup", "Choice group"),
+        ("separator", "Divider"),
+        ("scrollbar", "Scroller"),
+        ("math", "Formula"),
+        ("banner", "Top banner"),
+        ("contentinfo", "Footer info"),
+        ("complementary", "Aside"),
+        ("application", "An app"),
+        ("document", "A document"),
+        ("article", "An article"),
+        ("search", "Search area"),
+    ] {
+        let line = lines
+            .iter()
+            .find(|l| l.role == role && l.name == name)
+            .unwrap_or_else(|| panic!("the read printed no {role} \"{name}\":\n{text}"));
+        let found = resolve(&mut live.cdp, &line.locator).await.expect("resolve failed");
+        assert_eq!(found.len(), 1, "{role} \"{name}\" as the read wrote it found {}", found.len());
+    }
+    let mut missing = Vec::new();
+    for line in &lines {
+        match resolve(&mut live.cdp, &line.locator).await {
+            Ok(found) if found.is_empty() => missing.push(format!("{} \"{}\"", line.role, line.name)),
+            Ok(_) => {}
+            Err(e) => missing.push(format!("{} \"{}\": {e}", line.role, line.name)),
+        }
+    }
+    assert!(missing.is_empty(), "the read printed these, and the resolver found none: {missing:?}");
+    for bare in ["RootWebArea \"States and roles\"", "option \"Red\""] {
+        let printed = text.lines().find(|l| l.trim_start().starts_with(bare)).unwrap_or_else(|| panic!("no {bare}:\n{text}"));
+        assert!(!printed.contains(" -> "), "a line nothing can act on carries a locator: {printed}");
+    }
+}
+
+/// The report's switch: the usual toggle, an `<input role="switch">` sized
+/// to nothing under a slider drawn in its label. The page read lists it,
+/// so a probe by its role finds it, as visible, and a click on it is a
+/// click on the slider that the page sees.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_a_switch_sized_to_nothing_is_found_and_clicked_by_its_role() {
+    let mut live = open_states().await;
+    let target = action_target(json!({ "role": "switch", "name": "Evaluator included" }));
+    let said = probe(&mut live.cdp, &target).await.expect("the probe failed");
+    assert!(said.starts_with("matches: 1\ninput ") && said.contains(" visible at "), "{said}");
+    let all = action_target(json!({ "role": "switch" }));
+    assert_eq!(resolve(&mut live.cdp, &all).await.unwrap().len(), 4, "every switch on the page");
+    must(run(&mut live, json!({ "kind": "click", "selector": { "role": "switch", "name": "Evaluator included" } })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#switch-state", "equals": "included" })).await);
+}
+
+/// `within` on a real page: the one element a locator matches is listed
+/// with what is inside it and nothing else, and a locator matching several
+/// or none is refused with its count.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_a_read_within_one_element_lists_only_its_subtree() {
+    use v2_lib::browser::snapshot::{snapshot_read_within, within_node};
+    let mut live = open_states().await;
+    let region = action_target(json!({ "role": "region", "name": "Switches" }));
+    let node = within_node(&mut live.cdp, &region).await.unwrap().expect("the region is one element");
+    let read = snapshot_read_within(&mut live.cdp, 120, Some(node)).await.unwrap();
+    assert!(read.text.starts_with("region \"Switches\""), "{}", read.text);
+    let roles: Vec<&str> = read.lines.iter().map(|l| l.role.as_str()).collect();
+    assert!(roles.iter().filter(|r| **r == "switch").count() == 4, "{}", read.text);
+    assert!(!read.text.contains("Enabled action"), "a line outside the element was listed: {}", read.text);
+    assert!(read.cut && read.page_lines.as_ref().is_some_and(|p| p.len() > read.lines.len()));
+
+    let many = action_target(json!({ "role": "switch" }));
+    let refused = within_node(&mut live.cdp, &many).await.unwrap().unwrap_err();
+    assert!(refused.starts_with("within matched 4 elements: "), "{refused}");
+    let none = action_target(json!({ "role": "dialog", "name": "Nowhere" }));
+    let refused = within_node(&mut live.cdp, &none).await.unwrap().unwrap_err();
+    assert!(refused.starts_with("within matched 0 elements: "), "{refused}");
+}

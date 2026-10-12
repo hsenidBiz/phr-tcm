@@ -283,10 +283,17 @@ pub async fn route(
         // document a format, drive the browser the person opened, or read
         // files this machine already wrote - so none of them needs a
         // signed-in client. All were let through by the guard above.
-        ("GET", "/autorun-guide") => {
-            let quick = matches!(q(target, "quick").as_deref(), Some("true") | Some("1"));
-            (200, autorun_guide_with_quirks(ctx, quick))
-        }
+        ("GET", "/autorun-guide") => match q(target, "section").filter(|s| !s.trim().is_empty()) {
+            // One section of the live guide, after the Quick rules.
+            Some(title) => match crate::autorun::guide::guide_section(&autorun_guide_with_quirks(ctx, false), &title) {
+                Ok(text) => (200, text),
+                Err(titles) => (404, titles),
+            },
+            None => {
+                let quick = matches!(q(target, "quick").as_deref(), Some("true") | Some("1"));
+                (200, autorun_guide_with_quirks(ctx, quick))
+            }
+        },
         ("POST", "/autorun-script") => save_autorun_scripts(ctx, client, body).await,
         ("GET", "/autorun-page") => autorun_page(ctx, target).await,
         ("POST", "/autorun-probe") => autorun_probe(ctx, body).await,
@@ -1693,19 +1700,47 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool) -> String {
 
 /// The page in the browser the person opened, as text: Chrome's own
 /// accessibility tree with a locator on every line.
+/// `within` (a locator, as a script writes one: a string, an object or a
+/// chain) and `limit` (`PAGE_LINES_DEFAULT` when left out, at most
+/// `PAGE_LINES_MAX`) are read from the query.
 async fn autorun_page(ctx: &BridgeContext, target: &str) -> (u16, String) {
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
-    // Capped as well as defaulted: a snapshot is text an assistant has to
-    // read, and a limit of a million turns "see the page" into a reply
-    // nothing can use. Ten times the default is already a very long page.
-    let limit = q(target, "limit")
+    let within = match q(target, "within").filter(|w| !w.trim().is_empty()) {
+        None => None,
+        Some(raw) => match within_target(&raw) {
+            Ok(t) => Some(t),
+            Err(why) => return (400, why),
+        },
+    };
+    supervised_page_within(&ctx.org, &ctx.project, page_limit(q(target, "limit").as_deref()), within.as_ref()).await
+}
+
+/// The line limit a page read was asked for: `PAGE_LINES_DEFAULT` when
+/// none (or none that is a positive number) is given, and never more than
+/// `PAGE_LINES_MAX`. Capped as well as defaulted: a snapshot is text an
+/// assistant has to read, and a limit of a million turns "see the page"
+/// into a reply nothing can use.
+pub fn page_limit(asked: Option<&str>) -> usize {
+    asked
         .and_then(|s| s.trim().parse::<usize>().ok())
         .filter(|n| *n > 0)
-        .unwrap_or(crate::browser::snapshot::DEFAULT_LIMIT)
-        .min(crate::browser::snapshot::DEFAULT_LIMIT * 10);
-    supervised_page(&ctx.org, &ctx.project, limit).await
+        .unwrap_or(crate::browser::snapshot::PAGE_LINES_DEFAULT)
+        .min(crate::browser::snapshot::PAGE_LINES_MAX)
+}
+
+/// A `within` locator from its text: JSON (an object, a chain, or a quoted
+/// string), or a bare css selector. Checked as a script's locator is.
+pub fn within_target(raw: &str) -> Result<crate::browser::locator::Target, String> {
+    let t = raw.trim();
+    let target = if t.starts_with('{') || t.starts_with('[') || t.starts_with('"') {
+        serde_json::from_str::<crate::browser::locator::Target>(t).map_err(|e| format!("within is not a locator: {e}"))?
+    } else {
+        crate::browser::locator::Target::Legacy(t.to_string())
+    };
+    target.validate().map_err(|e| format!("within is not a locator: {e}"))?;
+    Ok(target)
 }
 
 /// The supervised browser's page as text, `limit` lines at most: what
@@ -1713,6 +1748,17 @@ async fn autorun_page(ctx: &BridgeContext, target: &str) -> (u16, String) {
 /// back beside its sentence. What it printed is filed in the project's
 /// discovery map.
 pub async fn supervised_page(organization: &str, project: &str, limit: usize) -> (u16, String) {
+    supervised_page_within(organization, project, limit, None).await
+}
+
+/// [`supervised_page`], listing only what is inside the one element
+/// `within` matches when it is given (`page_read_in_within`).
+pub async fn supervised_page_within(
+    organization: &str,
+    project: &str,
+    limit: usize,
+    within: Option<&crate::browser::locator::Target>,
+) -> (u16, String) {
     if let Some(going) = replay_is_holding_the_browser() {
         return going;
     }
@@ -1724,7 +1770,7 @@ pub async fn supervised_page(organization: &str, project: &str, limit: usize) ->
     };
     let root = if project.trim().is_empty() { None } else { crate::autorun::store::configured_root() };
     let tabs_case = session.tabs_case;
-    let answer = page_read_in(session, root.as_deref(), organization, project, tabs_case, limit).await;
+    let answer = page_read_in_within(session, root.as_deref(), organization, project, tabs_case, limit, within).await;
     // A browser that has gone is let go here, not kept to answer 503 again.
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery(&slot);
@@ -1775,19 +1821,37 @@ pub async fn page_read_in<B: DiscoveryBrowser>(
     tabs_case: Option<i32>,
     limit: usize,
 ) -> (u16, String) {
+    page_read_in_within(browser, root, organization, project, tabs_case, limit, None).await
+}
+
+/// [`page_read_in`], listing only the subtree of the one element `within`
+/// matches when it is given, refused (400, naming the count) when it
+/// matches none or several. Such a read is filed as one the limit cut
+/// short (`read_and_file_within`): it never explores the page.
+#[allow(clippy::too_many_arguments)]
+pub async fn page_read_in_within<B: DiscoveryBrowser>(
+    browser: &mut B,
+    root: Option<&std::path::Path>,
+    organization: &str,
+    project: &str,
+    tabs_case: Option<i32>,
+    limit: usize,
+    within: Option<&crate::browser::locator::Target>,
+) -> (u16, String) {
     let p = browser.parts();
     let discovery_area = p.discovery.as_ref().map(|s| named(s.area.as_deref()));
     let at = root.and_then(|root| {
         discovery_sighting(root, organization, project, p.discovery.as_ref(), tabs_case, p.signed_in.as_deref())
     });
     let Some(area) = discovery_area else {
-        return read_page(p.driver, limit, at.as_ref()).await;
+        let (status, text, _) = read_and_file_within(p.driver, limit, within, at.as_ref()).await;
+        return (status, text);
     };
     let Some(area) = area else {
-        let (status, text) = read_page(p.driver, limit, None).await;
+        let (status, text, _) = read_and_file_within(p.driver, limit, within, None).await;
         return if status == 200 { (status, format!("{text}\n\n{READ_WITH_NO_AREA}")) } else { (status, text) };
     };
-    let (status, text, filed) = read_and_file(p.driver, limit, at.as_ref()).await;
+    let (status, text, filed) = read_and_file_within(p.driver, limit, within, at.as_ref()).await;
     if status != 200 {
         return (status, text);
     }
@@ -1961,7 +2025,29 @@ pub async fn read_and_file<D: crate::browser::cdp::Driver>(
     limit: usize,
     at: Option<&Sighting>,
 ) -> (u16, String, Filed) {
-    let read = match crate::browser::snapshot::snapshot_read(d, limit).await {
+    read_and_file_within(d, limit, None, at).await
+}
+
+/// [`read_and_file`], listing only the subtree of the one element `within`
+/// matches when it is given (`snapshot::within_node`): 400 with the count
+/// when it matches none or several, and nothing filed. Each listed line is
+/// counted against the whole page when every frame of it was read
+/// (`discovery_map::record_read_counted`); a `within` read is never whole.
+pub async fn read_and_file_within<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    limit: usize,
+    within: Option<&crate::browser::locator::Target>,
+    at: Option<&Sighting>,
+) -> (u16, String, Filed) {
+    let node = match within {
+        None => None,
+        Some(t) => match crate::browser::snapshot::within_node(d, t).await {
+            Ok(Ok(node)) => Some(node),
+            Ok(Err(why)) => return (400, why, Filed::Not),
+            Err(e) => return (503, format!("the browser did not answer: {e}"), Filed::Not),
+        },
+    };
+    let read = match crate::browser::snapshot::snapshot_read_within(d, limit, node).await {
         Ok(read) => read,
         Err(e) => return (503, format!("the browser did not answer: {e}"), Filed::Not),
     };
@@ -1980,7 +2066,7 @@ pub async fn read_and_file<D: crate::browser::cdp::Driver>(
         ));
         return (200, read.text, Filed::OffOrigin);
     }
-    let recorded = crate::autorun::discovery_map::record_read(
+    let recorded = crate::autorun::discovery_map::record_read_counted(
         &at.root,
         &at.org,
         &at.project,
@@ -1988,6 +2074,7 @@ pub async fn read_and_file<D: crate::browser::cdp::Driver>(
         &crate::autorun::discovery_map::path_only(&href),
         &title,
         &read.lines,
+        read.page_lines.as_deref(),
         at.account.as_deref(),
         at.discovering,
         !read.cut,
@@ -3242,7 +3329,7 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
     };
     let filing = if project.trim().is_empty() { None } else { Some(root) };
     let (status, page) =
-        page_read_in(browser, filing, organization, project, None, crate::browser::snapshot::DEFAULT_LIMIT).await;
+        page_read_in(browser, filing, organization, project, None, crate::browser::snapshot::PAGE_LINES_DEFAULT).await;
     if status != 200 {
         lines.push(format!("The page could not be read: {}", one_short_line(&page)));
         return batch_ended_by_the_browser(slot, (status, page), lines).await;

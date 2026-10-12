@@ -287,13 +287,15 @@ pub fn name_matches(got: &str, want: &str, exact: bool) -> bool {
     }
 }
 
-/// `this` is the root. Arguments: selector, visibleOnly.
+/// `this` is the root. Arguments: selector, visibleOnly. What counts as
+/// seen is `VISIBLE_JS`'s rule.
 pub const CSS_JS: &str = r#"function(sel, visibleOnly) {
-  const seen = (e) => {
-    if (!visibleOnly) return true;
+  const drawn = (e) => {
     const r = e.getBoundingClientRect();
     return e.checkVisibility({ visibilityProperty: true }) && r.width > 0 && r.height > 0;
   };
+  const seen = (e) => !visibleOnly || drawn(e) ||
+    (!!e.labels && e.checkVisibility({ visibilityProperty: true }) && Array.from(e.labels).some(drawn));
   return Array.from(this.querySelectorAll(sel)).filter(seen);
 }"#;
 
@@ -314,11 +316,12 @@ pub const TEXT_JS: &str = r#"function(want, exact, visibleOnly) {
     const t = textOf(e);
     return exact ? t === needle : t.toLowerCase().includes(lower);
   };
-  const seen = (e) => {
-    if (!visibleOnly) return true;
+  const drawn = (e) => {
     const r = e.getBoundingClientRect();
     return e.checkVisibility({ visibilityProperty: true }) && r.width > 0 && r.height > 0;
   };
+  const seen = (e) => !visibleOnly || drawn(e) ||
+    (!!e.labels && e.checkVisibility({ visibilityProperty: true }) && Array.from(e.labels).some(drawn));
   const skip = /^(SCRIPT|STYLE|HEAD|HTML|BODY|NOSCRIPT|TEMPLATE)$/;
   const all = Array.from(this.querySelectorAll('*'))
     .filter((e) => e instanceof HTMLElement && !skip.test(e.tagName) && hit(e));
@@ -367,10 +370,25 @@ pub async fn legacy_count<D: Driver>(d: &mut D, sel: &str) -> Result<usize, CdpE
     Ok(n.as_u64().map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX)))
 }
 
-/// `this` is the element.
+/// `this` is the element. Could a person see it: drawn with a size, and
+/// not hidden by `display`, `visibility` or `content-visibility`.
+///
+/// One stand-in counts: a form control sized to nothing, with a label a
+/// person can see, is seen through that label. That is how the usual
+/// toggle switch is built (an `<input role="switch">` at 0 by 0 under a
+/// slider drawn inside its `<label>`): the accessibility tree lists the
+/// switch, so the page read prints it, and a click on the label is what a
+/// person's click on the slider does. A node that is not an element (the
+/// document a `RootWebArea` names, a list marker's pseudo-element) is
+/// never seen: nothing can be done to it.
 pub const VISIBLE_JS: &str = r#"function() {
-  const r = this.getBoundingClientRect();
-  return this.checkVisibility({ visibilityProperty: true }) && r.width > 0 && r.height > 0;
+  if (!(this instanceof Element)) return false;
+  const drawn = (e) => {
+    const r = e.getBoundingClientRect();
+    return e.checkVisibility({ visibilityProperty: true }) && r.width > 0 && r.height > 0;
+  };
+  return drawn(this) ||
+    (!!this.labels && this.checkVisibility({ visibilityProperty: true }) && Array.from(this.labels).some(drawn));
 }"#;
 
 async fn by_role<D: Driver>(
