@@ -1664,6 +1664,38 @@ async fn a_matched_probe_records_a_locator_the_snapshot_cut_off() {
     assert!(holds_css(page, "#archive"), "{:?}", page.elements);
 }
 
+/// A chain - a dialog, then the button inside it - is probed as a script
+/// writes it: a list of links, or that list sent as JSON text by a client
+/// that sends only strings. It resolves, and is filed whole with what it
+/// matched; its links are filed as not counted (`NOT_ONE`). A CSS string
+/// that only looks like a list stays CSS.
+#[tokio::test]
+async fn a_chain_probe_resolves_and_records_the_whole() {
+    use v2_lib::ai_bridge::probe_target;
+    use v2_lib::autorun::discovery_map::NOT_ONE;
+    use v2_lib::browser::locator::Target;
+    let chain = serde_json::json!([{ "css": "[role=dialog]" }, { "css": "button.save" }]);
+    for selector in [chain.clone(), serde_json::Value::String(chain.to_string())] {
+        let target = probe_target(selector).unwrap();
+        assert!(matches!(&target, Target::Chain(links) if links.len() == 2), "{target:?}");
+    }
+    assert!(matches!(probe_target(serde_json::json!("[data-x=\"1\"]")).unwrap(), Target::Legacy(_)));
+    assert!(probe_target(serde_json::json!([])).is_err(), "an empty chain was taken");
+
+    let dir = TempDir::new();
+    let target = probe_target(chain).unwrap();
+    let (status, text) = probe_page(&mut probed_page_showing(1, &[0]), &target, Some(&sighting(dir.path(), None))).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("matches: 1"), "{text}");
+    let area = mapped_area(dir.path(), "").expect("nothing was recorded");
+    let whole = area.wholes.iter().find(|w| w.locator == target).expect("the chain was not kept whole");
+    assert_eq!(whole.matched, 1);
+    assert!(!area.sightings.is_empty());
+    for link in &area.sightings {
+        assert_eq!(link.matched, NOT_ONE, "a link of a chain was counted on its own: {link:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_probe_with_no_match_records_nothing() {
     let dir = TempDir::new();

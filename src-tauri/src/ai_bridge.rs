@@ -2310,19 +2310,39 @@ fn body_field(body: &str, key: &str, shape: &str) -> Result<serde_json::Value, (
     }
 }
 
+/// What a probe body's `selector` may be.
+const PROBE_SHAPE: &str = "{ \"selector\": <a script's target: a CSS string, one locator object, or a list of them (a chain, outermost first)> }";
+
+/// The locator a probe names: a string, one locator object, or the chain
+/// form scripts use, a list of links (outermost first). A string holding
+/// such a list or object as JSON text - how a client whose schema allowed
+/// only a string or an object sent a chain - is read as that list or
+/// object, never as CSS: a selector that is valid JSON of either shape is
+/// not valid CSS. `Err` is the refusal's sentence.
+pub fn probe_target(selector: serde_json::Value) -> Result<crate::browser::locator::Target, String> {
+    let selector = match selector {
+        serde_json::Value::String(text) => match serde_json::from_str::<serde_json::Value>(text.trim()) {
+            Ok(v @ (serde_json::Value::Array(_) | serde_json::Value::Object(_))) => v,
+            _ => serde_json::Value::String(text),
+        },
+        other => other,
+    };
+    let target: crate::browser::locator::Target =
+        serde_json::from_value(selector).map_err(|e| format!("that is not a locator: {e}"))?;
+    target.validate()?;
+    Ok(target)
+}
+
 /// What a locator matches on the open page right now.
 async fn autorun_probe(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    let selector = match body_field(body, "selector", "{ \"selector\": <a script's target> }") {
+    let selector = match body_field(body, "selector", PROBE_SHAPE) {
         Ok(v) => v,
         Err(refused) => return refused,
     };
-    let target: crate::browser::locator::Target = match serde_json::from_value(selector) {
+    let target = match probe_target(selector) {
         Ok(t) => t,
-        Err(e) => return (400, format!("that is not a locator: {e}")),
+        Err(why) => return (400, why),
     };
-    if let Err(why) = target.validate() {
-        return (400, why);
-    }
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }

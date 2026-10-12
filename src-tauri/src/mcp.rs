@@ -356,8 +356,9 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "description": "Ask the open browser what a locator matches RIGHT NOW: how many elements, and for each one its tag, its text, whether it is visible and where it sits. Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. What it matched is recorded as seen, with how many elements it matched: an action needs a locator seen matching exactly one, while a check that can pass with several matches (expect_hidden, expect_count, wait_for) may use one seen matching several. A chain can pass through a same-origin iframe: name the iframe as one step and the element inside as the next. Needs a supervised or discovery browser to be open.",
             "inputSchema": schema(serde_json::json!({
                 "selector": {
-                    "type": ["object", "string"],
-                    "description": "A script target: a CSS selector string, or the role-and-accessible-name object a snapshot line ends with.",
+                    "type": ["object", "string", "array"],
+                    "items": { "type": "object" },
+                    "description": "A script target, exactly as the script writes it: a CSS selector string, the role-and-accessible-name object a snapshot line ends with, or a chain - a list of those objects, outermost first (a dialog, then the button inside it). A chain is recorded as seen as a whole.",
                 },
             }), &["selector"]),
         },
