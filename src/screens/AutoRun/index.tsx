@@ -57,6 +57,7 @@ import RunPane from "./RunPane";
 import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
 import SetupPanel, { useAutoRunSetup } from "./SetupPanel";
+import SetupColumn from "./SetupColumn";
 import { ResultToggleRow } from "./ResultFilterRow";
 import {
   RESULT_BUCKETS,
@@ -675,9 +676,7 @@ export default function AutoRun({
             // panel goes above the list at the list's width: it comes first
             // in the page, and moves last only where there is room.
             <div className={TWO_COLUMNS}>
-              <div className="min-w-0 @min-[69rem]:order-last">
-                {setupPanel}
-              </div>
+              <SetupColumn>{setupPanel}</SetupColumn>
 
               <section className="min-w-0 space-y-2">
                 <h2 className="text-sm font-semibold text-text">
@@ -914,7 +913,7 @@ export default function AutoRun({
           {shown === "runs" && (
             // The same two columns as Test cases, around the same panel.
             <div className={TWO_COLUMNS}>
-              <div className="min-w-0 @min-[69rem]:order-last">{setupPanel}</div>
+              <SetupColumn>{setupPanel}</SetupColumn>
               <div className="min-w-0">
                 <PastRuns
                   org={org}
