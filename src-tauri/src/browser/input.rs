@@ -134,20 +134,24 @@ pub const PROBE_JS: &str = concat!(
     let lx = allOnscreen ? (cl + cr) / 2 - ox : (l + r) / 2;
     let ly = allOnscreen ? (ct + cb) / 2 - oy : (t + bt) / 2;
     // Through a label: the first point of it, middle first, that a link or
-    // a button inside it does not take. With none, the control's own box
-    // is all that is left, and it has no size: `nospot`.
+    // a button inside it does not take. `nospot` only when every point
+    // tried landed in the label and on such a link or button: a point that
+    // landed outside it (a backdrop over the label) keeps the middle, so
+    // the hit test below says what covers it.
     let nospot = false;
     if (stand && onscreen) {
       const x0 = Math.max(l, cl - ox), x1 = Math.min(r, cr - ox), y0 = Math.max(t, ct - oy), y1 = Math.min(bt, cb - oy);
-      const free = (x, y) => { const e = document.elementFromPoint(x, y); return !!e && (e === this || (stand.contains(e) && !blocker(e))); };
-      let found = null;
+      let found = null, outside = false;
       for (const fy of [0.5, 0.25, 0.75]) {
         for (const fx of [0.5, 0.25, 0.75, 0.1, 0.9]) {
+          if (found) continue;
           const x = x0 + (x1 - x0) * fx, y = y0 + (y1 - y0) * fy;
-          if (!found && free(x, y)) found = [x, y];
+          const e = document.elementFromPoint(x, y);
+          if (e && (e === this || (stand.contains(e) && !blocker(e)))) found = [x, y];
+          else if (!e || !stand.contains(e)) outside = true;
         }
       }
-      if (found) { lx = found[0]; ly = found[1]; } else { nospot = true; }
+      if (found) { lx = found[0]; ly = found[1]; } else if (!outside) { nospot = true; }
     }
     const top = onscreen ? document.elementFromPoint(lx, ly) : null;
     const label = top && top.closest ? top.closest('label') : null;
@@ -303,6 +307,8 @@ pub const NOT_EDITABLE: &str = "cannot be typed into";
 pub const COVERED_BY: &str = "is covered by ";
 /// A control drawn at no size whose label has no point a link or a button
 /// inside it does not take: nothing a click could aim at is the control's.
+/// Said only when every point tried was such a link or button; something
+/// else over the label is reported as covering it (`COVERED_BY`).
 pub const NO_FREE_SPOT: &str =
     "is drawn at no size, and every point of its label is taken by a link or a button inside it, so there is nowhere to click it";
 /// It moved within the watch of every look (at least 2 frames and 50 ms).

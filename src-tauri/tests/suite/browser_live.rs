@@ -3420,3 +3420,32 @@ async fn states_a_label_click_never_lands_on_the_labels_link() {
     let out = run_with(&mut live, json!({ "kind": "click", "selector": { "role": "checkbox", "name": "Only a link" } }), &fast).await;
     refused(out, NO_FREE_SPOT);
 }
+
+/// A backdrop over the label of a control drawn at no size is reported as
+/// covering it, as for any control, never as a label with nowhere to
+/// click: "nowhere to click" is only for a label whose every point is its
+/// own link or button.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_a_backdrop_over_a_zero_size_controls_label_covers_it() {
+    use v2_lib::browser::input::{COVERED_BY, NO_FREE_SPOT};
+    let mut live = open_states().await;
+    let fast = Timing { action_ms: 800, ..timing() };
+    let out = run_with(&mut live, json!({ "kind": "click", "selector": { "role": "checkbox", "name": "Covered box" } }), &fast).await;
+    assert!(!out.ok && out.detail.contains(&format!("{COVERED_BY}span#backdrop.backdrop")), "{}", out.detail);
+    assert!(!out.detail.contains(NO_FREE_SPOT), "{}", out.detail);
+}
+
+/// The nearest explicit `aria-disabled` decides, as Playwright reads it: a
+/// "false" inside a "true" leaves the button enabled, for the check and
+/// for a click alike, which share the rule.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_a_nearer_aria_disabled_false_leaves_a_button_enabled() {
+    let mut live = open_states().await;
+    must(run(&mut live, json!({ "kind": "expect_enabled", "selector": "#aria-reset", "timeout_ms": 300 })).await);
+    let started = std::time::Instant::now();
+    must(run(&mut live, json!({ "kind": "click", "selector": "#aria-reset" })).await);
+    assert!(started.elapsed() < Duration::from_millis(2000), "the click waited {:?}", started.elapsed());
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#aria-reset-state", "equals": "clicked" })).await);
+}

@@ -13,6 +13,9 @@
   .agree { position: relative; display: inline-block; padding: 4px; }
   .agree input, .bare input { position: absolute; opacity: 0; width: 0; height: 0; }
   .bare { position: relative; display: inline-block; padding: 0; }
+  /* A backdrop laid over a label, as a modal's is. */
+  .covered-wrap { position: relative; display: inline-block; }
+  .backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.2); }
   /* Widgets drawn with no content of their own still take room. */
   [role=slider], [role=spinbutton], [role=combobox], [role=searchbox], [role=separator], [role=scrollbar], #div-switch {
     display: inline-block; width: 40px; height: 20px; background: #eee;
@@ -47,6 +50,9 @@
       </fieldset>
     </fieldset>
     <div aria-disabled=" TRUE "><button id="under-aria" type="button">Under aria action</button></div>
+    <div aria-disabled="true"><div aria-disabled="false"><button id="aria-reset" type="button"
+      onclick="document.getElementById('aria-reset-state').textContent = 'clicked'">Reset aria action</button></div></div>
+    <p id="aria-reset-state">not clicked</p>
   </section>
 
   <section aria-label="Labels">
@@ -54,6 +60,7 @@
       onchange="document.getElementById('terms-state').textContent = this.checked ? 'accepted' : 'not accepted'"><span>Accept the </span><a href="#terms">terms</a></label>
     <p id="terms-state">not accepted</p>
     <label class="bare"><input id="link-box" type="checkbox" aria-label="Only a link"><a href="#only">read this</a></label>
+    <span class="covered-wrap"><label class="agree"><input id="covered-box" type="checkbox" aria-label="Covered box"><span>Covered</span></label><span id="backdrop" class="backdrop"></span></span>
   </section>
 
   <section aria-label="Switches">

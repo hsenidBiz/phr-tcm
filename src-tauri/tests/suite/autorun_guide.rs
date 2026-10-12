@@ -1403,6 +1403,10 @@ fn a_page_reads_limit_and_within_are_read_from_the_query() {
     let css = Target::One(v2_lib::browser::locator::LocatorStep { css: Some("#form".to_string()), ..Default::default() });
     assert_eq!(within_target("#form").unwrap(), css);
     assert_eq!(within_target("\"#form\"").unwrap(), css);
+    // The legacy text form stays text, as a text link.
+    let words = Target::One(v2_lib::browser::locator::LocatorStep { text: Some("Edit cycle".to_string()), ..Default::default() });
+    assert_eq!(within_target("text=Edit cycle").unwrap(), words);
+    assert_eq!(within_target("\"text=Edit cycle\"").unwrap(), words);
     assert!(matches!(within_target(r#"{"role":"dialog","name":"Edit"}"#).unwrap(), Target::One(_)));
     assert!(matches!(within_target(r#"[{"role":"dialog"},{"css":"form"}]"#).unwrap(), Target::Chain(_)));
     assert!(within_target(r#"{"role":"dialog","colour":"red"}"#).unwrap_err().starts_with("within is not a locator"));

@@ -26,8 +26,10 @@
 /// once here so the two can never disagree:
 ///
 /// - its own `disabled` property is set;
-/// - it, or any element around it, carries `aria-disabled="true"` (trimmed,
-///   case ignored), as Playwright's `toBeDisabled` reads it;
+/// - the nearest of it and the elements around it that carries
+///   `aria-disabled` at all says `"true"` (trimmed, case ignored), as
+///   Playwright's `toBeDisabled` reads it: any other value there, such as
+///   `"false"`, ends the walk as enabled;
 /// - it is a listed form control (button, input, select, textarea,
 ///   fieldset, or a form-associated custom element) and a disabled fieldset
 ///   around it, any of them, holds it outside that fieldset's first
@@ -38,9 +40,10 @@ macro_rules! disabled_why_js {
         r#"((e) => {
   const ariaOff = (n) => (n.getAttribute('aria-disabled') || '').trim().toLowerCase() === 'true';
   if (e.disabled === true) return 'its disabled property is set';
-  if (ariaOff(e)) return 'it has aria-disabled="true"';
-  for (let p = e.parentElement; p; p = p.parentElement) {
-    if (ariaOff(p)) return 'an element around it has aria-disabled="true"';
+  for (let p = e; p; p = p.parentElement) {
+    if (!p.hasAttribute('aria-disabled')) continue;
+    if (ariaOff(p)) return p === e ? 'it has aria-disabled="true"' : 'an element around it has aria-disabled="true"';
+    break;
   }
   const listed = /^(BUTTON|INPUT|SELECT|TEXTAREA|FIELDSET)$/.test(e.tagName) ||
     !!(e.constructor && e.constructor.formAssociated);

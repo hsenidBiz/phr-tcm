@@ -1736,7 +1736,8 @@ pub fn page_limit(asked: Option<&str>) -> usize {
 /// legacy string target: a legacy target resolves to its first match,
 /// hidden or not, so "within matched 3" could never be said of it, and a
 /// hidden template could be listed in place of the dialog a person sees.
-/// A structured css link counts every visible match.
+/// A structured css link counts every visible match. A `text=` string
+/// becomes a text link the same way.
 pub fn within_target(raw: &str) -> Result<crate::browser::locator::Target, String> {
     use crate::browser::locator::{LocatorStep, Target};
     let t = raw.trim();
@@ -1745,8 +1746,13 @@ pub fn within_target(raw: &str) -> Result<crate::browser::locator::Target, Strin
     } else {
         Target::Legacy(t.to_string())
     };
+    // A `text=` string is the legacy text form: a text link, which counts
+    // its visible matches too.
     let target = match target {
-        Target::Legacy(css) => Target::One(LocatorStep { css: Some(css), ..LocatorStep::default() }),
+        Target::Legacy(s) => match s.strip_prefix("text=") {
+            Some(words) => Target::One(LocatorStep { text: Some(words.trim().to_string()), ..LocatorStep::default() }),
+            None => Target::One(LocatorStep { css: Some(s), ..LocatorStep::default() }),
+        },
         structured => structured,
     };
     target.validate().map_err(|e| format!("within is not a locator: {e}"))?;
