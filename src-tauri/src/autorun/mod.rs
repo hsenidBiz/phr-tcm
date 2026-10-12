@@ -33,6 +33,7 @@ pub mod recipe;
 pub mod recorder;
 pub mod replay;
 pub mod reset_wait;
+pub mod replay_record;
 pub mod replay_to;
 pub mod report;
 pub mod run_files;

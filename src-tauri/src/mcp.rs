@@ -487,7 +487,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_failures",
-            "description": "What failed in an Auto Run run on THIS machine, as text you can act on: which step, which action (its own JSON), what the page said, and the picture. It also says when you must not touch the script at all - a sign-in that failed, a browser that stopped answering, a case that could not reach its module screen, or a case the person marked Blocked are not script defects. Read this before repairing anything.",
+            "description": "What failed in an Auto Run run on THIS machine, as text you can act on: which step, which action (its own JSON), what the page said, and the picture. It also says when you must not touch the script at all - a sign-in that failed, a browser that stopped answering, a case that could not reach its module screen, or a case the person marked Blocked are not script defects. Asked by case_id, a replay of that case that stopped on a failure counts as its newest word when no run here has the case or the replay is newer, and the text says \"from a replay to step N\". Read this before repairing anything.",
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The newest run that holds this test case." },
                 "run_id": { "type": "string", "description": "One run by its id instead. With neither, the newest run on this machine." },
@@ -513,7 +513,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "mark_autorun_suspected_defect",
-            "description": "Use this instead of a repair when the application, not the script, is wrong: it marks the failed step of a case as a suspected application defect with a note on what the application did, leaves the script's actions and its repair count untouched, and is refused unless that step failed in the case's newest run for a reason other than a STOP line.",
+            "description": "Use this instead of a repair when the application, not the script, is wrong: it marks the failed step of a case as a suspected application defect with a note on what the application did, leaves the script's actions and its repair count untouched, and is refused unless that step failed in the case's newest run (or in a replay of it that stopped there, when that is newer or no run has the case) for a reason other than a STOP line.",
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The test case whose script to mark." },
                 "step_number": { "type": "number", "description": "The step that failed because of the application." },

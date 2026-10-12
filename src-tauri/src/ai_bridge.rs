@@ -4799,7 +4799,12 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
             // is nothing the reader can act on.
             Err(_) => return (400, "the run file could not be read".to_string()),
         },
-        None => match crate::autorun::failures::latest_run(&root, case_id) {
+        // A case's newest word may be a replay that stopped on a failure,
+        // when it is newer than the case's newest run or no run has it.
+        None => match case_id.map_or_else(
+            || crate::autorun::failures::latest_run(&root, None),
+            |id| crate::autorun::replay_record::latest_for_case(&root, id),
+        ) {
             Some(run) => run,
             None => {
                 return match case_id {
@@ -4920,7 +4925,9 @@ fn autorun_defect(body: &str) -> (u16, String) {
         Ok(s) => s,
         Err(e) => return (500, e),
     };
-    let run = crate::autorun::failures::latest_run(&root, Some(m.case_id));
+    // The newest word on the case: a replay that stopped on a failure
+    // counts when it is newer than the case's newest run, or none has it.
+    let run = crate::autorun::replay_record::latest_for_case(&root, m.case_id);
     let mark = match crate::autorun::defects::check_mark(
         run.as_ref(),
         script.as_ref(),

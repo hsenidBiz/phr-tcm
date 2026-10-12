@@ -230,6 +230,12 @@ fn push_downloads(step: &StepRecord, out: &mut Vec<String>) {
     }
 }
 
+/// Whether a run id is a replay's read back as a run (`replay_record::as_run`):
+/// a saved run's id is never words.
+fn run_mode_is_replay(run_id: &str) -> bool {
+    run_id.starts_with("a replay to step ")
+}
+
 /// One failed case's whole block: header, account and area when known,
 /// the stop reason when there is one, every failed or skipped
 /// step, and the person's own note last.
@@ -240,7 +246,10 @@ fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, c
     // verdict does - so an empty `proposed` is ordinary, not a gap to fill
     // with a blank; it is left out of the header rather than printed as
     // "proposed " with nothing after it.
-    let mut header_parts = vec![format!("run {run_id}")];
+    // A replay read back as a run (`replay_record::as_run`) says so: its id
+    // is "a replay to step N".
+    let origin = if run_mode_is_replay(run_id) { format!("from {run_id}") } else { format!("run {run_id}") };
+    let mut header_parts = vec![origin];
     if !case.proposed.is_empty() {
         header_parts.push(format!("proposed {}", case.proposed));
     }

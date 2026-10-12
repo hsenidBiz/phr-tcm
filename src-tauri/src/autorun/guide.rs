@@ -1661,7 +1661,10 @@ plain sentence about what you saw, and leave the script alone.
 - A recorded pass of that step clears the mark, and so does a repair that
   changes that step.
 - The mark is refused unless that step failed in the case's newest run,
-  and refused when the failure is one of the `STOP:` lines.
+  and refused when the failure is one of the `STOP:` lines. A replay that
+  stopped on a failure counts as the newest run when it is newer, or when
+  no run on this machine has the case; `get_autorun_failures` then says
+  the failure is "from a replay to step N".
 - It is not a way around a check you could not make pass. If the locator,
   the waiting, the navigation, the data or the environment could explain
   the failure, fix that first. Never mark a case to avoid repairing it.

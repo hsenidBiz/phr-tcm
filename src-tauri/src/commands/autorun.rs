@@ -1364,6 +1364,12 @@ pub(crate) async fn replay_supervised(
         ReplayBy::Assistant => " for the assistant",
     };
     crate::applog::info(format!("Auto Run replay of case {case_id} to step {step}{who}: {how}"));
+    // A replay that stopped on a failure is kept as the case's newest word,
+    // for get_autorun_failures and a suspected defect; one that reached its
+    // step lets an earlier one go.
+    let title = store::load_script(&root, case_id).ok().flatten().map(|s| s.title).unwrap_or_default();
+    let ran_as = slot.as_ref().and_then(|s| s.lease.account().map(str::to_string));
+    crate::autorun::replay_record::note(&root, case_id, &title, step, &end, ran_as, crate::autorun::sessions::now_ms());
     // The browser the replay leaves open, if it does, and whose it is.
     let left_open = slot.as_ref().map(|s| replay_to::LeftOpen {
         account: s.lease.account().map(str::to_string),
