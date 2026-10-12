@@ -2,7 +2,7 @@
 
 Each `##` section with an id is one test in `specs/rating-methods.spec.ts`.
 
-## 135152 - Rating Methods - User can create a new rating method
+## 135152 — Rating Methods - User can create a new rating method
 
 ### Steps
 
@@ -18,7 +18,7 @@ Each `##` section with an id is one test in `specs/rating-methods.spec.ts`.
 
 Added by engineer: a note that is not a test case.
 
-## 135180 - Rating Methods - User can rename a rating method
+## 135180 — Rating Methods - User can rename a rating method
 
 ### Steps
 

@@ -4,6 +4,7 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { RepoStructure } from "../../bindings";
 import { clearPlaywrightExportRequest, playwrightExportSnapshot, requestPlaywrightExport } from "../../lib/playwrightExport";
@@ -62,12 +63,14 @@ function mount(clone: string, structure: RepoStructure | (() => RepoStructure) =
     if (cmd === "pw_export_preview") throw "no preview in this test";
     return null;
   });
-  render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <Playwright org="acme" project="Web" />
-    </QueryClientProvider>,
+  const view = render(
+    <StrictMode>
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <Playwright org="acme" project="Web" />
+      </QueryClientProvider>
+    </StrictMode>,
   );
-  return calls;
+  return Object.assign(calls, { unmount: view.unmount });
 }
 
 test("a healthy clone shows it is ready, and what it holds", async () => {
@@ -124,4 +127,19 @@ test("Auto Run's Export request opens the Export dialog here, and closing it cle
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("heading", { name: "Export to Playwright" })).not.toBeInTheDocument());
   expect(playwrightExportSnapshot()).toBeNull();
+});
+
+test("a request left pending is cleared when the tab unmounts, so it cannot reopen the dialog later", async () => {
+  act(() => requestPlaywrightExport({ pbiId: 7, caseIds: [10], modules: [[10, "Wizard"]] }));
+  const view = mount("C:/repo");
+  // StrictMode mounts, unmounts and mounts again: the request survives that.
+  expect(await screen.findByRole("heading", { name: "Export to Playwright" })).toBeInTheDocument();
+  expect(playwrightExportSnapshot()).not.toBeNull();
+
+  view.unmount();
+  await waitFor(() => expect(playwrightExportSnapshot()).toBeNull());
+
+  mount("C:/repo");
+  await screen.findByText("The clone is ready.");
+  expect(screen.queryByRole("heading", { name: "Export to Playwright" })).not.toBeInTheDocument();
 });

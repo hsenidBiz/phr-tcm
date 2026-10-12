@@ -45,6 +45,27 @@ export function usePlaywrightExportRequest(): PlaywrightExportRequest | null {
   return useSyncExternalStore(subscribePlaywrightExport, playwrightExportSnapshot);
 }
 
+let clearOnUnmount: ReturnType<typeof setTimeout> | null = null;
+
+/** Clears the pending request when the calling screen unmounts, so a request
+ * left behind cannot reopen the dialog the next time the screen mounts. The
+ * clear waits one tick and a remount cancels it: StrictMode's mount, unmount,
+ * mount in development must not lose the request it was opened with. */
+export function useClearExportRequestOnUnmount(): void {
+  useEffect(() => {
+    if (clearOnUnmount !== null) {
+      clearTimeout(clearOnUnmount);
+      clearOnUnmount = null;
+    }
+    return () => {
+      clearOnUnmount = setTimeout(() => {
+        clearOnUnmount = null;
+        clearPlaywrightExportRequest();
+      }, 0);
+    };
+  }, []);
+}
+
 /** Calls `open` each time a new request arrives: the App shell's way of
  * moving to the Playwright tab, whichever tab the person is on. */
 export function useOpenOnExportRequest(open: () => void): void {

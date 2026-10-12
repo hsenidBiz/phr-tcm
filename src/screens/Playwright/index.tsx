@@ -13,7 +13,11 @@ import { commands, type RepoFeature, type RepoStructure } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { IconBrowse, IconRefresh } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
-import { clearPlaywrightExportRequest, usePlaywrightExportRequest } from "../../lib/playwrightExport";
+import {
+  clearPlaywrightExportRequest,
+  useClearExportRequestOnUnmount,
+  usePlaywrightExportRequest,
+} from "../../lib/playwrightExport";
 import HealthLine from "./HealthLine";
 import PlaywrightExportDialog from "./PlaywrightExportDialog";
 
@@ -53,6 +57,7 @@ function FeatureRow({ f }: { f: RepoFeature }) {
 export default function Playwright({ org, project }: { org: string; project: string }) {
   const qc = useQueryClient();
   const exportRequest = usePlaywrightExportRequest();
+  useClearExportRequestOnUnmount();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
