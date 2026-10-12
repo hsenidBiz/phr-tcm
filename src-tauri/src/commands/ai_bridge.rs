@@ -102,7 +102,7 @@ impl crate::ai_bridge::ReplayHost for AppReplayHost {
             use crate::commands::autorun::{replay_supervised, ReplayBy};
             replay_supervised(&self.0, &organization, &project, req, ReplayBy::Assistant)
                 .await
-                .map(|(end, _tabs, discovery)| crate::ai_bridge::AssistantReplay { end, discovery })
+                .map(|(end, _tabs, discovery, left_open)| crate::ai_bridge::AssistantReplay { end, discovery, left_open })
         })
     }
 

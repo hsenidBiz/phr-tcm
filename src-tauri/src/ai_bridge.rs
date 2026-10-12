@@ -1171,8 +1171,39 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
     if let Some(sentence) = not_saved {
         return (500, sentence);
     }
-    let text = serde_json::to_string(&report).unwrap_or_default();
+    let mut text = serde_json::to_string(&report).unwrap_or_default();
+    if !report.ok && held_by_the_auto_run_browser(&text) {
+        text = template_report_hint(text, crate::commands::autorun::assistant_browser_open().await);
+    }
     (if report.ok { 200 } else { 502 }, text)
+}
+
+/// Said beside a template run refused its account because the Auto Run
+/// browser holds it, when the assistant's replay opened that browser.
+pub const FREE_IT_WITH_RELEASE: &str =
+    "The Auto Run browser your replay left open holds this account: close it with release_autorun_browser, then run the template again.";
+
+/// Does a template run's report say its account was refused because the
+/// Auto Run browser holds it (the lease's own words)?
+fn held_by_the_auto_run_browser(report_json: &str) -> bool {
+    report_json.contains(" was in use by the Auto Run browser")
+}
+
+/// A failed template run's report, with `FREE_IT_WITH_RELEASE` beside it as
+/// `"free_it"` when its account was refused because the Auto Run browser
+/// holds it and the assistant opened that browser (`assistant_opened`).
+/// Otherwise the report as it was.
+pub fn template_report_hint(report_json: String, assistant_opened: bool) -> String {
+    if !assistant_opened || !held_by_the_auto_run_browser(&report_json) {
+        return report_json;
+    }
+    match serde_json::from_str::<serde_json::Value>(&report_json) {
+        Ok(mut v @ serde_json::Value::Object(_)) => {
+            v["free_it"] = serde_json::json!(FREE_IT_WITH_RELEASE);
+            v.to_string()
+        }
+        _ => report_json,
+    }
 }
 
 const FIXTURE_SAVE_SHAPE: &str = "{ \"fixture\": { \"id\": \"<fixture id>\", \"name\": \"<name>\", \"account\": \"<account key>\", \"steps\": [ { \"template\": \"<template id>\", \"params\": { <param>: \"<text>\" } } ], \"outputs\"?: { <name>: \"{{steps.<n>.<output>}}\" }, \"creates\"?: [ { \"kind\", \"id\", \"name\" } ] } }";
@@ -2582,6 +2613,12 @@ pub trait DiscoveryBrowser {
     fn alive(&mut self) -> impl std::future::Future<Output = bool> + Send {
         async { true }
     }
+    /// Whether the assistant opened this browser (its replay, or a
+    /// discovery): its release and its discovery may close it. A test's
+    /// fake is the person's unless it says otherwise.
+    fn opened_by_assistant(&mut self) -> bool {
+        false
+    }
 }
 
 /// Said in place of an answer from a held browser that had gone: the app
@@ -2625,6 +2662,27 @@ pub async fn refuse_while_held<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Res
         None => Ok(()),
     }
 }
+
+/// Before a discovery opens in `slot`: a held browser that has gone is let
+/// go; a live one the assistant's replay left open (opened by the
+/// assistant, no discovery in it) is closed through its normal close, and
+/// the answer is true; any other live browser refuses it, with the busy
+/// sentence (`refuse_while_held`). A replay going never reaches here
+/// (`refuse_discovery_while_busy`).
+pub async fn make_way_for_discovery<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Result<bool, String> {
+    forget_gone_browser(slot).await;
+    let left_open = slot.as_mut().is_some_and(|b| b.parts().discovery.is_none() && b.opened_by_assistant());
+    if left_open {
+        close_browser_in(slot);
+        crate::applog::info("Auto Run: a discovery closed the browser the assistant's replay left open");
+        return Ok(true);
+    }
+    refuse_while_held(slot).await.map(|()| false)
+}
+
+/// Put before what a discovery start answers when it first closed the
+/// browser the assistant's replay left open.
+pub const CLOSED_LEFT_OPEN: &str = "Closed the browser your replay left open.";
 
 /// Does this answer from a held browser say the browser failed, rather
 /// than the page: a 503, or the words of a closed browser or a failed
@@ -3741,9 +3799,10 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
         return (409, why);
     }
     let browser = browser.unwrap_or_else(|| crate::autorun::store::last_browser(&root));
-    if let Err(why) = crate::commands::autorun::open_for_discovery(&browser, mapping).await {
-        return (409, why);
-    }
+    let closed_left_open = match crate::commands::autorun::open_for_discovery(&browser, mapping).await {
+        Ok(closed) => closed,
+        Err(why) => return (409, why),
+    };
     let mut slot = crate::commands::autorun::supervised().lock().await;
     let answer = discover_start_in(
         &mut slot,
@@ -3762,7 +3821,24 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
     if slot.as_ref().is_some_and(|s| s.cdp.is_guarding_saves()) {
         crate::commands::autorun::answer_between_commands();
     }
-    answer
+    said_closed_left_open(closed_left_open, answer)
+}
+
+/// A discovery start's answer, saying first that it closed the browser the
+/// assistant's replay left open when it did: a `"closed"` field beside the
+/// JSON of one that started, the sentence before the text of one that did
+/// not.
+pub fn said_closed_left_open(closed: bool, (status, text): (u16, String)) -> (u16, String) {
+    if !closed {
+        return (status, text);
+    }
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(mut v @ serde_json::Value::Object(_)) => {
+            v["closed"] = serde_json::json!(CLOSED_LEFT_OPEN);
+            (status, v.to_string())
+        }
+        _ => (status, format!("{CLOSED_LEFT_OPEN} {text}")),
+    }
 }
 
 /// `/autorun-discover-action`: one action in the discovery's browser
@@ -4246,6 +4322,9 @@ pub trait ReplayHost: Send + Sync {
 pub struct AssistantReplay {
     pub end: crate::autorun::replay_to::ReplayEnd,
     pub discovery: DiscoveryEnded,
+    /// The supervised browser the replay leaves open, if it does: its
+    /// answer says what that blocks (`replay_to::left_open_line`).
+    pub left_open: Option<crate::autorun::replay_to::LeftOpen>,
 }
 
 static REPLAY_HOST: std::sync::OnceLock<Box<dyn ReplayHost>> = std::sync::OnceLock::new();
@@ -4447,12 +4526,17 @@ async fn run_assistant_replay(
     req: crate::autorun::replay_to::ReplayRequest,
 ) -> (u16, String) {
     use crate::autorun::replay_to::ReplayEnd;
-    let (end, discovery) = match host.replay(org.clone(), project.clone(), req).await {
-        Ok(AssistantReplay { end, discovery }) => (end, discovery),
+    let (end, discovery, left_open) = match host.replay(org.clone(), project.clone(), req).await {
+        Ok(AssistantReplay { end, discovery, left_open }) => (end, discovery, left_open),
         Err(why) => return (503, why),
     };
     // Said first when the replay ended the assistant's own discovery.
-    let sentence = after_ended_discovery(discovery.ended, &end.sentence());
+    let mut sentence = after_ended_discovery(discovery.ended, &end.sentence());
+    // A browser the replay leaves open, on a line of its own after it.
+    if let (Some(left), false) = (&left_open, matches!(end, ReplayEnd::Refused(_) | ReplayEnd::Blocked(_))) {
+        sentence.push('\n');
+        sentence.push_str(&crate::autorun::replay_to::left_open_line(left));
+    }
     // An ended mapping run's summary goes beside the sentence, as
     // `end_autorun_discovery` hands it back.
     let with_summary = |mut answer: serde_json::Value| {

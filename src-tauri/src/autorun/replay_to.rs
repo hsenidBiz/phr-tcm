@@ -136,6 +136,30 @@ pub fn guarding_other_case(other: i32) -> String {
     format!("the Auto Run browser is guarding case {other}'s draft, and the page tried to save")
 }
 
+/// The supervised browser a replay leaves open: the account KEY it holds,
+/// if any, and whether the assistant opened it (`commands::autorun::OpenedBy`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeftOpen {
+    pub account: Option<String>,
+    pub by_assistant: bool,
+}
+
+/// The line an assistant's replay answer gains when the browser stays
+/// open: what that blocks, and how it is freed.
+pub fn left_open_line(left: &LeftOpen) -> String {
+    let blocked = match &left.account {
+        Some(key) => format!("discovery actions, component saves and template runs as {key}"),
+        None => "discovery actions and component saves".to_string(),
+    };
+    if left.by_assistant {
+        format!(
+            "The Auto Run browser stays open on this step: {blocked} are refused until release_autorun_browser closes it, and start_autorun_discovery closes it."
+        )
+    } else {
+        format!("The person's Auto Run browser stays open on this step: {blocked} are refused until the person closes it.")
+    }
+}
+
 /// A step the replay ran outside `main`: the tab it ran in, as a live
 /// step's `tab` says it (`InRun::tab`). A step that stayed in `main` has
 /// none.

@@ -79,6 +79,8 @@ struct FakeHost {
     /// The replay runs on until this is notified (a slow replay); `None`
     /// ends it at once.
     release: Option<tokio::sync::Notify>,
+    /// The browser the replay leaves open, as the app says it.
+    left_open: Option<v2_lib::autorun::replay_to::LeftOpen>,
 }
 
 impl FakeHost {
@@ -90,6 +92,7 @@ impl FakeHost {
             summary: None,
             open_failed: None,
             release: None,
+            left_open: None,
         }
     }
     fn ready() -> Self {
@@ -119,7 +122,7 @@ impl ReplayHost for FakeHost {
                 return Err(after_ended_discovery(self.discovering, why));
             }
             let discovery = DiscoveryEnded { ended: self.discovering, summary: self.summary.clone() };
-            Ok(AssistantReplay { end: self.end.clone(), discovery })
+            Ok(AssistantReplay { end: self.end.clone(), discovery, left_open: self.left_open.clone() })
         })
     }
     fn page(&self, _organization: String, _project: String) -> HostFuture<'_, (u16, String)> {
@@ -379,7 +382,7 @@ async fn a_browser_that_would_not_open_after_the_end_still_says_the_discovery_wa
     // The app's own replay says it the same way.
     let source = include_str!("../../src/commands/autorun.rs");
     let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
-    let open = &replay[replay.find("open_if_none(app, &mut slot)").unwrap()..];
+    let open = &replay[replay.find("open_if_none(app, &mut slot, by.opens_as())").unwrap()..];
     let open = &open[..open.len().min(300)];
     assert!(open.contains("after_ended_discovery(discovery.ended, &why)"), "{open}");
 }
@@ -482,4 +485,53 @@ async fn the_answer_of_a_replay_that_ended_unwatched_goes_to_the_next_call() {
     assert_eq!(status, 200, "{text}");
     assert!(text.contains("replayed case 77 to step 3"), "{text}");
     assert_eq!(host.replays().len(), 1);
+}
+
+// ---- the browser a replay leaves open ---------------------------------------
+
+/// A replay that leaves the browser open says so on a line of its own:
+/// what that blocks for its account, and how to free it - the release and
+/// a discovery for the assistant's own browser, the person for theirs. A
+/// refused replay says nothing of it.
+#[tokio::test]
+async fn a_replay_that_leaves_the_browser_open_says_what_it_blocks() {
+    use v2_lib::autorun::replay_to::{left_open_line, LeftOpen};
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let mine = LeftOpen { account: Some("admin".into()), by_assistant: true };
+    assert_eq!(
+        left_open_line(&mine),
+        "The Auto Run browser stays open on this step: discovery actions, component saves and template runs as admin are refused until release_autorun_browser closes it, and start_autorun_discovery closes it."
+    );
+    let theirs = LeftOpen { account: None, by_assistant: false };
+    assert_eq!(
+        left_open_line(&theirs),
+        "The person's Auto Run browser stays open on this step: discovery actions and component saves are refused until the person closes it."
+    );
+
+    let host = leak(FakeHost { left_open: Some(mine.clone()), ..FakeHost::ready() });
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["sentence"],
+        format!("replayed case 77 to step 3 - the browser is on the page before step 3 runs\n{}", left_open_line(&mine))
+    );
+
+    let stopped = ReplayEnd::StoppedAt {
+        phase: v2_lib::autorun::replay_to::ReplayPhase::Step,
+        step: 2,
+        why: "nothing matched #s2".into(),
+        outcomes: vec![],
+    };
+    let host = leak(FakeHost { left_open: Some(theirs.clone()), ..FakeHost::ending(stopped) });
+    let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert!(v["sentence"].as_str().unwrap().ends_with(&left_open_line(&theirs)), "{v}");
+
+    let host = leak(FakeHost { left_open: Some(mine), ..FakeHost::ending(ReplayEnd::Refused("no".into())) });
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    assert_eq!((status, text.as_str()), (409, "no"));
 }
