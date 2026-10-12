@@ -83,7 +83,8 @@
 //! (click, fill, select, check, upload, press, drag, ...), and the checks
 //! whose run reads one element and fails on several (`expect_visible`,
 //! `expect_text`, `expect_contains_text`, `expect_attribute`,
-//! `expect_focused`, and the table checks `expect_row`, `expect_no_row`,
+//! `expect_enabled`, `expect_disabled`, `expect_focused`, and the table
+//! checks `expect_row`, `expect_no_row`,
 //! `expect_sorted` and `expect_row_count`, whose table must be one), as
 //! must a `when_visible`'s selector, which guards actions rather than
 //! checks. A locator never seen matching anything is refused for every
@@ -233,6 +234,8 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::ExpectText { .. }
         | Action::ExpectContainsText { .. }
         | Action::ExpectAttribute { .. }
+        | Action::ExpectEnabled { .. }
+        | Action::ExpectDisabled { .. }
         | Action::ExpectFocused { .. }
         | Action::ExpectRow { .. }
         | Action::ExpectNoRow { .. }
@@ -440,6 +443,8 @@ fn is_check(action: &Action) -> bool {
             | Action::ExpectContainsText { .. }
             | Action::ExpectCount { .. }
             | Action::ExpectAttribute { .. }
+            | Action::ExpectEnabled { .. }
+            | Action::ExpectDisabled { .. }
             | Action::ExpectFocused { .. }
             | Action::ExpectRow { .. }
             | Action::ExpectNoRow { .. }

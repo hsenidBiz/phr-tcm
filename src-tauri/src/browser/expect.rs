@@ -25,9 +25,40 @@ pub enum Check<'a> {
     ContainsText(&'a str),
     Count(u32),
     Attribute { name: &'a str, equals: &'a str },
+    /// The one match has no attribute `name`.
+    NoAttribute { name: &'a str },
     /// The focus is on the one match, or inside it.
     Focused,
+    /// The one match is not disabled (`DISABLED_JS`).
+    Enabled,
+    /// The one match is disabled (`DISABLED_JS`).
+    Disabled,
 }
+
+/// `this` is the element. Why it is disabled, in a few words, or `""` when
+/// it is not: its `disabled` property is set (a form control, a fieldset,
+/// an option), it carries `aria-disabled="true"`, or a disabled fieldset
+/// holds it and it is not inside that fieldset's first legend (HTML's own
+/// rule: a legend's controls stay usable). The same three things a click
+/// waits out (`input::PROBE_JS`'s `enabled`).
+pub const DISABLED_JS: &str = r#"function() {
+  if (this.disabled === true) return 'its disabled property is set';
+  if ((this.getAttribute('aria-disabled') || '').trim().toLowerCase() === 'true') return 'it has aria-disabled="true"';
+  const fs = this.parentElement ? this.parentElement.closest('fieldset[disabled]') : null;
+  if (fs) {
+    const legend = fs.querySelector(':scope > legend');
+    if (!(legend && legend.contains(this))) return 'a disabled fieldset holds it';
+  }
+  return '';
+}"#;
+
+/// `expect_enabled` on a disabled element, followed by why.
+pub const IS_DISABLED: &str = "is disabled: ";
+/// `expect_disabled` on an element that is not.
+pub const IS_ENABLED: &str = "is enabled";
+/// `expect_attribute` with `absent` on an element that has it, followed by
+/// the attribute's name and value.
+pub const HAS_ATTRIBUTE: &str = "still has ";
 
 /// `this` is the element. Does it, or something inside it, have the focus
 /// in its own document (an element in a frame is asked in that frame)?
@@ -200,6 +231,29 @@ pub(crate) async fn look<D: Driver>(
                     None => Err(format!("{HAS_NO}{name}{ATTRIBUTE_TAIL}")),
                     Some(v) if v == *equals => Ok(format!("{what} has {name}={equals:?}")),
                     Some(v) => Err(format!("expected {name}={equals:?} but saw {v:?}")),
+                }
+            }
+        },
+        Check::NoAttribute { name } => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let got = page::call_value(d, h, READ_ATTR_JS, &[json!(name)]).await?;
+                match got.as_str() {
+                    None => Ok(format!("{what} {HAS_NO}{name}{ATTRIBUTE_TAIL}")),
+                    Some(v) => Err(format!("{HAS_ATTRIBUTE}{name}={v:?}")),
+                }
+            }
+        },
+        Check::Enabled | Check::Disabled => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let why = page::call_value(d, h, DISABLED_JS, &[]).await?;
+                let why = why.as_str().unwrap_or("");
+                match (matches!(check, Check::Enabled), why.is_empty()) {
+                    (true, true) => Ok(format!("{what} {IS_ENABLED}")),
+                    (true, false) => Err(format!("{IS_DISABLED}{why}")),
+                    (false, false) => Ok(format!("{what} {IS_DISABLED}{why}")),
+                    (false, true) => Err(IS_ENABLED.to_string()),
                 }
             }
         },

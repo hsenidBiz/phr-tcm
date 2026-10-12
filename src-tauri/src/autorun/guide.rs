@@ -28,6 +28,8 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_contains_text",
     "expect_count",
     "expect_attribute",
+    "expect_enabled",
+    "expect_disabled",
     "sign_in",
     "upload",
     "expect_response",
@@ -201,7 +203,9 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_text", "selector": ..., "equals": "..." }`
 - `{ "kind": "expect_contains_text", "selector": ..., "value": "..." }`
 - `{ "kind": "expect_count", "selector": ..., "equals": 3 }`
-- `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }`
+- `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute
+- `{ "kind": "expect_enabled", "selector": ... }` - the element can be used
+- `{ "kind": "expect_disabled", "selector": ... }` - the element is disabled: its `disabled` property is set, it has `aria-disabled="true"`, or a disabled fieldset holds it
 - `{ "kind": "sign_in", "account": "hr.supervisor" }` - change who is signed in, in the middle of a case
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page (same-origin frames included), right now? A hidden frame is not searched, and a frame holding a page from another site is not searched.
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address, right now?
@@ -1258,8 +1262,9 @@ What a save checks:
   elements. Every other use needs a locator seen matching exactly one: an
   action (click, fill, upload, press_key, drag), the selector a
   `when_visible` waits for, and the checks that read one element (`expect_visible`, `expect_text`,
-  `expect_contains_text`, `expect_attribute`, `expect_focused`, and the
-  table checks, whose table must be one). A locator never seen matching
+  `expect_contains_text`, `expect_attribute`, `expect_enabled`,
+  `expect_disabled`, `expect_focused`, and the table checks, whose table
+  must be one). A locator never seen matching
   anything is refused for every use, `expect_hidden` included: probe it
   while what it names is on the page.
 - A `navigate` or `open_tab` address must be one discovery has visited.
@@ -1465,6 +1470,10 @@ Before every save:
   something is refused.
 - Check a state with `expect_attribute` on the element you saw (`checked`,
   `aria-checked` or `disabled`), not by adding a state to its selector.
+  Whether a control can be used is `expect_enabled` or `expect_disabled`,
+  which read the `disabled` property, `aria-disabled` and a disabled
+  fieldset together. An attribute that must not be there is
+  `expect_attribute` with `"absent": true` instead of `equals`.
 - A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
   text (`{ "text": "Draft {{setup.cycle_name}} Pending" }`), in a quoted
   attribute value (`div[data-cycle-id="{{setup.cycle_id}}"]`), or next to

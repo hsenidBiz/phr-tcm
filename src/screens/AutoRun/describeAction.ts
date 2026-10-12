@@ -405,11 +405,17 @@ function describeKnown(a: Action): Sentence {
       return [words("Check "), ...describeTarget(a.selector), words(`${times}${upTo(a.timeout_ms)}`)];
     }
     case "expect_attribute":
+      if (a.absent === true)
+        return [words("Check "), ...describeTarget(a.selector), words(` has no ${str(a.name)}${upTo(a.timeout_ms)}`)];
       return [
         words("Check "),
         ...describeTarget(a.selector),
         words(` has ${str(a.name)} set to "${withoutHosts(str(a.equals))}"${upTo(a.timeout_ms)}`),
       ];
+    case "expect_enabled":
+      return [words("Check "), ...describeTarget(a.selector), words(` can be used${upTo(a.timeout_ms)}`)];
+    case "expect_disabled":
+      return [words("Check "), ...describeTarget(a.selector), words(` is disabled${upTo(a.timeout_ms)}`)];
     case "sign_in":
       return [words(`Sign in as ${str(a.account)}`)];
     case "upload":

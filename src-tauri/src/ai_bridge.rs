@@ -2157,6 +2157,8 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::ExpectText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectAttribute { selector, .. }
+        | Action::ExpectEnabled { selector, .. }
+        | Action::ExpectDisabled { selector, .. }
         | Action::ExpectFocused { selector, .. } => vec![(selector, 1)],
         Action::ExpectCount { selector, equals, .. } => {
             if *equals >= 1 {
@@ -2563,6 +2565,8 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
+        | Action::ExpectEnabled { selector, .. }
+        | Action::ExpectDisabled { selector, .. }
         | Action::ExpectFocused { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. } => selector.describe(),

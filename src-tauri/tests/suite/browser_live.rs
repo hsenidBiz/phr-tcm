@@ -3331,3 +3331,34 @@ async fn states_a_read_within_one_element_lists_only_its_subtree() {
     let refused = within_node(&mut live.cdp, &none).await.unwrap().unwrap_err();
     assert!(refused.starts_with("within matched 0 elements: "), "{refused}");
 }
+
+/// `expect_enabled` and `expect_disabled` on a real page: an enabled
+/// button, one with the `disabled` property, one with
+/// `aria-disabled="true"`, a field a disabled fieldset holds, and a button
+/// in that fieldset's first legend, which HTML leaves usable. And
+/// `expect_attribute` with `absent`.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_enabled_and_disabled_are_read_from_the_page() {
+    let mut live = open_states().await;
+    // A check that is meant to fail waits 300 ms, not the full 3 s: polling
+    // role lookups for many seconds in a row stalls Edge's answers (seen
+    // with expect_text as much as with these), which is not under test here.
+    let check = |kind: &str, name: &str| {
+        json!({ "kind": kind, "selector": { "role": "button", "name": name, "exact": true }, "timeout_ms": 300 })
+    };
+    must(run(&mut live, check("expect_enabled", "Enabled action")).await);
+    refused(run(&mut live, check("expect_disabled", "Enabled action")).await, "is enabled");
+    must(run(&mut live, check("expect_disabled", "Disabled action")).await);
+    refused(run(&mut live, check("expect_enabled", "Disabled action")).await, "is disabled: its disabled property is set");
+    must(run(&mut live, check("expect_disabled", "Unavailable action")).await);
+    refused(run(&mut live, check("expect_enabled", "Unavailable action")).await, "is disabled: it has aria-disabled=\"true\"");
+    must(run(&mut live, check("expect_enabled", "Legend action")).await);
+    let field = json!({ "kind": "expect_disabled", "selector": { "role": "textbox", "name": "Locked field" } });
+    let out = run(&mut live, field).await;
+    assert!(out.ok && out.detail.ends_with("is disabled: a disabled fieldset holds it"), "{}", out.detail);
+
+    let absent = |name: &str| json!({ "kind": "expect_attribute", "selector": "#enabled", "name": name, "absent": true });
+    must(run(&mut live, absent("aria-pressed")).await);
+    refused(run(&mut live, absent("type")).await, "still has type=\"button\"");
+}
