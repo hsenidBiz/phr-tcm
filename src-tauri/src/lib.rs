@@ -102,6 +102,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::AutorunResetNeeded,
             events::RecordingEvent,
             events::ApiTemplatesChanged,
+            events::AutorunScriptsChanged,
             events::AutorunCleanupProgress,
             events::GuideProgress
         ])
@@ -488,6 +489,15 @@ pub fn run() {
             // A discovery starts and ends in the AI bridge, which has no
             // AppHandle either: Auto Run hears it through this one.
             commands::autorun::set_discovery_events(app.handle().clone());
+            // Every script written or removed, whoever did it, is said to
+            // the window: the Auto Run screen reads those scripts again.
+            {
+                let app = app.handle().clone();
+                autorun::store::on_scripts_changed(move |_, ids| {
+                    use tauri_specta::Event as _;
+                    let _ = events::AutorunScriptsChanged { case_ids: ids.to_vec() }.emit(&app);
+                });
+            }
 
             use tauri::Manager;
             // Each database's saved login, and the list naming the person's

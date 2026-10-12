@@ -1372,6 +1372,7 @@ export const events = {
 	autorunDiscoveryChanged: makeEvent<AutorunDiscoveryChanged>("autorun-discovery-changed"),
 	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
 	autorunResetNeeded: makeEvent<AutorunResetNeeded>("autorun-reset-needed"),
+	autorunScriptsChanged: makeEvent<AutorunScriptsChanged>("autorun-scripts-changed"),
 	autorunSessionChanged: makeEvent<AutorunSessionChanged>("autorun-session-changed"),
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
@@ -2090,6 +2091,16 @@ export type AutorunResetNeeded = {
 	names: string[],
 	changed_by: ([string, number[]])[],
 	remaining: number[],
+};
+
+/**
+ *  Emitted whenever Auto Run scripts on disk change: saved, edited,
+ *  repaired, marked, cleared or deleted, by the person, the assistant or a
+ *  replay. `case_ids` are the cases whose script changed; the Auto Run
+ *  screen reads those again, so a change shows without a reload.
+ */
+export type AutorunScriptsChanged = {
+	case_ids: number[],
 };
 
 /**

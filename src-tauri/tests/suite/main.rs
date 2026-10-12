@@ -81,6 +81,7 @@ mod autorun_report;
 mod autorun_reset;
 mod autorun_run_files;
 mod autorun_runner;
+mod autorun_scripts_changed;
 mod autorun_session_refused;
 mod autorun_setup;
 mod autorun_signin;

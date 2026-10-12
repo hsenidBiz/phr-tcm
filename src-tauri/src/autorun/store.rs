@@ -42,6 +42,33 @@ fn scripts_dir(root: &Path) -> PathBuf {
     root.join("scripts")
 }
 
+/// Told of every change to the scripts on disk: the store's root and the
+/// cases whose script was written or removed.
+type ChangeListener = Box<dyn Fn(&Path, &[i32]) + Send + Sync>;
+
+/// Everyone told of a change to the scripts (`on_scripts_changed`). The app
+/// adds one at startup that says so to the window, so the Auto Run screen
+/// reads a script again whoever changed it: the person, the assistant, or
+/// a replay.
+static LISTENERS: Mutex<Vec<ChangeListener>> = Mutex::new(Vec::new());
+
+/// Be told of every script written or removed from now on, as the store's
+/// root and the cases it touched.
+pub fn on_scripts_changed(f: impl Fn(&Path, &[i32]) + Send + Sync + 'static) {
+    LISTENERS.lock().unwrap_or_else(|e| e.into_inner()).push(Box::new(f));
+}
+
+/// Tell every listener that these cases' scripts changed. Nothing is said
+/// for no case.
+fn scripts_changed(root: &Path, case_ids: &[i32]) {
+    if case_ids.is_empty() {
+        return;
+    }
+    for listener in LISTENERS.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        listener(root, case_ids);
+    }
+}
+
 fn runs_dir(root: &Path) -> PathBuf {
     root.join("runs")
 }
@@ -78,8 +105,9 @@ pub fn save_script(root: &Path, script: &CaseScript) -> Result<(), String> {
     let dir = scripts_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(script).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(format!("case-{}.json", script.case_id)), json)
-        .map_err(|e| e.to_string())
+    std::fs::write(dir.join(format!("case-{}.json", script.case_id)), json).map_err(|e| e.to_string())?;
+    scripts_changed(root, &[script.case_id]);
+    Ok(())
 }
 
 /// Why a bundle save failed - so a caller with an HTTP status to pick
@@ -258,6 +286,8 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
             return Err(SaveScriptsError::Io(e.to_string()));
         }
     }
+    let ids: Vec<i32> = scripts.iter().map(|s| s.case_id).collect();
+    scripts_changed(root, &ids);
     Ok(())
 }
 
@@ -320,6 +350,7 @@ fn write_script(root: &Path, script: &CaseScript) -> Result<(), String> {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.to_string());
     }
+    scripts_changed(root, &[script.case_id]);
     Ok(())
 }
 
@@ -781,18 +812,22 @@ pub fn clear_scripts(root: &Path, case_ids: &[i32]) -> Result<usize, String> {
     // file into place, and a delete landing between would be undone.
     let _held = scripts_lock();
     let dir = scripts_dir(root);
-    let mut removed = 0usize;
+    let mut removed: Vec<i32> = vec![];
     for id in case_ids {
         let path = dir.join(format!("case-{id}.json"));
         match std::fs::remove_file(&path) {
-            Ok(()) => removed += 1,
+            Ok(()) => removed.push(*id),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("could not remove {}: {e}", path.display())),
+            Err(e) => {
+                scripts_changed(root, &removed);
+                return Err(format!("could not remove {}: {e}", path.display()));
+            }
         }
         // A replay kept for the case goes with its script.
         super::replay_record::forget(root, *id);
     }
-    Ok(removed)
+    scripts_changed(root, &removed);
+    Ok(removed.len())
 }
 
 /// Delete every saved run, and every screenshot and download with it -
