@@ -28,6 +28,8 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_contains_text",
     "expect_count",
     "expect_attribute",
+    "expect_enabled",
+    "expect_disabled",
     "sign_in",
     "upload",
     "expect_response",
@@ -67,6 +69,34 @@ pub fn autorun_guide() -> String {
     out.push('\n');
     out.push_str(GUIDE_BODY);
     out
+}
+
+/// The `##` section titles of `guide` (the live guide, its project
+/// sections included), in order.
+pub fn section_titles(guide: &str) -> Vec<&str> {
+    guide.lines().filter_map(|l| l.strip_prefix("## ")).map(str::trim).collect()
+}
+
+/// What `get_autorun_guide` with `section` answers: the Quick rules, then
+/// the one `##` section of `guide` whose title is `title` (case and the
+/// space around it ignored), down to the next `##` heading, its `###`
+/// parts included. The Quick rules asked for by name come once. An
+/// unknown title is refused with every title there is, one to a line.
+pub fn guide_section(guide: &str, title: &str) -> Result<String, String> {
+    let want = title.trim().to_lowercase();
+    let lines: Vec<&str> = guide.lines().collect();
+    let at = lines.iter().position(|l| l.strip_prefix("## ").is_some_and(|t| t.trim().to_lowercase() == want));
+    let Some(at) = at else {
+        let titles: Vec<String> = section_titles(guide).iter().map(|t| format!("- {t}")).collect();
+        return Err(format!("The guide has no section called \"{}\". Its sections are:\n{}", title.trim(), titles.join("\n")));
+    };
+    let end = lines[at + 1..].iter().position(|l| l.starts_with("## ")).map_or(lines.len(), |e| at + 1 + e);
+    let section = lines[at..end].join("\n");
+    let quick = quick_rules();
+    if lines[at].trim() == "## Quick rules" {
+        return Ok(quick);
+    }
+    Ok(format!("{}\n\n{}\n", quick.trim_end(), section.trim_end()))
 }
 
 /// The Quick rules section alone: what `get_autorun_guide` with
@@ -173,7 +203,9 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_text", "selector": ..., "equals": "..." }`
 - `{ "kind": "expect_contains_text", "selector": ..., "value": "..." }`
 - `{ "kind": "expect_count", "selector": ..., "equals": 3 }`
-- `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }`
+- `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute
+- `{ "kind": "expect_enabled", "selector": ... }` - the element can be used
+- `{ "kind": "expect_disabled", "selector": ... }` - the element is disabled: its `disabled` property is set, it or an element around it has `aria-disabled="true"`, or it is a form control (button, input, select, textarea) a disabled fieldset holds outside that fieldset's first legend; a link in a disabled fieldset is not disabled. A click waits out the same rule
 - `{ "kind": "sign_in", "account": "hr.supervisor" }` - change who is signed in, in the middle of a case
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page (same-origin frames included), right now? A hidden frame is not searched, and a frame holding a page from another site is not searched.
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address, right now?
@@ -382,6 +414,10 @@ not appear. Guard the click with `when_visible` instead:
   records no consent.
 - Use it only for something that genuinely may not appear. A step the
   test always expects belongs in the script as a plain action.
+- A save checks the `when_visible` selector, and any `then` action on
+  that same locator, against what was seen in every area of the project,
+  not only the script's: a banner seen on the sign-in page counts. It
+  still needs one seen matching exactly one element.
 
 ## Checking the API
 
@@ -1017,8 +1053,8 @@ is CALLED:
 - `{ "text": "Step 1 of 6" }` - the deepest element showing those words
 - `{ "css": "#save" }` - for a real id or data-testid
 
-`role` is the ARIA role (button, link, textbox, checkbox, combobox,
-searchbox, dialog, heading, row, cell...) and `name` is the
+`role` is the ARIA role (button, link, textbox, checkbox, switch,
+combobox, searchbox, dialog, heading, row, cell...) and `name` is the
 accessible name: a button's words, a field's label. Both come from the browser's own
 accessibility tree, so they match what a screen reader would announce.
 
@@ -1035,7 +1071,9 @@ before it:
 
 Only what a person could SEE is matched. Applications keep hidden copies
 of dialogs and menus in the page; they are ignored unless an entry says
-`"visible": false`.
+`"visible": false`. A form control drawn at no size under a widget of
+its own, such as a toggle switch's input under its slider, counts as
+seen when its label can be seen, and a click on it clicks that label.
 
 A locator must end up meaning exactly one element. If it matches several,
 the action fails and says how many: narrow it with a list, `"exact"`, or
@@ -1045,10 +1083,14 @@ entry matched, taken in page order, not from the matches inside one of
 them. Only `expect_count`, `expect_hidden` and `wait_for` are happy with
 many.
 
-Use full names, and probe `nth` locators exactly as written. A save checks
-a name as it was seen, so a part of a name ("Reviewer" for "Reviewer:
-30%") is refused even though a run would find it; and an `nth` locator is
-seen only once it was probed with its `nth`.
+Use full names, and probe `nth` locators exactly as written. A check that
+may match several (`expect_hidden`, `expect_count`, `wait_for`) may name
+a part of a seen name in the same role, of at least 3 characters, on a
+plain locator (one entry, no `nth`, no `"visible": false`, not `"exact"`):
+"Reviewer:" for the text "Reviewer: 30%", "Evaluators" for the
+progressbar "Step 4 of 9 Evaluators". Every other use needs the full name
+as it was seen, and a refusal names the seen one that holds the part. An
+`nth` locator is seen only once it was probed with its `nth`.
 
 A misspelt field is rejected, not ignored. Each entry takes exactly one
 of `role`, `text` or `css`.
@@ -1074,7 +1116,18 @@ browser (see "Discovering the app"):
 
 - `get_autorun_page` shows what the accessibility tree calls things, one
   element per line, with the locator that reaches it on the end of the
-  line.
+  line. It answers the first 120 lines, then a line saying how many more
+  there are. Ask for more with `limit` (at most 3000), or list one part
+  of the page with `within`: a locator, written as a script writes one,
+  that matches exactly one element, such as a dialog or a form. Only that
+  element and what is inside it is listed; a `within` that matches none
+  or several is refused with the count; a css string counts every
+  visible match. A replay's page, and the page `discover_autorun_action`
+  and `discover_autorun_actions` answer, stop at 120 lines too.
+- A line with no locator on its end names nothing a script can act on:
+  the page itself, a list bullet, and the options of a native list
+  (a customizable one included), which a script picks with `fill` on the
+  list, by the option's label.
 - `probe_autorun_locator` says how many elements a locator matches right
   now, before it goes into a script.
 - `try_autorun_action` runs one action in that same browser and says what
@@ -1121,7 +1174,11 @@ You open and drive a browser of your own to find what a script needs:
   the discovery browser too. During a discovery with an area,
   `get_autorun_page` records what it shows as seen under that area, and
   its answer ends with how many elements it recorded; with no area named
-  it records nothing and says how to name one.
+  it records nothing and says how to name one. Only a read of the whole
+  page marks the area explored: a read cut short by its limit, or one
+  `within` an element, records what it listed and drops nothing, and
+  each line it listed counts the elements its locator matches on the
+  whole page.
 - `discover_autorun_actions` carries out up to 20 actions in order, each
   carried out as `discover_autorun_action` would, and what each one's page
   showed is recorded as seen. Every action is checked first: if any would
@@ -1207,15 +1264,19 @@ What a save checks:
 
 - Every locator in the script must have been seen on the live app: every
   click, fill and check target, each link of a chained locator, the
-  actions inside `when_visible`, and the tab actions.
+  actions inside `when_visible`, and the tab actions. A part of a seen
+  name counts as described under "Selectors", and a `when_visible`'s own
+  locator may have been seen in any area (see "Dismissing what may not
+  show up").
 - How many elements it was seen matching depends on how it is used. A
   check that can pass with several matches (`expect_hidden`,
   `expect_count`, `wait_for`) may use a locator seen matching several
   elements. Every other use needs a locator seen matching exactly one: an
   action (click, fill, upload, press_key, drag), the selector a
   `when_visible` waits for, and the checks that read one element (`expect_visible`, `expect_text`,
-  `expect_contains_text`, `expect_attribute`, `expect_focused`, and the
-  table checks, whose table must be one). A locator never seen matching
+  `expect_contains_text`, `expect_attribute`, `expect_enabled`,
+  `expect_disabled`, `expect_focused`, and the table checks, whose table
+  must be one). A locator never seen matching
   anything is refused for every use, `expect_hidden` included: probe it
   while what it names is on the page.
 - A `navigate` or `open_tab` address must be one discovery has visited.
@@ -1234,9 +1295,14 @@ A new script is checked in full. A script saved before is checked again
 only when it is next changed.
 
 A refused save lists every locator never seen, in step order, one to a
-line, each with a hint when a close one was seen: `Step N: <the locator>
-was never seen on the live app.` (at most 50, then how many more). Find
-each on the page with
+line, each with a hint when a close one was seen and what that use needs:
+`Step N: <the locator> was never seen on the live app; this click needs
+one seen matching exactly one element.` (at most 50, then how many more).
+A locator that was seen says instead why it does not count: seen only
+matching several elements, never counted as one (probe it as written,
+with its `nth` when it has one), or used only in saved checks. A part
+of a seen name, where the full name is needed, is told to use the full
+name as seen. Find each on the page with
 `probe_autorun_locator` or `discover_autorun_action`, then save again.
 Never swap in a locator you did not see to get past the check.
 
@@ -1421,6 +1487,10 @@ Before every save:
   something is refused.
 - Check a state with `expect_attribute` on the element you saw (`checked`,
   `aria-checked` or `disabled`), not by adding a state to its selector.
+  Whether a control can be used is `expect_enabled` or `expect_disabled`,
+  which read the `disabled` property, `aria-disabled` on it or around it,
+  and a disabled fieldset around a form control, together. An attribute that must not be there is
+  `expect_attribute` with `"absent": true` instead of `equals`.
 - A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
   text (`{ "text": "Draft {{setup.cycle_name}} Pending" }`), in a quoted
   attribute value (`div[data-cycle-id="{{setup.cycle_id}}"]`), or next to

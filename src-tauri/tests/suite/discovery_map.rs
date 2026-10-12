@@ -835,3 +835,34 @@ fn a_cut_read_does_not_file_one_match() {
     assert_eq!(map.areas[0].sightings[0].matched, NOT_ONE);
     assert_eq!(map.areas[0].pages[0].elements[0].matched, NOT_ONE);
 }
+
+/// A read cut short, or one that listed only an element's subtree, counts
+/// each line it listed against the whole page when it knows the page's
+/// lines: a "Save" listed once with a second "Save" outside what was
+/// listed is two, and one with no twin anywhere is one. It still never
+/// explores the page: no stamp, and nothing it did not list is dropped.
+/// Without the page's lines (a frame was missed) a count of one stays
+/// `NOT_ONE`, as it always was.
+#[test]
+fn a_part_read_counts_against_the_whole_page_and_explores_nothing() {
+    use v2_lib::autorun::discovery_map::{record_read_counted, NOT_ONE};
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Earlier")], None, Some(1), 1).unwrap();
+    let page = [line("button", "Save"), line("button", "Apply"), line("button", "Save")];
+    let listed = [line("button", "Save"), line("button", "Apply")];
+    record_read_counted(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &listed, Some(&page), None, Some(5), false, 5).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let a = map.areas.iter().find(|a| a.area == "A").unwrap();
+    let matched = |name: &str| a.sightings.iter().find(|s| s.key == role_key("button", name)).map(|s| s.matched);
+    assert_eq!(matched("Save"), Some(2), "a twin outside what was listed still counts");
+    assert_eq!(matched("Apply"), Some(1), "one on the whole page is one");
+    assert_eq!(matched("Earlier"), Some(1), "a part read dropped what it did not list");
+    assert_eq!(a.explored_at, Some(1), "a part read stamped the area explored");
+
+    record_read_counted(dir.path(), "Acme", "Web", Some("A"), "/q", "Q", &[line("button", "Lone")], None, None, Some(6), false, 6)
+        .unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let a = map.areas.iter().find(|a| a.area == "A").unwrap();
+    let lone = a.sightings.iter().find(|s| s.key == role_key("button", "Lone")).unwrap();
+    assert_eq!(lone.matched, NOT_ONE, "without the page's lines a cut count of one is not known");
+}

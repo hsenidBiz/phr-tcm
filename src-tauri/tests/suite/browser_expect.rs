@@ -141,6 +141,56 @@ async fn attribute_compares_and_reports_a_missing_one() {
     assert!(!out.ok && out.detail.contains("has no aria-checked"), "{}", out.detail);
 }
 
+/// `absent: true` passes when the element has no such attribute and fails
+/// naming the value it has; it takes the place of `equals`, never both.
+#[tokio::test]
+async fn an_absent_attribute_passes_only_when_it_is_not_there() {
+    let check = action(json!({ "kind": "expect_attribute", "selector": { "css": "#toggle" }, "name": "aria-pressed", "absent": true }));
+    let mut d = FakePage { attribute: None, ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &check, &quick()).await;
+    assert!(out.ok && out.detail == "#toggle has no aria-pressed attribute", "{}", out.detail);
+    let mut d = FakePage { attribute: Some("false"), ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &check, &quick()).await;
+    assert!(!out.ok && out.detail.contains("still has aria-pressed=\"false\""), "{}", out.detail);
+
+    let both = action(json!({ "kind": "expect_attribute", "selector": "#t", "name": "x", "equals": "1", "absent": true }));
+    assert_eq!(both.validate().unwrap_err(), v2_lib::browser::actions::ATTRIBUTE_EQUALS_OR_ABSENT);
+    let neither = action(json!({ "kind": "expect_attribute", "selector": "#t", "name": "x" }));
+    assert_eq!(neither.validate().unwrap_err(), v2_lib::browser::actions::ATTRIBUTE_NEEDS_ONE);
+    // `absent` is written only when it is set, and `equals` only when given,
+    // so a script saved before either existed reads back as it was written.
+    let old = json!({ "kind": "expect_attribute", "selector": "#t", "name": "x", "equals": "" });
+    assert_eq!(serde_json::to_value(action(old.clone())).unwrap(), old);
+    assert_eq!(serde_json::to_value(&check).unwrap()["absent"], true);
+    assert!(serde_json::to_value(&check).unwrap().get("equals").is_none());
+}
+
+/// `expect_enabled` and `expect_disabled` read one element's state, say why
+/// it is disabled, and need exactly one match.
+#[tokio::test]
+async fn enabled_and_disabled_read_one_elements_state() {
+    let enabled = action(json!({ "kind": "expect_enabled", "selector": { "css": "#save" } }));
+    let disabled = action(json!({ "kind": "expect_disabled", "selector": { "css": "#save" } }));
+    let mut d = FakePage::default().driver();
+    let out = execute_with(&mut d, &enabled, &quick()).await;
+    assert!(out.ok && out.detail == "#save is enabled", "{}", out.detail);
+    let out = execute_with(&mut d, &disabled, &quick()).await;
+    assert!(!out.ok && out.detail.ends_with(" is enabled"), "{}", out.detail);
+
+    let mut d = FakePage { disabled_why: "it has aria-disabled=\"true\"", ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &disabled, &quick()).await;
+    assert!(out.ok && out.detail == "#save is disabled: it has aria-disabled=\"true\"", "{}", out.detail);
+    let out = execute_with(&mut d, &enabled, &quick()).await;
+    assert!(!out.ok && out.detail.contains("is disabled: it has aria-disabled"), "{}", out.detail);
+
+    let mut d = FakePage { found: 2, ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &enabled, &quick()).await;
+    assert!(!out.ok && out.detail.contains("matched 2 elements"), "{}", out.detail);
+    assert!(enabled.is_check() && disabled.is_check());
+    assert_eq!(enabled.kind(), "expect_enabled");
+    assert_eq!(disabled.kind(), "expect_disabled");
+}
+
 #[tokio::test]
 async fn its_own_timeout_wins_over_the_default() {
     let mut d = FakePage { found: 0, ..FakePage::default() }.driver();

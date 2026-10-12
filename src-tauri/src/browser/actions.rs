@@ -68,10 +68,29 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
+    /// The one element's attribute `name` is `equals`, or, with `absent`,
+    /// the element has no such attribute. Exactly one of the two is given.
     ExpectAttribute {
         selector: Target,
         name: String,
-        equals: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        absent: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// The one element can be used: not disabled (`expect::DISABLED_JS`).
+    ExpectEnabled {
+        selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// The one element is disabled: its `disabled` property is set, it
+    /// carries `aria-disabled="true"`, or a disabled fieldset holds it
+    /// (outside that fieldset's first legend) - `expect::DISABLED_JS`.
+    ExpectDisabled {
+        selector: Target,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
@@ -960,16 +979,23 @@ impl Action {
             | Action::ExpectVisible { selector, .. }
             | Action::ExpectHidden { selector, .. }
             | Action::ExpectText { selector, .. }
-            | Action::ExpectCount { selector, .. } => selector.validate(),
+            | Action::ExpectCount { selector, .. }
+            | Action::ExpectEnabled { selector, .. }
+            | Action::ExpectDisabled { selector, .. } => selector.validate(),
             Action::ExpectContainsText { selector, value, .. } => {
                 if value.trim().is_empty() {
                     return Err("expect_contains_text has an empty value - everything contains nothing".to_string());
                 }
                 selector.validate()
             }
-            Action::ExpectAttribute { selector, name, .. } => {
+            Action::ExpectAttribute { selector, name, equals, absent, .. } => {
                 if name.trim().is_empty() {
                     return Err("expect_attribute has an empty name".to_string());
+                }
+                match (equals.is_some(), *absent) {
+                    (true, true) => return Err(ATTRIBUTE_EQUALS_OR_ABSENT.to_string()),
+                    (false, false) => return Err(ATTRIBUTE_NEEDS_ONE.to_string()),
+                    _ => {}
                 }
                 selector.validate()
             }
@@ -1186,6 +1212,8 @@ impl Action {
             | Action::ExpectContainsText { selector, .. }
             | Action::ExpectCount { selector, .. }
             | Action::ExpectAttribute { selector, .. }
+            | Action::ExpectEnabled { selector, .. }
+            | Action::ExpectDisabled { selector, .. }
             | Action::Upload { selector, .. }
             | Action::ExpectFocused { selector, .. } => vec![selector],
             Action::WhenVisible { selector, then, .. } => {
@@ -1230,6 +1258,8 @@ impl Action {
             | Action::ExpectContainsText { selector, .. }
             | Action::ExpectCount { selector, .. }
             | Action::ExpectAttribute { selector, .. }
+            | Action::ExpectEnabled { selector, .. }
+            | Action::ExpectDisabled { selector, .. }
             | Action::Upload { selector, .. }
             | Action::ExpectFocused { selector, .. } => vec![selector],
             Action::WhenVisible { selector, then, .. } => {
@@ -1291,6 +1321,8 @@ impl Action {
                 | Action::ExpectContainsText { .. }
                 | Action::ExpectCount { .. }
                 | Action::ExpectAttribute { .. }
+                | Action::ExpectEnabled { .. }
+                | Action::ExpectDisabled { .. }
                 | Action::ExpectFocused { .. }
                 | Action::ExpectResponse { .. }
                 | Action::ApiRequest { .. }
@@ -1305,6 +1337,13 @@ impl Action {
         )
     }
 }
+
+/// `expect_attribute` given both `equals` and `absent: true`.
+pub const ATTRIBUTE_EQUALS_OR_ABSENT: &str =
+    "expect_attribute takes \"equals\" or \"absent\": true, not both - a missing attribute has no value to compare";
+/// `expect_attribute` given neither.
+pub const ATTRIBUTE_NEEDS_ONE: &str =
+    "expect_attribute needs \"equals\" (the value it must have) or \"absent\": true (it must not be there)";
 
 /// What `navigate`, and `open_tab` after it, say about an address that is
 /// not one a browser can be sent to.
@@ -1580,8 +1619,19 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::ExpectCount { selector, equals, timeout_ms } => {
             expect::expect(d, selector, Check::Count(*equals), wait(timeout_ms, timing), timing.poll_ms).await
         }
-        Action::ExpectAttribute { selector, name, equals, timeout_ms } => {
-            expect::expect(d, selector, Check::Attribute { name, equals }, wait(timeout_ms, timing), timing.poll_ms).await
+        Action::ExpectAttribute { selector, name, equals, timeout_ms, .. } => {
+            // `validate` holds `equals` and `absent` to exactly one.
+            let check = match equals {
+                Some(equals) => Check::Attribute { name, equals },
+                None => Check::NoAttribute { name },
+            };
+            expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectEnabled { selector, timeout_ms } => {
+            expect::expect(d, selector, Check::Enabled, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectDisabled { selector, timeout_ms } => {
+            expect::expect(d, selector, Check::Disabled, wait(timeout_ms, timing), timing.poll_ms).await
         }
         // The runner intercepts `sign_in` before it ever reaches this
         // executor (it alone has the tester's accounts and the project's

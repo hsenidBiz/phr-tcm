@@ -91,9 +91,14 @@ pub fn action_words(action: &Action) -> String {
         Action::ExpectCount { selector, equals, .. } => {
             format!("expect {equals} of {}", selector.describe())
         }
-        Action::ExpectAttribute { selector, name, equals, .. } => {
+        Action::ExpectAttribute { selector, name, equals: Some(equals), .. } => {
             format!("expect {}'s {name} to be \"{equals}\"", selector.describe())
         }
+        Action::ExpectAttribute { selector, name, equals: None, .. } => {
+            format!("expect {} to have no {name}", selector.describe())
+        }
+        Action::ExpectEnabled { selector, .. } => format!("expect {} to be enabled", selector.describe()),
+        Action::ExpectDisabled { selector, .. } => format!("expect {} to be disabled", selector.describe()),
         Action::SignIn { account } => format!("sign in as {account}"),
         Action::Upload { selector, file } => format!("upload {file} into {}", selector.describe()),
         Action::ExpectResponse { method, url_contains, status, .. } => {

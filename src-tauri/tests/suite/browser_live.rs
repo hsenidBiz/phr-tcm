@@ -3177,3 +3177,275 @@ async fn one_browser_gives_each_case_a_context_of_its_own() {
     drop(browsers);
     assert_eq!(closes.load(Ordering::SeqCst), 1, "closed once, at the end of the run");
 }
+
+/// The page with enabled, disabled and `aria-disabled` buttons, switches
+/// built three ways, and one element of most roles the page read prints.
+fn states_fixture_url() -> String {
+    fixture_url().replace("autorun-live.html", "autorun-states.html")
+}
+
+/// `open()`, then on to the states fixture.
+async fn open_states() -> Live {
+    let mut live = open().await;
+    let out = run(&mut live, json!({ "kind": "navigate", "url": states_fixture_url() })).await;
+    assert!(out.ok, "the states fixture did not load: {}", out.detail);
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": { "css": "#enabled" } })).await);
+    live
+}
+
+/// Every line the page read prints is a locator a script may copy, so each
+/// must find its element: the read's role and the resolver's role are the
+/// same word for the same element. The table names the roles this page is
+/// built to show (a switch three ways among them, the toggle sized to
+/// nothing under its slider), each of which the read must print and the
+/// resolver must find exactly once; then every other line the read printed
+/// must resolve too. Lines with no locator (`NO_LOCATOR_ROLES`, a closed
+/// native list's options) carry no locator to resolve.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_every_line_the_page_read_prints_resolves() {
+    use v2_lib::browser::snapshot::snapshot_with_lines;
+    let mut live = open_states().await;
+    let (text, lines) = snapshot_with_lines(&mut live.cdp, 2000).await.expect("the page read failed");
+    for (role, name) in [
+        ("switch", "Email alerts"),
+        ("switch", "Dark mode"),
+        ("switch", "Evaluator included"),
+        ("switch", "Weekly digest"),
+        ("button", "Enabled action"),
+        ("button", "Disabled action"),
+        ("checkbox", "Plain checkbox"),
+        ("radio", "Plain radio"),
+        ("searchbox", "Find things"),
+        ("slider", "Volume"),
+        ("spinbutton", "Count"),
+        ("combobox", "Colour"),
+        ("listbox", "Sizes"),
+        ("textbox", "Notes"),
+        ("progressbar", "Upload progress"),
+        ("meter", "Disk use"),
+        ("image", "Company logo"),
+        ("list", "Fruit"),
+        ("navigation", "Side menu"),
+        ("tablist", "Tabs"),
+        ("tab", "First tab"),
+        ("tabpanel", "First panel"),
+        ("menubar", "Menu bar"),
+        ("menuitem", "File"),
+        ("menuitemcheckbox", "Wrap"),
+        ("menuitemradio", "Plain"),
+        ("tree", "Folders"),
+        ("treeitem", "Root folder"),
+        ("dialog", "Small dialog"),
+        ("toolbar", "Tools"),
+        ("slider", "Brightness"),
+        ("spinbutton", "Steps"),
+        ("combobox", "Picker"),
+        ("option", "Choice one"),
+        ("grid", "People"),
+        ("columnheader", "Name"),
+        ("gridcell", "Ann"),
+        ("table", "Plain table"),
+        ("region", "A region"),
+        ("group", "A group"),
+        ("log", "Activity"),
+        ("marquee", "Ticker"),
+        ("timer", "Clock"),
+        ("feed", "Posts"),
+        ("article", "Post one"),
+        ("figure", "A figure"),
+        ("form", "A form"),
+        ("searchbox", "Role searchbox"),
+        ("radiogroup", "Choice group"),
+        ("separator", "Divider"),
+        ("scrollbar", "Scroller"),
+        ("math", "Formula"),
+        ("banner", "Top banner"),
+        ("contentinfo", "Footer info"),
+        ("complementary", "Aside"),
+        ("application", "An app"),
+        ("document", "A document"),
+        ("article", "An article"),
+        ("search", "Search area"),
+    ] {
+        let line = lines
+            .iter()
+            .find(|l| l.role == role && l.name == name)
+            .unwrap_or_else(|| panic!("the read printed no {role} \"{name}\":\n{text}"));
+        let found = resolve(&mut live.cdp, &line.locator).await.expect("resolve failed");
+        assert_eq!(found.len(), 1, "{role} \"{name}\" as the read wrote it found {}", found.len());
+    }
+    let mut missing = Vec::new();
+    for line in &lines {
+        match resolve(&mut live.cdp, &line.locator).await {
+            Ok(found) if found.is_empty() => missing.push(format!("{} \"{}\"", line.role, line.name)),
+            Ok(_) => {}
+            Err(e) => missing.push(format!("{} \"{}\": {e}", line.role, line.name)),
+        }
+    }
+    assert!(missing.is_empty(), "the read printed these, and the resolver found none: {missing:?}");
+    for bare in ["RootWebArea \"States and roles\"", "option \"Red\""] {
+        let printed = text.lines().find(|l| l.trim_start().starts_with(bare)).unwrap_or_else(|| panic!("no {bare}:\n{text}"));
+        assert!(!printed.contains(" -> "), "a line nothing can act on carries a locator: {printed}");
+    }
+}
+
+/// The report's switch: the usual toggle, an `<input role="switch">` sized
+/// to nothing under a slider drawn in its label. The page read lists it,
+/// so a probe by its role finds it, as visible, and a click on it is a
+/// click on the slider that the page sees.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_a_switch_sized_to_nothing_is_found_and_clicked_by_its_role() {
+    let mut live = open_states().await;
+    let target = action_target(json!({ "role": "switch", "name": "Evaluator included" }));
+    let said = probe(&mut live.cdp, &target).await.expect("the probe failed");
+    assert!(said.starts_with("matches: 1\ninput ") && said.contains(" visible at "), "{said}");
+    let all = action_target(json!({ "role": "switch" }));
+    assert_eq!(resolve(&mut live.cdp, &all).await.unwrap().len(), 4, "every switch on the page");
+    must(run(&mut live, json!({ "kind": "click", "selector": { "role": "switch", "name": "Evaluator included" } })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#switch-state", "equals": "included" })).await);
+}
+
+/// `within` on a real page: the one element a locator matches is listed
+/// with what is inside it and nothing else, and a locator matching several
+/// or none is refused with its count.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_a_read_within_one_element_lists_only_its_subtree() {
+    use v2_lib::browser::snapshot::{snapshot_read_within, within_node};
+    let mut live = open_states().await;
+    let region = action_target(json!({ "role": "region", "name": "Switches" }));
+    let node = within_node(&mut live.cdp, &region).await.unwrap().expect("the region is one element");
+    let read = snapshot_read_within(&mut live.cdp, 120, Some(node)).await.unwrap();
+    assert!(read.text.starts_with("region \"Switches\""), "{}", read.text);
+    let roles: Vec<&str> = read.lines.iter().map(|l| l.role.as_str()).collect();
+    assert!(roles.iter().filter(|r| **r == "switch").count() == 4, "{}", read.text);
+    assert!(!read.text.contains("Enabled action"), "a line outside the element was listed: {}", read.text);
+    assert!(read.cut && read.page_lines.as_ref().is_some_and(|p| p.len() > read.lines.len()));
+
+    let many = action_target(json!({ "role": "switch" }));
+    let refused = within_node(&mut live.cdp, &many).await.unwrap().unwrap_err();
+    assert!(refused.starts_with("within matched 4 elements: "), "{refused}");
+    let none = action_target(json!({ "role": "dialog", "name": "Nowhere" }));
+    let refused = within_node(&mut live.cdp, &none).await.unwrap().unwrap_err();
+    assert!(refused.starts_with("within matched 0 elements: "), "{refused}");
+}
+
+/// `expect_enabled` and `expect_disabled` on a real page: an enabled
+/// button, one with the `disabled` property, one with
+/// `aria-disabled="true"`, a field a disabled fieldset holds, and a button
+/// in that fieldset's first legend, which HTML leaves usable. And
+/// `expect_attribute` with `absent`.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_enabled_and_disabled_are_read_from_the_page() {
+    let mut live = open_states().await;
+    // A check that is meant to fail waits 300 ms, not the full 3 s: polling
+    // role lookups for many seconds in a row stalls Edge's answers (seen
+    // with expect_text as much as with these), which is not under test here.
+    let check = |kind: &str, name: &str| {
+        json!({ "kind": kind, "selector": { "role": "button", "name": name, "exact": true }, "timeout_ms": 300 })
+    };
+    must(run(&mut live, check("expect_enabled", "Enabled action")).await);
+    refused(run(&mut live, check("expect_disabled", "Enabled action")).await, "is enabled");
+    must(run(&mut live, check("expect_disabled", "Disabled action")).await);
+    refused(run(&mut live, check("expect_enabled", "Disabled action")).await, "is disabled: its disabled property is set");
+    must(run(&mut live, check("expect_disabled", "Unavailable action")).await);
+    refused(run(&mut live, check("expect_enabled", "Unavailable action")).await, "is disabled: it has aria-disabled=\"true\"");
+    must(run(&mut live, check("expect_enabled", "Legend action")).await);
+    let field = json!({ "kind": "expect_disabled", "selector": { "role": "textbox", "name": "Locked field" } });
+    let out = run(&mut live, field).await;
+    assert!(out.ok && out.detail.ends_with("is disabled: a disabled fieldset holds it"), "{}", out.detail);
+
+    let absent = |name: &str| json!({ "kind": "expect_attribute", "selector": "#enabled", "name": name, "absent": true });
+    must(run(&mut live, absent("aria-pressed")).await);
+    refused(run(&mut live, absent("type")).await, "still has type=\"button\"");
+}
+
+/// A bare css `within`, as an assistant most often writes one, counts every
+/// visible match: "section" on a page of several sections is refused with
+/// the count, never read as its first match.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_a_bare_css_within_matching_several_is_refused() {
+    use v2_lib::ai_bridge::within_target;
+    use v2_lib::browser::snapshot::within_node;
+    let mut live = open_states().await;
+    let sections = within_target("section").unwrap();
+    let refused = within_node(&mut live.cdp, &sections).await.unwrap().unwrap_err();
+    assert!(refused.starts_with("within matched 5 elements: "), "{refused}");
+    let one = within_target("\"section[aria-label='Switches']\"").unwrap();
+    assert!(within_node(&mut live.cdp, &one).await.unwrap().is_ok());
+}
+
+/// The disabled rule on a real page, the one `expect_disabled` reads and a
+/// click waits out: a link and a `div role="button"` in a disabled
+/// fieldset are usable; a button in an inner disabled fieldset's legend is
+/// still held by the outer one; `aria-disabled` on an element around a
+/// button disables it, written with spaces and in capitals; a button in
+/// the first legend of a disabled fieldset is clicked at once.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_the_disabled_rule_follows_html_and_aria() {
+    let mut live = open_states().await;
+    let check = |kind: &str, css: &str| json!({ "kind": kind, "selector": { "css": css }, "timeout_ms": 300 });
+    must(run(&mut live, check("expect_enabled", "#fs-link")).await);
+    must(run(&mut live, check("expect_enabled", "#fs-div")).await);
+    let out = run(&mut live, check("expect_disabled", "#inner-legend")).await;
+    assert!(out.ok && out.detail.ends_with("is disabled: a disabled fieldset holds it"), "{}", out.detail);
+    let out = run(&mut live, check("expect_disabled", "#under-aria")).await;
+    assert!(out.ok && out.detail.ends_with("an element around it has aria-disabled=\"true\""), "{}", out.detail);
+    let started = std::time::Instant::now();
+    must(run(&mut live, json!({ "kind": "click", "selector": "#legend-button" })).await);
+    assert!(started.elapsed() < Duration::from_millis(2000), "the click waited {:?}", started.elapsed());
+    refused(run(&mut live, json!({ "kind": "click", "selector": "#inner-legend" })).await, "is disabled");
+}
+
+/// A checkbox drawn at no size is clicked through its label at a point the
+/// label's own link does not take, so the box is ticked and the link is
+/// never followed. A label that is nothing but a link leaves nowhere to
+/// click, and the click says so.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_a_label_click_never_lands_on_the_labels_link() {
+    use v2_lib::browser::input::NO_FREE_SPOT;
+    let mut live = open_states().await;
+    must(run(&mut live, json!({ "kind": "click", "selector": { "role": "checkbox", "name": "Accept terms" } })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#terms-state", "equals": "accepted" })).await);
+    must(run(&mut live, json!({ "kind": "check_url", "contains": "autorun-states.html" })).await);
+    let href = page::eval_value(&mut live.cdp, "location.hash").await.unwrap();
+    assert_eq!(href.as_str(), Some(""), "the label's link was followed");
+    let fast = Timing { action_ms: 800, ..timing() };
+    let out = run_with(&mut live, json!({ "kind": "click", "selector": { "role": "checkbox", "name": "Only a link" } }), &fast).await;
+    refused(out, NO_FREE_SPOT);
+}
+
+/// A backdrop over the label of a control drawn at no size is reported as
+/// covering it, as for any control, never as a label with nowhere to
+/// click: "nowhere to click" is only for a label whose every point is its
+/// own link or button.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_a_backdrop_over_a_zero_size_controls_label_covers_it() {
+    use v2_lib::browser::input::{COVERED_BY, NO_FREE_SPOT};
+    let mut live = open_states().await;
+    let fast = Timing { action_ms: 800, ..timing() };
+    let out = run_with(&mut live, json!({ "kind": "click", "selector": { "role": "checkbox", "name": "Covered box" } }), &fast).await;
+    assert!(!out.ok && out.detail.contains(&format!("{COVERED_BY}span#backdrop.backdrop")), "{}", out.detail);
+    assert!(!out.detail.contains(NO_FREE_SPOT), "{}", out.detail);
+}
+
+/// The nearest explicit `aria-disabled` decides, as Playwright reads it: a
+/// "false" inside a "true" leaves the button enabled, for the check and
+/// for a click alike, which share the rule.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_a_nearer_aria_disabled_false_leaves_a_button_enabled() {
+    let mut live = open_states().await;
+    must(run(&mut live, json!({ "kind": "expect_enabled", "selector": "#aria-reset", "timeout_ms": 300 })).await);
+    let started = std::time::Instant::now();
+    must(run(&mut live, json!({ "kind": "click", "selector": "#aria-reset" })).await);
+    assert!(started.elapsed() < Duration::from_millis(2000), "the click waited {:?}", started.elapsed());
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#aria-reset-state", "equals": "clicked" })).await);
+}

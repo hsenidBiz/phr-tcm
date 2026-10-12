@@ -194,6 +194,22 @@ fn first_goes_on_single_element_locators_but_not_on_nth_or_counts() {
     assert!(got.contains("await expect(cur.locator('#f').first().and(cur.locator(':focus-within'))).toHaveCount(1, { timeout: 10000 });"), "{got}");
 }
 
+/// The enabled and disabled checks become Playwright's own, which read the
+/// same three things; an absent attribute is a negated `toHaveAttribute`.
+#[test]
+fn enabled_disabled_and_an_absent_attribute_translate() {
+    let got = one_step(json!([
+        { "kind": "expect_enabled", "selector": "#save" },
+        { "kind": "expect_disabled", "selector": "#save", "timeout_ms": 300 },
+        { "kind": "expect_attribute", "selector": "#t", "name": "aria-pressed", "absent": true }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("await expect(cur.locator('#save').first()).toBeEnabled({ timeout: 10000 });"), "{got}");
+    assert!(got.contains("await expect(cur.locator('#save').first()).toBeDisabled({ timeout: 300 });"), "{got}");
+    assert!(got.contains("await expect(cur.locator('#t').first()).not.toHaveAttribute('aria-pressed', { timeout: 10000 });"), "{got}");
+}
+
 #[test]
 fn tab_switching_moves_cur() {
     let got = one_step(json!([

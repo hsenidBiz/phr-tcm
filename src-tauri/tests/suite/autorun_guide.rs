@@ -35,7 +35,9 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectText { selector: "s".into(), equals: "v".into(), timeout_ms: None },
         Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
         Action::ExpectCount { selector: "s".into(), equals: 1, timeout_ms: None },
-        Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: "v".into(), timeout_ms: None },
+        Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), absent: false, timeout_ms: None },
+        Action::ExpectEnabled { selector: "s".into(), timeout_ms: None },
+        Action::ExpectDisabled { selector: "s".into(), timeout_ms: None },
         Action::SignIn { account: "a".into() },
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
         Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
@@ -1358,4 +1360,55 @@ fn the_quick_rules_prompt_marks_and_the_run_order() {
     for word in ["`changes`", "`needs_unchanged`", "`set_autorun_order`", "reset points", "precondition"] {
         assert!(quick.contains(word), "the quick rules never mention {word}");
     }
+}
+
+/// `get_autorun_guide` with `section`: the Quick rules, then the one `##`
+/// section asked for (case and space ignored), down to the next one and
+/// with its `###` parts; the Quick rules asked for by name come once; an
+/// unknown title lists every title.
+#[test]
+fn one_section_comes_with_the_quick_rules() {
+    use v2_lib::autorun::guide::{guide_section, quick_rules, section_titles};
+    let g = autorun_guide();
+    let quick = quick_rules();
+    let selectors = guide_section(&g, "  selectors ").unwrap();
+    assert!(selectors.starts_with(quick.trim_end()), "{selectors}");
+    assert!(selectors.contains("\n\n## Selectors\n"), "{selectors}");
+    assert!(!selectors.contains("\n## Seeing the page"), "the next section came along: {selectors}");
+    let discovering = guide_section(&g, "Discovering the app").unwrap();
+    assert!(discovering.contains("### Mapping the menus"), "a ### part was left out");
+    assert_eq!(guide_section(&g, "quick rules").unwrap(), quick);
+    let refused = guide_section(&g, "No such part").unwrap_err();
+    assert!(refused.starts_with("The guide has no section called \"No such part\". Its sections are:\n"), "{refused}");
+    for title in section_titles(&g) {
+        assert!(refused.contains(&format!("\n- {title}")), "{title} is not listed: {refused}");
+    }
+    assert!(section_titles(&g).contains(&"Saving it"));
+}
+
+/// A page read's limit: 120 lines when none is asked for, at most 3000,
+/// and a `within` is a locator as a script writes one, checked the same
+/// way.
+#[test]
+fn a_page_reads_limit_and_within_are_read_from_the_query() {
+    use v2_lib::ai_bridge::{page_limit, within_target};
+    use v2_lib::browser::locator::Target;
+    assert_eq!(page_limit(None), 120);
+    assert_eq!(page_limit(Some("0")), 120);
+    assert_eq!(page_limit(Some("abc")), 120);
+    assert_eq!(page_limit(Some(" 40 ")), 40);
+    assert_eq!(page_limit(Some("999999")), 3000);
+    // A css string, bare or quoted, is a structured css link: it counts
+    // every visible match, where a legacy string takes the first.
+    let css = Target::One(v2_lib::browser::locator::LocatorStep { css: Some("#form".to_string()), ..Default::default() });
+    assert_eq!(within_target("#form").unwrap(), css);
+    assert_eq!(within_target("\"#form\"").unwrap(), css);
+    // The legacy text form stays text, as a text link.
+    let words = Target::One(v2_lib::browser::locator::LocatorStep { text: Some("Edit cycle".to_string()), ..Default::default() });
+    assert_eq!(within_target("text=Edit cycle").unwrap(), words);
+    assert_eq!(within_target("\"text=Edit cycle\"").unwrap(), words);
+    assert!(matches!(within_target(r#"{"role":"dialog","name":"Edit"}"#).unwrap(), Target::One(_)));
+    assert!(matches!(within_target(r#"[{"role":"dialog"},{"css":"form"}]"#).unwrap(), Target::Chain(_)));
+    assert!(within_target(r#"{"role":"dialog","colour":"red"}"#).unwrap_err().starts_with("within is not a locator"));
+    assert!(within_target(r#"{"name":"Edit"}"#).unwrap_err().starts_with("within is not a locator"));
 }

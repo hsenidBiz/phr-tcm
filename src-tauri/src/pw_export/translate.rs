@@ -88,6 +88,8 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
+        | Action::ExpectEnabled { selector, .. }
+        | Action::ExpectDisabled { selector, .. }
         | Action::ExpectFocused { selector, .. } => check_target(selector),
         Action::Drag { from, to, position, .. } => {
             if matches!(position, Some(DropAt::Before | DropAt::After)) {
@@ -665,13 +667,25 @@ impl Em<'_> {
                     call("toHaveCount", &[equals.to_string()], *timeout_ms)
                 ),
             ),
-            Action::ExpectAttribute { selector, name, equals, timeout_ms } => self.line(
+            Action::ExpectAttribute { selector, name, equals: Some(equals), timeout_ms, .. } => self.line(
                 indent,
                 &format!(
                     "await expect({}).{};",
                     one(selector),
                     call("toHaveAttribute", &[lit(name), lit(equals)], *timeout_ms)
                 ),
+            ),
+            Action::ExpectAttribute { selector, name, equals: None, timeout_ms, .. } => self.line(
+                indent,
+                &format!("await expect({}).not.{};", one(selector), call("toHaveAttribute", &[lit(name)], *timeout_ms)),
+            ),
+            Action::ExpectEnabled { selector, timeout_ms } => self.line(
+                indent,
+                &format!("await expect({}).{};", one(selector), call("toBeEnabled", &[], *timeout_ms)),
+            ),
+            Action::ExpectDisabled { selector, timeout_ms } => self.line(
+                indent,
+                &format!("await expect({}).{};", one(selector), call("toBeDisabled", &[], *timeout_ms)),
             ),
             Action::ExpectFocused { selector, timeout_ms } => {
                 self.line(

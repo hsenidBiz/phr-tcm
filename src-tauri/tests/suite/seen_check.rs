@@ -77,9 +77,24 @@ fn edit_a_row() -> serde_json::Value {
     })
 }
 
+/// The refusal of a locator a click names that was never seen; a page
+/// address (`/...`) says only that.
 fn refusal(step: i32, describe: &str) -> String {
+    refusal_as(step, describe, "click")
+}
+
+/// [`refusal`] for a locator the action `kind` names: with what that use
+/// needs (`wants`).
+fn refusal_as(step: i32, describe: &str, kind: &str) -> String {
+    if describe.starts_with('/') {
+        return format!(
+            "Step {step}: {describe} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+        );
+    }
+    let many = matches!(kind, "expect_hidden" | "expect_count" | "wait_for");
     format!(
-        "Step {step}: {describe} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+        "Step {step}: {describe} was never seen on the live app; {} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
+        v2_lib::autorun::seen_check::wants(kind, many, false)
     )
 }
 
@@ -288,18 +303,18 @@ fn a_short_or_partial_word_from_the_case_does_not_exempt_a_check() {
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": { "role": "button", "name": "OK" } }] }]),
     );
-    assert_eq!(check_seen(&map, &none(), &short, &case_text, None), Err(refusal(1, "button \"OK\"")));
+    assert_eq!(check_seen(&map, &none(), &short, &case_text, None), Err(refusal_as(1, "button \"OK\"", "expect_visible")));
     // Long enough, but only part of a word.
     let partial = script(
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": { "text": "oken" } }] }]),
     );
-    assert_eq!(check_seen(&map, &none(), &partial, &case_text, None), Err(refusal(1, "text \"oken\"")));
+    assert_eq!(check_seen(&map, &none(), &partial, &case_text, None), Err(refusal_as(1, "text \"oken\"", "expect_visible")));
     let inside = script(
         Some("Ratings"),
         serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "expect_visible", "selector": { "text": "Rating" } }] }]),
     );
-    assert_eq!(check_seen(&map, &none(), &inside, &case_text, None), Err(refusal(1, "text \"Rating\"")));
+    assert_eq!(check_seen(&map, &none(), &inside, &case_text, None), Err(refusal_as(1, "text \"Rating\"", "expect_visible")));
 }
 
 #[test]
@@ -671,8 +686,17 @@ fn click(selector: serde_json::Value) -> serde_json::Value {
 }
 
 fn refusal_hinted(step: i32, describe: &str, hint: &str) -> String {
+    refusal_hinted_as(step, describe, hint, "click")
+}
+
+/// A refusal with a "did you mean" `hint`, for the action `kind`: what
+/// that use needs follows the hint.
+fn refusal_hinted_as(step: i32, describe: &str, hint: &str, kind: &str) -> String {
+    let needs = v2_lib::autorun::seen_check::wants(kind, false, false);
     format!(
-        "Step {step}: {describe} was never seen on the live app; {hint} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+        "Step {step}: {describe} was never seen on the live app; {hint} {}{} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
+        needs[..1].to_uppercase(),
+        &needs[1..]
     )
 }
 
@@ -923,7 +947,7 @@ fn a_test_file_name_and_size_are_exempt() {
         assert_eq!(check_seen_with_files(&map, &none(), &s, &[], None, &files), Ok(()), "{action}");
     }
     // The name and the size need the Test files to say them.
-    assert_eq!(check_seen(&map, &none(), &after_upload(shows("240.0 KB")), &[], None), Err(refusal(2, "text \"240.0 KB\"")));
+    assert_eq!(check_seen(&map, &none(), &after_upload(shows("240.0 KB")), &[], None), Err(refusal_as(2, "text \"240.0 KB\"", "expect_visible")));
     assert_eq!(
         check_seen(&map, &none(), &after_upload(named("Download policy.docx")), &[], None),
         Err(refusal(2, "button \"Download policy.docx\""))
@@ -950,12 +974,12 @@ fn a_test_file_name_and_size_are_exempt() {
     );
     assert_eq!(check_seen_with_files(&map, &none(), &not_a_file, &[], None, &files), Err(refusal(2, "button \"Approve\"")));
     // A file the script does not upload, and its size, are not its own.
-    for (action, what) in [
-        (named("Download other.pdf"), "button \"Download other.pdf\""),
-        (shows("2.1 MB"), "text \"2.1 MB\""),
-        (shows("1240.0 KB"), "text \"1240.0 KB\""),
+    for (action, what, kind) in [
+        (named("Download other.pdf"), "button \"Download other.pdf\"", "click"),
+        (shows("2.1 MB"), "text \"2.1 MB\"", "expect_visible"),
+        (shows("1240.0 KB"), "text \"1240.0 KB\"", "expect_visible"),
     ] {
-        assert_eq!(check_seen_with_files(&map, &none(), &after_upload(action), &[], None, &files), Err(refusal(2, what)));
+        assert_eq!(check_seen_with_files(&map, &none(), &after_upload(action), &[], None, &files), Err(refusal_as(2, what, kind)));
     }
 }
 
@@ -1061,10 +1085,11 @@ fn dashes_spaces_and_case_do_not_refuse_a_name() {
     }
     assert_eq!(
         check_seen(&map, &none(), &bar("Step 1 of 8 - Cycle Setup"), &[], None),
-        Err(refusal_hinted(
+        Err(refusal_hinted_as(
             1,
             "progressbar \"Step 1 of 8 - Cycle Setup\"",
-            "did you mean progressbar \"Step 1 of 9 \u{2013} Cycle Setup\"?"
+            "did you mean progressbar \"Step 1 of 9 \u{2013} Cycle Setup\"?",
+            "expect_visible"
         ))
     );
 }
@@ -1102,17 +1127,17 @@ fn the_suggestion_comes_from_the_same_area() {
     // An import lists it too.
     let hinted = check_seen_all_hinted(&map, &none(), &in_area("Ratings", button("Publsh")), &[], None, &[]);
     assert_eq!(hinted.len(), 1);
-    assert_eq!(hinted[0].1.as_deref(), Some("did you mean button \"Publish\"?"));
+    assert_eq!(hinted[0].1.as_deref(), Some("did you mean button \"Publish\"? This click needs one seen matching exactly one element."));
     // And a component's save.
     let actions: Vec<v2_lib::browser::actions::Action> =
         serde_json::from_value(serde_json::json!([click(button("Publsh"))])).unwrap();
     assert_eq!(
         check_component_seen(&map, Some("Ratings"), &actions),
-        Err("Action 1: button \"Publsh\" was never seen on the live app; did you mean button \"Publish\"? Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.".to_string())
+        Err("Action 1: button \"Publsh\" was never seen on the live app; did you mean button \"Publish\"? This click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.".to_string())
     );
     assert_eq!(
         check_component_seen(&map, Some("Leave"), &actions),
-        Err("Action 1: button \"Publsh\" was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.".to_string())
+        Err("Action 1: button \"Publsh\" was never seen on the live app; this click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.".to_string())
     );
 }
 
@@ -1362,7 +1387,7 @@ fn a_placeholder_link_passed_only_by_the_case_text_is_refused_at_save() {
     let case_text = vec!["Draft {{setup.cycle_name}} Pending is listed".to_string()];
     assert_eq!(
         check_seen(&map, &none(), &expect, &case_text, None),
-        Err(refusal(1, "text \"Draft {{setup.cycle_name}} Pending\""))
+        Err(refusal_as(1, "text \"Draft {{setup.cycle_name}} Pending\"", "expect_visible"))
     );
     // Without a placeholder the case's text still exempts a check.
     let plain = one_step("Cycles", serde_json::json!([{ "kind": "expect_visible", "selector": { "text": "Draft cycle Pending" } }]));
@@ -1489,7 +1514,7 @@ fn a_locator_from_another_areas_script_is_not_seen() {
     let here = one_step("Cycles", serde_json::json!([expect_bar(eval)]));
     assert_eq!(
         check_seen(&map, &none(), &here, &[], None),
-        Err(refusal(1, "progressbar \"Step 2 of 9 \u{2014} Eval Rules\""))
+        Err(refusal_as(1, "progressbar \"Step 2 of 9 \u{2014} Eval Rules\"", "expect_visible"))
     );
     let there = one_step("Payroll", serde_json::json!([expect_bar(eval)]));
     assert_eq!(check_seen(&map, &none(), &there, &[], None), Ok(()));
@@ -1504,19 +1529,19 @@ fn did_you_mean_keeps_to_the_same_role() {
     let says = |t: &str| one_step("Cycles", serde_json::json!([{ "kind": "expect_visible", "selector": { "text": t } }]));
     assert_eq!(
         check_seen(&map, &none(), &says("Step 2 of 9"), &[], None),
-        Err(refusal_hinted(1, "text \"Step 2 of 9\"", "did you mean text \"Step 4 of 9\"?"))
+        Err(refusal_hinted_as(1, "text \"Step 2 of 9\"", "did you mean text \"Step 4 of 9\"?", "expect_visible"))
     );
     assert_eq!(
         check_seen(&map, &none(), &one_step("Cycles", serde_json::json!([expect_bar("Step 2 of 9")])), &[], None),
-        Err(refusal_hinted(1, "progressbar \"Step 2 of 9\"", "did you mean progressbar \"Step 3 of 9\"?"))
+        Err(refusal_hinted_as(1, "progressbar \"Step 2 of 9\"", "did you mean progressbar \"Step 3 of 9\"?", "expect_visible"))
     );
     let only_text = map_with("Cycles", "/cycles", &[text("Step 4 of 9")]);
     assert_eq!(
         check_seen(&only_text, &none(), &one_step("Cycles", serde_json::json!([expect_bar("Step 2 of 9")])), &[], None),
-        Err(refusal(1, "progressbar \"Step 2 of 9\""))
+        Err(refusal_as(1, "progressbar \"Step 2 of 9\"", "expect_visible"))
     );
     let only_bar = map_with("Cycles", "/cycles", &[role("progressbar", "Step 3 of 9")]);
-    assert_eq!(check_seen(&only_bar, &none(), &says("Step 2 of 9"), &[], None), Err(refusal(1, "text \"Step 2 of 9\"")));
+    assert_eq!(check_seen(&only_bar, &none(), &says("Step 2 of 9"), &[], None), Err(refusal_as(1, "text \"Step 2 of 9\"", "expect_visible")));
 }
 
 /// "Did you mean" prefers a name seen on the page the refused step's area
@@ -1532,16 +1557,17 @@ fn did_you_mean_prefers_the_steps_area_page() {
     }))
     .unwrap();
     let says = |t: &str| one_step("Cycles", serde_json::json!([{ "kind": "expect_visible", "selector": { "text": t } }]));
-    let hinted = |hint: &str| Err(refusal_hinted(1, "text \"Step 2 of 9\"", hint));
+    // "Step 2 of 8": close to each seen name, and a part of none of them.
+    let hinted = |hint: &str| Err(refusal_hinted_as(1, "text \"Step 2 of 8\"", hint, "expect_visible"));
 
     // Elements on pages.
     let mut map = joined(
         map_with("Cycles", "/dashboard", &[text("Step 2 of 99")]),
         map_with("Cycles", "/cycles/edit/77", &[text("Step 4 of 99"), role("progressbar", "Step 2 of 9x")]),
     );
-    assert_eq!(check_seen(&map, &none(), &says("Step 2 of 9"), &[], None), hinted("did you mean text \"Step 2 of 99\"?"));
+    assert_eq!(check_seen(&map, &none(), &says("Step 2 of 8"), &[], None), hinted("did you mean text \"Step 2 of 99\"?"));
     add_area_pages(&mut map, &nav);
-    assert_eq!(check_seen(&map, &none(), &says("Step 2 of 9"), &[], None), hinted("did you mean text \"Step 4 of 99\"?"));
+    assert_eq!(check_seen(&map, &none(), &says("Step 2 of 8"), &[], None), hinted("did you mean text \"Step 4 of 99\"?"));
 
     // Kept sightings, by the page each was last seen on.
     let sighting = |t: &str, page: &str| Sighting { key: text(t).seen_key().unwrap(), link: text(t), page: page.to_string(), last_seen: 1, matched: 1, all: None };
@@ -1552,14 +1578,14 @@ fn did_you_mean_prefers_the_steps_area_page() {
             ..AreaMap::default()
         }],
     };
-    assert_eq!(check_seen(&kept, &none(), &says("Step 2 of 9"), &[], None), hinted("did you mean text \"Step 2 of 99\"?"));
+    assert_eq!(check_seen(&kept, &none(), &says("Step 2 of 8"), &[], None), hinted("did you mean text \"Step 2 of 99\"?"));
     add_area_pages(&mut kept, &nav);
-    assert_eq!(check_seen(&kept, &none(), &says("Step 2 of 9"), &[], None), hinted("did you mean text \"Step 4 of 99\"?"));
+    assert_eq!(check_seen(&kept, &none(), &says("Step 2 of 8"), &[], None), hinted("did you mean text \"Step 4 of 99\"?"));
 
     // Nothing close on the page: the closest elsewhere is still offered.
     let mut elsewhere = joined(map_with("Cycles", "/dashboard", &[text("Step 2 of 99")]), map_with("Cycles", "/cycles/edit/1", &[text("Totally different")]));
     add_area_pages(&mut elsewhere, &nav);
-    assert_eq!(check_seen(&elsewhere, &none(), &says("Step 2 of 9"), &[], None), hinted("did you mean text \"Step 2 of 99\"?"));
+    assert_eq!(check_seen(&elsewhere, &none(), &says("Step 2 of 8"), &[], None), hinted("did you mean text \"Step 2 of 99\"?"));
 }
 
 // ------------------------------------- who vouches for a saved locator
@@ -1734,7 +1760,7 @@ fn a_refusal_lists_every_unseen_locator_in_order() {
     );
     let expected = [
         refusal_hinted(1, "button \"Publsh\"", "did you mean button \"Publish\"?"),
-        refusal_hinted(1, "text \"Rating savd\"", "did you mean text \"Rating saved\"?"),
+        refusal_hinted_as(1, "text \"Rating savd\"", "did you mean text \"Rating saved\"?", "expect_visible"),
         refusal(2, "button \"Archive\""),
         refusal(2, "button \"Publsh\" in dialog \"Confirm\""),
     ];
@@ -1818,8 +1844,8 @@ fn a_component_refusal_lists_every_unseen_locator_in_order() {
     ]))
     .unwrap();
     let line = |i: usize, what: &str, hint: Option<&str>| match hint {
-        Some(h) => format!("Action {i}: {what} was never seen on the live app; {h} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."),
-        None => format!("Action {i}: {what} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."),
+        Some(h) => format!("Action {i}: {what} was never seen on the live app; {h} This click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."),
+        None => format!("Action {i}: {what} was never seen on the live app; this click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."),
     };
     let expected =
         [line(1, "button \"Publsh\"", Some("did you mean button \"Publish\"?")), line(3, "button \"Archive\"", None)];
@@ -1939,7 +1965,8 @@ fn a_locator_never_seen_matching_is_still_refused() {
         serde_json::json!({ "kind": "expect_count", "selector": { "css": NOT_THE_DRAFT }, "equals": 0 }),
     ] {
         let s = one_step("Cycles", serde_json::json!([check.clone()]));
-        assert_eq!(check_seen(&empty, &none(), &s, &[], None), Err(refusal(1, &described)), "{check}");
+        let kind = check["kind"].as_str().unwrap();
+        assert_eq!(check_seen(&empty, &none(), &s, &[], None), Err(refusal_as(1, &described, kind)), "{check}");
     }
     // Another selector seen matching several does not stand in for it.
     let other = sighted_matching("Cycles", css("button[title=\"Edit\"]"), 2);
@@ -2143,4 +2170,169 @@ fn a_structured_css_count_never_stands_for_its_hidden_matches() {
     assert!(check_seen(&structured, &none(), &clicks(serde_json::json!("#save")), &[], None).is_err());
     let legacy = filed(serde_json::json!("#save"), 1);
     assert_eq!(check_seen(&legacy, &none(), &clicks(serde_json::json!("#save")), &[], None), Ok(()));
+}
+
+// ---- a part of a seen name, a when_visible seen anywhere, what a use needs
+
+/// A part of a seen name of the same role counts for a check that may
+/// match several, folded the way a run folds a name: "Evaluators" in the
+/// seen wizard title, and the title with its dash cut, either kind of
+/// dash, all for a `wait_for`. A check that reads one element needs the
+/// full name, and its refusal names the seen one that holds the part.
+#[test]
+fn a_part_of_a_seen_name_counts_only_for_a_check_that_may_match_several() {
+    let map = map_with(
+        "Cycles",
+        "/cycles",
+        &[role("progressbar", "Step 4 of 9 Evaluators"), role("progressbar", "Step 3 of 9 \u{2014} Eval Rules")],
+    );
+    let waits = |name: &str| {
+        one_step(
+            "Cycles",
+            serde_json::json!([{ "kind": "wait_for", "selector": { "role": "progressbar", "name": name }, "timeout_ms": 500 }]),
+        )
+    };
+    for part in ["Evaluators", "of 9 evaluators", "\u{2014} Eval Rules", "\u{2013} eval rules", "- Eval Rules"] {
+        assert_eq!(check_seen(&map, &none(), &waits(part), &[], None), Ok(()), "{part}");
+    }
+    let shown = one_step("Cycles", serde_json::json!([expect_bar("Evaluators")]));
+    assert_eq!(
+        check_seen(&map, &none(), &shown, &[], None),
+        Err(refusal_hinted_as(
+            1,
+            "progressbar \"Evaluators\"",
+            "use the full name as seen, such as progressbar \"Step 4 of 9 Evaluators\".",
+            "expect_visible"
+        ))
+    );
+    // A part in another role is not one.
+    let heading = one_step(
+        "Cycles",
+        serde_json::json!([{ "kind": "wait_for", "selector": { "role": "heading", "name": "Evaluators" }, "timeout_ms": 500 }]),
+    );
+    assert!(check_seen(&map, &none(), &heading, &[], None).is_err());
+    // Only a plain one-link locator: not exact, not narrowed, not a chain.
+    for narrowed in [
+        serde_json::json!({ "role": "progressbar", "name": "Evaluators", "exact": true }),
+        serde_json::json!({ "role": "progressbar", "name": "Evaluators", "nth": 0 }),
+        serde_json::json!({ "role": "progressbar", "name": "Evaluators", "visible": false }),
+        serde_json::json!([{ "role": "progressbar", "name": "Step 4 of 9 Evaluators" }, { "role": "progressbar", "name": "Evaluators" }]),
+    ] {
+        let s = one_step("Cycles", serde_json::json!([{ "kind": "wait_for", "selector": narrowed.clone(), "timeout_ms": 500 }]));
+        assert!(check_seen(&map, &none(), &s, &[], None).is_err(), "{narrowed}");
+    }
+}
+
+/// A text the check looks for that is a part of a seen text counts for a
+/// check that may match several: an `expect_hidden` on "Reviewer:" with
+/// "Reviewer: 30%" seen. A part of two characters counts for nothing.
+#[test]
+fn a_part_of_a_seen_text_counts_for_expect_hidden_and_two_characters_do_not() {
+    let map = map_with("Evaluators", "/cycles", &[text("Reviewer: 30%")]);
+    let hidden = |t: &str| one_step("Evaluators", serde_json::json!([{ "kind": "expect_hidden", "selector": { "text": t } }]));
+    assert_eq!(check_seen(&map, &none(), &hidden("Reviewer:"), &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &hidden("Approver:"), &[], None), Err(refusal_as(1, "text \"Approver:\"", "expect_hidden")));
+    assert_eq!(check_seen(&map, &none(), &hidden("30"), &[], None), Err(refusal_as(1, "text \"30\"", "expect_hidden")));
+    assert_eq!(check_seen(&map, &none(), &hidden("30%"), &[], None), Ok(()));
+}
+
+/// A read cut at its 120-line limit files only what it listed: here
+/// "Save draft", seen matching one, while a "Save" button past the cut was
+/// never filed. A click on "Save" must not be vouched for by "Save draft":
+/// it needs its own name seen, and is told to use the full name.
+#[test]
+fn a_twin_past_the_read_limit_cannot_let_a_part_vouch_for_a_click() {
+    let map = map_with("Cycles", "/cycles", &[role("button", "Save draft")]);
+    let clicked = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": "Save" }))]));
+    assert_eq!(
+        check_seen(&map, &none(), &clicked, &[], None),
+        Err(refusal_hinted(1, "button \"Save\"", "use the full name as seen, such as button \"Save draft\"."))
+    );
+    // The same part for a count, which may match several, is taken.
+    let counted = one_step(
+        "Cycles",
+        serde_json::json!([{ "kind": "expect_count", "selector": { "role": "button", "name": "Save" }, "equals": 2 }]),
+    );
+    assert_eq!(check_seen(&map, &none(), &counted, &[], None), Ok(()));
+    // The whole name is still one.
+    let whole = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": "Save draft" }))]));
+    assert_eq!(check_seen(&map, &none(), &whole, &[], None), Ok(()));
+}
+
+/// An `nth` locator never counted with its `nth` is told to be probed with
+/// it, as written.
+#[test]
+fn an_nth_locator_never_counted_is_told_to_probe_it_with_its_nth() {
+    use v2_lib::autorun::seen_check::NEVER_COUNTED_NTH;
+    let map = sighted_matching("Cycles", text("%"), v2_lib::autorun::discovery_map::NOT_ONE);
+    let s = one_step("Cycles", serde_json::json!([{ "kind": "expect_text", "selector": { "text": "%", "nth": 0 }, "equals": "30%" }]));
+    let refused = check_seen(&map, &none(), &s, &[], None).unwrap_err();
+    assert!(refused.starts_with(&format!("Step 1: text \"%\" #1 {NEVER_COUNTED_NTH}")), "{refused}");
+    assert!(refused.contains("probe it with its nth as written"), "{refused}");
+}
+
+/// Each refusal of a locator never seen says what that use needs.
+#[test]
+fn a_refusal_says_what_the_use_needs() {
+    use v2_lib::autorun::seen_check::wants;
+    assert_eq!(wants("click", false, false), "this click needs one seen matching exactly one element.");
+    assert_eq!(
+        wants("expect_hidden", true, false),
+        "this expect_hidden needs it seen on the live app at least once, matching any number of elements."
+    );
+    assert_eq!(wants("when_visible", false, true), "this when_visible needs one seen matching exactly one element, in any area.");
+    let map = map_with("Cycles", "/cycles", &[]);
+    for (action, kind) in [
+        (click(serde_json::json!({ "css": "#go" })), "click"),
+        (serde_json::json!({ "kind": "expect_enabled", "selector": { "css": "#go" } }), "expect_enabled"),
+        (serde_json::json!({ "kind": "wait_for", "selector": { "css": "#go" }, "timeout_ms": 500 }), "wait_for"),
+    ] {
+        let s = one_step("Cycles", serde_json::json!([action]));
+        assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(refusal_as(1, "#go", kind)), "{kind}");
+    }
+}
+
+/// A cookie banner shows on the sign-in page and anywhere else, so a
+/// `when_visible` waiting for it, and its `then` click on that same
+/// locator, are checked against every area: seen only in another area, it
+/// saves. A different locator in its `then` is held to the script's areas
+/// as always, and the banner's own locator still needs one seen matching
+/// exactly one.
+#[test]
+fn a_when_visible_banner_seen_in_another_area_saves() {
+    let banner = css("#btnCookieClose");
+    let map = joined(map_with("Sign in", "/login", &[banner.clone()]), map_with("Cycles", "/cycles", &[role("button", "Save")]));
+    let guarded = |then: serde_json::Value| {
+        one_step(
+            "Cycles",
+            serde_json::json!([{ "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "then": [then] }]),
+        )
+    };
+    let s = guarded(click(serde_json::json!({ "css": "#btnCookieClose" })));
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()));
+    // Not a when_visible: the banner is held to the script's own areas.
+    let plain = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "css": "#btnCookieClose" }))]));
+    assert_eq!(check_seen(&map, &none(), &plain, &[], None), Err(refusal(1, "#btnCookieClose")));
+    // Another locator in its then is not the banner.
+    let other = guarded(click(serde_json::json!({ "css": "#accept-all" })));
+    assert_eq!(check_seen(&map, &none(), &other, &[], None), Err(refusal(1, "#accept-all")));
+    // Seen anywhere, but only matching several: still refused.
+    let several = joined(sighted_matching("Sign in", banner, 2), map_with("Cycles", "/cycles", &[]));
+    let refused = check_seen(&several, &none(), &s, &[], None).unwrap_err();
+    assert!(refused.contains(v2_lib::autorun::seen_check::SEEN_ONLY_MANY), "{refused}");
+    // Never seen anywhere: the refusal says it is looked for in any area.
+    let nowhere = map_with("Cycles", "/cycles", &[]);
+    let refused = check_seen(&nowhere, &none(), &s, &[], None).unwrap_err();
+    assert!(refused.contains("this when_visible needs one seen matching exactly one element, in any area."), "{refused}");
+}
+
+/// A component's `when_visible` is read the same way.
+#[test]
+fn a_components_when_visible_banner_seen_in_another_area_saves() {
+    let map = joined(map_with("Sign in", "/login", &[css("#btnCookieClose")]), map_with("Cycles", "/cycles", &[]));
+    let actions: Vec<v2_lib::browser::actions::Action> = serde_json::from_value(serde_json::json!([
+        { "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "then": [click(serde_json::json!({ "css": "#btnCookieClose" }))] }
+    ]))
+    .unwrap();
+    assert_eq!(check_component_seen(&map, Some("Cycles"), &actions), Ok(()));
 }

@@ -2740,7 +2740,7 @@ async fn a_limited_read_records_only_returned_lines() {
     let (mut cut, _) = slot(buttons_page(LEAVE_PAGE, &["Save", "Cancel", "Delete"]), exploring_anew("Leave"));
     let (status, text) = page_read_in(cut.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, 1).await;
     assert_eq!(status, 200, "{text}");
-    assert!(text.contains("... and 2 more"), "the read was not cut: {text}");
+    assert!(text.contains("2 more lines - call get_autorun_page"), "the read was not cut: {text}");
     assert!(text.ends_with("\n\nRecorded 1 element as seen on Leave."), "{text}");
     assert_eq!(sighted(dir.path(), "Leave"), ["Earlier", "Older", "Save"], "a cut read dropped or overreached");
     let area = mapped_area(dir.path(), "Leave").unwrap();
@@ -2762,7 +2762,8 @@ async fn a_cut_action_read_records_only_returned_lines() {
     let (mut first, _) = slot(buttons_page(LEAVE_PAGE, &["Earlier"]), exploring("Leave"));
     page_read_in(first.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
 
-    let names: Vec<String> = (0..DEFAULT_LIMIT + 5).map(|i| format!("Row {i:03}")).collect();
+    let limit = v2_lib::browser::snapshot::PAGE_LINES_DEFAULT;
+    let names: Vec<String> = (0..limit + 5).map(|i| format!("Row {i:03}")).collect();
     let d = acting_page("https://hr.example.internal/hr/leave", names);
     let (mut browser, _) = slot(d, exploring_anew("Leave"));
     let click = Action::Click { selector: "#save".into() };
@@ -2770,12 +2771,12 @@ async fn a_cut_action_read_records_only_returned_lines() {
     assert_eq!(status, 200, "{body}");
     let v = parsed(&body);
     assert_eq!(v["ok"], true, "{body}");
-    assert!(v["page"].as_str().unwrap_or("").contains("... and 5 more"), "the action's read was not cut");
+    assert!(v["page"].as_str().unwrap_or("").contains("5 more lines - "), "the action's read was not cut");
 
     let seen = sighted(dir.path(), "Leave");
     assert!(seen.contains(&"Earlier".to_string()), "a cut action read dropped an earlier sighting: {seen:?}");
-    assert!(seen.contains(&"Row 000".to_string()) && seen.contains(&format!("Row {:03}", DEFAULT_LIMIT - 1)));
-    assert!(!seen.contains(&format!("Row {:03}", DEFAULT_LIMIT)), "a line past the cut was recorded");
+    assert!(seen.contains(&"Row 000".to_string()) && seen.contains(&format!("Row {:03}", limit - 1)));
+    assert!(!seen.contains(&format!("Row {:03}", limit)), "a line past the cut was recorded");
 }
 
 /// With no current area, nothing is recorded, and the answer ends by
@@ -2911,7 +2912,7 @@ fn three_pages() -> Component {
 async fn record_on_page_runs_over_every_refused_locator() {
     let c = three_pages();
     let refused = |i: usize| {
-        format!("Action {i}: #pager-{i} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.")
+        format!("Action {i}: #pager-{i} was never seen on the live app; this click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.")
     };
 
     let dir = TempDir::new();
@@ -2983,7 +2984,7 @@ async fn a_component_dry_run_writes_and_records_nothing() {
         dry_run_component_in(&mut browser, dir.path(), ORG, PROJECT, c.clone(), None, 5, Some(&UserCases::default()));
     assert_eq!(
         (status, body.as_str()),
-        (400, "Action 1: #pager-2 was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.")
+        (400, "Action 1: #pager-2 was never seen on the live app; this click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.")
     );
     assert_eq!(every_file(dir.path()), before);
     assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty());

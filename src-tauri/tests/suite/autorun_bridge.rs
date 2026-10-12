@@ -2981,11 +2981,19 @@ fn see_scripts(root: &std::path::Path, body: &str) {
     crate::common::see_scripts(root, &c.org, &c.project, body);
 }
 
-/// The sentence a save refuses an unseen locator with.
-fn never_seen(step: i32, what: &str) -> String {
+/// The sentence a save refuses an unseen locator with, which the action
+/// `kind` names: with what that use needs (`seen_check::wants`).
+fn never_seen_as(step: i32, what: &str, kind: &str) -> String {
     format!(
-        "Step {step}: {what} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+        "Step {step}: {what} was never seen on the live app; {} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
+        v2_lib::autorun::seen_check::wants(kind, false, false)
     )
+}
+
+/// [`never_seen_as`] for the fixture's click on `#save` and its
+/// `expect_contains_text` on `.toast`, or any other click.
+fn never_seen(step: i32, what: &str) -> String {
+    never_seen_as(step, what, if what == ".toast" { "expect_contains_text" } else { "click" })
 }
 
 /// A new script is checked in full against the discovery map: a locator

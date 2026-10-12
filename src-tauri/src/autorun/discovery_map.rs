@@ -33,10 +33,17 @@
 //! A page read counts, for each line, the listed lines in the same frame
 //! its locator would match: the same role, and a name holding its name
 //! (`locator::name_matches`). Two rows' "Edit" buttons are two; "Save"
-//! beside "Save draft" is two. A read the line limit cut short may not
-//! have listed every match, so there a count of one is filed as
-//! `NOT_ONE`. A probe, a try or the record-on-page check of a refused save
-//! matches a locator against the page and files the number it found.
+//! beside "Save draft" is two. A read that knows every line of the whole
+//! page (`snapshot::PageRead::page_lines`) counts each line it listed
+//! against all of them, so a read the line limit cut short, or one that
+//! listed only one element's subtree (`within`), still files the page's
+//! own count: a line counted once inside a container may have a twin
+//! outside it, and that twin is counted. Such a read never explores the
+//! page. A read that does not know the whole page (a frame it could not
+//! read) may not have listed every match, so there a count of one is
+//! filed as `NOT_ONE`. A probe, a try or the record-on-page check of a
+//! refused save matches a locator against the page and files the number
+//! it found.
 //!
 //! A sighting and an element also keep `all`: how many elements the key
 //! matched hidden ones included, which is what a legacy string target
@@ -538,6 +545,36 @@ pub fn record_read(
     whole: bool,
     now: u64,
 ) -> Result<usize, String> {
+    record_read_counted(root, org, project, area, page_path, title, lines, None, account, discovery, whole, now)
+}
+
+/// [`record_read`], each listed line counted against `whole_page`: every line of
+/// the whole page that carries a locator, printed or not, when the read
+/// knows it (`snapshot::PageRead::page_lines`, every frame read). Then a
+/// read the limit cut short, or one that listed only an element's subtree
+/// (`within`), files each line it listed with the number of elements its
+/// locator matches on the whole page: a line counted once inside a
+/// container may have a twin outside it, and counting against the page
+/// sees that twin. Such a read still never explores the page (`whole` is
+/// false: no `explored_at`, nothing dropped), as only a read that listed
+/// the whole page can say what is no longer there. With it `None` the
+/// count is taken among the listed lines, and a count of one from a read
+/// that is not whole is filed as `NOT_ONE`, as it always was.
+#[allow(clippy::too_many_arguments)]
+pub fn record_read_counted(
+    root: &Path,
+    org: &str,
+    project: &str,
+    area: Option<&str>,
+    page_path: &str,
+    title: &str,
+    lines: &[SnapLine],
+    whole_page: Option<&[SnapLine]>,
+    account: Option<&str>,
+    discovery: Option<u64>,
+    whole: bool,
+    now: u64,
+) -> Result<usize, String> {
     let path = self::page_path(page_path);
     let area = canonical_area(root, org, project, area.unwrap_or(""));
     let mut recorded = 0;
@@ -567,13 +604,17 @@ pub fn record_read(
             }
         }
         recorded = shown_locators.len();
-        // How many listed elements each line's locator matches; a count of
-        // one from a read cut short is not known to be one.
+        // How many elements each line's locator matches: on the whole page
+        // when the read knows it, else among the listed lines, where a
+        // count of one from a read cut short is not known to be one.
         let counts: Vec<u32> = lines
             .iter()
-            .map(|l| match read_count(l, lines) {
-                1 if !whole => NOT_ONE,
-                n => n,
+            .map(|l| match whole_page {
+                Some(all) => read_count(l, all),
+                None => match read_count(l, lines) {
+                    1 if !whole => NOT_ONE,
+                    n => n,
+                },
             })
             .collect();
         for (line, &count) in lines.iter().zip(&counts) {

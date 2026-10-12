@@ -16,11 +16,36 @@ use std::collections::HashMap;
 /// The line count a snapshot stops at unless a caller asks for more.
 pub const DEFAULT_LIMIT: usize = 300;
 
+/// The line count an assistant's page read stops at unless it asks for
+/// more: `get_autorun_page`, the page a replay answers once it stands
+/// before its step, the page `discover_autorun_action` answers after its
+/// action, and the page `discover_autorun_actions` answers after its last. A whole page's tree runs to thousands of tokens on
+/// every read; the rest is one call away (`more_lines`), with a larger
+/// `limit` or a `within` that lists one part of the page.
+pub const PAGE_LINES_DEFAULT: usize = 120;
+
+/// The most lines a page read prints however many it is asked for.
+pub const PAGE_LINES_MAX: usize = DEFAULT_LIMIT * 10;
+
 /// Roles Chrome uses purely for structure or for text already folded into
 /// a parent's name. Printing them would double up on what the parent line
 /// already says, so they are skipped - their children print at the
 /// skipped node's own depth, as if it were never there.
 const FOLDED_ROLES: [&str; 5] = ["generic", "none", "presentation", "InlineTextBox", "StaticText"];
+
+/// Roles whose line names something no locator can act on, so it prints
+/// without one: the page itself (`RootWebArea`, the document, not an
+/// element), a list item's bullet (`ListMarker`, a pseudo-element), and a
+/// native list's closed popup (`MenuListPopup`), whose options are lines
+/// too. Those options are no elements a person can see or click: a script
+/// picks one with `fill` on the list, by its label. A customizable select
+/// (`appearance: base-select`) draws real options a person clicks, in the
+/// top layer; if Chrome lists them under `MenuListPopup` they print here
+/// with no locator too, and a script still picks one with `fill`. Every other line's
+/// locator is one the resolver can find (`locator::resolve`), which
+/// `browser_live::states_every_line_the_page_read_prints_resolves` holds
+/// against a real page.
+pub const NO_LOCATOR_ROLES: [&str; 3] = ["RootWebArea", "ListMarker", "MenuListPopup"];
 
 /// Roles whose current value is worth showing on the line.
 const VALUE_ROLES: [&str; 3] = ["textbox", "combobox", "searchbox"];
@@ -186,7 +211,9 @@ fn snap_line(node: &AxNode, frames: &[Value]) -> SnapLine {
 /// A printed line and, when it carries a locator, its data.
 type Printed = (String, Option<SnapLine>);
 
-fn format_line(node: &AxNode, depth: usize, frames: &[Value]) -> String {
+/// `format_line`, for a line with a locator (`reachable`) or one without
+/// (`NO_LOCATOR_ROLES`, and what a closed native list holds).
+fn format_line(node: &AxNode, depth: usize, frames: &[Value], reachable: bool) -> String {
     let indent = " ".repeat(depth.min(12));
     // The printed name is capped for readability, but the locator on the
     // end of the line has to reach the element by its REAL name - a
@@ -211,7 +238,9 @@ fn format_line(node: &AxNode, depth: usize, frames: &[Value]) -> String {
     if node.disabled {
         line.push_str(" (disabled)");
     }
-    line.push_str(&locator_suffix(&node.role, &full_name, frames));
+    if reachable {
+        line.push_str(&locator_suffix(&node.role, &full_name, frames));
+    }
     line
 }
 
@@ -231,7 +260,9 @@ struct Tree<'a> {
 /// forever on a malformed tree. `missed` is set when a frame's contents
 /// were not shown (a frame that could not be read, other than one from
 /// another site, or one nested past `MAX_FRAME_DEPTH`): a read with such a
-/// frame does not show the whole page.
+/// frame does not show the whole page. `in_list` is set inside a closed
+/// native list (`MenuListPopup`): its lines print without a locator.
+#[allow(clippy::too_many_arguments)]
 fn walk(
     id: &str,
     depth: usize,
@@ -239,24 +270,41 @@ fn walk(
     out: &mut Vec<Printed>,
     seen: &mut std::collections::HashSet<String>,
     missed: &mut bool,
+    in_list: bool,
+    within: Option<i64>,
 ) {
     if !seen.insert(id.to_string()) {
         return;
     }
     let Some(node) = tree.by_id.get(id) else { return };
+    // Above the one element a `within` read lists: walked through, never
+    // printed, until that element is reached.
+    if let Some(backend) = within {
+        if node.backend != Some(backend) {
+            for child in &node.children {
+                walk(child, depth, tree, out, seen, missed, in_list, within);
+            }
+            if let Some(frame) = tree.frames.get(id) {
+                walk_frame(frame, depth, &tree.path, out, missed, within);
+            }
+            return;
+        }
+    }
     let folded = node.ignored || FOLDED_ROLES.contains(&node.role.as_str());
+    let in_list = in_list || node.role == "MenuListPopup";
     if folded {
         for child in &node.children {
-            walk(child, depth, tree, out, seen, missed);
+            walk(child, depth, tree, out, seen, missed, in_list, None);
         }
         return;
     }
-    out.push((format_line(node, depth, &tree.path), Some(snap_line(node, &tree.path))));
+    let reachable = !in_list && !NO_LOCATOR_ROLES.contains(&node.role.as_str());
+    out.push((format_line(node, depth, &tree.path, reachable), reachable.then(|| snap_line(node, &tree.path))));
     for child in &node.children {
-        walk(child, depth + 1, tree, out, seen, missed);
+        walk(child, depth + 1, tree, out, seen, missed, in_list, None);
     }
     if let Some(frame) = tree.frames.get(id) {
-        walk_frame(frame, depth + 1, &tree.path, out, missed);
+        walk_frame(frame, depth + 1, &tree.path, out, missed, None);
     } else if node.role == "Iframe" && tree.path.len() >= MAX_FRAME_DEPTH {
         // `snapshot` follows frames only so deep: say so rather than let a
         // deeper frame's contents be silently missing.
@@ -273,8 +321,13 @@ pub const DEEP_FRAMES_NOTE: &str = "(frames nested deeper than 3 are not shown)"
 
 /// A frame's own tree, under its iframe's line, every locator behind the
 /// frame's step.
-fn walk_frame(frame: &FrameTree, depth: usize, path: &[Value], out: &mut Vec<Printed>, missed: &mut bool) {
+fn walk_frame(frame: &FrameTree, depth: usize, path: &[Value], out: &mut Vec<Printed>, missed: &mut bool, within: Option<i64>) {
     if let Some(why) = &frame.unreadable {
+        if within.is_some() {
+            // Not printed above a `within` element; whether the page was
+            // whole is the full read's to say.
+            return;
+        }
         out.push((format!("{}(frame contents could not be read: {})", " ".repeat(depth.min(12)), sanitize(why)), None));
         if !frame.cross_origin {
             *missed = true;
@@ -289,7 +342,7 @@ fn walk_frame(frame: &FrameTree, depth: usize, path: &[Value], out: &mut Vec<Pri
         frames: frame.frames.iter().map(|f| (f.iframe_id.as_str(), f)).collect(),
         path: inner,
     };
-    walk(&root.id, depth, &tree, out, &mut std::collections::HashSet::new(), missed);
+    walk(&root.id, depth, &tree, out, &mut std::collections::HashSet::new(), missed, false, within);
 }
 
 /// Pure rendering: every rule (folding, password redaction, the locator
@@ -314,24 +367,43 @@ pub fn render_frames_with_lines(nodes: &[AxNode], frames: &[FrameTree], limit: u
 }
 
 /// One read of the page: the text, the lines it printed as data, and
-/// whether `limit` cut it short (the text then ends "... and N more").
+/// whether it shows less than the whole page.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PageRead {
     pub text: String,
     pub lines: Vec<SnapLine>,
-    /// True when the page had more lines than the read printed, or a frame
-    /// in it could not be read (other than one from another site, which
-    /// nothing can reach) or sat deeper than `MAX_FRAME_DEPTH`: what it
-    /// shows is not the whole page.
+    /// True when what it shows is not the whole page: the page had more
+    /// lines than the read printed, it listed one element's subtree
+    /// (`within`), or a frame in it could not be read (other than one from
+    /// another site, which nothing can reach) or sat deeper than
+    /// `MAX_FRAME_DEPTH`. Such a read never explores the page
+    /// (`discovery_map::record_read`).
     pub cut: bool,
+    /// Every line of the whole page that carries a locator, printed or
+    /// not, when every frame of it was read: what each printed line is
+    /// counted against when it is filed (`discovery_map::record_read_counted`),
+    /// so a line cut from the answer or outside a `within` element still
+    /// counts. `None` when a frame was missed, so no count is known whole.
+    pub page_lines: Option<Vec<SnapLine>>,
 }
 
-/// `render_frames_with_lines`, saying as well whether the limit cut it.
-pub fn render_frames_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize) -> PageRead {
-    const EMPTY: &str = "the page has nothing a locator could name";
-    let empty = || PageRead { text: EMPTY.to_string(), lines: vec![], cut: false };
+/// The line a read cut short by its limit ends with, after `n` lines it
+/// did not print.
+pub fn more_lines(n: usize) -> String {
+    format!("{n} more lines - call get_autorun_page with a larger limit or within")
+}
+
+/// What a read prints when nothing is left to print.
+const EMPTY: &str = "the page has nothing a locator could name";
+
+/// What a `within` read prints when its element holds nothing to print.
+const EMPTY_WITHIN: &str = "that element holds nothing a locator could name";
+
+/// Every line the tree prints, and whether a frame's contents were missed;
+/// with `within`, only the subtree of the node behind that DOM node.
+fn printed_lines(nodes: &[AxNode], frames: &[FrameTree], within: Option<i64>) -> (Vec<Printed>, bool) {
     let Some(root) = nodes.first() else {
-        return empty();
+        return (Vec::new(), false);
     };
     let tree = Tree {
         by_id: nodes.iter().map(|n| (n.id.as_str(), n)).collect(),
@@ -341,9 +413,35 @@ pub fn render_frames_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize) 
     let mut lines = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut missed = false;
-    walk(&root.id, 0, &tree, &mut lines, &mut seen, &mut missed);
+    walk(&root.id, 0, &tree, &mut lines, &mut seen, &mut missed, false, within);
+    (lines, missed)
+}
+
+/// `render_frames_with_lines`, saying as well whether the limit cut it.
+pub fn render_frames_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize) -> PageRead {
+    render_read(nodes, frames, limit, None)
+}
+
+/// [`render_frames_read`] of one element's subtree: the element behind the
+/// DOM node `backend` (`backendDOMNodeId`), wherever in the page or its
+/// frames it is, and what is inside it, its locators written from the
+/// page as the whole read writes them. Always `cut`: it is never the whole
+/// page. An element the tree does not list prints `EMPTY_WITHIN`.
+pub fn render_frames_read_within(nodes: &[AxNode], frames: &[FrameTree], limit: usize, backend: i64) -> PageRead {
+    render_read(nodes, frames, limit, Some(backend))
+}
+
+fn render_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize, within: Option<i64>) -> PageRead {
+    let (page, missed) = printed_lines(nodes, frames, None);
+    let page_lines: Vec<SnapLine> = page.iter().filter_map(|(_, d)| d.clone()).collect();
+    let page_lines = (!missed).then_some(page_lines);
+    let lines = match within {
+        None => page,
+        Some(b) => printed_lines(nodes, frames, Some(b)).0,
+    };
     if lines.is_empty() {
-        return empty();
+        let text = if within.is_some() { EMPTY_WITHIN } else { EMPTY };
+        return PageRead { text: text.to_string(), lines: vec![], cut: within.is_some(), page_lines };
     }
     let total = lines.len();
     let mut out = lines.iter().take(limit).map(|(t, _)| t.clone()).collect::<Vec<_>>().join("\n");
@@ -352,9 +450,9 @@ pub fn render_frames_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize) 
         if !out.is_empty() {
             out.push('\n');
         }
-        out.push_str(&format!("... and {} more (raise the limit, or scope the probe)", total - limit));
+        out.push_str(&more_lines(total - limit));
     }
-    PageRead { text: out, lines: data, cut: total > limit || missed }
+    PageRead { text: out, lines: data, cut: total > limit || missed || within.is_some(), page_lines }
 }
 
 /// `Accessibility.getFullAXTree`, retried once after `Accessibility.enable`
@@ -371,6 +469,31 @@ pub async fn snapshot_with_lines<D: Driver>(d: &mut D, limit: usize) -> Result<(
 
 /// `snapshot_with_lines`, saying as well whether the limit cut it.
 pub async fn snapshot_read<D: Driver>(d: &mut D, limit: usize) -> Result<PageRead, CdpError> {
+    snapshot_read_within(d, limit, None).await
+}
+
+/// The DOM node a `within` locator names: its one match. Refused, with the
+/// count, when it matches none or several: a read of "one of these" could
+/// list the wrong part of the page.
+pub async fn within_node<D: Driver>(d: &mut D, within: &Target) -> Result<Result<i64, String>, CdpError> {
+    let found = resolve_explained(d, within).await?;
+    match found.handles.as_slice() {
+        [one] => Ok(Ok(page::backend_id(d, one).await?)),
+        [] => Ok(Err(match found.unreachable_frame {
+            Some(why) => format!("within matched 0 elements: {why}"),
+            None => format!("within matched 0 elements: nothing on the page answers to {}; it must match exactly one", within.describe()),
+        })),
+        many => Ok(Err(format!(
+            "within matched {} elements: {} must match exactly one, so narrow it with a name, \"exact\": true, a scope or \"nth\"",
+            many.len(),
+            within.describe()
+        ))),
+    }
+}
+
+/// [`snapshot_read`], or with `within` (a DOM node, `within_node`) only
+/// that element's subtree (`render_frames_read_within`).
+pub async fn snapshot_read_within<D: Driver>(d: &mut D, limit: usize, within: Option<i64>) -> Result<PageRead, CdpError> {
     let result = match d.call("Accessibility.getFullAXTree", json!({})).await {
         Ok(v) => v,
         Err(CdpError::Protocol { message, .. }) if message.to_lowercase().contains("enabled") => {
@@ -391,7 +514,10 @@ pub async fn snapshot_read<D: Driver>(d: &mut D, limit: usize) -> Result<PageRea
             inner.frames = frames_in(d, &inner.nodes).await;
         }
     }
-    Ok(render_frames_read(&nodes, &frames, limit))
+    Ok(match within {
+        Some(b) => render_frames_read_within(&nodes, &frames, limit, b),
+        None => render_frames_read(&nodes, &frames, limit),
+    })
 }
 
 /// The trees of the `Iframe` nodes in `nodes` (one level), each with the
