@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.11",
+    date: "2026-10-13",
+    items: [
+      "Replays your assistant starts no longer block it: it can close the browser its own replay left open (starting a discovery does so too), and it is told what stays blocked until then. A browser you are using is never closed by the assistant.",
+      "A long replay no longer times out on your assistant: it answers that the replay is still running and picks it up again when asked, and a replay of the same case carries on from the step it stopped at when nothing else has used the browser.",
+      "The app no longer asks you to allow a replay of a Must not save script; saves stay blocked during the replay as before.",
+      "Your assistant can probe a chained locator, mark a suspected defect straight after a replay, and a dry run's answer always starts with \"Dry run: nothing was saved.\"",
+    ],
+  },
+  {
     version: "2.1.3-beta.10",
     date: "2026-10-12",
     items: [
