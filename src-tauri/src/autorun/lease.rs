@@ -66,7 +66,7 @@ impl Holder {
     /// "another case in this run", one of any other run "an unattended run".
     fn seen_by(&self, asking: &Holder) -> &'static str {
         match (self, asking) {
-            (Holder::Browser, _) => "the Auto Run browser",
+            (Holder::Browser, _) => BROWSER_WORDS,
             (Holder::Template, _) => "an API template run",
             (Holder::Case { run }, Holder::Case { run: mine }) if run == mine => "another case in this run",
             (Holder::Case { .. }, _) => "an unattended run",
@@ -139,6 +139,15 @@ const HOLDER_WORDS: [&str; 5] =
 /// The sentence a refused or timed-out request gets.
 fn in_use(key: &str, holder: &str) -> String {
     format!("{IN_USE_START}{key}{IN_USE_BY}{holder}{IN_USE_END}")
+}
+
+/// How the supervised Auto Run browser is named as a holder.
+pub const BROWSER_WORDS: &str = "the Auto Run browser";
+
+/// The sentence a request for the account `key` gets while the supervised
+/// Auto Run browser holds it, word for word.
+pub fn in_use_by_browser(key: &str) -> String {
+    in_use(key, BROWSER_WORDS)
 }
 
 /// Is this exactly a lease refusal's sentence: `the account <key> was in

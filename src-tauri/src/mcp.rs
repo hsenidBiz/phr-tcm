@@ -356,8 +356,9 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "description": "Ask the open browser what a locator matches RIGHT NOW: how many elements, and for each one its tag, its text, whether it is visible and where it sits. Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. What it matched is recorded as seen, with how many elements it matched: an action needs a locator seen matching exactly one, while a check that can pass with several matches (expect_hidden, expect_count, wait_for) may use one seen matching several. A chain can pass through a same-origin iframe: name the iframe as one step and the element inside as the next. Needs a supervised or discovery browser to be open.",
             "inputSchema": schema(serde_json::json!({
                 "selector": {
-                    "type": ["object", "string"],
-                    "description": "A script target: a CSS selector string, or the role-and-accessible-name object a snapshot line ends with.",
+                    "type": ["object", "string", "array"],
+                    "items": { "type": "object" },
+                    "description": "A script target, exactly as the script writes it: a CSS selector string, the role-and-accessible-name object a snapshot line ends with, or a chain - a list of those objects, outermost first (a dialog, then the button inside it). A chain is recorded as seen as a whole.",
                 },
             }), &["selector"]),
         },
@@ -377,7 +378,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "replay_autorun_to_step",
-            "description": "Replay a case's saved script in the supervised Auto Run browser, steps 1 to `step` - 1, and stop before `step` runs, so you can heal the failing step where it failed. Needs no browser open: when none is, the app opens one. A discovery of yours holding the browser is ended first, as end_autorun_discovery ends it (what it mapped is kept), and the answer says so; start a new one to explore again. The replay checks the case's preconditions, signs in as the case's account and goes to its area, as a run does. A script marked must not save first asks the person in the app to Allow or Deny, and its saves stay stopped throughout. Answers a sentence, and once the browser stands before `step`, the page as get_autorun_page shows it, so you can try that step at once with try_autorun_action. Replay to the failing step and never past it to see what happens. One replay at a time.",
+            "description": "Replay a case's saved script in the supervised Auto Run browser, steps 1 to `step` - 1, and stop before `step` runs, so you can heal the failing step where it failed. Needs no browser open: when none is, the app opens one. A discovery of yours holding the browser is ended first, as end_autorun_discovery ends it (what it mapped is kept), and the answer says so; start a new one to explore again. The replay checks the case's preconditions, signs in as the case's account and goes to its area, as a run does. A script marked must not save replays at once too, its saves stopped throughout. Answers a sentence, and once the browser stands before `step`, the page as get_autorun_page shows it, so you can try that step at once with try_autorun_action. Replay to the failing step and never past it to see what happens. The browser stays open on that step afterwards, and the answer says what that blocks; release_autorun_browser closes a browser your replay opened, and so does start_autorun_discovery. Replaying the same case to a later step, in the browser your last replay of it left before an earlier step with nothing used in it since, carries on from there; the answer starts with Carried on from step K, or Started from the beginning. One replay at a time. A replay still going after about 45 seconds answers that it is still running and at which step: call again with the same case and step to keep waiting on that same replay (never a new one); a different case or step is refused until it ends. A finished answer nobody collected is kept for 90 seconds, while the script and the browser are unchanged; after that the same call starts a new replay. While a replay runs, get_autorun_page, probes and tries answer at once that a replay is going.",
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The case whose saved script is replayed." },
                 "step": { "type": "number", "description": "The step to stop before: the failing step. Steps 1 to step - 1 run." },
@@ -385,7 +386,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "start_autorun_discovery",
-            "description": "Open the app's own Auto Run browser and sign in as a saved account, so you can explore the live application before you write a script. The app replays the recorded sign-in and types the password; you never see it. Answers the landing page as get_autorun_page shows it, and its address path. Refused while a run, a replay or a person's browser holds the Auto Run browser; a failed sign-in closes the browser and says why, so report it rather than trying again. Every locator you will put in a script must be seen on the live app first: a save refuses any locator the app has not seen. Never read the application's code to write scripts. Call end_autorun_discovery when you are done.",
+            "description": "Open the app's own Auto Run browser and sign in as a saved account, so you can explore the live application before you write a script. The app replays the recorded sign-in and types the password; you never see it. Answers the landing page as get_autorun_page shows it, and its address path. Refused while a run, a replay or a person's browser holds the Auto Run browser; a browser your own replay left open is closed first, and the answer says \"Closed the browser your replay left open.\"; a failed sign-in closes the browser and says why, so report it rather than trying again. Every locator you will put in a script must be seen on the live app first: a save refuses any locator the app has not seen. Never read the application's code to write scripts. Call end_autorun_discovery when you are done.",
             "inputSchema": schema(serde_json::json!({
                 "account": { "type": "string", "description": "The KEY of the saved account to sign in as, from get_accounts. Never a username or a password." },
                 "area": { "type": "string", "description": "The recorded area you are exploring, by its name: pass it whenever the case's area is listed in the guide. What you see is filed under it; with none, it is filed under no area." },
@@ -446,7 +447,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "release_autorun_browser",
-            "description": "Let go of an Auto Run browser the app still holds after it closed. Use it when the app refuses with 'close the supervised browser first' or answers 'the browser did not answer' while no Auto Run browser is really open, instead of asking the person to restart the app. It frees a held browser that has gone, and ends your own discovery as end_autorun_discovery does (what it mapped is kept). It never closes the person's own browser while it is open and answering: then it answers that the person must close it or press Release Auto Run browser. It never stops a replay that is going.",
+            "description": "Let go of an Auto Run browser the app still holds after it closed. Use it when the app refuses with 'close the supervised browser first' or answers 'the browser did not answer' while no Auto Run browser is really open, instead of asking the person to restart the app. It frees a held browser that has gone, ends your own discovery as end_autorun_discovery does (what it mapped is kept), and closes a browser your own replay left open, which frees its account for discovery, component saves and template runs. It never closes the person's own browser while it is open and answering: then it answers that the person must close it or press Release Auto Run browser. It never stops a replay that is going.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
@@ -486,7 +487,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_failures",
-            "description": "What failed in an Auto Run run on THIS machine, as text you can act on: which step, which action (its own JSON), what the page said, and the picture. It also says when you must not touch the script at all - a sign-in that failed, a browser that stopped answering, a case that could not reach its module screen, or a case the person marked Blocked are not script defects. Read this before repairing anything.",
+            "description": "What failed in an Auto Run run on THIS machine, as text you can act on: which step, which action (its own JSON), what the page said, and the picture. It also says when you must not touch the script at all - a sign-in that failed, a browser that stopped answering, a case that could not reach its module screen, or a case the person marked Blocked are not script defects. Asked by case_id, a replay of that case that stopped on a failure counts as its newest word when no run here has the case or the replay is newer, and the text says \"from a replay to step N\". Read this before repairing anything.",
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The newest run that holds this test case." },
                 "run_id": { "type": "string", "description": "One run by its id instead. With neither, the newest run on this machine." },
@@ -512,7 +513,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "mark_autorun_suspected_defect",
-            "description": "Use this instead of a repair when the application, not the script, is wrong: it marks the failed step of a case as a suspected application defect with a note on what the application did, leaves the script's actions and its repair count untouched, and is refused unless that step failed in the case's newest run for a reason other than a STOP line.",
+            "description": "Use this instead of a repair when the application, not the script, is wrong: it marks the failed step of a case as a suspected application defect with a note on what the application did, leaves the script's actions and its repair count untouched, and is refused unless that step failed in the case's newest run (or in a replay of it that stopped there, when that is newer or no run has the case) for a reason other than a STOP line.",
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The test case whose script to mark." },
                 "step_number": { "type": "number", "description": "The step that failed because of the application." },
@@ -796,7 +797,7 @@ pub const BUNDLE_EDITS_NOT_A_LIST: &str = "the bundle sent as \"scripts\" has an
 pub const BESIDE_EDITS_NOT_A_LIST: &str = "the \"edits\" sent beside the bundle in \"scripts\" is not a list - send one \"edits\" list beside \"scripts\", one entry per case";
 
 /// What `dry_run` does on `save_autorun_script`.
-const DRY_RUN_SCRIPT: &str = "true: run every check a save makes, the seen check included, and answer would save, or the refusal a save would give (every locator never seen, listed at once), writing nothing and recording nothing.";
+const DRY_RUN_SCRIPT: &str = "true: run every check a save makes, the seen check included, and answer \"Dry run: nothing was saved.\" with what it would save, or the refusal a save would give (every locator never seen, listed at once), writing nothing and recording nothing.";
 
 /// What `dry_run` does on `save_autorun_component`.
 const DRY_RUN_COMPONENT: &str = "true: run every rule a save makes and answer would_save or the refusal, writing nothing and recording nothing. It is not a try of the component.";

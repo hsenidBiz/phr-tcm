@@ -670,9 +670,9 @@ fn the_guide_says_when_a_dialog_never_fails_and_which_settings_a_watched_run_rea
 }
 
 /// Healing starts from the failing step: the repair section says to replay
-/// there first, that the assistant may replay without asking except that a
-/// must-not-save script asks the person in the app, and never to replay
-/// past the failing step.
+/// there first, that the assistant may replay without asking (a
+/// must-not-save script too, its saves stopped), never to replay past the
+/// failing step, and how to keep waiting on a replay still running.
 #[test]
 fn the_guide_teaches_replaying_to_the_failing_step() {
     let g = autorun_guide();
@@ -683,10 +683,17 @@ fn the_guide_teaches_replaying_to_the_failing_step() {
     assert!(flat.contains("Replay to the failing step before trying fixes."), "{flat}");
     assert!(
         flat.contains(
-            "You may replay without asking the person, except that a script marked must not save asks the person in the app first"
+            "You may replay without asking the person. A script marked must not save replays at once too, its saves stopped throughout."
         ),
         "{flat}"
     );
+    assert!(!flat.contains("Allow"), "the guide still names the removed Allow prompt: {flat}");
+    assert!(flat.contains("still running, now at step N of M"), "{flat}");
+    assert!(flat.contains("again with the same case and step to keep waiting"), "{flat}");
+    assert!(flat.contains("The replay leaves the Auto Run browser open on that step"), "{flat}");
+    assert!(flat.contains("carries on from where your last replay of it stood"), "{flat}");
+    assert!(flat.contains("\"Carried on from step K\" or \"Started from the beginning\""), "{flat}");
+    assert!(flat.contains("`release_autorun_browser` closes a browser your replay opened, and starting a discovery closes it"), "{flat}");
     assert!(flat.contains("Never replay past the failing step to \"see what happens\"."), "{flat}");
     assert!(flat.contains("No browser needs to be open"), "{flat}");
     assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
@@ -1324,6 +1331,13 @@ fn every_quick_rule_is_in_the_full_guide() {
         ("stop and report to the person; never try again in a loop", "Discovering the app"),
         ("the app still holds after it closed", "Discovering the app"),
         ("Never ask the person to restart the app", "Discovering the app"),
+        ("closes a browser your replay left open (never the person's)", "Discovering the app"),
+        ("Use full names, and probe `nth` locators exactly as written", "Selectors"),
+        ("Use `exact: true` when a name is part of another, such as \"Continue\" and \"Save & Continue\"", "Selectors"),
+        (
+            "After typing in a search box, wait for the list to settle (the other rows gone, the target visible) before clicking",
+            "Tables and grids",
+        ),
         ("creates, deletes, publishes or submits shared data, or needs the site in a particular state", "Shared state a case changes"),
         ("reusing one name for one change across the PBI", "Shared state a case changes"),
         ("call `set_autorun_order` if an order is needed", "Shared state a case changes"),

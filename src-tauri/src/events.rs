@@ -192,22 +192,6 @@ pub struct AutorunDiscoveryChanged {
     pub active: bool,
 }
 
-/// Emitted when the assistant asks to replay case `case_id` (`title`) up
-/// to step `step` and its script must not save: the app shows the Allow
-/// prompt for request `id` (`autorun::replay_ask`), and nothing runs until
-/// the person answers it with `auto_run_answer_replay_request`.
-/// `ends_discovery`: the assistant's discovery holds the browser as it
-/// asks, and Allow ends it first (what it mapped is kept), so the prompt
-/// says so.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type, tauri_specta::Event)]
-pub struct AutorunReplayRequest {
-    pub id: String,
-    pub case_id: i32,
-    pub title: String,
-    pub step: i32,
-    pub ends_discovery: bool,
-}
-
 /// Emitted when an unattended run pauses at a reset point: before case
 /// `before_case_id` runs, a person reverts `names` (`changed_by` gives, per
 /// name, the cases that changed it), then answers with
@@ -221,13 +205,6 @@ pub struct AutorunResetNeeded {
     pub names: Vec<String>,
     pub changed_by: Vec<(String, Vec<i32>)>,
     pub remaining: Vec<i32>,
-}
-
-/// Emitted when replay request `id` stops waiting: answered, timed out, or
-/// its caller gone. The Allow prompt for it closes.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type, tauri_specta::Event)]
-pub struct AutorunReplayRequestEnded {
-    pub id: String,
 }
 
 /// Emitted while a module path or a sign-in is being recorded: one per

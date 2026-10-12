@@ -79,20 +79,22 @@ pub fn quick_rules() -> String {
 
 const QUICK_RULES: &str = r##"## Quick rules
 
-The short form of this guide, for work you have done before. When
-something comes up that these do not cover, call `get_autorun_guide`
+Short form: for anything these rules do not cover, call `get_autorun_guide`
 without `quick` and read the full guide.
 
-- Discover the live app; never read the application's code to write
-  scripts. A save refuses any locator the app has not seen.
-- During a discovery with an area, `get_autorun_page` records what it
-  shows as seen under that area.
+- Discover the live app; never read the application's code to write scripts.
+  A save refuses any locator the app has not seen. During a discovery with
+  an area, `get_autorun_page` records what it shows as seen under that area.
 - `discover_autorun_actions` carries out up to 20 actions in order and
-  answers the page once. If any would be refused, none runs. It stops at
-  the first action that fails unless `stop_on_failure` is false, and
-  ending the discovery stops it before its next action.
+  answers the page once. If any would be refused, none runs. It stops at the
+  first action that fails unless `stop_on_failure` is false, and ending the
+  discovery stops it before its next action.
 - Probe every final locator with `probe_autorun_locator`, exactly as it is
-  written in the script, immediately before saving.
+  written in the script, immediately before saving. Use full names, and
+  probe `nth` locators exactly as written. Use `exact: true` when a name is
+  part of another, such as "Continue" and "Save & Continue".
+- After typing in a search box, wait for the list to settle (the other rows
+  gone, the target visible) before clicking.
 - Save with `"dry_run": true` to check a save without making it: writing
   nothing and recording nothing. A refused save lists every locator never
   seen, each with a hint when a close one was seen.
@@ -100,28 +102,26 @@ without `quick` and read the full guide.
   `save_autorun_component`, then save it unchanged from the draft that
   worked.
 - A step is either `unchecked` (no checks at all, and the reason) or
-  checked, never both.
-- Check a state with `expect_attribute` (`checked`, `aria-checked` or
-  `disabled`), not by adding a state to its selector.
+  checked, never both. Check a state with `expect_attribute` (`checked`,
+  `aria-checked` or `disabled`), not by adding a state to its selector.
 - A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
   text, in a quoted attribute value, or next to fixed text in an id or
   class. `{{prefix}}` and `{{now:...}}` are refused.
-- A picture is named by its full path: open it directly with the file
-  reader. Never search the disk for a picture.
-- Set `"no_save": true` on any script that works on a shared draft and
-  must not change it. A repair can turn `no_save` on, never off.
-- `end_autorun_discovery` closes the browser when you are done. A replay
-  to a failing step ends your own discovery first, keeping what it mapped.
-- When the sign-in fails, the session expires or you reach a cap, stop and
-  report to the person; never try again in a loop.
+- A picture: open it directly with the file reader. Never search the disk
+  for a picture. Set `"no_save": true` on any script that works on a shared
+  draft and must not change it. A repair can turn `no_save` on, never off.
+- `end_autorun_discovery` closes the browser when you are done. A replay to
+  a failing step ends your own discovery first, keeping what it mapped. When
+  the sign-in fails, the session expires or you reach a cap, stop and report
+  to the person; never try again in a loop.
 - `release_autorun_browser` lets go of a browser the app still holds after
-  it closed, and ends your own discovery. Never ask the person to restart
-  the app.
-- When a case creates, deletes, publishes or submits shared data, or needs
-  the site in a particular state, mark it `changes` or `needs_unchanged`,
-  reusing one name for one change across the PBI. Once its scripts are
-  written, call `set_autorun_order` if an order is needed and report the
-  order and any reset points. State needed before a run: a precondition.
+  it closed, ends your own discovery, and closes a browser your replay left
+  open (never the person's). Never ask the person to restart the app.
+- If a case creates, deletes, publishes or submits shared data, or needs the
+  site in a particular state, mark it `changes` or `needs_unchanged`,
+  reusing one name for one change across the PBI. Then call
+  `set_autorun_order` if an order is needed and report the order and any
+  reset points. State needed before a run: a precondition.
 "##;
 
 const GUIDE_BODY: &str = r##"An action script drives ONE test case through a real, visible browser -
@@ -600,6 +600,11 @@ page to the rows the case is about first. Rows in a table's footer
 (`tfoot`) are not read. Column spans are not followed: cells are matched
 to headers by their position in the row.
 
+After typing in a search box, wait for the list to settle (the other rows
+gone, the target visible) before clicking. A click sent while the list
+redraws for the filter is lost: a `wait_for` on the target's own control,
+and an `expect_hidden` on the rows the filter removes, come first.
+
 ## Browser dialogs
 
 A page's own `alert`, `confirm` and `prompt`, and the browser's "Leave
@@ -1019,7 +1024,8 @@ accessibility tree, so they match what a screen reader would announce.
 
 `name` and `text` match loosely - contains, ignoring case and extra
 spaces. Add `"exact": true` when a near miss exists ("Save" and "Save as
-new").
+new"). Use `exact: true` when a name is part of another, such as
+"Continue" and "Save & Continue": without it "Continue" matches both.
 
 A list narrows from left to right, each entry searching inside the one
 before it:
@@ -1038,6 +1044,11 @@ the action fails and says how many: narrow it with a list, `"exact"`, or
 entry matched, taken in page order, not from the matches inside one of
 them. Only `expect_count`, `expect_hidden` and `wait_for` are happy with
 many.
+
+Use full names, and probe `nth` locators exactly as written. A save checks
+a name as it was seen, so a part of a name ("Reviewer" for "Reviewer:
+30%") is refused even though a run would find it; and an `nth` locator is
+seen only once it was probed with its `nth`.
 
 A misspelt field is rejected, not ignored. Each entry takes exactly one
 of `role`, `text` or `css`.
@@ -1127,14 +1138,18 @@ You open and drive a browser of your own to find what a script needs:
   menus, ask the person to record the area in Auto Run.
 - `end_autorun_discovery` closes the browser when you are done.
 - `release_autorun_browser` lets go of an Auto Run browser the app still
-  holds after it closed, and ends your own discovery the way
-  `end_autorun_discovery` does. Call it when a discovery or a replay is
+  holds after it closed, ends your own discovery the way
+  `end_autorun_discovery` does, and closes a browser your replay left
+  open (never the person's). Call it when a discovery or a replay is
   refused with "close the supervised browser first", or a page read
   answers "the browser did not answer", while no Auto Run browser is
-  really open. It never closes the person's own browser while it is open:
-  then it says so, and you ask the person to close it or to press Release
-  Auto Run browser. It never stops a replay. Never ask the person to
-  restart the app for any of this.
+  really open, and when a template run is refused because the Auto Run
+  browser holds its account. It never closes the person's own browser
+  while it is open: then it says so, and you ask the person to close it
+  or to press Release Auto Run browser. It never stops a replay. Never ask
+  the person to restart the app for any of this.
+- `start_autorun_discovery` closes a browser your replay left open and
+  says "Closed the browser your replay left open." before it signs in.
 
 When the sign-in fails, the session expires or you reach a cap (a mapping
 run's 150 screens), stop and report to the person; never try again in a
@@ -1398,7 +1413,8 @@ objectives group" (expected: "The group is listed"):
 Before every save:
 
 - Probe every final locator with `probe_autorun_locator`, exactly as it is
-  written in the script, immediately before saving. A locator changed
+  written in the script, immediately before saving. A chain is probed as
+  its list, and is seen as a whole. A locator changed
   after its last probe is a guess.
 - A step is either `unchecked` (no checks at all, and the reason) or
   checked, never both. A step marked `unchecked` that also checks
@@ -1415,9 +1431,10 @@ Before every save:
   once the run has filled it in. When such a locator is still refused,
   open the fixture's draft by its unique name instead.
 - Save with `"dry_run": true` to check a save without making it: it runs
-  every check a save makes, the seen check included, and answers would
-  save, or the refusal a save would give (every locator never seen,
-  listed at once), writing nothing and recording nothing.
+  every check a save makes, the seen check included, and answers "Dry
+  run: nothing was saved." with what it would save, or the refusal a
+  save would give (every locator never seen, listed at once), writing
+  nothing and recording nothing. Only an answer starting "saved" saved.
 - A save refused during a discovery only because some locators were never
   seen checks those locators on the discovery's current page once, on its
   own: each one found there visible is recorded with how many elements it
@@ -1494,11 +1511,23 @@ be open: the app opens one, signs in as the case's account and goes to its
 area. A discovery of yours still open is ended first, keeping what it
 mapped, and the answer says so; start a new one to explore again.
 
-- You may replay without asking the person, except that a script marked
-  must not save asks the person in the app first, and runs only once they
-  press Allow. Its saves stay stopped throughout.
+- You may replay without asking the person. A script marked must not save
+  replays at once too, its saves stopped throughout.
 - Never replay past the failing step to "see what happens". The steps after
   it are not the failure, and they can change the application's data.
+- The replay leaves the Auto Run browser open on that step, and its answer
+  says so: until it closes, discovery actions, component saves and
+  template runs as the case's account are refused. `release_autorun_browser`
+  closes a browser your replay opened, and starting a discovery closes it.
+  So explore, probe and save components first, and replay last.
+- Replaying the same case to a later step carries on from where your last
+  replay of it stood, when that browser is yours and nothing (a step, a
+  try, a discovery action or another replay) has used it since; the
+  answer starts with "Carried on from step K" or "Started from the
+  beginning". Already standing before the step, nothing runs.
+- A replay still going after about 45 seconds answers "still running, now
+  at step N of M". Call `replay_autorun_to_step` again with the same case
+  and step to keep waiting on that same replay; it is never started twice.
 
 Its `STOP:` lines are final, and mean the script must not be touched at
 all:
@@ -1631,7 +1660,10 @@ plain sentence about what you saw, and leave the script alone.
 - A recorded pass of that step clears the mark, and so does a repair that
   changes that step.
 - The mark is refused unless that step failed in the case's newest run,
-  and refused when the failure is one of the `STOP:` lines.
+  and refused when the failure is one of the `STOP:` lines. A replay that
+  stopped on a failure counts as the newest run when it is newer, or when
+  no run on this machine has the case; `get_autorun_failures` then says
+  the failure is "from a replay to step N".
 - It is not a way around a check you could not make pass. If the locator,
   the waiting, the navigation, the data or the environment could explain
   the failure, fix that first. Never mark a case to avoid repairing it.

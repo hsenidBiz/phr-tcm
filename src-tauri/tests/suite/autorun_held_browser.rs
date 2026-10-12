@@ -31,6 +31,8 @@ struct HeldOne {
     discovery: Option<DiscoveryState>,
     alive: bool,
     closed: Arc<AtomicBool>,
+    /// The assistant opened it (its replay); otherwise the person did.
+    assistant: bool,
 }
 
 impl DiscoveryBrowser for HeldOne {
@@ -49,6 +51,9 @@ impl DiscoveryBrowser for HeldOne {
     async fn alive(&mut self) -> bool {
         self.alive
     }
+    fn opened_by_assistant(&mut self) -> bool {
+        self.assistant
+    }
 }
 
 /// A driver whose browser has gone: every call is `Closed`.
@@ -59,8 +64,17 @@ fn gone_driver() -> ScriptedDriver {
 fn held(alive: bool, discovery: Option<DiscoveryState>) -> (Option<HeldOne>, Arc<AtomicBool>) {
     let closed = Arc::new(AtomicBool::new(false));
     let d = if alive { ScriptedDriver::new(|_, _| Ok(serde_json::json!({}))) } else { gone_driver() };
-    let b = HeldOne { d, lease: Held::supervised(), account: None, discovery, alive, closed: closed.clone() };
+    let b = HeldOne { d, lease: Held::supervised(), account: None, discovery, alive, closed: closed.clone(), assistant: false };
     (Some(b), closed)
+}
+
+/// `held`, the browser opened by the assistant's replay.
+fn left_open_by_assistant(alive: bool, discovery: Option<DiscoveryState>) -> (Option<HeldOne>, Arc<AtomicBool>) {
+    let (mut slot, closed) = held(alive, discovery);
+    if let Some(b) = slot.as_mut() {
+        b.assistant = true;
+    }
+    (slot, closed)
 }
 
 fn discovering() -> Option<DiscoveryState> {
@@ -248,7 +262,7 @@ fn every_refusal_for_a_held_browser_asks_first_whether_it_is_alive() {
         let rest = &source[at..];
         &rest[..rest.find("\n}\n").unwrap_or(rest.len())]
     };
-    assert!(body("pub(crate) async fn open_for_discovery").contains("refuse_while_held(&mut slot)"));
+    assert!(body("pub(crate) async fn open_for_discovery").contains("make_way_for_discovery(&mut slot)"));
     assert!(body("pub async fn auto_run_open_browser").contains("let_go_if_gone(&mut slot)"));
     assert!(body("async fn open_if_none").contains("let_go_if_gone(slot)"));
     assert!(body("pub(crate) async fn replay_supervised").contains("let_go_if_gone(&mut slot)"));
@@ -343,6 +357,94 @@ async fn the_assistants_release_keeps_a_live_persons_browser() {
 
     let mut none: Option<HeldOne> = None;
     assert_eq!(release_in_for_assistant(&mut none).await.0, 200);
+}
+
+/// The assistant's release closes a live browser its own replay opened,
+/// through its normal close, and still keeps one the person opened.
+#[tokio::test]
+async fn the_assistants_release_closes_the_browser_its_replay_left_open() {
+    let (mut slot, closed) = left_open_by_assistant(true, None);
+    let (status, said) = release_in_for_assistant(&mut slot).await;
+    assert_eq!((status, said.as_str()), (200, v2_lib::commands::autorun::RELEASED_YOURS));
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst), "the assistant's browser was kept");
+    assert!(!said.contains('\u{2014}') && !said.contains('\u{2013}'), "{said}");
+
+    let (mut slot, closed) = held(true, None);
+    assert_eq!(release_in_for_assistant(&mut slot).await.0, 409);
+    assert!(slot.is_some() && !closed.load(Ordering::SeqCst), "the person's browser was closed");
+}
+
+/// A discovery closes a live browser the assistant's replay left open and
+/// says so; one the person opened, or a discovery's own, still refuses it.
+#[tokio::test]
+async fn a_discovery_closes_the_browser_the_assistants_replay_left_open() {
+    use v2_lib::ai_bridge::{make_way_for_discovery, said_closed_left_open, CLOSED_LEFT_OPEN};
+    let (mut slot, closed) = left_open_by_assistant(true, None);
+    assert_eq!(make_way_for_discovery(&mut slot).await, Ok(true));
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst));
+
+    let (mut slot, closed) = held(true, None);
+    assert_eq!(make_way_for_discovery(&mut slot).await, Err(busy_browser_sentence(false).to_string()));
+    assert!(slot.is_some() && !closed.load(Ordering::SeqCst));
+
+    let (mut slot, _) = left_open_by_assistant(true, discovering());
+    assert_eq!(make_way_for_discovery(&mut slot).await, Err(busy_browser_sentence(true).to_string()));
+
+    let (mut slot, _) = held(false, None);
+    assert_eq!(make_way_for_discovery(&mut slot).await, Ok(false), "a gone browser is let go, not closed as left open");
+
+    // The answer says it: beside a start's JSON, before a refusal's text.
+    assert_eq!(CLOSED_LEFT_OPEN, "Closed the browser your replay left open.");
+    let (status, text) = said_closed_left_open(true, (200, r#"{"signed_in":true}"#.to_string()));
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!((status, v["closed"].as_str()), (200, Some(CLOSED_LEFT_OPEN)));
+    assert_eq!(said_closed_left_open(true, (409, "no".into())), (409, format!("{CLOSED_LEFT_OPEN} no")));
+    assert_eq!(said_closed_left_open(false, (409, "no".into())), (409, "no".to_string()));
+}
+
+/// Who opened the browser is marked where it opens, and the person's own
+/// step or replay makes a browser theirs; the assistant's replay keeps an
+/// open browser's mark.
+#[test]
+fn the_browser_is_marked_with_who_opened_it() {
+    let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+    let body = |start: &str| -> String {
+        let from = &source[source.find(start).unwrap()..];
+        from[..from.find("\n}\n").unwrap()].to_string()
+    };
+    assert!(body("pub async fn auto_run_open_browser").contains("OpenedBy::Person"));
+    let discovery = body("pub(crate) async fn open_for_discovery");
+    assert!(discovery.contains("OpenedBy::Assistant") && discovery.contains("make_way_for_discovery"), "{discovery}");
+    let step = body("pub async fn auto_run_step");
+    assert!(step.contains("session.opened_by = OpenedBy::Person;"), "{step}");
+    let replay = body("pub(crate) async fn replay_supervised");
+    assert!(replay.contains("open_if_none(app, &mut slot, by.opens_as())"), "{replay}");
+    assert!(replay.contains("if by == ReplayBy::Person {\n        session.opened_by = OpenedBy::Person;"), "{replay}");
+    use v2_lib::commands::autorun::{OpenedBy, ReplayBy};
+    assert_eq!((ReplayBy::Person.opens_as(), ReplayBy::Assistant.opens_as()), (OpenedBy::Person, OpenedBy::Assistant));
+}
+
+/// A template refused its account because the Auto Run browser holds it
+/// names release_autorun_browser when the assistant opened that browser.
+#[test]
+fn a_template_held_off_by_the_assistants_browser_names_the_release() {
+    use v2_lib::ai_bridge::{template_report_hint, FREE_IT_WITH_RELEASE};
+    use v2_lib::autorun::lease::in_use_by_browser;
+    assert_eq!(in_use_by_browser("automation"), "the account automation was in use by the Auto Run browser - try again when it is free");
+    let report = |detail: String| serde_json::json!({ "ok": false, "steps": [{ "detail": detail }] }).to_string();
+    let refused = report(in_use_by_browser("automation"));
+    let v: serde_json::Value = serde_json::from_str(&template_report_hint(refused.clone(), "automation", true)).unwrap();
+    assert_eq!(v["free_it"], FREE_IT_WITH_RELEASE);
+    assert!(FREE_IT_WITH_RELEASE.contains("release_autorun_browser"));
+    assert_eq!(template_report_hint(refused.clone(), "automation", false), refused, "a browser not the assistant's, or holding another account, named the release");
+    // Another account's refusal is not this template's.
+    assert_eq!(template_report_hint(refused.clone(), "evelyn1", true), refused);
+    let other = report("the account automation was in use by an unattended run - try again when it is free".into());
+    assert_eq!(template_report_hint(other.clone(), "automation", true), other);
+    // The app asks whether the assistant's own browser holds this very account.
+    let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+    let holds = &source[source.find("pub async fn assistant_browser_holds").unwrap()..];
+    assert!(holds[..holds.find("\n}\n").unwrap()].contains("s.lease.account() == Some(key)"));
 }
 
 /// The assistant's release never stops a replay going: it waits for it.

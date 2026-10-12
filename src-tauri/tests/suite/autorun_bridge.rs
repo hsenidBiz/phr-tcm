@@ -1664,6 +1664,38 @@ async fn a_matched_probe_records_a_locator_the_snapshot_cut_off() {
     assert!(holds_css(page, "#archive"), "{:?}", page.elements);
 }
 
+/// A chain - a dialog, then the button inside it - is probed as a script
+/// writes it: a list of links, or that list sent as JSON text by a client
+/// that sends only strings. It resolves, and is filed whole with what it
+/// matched; its links are filed as not counted (`NOT_ONE`). A CSS string
+/// that only looks like a list stays CSS.
+#[tokio::test]
+async fn a_chain_probe_resolves_and_records_the_whole() {
+    use v2_lib::ai_bridge::probe_target;
+    use v2_lib::autorun::discovery_map::NOT_ONE;
+    use v2_lib::browser::locator::Target;
+    let chain = serde_json::json!([{ "css": "[role=dialog]" }, { "css": "button.save" }]);
+    for selector in [chain.clone(), serde_json::Value::String(chain.to_string())] {
+        let target = probe_target(selector).unwrap();
+        assert!(matches!(&target, Target::Chain(links) if links.len() == 2), "{target:?}");
+    }
+    assert!(matches!(probe_target(serde_json::json!("[data-x=\"1\"]")).unwrap(), Target::Legacy(_)));
+    assert!(probe_target(serde_json::json!([])).is_err(), "an empty chain was taken");
+
+    let dir = TempDir::new();
+    let target = probe_target(chain).unwrap();
+    let (status, text) = probe_page(&mut probed_page_showing(1, &[0]), &target, Some(&sighting(dir.path(), None))).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.starts_with("matches: 1"), "{text}");
+    let area = mapped_area(dir.path(), "").expect("nothing was recorded");
+    let whole = area.wholes.iter().find(|w| w.locator == target).expect("the chain was not kept whole");
+    assert_eq!(whole.matched, 1);
+    assert!(!area.sightings.is_empty());
+    for link in &area.sightings {
+        assert_eq!(link.matched, NOT_ONE, "a link of a chain was counted on its own: {link:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_probe_with_no_match_records_nothing() {
     let dir = TempDir::new();
@@ -3286,13 +3318,18 @@ async fn a_dry_run_that_passes_says_it_would_save() {
 
     let body = tool_body(serde_json::json!({ "scripts": scripts, "dry_run": true }));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (new)"));
+    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)"));
     assert_eq!(load_script(dir.path(), 7).unwrap(), None, "a dry run wrote the script");
+    // Never mistaken for a save: it opens by saying nothing was saved, and
+    // never says "saved N script(s)".
+    assert!(out.starts_with(v2_lib::ai_bridge::DRY_RUN_NOTHING_SAVED), "{out}");
+    assert!(!out.contains("saved 1 script(s)"), "{out}");
+    assert_eq!(v2_lib::ai_bridge::DRY_RUN_NOTHING_SAVED, "Dry run: nothing was saved.");
 
     // The scripts as a string, as sibling tools take them, and false.
     let body = tool_body(serde_json::json!({ "scripts": scripts.to_string(), "dry_run": true }));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (new)"));
+    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)"));
     let body = tool_body(serde_json::json!({ "scripts": scripts, "dry_run": false }));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -3303,6 +3340,25 @@ async fn a_dry_run_that_passes_says_it_would_save() {
     let odd = serde_json::json!({ "scripts": scripts, "dry_run": "yes" }).to_string();
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &odd, "1.0.0").await;
     assert_eq!((status, out.as_str()), (400, "\"dry_run\" is true or false."));
+}
+
+/// A `dry_run` placed inside a script is refused, never dropped: dropped,
+/// the save would be real. Nothing is written.
+#[tokio::test]
+async fn a_dry_run_inside_a_script_is_refused_and_saves_nothing() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let mut scripts = case_7("#toast", "Saved");
+    see_scripts(dir.path(), &scripts.to_string());
+    scripts[0]["dry_run"] = serde_json::json!(true);
+    for body in [scripts.to_string(), serde_json::json!({ "scripts": scripts }).to_string()] {
+        let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+        assert_eq!((status, out.as_str()), (400, v2_lib::ai_bridge::DRY_RUN_IN_A_SCRIPT));
+    }
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None, "a misplaced dry run saved the script");
+    assert!(v2_lib::ai_bridge::DRY_RUN_IN_A_SCRIPT.contains("nothing was saved"));
 }
 
 /// A dry run writes nothing and records nothing, refused or not: no
@@ -3338,7 +3394,7 @@ async fn a_dry_run_writes_and_records_nothing() {
     see_scripts(dir.path(), &case_7(".toast", "Saved").to_string());
     let seen = every_file(dir.path());
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry(".toast", true), "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (repaired)"));
+    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (repaired)"));
     assert_eq!(every_file(dir.path()), seen, "a dry run that passed changed a file");
     let kept = load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(kept.repairs, 0);

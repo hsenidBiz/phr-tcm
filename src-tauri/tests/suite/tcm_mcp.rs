@@ -1223,7 +1223,11 @@ fn the_replay_tool_rides_with_the_auto_run_tools() {
     assert_eq!(tool["inputSchema"]["required"], serde_json::json!(["case_id", "step"]));
     let d = tool["description"].as_str().unwrap();
     assert!(d.contains("Needs no browser open"), "{d}");
-    assert!(d.contains("must not save first asks the person in the app"), "{d}");
+    assert!(d.contains("must not save replays at once too, its saves stopped throughout"), "{d}");
+    assert!(!d.contains("Allow"), "{d}");
+    assert!(d.contains("call again with the same case and step to keep waiting"), "{d}");
+    assert!(d.contains("release_autorun_browser closes a browser your replay opened"), "{d}");
+    assert!(d.contains("carries on from there; the answer starts with Carried on from step K, or Started from the beginning"), "{d}");
     assert!(d.contains("never past it"), "{d}");
     assert!(d.contains("try_autorun_action"), "{d}");
     assert!(!d.contains('\u{2014}'), "{d}");
