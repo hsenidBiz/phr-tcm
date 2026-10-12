@@ -346,6 +346,20 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["scripts"]),
         },
         {
+            "name": "get_autorun_script",
+            "description": "Read one test case's saved Auto Run script, whole, as the JSON save_autorun_script takes for one entry: { case_id, title, account, area, steps, ... } with its repairs, its suspected-defect mark and when it was saved. Read it before you repair or delete a script. Answers 404 with a sentence when the case has no script on this machine.",
+            "inputSchema": schema(serde_json::json!({
+                "case_id": { "type": "number", "description": "The test case whose script to read." },
+            }), &["case_id"]),
+        },
+        {
+            "name": "delete_autorun_script",
+            "description": "Delete one test case's saved Auto Run script, when the case no longer needs one. It is not removed at once: it is moved aside on this machine, out of every list and run, and purged after 30 days; Auto Run shows the case with no script straight away. Refused while that case is being replayed, by replay_autorun_to_step or a run: wait for it to end. Refused for a case with no script. Never call it to start a script again from nothing: a repair is a save with `edits`.",
+            "inputSchema": schema(serde_json::json!({
+                "case_id": { "type": "number", "description": "The test case whose script to delete." },
+            }), &["case_id"]),
+        },
+        {
             "name": "get_autorun_page",
             "description": "Read the page in the Auto Run browser, the one the person opened on the Auto Run tab or your discovery browser, as text: Chrome's own accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script - what a password field holds is never shown. It answers the first 120 lines, then a line saying how many more there are: ask for more with `limit`, or list one part of the page with `within`. During a discovery with an area, a read records what it shows as seen under that area, and the answer ends with a line saying what was recorded; only a read of the whole page marks the area explored. Needs a supervised or discovery browser to be open.",
             "inputSchema": schema(serde_json::json!({
@@ -1052,6 +1066,17 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 Err(refused) => Ok((400, refused)),
             }
         }
+        "get_autorun_script" => {
+            // A number, or a numeric string: anything else is forwarded as
+            // written, so the route names what is wrong with it.
+            let id = match &args["case_id"] {
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => s.trim().to_string(),
+                _ => String::new(),
+            };
+            call("GET", &format!("/autorun-script?case_id={}", percent_encode(&id)), "")
+        }
+        "delete_autorun_script" => call("POST", "/autorun-script-delete", &args.to_string()),
         "get_autorun_page" => {
             let mut params: Vec<String> = Vec::new();
             if let Some(n) = args["limit"].as_u64() {

@@ -190,6 +190,80 @@ async fn a_reload_and_a_tab_open_close_keep_the_browser_for_the_next_case() {
     assert!(!profile.exists());
 }
 
+/// The page targets a browser on this DevTools port lists, each with the
+/// window it is in and that window's state.
+async fn page_targets(port: u16) -> Vec<(String, serde_json::Value)> {
+    let mut b = Cdp::connect_browser(port).await.expect("connected");
+    let listed = b.call("Target.getTargets", json!({})).await.expect("targets");
+    let mut out = vec![];
+    for t in listed["targetInfos"].as_array().unwrap().iter().filter(|t| t["type"] == "page") {
+        let window = b
+            .call("Browser.getWindowForTarget", json!({ "targetId": t["targetId"] }))
+            .await
+            .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+        out.push((t["url"].as_str().unwrap_or("").to_string(), window));
+    }
+    out
+}
+
+/// A watched unattended run (`run_browsers` with watch on) shows ONE
+/// window: the case drives the page its browser started with, and no page
+/// is made beside it (a context's page would be a second window, the first
+/// one left on about:blank).
+#[tokio::test]
+#[ignore = "starts a real Edge window"]
+async fn a_watched_unattended_run_has_one_page_and_so_one_window() {
+    let _held = crate::serial::held_browsers();
+    let before = tree::held_profiles();
+    let mut run = v2_lib::commands::autorun_replay::run_browsers(Browser::Edge, true);
+    let mut d = run.open().await.expect("a page for case 1");
+    let started: Vec<_> = tree::held_profiles().into_iter().filter(|p| !before.contains(p)).collect();
+    assert_eq!(started.len(), 1, "one browser: {started:?}");
+    let port: u16 = started[0]
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .trim_start_matches(tree::PROFILE_PREFIX)
+        .parse()
+        .expect("the profile is named for its port");
+    // A moment for a late window to show up, if one were coming.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let pages = page_targets(port).await;
+    let app: Vec<_> = pages.iter().filter(|(url, _)| v2_lib::browser::cdp::is_app_page(url)).collect();
+    assert_eq!(app.len(), 1, "one page, so one window: {pages:?}");
+    // Edge's own sync dialog on a fresh profile is listed too, but is in
+    // no browser window: every page that is in one shares that one.
+    let mut windows: Vec<i64> = pages.iter().filter_map(|(_, w)| w["windowId"].as_i64()).collect();
+    windows.sort();
+    windows.dedup();
+    assert_eq!(windows.len(), 1, "one window: {pages:?}");
+    assert_eq!(page::eval_value(&mut d, "1 + 1").await.unwrap(), json!(2), "and it is the one driven");
+    run.close(d).await;
+    drop(run);
+    assert!(processes_on(&started[0]).is_empty(), "the case's browser ended with it");
+}
+
+/// What the watched run used to do, kept as the evidence for the fix: a
+/// visible browser shows a new context's page in a window of its own, so a
+/// context per case meant a second window beside the about:blank one the
+/// browser started with.
+#[tokio::test]
+#[ignore = "starts a real Edge window"]
+async fn a_context_page_in_a_visible_browser_opens_a_second_window() {
+    let _held = crate::serial::held_browsers();
+    let b = start_with(&[]).await;
+    let mut cdp = Cdp::connect_browser(b.port).await.expect("connected");
+    cdp.drive_new_context().await.expect("a context page");
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let pages = page_targets(b.port).await;
+    let mut windows: Vec<i64> = pages.iter().filter_map(|(_, w)| w["windowId"].as_i64()).collect();
+    windows.sort();
+    windows.dedup();
+    assert_eq!(windows.len(), 2, "{pages:?}");
+    drop(cdp);
+    assert!(b.close().is_ok());
+}
+
 /// A program the person opens from a visible app browser (a download in
 /// Excel, a link in their own Edge) is started by the browser and so lands
 /// in its job. Closing the browser ends only the browser's own processes,

@@ -42,6 +42,36 @@ fn scripts_dir(root: &Path) -> PathBuf {
     root.join("scripts")
 }
 
+/// Told of every change to the scripts on disk: the store's root and the
+/// cases whose script was written or removed.
+type ChangeListener = std::sync::Arc<dyn Fn(&Path, &[i32]) + Send + Sync>;
+
+/// Everyone told of a change to the scripts (`on_scripts_changed`). The app
+/// adds one at startup that says so to the window, so the Auto Run screen
+/// reads a script again whoever changed it: the person, the assistant, or
+/// a replay.
+static LISTENERS: Mutex<Vec<ChangeListener>> = Mutex::new(Vec::new());
+
+/// Be told of every script written or removed from now on, as the store's
+/// root and the cases it touched.
+pub fn on_scripts_changed(f: impl Fn(&Path, &[i32]) + Send + Sync + 'static) {
+    LISTENERS.lock().unwrap_or_else(|e| e.into_inner()).push(std::sync::Arc::new(f));
+}
+
+/// Tell every listener that these cases' scripts changed. Nothing is said
+/// for no case.
+fn scripts_changed(root: &Path, case_ids: &[i32]) {
+    if case_ids.is_empty() {
+        return;
+    }
+    // Copied out first: a listener runs with no lock of this module held,
+    // so one that registers another or reads the store cannot deadlock.
+    let listeners: Vec<ChangeListener> = LISTENERS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    for listener in listeners {
+        listener(root, case_ids);
+    }
+}
+
 fn runs_dir(root: &Path) -> PathBuf {
     root.join("runs")
 }
@@ -78,8 +108,9 @@ pub fn save_script(root: &Path, script: &CaseScript) -> Result<(), String> {
     let dir = scripts_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(script).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(format!("case-{}.json", script.case_id)), json)
-        .map_err(|e| e.to_string())
+    std::fs::write(dir.join(format!("case-{}.json", script.case_id)), json).map_err(|e| e.to_string())?;
+    scripts_changed(root, &[script.case_id]);
+    Ok(())
 }
 
 /// Why a bundle save failed - so a caller with an HTTP status to pick
@@ -258,6 +289,8 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
             return Err(SaveScriptsError::Io(e.to_string()));
         }
     }
+    let ids: Vec<i32> = scripts.iter().map(|s| s.case_id).collect();
+    scripts_changed(root, &ids);
     Ok(())
 }
 
@@ -320,6 +353,7 @@ fn write_script(root: &Path, script: &CaseScript) -> Result<(), String> {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.to_string());
     }
+    scripts_changed(root, &[script.case_id]);
     Ok(())
 }
 
@@ -781,18 +815,149 @@ pub fn clear_scripts(root: &Path, case_ids: &[i32]) -> Result<usize, String> {
     // file into place, and a delete landing between would be undone.
     let _held = scripts_lock();
     let dir = scripts_dir(root);
-    let mut removed = 0usize;
+    let mut removed: Vec<i32> = vec![];
     for id in case_ids {
         let path = dir.join(format!("case-{id}.json"));
         match std::fs::remove_file(&path) {
-            Ok(()) => removed += 1,
+            Ok(()) => removed.push(*id),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("could not remove {}: {e}", path.display())),
+            Err(e) => {
+                scripts_changed(root, &removed);
+                return Err(format!("could not remove {}: {e}", path.display()));
+            }
         }
         // A replay kept for the case goes with its script.
         super::replay_record::forget(root, *id);
     }
-    Ok(removed)
+    scripts_changed(root, &removed);
+    Ok(removed.len())
+}
+
+/// Where a deleted script is kept aside: beside the scripts, never among
+/// them, so nothing that lists or runs scripts sees it.
+fn deleted_dir(root: &Path) -> PathBuf {
+    root.join("deleted-scripts")
+}
+
+/// How long a deleted script is kept aside before it is purged.
+pub const DELETED_KEPT_DAYS: u64 = 30;
+
+const DAY_MS: u64 = 86_400_000;
+
+/// The cases a replay is running right now: a replay to a step, a case of
+/// an unattended run, or the case a watched step-by-step run is on. Their
+/// scripts are not deleted under them.
+static REPLAYING: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+
+/// A case being replayed, for as long as this is held (`replaying`).
+pub struct Replaying(i32);
+
+impl Replaying {
+    /// The case it holds.
+    pub fn case_id(&self) -> i32 {
+        self.0
+    }
+}
+
+/// Note that case `case_id` is being replayed until the value is dropped.
+///
+/// Taken under the scripts lock, so it and a delete are one after the
+/// other: a delete that got in first has already moved the script aside
+/// (the replay then finds none), and one that comes after is refused.
+/// Take it before the script is read.
+pub fn replaying(case_id: i32) -> Replaying {
+    let _held = scripts_lock();
+    REPLAYING.lock().unwrap_or_else(|e| e.into_inner()).push(case_id);
+    Replaying(case_id)
+}
+
+impl Drop for Replaying {
+    fn drop(&mut self) {
+        let mut going = REPLAYING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(at) = going.iter().position(|id| *id == self.0) {
+            going.remove(at);
+        }
+    }
+}
+
+/// Is case `case_id` being replayed right now?
+pub fn is_replaying(case_id: i32) -> bool {
+    REPLAYING.lock().unwrap_or_else(|e| e.into_inner()).contains(&case_id)
+}
+
+/// Said when a delete is asked for while the case is being replayed.
+pub fn replaying_refusal(case_id: i32) -> String {
+    format!("case {case_id} is being replayed right now - wait for its replay or run to end, then delete its script")
+}
+
+/// Said when a delete names a case with no script on this machine.
+pub fn no_script(case_id: i32) -> String {
+    format!("case {case_id} has no script on this machine")
+}
+
+/// Delete case `case_id`'s script: it is moved aside, out of the scripts,
+/// into the deleted-scripts folder beside them under a name that carries
+/// the deletion time (`now_ms`), and purged from there after
+/// `DELETED_KEPT_DAYS` (`purge_deleted_scripts`). A replay kept for the case
+/// goes with it, as with Clear scripts. Refused while the case is being
+/// replayed (`is_replaying`) and for a case with no script. A local file
+/// move only. Answers the name it was kept under.
+pub fn delete_script(root: &Path, case_id: i32, now_ms: u64) -> Result<String, String> {
+    let _held = scripts_lock();
+    if is_replaying(case_id) {
+        return Err(replaying_refusal(case_id));
+    }
+    let from = scripts_dir(root).join(format!("case-{case_id}.json"));
+    if !from.is_file() {
+        return Err(no_script(case_id));
+    }
+    let aside = deleted_dir(root);
+    std::fs::create_dir_all(&aside).map_err(|e| format!("the script could not be kept aside: {e}"))?;
+    // Two deletes of one case in the same millisecond still keep both.
+    let mut stamp = now_ms;
+    let to = loop {
+        let to = aside.join(format!("case-{case_id}-deleted-{stamp}.json"));
+        if !to.exists() {
+            break to;
+        }
+        stamp += 1;
+    };
+    std::fs::rename(&from, &to).map_err(|e| format!("the script could not be kept aside: {e}"))?;
+    super::replay_record::forget(root, case_id);
+    scripts_changed(root, &[case_id]);
+    Ok(to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
+}
+
+/// When a script kept aside was deleted, read from its name
+/// (`case-<id>-deleted-<ms>.json`). `None` for any other name: a file this
+/// store did not name is never purged.
+pub fn deleted_at(name: &str) -> Option<u64> {
+    let rest = name.strip_prefix("case-")?.strip_suffix(".json")?;
+    let (id, ms) = rest.split_once("-deleted-")?;
+    id.parse::<i32>().ok()?;
+    ms.parse().ok()
+}
+
+/// Remove every script kept aside more than `DELETED_KEPT_DAYS` before
+/// `now_ms`, and say how many went. Run when the app starts and before each
+/// delete. Anything else in the folder is left alone.
+pub fn purge_deleted_scripts(root: &Path, now_ms: u64) -> usize {
+    let Ok(entries) = std::fs::read_dir(deleted_dir(root)) else {
+        return 0;
+    };
+    let kept_for = DELETED_KEPT_DAYS * DAY_MS;
+    let mut purged = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(at) = deleted_at(&name) else { continue };
+        if now_ms.saturating_sub(at) > kept_for {
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => purged += 1,
+                Err(e) => crate::applog::warn(format!("Auto Run: the deleted script {name} could not be purged: {e}")),
+            }
+        }
+    }
+    purged
 }
 
 /// Delete every saved run, and every screenshot and download with it -

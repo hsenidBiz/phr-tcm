@@ -97,6 +97,8 @@ fn tools_list_names_every_tool() {
             "merge_case_files",
             "get_autorun_guide",
             "save_autorun_script",
+            "get_autorun_script",
+            "delete_autorun_script",
             "get_autorun_page",
             "probe_autorun_locator",
             "try_autorun_action",
@@ -441,10 +443,10 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 50 in this development build: nothing is disabled by an unreachable
-    // bridge, including the thirty-three dev-only tools, which default to ON here
+    // 52 in this development build: nothing is disabled by an unreachable
+    // bridge, including the thirty-five dev-only tools, which default to ON here
     // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 50, "an unreachable bridge must not disable anything, dev-only tools included");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 52, "an unreachable bridge must not disable anything, dev-only tools included");
 }
 
 /// The description is the only thing an assistant reads. It used to name
@@ -615,7 +617,7 @@ fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordina
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1006,7 +1008,7 @@ fn with_auto_run_off_and_api_templates_on_the_app_quirk_tools_stay() {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
             ));
         }
         calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
@@ -1066,7 +1068,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))

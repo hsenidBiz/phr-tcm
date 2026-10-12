@@ -21,6 +21,12 @@
 //! process, and that browser is kept. A browser that will not make
 //! contexts at all (a policy can switch them off) gives the rest of the run
 //! a browser per case, as it was before contexts.
+//!
+//! A run the person watches has a browser per case from the start, driving
+//! the page that browser started with (`Cdp::drive_new_page`). A visible
+//! browser shows a new context's page in a window of its own, beside the
+//! window it started with: a watched run with contexts showed two windows,
+//! one of them left on about:blank for the whole run.
 
 use crate::autorun::replay::Browsers;
 use crate::browser::cdp::{Cdp, CdpError, Transport};
@@ -51,6 +57,12 @@ pub trait Launcher {
     /// End every process of it, wait until they are gone, and delete its
     /// profile. A browser whose processes will not end is handed back.
     fn close(&mut self, p: Self::Process) -> Result<(), Self::Process>;
+    /// Does the browser it starts have a window on screen? Then each case
+    /// gets a browser of its own and drives the page it started with: a
+    /// context's page would open a second window.
+    fn shows_window(&self) -> bool {
+        false
+    }
 }
 
 /// Why a case's page could not be made.
@@ -72,14 +84,15 @@ fn refuses_contexts(e: &CdpError) -> bool {
 pub struct OneBrowser<L: Launcher> {
     launcher: L,
     current: Option<L::Process>,
-    /// The browser refused contexts: from then on each case has a browser
-    /// of its own, closed when the case ends.
+    /// The browser refused contexts, or shows a window: each case has a
+    /// browser of its own, closed when the case ends.
     per_case: bool,
 }
 
 impl<L: Launcher> OneBrowser<L> {
     pub fn new(launcher: L) -> Self {
-        OneBrowser { launcher, current: None, per_case: false }
+        let per_case = launcher.shows_window();
+        OneBrowser { launcher, current: None, per_case }
     }
 
     /// Close the browser, if one is open: the next case starts another.

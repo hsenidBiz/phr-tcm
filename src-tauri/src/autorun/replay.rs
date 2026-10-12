@@ -1009,6 +1009,8 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
         }
         let index = i as u32;
         let (case_id, title) = (case.case_id, case.title.as_str());
+        // Its script is not deleted while the case runs.
+        let _replaying = store::replaying(case_id);
         // The script's own step count, not what the case actually ran -
         // it must read the same on every phase of a case, including
         // "done", whether the browser opened or the case has a script at

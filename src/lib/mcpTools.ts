@@ -42,6 +42,16 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Save browser scripts for a PBI's cases - one call covers the whole set.",
   },
   {
+    name: "get_autorun_script",
+    label: "Read a script",
+    summary: "Read one case's saved browser script, whole.",
+  },
+  {
+    name: "delete_autorun_script",
+    label: "Delete a script",
+    summary: "Delete one case's saved script. It is kept aside on this machine for 30 days, then purged.",
+  },
+  {
     name: "get_autorun_page",
     label: "See the open page",
     summary: "Read the page in the browser you opened, one element per line with its locator.",
@@ -234,6 +244,8 @@ export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_
 export const DEV_ONLY_TOOLS = [
   "get_autorun_guide",
   "save_autorun_script",
+  "get_autorun_script",
+  "delete_autorun_script",
   "get_autorun_page",
   "probe_autorun_locator",
   "try_autorun_action",
@@ -326,6 +338,8 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   [
     "get_autorun_guide",
     "save_autorun_script",
+    "get_autorun_script",
+    "delete_autorun_script",
     "get_autorun_page",
     "probe_autorun_locator",
     "try_autorun_action",
@@ -390,7 +404,7 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
   get_autorun_guide: {
     label: "Auto Run scripts",
     summary:
-      "Read the script guide, see the page in the open browser, try a locator or an action, replay a case to its failing step, read a run's failures, save and repair scripts, set Auto Run's order for a PBI, and propose and read the environment's test logins.",
+      "Read the script guide, see the page in the open browser, try a locator or an action, replay a case to its failing step, read a run's failures, save, read, repair and delete scripts, set Auto Run's order for a PBI, and propose and read the environment's test logins.",
   },
   get_api_template_guide: {
     label: "API templates",

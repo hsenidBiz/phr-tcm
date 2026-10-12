@@ -741,6 +741,27 @@ pub fn is_app_page(url: &str) -> bool {
     true
 }
 
+/// How long `drive_new_page` waits for the page a browser starts with
+/// before it makes one of its own.
+pub const STARTUP_PAGE_WAIT: Duration = Duration::from_millis(1500);
+
+/// How often it asks in that time.
+const STARTUP_PAGE_POLL: Duration = Duration::from_millis(100);
+
+/// The page a browser started with, from a `Target.getTargets` answer: an
+/// application page (`is_app_page`) nobody is attached to yet, as its
+/// target id and address.
+pub fn startup_page(listed: &serde_json::Value) -> Option<(String, String)> {
+    let page = listed["targetInfos"].as_array()?.iter().find(|t| {
+        t["type"] == "page" && !t["attached"].as_bool().unwrap_or(false) && is_app_page(t["url"].as_str().unwrap_or(""))
+    })?;
+    let target = page["targetId"].as_str().unwrap_or("").to_string();
+    if target.is_empty() {
+        return None;
+    }
+    Some((target, page["url"].as_str().unwrap_or("").to_string()))
+}
+
 impl Cdp<WsTransport> {
     /// Open the browser's own socket and drive its first page over it
     /// (`drive_first_page`). The page is the first application page
@@ -932,21 +953,23 @@ impl<T: Transport> Cdp<T> {
     /// browser of its own. Making a page beside the one it started with
     /// would leave that one open, and the auto-attach would take it for a
     /// tab the case opened.
+    ///
+    /// A browser can answer on its DevTools port a moment before its
+    /// first window has a page in it. So the browser is asked again for a
+    /// while (`STARTUP_PAGE_WAIT`) before a page is made: a page made in
+    /// that moment is a second window beside the one the browser then
+    /// opens anyway, left showing about:blank.
     pub async fn drive_new_page(&mut self) -> Result<(), CdpError> {
-        let listed = self.call_on(None, "Target.getTargets", serde_json::json!({}), CALL_TIMEOUT).await?;
-        let started_with = listed["targetInfos"].as_array().and_then(|all| {
-            all.iter().find(|t| {
-                t["type"] == "page"
-                    && !t["attached"].as_bool().unwrap_or(false)
-                    && is_app_page(t["url"].as_str().unwrap_or(""))
-            })
-        });
-        if let Some(page) = started_with {
-            let target = page["targetId"].as_str().unwrap_or("").to_string();
-            let url = page["url"].as_str().unwrap_or("").to_string();
-            if !target.is_empty() {
+        let began = Instant::now();
+        loop {
+            let listed = self.call_on(None, "Target.getTargets", serde_json::json!({}), CALL_TIMEOUT).await?;
+            if let Some((target, url)) = startup_page(&listed) {
                 return self.drive_first_page(&target, &url).await;
             }
+            if began.elapsed() >= STARTUP_PAGE_WAIT {
+                break;
+            }
+            tokio::time::sleep(STARTUP_PAGE_POLL).await;
         }
         let page =
             self.call_on(None, "Target.createTarget", serde_json::json!({ "url": "about:blank" }), CALL_TIMEOUT).await?;

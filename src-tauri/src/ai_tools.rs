@@ -155,6 +155,8 @@ pub const CORE_TOOLS: &[&str] = &[
 pub const DEV_ONLY_TOOLS: &[&str] = &[
     "get_autorun_guide",
     "save_autorun_script",
+    "get_autorun_script",
+    "delete_autorun_script",
     "get_autorun_page",
     "probe_autorun_locator",
     "try_autorun_action",

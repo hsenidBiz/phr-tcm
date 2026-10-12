@@ -239,6 +239,15 @@ pub struct ApiTemplatesChanged {
     pub id: String,
 }
 
+/// Emitted whenever Auto Run scripts on disk change: saved, edited,
+/// repaired, marked, cleared or deleted, by the person, the assistant or a
+/// replay. `case_ids` are the cases whose script changed; the Auto Run
+/// screen reads those again, so a change shows without a reload.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunScriptsChanged {
+    pub case_ids: Vec<i32>,
+}
+
 /// Emitted while How To Use downloads, so Settings can show "12 of 31 MB".
 /// Bytes; u32 because specta refuses u64, and the zip is capped at 200 MB.
 /// `total` is the zip's size (the server's, else the release's json).

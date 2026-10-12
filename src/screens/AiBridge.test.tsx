@@ -952,6 +952,7 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
   );
   const disabledTools = (seen as { disabledTools: string[] }).disabledTools;
   expect([...disabledTools].sort()).toEqual([
+    "delete_autorun_script",
     "discover_autorun_action",
     "discover_autorun_actions",
     "end_autorun_discovery",
@@ -959,6 +960,7 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     "get_autorun_failures",
     "get_autorun_guide",
     "get_autorun_page",
+    "get_autorun_script",
     "list_test_files",
     "mark_autorun_suspected_defect",
     "probe_autorun_locator",

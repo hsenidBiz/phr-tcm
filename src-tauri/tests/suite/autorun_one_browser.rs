@@ -44,6 +44,11 @@ struct World {
     /// Each browser starts with its own blank page, as a launched Edge
     /// does, and reports it to `Target.getTargets`.
     launch_page: bool,
+    /// That page is listed only from this many `Target.getTargets` calls
+    /// on, as a browser answering before its first window has a page.
+    launch_page_after: usize,
+    /// `Target.getTargets` calls so far.
+    listed: usize,
     /// Launches and closes, in the order they happened ("launch 1",
     /// "close 1").
     events: Vec<String>,
@@ -111,7 +116,11 @@ impl Transport for FakeSocket {
                 json!({ "targetId": target })
             }
             "Target.attachToTarget" => json!({ "sessionId": format!("S-{}", v["params"]["targetId"].as_str().unwrap()) }),
-            "Target.getTargets" if w.launch_page => json!({ "targetInfos": [
+            "Target.getTargets" if w.launch_page && {
+                w.listed += 1;
+                w.listed > w.launch_page_after
+            } =>
+            json!({ "targetInfos": [
                 { "targetId": format!("T-blank-{}", self.browser), "type": "page", "url": "about:blank",
                   "attached": false, "browserContextId": "default" }
             ] }),
@@ -180,6 +189,8 @@ impl Ends for FakeTree {
 struct FakeLauncher {
     world: Arc<Mutex<World>>,
     profiles: PathBuf,
+    /// The browser it starts has a window on screen (a watched run).
+    watched: bool,
 }
 
 impl Launcher for FakeLauncher {
@@ -222,6 +233,10 @@ impl Launcher for FakeLauncher {
         liveness(Some(processes), w.pid_ended.contains(&p.browser), !dead)
     }
 
+    fn shows_window(&self) -> bool {
+        self.watched
+    }
+
     fn close(&mut self, p: FakeProcess) -> Result<(), FakeProcess> {
         self.world.lock().unwrap().events.push(format!("close {}", p.browser));
         if !p.tree.end() {
@@ -234,8 +249,13 @@ impl Launcher for FakeLauncher {
 }
 
 fn browsers(profiles: &std::path::Path) -> (OneBrowser<FakeLauncher>, Arc<Mutex<World>>) {
+    browsers_shown(profiles, false)
+}
+
+/// The same, for a run whose browser has a window on screen or not.
+fn browsers_shown(profiles: &std::path::Path, watched: bool) -> (OneBrowser<FakeLauncher>, Arc<Mutex<World>>) {
     let world = Arc::new(Mutex::new(World::default()));
-    (OneBrowser::new(FakeLauncher { world: Arc::clone(&world), profiles: profiles.to_path_buf() }), world)
+    (OneBrowser::new(FakeLauncher { world: Arc::clone(&world), profiles: profiles.to_path_buf(), watched }), world)
 }
 
 fn new_run(id: &str) -> LocalRun {
@@ -550,6 +570,77 @@ async fn a_browser_per_case_drives_the_page_it_started_with() {
         .map(|(b, f)| (*b, f["params"]["targetId"].as_str().unwrap().to_string()))
         .collect();
     assert_eq!(driven, vec![(1, "T-blank-1".to_string()), (2, "T-blank-2".to_string())]);
+}
+
+/// A watched run's browser has a window on screen, and a page made in a
+/// context of its own would open a second window beside the one it started
+/// with, left on about:blank. So each case gets a browser of its own and
+/// drives the page that browser started with: one page, one window.
+#[tokio::test]
+async fn a_watched_run_drives_the_page_its_browser_started_with_and_makes_no_other() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers_shown(dir.path(), true);
+    world.lock().unwrap().launch_page = true;
+    let run = run(&mut b, dir.path(), &[1, 2]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", run.cases);
+    let w = world.lock().unwrap();
+    assert!(w.sent("Target.createBrowserContext").is_empty(), "no context, so no window of its own");
+    assert!(w.sent("Target.createTarget").is_empty(), "no second page: {:?}", w.sent("Target.createTarget"));
+    let driven: Vec<(usize, String)> = w
+        .sent("Target.attachToTarget")
+        .iter()
+        .map(|(b, f)| (*b, f["params"]["targetId"].as_str().unwrap().to_string()))
+        .collect();
+    assert_eq!(driven, vec![(1, "T-blank-1".to_string()), (2, "T-blank-2".to_string())]);
+    assert_eq!((w.launches, w.closes), (2, 2), "a browser per case, each closed with it");
+}
+
+/// A run nobody watches is headless: it keeps one browser and a context
+/// per case, as before.
+#[tokio::test]
+async fn a_headless_run_still_keeps_one_browser_with_a_context_per_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers_shown(dir.path(), false);
+    world.lock().unwrap().launch_page = true;
+    let run = run(&mut b, dir.path(), &[1, 2]).await;
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", run.cases);
+    let w = world.lock().unwrap();
+    assert_eq!(w.launches, 1);
+    assert_eq!(w.sent("Target.createBrowserContext").len(), 2);
+}
+
+/// A browser can answer before its first window has a page in it. The page
+/// it then opens is the one driven, not a second one made in that moment.
+#[tokio::test]
+async fn a_page_that_is_listed_a_moment_late_is_waited_for_rather_than_made() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers_shown(dir.path(), true);
+    {
+        let mut w = world.lock().unwrap();
+        w.launch_page = true;
+        w.launch_page_after = 3;
+    }
+    let d = b.open().await.unwrap();
+    assert_eq!(d.current().unwrap().target_id, "T-blank-1");
+    b.close(d).await;
+    let w = world.lock().unwrap();
+    assert!(w.sent("Target.createTarget").is_empty(), "{:?}", w.sent("Target.createTarget"));
+    assert_eq!(w.sent("Target.getTargets").len(), 4, "asked until it was listed");
+}
+
+/// A browser that never lists a page of its own still gets one, after the
+/// bounded wait.
+#[tokio::test]
+async fn a_browser_with_no_page_of_its_own_gets_one_after_the_wait() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut b, world) = browsers_shown(dir.path(), true);
+    let began = std::time::Instant::now();
+    let d = b.open().await.unwrap();
+    let took = began.elapsed();
+    b.close(d).await;
+    assert!(took >= v2_lib::browser::cdp::STARTUP_PAGE_WAIT, "{took:?}");
+    assert!(took < v2_lib::browser::cdp::STARTUP_PAGE_WAIT * 3, "{took:?}");
+    assert_eq!(world.lock().unwrap().sent("Target.createTarget").len(), 1);
 }
 
 /// A browser whose DevTools port answers but whose socket never finishes

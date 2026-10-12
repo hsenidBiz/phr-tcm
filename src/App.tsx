@@ -66,6 +66,7 @@ import RunWindow from "./screens/AutoRun/ReplayPane";
 import RunPill from "./components/RunPill";
 import { clearReviewRequest } from "./lib/backgroundRun";
 import { useBackgroundRunHost } from "./hooks/useBackgroundRunHost";
+import { useAutoRunScriptsSync } from "./hooks/useAutoRunScriptsSync";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
@@ -458,6 +459,8 @@ export default function App() {
     setWorkMode(false); // any tab click exits Work Manager mode
     setCaseSelection(null); // direct navigation returns Edit to PBI mode
   };
+  // A script saved, repaired or deleted anywhere shows on Auto Run at once.
+  useAutoRunScriptsSync();
   // The unattended run outlives the Auto Run screen (lib/backgroundRun):
   // its end is caught here, and Review on its pill or toast brings the
   // person to the run's PBI in Auto Run, whose screen opens the review.

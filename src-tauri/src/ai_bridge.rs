@@ -295,6 +295,10 @@ pub async fn route(
             }
         },
         ("POST", "/autorun-script") => save_autorun_scripts(ctx, client, body).await,
+        // One saved script, and a delete that keeps it aside: files on this
+        // machine only, never Azure DevOps.
+        ("GET", "/autorun-script") => autorun_script_read(target),
+        ("POST", "/autorun-script-delete") => autorun_script_delete(body),
         ("GET", "/autorun-page") => autorun_page(ctx, target).await,
         ("POST", "/autorun-probe") => autorun_probe(ctx, body).await,
         ("POST", "/autorun-try") => autorun_try(ctx, body).await,
@@ -4332,6 +4336,86 @@ fn component_answer(saved: Result<crate::autorun::components::Saved, String>) ->
         Err(why) if why == TRY_IT_FIRST => (409, why),
         Err(why) if why == SIGN_IN_TO_CHECK_USERS => (503, why),
         Err(why) => (400, why),
+    }
+}
+
+/// The case id a script route names: a positive whole number.
+fn script_case_id(found: Option<serde_json::Value>, shape: &str) -> Result<i32, (u16, String)> {
+    let id = match found {
+        Some(serde_json::Value::Number(n)) => n.as_i64(),
+        Some(serde_json::Value::String(s)) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    };
+    match id.and_then(|n| i32::try_from(n).ok()).filter(|n| *n > 0) {
+        Some(id) => Ok(id),
+        None => Err((400, format!("\"case_id\" is a test case's id, a positive whole number. Expected {shape}."))),
+    }
+}
+
+/// `GET /autorun-script?case_id=N`: case N's saved script, whole, as the
+/// JSON `save_autorun_script` takes for one entry. 404 when the case has
+/// none on this machine.
+fn autorun_script_read(target: &str) -> (u16, String) {
+    match autorun_root() {
+        Ok(root) => autorun_script_read_at(&root, target),
+        Err(refused) => refused,
+    }
+}
+
+/// `autorun_script_read` against the store at `root`.
+pub fn autorun_script_read_at(root: &std::path::Path, target: &str) -> (u16, String) {
+    const SHAPE: &str = "?case_id=<the test case id>";
+    let case_id = match script_case_id(q(target, "case_id").map(serde_json::Value::String), SHAPE) {
+        Ok(id) => id,
+        Err(refused) => return refused,
+    };
+    match crate::autorun::store::load_script(root, case_id) {
+        Ok(Some(script)) => (200, serde_json::to_string_pretty(&script).unwrap_or_default()),
+        Ok(None) => (404, crate::autorun::store::no_script(case_id)),
+        Err(e) => {
+            crate::applog::warn(format!("Auto Run: the script of case {case_id} could not be read: {e}"));
+            (500, format!("the script of case {case_id} could not be read - see Settings, Logs"))
+        }
+    }
+}
+
+/// `POST /autorun-script-delete`, body `{ case_id }`: the script is moved
+/// aside, not removed (`store::delete_script`), and scripts kept aside more
+/// than 30 days are purged first. Refused while the case is being replayed.
+/// A local file move: nothing reaches Azure DevOps.
+fn autorun_script_delete(body: &str) -> (u16, String) {
+    match autorun_root() {
+        Ok(root) => autorun_script_delete_at(&root, body, crate::autorun::sessions::now_ms()),
+        Err(refused) => refused,
+    }
+}
+
+/// `autorun_script_delete` against the store at `root`, at `now` (epoch ms).
+pub fn autorun_script_delete_at(root: &std::path::Path, body: &str, now: u64) -> (u16, String) {
+    const SHAPE: &str = "{ \"case_id\": <the test case id> }";
+    let case_id = match body_field(body, "case_id", SHAPE).and_then(|v| script_case_id(Some(v), SHAPE)) {
+        Ok(id) => id,
+        Err(refused) => return refused,
+    };
+    crate::autorun::store::purge_deleted_scripts(root, now);
+    match crate::autorun::store::delete_script(root, case_id, now) {
+        Ok(_) => {
+            crate::applog::info(format!("Auto Run: the script of case {case_id} was deleted by the assistant (kept aside for 30 days)"));
+            (
+                200,
+                serde_json::json!({
+                    "deleted": case_id,
+                    "sentence": format!("The script of case {case_id} is deleted. It is kept aside on this machine for {} days, then purged.", crate::autorun::store::DELETED_KEPT_DAYS),
+                })
+                .to_string(),
+            )
+        }
+        Err(why) if why == crate::autorun::store::no_script(case_id) => (404, why),
+        Err(why) if why == crate::autorun::store::replaying_refusal(case_id) => (409, why),
+        Err(why) => {
+            crate::applog::warn(format!("Auto Run: the script of case {case_id} could not be deleted: {why}"));
+            (500, format!("the script of case {case_id} could not be deleted - see Settings, Logs"))
+        }
     }
 }
 
