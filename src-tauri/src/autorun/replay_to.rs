@@ -199,6 +199,7 @@ impl OneReplay {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| ALREADY_RUNNING.to_string())?;
         CANCEL.store(false, Ordering::SeqCst);
+        PROGRESS.store(0, Ordering::SeqCst);
         Ok(OneReplay(()))
     }
 }
@@ -207,6 +208,25 @@ impl Drop for OneReplay {
     fn drop(&mut self) {
         RUNNING.store(false, Ordering::SeqCst);
     }
+}
+
+/// Where the replay going is: the step it is running and how many steps it
+/// runs in all, packed as `(step << 32) | of`. Zero before step 1 (signing
+/// in, going to the area). Set by `note_progress`, cleared by a claim.
+static PROGRESS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The replay going is about to run step `step` of `of`: kept for whoever
+/// asks how far it has got (`progress`).
+pub fn note_progress(step: i32, of: i32) {
+    let packed = (u64::from(step.max(0) as u32) << 32) | u64::from(of.max(0) as u32);
+    PROGRESS.store(packed, Ordering::SeqCst);
+}
+
+/// The step the replay going is running and how many it runs, `(0, 0)`
+/// before its first step.
+pub fn progress() -> (i32, i32) {
+    let packed = PROGRESS.load(Ordering::SeqCst);
+    ((packed >> 32) as i32, (packed & 0xFFFF_FFFF) as i32)
 }
 
 /// Whether a replay to a step is going right now.
@@ -478,6 +498,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
         if stopped() {
             return ReplayEnd::Stopped { step: k };
         }
+        note_progress(k, n - 1);
         progress(k, n - 1);
         let mut in_run = InRun {
             cancel: Some(cancel),

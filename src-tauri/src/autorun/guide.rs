@@ -1499,6 +1499,9 @@ mapped, and the answer says so; start a new one to explore again.
   replays at once too, its saves stopped throughout.
 - Never replay past the failing step to "see what happens". The steps after
   it are not the failure, and they can change the application's data.
+- A replay still going after about 45 seconds answers "still running, now
+  at step N of M". Call `replay_autorun_to_step` again with the same case
+  and step to keep waiting on that same replay; it is never started twice.
 
 Its `STOP:` lines are final, and mean the script must not be touched at
 all:

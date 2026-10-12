@@ -670,9 +670,9 @@ fn the_guide_says_when_a_dialog_never_fails_and_which_settings_a_watched_run_rea
 }
 
 /// Healing starts from the failing step: the repair section says to replay
-/// there first, that the assistant may replay without asking except that a
-/// must-not-save script asks the person in the app, and never to replay
-/// past the failing step.
+/// there first, that the assistant may replay without asking (a
+/// must-not-save script too, its saves stopped), never to replay past the
+/// failing step, and how to keep waiting on a replay still running.
 #[test]
 fn the_guide_teaches_replaying_to_the_failing_step() {
     let g = autorun_guide();
@@ -683,10 +683,13 @@ fn the_guide_teaches_replaying_to_the_failing_step() {
     assert!(flat.contains("Replay to the failing step before trying fixes."), "{flat}");
     assert!(
         flat.contains(
-            "You may replay without asking the person, except that a script marked must not save asks the person in the app first"
+            "You may replay without asking the person. A script marked must not save replays at once too, its saves stopped throughout."
         ),
         "{flat}"
     );
+    assert!(!flat.contains("Allow"), "the guide still names the removed Allow prompt: {flat}");
+    assert!(flat.contains("still running, now at step N of M"), "{flat}");
+    assert!(flat.contains("again with the same case and step to keep waiting"), "{flat}");
     assert!(flat.contains("Never replay past the failing step to \"see what happens\"."), "{flat}");
     assert!(flat.contains("No browser needs to be open"), "{flat}");
     assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");

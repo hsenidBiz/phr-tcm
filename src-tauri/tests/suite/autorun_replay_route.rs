@@ -7,6 +7,7 @@
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::Duration;
 use v2_lib::ai_bridge::{
     after_ended_discovery, autorun_guard_for, autorun_replay_with, route, AssistantReplay, BridgeContext,
     DiscoveryEnded, HostFuture, ReplayHost, ENDED_DISCOVERY_FIRST,
@@ -75,6 +76,9 @@ struct FakeHost {
     summary: Option<MappingSummary>,
     /// The browser would not open: the replay answers this `Err`.
     open_failed: Option<String>,
+    /// The replay runs on until this is notified (a slow replay); `None`
+    /// ends it at once.
+    release: Option<tokio::sync::Notify>,
 }
 
 impl FakeHost {
@@ -85,6 +89,7 @@ impl FakeHost {
             discovering: false,
             summary: None,
             open_failed: None,
+            release: None,
         }
     }
     fn ready() -> Self {
@@ -104,6 +109,10 @@ impl ReplayHost for FakeHost {
     ) -> HostFuture<'_, Result<AssistantReplay, String>> {
         Box::pin(async move {
             self.replays.lock().unwrap().push((organization, project, req));
+            if let Some(release) = &self.release {
+                v2_lib::autorun::replay_to::note_progress(2, 2);
+                release.notified().await;
+            }
             // As `replay_supervised` says a browser that would not open
             // after it ended the discovery.
             if let Some(why) = &self.open_failed {
@@ -117,6 +126,14 @@ impl ReplayHost for FakeHost {
         Box::pin(async { (200, "- button \"Submit\" [role=button name=\"Submit\"]".to_string()) })
     }
 }
+
+/// A host for the detached replay, which outlives the call that started it.
+fn leak(host: FakeHost) -> &'static FakeHost {
+    Box::leak(Box::new(host))
+}
+
+/// How long a call waits for its replay in these tests.
+const WAIT: Duration = Duration::from_secs(5);
 
 fn body(step: i32) -> String {
     json!({ "case_id": ID, "step": step }).to_string()
@@ -132,8 +149,8 @@ async fn a_must_not_save_script_replays_without_asking() {
     let dir = tempfile::tempdir().unwrap();
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(true));
-    let host = FakeHost::ready();
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+    let host = leak(FakeHost::ready());
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], "replayed case 77 to step 3 - the browser is on the page before step 3 runs");
@@ -166,8 +183,8 @@ async fn a_normal_script_runs_without_asking() {
     let dir = tempfile::tempdir().unwrap();
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
-    let host = FakeHost::ready();
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+    let host = leak(FakeHost::ready());
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     assert_eq!(host.replays().len(), 1);
     let v: Value = serde_json::from_str(&text).unwrap();
@@ -197,15 +214,15 @@ async fn a_replay_that_stops_answers_its_sentence_without_a_page() {
             "replay stopped at step 1: the Auto Run browser closed before the step finished (its window was closed, or it stopped answering), so the app let it go - replay again and a new browser opens",
         ),
     ] {
-        let host = FakeHost::ending(end);
-        let (status, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+        let host = leak(FakeHost::ending(end));
+        let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
         assert_eq!(status, 200, "{text}");
         let v: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v, json!({ "sentence": sentence }));
     }
     // A refusal the engine itself gives is the usual refusal.
-    let host = FakeHost::ending(ReplayEnd::Refused(ALREADY_RUNNING.into()));
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+    let host = leak(FakeHost::ending(ReplayEnd::Refused(ALREADY_RUNNING.into())));
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     assert_eq!((status, text.as_str()), (409, ALREADY_RUNNING));
 }
 
@@ -216,25 +233,25 @@ async fn refusals_before_running_never_ask_or_run() {
     store::set_root(dir.path().to_path_buf());
 
     // No saved script.
-    let host = FakeHost::ready();
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+    let host = leak(FakeHost::ready());
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     assert_eq!((status, text.as_str()), (409, "case 77 has no saved script"));
 
     // A step outside the script, on a must-not-save one: refused before
     // the person is asked.
     project(dir.path(), &script(true));
-    let (status, text) = autorun_replay_with(&ctx(), &body(5), &host).await;
+    let (status, text) = autorun_replay_with(&ctx(), &body(5), host, WAIT).await;
     assert_eq!((status, text.as_str()), (409, "step 5 is not in case 77's script (it has steps 1 to 3)"));
 
     // A replay already running.
     let one = OneReplay::claim().unwrap();
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     assert_eq!((status, text.as_str()), (409, ALREADY_RUNNING));
     drop(one);
 
     // A body without its fields.
     for bad in [json!({ "step": 3 }), json!({ "case_id": ID }), json!({ "case_id": "x", "step": 3 })] {
-        let (status, _) = autorun_replay_with(&ctx(), &bad.to_string(), &host).await;
+        let (status, _) = autorun_replay_with(&ctx(), &bad.to_string(), host, WAIT).await;
         assert_eq!(status, 400, "{bad}");
     }
 
@@ -248,8 +265,8 @@ async fn database_read_access_follows_the_db_query_switch() {
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
     let off = BridgeContext { disabled_tools: vec!["db_lookup".into(), "db_query".into()], ..ctx() };
-    let host = FakeHost::ready();
-    let (status, _) = autorun_replay_with(&off, &body(2), &host).await;
+    let host = leak(FakeHost::ready());
+    let (status, _) = autorun_replay_with(&off, &body(2), host, WAIT).await;
     assert_eq!(status, 200);
     assert_eq!(host.replays(), vec![ReplayRequest { case_id: ID, step: 2, db_read_access: false }]);
 }
@@ -285,8 +302,8 @@ async fn the_replay_answer_says_the_discovery_was_ended() {
     );
     let ready = "replayed case 77 to step 3 - the browser is on the page before step 3 runs";
 
-    let host = FakeHost { discovering: true, ..FakeHost::ready() };
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+    let host = leak(FakeHost { discovering: true, ..FakeHost::ready() });
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} {ready}"));
@@ -295,13 +312,13 @@ async fn the_replay_answer_says_the_discovery_was_ended() {
 
     // A stop after the end still says the discovery is over.
     let stopped = ReplayEnd::Stopped { step: 2 };
-    let host = FakeHost { discovering: true, ..FakeHost::ending(stopped) };
-    let (_, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+    let host = leak(FakeHost { discovering: true, ..FakeHost::ending(stopped) });
+    let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)"));
 
-    let host = FakeHost::ready();
-    let (_, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+    let host = leak(FakeHost::ready());
+    let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], ready);
 }
@@ -318,8 +335,8 @@ async fn a_replay_that_ended_a_mapping_run_answers_its_summary() {
         "ran_at": 1, "modules": ["Leave"], "added": ["Leave Apply"], "updated": [], "unchanged": [], "unreached": [], "blocked_writes": 0
     }))
     .unwrap();
-    let host = FakeHost { discovering: true, summary: Some(summary.clone()), ..FakeHost::ready() };
-    let (status, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+    let host = leak(FakeHost { discovering: true, summary: Some(summary.clone()), ..FakeHost::ready() });
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
     assert!(v["sentence"].as_str().unwrap().starts_with(ENDED_DISCOVERY_FIRST), "{v}");
@@ -328,13 +345,13 @@ async fn a_replay_that_ended_a_mapping_run_answers_its_summary() {
 
     // A stop after the end carries it too.
     let stopped = ReplayEnd::Stopped { step: 2 };
-    let host = FakeHost { discovering: true, summary: Some(summary.clone()), ..FakeHost::ending(stopped) };
-    let (_, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+    let host = leak(FakeHost { discovering: true, summary: Some(summary.clone()), ..FakeHost::ending(stopped) });
+    let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["summary"], serde_json::to_value(&summary).unwrap());
 
-    let host = FakeHost { discovering: true, ..FakeHost::ready() };
-    let (_, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+    let host = leak(FakeHost { discovering: true, ..FakeHost::ready() });
+    let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert!(v.get("summary").is_none(), "{v}");
 }
@@ -354,8 +371,8 @@ async fn a_browser_that_would_not_open_after_the_end_still_says_the_discovery_wa
     for (discovering, said) in
         [(true, format!("{ENDED_DISCOVERY_FIRST} {WOULD_NOT_OPEN}")), (false, WOULD_NOT_OPEN.to_string())]
     {
-        let host = FakeHost { discovering, open_failed: Some(WOULD_NOT_OPEN.into()), ..FakeHost::ready() };
-        let (status, text) = autorun_replay_with(&ctx(), &body(3), &host).await;
+        let host = leak(FakeHost { discovering, open_failed: Some(WOULD_NOT_OPEN.into()), ..FakeHost::ready() });
+        let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
         assert_eq!((status, text), (503, said));
     }
 
@@ -365,4 +382,104 @@ async fn a_browser_that_would_not_open_after_the_end_still_says_the_discovery_wa
     let open = &replay[replay.find("open_if_none(app, &mut slot)").unwrap()..];
     let open = &open[..open.len().min(300)];
     assert!(open.contains("after_ended_discovery(discovery.ended, &why)"), "{open}");
+}
+
+// ---- a replay that outlasts the call ----------------------------------------
+
+/// A slow replay: one that runs until `host.release` is notified.
+fn slow() -> &'static FakeHost {
+    leak(FakeHost { release: Some(tokio::sync::Notify::new()), ..FakeHost::ready() })
+}
+
+/// The 202 a call answers while its replay still runs.
+fn still_running_answer(text: &str) -> Value {
+    let v: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(v["status"], "running", "{v}");
+    v
+}
+
+/// The call times out, says where the replay is, and a second call for the
+/// same case and step waits on that same replay and takes its answer: the
+/// replay ran once, and is never refused as already running.
+#[tokio::test]
+async fn a_replay_past_the_wait_answers_still_running_and_a_second_call_attaches() {
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    assert_eq!(v2_lib::ai_bridge::REPLAY_ANSWER_WAIT, Duration::from_secs(45));
+    let host = slow();
+    let short = Duration::from_millis(50);
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, short).await;
+    assert_eq!(status, 202, "{text}");
+    let v = still_running_answer(&text);
+    assert_eq!(
+        v["sentence"],
+        "still running, now at step 2 of 2 - call replay_autorun_to_step again with the same case (77) and step (3) to keep waiting"
+    );
+    assert_eq!((v["step"].as_i64(), v["of"].as_i64()), (Some(2), Some(2)));
+
+    // Asked again: still running, still the same replay.
+    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, short).await;
+    assert_eq!(status, 202);
+
+    // Asked again while it ends: this call takes its answer.
+    let (c, b) = (ctx(), body(3));
+    let (answered, ()) = tokio::join!(autorun_replay_with(&c, &b, host, WAIT), async {
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        host.release.as_ref().unwrap().notify_one();
+    });
+    assert_eq!(answered.0, 200, "{}", answered.1);
+    let v: Value = serde_json::from_str(&answered.1).unwrap();
+    assert!(v["sentence"].as_str().unwrap().starts_with("replayed case 77 to step 3"), "{v}");
+    assert_eq!(host.replays().len(), 1, "the second call started another replay");
+}
+
+/// While the assistant's replay runs, a replay of another case or step is
+/// refused, naming what is running.
+#[tokio::test]
+async fn a_replay_of_another_step_while_one_runs_is_refused() {
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let host = slow();
+    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, Duration::from_millis(30)).await;
+    assert_eq!(status, 202);
+    let other = leak(FakeHost::ready());
+    let (status, text) = autorun_replay_with(&ctx(), &body(2), other, WAIT).await;
+    assert_eq!((status, text.as_str()), (409, v2_lib::ai_bridge::replay_running_elsewhere(77, 3).as_str()));
+    assert!(text.contains("case 77 to step 3"), "{text}");
+    assert!(other.replays().is_empty(), "a second replay ran beside the first");
+
+    // Let it end, and take its answer, so the slot is free again.
+    host.release.as_ref().unwrap().notify_one();
+    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    assert_eq!(status, 200);
+    let (status, _) = autorun_replay_with(&ctx(), &body(2), other, WAIT).await;
+    assert_eq!(status, 200, "the slot was not freed once the answer was taken");
+}
+
+/// A replay that ends while no call is waiting keeps its answer for the
+/// next call with the same case and step, which gets it at once; it is
+/// handed over once.
+#[tokio::test]
+async fn the_answer_of_a_replay_that_ended_unwatched_goes_to_the_next_call() {
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let host = slow();
+    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, Duration::from_millis(30)).await;
+    assert_eq!(status, 202);
+    host.release.as_ref().unwrap().notify_one();
+    // Nobody waits while it ends.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (c, b) = (ctx(), body(3));
+    let (status, text) = tokio::time::timeout(Duration::from_millis(500), autorun_replay_with(&c, &b, host, WAIT))
+        .await
+        .expect("the kept answer was not handed over at once");
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("replayed case 77 to step 3"), "{text}");
+    assert_eq!(host.replays().len(), 1);
 }

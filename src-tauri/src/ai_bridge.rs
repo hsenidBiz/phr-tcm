@@ -4263,17 +4263,107 @@ async fn autorun_replay(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let Some(host) = REPLAY_HOST.get() else {
         return (503, NO_REPLAY_HOST.to_string());
     };
-    autorun_replay_with(ctx, body, host.as_ref()).await
+    autorun_replay_with(ctx, body, host.as_ref(), REPLAY_ANSWER_WAIT).await
 }
 
-/// `/autorun-replay`, body `{ case_id, step }`, with its host.
+/// How long `replay_autorun_to_step` waits for its replay to reach its stop
+/// point before it answers that the replay is still running. Kept under
+/// the wait of an assistant's own tool call.
+pub const REPLAY_ANSWER_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// The assistant's replay, running apart from the call that started it,
+/// and its answer once it ends. The answer is kept here until a call for
+/// the same case and step takes it, so a replay that ends while no call
+/// waits never loses it; a replay for another case replaces a finished one.
+struct AssistantRun {
+    id: u64,
+    case_id: i32,
+    step: i32,
+    answer: tokio::sync::watch::Receiver<Option<(u16, String)>>,
+}
+
+/// The one assistant's replay (`AssistantRun`), if any. Never held across
+/// an await.
+static ASSISTANT_RUN: std::sync::Mutex<Option<AssistantRun>> = std::sync::Mutex::new(None);
+
+/// Numbers each assistant's replay, so a call takes only its own answer.
+static NEXT_ASSISTANT_RUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn assistant_run() -> std::sync::MutexGuard<'static, Option<AssistantRun>> {
+    ASSISTANT_RUN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Said when the assistant asks for a replay while its replay of another
+/// case or step is still running.
+pub fn replay_running_elsewhere(case_id: i32, step: i32) -> String {
+    format!(
+        "a replay of case {case_id} to step {step} is already running - call replay_autorun_to_step with case {case_id} and step {step} to wait for it, then ask for this one"
+    )
+}
+
+/// Said, with 202, when the replay has not reached its stop point within
+/// the call's wait: where it is, and how to keep waiting.
+pub fn replay_still_running(case_id: i32, step: i32, at: i32, of: i32) -> String {
+    let now = if at > 0 {
+        format!("now at step {at} of {of}")
+    } else {
+        "now signing in and going to the case's area".to_string()
+    };
+    format!(
+        "still running, {now} - call replay_autorun_to_step again with the same case ({case_id}) and step ({step}) to keep waiting"
+    )
+}
+
+/// Said when a replay ended without handing back its answer: its task
+/// stopped before it could.
+const REPLAY_LOST: &str = "the replay ended without an answer - see Settings, Logs, then replay again";
+
+/// Wait up to `wait` for replay `id`'s answer. Once it is there it is
+/// taken: the slot is freed for the next replay. Not there yet, the
+/// answer is 202 with where the replay is now.
+async fn wait_for_replay(
+    mut answer: tokio::sync::watch::Receiver<Option<(u16, String)>>,
+    id: u64,
+    case_id: i32,
+    step: i32,
+    wait: std::time::Duration,
+) -> (u16, String) {
+    let got = tokio::time::timeout(wait, answer.wait_for(|a| a.is_some())).await.map(|r| r.map(|a| a.clone()));
+    let taken = |answer: (u16, String)| {
+        let mut slot = assistant_run();
+        if slot.as_ref().is_some_and(|r| r.id == id) {
+            *slot = None;
+        }
+        answer
+    };
+    match got {
+        Ok(Ok(Some(done))) => taken(done),
+        Ok(_) => taken((500, REPLAY_LOST.to_string())),
+        Err(_) => {
+            let (at, of) = crate::autorun::replay_to::progress();
+            let sentence = replay_still_running(case_id, step, at, of);
+            (202, serde_json::json!({ "status": "running", "sentence": sentence, "step": at, "of": of }).to_string())
+        }
+    }
+}
+
+/// `/autorun-replay`, body `{ case_id, step }`, with its host and how long
+/// the call waits for the replay (`REPLAY_ANSWER_WAIT`).
 ///
 /// Refused, with the sentence, before anything opens: a body without the
 /// two numbers, an unattended run going, a case with no saved script, a
-/// step outside it, a replay already running. Nothing asks the person
-/// first: a script marked must not save replays at once, its saves
-/// stopped throughout by its no-save guard (`guard_for_case`). Database
-/// Read Access is the `db_query` switch, as for the person's own replay.
+/// step outside it, the person's replay going, or the assistant's replay of
+/// another case or step still running (`replay_running_elsewhere`). Nothing
+/// asks the person first: a script marked must not save replays at once,
+/// its saves stopped throughout by its no-save guard (`guard_for_case`).
+/// Database Read Access is the `db_query` switch, as for the person's own
+/// replay.
+///
+/// The replay runs apart from the call (`AssistantRun`). One that has not
+/// reached its stop point within `wait` answers 202 with where it is
+/// (`replay_still_running`); the same case and step asked for again waits
+/// on that replay, up to `wait` more, and takes its answer - one that
+/// ended in between hands it over at once.
 ///
 /// A discovery holding the browser does not refuse it: the replay ends it
 /// first (`end_discovery_for_replay`), and the answer's sentence starts
@@ -4285,9 +4375,10 @@ async fn autorun_replay(ctx: &BridgeContext, body: &str) -> (u16, String) {
 pub async fn autorun_replay_with(
     ctx: &BridgeContext,
     body: &str,
-    host: &dyn ReplayHost,
+    host: &'static dyn ReplayHost,
+    wait: std::time::Duration,
 ) -> (u16, String) {
-    use crate::autorun::replay_to::{self, ReplayEnd, ReplayRequest};
+    use crate::autorun::replay_to::{self, ReplayRequest};
     const SHAPE: &str = "{ \"case_id\": <number>, \"step\": <number> }";
     let number = |key: &str| -> Result<i32, (u16, String)> {
         body_field(body, key, SHAPE)?
@@ -4302,6 +4393,15 @@ pub async fn autorun_replay_with(
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
+    // The same replay still running, or ended with its answer not yet
+    // taken: this call waits on it, and nothing new starts.
+    let same = assistant_run()
+        .as_ref()
+        .filter(|r| r.case_id == case_id && r.step == step)
+        .map(|r| (r.answer.clone(), r.id));
+    if let Some((answer, id)) = same {
+        return wait_for_replay(answer, id, case_id, step, wait).await;
+    }
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
@@ -4311,10 +4411,43 @@ pub async fn autorun_replay_with(
     if let Err(why) = replay_to::check(&root, &ctx.org, &ctx.project, &req) {
         return (409, why);
     }
-    if replay_to::is_running() {
-        return (409, replay_to::ALREADY_RUNNING.to_string());
+    // Looked at and claimed under one lock, so two calls cannot both start.
+    let (tx, answer) = tokio::sync::watch::channel(None);
+    let id = NEXT_ASSISTANT_RUN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let attach = {
+        let mut slot = assistant_run();
+        let running = slot.as_ref().map(|r| (r.case_id, r.step, r.id, r.answer.clone()));
+        match running {
+            Some((c, s, other, theirs)) if c == case_id && s == step => Some((theirs, other)),
+            Some((c, s, _, theirs)) if theirs.borrow().is_none() => return (409, replay_running_elsewhere(c, s)),
+            _ if replay_to::is_running() => return (409, replay_to::ALREADY_RUNNING.to_string()),
+            _ => {
+                *slot = Some(AssistantRun { id, case_id, step, answer: answer.clone() });
+                None
+            }
+        }
+    };
+    if let Some((theirs, other)) = attach {
+        return wait_for_replay(theirs, other, case_id, step, wait).await;
     }
-    let (end, discovery) = match host.replay(ctx.org.clone(), ctx.project.clone(), req).await {
+    let (org, project) = (ctx.org.clone(), ctx.project.clone());
+    tokio::spawn(async move {
+        let done = run_assistant_replay(host, org, project, req).await;
+        // Kept in the slot for the next call when none is waiting.
+        let _ = tx.send(Some(done));
+    });
+    wait_for_replay(answer, id, case_id, step, wait).await
+}
+
+/// The assistant's replay through `host`, and its answer.
+async fn run_assistant_replay(
+    host: &'static dyn ReplayHost,
+    org: String,
+    project: String,
+    req: crate::autorun::replay_to::ReplayRequest,
+) -> (u16, String) {
+    use crate::autorun::replay_to::ReplayEnd;
+    let (end, discovery) = match host.replay(org.clone(), project.clone(), req).await {
         Ok(AssistantReplay { end, discovery }) => (end, discovery),
         Err(why) => return (503, why),
     };
@@ -4331,7 +4464,7 @@ pub async fn autorun_replay_with(
     match end {
         ReplayEnd::Refused(_) | ReplayEnd::Blocked(_) => (409, sentence),
         ReplayEnd::Ready { .. } => {
-            let answer = match host.page(ctx.org.clone(), ctx.project.clone()).await {
+            let answer = match host.page(org, project).await {
                 (200, page) => serde_json::json!({ "sentence": sentence, "page": page }),
                 (_, why) => serde_json::json!({ "sentence": sentence, "page_unavailable": why }),
             };
@@ -8094,6 +8227,7 @@ pub async fn start_listener(
                 };
                 let reason = match status {
                     200 => "OK",
+                    202 => "Accepted",
                     400 => "Bad Request",
                     401 => "Unauthorized",
                     403 => "Forbidden",
