@@ -297,7 +297,12 @@ pub async fn route(
         ("POST", "/autorun-discover-start") => autorun_discover_start(ctx, body).await,
         ("POST", "/autorun-discover-action") => autorun_discover_action(ctx, body).await,
         ("POST", "/autorun-discover-actions") => autorun_discover_actions(ctx, body).await,
-        ("POST", "/autorun-discover-end") => crate::commands::autorun::end_discovery().await,
+        // A replay going has already ended any discovery, and holds the
+        // browser: said at once rather than waited for.
+        ("POST", "/autorun-discover-end") => match replay_is_holding_the_browser() {
+            Some(going) => going,
+            None => crate::commands::autorun::end_discovery().await,
+        },
         // Release: every Auto Run browser record the app holds is cleared
         // and the app's own browsers closed, for a browser held after it
         // is gone. Never a process outside the app's own jobs.
@@ -1172,8 +1177,9 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
         return (500, sentence);
     }
     let mut text = serde_json::to_string(&report).unwrap_or_default();
-    if !report.ok && held_by_the_auto_run_browser(&text) {
-        text = template_report_hint(text, crate::commands::autorun::assistant_browser_open().await);
+    if !report.ok && held_by_the_auto_run_browser(&text, &req.account) {
+        let holds = crate::commands::autorun::assistant_browser_holds(&req.account).await;
+        text = template_report_hint(text, &req.account, holds);
     }
     (if report.ok { 200 } else { 502 }, text)
 }
@@ -1183,18 +1189,19 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
 pub const FREE_IT_WITH_RELEASE: &str =
     "The Auto Run browser your replay left open holds this account: close it with release_autorun_browser, then run the template again.";
 
-/// Does a template run's report say its account was refused because the
-/// Auto Run browser holds it (the lease's own words)?
-fn held_by_the_auto_run_browser(report_json: &str) -> bool {
-    report_json.contains(" was in use by the Auto Run browser")
+/// Does a template run's report say its account `key` was refused because
+/// the Auto Run browser holds it (the lease's own sentence,
+/// `lease::in_use_by_browser`)?
+fn held_by_the_auto_run_browser(report_json: &str, key: &str) -> bool {
+    report_json.contains(&crate::autorun::lease::in_use_by_browser(key))
 }
 
 /// A failed template run's report, with `FREE_IT_WITH_RELEASE` beside it as
-/// `"free_it"` when its account was refused because the Auto Run browser
-/// holds it and the assistant opened that browser (`assistant_opened`).
-/// Otherwise the report as it was.
-pub fn template_report_hint(report_json: String, assistant_opened: bool) -> String {
-    if !assistant_opened || !held_by_the_auto_run_browser(&report_json) {
+/// `"free_it"` when its account `key` was refused because the Auto Run
+/// browser holds it and that browser is the assistant's own, holding this
+/// very account (`assistant_holds`). Otherwise the report as it was.
+pub fn template_report_hint(report_json: String, key: &str, assistant_holds: bool) -> String {
+    if !assistant_holds || !held_by_the_auto_run_browser(&report_json, key) {
         return report_json;
     }
     match serde_json::from_str::<serde_json::Value>(&report_json) {
@@ -1706,6 +1713,9 @@ async fn autorun_page(ctx: &BridgeContext, target: &str) -> (u16, String) {
 /// back beside its sentence. What it printed is filed in the project's
 /// discovery map.
 pub async fn supervised_page(organization: &str, project: &str, limit: usize) -> (u16, String) {
+    if let Some(going) = replay_is_holding_the_browser() {
+        return going;
+    }
     // The lock is held for exactly one protocol job - whoever holds it
     // holds the browser, and the person may be using it.
     let mut slot = crate::commands::autorun::supervised().lock().await;
@@ -2312,7 +2322,7 @@ async fn record_refused_on_page(
     script_areas: &[Option<&str>],
     targets: &[crate::browser::locator::Target],
 ) -> Option<Vec<String>> {
-    if unattended_run_is_using_the_browser().is_some() {
+    if unattended_run_is_using_the_browser().is_some() || crate::autorun::replay_to::is_running() {
         return None;
     }
     let mut slot = crate::commands::autorun::supervised().lock().await;
@@ -2364,6 +2374,17 @@ pub fn probe_target(selector: serde_json::Value) -> Result<crate::browser::locat
     Ok(target)
 }
 
+/// Said, with 409, to a page read, a probe, a try or the assistant's End
+/// discovery while a replay holds the browser: it holds the session's lock
+/// for its whole run, so waiting on it could outlast the call.
+pub const REPLAY_GOING: &str =
+    "a replay is going - call replay_autorun_to_step with the same case and step to wait for it";
+
+/// `REPLAY_GOING` while a replay to a step holds the browser.
+pub fn replay_is_holding_the_browser() -> Option<(u16, String)> {
+    crate::autorun::replay_to::is_running().then(|| (409, REPLAY_GOING.to_string()))
+}
+
 /// What a locator matches on the open page right now.
 async fn autorun_probe(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let selector = match body_field(body, "selector", PROBE_SHAPE) {
@@ -2376,6 +2397,9 @@ async fn autorun_probe(ctx: &BridgeContext, body: &str) -> (u16, String) {
     };
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
+    }
+    if let Some(going) = replay_is_holding_the_browser() {
+        return going;
     }
     let mut slot = crate::commands::autorun::supervised().lock().await;
     let Some(session) = slot.as_mut() else {
@@ -2523,6 +2547,9 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
+    if let Some(going) = replay_is_holding_the_browser() {
+        return going;
+    }
     // Everything that can fail without the browser is settled BEFORE the
     // lock: whoever holds it holds the browser the person is using, and
     // a session held open to look up a path is a session held for no
@@ -2537,6 +2564,7 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     };
     // A try uses the browser: no replay carries on from where it stood.
     session.replay_stand = None;
+    crate::commands::autorun::note_session_use();
     // Another case's tabs go first, before its unreported stop is read by
     // the guard below (`try_for_case` does this too).
     crate::autorun::runner::tabs_for_case(&mut session.cdp, &mut session.tabs_case, case_id).await;
@@ -4363,7 +4391,38 @@ struct AssistantRun {
     id: u64,
     case_id: i32,
     step: i32,
-    answer: tokio::sync::watch::Receiver<Option<(u16, String)>>,
+    /// The script's `saved_at` when the replay started.
+    saved_at: Option<String>,
+    answer: tokio::sync::watch::Receiver<Option<ReplayDone>>,
+}
+
+/// A finished assistant's replay: its answer, when it ended, and how many
+/// times the supervised browser had been used then
+/// (`commands::autorun::session_uses`).
+#[derive(Clone)]
+struct ReplayDone {
+    answer: (u16, String),
+    ended: std::time::Instant,
+    uses: u64,
+}
+
+/// The script's `saved_at` now, for case `case_id`.
+fn script_saved_at(root: &std::path::Path, case_id: i32) -> Option<String> {
+    crate::autorun::store::load_script(root, case_id).ok().flatten().and_then(|s| s.saved_at)
+}
+
+/// Whether `run` may still be handed to a call: running, or ended no more
+/// than twice the call's `wait` ago (`REPLAY_ANSWER_WAIT` makes that 90 s)
+/// with the script unchanged since it started and the browser not used
+/// since it ended. An answer that fails any of these is stale: a new
+/// replay starts instead.
+fn still_fresh(run: &AssistantRun, root: &std::path::Path, wait: std::time::Duration) -> bool {
+    let Some(done) = run.answer.borrow().clone() else {
+        return true;
+    };
+    done.ended.elapsed() <= wait * 2
+        && script_saved_at(root, run.case_id) == run.saved_at
+        && crate::commands::autorun::session_uses() == done.uses
 }
 
 /// The one assistant's replay (`AssistantRun`), if any. Never held across
@@ -4406,13 +4465,15 @@ const REPLAY_LOST: &str = "the replay ended without an answer - see Settings, Lo
 /// taken: the slot is freed for the next replay. Not there yet, the
 /// answer is 202 with where the replay is now.
 async fn wait_for_replay(
-    mut answer: tokio::sync::watch::Receiver<Option<(u16, String)>>,
+    mut answer: tokio::sync::watch::Receiver<Option<ReplayDone>>,
     id: u64,
     case_id: i32,
     step: i32,
     wait: std::time::Duration,
 ) -> (u16, String) {
-    let got = tokio::time::timeout(wait, answer.wait_for(|a| a.is_some())).await.map(|r| r.map(|a| a.clone()));
+    let got = tokio::time::timeout(wait, answer.wait_for(|a| a.is_some()))
+        .await
+        .map(|r| r.map(|a| a.as_ref().map(|done| done.answer.clone())));
     let taken = |answer: (u16, String)| {
         let mut slot = assistant_run();
         if slot.as_ref().is_some_and(|r| r.id == id) {
@@ -4477,19 +4538,27 @@ pub async fn autorun_replay_with(
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
-    // The same replay still running, or ended with its answer not yet
-    // taken: this call waits on it, and nothing new starts.
-    let same = assistant_run()
-        .as_ref()
-        .filter(|r| r.case_id == case_id && r.step == step)
-        .map(|r| (r.answer.clone(), r.id));
-    if let Some((answer, id)) = same {
-        return wait_for_replay(answer, id, case_id, step, wait).await;
-    }
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
     };
+    // The same replay still running, or ended with a fresh answer not yet
+    // taken (`still_fresh`): this call waits on it, and nothing new
+    // starts. A stale answer is dropped, and a new replay starts below.
+    let same = {
+        let mut slot = assistant_run();
+        match slot.as_ref().filter(|r| r.case_id == case_id && r.step == step) {
+            Some(r) if still_fresh(r, &root, wait) => Some((r.answer.clone(), r.id)),
+            Some(_) => {
+                *slot = None;
+                None
+            }
+            None => None,
+        }
+    };
+    if let Some((answer, id)) = same {
+        return wait_for_replay(answer, id, case_id, step, wait).await;
+    }
     let db_read_access = !ctx.disabled_tools.iter().any(|t| t == "db_query");
     let req = ReplayRequest { case_id, step, db_read_access };
     if let Err(why) = replay_to::check(&root, &ctx.org, &ctx.project, &req) {
@@ -4500,13 +4569,15 @@ pub async fn autorun_replay_with(
     let id = NEXT_ASSISTANT_RUN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let attach = {
         let mut slot = assistant_run();
+        let fresh = slot.as_ref().is_some_and(|r| still_fresh(r, &root, wait));
         let running = slot.as_ref().map(|r| (r.case_id, r.step, r.id, r.answer.clone()));
         match running {
-            Some((c, s, other, theirs)) if c == case_id && s == step => Some((theirs, other)),
+            Some((c, s, other, theirs)) if c == case_id && s == step && fresh => Some((theirs, other)),
             Some((c, s, _, theirs)) if theirs.borrow().is_none() => return (409, replay_running_elsewhere(c, s)),
             _ if replay_to::is_running() => return (409, replay_to::ALREADY_RUNNING.to_string()),
             _ => {
-                *slot = Some(AssistantRun { id, case_id, step, answer: answer.clone() });
+                let saved_at = script_saved_at(&root, case_id);
+                *slot = Some(AssistantRun { id, case_id, step, saved_at, answer: answer.clone() });
                 None
             }
         }
@@ -4516,11 +4587,26 @@ pub async fn autorun_replay_with(
     }
     let (org, project) = (ctx.org.clone(), ctx.project.clone());
     tokio::spawn(async move {
-        let done = run_assistant_replay(host, org, project, req).await;
-        // Kept in the slot for the next call when none is waiting.
+        let answer = run_assistant_replay(host, org, project, req).await;
+        // Kept in the slot for the next call when none is waiting, while
+        // it stays fresh (`still_fresh`).
+        let done = ReplayDone {
+            answer,
+            ended: std::time::Instant::now(),
+            uses: crate::commands::autorun::session_uses(),
+        };
         let _ = tx.send(Some(done));
     });
     wait_for_replay(answer, id, case_id, step, wait).await
+}
+
+/// `s` with its first letter a capital, as a sentence after another one.
+fn capitalised(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 /// The assistant's replay through `host`, and its answer.
@@ -4541,12 +4627,15 @@ async fn run_assistant_replay(
     let said = match (&end, from) {
         (ReplayEnd::Refused(_) | ReplayEnd::Blocked(_), _) => end.sentence(),
         (_, ReplayFrom::AlreadyThere) => from.said(case_id, step),
-        _ => format!("{} {}", from.said(case_id, step), end.sentence()),
+        _ => format!("{} {}", from.said(case_id, step), capitalised(&end.sentence())),
     };
     // Said before that when the replay ended the assistant's own discovery.
     let mut sentence = after_ended_discovery(discovery.ended, &said);
     // A browser the replay leaves open, on a line of its own after it.
-    if let (Some(left), false) = (&left_open, matches!(end, ReplayEnd::Refused(_) | ReplayEnd::Blocked(_))) {
+    // Not after a stop: Stop, Close or Release stopped it, and the browser
+    // may be closing right behind the answer.
+    let refused_or_stopped = matches!(end, ReplayEnd::Refused(_) | ReplayEnd::Blocked(_) | ReplayEnd::Stopped { .. });
+    if let (Some(left), false) = (&left_open, refused_or_stopped) {
         sentence.push('\n');
         sentence.push_str(&crate::autorun::replay_to::left_open_line(left));
     }
@@ -5521,6 +5610,13 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
             })
         }
     };
+    // A `dry_run` inside a script is refused rather than dropped: dropped,
+    // the save would be real, and a misplaced dry run must never save.
+    if let serde_json::Value::Array(items) = &scripts_value {
+        if items.iter().any(|s| s.get("dry_run").is_some()) {
+            return Err(DRY_RUN_IN_A_SCRIPT.to_string());
+        }
+    }
     if let serde_json::Value::Array(items) = &mut scripts_value {
         for script in items.iter_mut().filter_map(|s| s.as_object_mut()) {
             let Some(nested) = script.remove("edits") else { continue };
@@ -5606,6 +5702,10 @@ fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::Cas
 pub fn dry_run_answer(count: usize, lines: &[String]) -> String {
     format!("{DRY_RUN_NOTHING_SAVED} It would save {count} script(s): {}", lines.join(", "))
 }
+
+/// Said to a save whose `dry_run` is inside a script rather than beside
+/// `"scripts"`: nothing is checked or saved.
+pub const DRY_RUN_IN_A_SCRIPT: &str = "\"dry_run\" goes beside \"scripts\", not inside a script - nothing was saved. Send { \"scripts\": [...], \"dry_run\": true }.";
 
 /// How a script save's dry run answer begins.
 pub const DRY_RUN_NOTHING_SAVED: &str = "Dry run: nothing was saved.";

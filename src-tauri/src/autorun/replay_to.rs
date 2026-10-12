@@ -614,33 +614,56 @@ async fn run_steps<D: Driver>(
     None
 }
 
-/// Where an assistant's replay left its own browser: on the page before
-/// step `before` of case `case_id`, every step before it run. Kept on the
-/// supervised session while nothing else has used that browser since
-/// (no step, try, sign-in, start or other replay); `steps` is a
-/// fingerprint of the script's steps before `before`, so a script changed
-/// since is never carried on from.
+/// Where an assistant's replay left its own browser: on the page whose
+/// address path is `path`, before step `before` of case `case_id`, every
+/// step before it run, at `at_ms` (milliseconds since the epoch). Kept on
+/// the supervised session while nothing else has used that browser since
+/// (no step, try, sign-in, start or other replay). `script` is a
+/// fingerprint of the script that ran (`run_fingerprint`), so a script
+/// changed since in anything that shapes the run is never carried on from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayStand {
     pub case_id: i32,
     pub before: i32,
-    pub steps: u64,
+    pub script: u64,
+    pub path: String,
+    pub at_ms: u64,
 }
 
 impl ReplayStand {
-    /// The stand of a replay of `script` that reached step `before`.
-    pub fn of(script: &CaseScript, before: i32) -> Self {
-        ReplayStand { case_id: script.case_id, before, steps: steps_before(script, before) }
+    /// The stand of a replay of `script` (the copy that ran) that reached
+    /// step `before`, on the page at `path`, at `at_ms`.
+    pub fn of(script: &CaseScript, before: i32, path: &str, at_ms: u64) -> Self {
+        ReplayStand {
+            case_id: script.case_id,
+            before,
+            script: run_fingerprint(script, before),
+            path: path.to_string(),
+            at_ms,
+        }
     }
 }
 
-/// A fingerprint of `script`'s steps before `before`.
-fn steps_before(script: &CaseScript, before: i32) -> u64 {
+/// How long a stand is carried on from: past this the application's own
+/// session may have timed out, so a replay starts from the beginning.
+pub const STAND_FRESH_MS: u64 = 10 * 60 * 1000;
+
+/// A fingerprint of everything in `script` that shapes a replay to step
+/// `before`: its steps before `before`, and every script-level setting -
+/// `no_save`, the account, the area, the setup, the preconditions, the
+/// dialog and page-error choices. Only the bookkeeping a save or a run
+/// writes (repairs, the last repair, when it was saved, a suspected
+/// defect) is left out.
+pub fn run_fingerprint(script: &CaseScript, before: i32) -> u64 {
     use std::hash::{Hash, Hasher};
+    let mut shaped = script.clone();
+    shaped.steps.retain(|s| s.step_number < before);
+    shaped.repairs = 0;
+    shaped.last_repair = None;
+    shaped.saved_at = None;
+    shaped.suspected_defect = None;
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    for step in script.steps.iter().filter(|s| s.step_number < before) {
-        serde_json::to_string(step).unwrap_or_default().hash(&mut h);
-    }
+    serde_json::to_string(&shaped).unwrap_or_default().hash(&mut h);
     h.finish()
 }
 
@@ -672,14 +695,24 @@ impl ReplayFrom {
 
 /// Where a replay of case `case_id` to `step` starts, from the stand the
 /// browser's last replay left (`None` when it left none, or something used
-/// the browser since). `script` is the case's saved script now. The same
-/// case, stood before step K with its steps before K unchanged: before
-/// step `step` already, nothing runs; K earlier, it carries on from K. Any
-/// other stand - another case, a K past `step`, a script changed since -
-/// starts from the beginning.
-pub fn carry_from(stand: Option<&ReplayStand>, script: &CaseScript, step: i32) -> ReplayFrom {
+/// the browser since). `script` is the case's saved script now, `here` the
+/// address path the browser is on and `now_ms` the time. The same case,
+/// stood before step K with the script unchanged in anything that shapes
+/// the run (`run_fingerprint`), the browser still on that page and the
+/// stand younger than `STAND_FRESH_MS`: before step `step` already,
+/// nothing runs; K earlier, it carries on from K. Anything else - another
+/// case, a K past `step`, a script changed since, a browser on another
+/// page, an old stand - starts from the beginning.
+pub fn carry_from(stand: Option<&ReplayStand>, script: &CaseScript, step: i32, here: &str, now_ms: u64) -> ReplayFrom {
     match stand {
-        Some(s) if s.case_id == script.case_id && s.before <= step && s.steps == steps_before(script, s.before) => {
+        Some(s)
+            if s.case_id == script.case_id
+                && s.before <= step
+                && s.script == run_fingerprint(script, s.before)
+                && !s.path.is_empty()
+                && s.path == here
+                && now_ms.saturating_sub(s.at_ms) < STAND_FRESH_MS =>
+        {
             if s.before == step {
                 ReplayFrom::AlreadyThere
             } else {
@@ -693,7 +726,9 @@ pub fn carry_from(stand: Option<&ReplayStand>, script: &CaseScript, step: i32) -
 /// Carry case `req.case_id` on in `d` from the page before step `from`,
 /// where its last replay left it, to the page before step `req.step`: only
 /// steps `from` to `req.step` - 1 run, each with its fixture values filled
-/// in as a person's step is (`setup::resolve_step`). No preconditions,
+/// in as a person's step is (`setup::resolve_step`). The case's no-save
+/// guard is armed first, as at the start of every replay (`guard_for_case`,
+/// never lifting one held for another case). No preconditions,
 /// setup, sign-in or trip to the area: the browser is already past them.
 #[allow(clippy::too_many_arguments)]
 pub async fn carry_on<D: Driver>(
@@ -705,7 +740,7 @@ pub async fn carry_on<D: Driver>(
     from: i32,
     account: &mut Option<String>,
     lease: &mut Held,
-    guarded_case: &Option<i32>,
+    guarded_case: &mut Option<i32>,
     timing: &Timing,
     cancel: &AtomicBool,
     mut progress: impl FnMut(i32, i32),
@@ -722,6 +757,13 @@ pub async fn carry_on<D: Driver>(
             Ok(resolved) => *step = resolved,
             Err(why) => return ReplayEnd::Refused(why),
         }
+    }
+    // The no-save guard, as every replay arms it: a script marked Must not
+    // save is guarded however it was when the browser got here.
+    if let Err(why) =
+        crate::commands::autorun::guard_for_case(d, guarded_case, root, organization, project, id, false).await
+    {
+        return ReplayEnd::Refused(why);
     }
     let guarding_other = guarded_case.filter(|c| *c != id);
     if let Some(stopped) = run_steps(

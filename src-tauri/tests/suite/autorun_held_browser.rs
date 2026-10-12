@@ -429,13 +429,22 @@ fn the_browser_is_marked_with_who_opened_it() {
 #[test]
 fn a_template_held_off_by_the_assistants_browser_names_the_release() {
     use v2_lib::ai_bridge::{template_report_hint, FREE_IT_WITH_RELEASE};
-    let refused = serde_json::json!({ "ok": false, "steps": [{ "detail": "the account automation was in use by the Auto Run browser - try again when it is free" }] }).to_string();
-    let v: serde_json::Value = serde_json::from_str(&template_report_hint(refused.clone(), true)).unwrap();
+    use v2_lib::autorun::lease::in_use_by_browser;
+    assert_eq!(in_use_by_browser("automation"), "the account automation was in use by the Auto Run browser - try again when it is free");
+    let report = |detail: String| serde_json::json!({ "ok": false, "steps": [{ "detail": detail }] }).to_string();
+    let refused = report(in_use_by_browser("automation"));
+    let v: serde_json::Value = serde_json::from_str(&template_report_hint(refused.clone(), "automation", true)).unwrap();
     assert_eq!(v["free_it"], FREE_IT_WITH_RELEASE);
     assert!(FREE_IT_WITH_RELEASE.contains("release_autorun_browser"));
-    assert_eq!(template_report_hint(refused.clone(), false), refused, "a person's browser named the release");
-    let other = serde_json::json!({ "ok": false, "steps": [{ "detail": "the account automation was in use by an unattended run - try again when it is free" }] }).to_string();
-    assert_eq!(template_report_hint(other.clone(), true), other);
+    assert_eq!(template_report_hint(refused.clone(), "automation", false), refused, "a browser not the assistant's, or holding another account, named the release");
+    // Another account's refusal is not this template's.
+    assert_eq!(template_report_hint(refused.clone(), "evelyn1", true), refused);
+    let other = report("the account automation was in use by an unattended run - try again when it is free".into());
+    assert_eq!(template_report_hint(other.clone(), "automation", true), other);
+    // The app asks whether the assistant's own browser holds this very account.
+    let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+    let holds = &source[source.find("pub async fn assistant_browser_holds").unwrap()..];
+    assert!(holds[..holds.find("\n}\n").unwrap()].contains("s.lease.account() == Some(key)"));
 }
 
 /// The assistant's release never stops a replay going: it waits for it.

@@ -3342,6 +3342,25 @@ async fn a_dry_run_that_passes_says_it_would_save() {
     assert_eq!((status, out.as_str()), (400, "\"dry_run\" is true or false."));
 }
 
+/// A `dry_run` placed inside a script is refused, never dropped: dropped,
+/// the save would be real. Nothing is written.
+#[tokio::test]
+async fn a_dry_run_inside_a_script_is_refused_and_saves_nothing() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let mut scripts = case_7("#toast", "Saved");
+    see_scripts(dir.path(), &scripts.to_string());
+    scripts[0]["dry_run"] = serde_json::json!(true);
+    for body in [scripts.to_string(), serde_json::json!({ "scripts": scripts }).to_string()] {
+        let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+        assert_eq!((status, out.as_str()), (400, v2_lib::ai_bridge::DRY_RUN_IN_A_SCRIPT));
+    }
+    assert_eq!(load_script(dir.path(), 7).unwrap(), None, "a misplaced dry run saved the script");
+    assert!(v2_lib::ai_bridge::DRY_RUN_IN_A_SCRIPT.contains("nothing was saved"));
+}
+
 /// A dry run writes nothing and records nothing, refused or not: no
 /// script, no map, no stamp, no repair counted, no quirk. Every file under
 /// the Auto Run folder is the same, byte for byte. A refused dry run
