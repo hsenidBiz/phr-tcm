@@ -1415,9 +1415,10 @@ Before every save:
   once the run has filled it in. When such a locator is still refused,
   open the fixture's draft by its unique name instead.
 - Save with `"dry_run": true` to check a save without making it: it runs
-  every check a save makes, the seen check included, and answers would
-  save, or the refusal a save would give (every locator never seen,
-  listed at once), writing nothing and recording nothing.
+  every check a save makes, the seen check included, and answers "Dry
+  run: nothing was saved." with what it would save, or the refusal a
+  save would give (every locator never seen, listed at once), writing
+  nothing and recording nothing. Only an answer starting "saved" saved.
 - A save refused during a discovery only because some locators were never
   seen checks those locators on the discovery's current page once, on its
   own: each one found there visible is recorded with how many elements it

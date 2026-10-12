@@ -3286,13 +3286,18 @@ async fn a_dry_run_that_passes_says_it_would_save() {
 
     let body = tool_body(serde_json::json!({ "scripts": scripts, "dry_run": true }));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (new)"));
+    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)"));
     assert_eq!(load_script(dir.path(), 7).unwrap(), None, "a dry run wrote the script");
+    // Never mistaken for a save: it opens by saying nothing was saved, and
+    // never says "saved N script(s)".
+    assert!(out.starts_with(v2_lib::ai_bridge::DRY_RUN_NOTHING_SAVED), "{out}");
+    assert!(!out.contains("saved 1 script(s)"), "{out}");
+    assert_eq!(v2_lib::ai_bridge::DRY_RUN_NOTHING_SAVED, "Dry run: nothing was saved.");
 
     // The scripts as a string, as sibling tools take them, and false.
     let body = tool_body(serde_json::json!({ "scripts": scripts.to_string(), "dry_run": true }));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (new)"));
+    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (new)"));
     let body = tool_body(serde_json::json!({ "scripts": scripts, "dry_run": false }));
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
@@ -3338,7 +3343,7 @@ async fn a_dry_run_writes_and_records_nothing() {
     see_scripts(dir.path(), &case_7(".toast", "Saved").to_string());
     let seen = every_file(dir.path());
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &dry(".toast", true), "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "would save 1 script(s): case 7 (repaired)"));
+    assert_eq!((status, out.as_str()), (200, "Dry run: nothing was saved. It would save 1 script(s): case 7 (repaired)"));
     assert_eq!(every_file(dir.path()), seen, "a dry run that passed changed a file");
     let kept = load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(kept.repairs, 0);

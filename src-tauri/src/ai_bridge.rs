@@ -5361,6 +5361,17 @@ fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::Cas
                     == crate::autorun::edits::step_signature(b)
         })
 }
+
+/// What a dry run that passed every check answers. It opens with
+/// `DRY_RUN_NOTHING_SAVED` and never says "saved N script(s)", so it can
+/// never be read as the save's own answer.
+pub fn dry_run_answer(count: usize, lines: &[String]) -> String {
+    format!("{DRY_RUN_NOTHING_SAVED} It would save {count} script(s): {}", lines.join(", "))
+}
+
+/// How a script save's dry run answer begins.
+pub const DRY_RUN_NOTHING_SAVED: &str = "Dry run: nothing was saved.";
+
 /// Save one or many Auto Run action scripts, as an assistant writes them.
 ///
 /// A BUNDLE by design: the body is an array, so a whole PBI's worth of
@@ -5729,7 +5740,7 @@ async fn save_autorun_scripts(
         return answer(refused.said());
     }
     if dry_run {
-        return (200, format!("would save {} script(s): {}", prepared.len(), lines.join(", ")));
+        return (200, dry_run_answer(prepared.len(), &lines));
     }
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
 

@@ -796,7 +796,7 @@ pub const BUNDLE_EDITS_NOT_A_LIST: &str = "the bundle sent as \"scripts\" has an
 pub const BESIDE_EDITS_NOT_A_LIST: &str = "the \"edits\" sent beside the bundle in \"scripts\" is not a list - send one \"edits\" list beside \"scripts\", one entry per case";
 
 /// What `dry_run` does on `save_autorun_script`.
-const DRY_RUN_SCRIPT: &str = "true: run every check a save makes, the seen check included, and answer would save, or the refusal a save would give (every locator never seen, listed at once), writing nothing and recording nothing.";
+const DRY_RUN_SCRIPT: &str = "true: run every check a save makes, the seen check included, and answer \"Dry run: nothing was saved.\" with what it would save, or the refusal a save would give (every locator never seen, listed at once), writing nothing and recording nothing.";
 
 /// What `dry_run` does on `save_autorun_component`.
 const DRY_RUN_COMPONENT: &str = "true: run every rule a save makes and answer would_save or the refusal, writing nothing and recording nothing. It is not a try of the component.";
