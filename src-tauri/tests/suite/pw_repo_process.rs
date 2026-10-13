@@ -13,7 +13,7 @@ use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 use std::time::Duration;
 use v2_lib::pw_repo::process::{
-    self, busy_sentence, clean_line, resolve, start, start_repo, stream_lines, strip_ansi, Launch, Program, Resolved,
+    self, busy_sentence, clean_line, resolve, start, stream_lines, strip_ansi, Launch, Program, Resolved,
     RunEvent, RunId, Sink, CUT_MARK, LINE_CAP, NODE_NOT_FOUND, NO_NODE_MODULES, ONLY_NPX_AND_NPM, OUTSIDE_THE_CLONE,
 };
 use v2_lib::pw_repo::NOT_OFFERED;
@@ -245,10 +245,20 @@ fn a_folder_that_is_not_the_repo_or_has_no_node_modules_starts_nothing() {
 
 #[test]
 fn every_start_is_refused_with_advanced_features_off() {
+    // No command starts an arbitrary repo command: every start goes through
+    // a command that asks `ensure_offered` first, then `Launch::repo` and
+    // `start`.
+    assert_eq!(v2_lib::pw_repo::ensure_offered(false).unwrap_err(), NOT_OFFERED);
+    let src = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/pw_repo.rs")).unwrap();
+    assert!(!src.contains("pw_repo_start") && !src.contains("start_repo"), "no command starts any npx playwright subcommand");
+    let lib = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs")).unwrap();
+    assert!(!lib.contains("pw_repo_start"));
+
     let d = clone_with_node_modules();
-    let (sink, _rx) = collect();
-    let e = start_repo(false, &d.path().to_string_lossy(), "npx", &strings(&["playwright", "test"]), sink).unwrap_err();
-    assert_eq!(e, NOT_OFFERED);
+    let (sink, rx) = collect();
+    let launch = Launch::repo(d.path(), "npx", &strings(&["playwright", "test"]), |_| None).map(|l| start(l, sink));
+    assert_eq!(launch.unwrap_err(), NODE_NOT_FOUND);
+    assert!(rx.try_recv().is_err(), "nothing started");
 }
 
 // ---- How npx and npm are found ---------------------------------------------

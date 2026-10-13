@@ -252,7 +252,7 @@ test("Stop during the listing or the count stops whatever runs", async () => {
   fireEvent.click(button("Run picked (2)"));
   await waitFor(() => expect(button("Stop")).toBeEnabled());
   // The dry count is going: its id is the slot's, not one this screen knows.
-  calls.setRunning({ run: 7, label: "npx playwright test" });
+  calls.setRunning({ run: 7, label: "npx playwright test", brief: true });
   fireEvent.click(button("Stop"));
   await waitFor(() => expect(calls.find((c) => c.cmd === "pw_repo_stop")?.args).toEqual({ run: 7 }));
   expect(calls.some((c) => c.cmd === "pw_repo_running")).toBe(true);
@@ -260,7 +260,7 @@ test("Stop during the listing or the count stops whatever runs", async () => {
 });
 
 test("a run started before the tab was opened is still this Runner's", async () => {
-  const calls = mount({ running: { run: 12, label: "npx playwright test" } });
+  const calls = mount({ running: { run: 12, label: "npx playwright test", brief: false } });
   await screen.findByText("User can create a new rating method");
   await waitFor(() => expect(button("Stop")).toBeEnabled());
   for (const name of [/^Run picked/, "Run all", "Re-run failures", "Preview", "List again"]) expect(button(name)).toBeDisabled();
@@ -287,8 +287,44 @@ test("a run started before the tab was opened is still this Runner's", async () 
   expect(calls.some((c) => c.cmd === "pw_open_report")).toBe(false);
 });
 
+test("opened during a dry count, the Runner waits it out, then takes on the run it prepared", async () => {
+  const calls = mount({ running: { run: 20, label: "npx playwright test", brief: true } });
+  await screen.findByText("User can create a new rating method");
+  // Busy, but the dry count is not this screen's run.
+  await waitFor(() => expect(button("Run all")).toBeDisabled());
+  expect(button("Stop")).toBeEnabled();
+  expect(screen.queryByText(/The run/)).not.toBeInTheDocument();
+
+  // The dry count ends and the real run starts.
+  calls.setRunning({ run: 21, label: "npx playwright test", brief: false });
+  calls.addReport(NEW);
+  await act(async () => {
+    await emit("pw-done", { run: 20, code: 0 });
+  });
+  expect(screen.queryByText("The run passed.")).not.toBeInTheDocument();
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_repo_running").length).toBeGreaterThanOrEqual(2));
+  // Its lines arrive once it is taken on.
+  const log = await screen.findByRole("log", { name: "Run output" });
+  await waitFor(async () => {
+    await act(async () => {
+      await emit("pw-output", { run: 21, line: "Running 2 tests using 1 worker" });
+    });
+    expect(log).toHaveTextContent("Running 2 tests using 1 worker");
+  });
+  expect(button("Run all")).toBeDisabled();
+
+  await act(async () => {
+    await emit("pw-done", { run: 21, code: 1 });
+  });
+  expect(await screen.findByText("The run ended with failures (exit 1).")).toBeInTheDocument();
+  expect(button("Run all")).toBeEnabled();
+  // NEW was listed when the run was taken on: it is not this run's.
+  await new Promise((r) => setTimeout(r, 20));
+  expect(calls.some((c) => c.cmd === "pw_open_report")).toBe(false);
+});
+
 test("another kind of repo command going is not taken for a test run", async () => {
-  mount({ running: { run: 13, label: "npm run users" } });
+  mount({ running: { run: 13, label: "npm run users", brief: true } });
   await screen.findByText("User can create a new rating method");
   await new Promise((r) => setTimeout(r, 20));
   expect(button("Stop")).toBeDisabled();

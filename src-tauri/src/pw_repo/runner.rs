@@ -59,6 +59,12 @@ pub const NOT_THE_CHOSEN_CLONE: &str = "That folder is not the clone chosen in t
 /// Held from a run's listing to its start (see `run`).
 static PREPARING: Mutex<()> = Mutex::new(());
 
+/// The refusal for ticked tests the listing no longer has.
+pub fn missing_ticks(missing: usize) -> String {
+    let what = if missing == 1 { "1 ticked test is".to_string() } else { format!("{missing} ticked tests are") };
+    format!("{what} no longer in the repo's list, so nothing was run. Use List again, then tick what to run.")
+}
+
 /// `asked` (the webview's clone path) if it is `configured` (the app's
 /// clone setting), as a path; refused otherwise. Compared without
 /// surrounding space, trailing separators, the kind of slash, or case on
@@ -809,6 +815,14 @@ pub fn plan(clone: &Path, tree: &TestTree, picked: &[String], action: RunAction,
         RunAction::All => tree.tests.iter().map(|t| t.id.clone()).collect(),
         _ => picked.iter().cloned().collect(),
     };
+    if action == RunAction::Picked {
+        // A ticked test the listing no longer has would silently not run.
+        let known: HashSet<&str> = tree.tests.iter().map(|t| t.id.as_str()).collect();
+        let missing = selection.iter().filter(|id| !known.contains(id.as_str())).count();
+        if missing > 0 {
+            return Err(missing_ticks(missing));
+        }
+    }
     let list = build_test_list(&tree.tests, &selection);
     if list.lines.is_empty() {
         return Err(NOTHING_PICKED.to_string());
@@ -959,7 +973,13 @@ pub fn run(
     // One run prepared at a time: no second `pw_run` rewrites the run list
     // between this one's write, its dry count and its start. An `npm run qa`
     // someone runs on the same clone outside the app is not covered.
-    let _preparing = PREPARING.try_lock().map_err(|_| PREPARING_ALREADY.to_string())?;
+    // A run that panicked while preparing leaves nothing to protect: its
+    // lock is taken as free.
+    let _preparing = match PREPARING.try_lock() {
+        Ok(g) => g,
+        Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => return Err(PREPARING_ALREADY.to_string()),
+    };
     let tree = list(clone, false, show, launch)?;
     let read = read_options(clone);
     let p = plan(clone, &tree, picked, action, mode, &read.options)?;
@@ -969,7 +989,8 @@ pub fn run(
     let summary = match (&p.run_list, &p.dry_args) {
         (Some(text), Some(dry)) => {
             write_run_list(clone, text)?;
-            let matched = count_matches(&capture(&npx_args(dry), show, launch)?)?;
+            let waits = |a: &[String]| launch(a).map(|l| l.waiting(process::SLOT_WAIT));
+            let matched = count_matches(&capture(&npx_args(dry), show, &waits)?)?;
             if matched != p.expected {
                 crate::applog::info(format!("pw-repo: the dry count matched {matched} of {}; the run was refused", p.expected));
                 return Err(explain_mismatch(p.expected, matched));
@@ -978,7 +999,10 @@ pub fn run(
         }
         _ => format!("Re-running {} failed test(s).", p.expected),
     };
-    let launched = launch(&npx_args(&p.args))?;
+    // A short command (an accounts command) that took the slot after the dry
+    // count is waited for rather than refusing a checked run; only this run
+    // writes the run list (`PREPARING`), so what it checked is what it runs.
+    let launched = launch(&npx_args(&p.args))?.waiting(process::SLOT_WAIT);
     let run = process::start(launched, show.clone())?;
     Ok(RunStart::Started {
         run,

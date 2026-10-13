@@ -33,6 +33,12 @@ export const TESTS_KEY = "pw-tests";
 export const REPORTS_KEY = "pw-reports";
 /** The most output lines the panel keeps; older ones fall off the top. */
 export const OUTPUT_CAP = 5000;
+/** The most ends of other runs kept, for a run whose start comes back late. */
+export const ENDED_CAP = 20;
+/** After a listing or dry count ends, how often and how many times to look
+ * for the run it prepared. */
+const ADOPT_RETRY_MS = 250;
+const ADOPT_TRIES = 8;
 
 /** The debug question: the run it is about, in the mode it was asked in. */
 type Ask = { action: RunAction; count: number; mode: BrowserMode };
@@ -70,6 +76,9 @@ export default function Runner({ clone }: { clone: string }) {
   const [busy, setBusy] = useState(false);
   /** The run started, until its end. */
   const [running, setRunning] = useState<number | null>(null);
+  /** A listing or dry count going when this screen opened: not this screen's
+   * to adopt, but it is busy until that ends. */
+  const [waitingOn, setWaitingOn] = useState<number | null>(null);
   const [output, setOutput] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
@@ -80,9 +89,60 @@ export default function Runner({ clone }: { clone: string }) {
   // What the event listeners read: the latest values, not the first render's.
   // `ended` holds the end of a run whose start has not come back yet: a run
   // that fails at once can end before `pw_run` answers.
-  const live = useRef({ busy, running, reportsBefore: new Set<string>(), ended: new Map<number, number | null>() });
+  const live = useRef({
+    busy,
+    running,
+    waitingOn,
+    reportsBefore: new Set<string>(),
+    ended: new Map<number, number | null>(),
+  });
   live.current.busy = busy;
   live.current.running = running;
+  live.current.waitingOn = waitingOn;
+
+  /** Keep only ends newer than `run` (and at most ENDED_CAP of them). */
+  const prune = (run: number) => {
+    const ended = live.current.ended;
+    for (const id of [...ended.keys()]) if (id <= run) ended.delete(id);
+    while (ended.size > ENDED_CAP) ended.delete(ended.keys().next().value as number);
+  };
+
+  /** This run is this screen's now. */
+  const adoptRun = (run: number) => {
+    prune(run);
+    live.current.running = run;
+    setRunning(run);
+  };
+
+  /**
+   * Take on the repo command going now, if it is a test run. A listing or dry
+   * count (brief) is waited out instead, and looked at again when it ends:
+   * the run it was preparing starts right after. `tries` re-asks a moment
+   * later while nothing is going yet.
+   */
+  const adopt = useRef(async (_tries: number) => {});
+  adopt.current = async (tries) => {
+    try {
+      const now = await unwrapStr(commands.pwRepoRunning());
+      const l = live.current;
+      if (l.busy || l.running !== null) return;
+      if (!now) {
+        if (tries > 0) setTimeout(() => void adopt.current(tries - 1), ADOPT_RETRY_MS);
+        return;
+      }
+      if (!now.label.startsWith("npx playwright") || l.ended.has(now.run)) return;
+      if (now.brief) {
+        l.waitingOn = now.run;
+        setWaitingOn(now.run);
+        return;
+      }
+      l.reportsBefore = new Set((await fetchReports()).map((r) => r.run_id));
+      if (l.busy || l.running !== null || l.ended.has(now.run)) return;
+      adoptRun(now.run);
+    } catch {
+      // Nothing to adopt.
+    }
+  };
 
   /** The run ended: say how, show the results, and open its report. */
   const finish = useRef((_code: number | null) => {});
@@ -120,41 +180,40 @@ export default function Runner({ clone }: { clone: string }) {
   const branches = useMemo(() => buildBranches(list), [list]);
   const known = useMemo(() => new Set(list.map((t) => t.id)), [list]);
   const picked = [...ticked].filter((id) => known.has(id));
-  const active = busy || running !== null;
+  const active = busy || running !== null || waitingOn !== null;
 
   useEffect(() => {
     const output = events.pwOutput.listen((e) => {
       // Once the run's id is known, only its lines. Before that (the listing
       // and the dry count, whose ids are not exposed) only while this
       // screen is itself starting something.
-      const { busy, running } = live.current;
-      if (running !== null ? e.payload.run !== running : !busy) return;
+      const { busy, running, waitingOn } = live.current;
+      const ours = running !== null ? e.payload.run === running : e.payload.run === waitingOn || busy;
+      if (!ours) return;
       setOutput((o) => {
         const next = [...o, e.payload.line];
         return next.length > OUTPUT_CAP ? next.slice(next.length - OUTPUT_CAP) : next;
       });
     });
+    let gone = false;
     const done = events.pwDone.listen((e) => {
-      if (e.payload.run === live.current.running) finish.current(e.payload.code);
-      else live.current.ended.set(e.payload.run, e.payload.code);
+      const { run, code } = e.payload;
+      if (run === live.current.running) finish.current(code);
+      else if (run === live.current.waitingOn) {
+        // The listing or dry count ended: the run it prepared, if any, is
+        // about to start. Look again, for a moment.
+        live.current.waitingOn = null;
+        setWaitingOn(null);
+        if (!gone) void adopt.current(ADOPT_TRIES);
+      } else {
+        live.current.ended.set(run, code);
+        prune(live.current.running ?? 0);
+      }
     });
     // A run started before this screen was (the tab was left and come back
     // to) is still this Runner's: Stop works, the actions wait, and its
     // output and end arrive here.
-    let gone = false;
-    void (async () => {
-      try {
-        const now = await unwrapStr(commands.pwRepoRunning());
-        if (gone || !now || !now.label.startsWith("npx playwright")) return;
-        if (live.current.busy || live.current.running !== null || live.current.ended.has(now.run)) return;
-        live.current.reportsBefore = new Set((await fetchReports()).map((r) => r.run_id));
-        if (gone || live.current.ended.has(now.run)) return;
-        live.current.running = now.run;
-        setRunning(now.run);
-      } catch {
-        // Nothing to adopt.
-      }
-    })();
+    void adopt.current(0);
     return () => {
       gone = true;
       for (const un of [output, done]) un.then((f) => f()).catch(() => {});
@@ -199,11 +258,11 @@ export default function Runner({ clone }: { clone: string }) {
       setWarnings(r.warnings);
       setOutput((o) => [`$ ${r.command}`, r.summary, ...o]);
       const ended = live.current.ended;
-      if (ended.has(r.run)) finish.current(ended.get(r.run) ?? null);
-      else {
-        setRunning(r.run);
-        live.current.running = r.run;
-      }
+      if (ended.has(r.run)) {
+        const code = ended.get(r.run) ?? null;
+        prune(r.run);
+        finish.current(code);
+      } else adoptRun(r.run);
     } catch (e) {
       setError(message(e));
     } finally {
@@ -226,7 +285,7 @@ export default function Runner({ clone }: { clone: string }) {
 
   const stop = async () => {
     try {
-      const now = running ?? (await unwrapStr(commands.pwRepoRunning()))?.run ?? null;
+      const now = running ?? waitingOn ?? (await unwrapStr(commands.pwRepoRunning()))?.run ?? null;
       if (now !== null) await unwrapStr(commands.pwRepoStop(now));
     } catch (e) {
       setError(message(e));

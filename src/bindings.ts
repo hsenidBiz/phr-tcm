@@ -1265,20 +1265,13 @@ export const commands = {
 	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, moduleRef, preconditionsRef })),
 	/**  What the clone at `clone` holds, and the health line. Read only. */
 	pwRepoStructure: (clone: string) => typedError<RepoStructure, string>(__TAURI_INVOKE("pw_repo_structure", { clone })),
-	/**
-	 *  Start `npx playwright …` in the clone, in a job of its own. Its output
-	 *  comes as `PwOutput` events and its end as `PwDone`. Any other program or
-	 *  command is refused (`npm run users` goes through `pw_users_*`, which keep
-	 *  passwords out of the output), and so is a second start while one runs,
-	 *  with a sentence naming it.
-	 */
-	pwRepoStart: (clone: string, program: string, args: string[]) => typedError<number, string>(__TAURI_INVOKE("pw_repo_start", { clone, program, args })),
 	/**  End run `run` and every process it started. A run already over is fine. */
 	pwRepoStop: (run: number) => typedError<null, string>(__TAURI_INVOKE("pw_repo_stop", { run })),
 	/**  The repo command going now, if any. */
 	pwRepoRunning: () => typedError<{
 	run: number,
 	label: string,
+	brief: boolean,
 } | null, string>(__TAURI_INVOKE("pw_repo_running")),
 	/**
 	 *  The clone's tests as a tree, from `npx playwright test --list`. The
@@ -4280,10 +4273,15 @@ export type PwReport = {
 	stats: ReportStats | null,
 };
 
-/**  The repo command going now: its run id and how it is named. */
+/**
+ *  The repo command going now: its run id, how it is named, and whether it
+ *  is a short command (a listing, a dry count, an accounts command) rather
+ *  than a test run.
+ */
 export type PwRunning = {
 	run: number,
 	label: string,
+	brief: boolean,
 };
 
 /**

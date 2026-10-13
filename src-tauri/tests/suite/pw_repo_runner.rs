@@ -374,10 +374,17 @@ fn every_action_plans_as_qa_would() {
     assert_eq!(one.expected, 1);
     assert_eq!(one.args.last().unwrap(), "--debug");
     assert_eq!(plan(d.path(), &tree, &[], RunAction::Picked, BrowserMode::Hidden, &none).unwrap_err(), NOTHING_PICKED);
-    assert_eq!(
-        plan(d.path(), &tree, &["[\"gone\"]".to_string()], RunAction::Picked, BrowserMode::Hidden, &none).unwrap_err(),
-        NOTHING_PICKED
-    );
+    // A ticked test the listing no longer has refuses the run, naming how
+    // many, even beside ones it still has.
+    let gone = "[\"gone\"]".to_string();
+    let e = plan(d.path(), &tree, &[gone.clone()], RunAction::Picked, BrowserMode::Hidden, &none).unwrap_err();
+    assert_eq!(e, runner::missing_ticks(1));
+    assert!(e.starts_with("1 ticked test is no longer in the repo's list") && e.contains("Use List again"), "{e}");
+    let two = vec![gone, "[\"also gone\"]".to_string(), find(&tree, "the app shell loads").id.clone()];
+    let e = plan(d.path(), &tree, &two, RunAction::Picked, BrowserMode::Hidden, &none).unwrap_err();
+    assert!(e.starts_with("2 ticked tests are no longer"), "{e}");
+    // Run all is not about ticks.
+    assert!(plan(d.path(), &tree, &two, RunAction::All, BrowserMode::Hidden, &none).is_ok());
 
     // Re-run failures: --last-failed under every project that has tests.
     assert_eq!(plan(d.path(), &tree, &[], RunAction::Failed, BrowserMode::Hidden, &none).unwrap_err(), NOTHING_FAILED);
@@ -732,5 +739,64 @@ fn a_second_run_cannot_rewrite_the_run_list_while_one_is_prepared() {
     };
     assert_eq!(second.lock().unwrap().clone().unwrap().unwrap_err(), runner::PREPARING_ALREADY);
     assert!(!other.path().join(RUN_LIST).exists());
+    while !matches!(rx.recv_timeout(Duration::from_secs(20)).unwrap(), RunEvent::Done { run: r, .. } if r == run) {}
+}
+
+#[cfg(windows)]
+#[test]
+fn a_run_that_panicked_while_preparing_does_not_lock_out_the_next() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let d = clone();
+    let fake = Fake::new("dry-two.json");
+    let (show, rx) = collect();
+    let picked = rating_methods(&tree_of(d.path()));
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner::run(d.path(), &picked, RunAction::Picked, BrowserMode::Hidden, false, &show, &|_| panic!("a starter that failed"))
+    }));
+    assert!(panicked.is_err());
+    let RunStart::Started { run, .. } =
+        runner::run(d.path(), &picked, RunAction::Picked, BrowserMode::Hidden, false, &show, &|a| fake.launch(a)).unwrap()
+    else {
+        panic!()
+    };
+    while !matches!(rx.recv_timeout(Duration::from_secs(20)).unwrap(), RunEvent::Done { run: r, .. } if r == run) {}
+}
+
+#[cfg(windows)]
+#[test]
+fn a_short_command_that_takes_the_slot_after_the_dry_count_is_waited_for() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let d = clone();
+    let fake = Fake::new("dry-two.json");
+    let (show, rx) = collect();
+    let (brief_sink, brief_rx) = collect();
+    let picked = rating_methods(&tree_of(d.path()));
+    let took: Mutex<Option<u32>> = Mutex::new(None);
+
+    // Between the dry count's end and the run's start, an accounts command
+    // (short, about two seconds) takes the slot.
+    let launch = |a: &[String]| {
+        let real = !a.iter().any(|x| x == "--list");
+        if real && took.lock().unwrap().is_none() {
+            let ping = ["/D", "/C", "ping", "-n", "3", "127.0.0.1"].map(OsString::from).to_vec();
+            let accounts = Launch::test_program(cmd(), ping, fake.dir.path().to_path_buf(), "npm run users").brief();
+            *took.lock().unwrap() = Some(v2_lib::pw_repo::process::start(accounts, brief_sink.clone()).unwrap());
+        }
+        fake.launch(a)
+    };
+    let RunStart::Started { run, .. } =
+        runner::run(d.path(), &picked, RunAction::Picked, BrowserMode::Hidden, false, &show, &launch).unwrap()
+    else {
+        panic!()
+    };
+    // The run was not refused: it waited for the accounts command, which
+    // ended (the slot holds one command at a time).
+    let accounts = took.lock().unwrap().unwrap();
+    assert!(run > accounts);
+    while !matches!(brief_rx.recv_timeout(Duration::from_secs(20)).unwrap(), RunEvent::Done { run: r, .. } if r == accounts) {}
+    // A short command waits at least as long as a listing may take.
+    assert!(v2_lib::pw_repo::process::SLOT_WAIT >= runner::LIST_TIMEOUT + Duration::from_secs(10));
     while !matches!(rx.recv_timeout(Duration::from_secs(20)).unwrap(), RunEvent::Done { run: r, .. } if r == run) {}
 }

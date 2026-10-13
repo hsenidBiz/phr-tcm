@@ -175,6 +175,10 @@ fn output_lines_hide_passwords_and_json_errors() {
     let secrets = vec!["abc".to_string(), "abcdef".to_string()];
     assert_eq!(clean_line("set abcdef and abc", &secrets), format!("set {HIDDEN} and {HIDDEN}"));
     assert_eq!(clean_line("nothing secret", &secrets), "nothing secret");
+    // A password with a quote or a backslash, as JSON prints it.
+    let odd = vec![r#"pa"ss\word"#.to_string()];
+    assert_eq!(clean_line(r#"{ "password": "pa\"ss\\word" }"#, &odd), format!(r#"{{ "password": "{HIDDEN}" }}"#));
+    assert_eq!(clean_line(r#"typed pa"ss\word"#, &odd), format!("typed {HIDDEN}"));
     // Node quotes the text it could not parse.
     let quoted = format!(r#"Unexpected token '}}', "{{"a": "{PASS_A}" "... is not valid JSON"#);
     assert_eq!(clean_line(&quoted, &[]), REGISTRY_NOT_JSON);
@@ -199,10 +203,14 @@ fn show_reads_one_password_from_the_registry() {
 }
 
 #[test]
-fn the_repo_start_command_refuses_npm() {
-    let (sink, _rx) = collect();
-    let e = process::start_repo(true, "C:\\nowhere", "npm", &strings(&["run", "users", "--", "list", "--json"]), sink).unwrap_err();
-    assert_eq!(e, process::ACCOUNTS_ONLY);
+fn npm_run_users_starts_only_through_launch_repo_in_the_clone() {
+    // The accounts commands are the only way to `npm run users`; a folder
+    // that is not the repo starts nothing.
+    let (sink, rx) = collect();
+    let r = process::Launch::repo(std::path::Path::new(r"C:\nowhere"), "npm", &strings(&["run", "users", "--", "list", "--json"]), process::resolve_here)
+        .map(|l| process::start(l, sink));
+    assert_eq!(r.unwrap_err(), v2_lib::pw_export::clone::NOT_A_CLONE);
+    assert!(rx.try_recv().is_err(), "nothing started");
 }
 
 // ---- Running, through a fake starter ----------------------------------------------

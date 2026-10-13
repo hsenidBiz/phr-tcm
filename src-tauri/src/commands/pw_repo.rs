@@ -56,30 +56,18 @@ async fn blocking<T: Send + 'static>(
 #[tauri::command]
 #[specta::specta]
 pub fn pw_repo_structure(clone: String) -> Result<RepoStructure, String> {
-    structure::structure_for(crate::ai_tools::autorun_offered(), &clone, structure::node_found())
+    let clone = chosen(&clone)?;
+    structure::structure_for(true, &clone.to_string_lossy(), structure::node_found())
 }
 
-/// The repo command going now: its run id and how it is named.
+/// The repo command going now: its run id, how it is named, and whether it
+/// is a short command (a listing, a dry count, an accounts command) rather
+/// than a test run.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
 pub struct PwRunning {
     pub run: u32,
     pub label: String,
-}
-
-/// Start `npx playwright …` in the clone, in a job of its own. Its output
-/// comes as `PwOutput` events and its end as `PwDone`. Any other program or
-/// command is refused (`npm run users` goes through `pw_users_*`, which keep
-/// passwords out of the output), and so is a second start while one runs,
-/// with a sentence naming it.
-#[tauri::command]
-#[specta::specta]
-pub async fn pw_repo_start(app: tauri::AppHandle, clone: String, program: String, args: Vec<String>) -> Result<u32, String> {
-    let sink = emitter(app);
-    // Off the async workers: it looks at the clone and PATH, and spawns.
-    let offered = crate::ai_tools::autorun_offered();
-    tauri::async_runtime::spawn_blocking(move || process::start_repo(offered, &clone, &program, &args, sink))
-        .await
-        .map_err(|_| process::COULD_NOT_START.to_string())?
+    pub brief: bool,
 }
 
 /// End run `run` and every process it started. A run already over is fine.
@@ -95,7 +83,7 @@ pub fn pw_repo_stop(run: u32) -> Result<(), String> {
 #[specta::specta]
 pub fn pw_repo_running() -> Result<Option<PwRunning>, String> {
     crate::pw_repo::ensure_offered(crate::ai_tools::autorun_offered())?;
-    Ok(process::running().map(|(run, label)| PwRunning { run, label }))
+    Ok(process::running_now().map(|(run, label, brief)| PwRunning { run, label, brief }))
 }
 
 /// The clone's tests as a tree, from `npx playwright test --list`. The

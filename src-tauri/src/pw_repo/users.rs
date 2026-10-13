@@ -331,10 +331,20 @@ pub fn clean_line(line: &str, secrets: &[String]) -> String {
     if line.contains("is not valid JSON") || line.contains("in JSON at position") || line.contains("Unexpected token") {
         return REGISTRY_NOT_JSON.to_string();
     }
-    let mut sorted: Vec<&String> = secrets.iter().filter(|s| !s.is_empty()).collect();
-    sorted.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    // Each as typed, and as JSON writes it (a `"` or `\` escaped), which is
+    // how a password reaches output the CLI prints as JSON.
+    let mut forms: Vec<String> = Vec::new();
+    for s in secrets.iter().filter(|s| !s.is_empty()) {
+        forms.push(s.clone());
+        let escaped = serde_json::to_string(s).unwrap_or_default();
+        let escaped = escaped.get(1..escaped.len().saturating_sub(1)).unwrap_or_default().to_string();
+        if !escaped.is_empty() && escaped != *s {
+            forms.push(escaped);
+        }
+    }
+    forms.sort_by_key(|s| std::cmp::Reverse(s.len()));
     let mut out = line.to_string();
-    for s in sorted {
+    for s in forms {
         out = out.replace(s.as_str(), HIDDEN);
     }
     out

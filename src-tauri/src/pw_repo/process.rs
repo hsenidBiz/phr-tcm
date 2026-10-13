@@ -97,8 +97,10 @@ pub const COULD_NOT_START: &str = "The command could not be started. Settings â†
 pub const NO_NPM_LOGS_DIR: &str =
     "npm run users was not started: the app has no folder of its own for npm's log, which would keep its arguments.";
 /// How long a listing or an accounts command waits for another short
-/// command to finish (`Launch::waiting`).
-pub const SLOT_WAIT: Duration = Duration::from_secs(60);
+/// command to finish (`Launch::waiting`). A listing may take up to
+/// `runner::LIST_TIMEOUT` (2 minutes), so the Accounts section opened while
+/// the Runner lists waits that long and a margin rather than giving up.
+pub const SLOT_WAIT: Duration = Duration::from_secs(150);
 
 fn npm_logs_cell() -> std::sync::MutexGuard<'static, Option<PathBuf>> {
     static DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -568,6 +570,12 @@ pub fn running() -> Option<(RunId, String)> {
     slot().as_ref().map(|c| (c.id, c.label.clone()))
 }
 
+/// `running`, with whether it is a short command (`Launch::brief`: a
+/// listing, a dry count, an accounts command), read at one moment.
+pub fn running_now() -> Option<(RunId, String, bool)> {
+    slot().as_ref().map(|c| (c.id, c.label.clone(), c.brief))
+}
+
 /// The refusal a start meets while `label` runs.
 pub fn busy_sentence(label: &str) -> String {
     format!("{label} is still running. Stop it, or wait for it to finish, before starting another.")
@@ -723,22 +731,6 @@ pub fn start_split(launch: Launch, out: Sink, err: Sink) -> Result<RunId, String
     Ok(id)
 }
 
-/// The refusal `start_repo` gives `npm`: its output would stream to the
-/// webview, and `npm run users -- list --json` prints every password.
-pub const ACCOUNTS_ONLY: &str = "npm run users runs only from the Accounts section, which keeps passwords out of the output.";
-
-/// The command's body: refused where the tab is not offered, then
-/// `Launch::repo` with npx found on PATH, then `start`. `npm run users` is
-/// refused here: its output streams as it is, and the accounts commands
-/// (`users`) are the only way to it.
-pub fn start_repo(offered: bool, clone: &str, program: &str, args: &[String], sink: Sink) -> Result<RunId, String> {
-    super::ensure_offered(offered)?;
-    if program == Program::Npm.name() {
-        return Err(ACCOUNTS_ONLY.to_string());
-    }
-    let launch = Launch::repo(Path::new(clone.trim()), program, args, resolve_here)?;
-    start(launch, sink)
-}
 
 /// End run `run`'s whole job. A run already over is not an error.
 pub fn stop(run: RunId) -> Result<(), String> {
