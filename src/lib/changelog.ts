@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.22",
+    date: "2026-10-13",
+    items: [
+      "After an export to Playwright, a Finish in the repo card gives a ready-to-copy prompt for Claude Code in your clone. It runs the raw specs, then the repo's own refactor, lint and live check, and turns the export into a finished page object and spec.",
+    ],
+  },
+  {
     version: "2.1.3-beta.21",
     date: "2026-10-13",
     items: [
