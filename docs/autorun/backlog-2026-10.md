@@ -89,6 +89,20 @@ happened that motivates it.
     contains a piece of text, for generated forms and reports, reusing the
     download pipeline from part 3.
 
+17. **Reuse a signed-in browser across template runs.** Every
+    `run_api_template` / `prove_api_template` opens a fresh browser, replays
+    the whole sign-in recipe (login page, password, home page, the
+    "Another active session" bootbox, the menu) and loads the template's
+    `antiforgery.page` before its requests - usually 10-30 s of setup for
+    requests that take under a second. Building one draft cycle step by step
+    (2026-10-09) meant 6-8 sign-ins. Fixtures already run their templates in
+    one signed-in browser; give single runs the same: keep the browser and
+    session open for a short idle window (per environment + account) so
+    back-to-back runs skip the sign-in, re-reading the anti-forgery token
+    only when the page differs, and dropping the session on an empty 400 or a
+    sign-in page. PeoplesHR allows one session per user, so the held session
+    must yield to a run or a person's browser on the same account.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
