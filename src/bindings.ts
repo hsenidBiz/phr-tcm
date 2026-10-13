@@ -4643,11 +4643,14 @@ export type ReplayEnd_Deserialize =
 /**
  *  Every step before `step` ran: the browser is on the page before it.
  *  `notice` is said beside it: the preconditions were not checked.
+ *  `whole` is how many steps the case has, when `step` is past its last:
+ *  the whole case ran, and the browser is on the page its last step left.
  */
 { kind: "ready"; detail: {
 	case_id: number,
 	step: number,
 	notice: string | null,
+	whole?: number | null,
 } } | 
 /**
  *  The replay failed in `phase`: step `step` when it is `Step`; the
@@ -4697,11 +4700,14 @@ export type ReplayEnd_Serialize =
 /**
  *  Every step before `step` ran: the browser is on the page before it.
  *  `notice` is said beside it: the preconditions were not checked.
+ *  `whole` is how many steps the case has, when `step` is past its last:
+ *  the whole case ran, and the browser is on the page its last step left.
  */
 { kind: "ready"; detail: {
 	case_id: number,
 	step: number,
 	notice: string | null,
+	whole?: number | null,
 } } | 
 /**
  *  The replay failed in `phase`: step `step` when it is `Step`; the

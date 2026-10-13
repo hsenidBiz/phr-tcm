@@ -362,7 +362,7 @@ async fn a_replay_to_a_step_goes_to_the_named_area_and_back() {
         |_, _| {},
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: 12, step: 2, notice: None });
+    assert_eq!(end, ReplayEnd::Ready { case_id: 12, step: 2, notice: None, whole: None });
     let seen = log(&app);
     let at = |what: &str| seen.iter().rposition(|l| l == what).unwrap_or_else(|| panic!("no {what:?} in {seen:?}"));
     assert!(at("click Common Configurator") < at("check yes") && at("check yes") < at("click Leave"), "{seen:?}");

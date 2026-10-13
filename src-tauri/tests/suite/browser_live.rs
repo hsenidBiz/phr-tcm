@@ -2959,7 +2959,7 @@ async fn a_replay_to_step_3_leaves_the_page_where_step_2_left_it() {
         |_, _| {},
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: 31, step: 3, notice: None }, "{}", end.sentence());
+    assert_eq!(end, ReplayEnd::Ready { case_id: 31, step: 3, notice: None, whole: None }, "{}", end.sentence());
     let state = page::eval_value(
         &mut live.cdp,
         "[location.pathname, document.getElementById('form').hidden, document.querySelector('[aria-label=Reason]').value, document.getElementById('msg').textContent]",

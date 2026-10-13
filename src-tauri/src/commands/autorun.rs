@@ -1368,7 +1368,12 @@ pub(crate) async fn replay_supervised(
     );
     let mut tabs = Vec::new();
     let mut end = match from {
-        ReplayFrom::AlreadyThere => ReplayEnd::Ready { case_id, step, notice: None },
+        ReplayFrom::AlreadyThere => ReplayEnd::Ready {
+            case_id,
+            step,
+            notice: None,
+            whole: saved.as_ref().and_then(|s| replay_to::whole_case(s, step)),
+        },
         ReplayFrom::CarriedOn(k) => {
             replay_to::carry_on(
                 &mut session.cdp,

@@ -99,7 +99,7 @@ impl FakeHost {
         }
     }
     fn ready() -> Self {
-        Self::ending(ReplayEnd::Ready { case_id: ID, step: 3, notice: None })
+        Self::ending(ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None })
     }
     fn replays(&self) -> Vec<ReplayRequest> {
         self.replays.lock().unwrap().iter().map(|r| r.2.clone()).collect()
