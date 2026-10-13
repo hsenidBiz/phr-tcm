@@ -3449,3 +3449,43 @@ async fn states_a_nearer_aria_disabled_false_leaves_a_button_enabled() {
     assert!(started.elapsed() < Duration::from_millis(2000), "the click waited {:?}", started.elapsed());
     must(run(&mut live, json!({ "kind": "expect_text", "selector": "#aria-reset-state", "equals": "clicked" })).await);
 }
+
+/// Role locators ask `Accessibility.queryAXTree`, which answers only once
+/// the page has drawn a frame, and a page that is not the window's shown
+/// tab draws none. Edge signed the throwaway profile into the Windows
+/// account and synced it: a synced extension opened its own tab about ten
+/// seconds in, the page under test went to the back, and from then on
+/// every role lookup was "the browser did not answer". So look up by role
+/// for well past that point, and expect every look to be the page
+/// answering (a text mismatch), with the page still the only tab and
+/// still shown.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn role_lookups_keep_answering_with_the_page_the_only_tab_shown() {
+    let mut live = open_states().await;
+    let names = ["Enabled action", "Disabled action", "Unavailable action", "Enabled action"];
+    for name in names.iter().chain(names.iter()) {
+        let out = run(
+            &mut live,
+            json!({ "kind": "expect_text", "selector": { "role": "button", "name": name, "exact": true }, "equals": "nope" }),
+        )
+        .await;
+        assert!(!out.ok, "{name} said \"nope\": {}", out.detail);
+        assert!(
+            out.detail.contains(&format!("expected text \"nope\" but saw \"{name}\"")),
+            "{name}: {}",
+            out.detail
+        );
+    }
+    let shown = page::eval_value(&mut live.cdp, "document.visibilityState").await.expect("the page did not answer");
+    assert_eq!(shown, json!("visible"), "the page under test went to the back");
+    let targets = live.cdp.call("Target.getTargets", json!({})).await.expect("no target list");
+    let pages: Vec<String> = targets["targetInfos"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|t| t["type"] == "page")
+        .map(|t| t["url"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(pages.len(), 1, "the browser opened tabs of its own: {pages:?}");
+}
