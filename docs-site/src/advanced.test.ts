@@ -1,5 +1,5 @@
-// The guide hides Auto Run and API Templates unless the app opened it with
-// Enable Advanced Features on; unknown means hidden.
+// The guide hides Auto Run, API Templates and Playwright unless the app
+// opened it with Enable Advanced Features on; unknown means hidden.
 
 import { describe, expect, test } from "vitest";
 import positions from "../shots/positions.json";
@@ -52,7 +52,7 @@ describe("the content", () => {
     for (const q of shown.intro.quickStart) expect(hidden(q.link), q.label).toBe(false);
   });
 
-  test("off, the page has no Auto Run or API Templates section or contents entry", () => {
+  test("off, the page has no Auto Run, API Templates or Playwright section or contents entry", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
     const site = render(root, forFeatures(content, false));
@@ -69,7 +69,28 @@ describe("the content", () => {
     }
   });
 
-  test("on, both sections are there", () => {
+  test("Playwright is hidden exactly when Auto Run is, contents entry and all", () => {
+    expect(ADVANCED_SCREENS).toContain("auto-run");
+    expect(ADVANCED_SCREENS).toContain("playwright");
+    const off = forFeatures(content, false).screens.map((s) => s.id);
+    const on = forFeatures(content, true).screens.map((s) => s.id);
+    for (const id of ["auto-run", "playwright"]) {
+      expect(off, id).not.toContain(id);
+      expect(on, id).toContain(id);
+    }
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const site = render(root, forFeatures(content, false));
+    try {
+      expect(root.querySelector('[id="playwright"]')).toBeNull();
+      expect(root.querySelector('a[href="#playwright"]')).toBeNull();
+    } finally {
+      site.destroy();
+      root.remove();
+    }
+  });
+
+  test("on, every advanced section is there", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
     const site = render(root, forFeatures(content, true));

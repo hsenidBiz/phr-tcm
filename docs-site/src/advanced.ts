@@ -1,13 +1,13 @@
 // The guide shows what the app shows. The app opens it with `?advanced=1`
 // while Enable Advanced Features is on (src-tauri/src/help.rs); without
-// that, or with anything else, the Auto Run and API Templates sections are
-// left out, with their entries in the contents, the search and the hero,
-// and so are the AI Bridge cards the app shows only with that setting on.
+// that, or with anything else, the Auto Run, API Templates and Playwright
+// sections are left out, with their entries in the contents, the search and
+// the hero, and so are the AI Bridge cards the app shows only with that setting on.
 
 import type { SiteContent } from "./types";
 
 /** The screens shown only while Enable Advanced Features is on. */
-export const ADVANCED_SCREENS = ["auto-run", "api-templates"] as const;
+export const ADVANCED_SCREENS = ["auto-run", "api-templates", "playwright"] as const;
 
 /** Per screen, the groups (cards) shown only while it is on. */
 export const ADVANCED_GROUPS: Record<string, readonly string[]> = {

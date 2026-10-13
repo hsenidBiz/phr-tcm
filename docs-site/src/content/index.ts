@@ -11,6 +11,7 @@ import { gettingStarted } from "./getting-started";
 import { importFile } from "./import-file";
 import { manualEntry } from "./manual-entry";
 import { newWorkItem } from "./new-work-item";
+import { playwright } from "./playwright";
 import { pullRequests } from "./pull-requests";
 import { reviewPage } from "./review-page";
 import { runTests } from "./run-tests";
@@ -31,6 +32,7 @@ export const screens: Screen[] = [
   reviewPage,
   runTests,
   autoRun,
+  playwright,
   searchSuites,
   suiteManagement,
   pullRequests,
