@@ -396,9 +396,22 @@ accessibility tree, not a real screen reader.
 Some things appear only sometimes: a cookie banner, or PeoplesHR's
 "Another active session" prompt when the account is still signed in
 somewhere else. A plain `click` on them fails on every run where they do
-not appear. Guard the click with `when_visible` instead:
+not appear.
+
+**Pop-ups the runner closes by itself.** The project's sign-in recipe
+lists known pop-ups under `close_when_shown` - for PeoplesHR, the cookie
+banner. Right before every click, fill, drag or upload, the runner looks
+once, without waiting, and if one of them is up it clicks its close
+control (the banner's x, never Accept All); the step then says "closed the
+cookie banner first". This happens in runs, tries, discoveries and replays
+alike. So a script needs NO guard for a listed pop-up - do not add one. A
+"covered by div#cookieBanner" failure means the close did not work; the
+step says so too. An older script's guard on the banner is harmless and
+may stay:
 
     { "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "within_ms": 4000, "then": [ { "kind": "click", "selector": { "css": "#btnCookieClose" } } ] }
+
+For anything NOT on that list, guard the click with `when_visible`:
 
     { "kind": "when_visible", "selector": { "role": "button", "name": "Continue here" }, "then": [ { "kind": "click", "selector": { "role": "button", "name": "Continue here" } } ] }
 

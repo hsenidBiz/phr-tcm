@@ -46,6 +46,7 @@ mod autorun_api_checks;
 mod autorun_area_trip;
 mod autorun_batches;
 mod autorun_cleanup;
+mod autorun_close_popups;
 mod autorun_bridge;
 mod autorun_commands;
 mod autorun_defects;

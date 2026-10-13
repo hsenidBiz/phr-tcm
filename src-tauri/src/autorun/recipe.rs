@@ -96,6 +96,26 @@ impl<'de> serde::Deserialize<'de> for RecipeStep {
     }
 }
 
+// The doc comments below say "consent banner", not the other word for it:
+// they are exported into the TypeScript bindings, where `tests/bindings.rs`
+// refuses that word as a sign a session secret crossed the IPC boundary.
+/// A pop-up the runner closes by itself (`SignInRecipe::close_when_shown`):
+/// while `shown` is showing, `close` is clicked, right before an action
+/// that touches the page. Written for PeoplesHR's consent banner
+/// (2026-10-14), which comes back after every reload and sits over the
+/// controls along the bottom of each page.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct ClosePopup {
+    /// What a step that closed it says: "closed the <name> first".
+    pub name: String,
+    /// The pop-up itself, as it looks while it is up.
+    pub shown: Target,
+    /// What closes it - never what accepts something on the person's
+    /// behalf (a consent banner's x, not its Accept All).
+    pub close: Target,
+}
+
 fn default_minutes() -> u32 {
     480
 }
@@ -116,6 +136,13 @@ pub struct SignInRecipe {
     /// page". No login is filled in here: a placeholder is refused.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub after_sign_in: Vec<RecipeStep>,
+    /// Pop-ups the runner closes by itself: before every action that
+    /// touches the page (a click, a fill, a drag, an upload) it looks
+    /// once, without waiting, for each, and clicks the close control of one
+    /// that is up - so no script has to guard against them. Nothing that is
+    /// not listed here is ever closed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub close_when_shown: Vec<ClosePopup>,
     /// Exactly one visible match of this means "signed in".
     pub signed_in: Target,
     /// Other origins `navigate` may go to. The start address's own origin
@@ -290,6 +317,35 @@ fn check_steps(steps: &[RecipeStep], label: &str, fill_placeholders: bool) -> Re
     Ok(())
 }
 
+/// Each pop-up the runner closes, named "close_when_shown <n> (<name>)" in
+/// a refusal: a name to say it by, and two selectors that can be looked up
+/// as they stand - nothing is filled in here.
+fn check_popups(popups: &[ClosePopup]) -> Result<(), String> {
+    for (i, p) in popups.iter().enumerate() {
+        let n = i + 1;
+        let name = p.name.trim();
+        if name.is_empty() {
+            return Err(format!(
+                "close_when_shown {n}: give the pop-up a short name, such as \"cookie banner\" - a step that closed it says \"closed the cookie banner\""
+            ));
+        }
+        let at = |e: String| format!("close_when_shown {n} ({name}): {e}");
+        for (field, target) in [("shown", &p.shown), ("close", &p.close)] {
+            target.validate().map_err(|e| at(format!("\"{field}\" - {e}")))?;
+            if crate::browser::locator::has_input_placeholder(target) {
+                return Err(at(format!("\"{field}\" - a component input has no value here; write the selector out")));
+            }
+        }
+        if serde_json::to_value(p).is_ok_and(|v| has_placeholder_anywhere(&v)) {
+            return Err(at(
+                "{{username}} and {{password}} are filled in for the recipe's own steps only - here they would be typed as they are"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The rule a recipe's `start_url` must pass, on its own: a recording asks
 /// before it opens a browser, with the same words `validate` refuses in.
 pub fn check_start_url(url: &str) -> Result<(), String> {
@@ -307,6 +363,7 @@ impl SignInRecipe {
         }
         check_steps(&self.steps, "step", true)?;
         check_steps(&self.after_sign_in, "after_sign_in step", false)?;
+        check_popups(&self.close_when_shown)?;
         self.signed_in.validate().map_err(|e| format!("signed_in: {e}"))?;
         for o in &self.allowed_origins {
             if !is_bare_origin(o) {

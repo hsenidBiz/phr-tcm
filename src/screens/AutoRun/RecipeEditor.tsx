@@ -28,6 +28,9 @@ const PLACEHOLDER = `{
     { "kind": "when_visible", "selector": { "css": "#sidebar-toggle-menu:not(.active)" }, "within_ms": 1500,
       "then": [ { "kind": "click", "selector": { "css": "#sidebar-toggle-menu" } } ] }
   ],
+  "close_when_shown": [
+    { "name": "cookie banner", "shown": { "css": "#cookieBanner.show" }, "close": { "css": "#btnCookieClose" } }
+  ],
   "allowed_origins": [],
   "session_minutes": 480
 }`;
@@ -105,7 +108,10 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
           anywhere else. "signed_in" is something only a signed-in page shows. "when_visible" handles a
           prompt that may or may not appear. "after_sign_in" runs after every sign-in, a saved session
           included, to leave the application the way scripts expect it - here, opening a menu that starts
-          closed, only when it is closed.
+          closed, only when it is closed. "close_when_shown" lists pop-ups the runner closes by itself: right
+          before each click, fill, drag or upload it looks once, without waiting, and clicks "close" while
+          "shown" is up - so no script needs a guard for them. Point "close" at the pop-up's close button,
+          never at one that accepts something.
         </p>
         {existing.isError && <p className="text-xs text-danger">{existing.error.message}</p>}
         <Textarea aria-label="Sign-in recipe JSON" className="min-h-[18rem] font-mono text-xs"
