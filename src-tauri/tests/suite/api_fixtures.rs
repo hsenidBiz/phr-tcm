@@ -211,6 +211,29 @@ fn a_creates_entry_must_come_from_one_creating_step() {
     assert_eq!(refused(&f), vec![creates_one_step("cycle")]);
 }
 
+/// A `creates` name that is its id's own capture, or that the creating step
+/// never sends with `{{prefix}}` at its start, is refused at save, saying
+/// what to use: Clean up finds a test-made thing by that prefix.
+#[test]
+fn a_creates_name_must_be_a_prefixed_name_and_not_its_id() {
+    use v2_lib::api_templates::fixture::{name_is_the_id, name_without_prefix};
+    let mut f = fixture();
+    f.creates[0].name = "{{steps.1.cycleId}}".into();
+    assert_eq!(problems(&f), vec![name_is_the_id("cycle", "{{steps.1.cycleId}}")]);
+    assert!(problems(&f)[0].contains("{{prefix}}"), "{:?}", problems(&f));
+
+    // The prefix is used, but not at the start of anything step 1 sends.
+    let mut f = fixture();
+    f.steps[0].params.insert("cycleName".into(), "cycle {{prefix}}".into());
+    f.steps[1].params.insert("note".into(), "{{prefix}} note".into());
+    assert_eq!(problems(&f), vec![name_without_prefix("cycle", 1)]);
+
+    // Spaces inside the braces are the same placeholder.
+    let mut f = fixture();
+    f.steps[0].params.insert("cycleName".into(), "  {{ prefix }} cycle".into());
+    validate(&f, &lookup, &no_flow).unwrap();
+}
+
 #[test]
 fn a_fixture_with_creates_must_use_the_prefix() {
     let mut f = fixture();

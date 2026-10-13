@@ -350,7 +350,10 @@ step whose flow, or whose stage, is no longer saved is refused.
 Name what it makes with `{{prefix}}`: a fixture with `creates` must use it
 in a step's params. Everything a run makes is recorded as test-made - even
 when a later step fails - and Clean up only finds a name that starts with
-the prefix; the run warns about one that does not.
+the prefix; the run warns about one that does not. A `creates` name is the
+capture holding the name the creating step sent, and that step must send a
+value starting with `{{prefix}}`; a name that is the same capture as its id
+is refused at save.
 
 `save_api_fixture { fixture }` checks the fixture and saves it, or answers
 with every problem, one sentence each. `run_api_fixture { id }` runs it and
