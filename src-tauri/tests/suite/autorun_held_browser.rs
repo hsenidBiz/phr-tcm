@@ -78,7 +78,15 @@ fn left_open_by_assistant(alive: bool, discovery: Option<DiscoveryState>) -> (Op
 }
 
 fn discovering() -> Option<DiscoveryState> {
-    Some(DiscoveryState { area: Some("Leave".into()), account: Some("admin".into()), started_at: 1, tried: Vec::new(), mapping: None })
+    Some(DiscoveryState {
+        area: Some("Leave".into()),
+        account: Some("admin".into()),
+        started_at: 1,
+        tried: Vec::new(),
+        mapping: None,
+        case_id: None,
+        no_save: false,
+    })
 }
 
 /// The report: a supervised browser held after it was gone refused every

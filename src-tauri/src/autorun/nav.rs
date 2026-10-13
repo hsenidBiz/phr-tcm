@@ -144,7 +144,11 @@ pub fn view(nav: &NavFile) -> NavView {
             })
             .collect(),
         save_words: nav.save_words.clone(),
-        built_in_save_words: crate::browser::save_guard::SAVE_WORDS.iter().map(|w| w.to_string()).collect(),
+        built_in_save_words: crate::browser::save_guard::SAVE_WORDS
+            .iter()
+            .chain(std::iter::once(&crate::browser::save_guard::ADD_WORD))
+            .map(|w| w.to_string())
+            .collect(),
     }
 }
 

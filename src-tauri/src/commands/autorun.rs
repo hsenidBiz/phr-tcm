@@ -102,6 +102,23 @@ pub struct DiscoveryState {
     /// Set when this discovery is a mapping run: read only, every save the
     /// page tries is stopped (`browser::save_guard`).
     pub mapping: Option<MappingRun>,
+    /// The case this discovery explores for, when the assistant named one.
+    /// Its saved script is read again before every action, so a case marked
+    /// `no_save` keeps its discovery guarded (`ai_bridge::guard_a_no_save_discovery`).
+    pub case_id: Option<i32>,
+    /// Set for a discovery that must not save: the start or an action said
+    /// `no_save`, or named a case whose script is marked `no_save`. Every
+    /// save the page tries is then blocked, never only reported, and it is
+    /// never cleared while the discovery lasts.
+    pub no_save: bool,
+}
+
+/// The case a discovery is for, as its start named it, and whether it must
+/// not save (`DiscoveryState::no_save`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DiscoveryFor {
+    pub case_id: Option<i32>,
+    pub no_save: bool,
 }
 
 /// A mapping run: a discovery that walks the menus of `modules` and saves
@@ -334,10 +351,15 @@ pub(crate) fn refuse_discovery_while_busy() -> Result<(), String> {
 /// discovery never replaces. The session is marked a discovery from the
 /// moment it opens; its area and account are set once the sign-in arrives.
 /// `mapping` makes it a mapping run, whose save guard goes on once it has
-/// signed in (`ai_bridge::discover_start_in`). A browser the assistant's
+/// signed in (`ai_bridge::discover_start_in`); so does the guard of a
+/// discovery for a case that must not save (`no_save`). A browser the assistant's
 /// own replay left open is closed first, through its normal close
 /// (`ai_bridge::make_way_for_discovery`): true when one was.
-pub(crate) async fn open_for_discovery(browser_name: &str, mapping: Option<MappingRun>) -> Result<bool, String> {
+pub(crate) async fn open_for_discovery(
+    browser_name: &str,
+    mapping: Option<MappingRun>,
+    no_save: DiscoveryFor,
+) -> Result<bool, String> {
     refuse_discovery_while_busy()?;
     let mut slot = SESSION.lock().await;
     // Refused only for a browser that is really there: one that has gone
@@ -357,6 +379,8 @@ pub(crate) async fn open_for_discovery(browser_name: &str, mapping: Option<Mappi
             started_at: crate::autorun::sessions::now_ms(),
             tried: Vec::new(),
             mapping,
+            case_id: no_save.case_id,
+            no_save: no_save.no_save,
         });
     }
     publish_discovery(&slot);
@@ -1551,6 +1575,9 @@ pub(crate) async fn guard_supervised(
     case_id: i32,
     may_lift: bool,
 ) -> Result<(), String> {
+    // A discovery that must not save keeps its guard: no step run in its
+    // browser lifts it.
+    let may_lift = may_lift && !session.discovery.as_ref().is_some_and(|s| s.no_save);
     let out =
         guard_for_case(&mut session.cdp, &mut session.guarded_case, root, organization, project, case_id, may_lift).await;
     if session.cdp.is_guarding_saves() {

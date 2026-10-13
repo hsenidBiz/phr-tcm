@@ -824,8 +824,10 @@ not change it. While it runs, the app stops every save the page tries to
 send before it leaves the browser. A save is a POST, PUT, PATCH or DELETE
 whose address path (the query is ignored, and case does not matter)
 contains one of the built-in save words - save, update, delete, submit,
-approve, publish, assign - or one of the project's own save words, which
-a person adds on the Auto Run Setup tab. Every other request goes through
+approve, publish, assign, create, insert - or has a path segment that
+starts with the word add (AddEmployee, add-leave; never address), or
+contains one of the project's own save words, which a person adds on the
+Auto Run Setup tab. Every other request goes through
 unchanged. The sign-in is not checked: it is the app's own.
 
 When the page tries to save, the case fails at once with:
@@ -1196,7 +1198,11 @@ You open and drive a browser of your own to find what a script needs:
   and types the password; you never see it. It answers the landing page.
   If the sign-in fails, report it and stop; never try again in a loop. It
   is refused while a run, a replay or the person's own browser holds the
-  Auto Run browser.
+  Auto Run browser. Pass `case_id` with the case you explore for: when
+  its script is marked `no_save` (or you pass `no_save: true`), every
+  save the page tries is blocked, not only reported, until the discovery
+  ends. An action whose save was blocked fails with the guard's sentence,
+  and its answer names the request in `blocked_writes`.
 - `discover_autorun_action` carries out one action and answers what it
   did: the page afterwards, an address change, a dialog or message that
   appeared, and the requests that wrote data. Carry each of the case's

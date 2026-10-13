@@ -5,7 +5,8 @@
 //! that can save (`Fetch.enable`, answered in `cdp`; `PAUSED_TYPES`), and
 //! this module decides, purely, which requests are saves: a POST, PUT,
 //! PATCH or DELETE whose path, lowercased and with the query left out,
-//! contains a built-in save word or one of the project's own words. A save
+//! contains a built-in save word or one of the project's own words, or has
+//! a segment that starts with the word "add" (`adds`). A save
 //! is failed inside the browser, so it never reaches the server, and the
 //! case fails with `blocked`'s sentence.
 //!
@@ -16,7 +17,15 @@ use serde_json::{json, Value};
 
 /// The words that make a request with a writing method a save. Fixed: a
 /// project can add its own (`check_words`), never remove one of these.
-pub const SAVE_WORDS: [&str; 7] = ["save", "update", "delete", "submit", "approve", "publish", "assign"];
+pub const SAVE_WORDS: [&str; 9] =
+    ["save", "update", "delete", "submit", "approve", "publish", "assign", "create", "insert"];
+
+/// "add" is a save word too, but only as a word of its own: matched as a
+/// substring it would stop every POST to an address book or a padding
+/// setting. A path segment is a save when it is "add", or starts with "add"
+/// followed by a capital letter, a digit, `-`, `_` or `.` (`AddEmployee`,
+/// `add-leave`), judged before the path is lowercased.
+pub const ADD_WORD: &str = "add";
 
 /// The methods that can write. Every other method (GET, HEAD, OPTIONS)
 /// always goes through.
@@ -55,12 +64,34 @@ pub fn is_save(method: &str, url: &str, patterns: &[String]) -> bool {
     if !SAVE_METHODS.contains(&method.as_str()) {
         return false;
     }
-    let path = path_of(url).to_lowercase();
+    let path = path_of(url);
+    if adds(&path) {
+        return true;
+    }
+    let path = path.to_lowercase();
     SAVE_WORDS.iter().any(|w| path.contains(w))
         || patterns
             .iter()
             .map(|p| p.trim().to_lowercase())
             .any(|p| !p.is_empty() && path.contains(&p))
+}
+
+/// Does a segment of `path` start with the word "add" (`ADD_WORD`): the
+/// whole segment, or "add" in any case followed by a capital, a digit,
+/// `-`, `_` or `.`? `address` and `padding` are not.
+pub fn adds(path: &str) -> bool {
+    path.split('/').any(|segment| {
+        let Some(head) = segment.get(..ADD_WORD.len()) else {
+            return false;
+        };
+        if !head.eq_ignore_ascii_case(ADD_WORD) {
+            return false;
+        }
+        match segment[ADD_WORD.len()..].chars().next() {
+            None => true,
+            Some(c) => c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'),
+        }
+    })
 }
 
 /// The case's failure when the page tried to save: the method and the path,
@@ -134,7 +165,7 @@ pub fn check_words(words: &[String]) -> Result<Vec<String>, String> {
         if word.contains('?') || word.contains('#') {
             return Err(format!("\"{word}\" cannot match - a save word is matched against the path, never the query or a fragment"));
         }
-        if SAVE_WORDS.contains(&word.as_str()) {
+        if SAVE_WORDS.contains(&word.as_str()) || word == ADD_WORD {
             return Err(format!("\"{word}\" is already a built-in save word"));
         }
         if !kept.contains(&word) {

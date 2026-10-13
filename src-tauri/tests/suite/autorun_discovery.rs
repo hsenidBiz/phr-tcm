@@ -120,7 +120,15 @@ fn slot(d: ScriptedDriver, discovery: Option<DiscoveryState>) -> (Option<FakeBro
 }
 
 fn opened_for_discovery() -> Option<DiscoveryState> {
-    Some(DiscoveryState { area: None, account: None, started_at: 1, tried: Vec::new(), mapping: None })
+    Some(DiscoveryState {
+        area: None,
+        account: None,
+        started_at: 1,
+        tried: Vec::new(),
+        mapping: None,
+        case_id: None,
+        no_save: false,
+    })
 }
 
 fn exploring(area: &str) -> Option<DiscoveryState> {
@@ -130,6 +138,8 @@ fn exploring(area: &str) -> Option<DiscoveryState> {
         started_at: 1,
         tried: Vec::new(),
         mapping: None,
+        case_id: None,
+        no_save: false,
     })
 }
 
@@ -642,6 +652,235 @@ async fn a_mapping_run_whose_guard_cannot_go_on_closes_its_browser() {
     assert!(browser.is_none(), "the discovery slot still holds the browser");
 }
 
+// ------------------------------------------------- a case that must not save
+
+/// Case 77's script, marked `no_save` when `no_save`.
+fn save_case_77(root: &std::path::Path, no_save: bool) {
+    let mut s: v2_lib::autorun::CaseScript = serde_json::from_value(json!({
+        "case_id": 77,
+        "title": "Leave request",
+        "account": "admin",
+        "area": "Leave",
+        "steps": [ { "step_number": 1, "actions": [ { "kind": "click", "selector": { "css": "#s1" } } ] } ]
+    }))
+    .unwrap();
+    s.no_save = no_save;
+    v2_lib::autorun::store::save_script(root, &s).unwrap();
+}
+
+/// `state`, explored for case `id`.
+fn for_case(state: Option<DiscoveryState>, id: i32) -> Option<DiscoveryState> {
+    state.map(|s| DiscoveryState { case_id: Some(id), ..s })
+}
+
+/// A discovery for a case marked `no_save` puts the guard on before the
+/// action, so the save a click sends is BLOCKED, not only reported: the
+/// action fails with the guard's sentence, and the answer names the request.
+/// A guard lifted between two actions is back on before the next.
+#[tokio::test]
+async fn a_discovery_for_a_no_save_case_blocks_a_save_a_click_sends() {
+    use v2_lib::browser::cdp::Driver;
+    let dir = root_with_recipe_and_account();
+    save_case_77(dir.path(), true);
+    let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
+    d.saves_on_call.push((
+        "Input.dispatchMouseEvent".into(),
+        "POST".into(),
+        "https://hr.example.internal/api/leave/create?token=t0p-secret".into(),
+    ));
+    let (mut browser, _) = slot(d, for_case(exploring("Leave"), 77));
+    let save = Action::Click { selector: "#save".into() };
+
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], false, "a blocked save did not fail the action: {body}");
+    let detail = v["detail"].as_str().unwrap_or("");
+    assert!(v2_lib::browser::save_guard::is_blocked(detail), "{body}");
+    assert!(detail.contains("POST /api/leave/create"), "{body}");
+    assert_eq!(v["no_save"], true, "{body}");
+    assert_eq!(v["blocked"], 1, "{body}");
+    assert_eq!(v["blocked_writes"], json!(["POST /api/leave/create"]), "{body}");
+    assert!(!body.contains("t0p-secret"), "{body}");
+    let b = browser.as_ref().unwrap();
+    let methods: Vec<&str> = b.d.calls.iter().map(|(m, _)| m.as_str()).collect();
+    let guard = methods.iter().position(|m| *m == "Fetch.enable").expect("the guard never went on");
+    let click = methods.iter().position(|m| *m == "Input.dispatchMouseEvent").expect("no click");
+    assert!(guard < click, "the click ran before the guard went on: {methods:?}");
+    assert!(b.discovery.as_ref().unwrap().no_save, "the discovery did not keep its no-save mark");
+
+    // Something lifts the guard between two actions: it is back on first.
+    browser.as_mut().unwrap().d.stop_guarding_saves().await.unwrap();
+    assert!(!browser.as_ref().unwrap().d.is_guarding_saves());
+    browser.as_mut().unwrap().d.saves_on_call.push((
+        "Input.dispatchMouseEvent".into(),
+        "PUT".into(),
+        "https://hr.example.internal/api/leave/7".into(),
+    ));
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], false, "{body}");
+    assert_eq!(v["blocked_writes"], json!(["PUT /api/leave/7"]), "{body}");
+    assert!(browser.as_ref().unwrap().d.is_guarding_saves(), "the guard was not put back on");
+}
+
+/// `no_save: true` guards a discovery with no case named, and the mark is
+/// never taken off by a later call that does not say it.
+#[tokio::test]
+async fn a_discovery_told_no_save_blocks_saves_and_stays_guarded() {
+    let dir = root_with_recipe_and_account();
+    let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
+    d.saves_on_call.push((
+        "Input.dispatchMouseEvent".into(),
+        "POST".into(),
+        "https://hr.example.internal/api/Employee/AddEmployee".into(),
+    ));
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let told = v2_lib::ai_bridge::discovery_for(dir.path(), &json!({ "no_save": true }).to_string()).unwrap();
+    v2_lib::ai_bridge::mark_discovery_for(&mut browser, told);
+    let quiet = v2_lib::ai_bridge::discovery_for(dir.path(), "{}").unwrap();
+    v2_lib::ai_bridge::mark_discovery_for(&mut browser, quiet);
+    assert!(browser.as_ref().unwrap().discovery.as_ref().unwrap().no_save, "a later call took the mark off");
+
+    let save = Action::Click { selector: "#save".into() };
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], false, "{body}");
+    assert_eq!(v["blocked_writes"], json!(["POST /api/Employee/AddEmployee"]), "{body}");
+}
+
+/// An ordinary discovery still only reports what the page wrote: no guard
+/// goes on, and the action keeps its own outcome.
+#[tokio::test]
+async fn an_ordinary_discovery_only_reports_a_create() {
+    let dir = root_with_recipe_and_account();
+    save_case_77(dir.path(), false);
+    let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
+    d.on_call_events.push(("Input.dispatchMouseEvent".into(), sent("1", "POST", "https://hr.example.internal/api/leave/create")));
+    // Named, but not marked: still an ordinary discovery.
+    let (mut browser, _) = slot(d, for_case(exploring("Leave"), 77));
+    let save = Action::Click { selector: "#save".into() };
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], true, "{body}");
+    assert_eq!(v["writes"], json!([{ "method": "POST", "path": "/api/leave/create" }]), "{body}");
+    assert!(v.get("blocked_writes").is_none(), "{body}");
+    assert!(v.get("no_save").is_none(), "{body}");
+    let b = browser.as_ref().unwrap();
+    assert!(b.d.calls_to("Fetch.enable").is_empty(), "an ordinary discovery was guarded");
+    assert!(!b.discovery.as_ref().unwrap().no_save);
+}
+
+/// A case marked `no_save` after the discovery started is guarded from the
+/// next action: the script is read again each time.
+#[tokio::test]
+async fn a_no_save_mark_added_mid_discovery_counts_from_the_next_action() {
+    let dir = root_with_recipe_and_account();
+    save_case_77(dir.path(), false);
+    let d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
+    let (mut browser, _) = slot(d, for_case(exploring("Leave"), 77));
+    let open = Action::Click { selector: "#open".into() };
+    let (status, _) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &open, None, None).await;
+    assert_eq!(status, 200);
+    assert!(browser.as_ref().unwrap().d.calls_to("Fetch.enable").is_empty());
+    save_case_77(dir.path(), true);
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &open, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(!browser.as_ref().unwrap().d.calls_to("Fetch.enable").is_empty(), "the new mark was not guarded");
+    assert!(browser.as_ref().unwrap().discovery.as_ref().unwrap().no_save);
+}
+
+/// When the guard cannot go on, the action is refused with the guard's own
+/// sentence and never runs: such a discovery never acts unguarded.
+#[tokio::test]
+async fn a_no_save_discovery_whose_guard_cannot_go_on_runs_nothing() {
+    let dir = root_with_recipe_and_account();
+    let nav = v2_lib::autorun::nav::nav_path(dir.path(), ORG, PROJECT);
+    std::fs::create_dir_all(nav.parent().unwrap()).unwrap();
+    std::fs::write(&nav, "not json").unwrap();
+    let d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
+    let state = exploring("Leave").map(|s| DiscoveryState { no_save: true, ..s });
+    let (mut browser, _) = slot(d, state);
+    let save = Action::Click { selector: "#save".into() };
+    let (status, out) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &save, None, None).await;
+    assert_eq!(status, 409, "{out}");
+    assert!(out.starts_with(v2_lib::browser::save_guard::SETUP_FAILED), "{out}");
+    assert!(browser.as_ref().unwrap().d.calls_to("Input.dispatchMouseEvent").is_empty(), "the click ran unguarded");
+}
+
+/// A discovery started for a no-save case puts its guard on once the
+/// sign-in has arrived and before the landing page is read, and says so.
+#[tokio::test]
+async fn a_discovery_started_for_a_no_save_case_is_guarded_after_the_sign_in() {
+    use v2_lib::browser::cdp::Driver;
+    let dir = root_with_recipe_and_account();
+    save_case_77(dir.path(), true);
+    let (mut browser, closed) = slot(signin_app(true), for_case(opened_for_discovery(), 77));
+    let (status, body) =
+        discover_start_in(&mut browser, dir.path(), ORG, PROJECT, "admin", Some("Leave"), &quick()).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(!closed.load(Ordering::SeqCst));
+    assert_eq!(parsed(&body)["no_save"], true, "{body}");
+    let b = browser.as_ref().unwrap();
+    assert!(b.d.is_guarding_saves(), "the discovery's guard is not on");
+    let methods: Vec<&str> = b.d.calls.iter().map(|(m, _)| m.as_str()).collect();
+    let guard = methods.iter().position(|m| *m == "Fetch.enable").expect("the guard never went on");
+    let sign_in = methods.iter().position(|m| *m == "Input.dispatchMouseEvent").expect("no sign-in click");
+    let landing = methods.iter().rposition(|m| *m == "Accessibility.getFullAXTree").expect("no page read");
+    assert!(sign_in < guard && guard < landing, "{methods:?}");
+    let state = b.discovery.as_ref().unwrap();
+    assert_eq!(state.case_id, Some(77));
+    assert!(state.no_save);
+}
+
+/// A batch in a no-save discovery says on each line what was blocked, and
+/// counts the blocks under the no-save guard, not a mapping run.
+#[tokio::test]
+async fn a_no_save_batch_names_each_blocked_save() {
+    let dir = root_with_recipe_and_account();
+    let mut d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list");
+    d.saves_on_call.push((
+        "Input.dispatchMouseEvent".into(),
+        "POST".into(),
+        "https://hr.example.internal/api/leave/insert".into(),
+    ));
+    let state = exploring("Leave").map(|s| DiscoveryState { no_save: true, ..s });
+    let (mut browser, _) = slot(d, state);
+    let actions = vec![Action::Click { selector: "#save".into() }];
+    let stop = AtomicBool::new(false);
+    let (status, text) =
+        v2_lib::ai_bridge::discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &stop)
+            .await;
+    assert_eq!(status, 200, "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].starts_with("1. failed:") && lines[0].contains("; blocked POST /api/leave/insert"), "{text}");
+    assert!(lines.contains(&"Saves blocked by the no-save guard: 1."), "{text}");
+}
+
+/// What a discovery call names: a case marked `no_save` is enough, a case
+/// with no script or an ordinary one is not, and a wrong value is refused.
+#[test]
+fn a_discovery_call_names_its_case_and_whether_it_must_not_save() {
+    use v2_lib::ai_bridge::discovery_for;
+    let dir = TempDir::new();
+    save_case_77(dir.path(), true);
+    let marked = discovery_for(dir.path(), &json!({ "case_id": 77 }).to_string()).unwrap();
+    assert_eq!((marked.case_id, marked.no_save), (Some(77), true));
+    let unknown = discovery_for(dir.path(), &json!({ "case_id": 78 }).to_string()).unwrap();
+    assert_eq!((unknown.case_id, unknown.no_save), (Some(78), false));
+    let told = discovery_for(dir.path(), &json!({ "no_save": true }).to_string()).unwrap();
+    assert_eq!((told.case_id, told.no_save), (None, true));
+    let neither = discovery_for(dir.path(), "{}").unwrap();
+    assert_eq!((neither.case_id, neither.no_save), (None, false));
+    for bad in [json!({ "case_id": "77" }), json!({ "case_id": -1 }), json!({ "no_save": "yes" })] {
+        let (status, _) = discovery_for(dir.path(), &bad.to_string()).unwrap_err();
+        assert_eq!(status, 400, "{bad}");
+    }
+}
+
 /// A person's Run step is refused while a discovery holds the browser: it
 /// would act behind the assistant's back, and could lift a mapping run's
 /// save guard. Refused under the session's lock, before the guard is
@@ -710,6 +949,8 @@ async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
         started_at: 1,
         tried: Vec::new(),
         mapping: None,
+        case_id: None,
+        no_save: false,
     };
     let at = discovery_sighting(dir.path(), ORG, PROJECT, Some(&state), None, Some("manager"))
         .expect("a project is chosen, so there is somewhere to file it");
@@ -1580,7 +1821,7 @@ fn stamp_explored(root: &std::path::Path, area: &str, at: u64) {
 async fn a_mapping_run_files_each_screens_elements_under_that_screen() {
     let dir = root_with_recipe_and_account();
     let started =
-        Some(DiscoveryState { area: None, account: Some("admin".into()), started_at: 1, tried: Vec::new(), mapping: None });
+        Some(DiscoveryState { account: Some("admin".into()), ..opened_for_discovery().unwrap() });
     let (mut browser, _) = slot(menu_app(true, "/hr/leave/apply"), mapping(started, &["Leave"]));
     browser.as_mut().unwrap().account = Some("admin".into());
 
