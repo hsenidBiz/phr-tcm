@@ -147,8 +147,10 @@ pub(crate) fn docs(list: &[(i32, &str)]) -> BTreeMap<i32, CaseDoc> {
     list.iter().map(|(i, t)| (*i, doc(*i, t))).collect()
 }
 
+/// A write with every case chosen to replace: what these tests check is the
+/// write itself. The guard on cases the repo has is `pw_repo_presence`'s.
 fn export(fx: &Fx, ids: &[i32], d: &BTreeMap<i32, CaseDoc>) -> Result<ExportResult, String> {
-    write_with(fx.root.path(), ORG, PROJECT, ids, &fx.clone_path(), &fx.modules.borrow(), d)
+    write_with(fx.root.path(), ORG, PROJECT, ids, &fx.clone_path(), &fx.modules.borrow(), d, ids)
 }
 
 #[test]

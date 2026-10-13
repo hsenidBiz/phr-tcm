@@ -1248,7 +1248,10 @@ export const commands = {
 	setCloseToTray: (on: boolean) => typedError<AppSettings, string>(__TAURI_INVOKE("set_close_to_tray", { on })),
 	/**  The folder of the Playwright automation clone scripts export into. */
 	setPlaywrightClone: (path: string) => typedError<AppSettings, string>(__TAURI_INVOKE("set_playwright_clone", { path })),
-	/**  Which of `case_ids` can be exported, and why not for the rest. */
+	/**
+	 *  Which of `case_ids` can be exported, and why not for the rest, and which
+	 *  the repo already has (and whether this app exported them).
+	 */
 	pwExportPreview: (organization: string, project: string, caseIds: number[], modules: ([number, string])[]) => typedError<Preview, string>(__TAURI_INVOKE("pw_export_preview", { organization, project, caseIds, modules })),
 	/**
 	 *  Keeps the area placements and account choices. One bad placement refuses
@@ -1260,9 +1263,11 @@ export const commands = {
 	 *  case's title, steps, state and paths from Azure DevOps first
 	 *  (read-only). `modules` is each case's Module as the screen has it - the
 	 *  same the preview was given, so the write picks the same areas the
-	 *  preview showed.
+	 *  preview showed. `replace` is the cases the repo already has that the
+	 *  person ticked to replace on purpose: any other case the repo has refuses
+	 *  the whole write.
 	 */
-	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, moduleRef, preconditionsRef })),
+	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], replace: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, replace, moduleRef, preconditionsRef })),
 	/**  What the clone at `clone` holds, and the health line. Read only. */
 	pwRepoStructure: (clone: string) => typedError<RepoStructure, string>(__TAURI_INVOKE("pw_repo_structure", { clone })),
 	/**  End run `run` and every process it started. A run already over is fine. */
@@ -1324,8 +1329,19 @@ export const commands = {
 	 *  section and file stays as it is. A refusal writes nothing
 	 *  and leaves the record as it was. Each case is placed by its Module as
 	 *  Azure DevOps has it now, else as it was at its last export.
+	 * 
+	 *  A case this app exported may be replaced; one the repo has that this
+	 *  app did not export (InRepoNotFromApp) only when it is in `replace`, the
+	 *  cases the person ticked. Update out of date sends none.
 	 */
-	pwSyncUpdate: (clone: string, org: string, project: string, cases: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_sync_update", { clone, org, project, cases, moduleRef, preconditionsRef })),
+	pwSyncUpdate: (clone: string, org: string, project: string, cases: number[], replace: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_sync_update", { clone, org, project, cases, replace, moduleRef, preconditionsRef })),
+	/**
+	 *  Add new: exports every case with a script that the repo has in none of
+	 *  its places (`sync::add_new`), through the same write as Update, and
+	 *  nothing else. Which cases is worked out here, not taken from the
+	 *  webview, and the write refuses any case the repo has.
+	 */
+	pwSyncAddNew: (clone: string, org: string, project: string, moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_sync_add_new", { clone, org, project, moduleRef, preconditionsRef })),
 	/**
 	 *  Whether a start at sign-in stays hidden in the tray (on) or opens the
 	 *  window (off). Read at start-up, so the Windows startup entry itself never
@@ -4124,6 +4140,15 @@ export type PreviewCase = {
 	seg: string | null,
 	user_key: string | null,
 	add_user_command: string | null,
+	/**
+	 *  The repo already has this case (`pw_repo::presence`): the export
+	 *  skips it unless the person ticks it to replace it on purpose.
+	 */
+	in_repo: boolean,
+	/**  Where the repo has it, short: "in competencies.md and specs/competencies.spec.ts". */
+	repo_note: string | null,
+	/**  The Sync record has an export of it by this app. */
+	from_app: boolean,
 };
 
 export type Project = {
@@ -5546,6 +5571,10 @@ export type SyncRow = {
 	exported_at: string | null,
 	/**  Whether Auto Run still has its script, so Update can export it. */
 	has_script: boolean,
+	/**  The repo has it in at least one place (`pw_repo::presence`). */
+	in_repo: boolean,
+	/**  Where, short: "in competencies.md and specs/competencies.spec.ts". */
+	repo_note: string | null,
 };
 
 /**  Where a case stands. */
@@ -5556,8 +5585,18 @@ export type SyncState =
 { kind: "OutOfDate"; why: string } | 
 /**  Exported, but the clone has no section or no raw spec for it now. */
 { kind: "NotInRepo" } | 
-/**  The project has a script for it that was never exported. */
-{ kind: "NeverExported" };
+/**
+ *  The project has a script for it that was never exported, and the
+ *  repo has it nowhere.
+ */
+{ kind: "NeverExported" } | 
+/**
+ *  The repo has it, but this app has no export of it on record: someone
+ *  wrote it by hand, or exported it from another machine. Update out of
+ *  date and Add new never touch it; Update ticked replaces it only when
+ *  it is ticked.
+ */
+{ kind: "InRepoNotFromApp" };
 
 /**
  *  What an action points at. A plain string keeps the meaning it has

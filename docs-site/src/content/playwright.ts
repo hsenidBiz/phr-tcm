@@ -64,8 +64,10 @@ export const playwright: Screen = {
     {
       title: "Keep the repo's copies of your scripts current",
       steps: [
-        "Under **Sync**, every case of the project with an Auto Run script is listed with its state. **Current**: the script has not changed since it was exported. **Out of date**: the script changed after the export, and the line says what changed. **Not in the repo**: the clone no longer has its section or raw spec. **Never exported**: it has not been exported yet.",
+        "Under **Sync**, every case of the project with an Auto Run script is listed with its state. **Current**: the script has not changed since it was exported. **Out of date**: the script changed after the export, and the line says what changed. **Not in the repo**: the clone no longer has its section or raw spec. **Never exported**: it has not been exported yet. **In the repo (not from this app)**: the repo already has it, but this app did not export it, for example because someone wrote it by hand.",
         "Press **Update out of date** to export every out-of-date case again, or tick cases and press **Update ticked**. **Refresh** reads the states again.",
+        "Press **Add new** to export every case with a script that the repo does not have yet. A case counts as in the repo when a test-case file has its heading, the generated index lists it, or a spec has its ADO marker.",
+        "Update out of date and Add new never touch a case that is in the repo but not from this app. To replace one on purpose, tick it and press **Update ticked**.",
         "Update replaces each case's raw spec and rewrites its section in the test-case file from Azure DevOps. The repo's Added by engineer, Also and Assertion floor blocks stay as they are, and so does every other section and file.",
         "Each updated case is listed with its file. An updated raw spec still needs /gen-test stages 5 and 6 in the repo to become a finished spec.",
       ],
@@ -75,7 +77,8 @@ export const playwright: Screen = {
       steps: [
         "Export to Playwright now lives in this tab. On **Auto Run**, pick the Product Backlog Item, press **More** and choose **Export to Playwright**: the Playwright tab opens with the export window over it.",
         "Check the clone folder, then where each area's specs go (side, module and feature) and which repo user each of your accounts signs in as. Press **Save mappings** when you change them.",
-        "Under **Cases**, untick any case you do not want. A case that cannot go says why, with a command to copy when the repo is missing its user.",
+        "Under **Cases**, each case says **New** or **In the repo**, with where the repo has it. Cases already in the repo are skipped. Tick one to replace it.",
+        "Untick any new case you do not want. A case that cannot go says why, with a command to copy when the repo is missing its user.",
         "Press **Export**. The summary lists the files written and the steps still to do in the repo. Nothing is run, committed or pushed.",
       ],
     },

@@ -210,14 +210,58 @@ pub async fn pw_sync_states(app: tauri::AppHandle, clone: String, org: String, p
 /// section and file stays as it is. A refusal writes nothing
 /// and leaves the record as it was. Each case is placed by its Module as
 /// Azure DevOps has it now, else as it was at its last export.
+///
+/// A case this app exported may be replaced; one the repo has that this
+/// app did not export (InRepoNotFromApp) only when it is in `replace`, the
+/// cases the person ticked. Update out of date sends none.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn pw_sync_update(
     app: tauri::AppHandle,
     clone: String,
     org: String,
     project: String,
     cases: Vec<i32>,
+    replace: Vec<i32>,
+    module_ref: Option<String>,
+    preconditions_ref: Option<String>,
+) -> Result<ExportResult, String> {
+    update(app, clone, org, project, cases, replace, module_ref, preconditions_ref).await
+}
+
+/// Add new: exports every case with a script that the repo has in none of
+/// its places (`sync::add_new`), through the same write as Update, and
+/// nothing else. Which cases is worked out here, not taken from the
+/// webview, and the write refuses any case the repo has.
+#[tauri::command]
+#[specta::specta]
+pub async fn pw_sync_add_new(
+    app: tauri::AppHandle,
+    clone: String,
+    org: String,
+    project: String,
+    module_ref: Option<String>,
+    preconditions_ref: Option<String>,
+) -> Result<ExportResult, String> {
+    let root = super::autorun::root(&app)?;
+    let dir = super::pw_export::sync_dir(&app)?;
+    let configured = crate::app_settings::current().playwright_clone;
+    let (o, p) = (org.clone(), project.clone());
+    let rows = blocking(clone.clone(), false, move |_, _| sync::states(&dir, &root, &configured, &o, &p)).await?;
+    let cases = sync::add_new(&rows);
+    update(app, clone, org, project, cases, vec![], module_ref, preconditions_ref).await
+}
+
+/// The body of Update and Add new.
+#[allow(clippy::too_many_arguments)]
+async fn update(
+    app: tauri::AppHandle,
+    clone: String,
+    org: String,
+    project: String,
+    cases: Vec<i32>,
+    replace: Vec<i32>,
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
 ) -> Result<ExportResult, String> {
@@ -229,17 +273,23 @@ pub async fn pw_sync_update(
     let dir = super::pw_export::sync_dir(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
     let record = sync::load(&sync::record_path(&dir, &configured, &org, &project))?;
+    let replace = sync::update_replace(&record, &cases, &replace);
     // Refuse an unexportable selection before any request is made, as
     // Export does, placing each case by the Module it was exported by. A
     // case never exported has no Module yet: the write itself checks it,
-    // once Azure DevOps has given its Module.
+    // once Azure DevOps has given its Module. A case the repo has that may
+    // not be replaced is refused here for all of them.
     let recorded: BTreeMap<i32, String> =
         cases.iter().filter_map(|id| record.cases.get(id).map(|e| (*id, e.module.clone()))).collect();
     {
         let known: Vec<i32> = recorded.keys().copied().collect();
         let (root, org, project, configured) = (root.clone(), org.clone(), project.clone(), configured.clone());
-        blocking(clone.clone(), false, move |_, _| export::ensure_exportable(&root, &org, &project, &known, &configured, &recorded))
-            .await?;
+        let (all, replace) = (cases.clone(), replace.clone());
+        blocking(clone.clone(), false, move |c, _| {
+            export::refuse_present(&crate::pw_repo::presence::scan(c)?, &all, &replace)?;
+            export::ensure_exportable(&root, &org, &project, &known, &configured, &recorded, &replace)
+        })
+        .await?;
     }
     let docs = super::pw_export::read_docs(&app, &org, &project, &cases, module_ref.as_deref(), preconditions_ref.as_deref()).await?;
     let modules: BTreeMap<i32, String> = cases
@@ -250,5 +300,8 @@ pub async fn pw_sync_update(
             (*id, now.unwrap_or(then))
         })
         .collect();
-    blocking(clone, false, move |_, _| export::write_recorded(&root, &dir, &org, &project, &cases, &configured, &modules, &docs)).await
+    blocking(clone, false, move |_, _| {
+        export::write_recorded(&root, &dir, &org, &project, &cases, &configured, &modules, &docs, &replace)
+    })
+    .await
 }

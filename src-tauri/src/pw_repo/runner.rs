@@ -419,15 +419,20 @@ pub fn marker_above(source: &[String], line: u32) -> Option<i32> {
     while i > 0 {
         i -= 1;
         let text = source.get(i)?.trim();
-        let comment = text.strip_prefix("//")?;
-        if let Some(rest) = comment.trim().strip_prefix("ADO") {
-            let digits: String = rest.trim().chars().take_while(char::is_ascii_digit).collect();
-            if let Ok(id) = digits.parse() {
-                return Some(id);
-            }
+        text.strip_prefix("//")?;
+        if let Some(id) = marker_in(text) {
+            return Some(id);
         }
     }
     None
+}
+
+/// The id of one `// ADO <id>` comment line, if `line` is one.
+pub fn marker_in(line: &str) -> Option<i32> {
+    let comment = line.trim().strip_prefix("//")?;
+    let rest = comment.trim().strip_prefix("ADO")?;
+    let digits: String = rest.trim().chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 /// The test titles of the raw specs `index.json` maps, to their ids. A

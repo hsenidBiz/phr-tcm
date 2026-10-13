@@ -16,6 +16,7 @@ use crate::autorun::recipe::{self, SignInRecipe};
 use crate::autorun::{accounts, components, runner, store, CaseScript, LocalRun};
 use crate::browser::actions::Action;
 use crate::browser::locator::Target;
+use crate::pw_repo::presence::{self, Presence};
 use crate::pw_repo::sync;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,6 +37,13 @@ pub struct PreviewCase {
     pub seg: Option<String>,
     pub user_key: Option<String>,
     pub add_user_command: Option<String>,
+    /// The repo already has this case (`pw_repo::presence`): the export
+    /// skips it unless the person ticks it to replace it on purpose.
+    pub in_repo: bool,
+    /// Where the repo has it, short: "in competencies.md and specs/competencies.spec.ts".
+    pub repo_note: Option<String>,
+    /// The Sync record has an export of it by this app.
+    pub from_app: bool,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -303,6 +311,9 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
         seg: None,
         user_key: None,
         add_user_command: None,
+        in_repo: false,
+        repo_note: None,
+        from_app: false,
     };
     let fail = |mut pc: PreviewCase, why: String| {
         pc.reason = Some(why);
@@ -433,6 +444,7 @@ pub fn preview_with(
 ) -> Result<Preview, String> {
     // A failure here is not the clone's: it is the caller's error.
     let ctx = Ctx::load(root, org, project, clone_path, modules)?;
+    let found = ctx.clone.as_ref().map(presence::scan_repo).unwrap_or_default();
     let mut cases = Vec::new();
     // A guess only for an area one of these cases starts in and that is
     // not placed yet - not for every area the project has recorded.
@@ -445,7 +457,10 @@ pub fn preview_with(
                 suggested.insert(name, p);
             }
         }
-        cases.push(evaluate(&ctx, id, script).0);
+        let mut pc = evaluate(&ctx, id, script).0;
+        pc.in_repo = found.has(id);
+        pc.repo_note = found.note(id);
+        cases.push(pc);
     }
     Ok(Preview {
         environment: ctx.env_id.clone(),
@@ -458,6 +473,41 @@ pub fn preview_with(
         map: ctx.map.clone(),
         cases,
     })
+}
+
+/// `preview_with`, with each case the repo has marked as this app's export
+/// or not, from the Sync record in `sync_dir`.
+pub fn preview_recorded(
+    root: &Path,
+    sync_dir: &Path,
+    org: &str,
+    project: &str,
+    case_ids: &[i32],
+    clone_path: &str,
+    modules: &BTreeMap<i32, String>,
+) -> Result<Preview, String> {
+    let mut p = preview_with(root, org, project, case_ids, clone_path, modules)?;
+    let record = sync::load(&sync::record_path(sync_dir, clone_path, org, project))?;
+    for c in p.cases.iter_mut() {
+        c.from_app = c.in_repo && record.cases.contains_key(&c.case_id);
+    }
+    Ok(p)
+}
+
+/// The guard on writing over what the repo has: every case in `case_ids`
+/// the repo already has (`pw_repo::presence`) must be in `replace`, the
+/// cases the person chose to replace on purpose. What the webview ticks by
+/// default is not enough on its own.
+pub fn refuse_present(found: &Presence, case_ids: &[i32], replace: &[i32]) -> Result<(), String> {
+    for &id in case_ids {
+        if found.has(id) && !replace.contains(&id) {
+            let note = found.note(id).unwrap_or_default();
+            return Err(format!(
+                "case {id} is already in the repo ({note}). Tick it to replace it on purpose. Nothing was written."
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Every selected case, or the first reason one cannot be exported. Reads
@@ -482,6 +532,8 @@ fn eligible(ctx: &Ctx, root: &Path, org: &str, project: &str, case_ids: &[i32]) 
     Ok(ready)
 }
 
+/// `replace` is the cases the person chose to replace (`refuse_present`).
+#[allow(clippy::too_many_arguments)]
 pub fn ensure_exportable(
     root: &Path,
     org: &str,
@@ -489,9 +541,11 @@ pub fn ensure_exportable(
     case_ids: &[i32],
     clone_path: &str,
     modules: &BTreeMap<i32, String>,
+    replace: &[i32],
 ) -> Result<(), String> {
     let ctx = Ctx::load(root, org, project, clone_path, modules)?;
-    ctx.clone.as_ref().map_err(|e| e.clone())?;
+    let repo = ctx.clone.as_ref().map_err(|e| e.clone())?;
+    refuse_present(&presence::scan_repo(repo), case_ids, replace)?;
     eligible(&ctx, root, org, project, case_ids).map(|_| ())
 }
 
@@ -500,6 +554,9 @@ struct Out {
     content: String,
 }
 
+/// Writes `case_ids`, all or nothing. A case the repo already has is
+/// refused unless it is in `replace` (`refuse_present`).
+#[allow(clippy::too_many_arguments)]
 pub fn write_with(
     root: &Path,
     org: &str,
@@ -508,9 +565,11 @@ pub fn write_with(
     clone_path: &str,
     modules: &BTreeMap<i32, String>,
     docs: &BTreeMap<i32, CaseDoc>,
+    replace: &[i32],
 ) -> Result<ExportResult, String> {
     let ctx = Ctx::load(root, org, project, clone_path, modules)?;
     let repo = ctx.clone.as_ref().map_err(|e| e.clone())?;
+    refuse_present(&presence::scan_repo(repo), case_ids, replace)?;
 
     // Refuse everything unless every case is exportable.
     let ready = eligible(&ctx, root, org, project, case_ids)?;
@@ -649,6 +708,7 @@ pub fn write_recorded(
     clone_path: &str,
     modules: &BTreeMap<i32, String>,
     docs: &BTreeMap<i32, CaseDoc>,
+    replace: &[i32],
 ) -> Result<ExportResult, String> {
     // Taken before the write: a script changed while it runs shows as out of date.
     let fingerprints = Fingerprinter::load(root, org, project)?;
@@ -659,7 +719,7 @@ pub fn write_recorded(
             saved.insert(id, (s.title, fp));
         }
     }
-    let mut result = write_with(root, org, project, case_ids, clone_path, modules, docs)?;
+    let mut result = write_with(root, org, project, case_ids, clone_path, modules, docs, replace)?;
     let at = crate::applog::iso_stamp();
     let entries: Vec<(i32, sync::Exported)> = result
         .cases

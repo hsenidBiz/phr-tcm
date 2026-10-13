@@ -8,6 +8,10 @@
 // which repo user each of TCM's accounts signs in as, and the cases. The
 // preview (what each case needs, and why one cannot go) is read again after
 // a mapping is saved or the clone changes, so the reasons stay current.
+//
+// Each case says whether the repo already has it (pw_repo::presence): a new
+// case is ticked, one in the repo is not and is skipped. Ticking one sends it
+// as chosen to replace; the write refuses a case the repo has otherwise.
 
 import { useCallback, useEffect, useId, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -17,6 +21,7 @@ import {
   type ExportResult,
   type Placement,
   type Preview,
+  type PreviewCase,
 } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -40,6 +45,16 @@ const NEXT_STEPS = [
   "Run npm run lint:tests -- --require-specs",
   "Review the changes and commit them.",
 ];
+
+/** What the dialog says about cases the repo already has. */
+export const SKIP_NOTE = "Cases already in the repo are skipped. Tick one to replace it.";
+
+/** "New", or "In the repo" with where, and whether this app put it there. */
+export function repoStatus(c: Pick<PreviewCase, "in_repo" | "repo_note" | "from_app">): string {
+  if (!c.in_repo) return "New";
+  const where = c.repo_note ? `: ${c.repo_note}` : "";
+  return `In the repo${where}${c.from_app ? " (exported by this app)" : ""}`;
+}
 
 export default function PlaywrightExportDialog({
   org,
@@ -67,8 +82,10 @@ export default function PlaywrightExportDialog({
    */
   const [areas, setAreas] = useState<Record<string, Placement> | null>(null);
   const [users, setUsers] = useState<Record<string, string> | null>(null);
-  /** Exportable cases the person unticked; everything else exportable is ticked. */
+  /** New exportable cases the person unticked; every other new one is ticked. */
   const [unticked, setUnticked] = useState<Set<number>>(new Set());
+  /** Exportable cases the repo has that the person ticked to replace. */
+  const [replacing, setReplacing] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<ExportResult | null>(null);
@@ -156,16 +173,30 @@ export default function PlaywrightExportDialog({
     JSON.stringify(Object.entries(draftUsers).sort()) !== JSON.stringify(Object.entries(savedUsers).sort());
 
   const cases = preview?.cases ?? [];
-  const ticked = cases.filter((c) => c.exportable && !unticked.has(c.case_id)).map((c) => c.case_id);
+  const isTicked = (c: PreviewCase) => (c.in_repo ? replacing.has(c.case_id) : !unticked.has(c.case_id));
+  const ticked = cases.filter((c) => c.exportable && isTicked(c)).map((c) => c.case_id);
+  const replace = cases.filter((c) => c.exportable && c.in_repo && replacing.has(c.case_id)).map((c) => c.case_id);
+  const setTick = (c: PreviewCase, on: boolean) => {
+    const flip = (cur: Set<number>, add: boolean) => {
+      const next = new Set(cur);
+      if (add) next.add(c.case_id);
+      else next.delete(c.case_id);
+      return next;
+    };
+    if (c.in_repo) setReplacing((cur) => flip(cur, on));
+    else setUnticked((cur) => flip(cur, !on));
+  };
   const canExport = Boolean(preview?.clone_ok) && ticked.length > 0 && !busy && !unsaved;
 
   const doExport = () =>
     attempt(async () => {
       setRefreshError("");
       const written = await unwrapStr(
-        commands.pwExportWrite(org, project, ticked, modules, prefs.moduleRef ?? null, prefs.preconditionsRef ?? null),
+        commands.pwExportWrite(org, project, ticked, modules, replace, prefs.moduleRef ?? null, prefs.preconditionsRef ?? null),
       );
       setResult(written);
+      // What was just written is in the repo now: skipped by default again.
+      setReplacing(new Set());
       try {
         await refresh(false);
       } catch (e) {
@@ -277,26 +308,22 @@ export default function PlaywrightExportDialog({
 
             <section className="space-y-2">
               <h3 className={sectionTitle}>Cases</h3>
+              <p className="text-xs text-muted">{SKIP_NOTE}</p>
               {cases.map((c) =>
                 c.exportable ? (
-                  <label key={c.case_id} className="flex items-center gap-2 text-sm text-text">
+                  <label key={c.case_id} className="flex flex-wrap items-center gap-2 text-sm text-text">
                     <Checkbox
-                      checked={!unticked.has(c.case_id)}
+                      checked={isTicked(c)}
                       ariaLabel={`#${c.case_id} ${c.title}`}
-                      onCheckedChange={(on) =>
-                        setUnticked((cur) => {
-                          const next = new Set(cur);
-                          if (on) next.delete(c.case_id);
-                          else next.add(c.case_id);
-                          return next;
-                        })
-                      }
+                      onCheckedChange={(on) => setTick(c, on)}
                     />
                     <span>{`#${c.case_id} ${c.title}`}</span>
+                    <span className={`text-xs ${c.in_repo ? "text-warning" : "text-success"}`}>{repoStatus(c)}</span>
                   </label>
                 ) : (
                   <div key={c.case_id} className="space-y-1 text-sm text-faint">
                     <p>{`#${c.case_id} ${c.title}`}</p>
+                    {c.in_repo && <p className="text-xs">{repoStatus(c)}</p>}
                     {c.reason && <p className="text-xs">{c.reason}</p>}
                     {c.add_user_command && (
                       <div className="flex items-center gap-2">

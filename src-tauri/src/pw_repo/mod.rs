@@ -17,9 +17,13 @@
 //! `sync` keeps the export record and says, for each case, whether the
 //! clone's copy of its script is current.
 //!
+//! `presence` finds which ADO ids the clone already has, and where: what
+//! Export skips by default and what Sync's Add new leaves alone.
+//!
 //! Offered exactly where Auto Run is (`ai_tools::autorun_offered`): with
 //! Advanced Features off every command of the tab is refused.
 
+pub mod presence;
 pub mod process;
 pub mod runner;
 pub mod structure;
