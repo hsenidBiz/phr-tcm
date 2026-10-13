@@ -700,15 +700,23 @@ impl Em<'_> {
                 indent,
                 &format!("await expect({}).{};", one(selector), call("toBeDisabled", &[], *timeout_ms)),
             ),
-            Action::ExpectChecked { selector, checked, timeout_ms } => self.line(
+            // Clear is not partly ticked: a native box reads its own state,
+            // and an aria widget saying "mixed" fails, as it does in a run.
+            Action::ExpectChecked { selector, checked: true, timeout_ms } => self.line(
                 indent,
-                &format!(
-                    "await expect({}).{}{};",
-                    one(selector),
-                    if *checked { "" } else { "not." },
-                    call("toBeChecked", &[], *timeout_ms)
-                ),
+                &format!("await expect({}).{};", one(selector), call("toBeChecked", &[], *timeout_ms)),
             ),
+            Action::ExpectChecked { selector, checked: false, timeout_ms } => {
+                self.line(indent, &format!("await expect({}).not.{};", one(selector), call("toBeChecked", &[], *timeout_ms)));
+                self.line(
+                    indent,
+                    &format!(
+                        "await expect({}).not.{};",
+                        one(selector),
+                        call("toHaveAttribute", &[lit("aria-checked"), lit("mixed")], *timeout_ms)
+                    ),
+                );
+            }
             Action::ExpectFocused { selector, timeout_ms } => {
                 self.line(
                     indent,

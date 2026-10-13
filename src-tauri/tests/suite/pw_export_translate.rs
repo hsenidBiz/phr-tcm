@@ -222,6 +222,9 @@ fn checked_translates_to_to_be_checked() {
     .unwrap();
     assert!(got.contains("await expect(cur.locator('#agree').first()).toBeChecked({ timeout: 10000 });"), "{got}");
     assert!(got.contains("await expect(cur.locator('#news').first()).not.toBeChecked({ timeout: 300 });"), "{got}");
+    // A clear box is not a partly ticked one: an aria widget saying mixed fails.
+    assert!(got.contains("await expect(cur.locator('#news').first()).not.toHaveAttribute('aria-checked', 'mixed', { timeout: 300 });"), "{got}");
+    assert!(!got.contains("#agree').first()).not.toHaveAttribute"), "{got}");
 }
 
 #[test]

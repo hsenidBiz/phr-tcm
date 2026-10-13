@@ -3621,6 +3621,9 @@ async fn states_expect_checked_follows_clicks() {
     must(run(&mut live, checked(json!({ "role": "switch", "name": "Dark mode" }), false)).await);
     let button = json!({ "role": "button", "name": "Enabled action", "exact": true });
     refused(run(&mut live, checked(button, true)).await, "has no checked state");
+    // A container is never read for the first box inside it.
+    let region = json!({ "role": "region", "name": "Switches" });
+    refused(run(&mut live, checked(region, true)).await, "matches a container, point at the checkbox");
 }
 
 /// A bare css `within`, as an assistant most often writes one, counts every

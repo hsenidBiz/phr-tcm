@@ -196,7 +196,7 @@ async fn enabled_and_disabled_read_one_elements_state() {
 /// when left out, and written back as given.
 #[tokio::test]
 async fn checked_reads_one_boxs_live_state() {
-    use v2_lib::browser::expect::{IS_CHECKED, IS_MIXED, IS_NOT_CHECKED, NOT_CHECKABLE};
+    use v2_lib::browser::expect::{IS_CHECKED, IS_MIXED, IS_NOT_CHECKED, MATCHES_A_CONTAINER, NOT_CHECKABLE};
     let ticked = action(json!({ "kind": "expect_checked", "selector": { "css": "#agree" } }));
     let clear = action(json!({ "kind": "expect_checked", "selector": { "css": "#agree" }, "checked": false }));
     assert_eq!(serde_json::to_value(&ticked).unwrap()["checked"], true);
@@ -223,6 +223,9 @@ async fn checked_reads_one_boxs_live_state() {
     let mut d = FakePage::default().driver();
     let out = execute_with(&mut d, &ticked, &quick()).await;
     assert!(!out.ok && out.detail.contains(NOT_CHECKABLE), "{}", out.detail);
+    let mut d = FakePage { checked: Some("container"), ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &ticked, &quick()).await;
+    assert!(!out.ok && out.detail.contains(MATCHES_A_CONTAINER), "{}", out.detail);
     let mut d = FakePage { found: 2, checked: Some("true"), ..FakePage::default() }.driver();
     let out = execute_with(&mut d, &ticked, &quick()).await;
     assert!(!out.ok && out.detail.contains("matched 2 elements"), "{}", out.detail);
