@@ -126,7 +126,14 @@ impl Quirk {
 /// How many ACTIVE quirks a project keeps. Past this, one has to be
 /// retired before another is added - the list is read in full by every
 /// assistant, and a long one stops being read.
-pub const MAX_QUIRKS: usize = 40;
+///
+/// One project-wide cap, raised from 40, rather than a cap per area: a
+/// quirk has no area (most are about the whole application - a header, a
+/// date format, a grid that pages), and every guide serves the whole list,
+/// so a per-area cap would neither bound what is read nor fit the notes.
+/// 60 lines of at most `MAX_QUIRK_CHARS` keep the guide's section under
+/// about 18,000 characters.
+pub const MAX_QUIRKS: usize = 60;
 
 /// How many retired quirks the file keeps for a person to restore. The
 /// oldest retirements are dropped first.
@@ -378,6 +385,25 @@ pub fn cap_refusal(list: &[Quirk], retire_tool: Option<&str>) -> String {
             candidates.iter().map(|q| format!("{} \"{}\" ({})", q.id, q.text, candidate_label(q))).collect();
         out.push_str(&format!(" Best candidates, written by an assistant: {}.", names.join("; ")));
     }
+    // The oldest of the assistant's other notes too: on a list where every
+    // note has been confirmed, age is what is left to go by.
+    let oldest = oldest_others(list, &candidates);
+    if !oldest.is_empty() {
+        let names: Vec<String> = oldest.iter().map(|q| format!("{} \"{}\"", q.id, q.text)).collect();
+        out.push_str(&format!(" Oldest of the others, written by an assistant: {}.", names.join("; ")));
+    }
+    out
+}
+
+/// The oldest active notes an assistant wrote that are not among
+/// `candidates`, at most three, oldest first.
+pub fn oldest_others<'a>(list: &'a [Quirk], candidates: &[&Quirk]) -> Vec<&'a Quirk> {
+    let mut out: Vec<&Quirk> = list
+        .iter()
+        .filter(|q| q.is_active() && q.by == "assistant" && !candidates.iter().any(|c| c.id == q.id))
+        .collect();
+    out.sort_by_key(|q| q.at_ms());
+    out.truncate(3);
     out
 }
 

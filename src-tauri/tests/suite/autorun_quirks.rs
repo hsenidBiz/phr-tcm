@@ -281,7 +281,8 @@ fn a_full_list_refuses_one_more_and_names_the_three_best_candidates_oldest_first
     assert!(err.contains(RETIRE_TOOL), "the refusal names the retire tool: {err}");
     let (a, b, c) = (err.find("\"note 9\"").unwrap(), err.find("\"note 20\"").unwrap(), err.find("\"note 5\"").unwrap());
     assert!(a < b && b < c, "oldest first: {err}");
-    assert!(!err.contains("\"note 30\""), "only three: {err}");
+    let candidates = err.split("Oldest of the others").next().unwrap();
+    assert!(!candidates.contains("\"note 30\""), "only three: {err}");
     assert!(!err.contains("\"note 1\""), "never a person's note: {err}");
     assert_eq!(list.len(), MAX_QUIRKS, "nothing was added");
 
@@ -602,6 +603,32 @@ fn candidates_rank_unhelpful_then_unconfirmed_then_untested() {
     let text = cap_refusal(&list, Some(RETIRE_TOOL));
     assert!(text.contains("\"an old standing fact\" (untested - not tied to any run)"), "{text}");
     assert!(text.contains("\"filed with a repair\" (never confirmed by a run)"), "{text}");
+    // The one left out of the candidates is named among the oldest others.
+    assert!(text.contains("Oldest of the others, written by an assistant:"), "{text}");
+    assert!(text.contains("\"confirmed often\""), "{text}");
+}
+
+/// The cap is 60, and on a full list of confirmed notes the refusal still
+/// names something to retire: the oldest three, oldest first.
+#[test]
+fn a_full_list_of_confirmed_notes_names_the_oldest_to_retire() {
+    use v2_lib::autorun::quirks::oldest_others;
+    assert_eq!(MAX_QUIRKS, 60);
+    let list: Vec<Quirk> = (0..MAX_QUIRKS)
+        .map(|i| {
+            let mut q = quirk(&format!("note {i}"), "assistant", &(1000 - i).to_string());
+            q.sources = vec![source(i as i32 + 1, &[1], None)];
+            q.confirmed = 3;
+            q
+        })
+        .collect();
+    let mut list = list;
+    v2_lib::autorun::quirks::ensure_ids(&mut list);
+    let oldest: Vec<&str> = oldest_others(&list, &[]).iter().map(|q| q.text.as_str()).collect();
+    assert_eq!(oldest, vec!["note 59", "note 58", "note 57"]);
+    let text = cap_refusal(&list, Some(RETIRE_TOOL));
+    assert!(text.contains("60 active quirks"), "{text}");
+    assert!(text.contains("\"note 59\"") && text.contains(RETIRE_TOOL), "{text}");
 }
 
 /// One run counts at most once per source case: three passing steps of

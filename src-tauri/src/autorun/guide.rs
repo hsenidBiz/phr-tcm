@@ -1748,11 +1748,11 @@ or supervised once that run is saved - at most once per case per run:
 "confirmed Nx" when those steps passed, "did not help Nx" when they failed
 the same way again.
 
-A project keeps 40 active quirks. Past that, `record_autorun_quirk` (and
+A project keeps 60 active quirks. Past that, `record_autorun_quirk` (and
 an edit's `quirk`) is refused with up to three of the assistant's own
 notes to retire: ones that did not help more often than they helped
 first, then ones no run has confirmed, then ones never tied to a run,
-oldest first within each. Retire one with
+oldest first within each; and with the three oldest of its other notes. Retire one with
 `retire_autorun_quirk { id, reason, replacement? }` - `replacement`
 records a better note in the same call and keeps the old one's cases and
 steps. A retired note leaves this guide; recording the same line again

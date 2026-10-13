@@ -2326,7 +2326,9 @@ async fn a_full_list_refuses_through_the_bridge_with_candidates() {
     assert_eq!(status, 400, "{out}");
     assert!(out.contains("retire_autorun_quirk"), "{out}");
     assert!(out.contains("\"note 0\"") && out.contains("\"note 1\"") && out.contains("\"note 2\""), "{out}");
-    assert!(!out.contains("\"note 3\""), "{out}");
+    let (candidates, others) = out.split_once("Oldest of the others").expect("no oldest others");
+    assert!(!candidates.contains("\"note 3\""), "{out}");
+    assert!(others.contains("\"note 3\""), "the next oldest is named after the candidates: {out}");
 }
 
 // ----------------------------------------------------------- the dev gate

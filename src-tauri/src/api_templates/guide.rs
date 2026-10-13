@@ -290,7 +290,7 @@ When this project has any, this guide ends with them, under
 `## Known quirks of this application`. Record something you learned
 building a template (a handler that needs a header the screen sends, an
 id the response returns as text) with `record_app_quirk { text }`; it is
-shown as `(assistant, API)`. A project keeps 40 active quirks: past that
+shown as `(assistant, API)`. A project keeps 60 active quirks: past that
 the call is refused with up to three of the assistant's notes worth
 retiring. Retire one with `retire_app_quirk { id, reason, replacement? }`.
 A note a person wrote is theirs to remove, and a line a person retired is

@@ -521,7 +521,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "record_autorun_quirk",
-            "description": "Record one line about how this application behaves, so the next script or API template - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; one list per project, read by both the Auto Run guide and the API template guide. A line already on the list is not written twice, and one you retired comes back rather than being copied (one a person wrote or retired is refused - ask them). Name the cases and steps it explains in `cases` - each step must have failed in its case's newest run - so later runs can count whether it helped; or put it on the edit of every case you repair for it. A project keeps 40 active quirks: past that, this is refused with the best candidates to retire.",
+            "description": "Record one line about how this application behaves, so the next script or API template - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; one list per project, read by both the Auto Run guide and the API template guide. A line already on the list is not written twice, and one you retired comes back rather than being copied (one a person wrote or retired is refused - ask them). Name the cases and steps it explains in `cases` - each step must have failed in its case's newest run - so later runs can count whether it helped; or put it on the edit of every case you repair for it. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire and the oldest of the others.",
             "inputSchema": schema(serde_json::json!({
                 "text": { "type": "string", "description": "One line, at most 300 characters, e.g. \"the results grid paginates at 25 rows\"." },
                 "cases": quirk_cases(),
@@ -672,7 +672,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "record_app_quirk",
-            "description": "Record one line about how this application behaves that you learned building API templates (a handler that needs a header the screen sends, an id the response returns as text), so the next template or script does not rediscover it. The project's one list, shared with whoever writes its Auto Run scripts, and shown as (assistant, API). A line already on the list is not written twice; one a person wrote or retired is refused - ask them. A project keeps 40 active quirks: past that, this is refused with the best candidates to retire.",
+            "description": "Record one line about how this application behaves that you learned building API templates (a handler that needs a header the screen sends, an id the response returns as text), so the next template or script does not rediscover it. The project's one list, shared with whoever writes its Auto Run scripts, and shown as (assistant, API). A line already on the list is not written twice; one a person wrote or retired is refused - ask them. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire and the oldest of the others.",
             "inputSchema": schema(serde_json::json!({
                 "text": { "type": "string", "description": "One line, at most 300 characters." },
                 "cases": quirk_cases(),
