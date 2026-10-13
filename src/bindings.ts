@@ -613,6 +613,12 @@ export const commands = {
 	 */
 	checked?: boolean,
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
+	/**
+	 *  Every listed case's script in one call - what the Auto Run screen asks
+	 *  for when it opens. Off the main thread, as every read here is: the
+	 *  window stays responsive while hundreds of files are read.
+	 */
+	autoRunLoadScripts: (caseIds: number[]) => typedError<ScriptLookup_Serialize[], string>(__TAURI_INVOKE("auto_run_load_scripts", { caseIds })),
 	autoRunSaveScript: (organization: string, project: string, script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { organization, project, script })),
 	/**
 	 *  A person's Clear on a case's suspected-defect mark: they have looked and
@@ -5080,6 +5086,32 @@ export type ScreenShot = {
 	name: string,
 	/**  PNG, base64 (no data: prefix) - the shape add_result_attachment wants. */
 	b64_png: string,
+};
+
+/**
+ *  One case's answer in `load_scripts`: its script, none, or why its file
+ *  could not be read.
+ */
+export type ScriptLookup = ScriptLookup_Serialize | ScriptLookup_Deserialize;
+
+/**
+ *  One case's answer in `load_scripts`: its script, none, or why its file
+ *  could not be read.
+ */
+export type ScriptLookup_Deserialize = {
+	case_id: number,
+	script: CaseScript_Deserialize | null,
+	error: string | null,
+};
+
+/**
+ *  One case's answer in `load_scripts`: its script, none, or why its file
+ *  could not be read.
+ */
+export type ScriptLookup_Serialize = {
+	case_id: number,
+	script: CaseScript_Serialize | null,
+	error: string | null,
 };
 
 /**

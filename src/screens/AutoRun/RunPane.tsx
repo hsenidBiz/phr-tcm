@@ -20,6 +20,7 @@ import {
   type SignInOutcome,
   type StepDialog,
 } from "../../bindings";
+import { loadScript } from "../../lib/scriptBatch";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
@@ -128,7 +129,7 @@ export default function RunPane({
 
   const script = useQuery({
     queryKey: ["autorun-script", caseId],
-    queryFn: () => unwrapStr(commands.autoRunLoadScript(caseId)),
+    queryFn: () => loadScript(caseId),
     retry: false,
   });
 

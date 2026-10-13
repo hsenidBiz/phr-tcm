@@ -400,6 +400,47 @@ pub fn load_script(root: &Path, case_id: i32) -> Result<Option<CaseScript>, Stri
     }
 }
 
+/// One case's answer in `load_scripts`: its script, none, or why its file
+/// could not be read.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct ScriptLookup {
+    pub case_id: i32,
+    pub script: Option<CaseScript>,
+    pub error: Option<String>,
+}
+
+/// `load_script` for many cases at once, in the order asked. The folder is
+/// listed once and only the files in it are opened: on a machine where
+/// each open costs milliseconds (a scanner looks at every one), a PBI of
+/// hundreds of cases, most without a script, would otherwise open a file
+/// per case. One unreadable script answers with its own error and never
+/// stops the rest.
+pub fn load_scripts(root: &Path, case_ids: &[i32]) -> Vec<ScriptLookup> {
+    // `None` when the folder could not be listed for any reason but its
+    // absence: then every case is opened, so its own error is the answer.
+    let present: Option<std::collections::HashSet<std::ffi::OsString>> = match std::fs::read_dir(scripts_dir(root)) {
+        Ok(entries) => Some(entries.flatten().map(|e| e.file_name()).collect()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(Default::default()),
+        Err(_) => None,
+    };
+    case_ids
+        .iter()
+        .map(|&case_id| {
+            let name = format!("case-{case_id}.json");
+            let worth_opening = present.as_ref().is_none_or(|p| p.contains(std::ffi::OsStr::new(&name)));
+            let (script, error) = if worth_opening {
+                match load_script(root, case_id) {
+                    Ok(s) => (s, None),
+                    Err(e) => (None, Some(e)),
+                }
+            } else {
+                (None, None)
+            };
+            ScriptLookup { case_id, script, error }
+        })
+        .collect()
+}
+
 pub fn save_run(root: &Path, run: &LocalRun) -> Result<(), String> {
     let dir = runs_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

@@ -1643,6 +1643,8 @@ function applyPatches() {
       return ok([] as string[]);
     },
     autoRunLoadScript: (caseId: number) => ok(scripts.get(caseId) ?? null),
+    autoRunLoadScripts: (caseIds: number[]) =>
+      ok((caseIds ?? []).map((id) => ({ case_id: id, script: scripts.get(id) ?? null, error: null }))),
     autoRunSaveScript: (_o: string, _p: string, script: DemoScript) => {
       if (!script || typeof script !== "object" || typeof script.case_id !== "number") return err("Demo mode: that script is not valid");
       const kept = scripts.get(script.case_id)?.suspected_defect;

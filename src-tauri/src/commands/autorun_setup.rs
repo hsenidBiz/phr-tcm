@@ -18,7 +18,7 @@ fn script_with_setup(root: &std::path::Path, case_id: i32) -> Result<crate::auto
 /// The editor's view of case `case_id`'s setup: its fixture, account,
 /// steps and what it makes, and where its approval stands. `None` when the
 /// saved script has no setup.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_setup_view(
     app: tauri::AppHandle,

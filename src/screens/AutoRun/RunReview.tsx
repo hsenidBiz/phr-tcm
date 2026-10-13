@@ -12,6 +12,7 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "../../lib/toast";
 import { commands, type LocalRun_Serialize, type PublishResult } from "../../bindings";
+import { loadScript } from "../../lib/scriptBatch";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
@@ -140,7 +141,7 @@ export default function RunReview(props: {
   const scripts = useQueries({
     queries: (run?.cases ?? []).map((c) => ({
       queryKey: ["autorun-script", c.case_id],
-      queryFn: () => unwrapStr(commands.autoRunLoadScript(c.case_id)),
+      queryFn: () => loadScript(c.case_id),
       retry: false,
     })),
   });

@@ -483,7 +483,7 @@ pub fn env_clear_default_password(
 }
 
 /// The assistant's proposed accounts for the active environment.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn env_proposals(app: tauri::AppHandle) -> Result<Vec<environments::ProposedAccount>, String> {
     proposals_with(&super::autorun::root(&app)?)

@@ -215,6 +215,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun_setup::auto_run_approve_setup,
             autorun_setup::auto_run_withdraw_setup,
             autorun::auto_run_load_script,
+            autorun::auto_run_load_scripts,
             autorun::auto_run_save_script,
             autorun::auto_run_clear_suspected_defect,
             autorun::auto_run_plan,

@@ -1217,3 +1217,33 @@ fn a_review_save_does_not_prune() {
     save_run_at(root, run).unwrap();
     assert_eq!(count(), 1001, "a review save of a run already on disk does not");
 }
+
+/// The Auto Run screen asks for every case's script at once: one read of
+/// the folder, one result per id in the order asked, a missing script as
+/// none and an unreadable one as its own error - never failing the others.
+#[test]
+fn many_scripts_load_in_one_call_each_with_its_own_answer() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &script()).unwrap();
+    let mut other = script();
+    other.case_id = 202;
+    save_script(dir.path(), &other).unwrap();
+    std::fs::write(dir.path().join("scripts").join("case-203.json"), "{ not json").unwrap();
+
+    let got = v2_lib::autorun::store::load_scripts(dir.path(), &[202, 999, 203, 201]);
+    let ids: Vec<i32> = got.iter().map(|l| l.case_id).collect();
+    assert_eq!(ids, vec![202, 999, 203, 201]);
+    assert_eq!(got[0].script.as_ref().map(|s| s.case_id), Some(202));
+    assert!(got[0].error.is_none());
+    assert!(got[1].script.is_none() && got[1].error.is_none());
+    assert!(got[2].script.is_none() && got[2].error.as_deref().is_some_and(|e| e.contains("not a readable script")));
+    assert_eq!(got[3].script.as_ref(), Some(&script()));
+}
+
+#[test]
+fn many_scripts_with_no_scripts_folder_are_all_none() {
+    let dir = TempDir::new();
+    let got = v2_lib::autorun::store::load_scripts(dir.path(), &[1, 2]);
+    assert_eq!(got.len(), 2);
+    assert!(got.iter().all(|l| l.script.is_none() && l.error.is_none()));
+}

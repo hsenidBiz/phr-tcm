@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
 
 // vitest runs without injected globals, so RTL's automatic cleanup never
 // registers - without this, each test's DOM leaks into the next.
@@ -99,3 +99,40 @@ if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.sho
     this.dispatchEvent(new Event("close", { bubbles: false }));
   };
 }
+
+// The Auto Run screen reads its scripts in one batched call
+// (`auto_run_load_scripts`, lib/scriptBatch). Tests describe scripts one
+// case at a time (`auto_run_load_script`), which is what each case's answer
+// is; a handler that does not answer the batch itself gets it assembled
+// from those per-case answers, a thrown one becoming that case's error.
+vi.mock("@tauri-apps/api/mocks", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@tauri-apps/api/mocks")>();
+  type Handler = Parameters<typeof real.mockIPC>[0];
+  const message = (e: unknown) => (typeof e === "string" ? e : e instanceof Error ? e.message : String(e));
+  return {
+    ...real,
+    mockIPC: (handler: Handler, options?: Parameters<typeof real.mockIPC>[1]) =>
+      real.mockIPC(async (cmd, args) => {
+        if (cmd !== "auto_run_load_scripts") return handler(cmd, args);
+        let own: unknown;
+        try {
+          own = await handler(cmd, args);
+        } catch {
+          own = undefined;
+        }
+        // A real answer is a list; a catch-all `return null` is not one.
+        if (Array.isArray(own)) return own;
+        const ids = (args as { caseIds: number[] }).caseIds;
+        return Promise.all(
+          ids.map(async (id) => {
+            try {
+              const script = await handler("auto_run_load_script", { caseId: id });
+              return { case_id: id, script: script ?? null, error: null };
+            } catch (e) {
+              return { case_id: id, script: null, error: message(e) };
+            }
+          }),
+        );
+      }, options),
+  };
+});

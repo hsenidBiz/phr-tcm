@@ -12,6 +12,7 @@ import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type
 import { createPortal } from "react-dom";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
 import { commands, events, type AutorunResetNeeded, type PbiHit, type PlanView } from "../../bindings";
+import { loadScript } from "../../lib/scriptBatch";
 import { Checkbox } from "../../components/ui/checkbox";
 import MoreActionsMenu from "../../components/MoreActionsMenu";
 import { Collapse, useSettled } from "../../components/ui/collapse";
@@ -121,7 +122,7 @@ export default function AutoRun({
   const scripts = useQueries({
     queries: (cases.data ?? []).map((c) => ({
       queryKey: ["autorun-script", c.id],
-      queryFn: () => unwrapStr(commands.autoRunLoadScript(c.id)),
+      queryFn: () => loadScript(c.id),
       retry: false,
     })),
     combine: (results) => results.map((q) => q.data),
