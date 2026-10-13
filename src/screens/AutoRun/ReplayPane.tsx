@@ -98,10 +98,10 @@ function PlanSummary({ plan, cases }: { plan: PlanView; cases: { id: number; tit
         const lines = b.pause ? pauseLines(b.pause, titleOf) : [];
         return (
           <div key={b.n} className="space-y-1">
+            <p className="text-text">{batchLabel(b.n, b.ids.length)}</p>
             {lines.map((l) => (
               <p key={l} className="border-l-2 border-l-warning pl-2 text-warning">{l}</p>
             ))}
-            <p className="text-text">{batchLabel(b.n, b.ids.length)}</p>
           </div>
         );
       })}

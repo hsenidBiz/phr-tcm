@@ -34,7 +34,7 @@ import OutcomeGroups from "./OutcomeGroups";
 import VerdictPicker from "./VerdictPicker";
 import ResetNeededPanel from "./ResetNeededPanel";
 import BatchList from "./BatchList";
-import { STOPPED_AT_RESET } from "./plan";
+import { stoppedAtPause } from "./plan";
 
 const BROWSERS = [
   { value: "edge", label: "Microsoft Edge" },
@@ -695,7 +695,7 @@ export default function RunPane({
         verdict: "",
         note: "",
         steps: [],
-        reason: STOPPED_AT_RESET,
+        reason: stoppedAtPause(pausedAt.reset.batch),
       }));
       if (!(await writeRun([...records, ...left], [...resets, resetRecord(pausedAt, "stopped")]))) return;
       closedRef.current = true;

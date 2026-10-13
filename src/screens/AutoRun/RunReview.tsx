@@ -27,7 +27,7 @@ import NoticeBadge from "./NoticeBadge";
 import OutcomeGroups from "./OutcomeGroups";
 import PageErrorsBadge from "./PageErrorsBadge";
 import VerdictPicker from "./VerdictPicker";
-import { batchHeadingBefore, resetLinesBefore } from "./plan";
+import { recordedBatches, resetLinesBefore, shownBatchHeading } from "./plan";
 import { countBuckets, matchesFilter, replayStep, type ResultFilter } from "./verdicts";
 
 /** The result of a successful send - never the "refused" branch, which
@@ -351,6 +351,7 @@ export default function RunReview(props: {
   // here moves its case to its new bucket at once.
   const counts = countBuckets(run.cases);
   const shown = visibleIds ? run.cases.filter((c) => visibleIds.has(c.case_id)) : run.cases;
+  const batches = recordedBatches(run);
 
   return (
     <Modal onClose={onClose} className={`${MODAL_LARGE} flex flex-col gap-3 p-4`}>
@@ -363,15 +364,18 @@ export default function RunReview(props: {
       {shown.length === 0 && <p className="text-xs text-muted">No case in this run matches that filter.</p>}
 
       <ul className="min-h-0 flex-1 space-y-3 overflow-y-auto">
-        {shown.map((c) => {
+        {shown.map((c, i) => {
           const isExpanded = expanded.has(c.case_id);
           const replayTo = onReplay && !mismatch ? replayStep(c) : null;
+          const heading = shownBatchHeading(batches, shown, i);
           return (
             <Fragment key={c.case_id}>
-              {/* The batch that starts here, where the run paused before it
-                  and how it went on. */}
-              {batchHeadingBefore(run, c.case_id) && (
-                <li className="pt-1 text-xs font-semibold text-text">{batchHeadingBefore(run, c.case_id)}</li>
+              {/* The batch that starts here (or its first case this filter
+                  shows), where the run paused before it and how it went on. */}
+              {heading && (
+                <li className="pt-1">
+                  <h3 className="text-xs font-semibold text-text">{heading}</h3>
+                </li>
               )}
               {resetLinesBefore(run.resets, c.case_id).map((line) => (
                 <li key={line} className="border-l-2 border-l-warning pl-2 text-xs text-warning">

@@ -1260,8 +1260,8 @@ test("Stop at a reset point ends the supervised run with the rest recorded as no
   };
   expect(run.cases.map((c) => [c.case_id, c.verdict, c.reason ?? ""])).toEqual([
     [1, "Passed", ""],
-    [2, "", "not run: the run stopped at a reset point"],
-    [3, "", "not run: the run stopped at a reset point"],
+    [2, "", "not run: the run stopped at a pause before Batch 2"],
+    [3, "", "not run: the run stopped at a pause before Batch 2"],
   ]);
   expect(run.resets?.map((r) => r.outcome)).toEqual(["stopped"]);
 });
@@ -1369,9 +1369,9 @@ test("Stop before Batch 1 records every case as not run and opens nothing", asyn
   expect(s.launched).toEqual([]);
   const run = s.saved[0] as unknown as { cases: { case_id: number; reason?: string }[] };
   expect(run.cases.map((c) => [c.case_id, c.reason])).toEqual([
-    [1, "not run: the run stopped at a reset point"],
-    [2, "not run: the run stopped at a reset point"],
-    [3, "not run: the run stopped at a reset point"],
+    [1, "not run: the run stopped at a pause before Batch 1"],
+    [2, "not run: the run stopped at a pause before Batch 1"],
+    [3, "not run: the run stopped at a pause before Batch 1"],
   ]);
 });
 

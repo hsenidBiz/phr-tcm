@@ -197,6 +197,71 @@ fn a_saved_order_is_honoured_and_counted_in_pauses() {
     assert_eq!(batches_for(&cases, Some(&[3, 1, 2])).1, None);
 }
 
+/// A pause that only switches settings puts nothing back: what was changed
+/// stays changed, so the reset a later case needs still comes, at the pause
+/// where it is due.
+#[test]
+fn a_settings_pause_does_not_drop_a_reset_still_due() {
+    // Saved order A, B, C: A changes X and needs S=1, B needs S=2, C needs X
+    // unchanged.
+    let cases = vec![
+        (1, m(&["x"], &[]), s(&[("S", "1")])),
+        (2, m(&[], &[]), s(&[("S", "2")])),
+        (3, m(&[], &["x"]), s(&[])),
+    ];
+    let (plan, _) = batches_for(&cases, Some(&[1, 2, 3]));
+    assert_eq!(plan.batches, vec![vec![1], vec![2], vec![3]]);
+    assert_eq!(
+        plan.pauses,
+        vec![
+            set(1, 1, &[("S", "1")]),
+            set(2, 2, &[("S", "2")]),
+            Pause {
+                batch: 3,
+                before_case_id: 3,
+                set: vec![],
+                names: names(&["x"]),
+                changed_by: vec![("x".into(), vec![1])],
+            },
+        ]
+    );
+}
+
+/// The suggested order counts the resets a settings pause no longer hides,
+/// and puts a reset that is due anyway on the same pause as the settings.
+#[test]
+fn the_suggestion_counts_resets_behind_settings_pauses() {
+    // 1 and 3 form a cycle (one reset whatever the order); 2 and 3 need
+    // the same setting.
+    let cases = vec![
+        (1, m(&["x"], &["y"]), s(&[("S", "1")])),
+        (2, m(&[], &[]), s(&[("S", "2")])),
+        (3, m(&["y"], &["x"]), s(&[("S", "2")])),
+    ];
+    // In list order the reset needs a pause of its own: three in all.
+    let marks: HashMap<i32, Marks> = cases.iter().map(|(id, mk, _)| (*id, mk.clone())).collect();
+    let wants: HashMap<i32, Needs> = cases.iter().map(|(id, _, n)| (*id, n.clone())).collect();
+    let listed = batches(&[1, 2, 3], &marks, &wants);
+    assert_eq!(listed.pauses.len(), 3);
+    assert_eq!(listed.pauses[2].names, names(&["x"]));
+
+    let (plan, _) = batches_for(&cases, None);
+    assert_eq!(plan.order, vec![1, 3, 2]);
+    assert_eq!(
+        plan.pauses,
+        vec![
+            set(1, 1, &[("S", "1")]),
+            Pause {
+                batch: 2,
+                before_case_id: 3,
+                set: s(&[("S", "2")]),
+                names: names(&["x"]),
+                changed_by: vec![("x".into(), vec![1])],
+            },
+        ]
+    );
+}
+
 /// Without settings, the batches are the reset plan exactly.
 #[test]
 fn without_settings_the_batches_are_the_reset_plan() {

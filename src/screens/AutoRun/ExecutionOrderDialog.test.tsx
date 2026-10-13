@@ -64,6 +64,10 @@ test("each batch has a heading with its size, and the pause before it says what 
   expect(screen.getByRole("heading", { name: "Batch 2 (2 cases)" })).toBeInTheDocument();
   expect(screen.getByText("Make sure Approval workflow is ON")).toBeInTheDocument();
   expect(screen.getByText("Set Approval workflow to OFF")).toBeInTheDocument();
+  // The heading first, then the pause before that batch, as in the review.
+  const two = screen.getByRole("heading", { name: "Batch 2 (2 cases)" });
+  const set = screen.getByText("Set Approval workflow to OFF");
+  expect(two.compareDocumentPosition(set) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.getByText('Reset: revert "Cycle" (changed by #1 Publish the cycle)')).toBeInTheDocument();
   // The rows are still the cases alone, in order.
   expect(rows()[0]).toContain("Publish the cycle");

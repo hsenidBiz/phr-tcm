@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use v2_lib::autorun::plan::Pause;
 use v2_lib::autorun::preconditions::{NoDb, PreconditionDb, NEED_DB};
-use v2_lib::autorun::replay::{run_cases_planned, Browsers, CaseToRun, ResetGate, STOPPED_AT_RESET};
+use v2_lib::autorun::replay::{stopped_at_pause, run_cases_planned, Browsers, CaseToRun, ResetGate, STOPPED_AT_PAUSE, STOPPED_AT_RESET};
 use v2_lib::autorun::reset_wait::{AppGate, ResetWaits, NOT_WAITING};
 use v2_lib::autorun::{report, store, CaseScript, LocalRun, ResetRecord, RESET_CONTINUED, RESET_STOPPED};
 use v2_lib::browser::timing::Timing;
@@ -196,11 +196,11 @@ async fn stop_ends_the_run_and_records_every_case_left_as_not_run() {
     assert_eq!(run.cases.len(), 3);
     assert_eq!(run.cases[0].proposed, "Passed");
     for c in &run.cases[1..] {
-        assert_eq!(c.reason, STOPPED_AT_RESET);
+        assert_eq!(c.reason, stopped_at_pause(2));
         assert_eq!(c.proposed, "");
         assert_eq!(c.verdict, "");
         assert!(!c.steps.is_empty());
-        assert!(c.steps.iter().flat_map(|s| &s.outcomes).all(|o| !o.ok && o.detail == STOPPED_AT_RESET));
+        assert!(c.steps.iter().flat_map(|s| &s.outcomes).all(|o| !o.ok && o.detail == stopped_at_pause(2)));
     }
     assert_eq!(run.resets.len(), 1);
     assert_eq!(run.resets[0].outcome, RESET_STOPPED);
@@ -293,7 +293,7 @@ async fn the_runs_own_stop_while_paused_counts_as_stop() {
 
     assert_eq!(b.opened, 1);
     assert_eq!(run.resets[0].outcome, RESET_STOPPED);
-    assert!(run.cases[1..].iter().all(|c| c.reason == STOPPED_AT_RESET), "{:?}", run.cases);
+    assert!(run.cases[1..].iter().all(|c| c.reason == stopped_at_pause(2)), "{:?}", run.cases);
     assert_eq!(waits.waiting(), None, "a stopped wait leaves nothing to answer");
 }
 
@@ -321,7 +321,7 @@ async fn closing_the_app_while_paused_stops_the_run_and_saves_it_as_stopped() {
     assert_eq!(saved.resets.len(), 1);
     assert_eq!(saved.resets[0].outcome, RESET_STOPPED);
     assert_eq!(saved.cases.len(), 3, "every case is on disk: none is left waiting");
-    assert!(saved.cases[1..].iter().all(|c| c.reason == STOPPED_AT_RESET));
+    assert!(saved.cases[1..].iter().all(|c| c.reason == stopped_at_pause(2)));
 }
 
 #[test]
@@ -552,7 +552,7 @@ async fn stop_before_batch_1_runs_nothing() {
     .unwrap();
     assert_eq!(b.opened, 0);
     assert_eq!(run.cases.len(), 1);
-    assert_eq!(run.cases[0].reason, STOPPED_AT_RESET);
+    assert_eq!(run.cases[0].reason, "not run: the run stopped at a pause before Batch 1");
     assert_eq!(run.resets[0].outcome, RESET_STOPPED);
 }
 
@@ -643,4 +643,18 @@ fn the_report_shows_batches_and_the_pauses_between_them() {
     old.resets[0].batch = 0;
     assert_eq!(report::batch_heading(&old, 1), None);
     assert!(!report::build_with_downloads(&old, &[], "", &|_| false, &|_| None).contains(">Batch "));
+}
+
+/// New runs name the batch they stopped before; the webview says the same
+/// words, and runs saved before batches keep their own.
+#[test]
+fn the_not_run_reason_names_the_batch_and_the_webview_agrees() {
+    assert_eq!(stopped_at_pause(3), "not run: the run stopped at a pause before Batch 3");
+    let ts = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/screens/AutoRun/plan.ts"))
+        .unwrap()
+        .replace("
+", "
+");
+    assert!(ts.contains(&format!("export const STOPPED_AT_PAUSE = \"{STOPPED_AT_PAUSE}\";")), "plan.ts disagrees");
+    assert!(ts.contains(&format!("export const STOPPED_AT_RESET = \"{STOPPED_AT_RESET}\";")), "plan.ts disagrees");
 }

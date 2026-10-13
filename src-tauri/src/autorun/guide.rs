@@ -1034,7 +1034,7 @@ with `needs_state`: each setting the case needs, with the value it needs.
     { "case_id": 703, "title": "...", "steps": [ ... ] }
 
 Auto Run groups the cases into batches whose cases agree on every
-setting they name, with as few pauses as it can, and the run pauses
+setting they name, trying to keep the pauses few, and the run pauses
 before each batch for a person to set what changes, for example "Before
 Batch 2: Set Approval workflow to OFF". Case 703 names no setting, so it
 can run in any batch.
@@ -1044,7 +1044,8 @@ case needs one of them. Use `changes` with `needs_unchanged` for state a
 case uses up or changes as it runs, such as publishing a cycle, that a
 person must put back. A case can carry both.
 
-Setting names and values compare like mark names: trimmed, ignoring case.
+Setting names and values compare like mark names: trimmed, ignoring case,
+with spaces inside collapsed.
 Each is 1 to 60 characters, and a script names at most 10 settings. One
 setting needed at two values in the same script is refused:
 `needs_state: "<name>" cannot need both "<value>" and "<value>" - pick one value`.

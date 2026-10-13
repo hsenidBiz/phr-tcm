@@ -115,6 +115,40 @@ export function resetLinesBefore(resets: readonly RecordedReset[] | undefined, c
   return (resets ?? []).filter((r) => r.before_case_id === caseId).flatMap(recordedResetLines);
 }
 
+/** The batch each case of a recorded run ran in, by case id: Batch 1 up
+ * to the first recorded pause with a batch, then the batch each such pause
+ * opened. Empty for a run recorded before batches. */
+export function recordedBatches(run: {
+  resets?: readonly RecordedReset[] | null;
+  cases: readonly { case_id: number }[];
+}): Map<number, number> {
+  const out = new Map<number, number>();
+  const resets = run.resets ?? [];
+  if (!resets.some((r) => (r.batch ?? 0) > 0)) return out;
+  let at = 1;
+  for (const c of run.cases) {
+    const opened = resets.find((r) => r.before_case_id === c.case_id && (r.batch ?? 0) > 0);
+    if (opened?.batch) at = opened.batch;
+    out.set(c.case_id, at);
+  }
+  return out;
+}
+
+/** The batch heading due before the shown case at `index` of `shown` (the
+ * cases a filter leaves, in run order): `Batch N` before the first shown
+ * case of each batch, so a heading stays when a filter hides the case its
+ * batch starts with. */
+export function shownBatchHeading(
+  batches: ReadonlyMap<number, number>,
+  shown: readonly { case_id: number }[],
+  index: number,
+): string | null {
+  const n = batches.get(shown[index]?.case_id ?? -1);
+  if (n == null) return null;
+  const before = index > 0 ? batches.get(shown[index - 1].case_id) : undefined;
+  return before === n ? null : `Batch ${n}`;
+}
+
 /** The batch heading due before case `caseId` in a recorded run, as the
  * report has it: `Batch N` where a recorded pause opened one, and `Batch 1`
  * before the run's first case. None for a run recorded before batches. */
@@ -129,6 +163,16 @@ export function batchHeadingBefore(
   return run.cases[0]?.case_id === caseId ? "Batch 1" : null;
 }
 
-/** The sentence every case left is recorded with when a run stops at a
- * pause - the same words as the unattended run's. */
+/** The sentence every case left was recorded with when a run stopped at a
+ * reset point, before batches. Runs saved then keep it. */
 export const STOPPED_AT_RESET = "not run: the run stopped at a reset point";
+
+/** The words before the batch number in `stoppedAtPause` - the same as the
+ * unattended run's (`autorun::replay::STOPPED_AT_PAUSE`). */
+export const STOPPED_AT_PAUSE = "not run: the run stopped at a pause before Batch";
+
+/** The sentence every case left is recorded with when a run stops at the
+ * pause before batch `batch`. */
+export function stoppedAtPause(batch: number): string {
+  return `${STOPPED_AT_PAUSE} ${batch}`;
+}

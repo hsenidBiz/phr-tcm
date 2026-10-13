@@ -1,9 +1,9 @@
 // Auto Run's own execution order for a PBI. The list starts in the planned
 // order (the saved one, else the suggested one). When the run pauses, the
-// list is split into batches: a "Batch N (k cases)" heading above each
-// batch's first case, with the pause before it (settings to set, shared
-// state to put back). Run Tests has its own order and this does not touch
-// it.
+// list is split into batches: a "Batch N (k cases)" heading, then the pause
+// before that batch (settings to set, shared state to put back), then its
+// cases - the order the review, Past runs and the report use too. Run Tests
+// has its own order and this does not touch it.
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { commands, type PlanView } from "../../bindings";
@@ -133,6 +133,7 @@ export default function ExecutionOrderDialog({
               const lines = batch.pause ? pauseLines(batch.pause, titleOf) : [];
               return (
                 <div className="space-y-1 pt-1">
+                  <h3 className="text-xs font-semibold text-text">{batchLabel(batch.n, batch.ids.length)}</h3>
                   {lines.length > 0 && (
                     <div className="space-y-0.5 border-l-2 border-l-warning bg-surface-2 px-3 py-1.5 text-xs text-warning">
                       {lines.map((l) => (
@@ -140,7 +141,6 @@ export default function ExecutionOrderDialog({
                       ))}
                     </div>
                   )}
-                  <h3 className="text-xs font-semibold text-text">{batchLabel(batch.n, batch.ids.length)}</h3>
                 </div>
               );
             }}

@@ -204,17 +204,22 @@ fn incoming_of(after: &[Vec<usize>]) -> Vec<usize> {
 /// the order.
 pub fn suggest(cases_in_list_order: &[(i32, Marks)]) -> Vec<i32> {
     let cases = first_of_each(cases_in_list_order);
-    let n = cases.len();
     let needs: Vec<Vec<String>> = cases.iter().map(|(_, m)| keys(&m.needs)).collect();
     let changes: Vec<Vec<String>> = cases.iter().map(|(_, m)| keys(&m.changes)).collect();
     let after = kept(&needs, &changes);
+    stable_sort(&after).into_iter().map(|i| cases[i].0).collect()
+}
 
-    let mut incoming = incoming_of(&after);
+/// The stable Kahn sort over the kept constraints: always the available
+/// case that comes first in list order. List positions out.
+fn stable_sort(after: &[Vec<usize>]) -> Vec<usize> {
+    let n = after.len();
+    let mut incoming = incoming_of(after);
     let mut placed = vec![false; n];
     let mut order = Vec::with_capacity(n);
     while let Some(next) = (0..n).find(|&i| !placed[i] && incoming[i] == 0) {
         placed[next] = true;
-        order.push(cases[next].0);
+        order.push(next);
         for &j in &after[next] {
             incoming[j] -= 1;
         }
@@ -252,24 +257,32 @@ const STARTS_TRIED: usize = 8;
 /// a new batch. A few ways of opening batches are tried: first in list
 /// order, the case most of the others on offer could join, and each
 /// distinct first batch on offer. Every candidate is counted with the same
-/// walk a run makes ([`batches`]), and the one with the fewest pauses wins;
-/// `suggest`'s own order is the first candidate, so on a tie it stays.
+/// walk a run makes ([`batches`]), resets and settings pauses alike, and
+/// the one with the fewest pauses among them wins; `suggest`'s own order is
+/// the first candidate, so on a tie it stays. This tries to keep pauses
+/// few: it is a heuristic, not a search for the smallest number possible.
 pub fn suggest_batched(cases_in_list_order: &[(i32, Marks, Needs)]) -> Vec<i32> {
-    let marks_only: Vec<(i32, Marks)> = cases_in_list_order.iter().map(|(id, m, _)| (*id, m.clone())).collect();
-    let plain = suggest(&marks_only);
     let with: Vec<(i32, (&Marks, &Needs))> = cases_in_list_order.iter().map(|(id, m, s)| (*id, (m, s))).collect();
     let cases = first_of_each(&with);
-    if cases.iter().all(|(_, (_, s))| setting_keys(s).is_empty()) {
-        return plain;
-    }
     let n = cases.len();
     let needs: Vec<Vec<String>> = cases.iter().map(|(_, (m, _))| keys(&m.needs)).collect();
     let changes: Vec<Vec<String>> = cases.iter().map(|(_, (m, _))| keys(&m.changes)).collect();
-    let settings: Vec<Vec<(String, String)>> = cases.iter().map(|(_, (_, s))| setting_keys(s)).collect();
+    // The kept constraints, worked out once for the suggested order and
+    // every grouping walk.
     let after = kept(&needs, &changes);
+    let plain: Vec<i32> = stable_sort(&after).into_iter().map(|i| cases[i].0).collect();
+    if cases.iter().all(|(_, (_, s))| setting_keys(s).is_empty()) {
+        return plain;
+    }
+    let settings: Vec<Vec<(String, String)>> = cases.iter().map(|(_, (_, s))| setting_keys(s)).collect();
     let g = Grouping { after: &after, needs: &needs, changes: &changes, settings: &settings };
 
-    let mut candidates: Vec<Vec<usize>> = vec![g.walk(None, false), g.walk(None, true)];
+    let mut candidates: Vec<Vec<usize>> = vec![
+        g.walk(None, false, false),
+        g.walk(None, true, false),
+        g.walk(None, false, true),
+        g.walk(None, true, true),
+    ];
     let incoming = incoming_of(&after);
     let mut profiles: Vec<&[(String, String)]> = Vec::new();
     for i in (0..n).filter(|&i| incoming[i] == 0) {
@@ -278,7 +291,8 @@ pub fn suggest_batched(cases_in_list_order: &[(i32, Marks, Needs)]) -> Vec<i32> 
         }
         if !profiles.iter().any(|p| same_settings(p, &settings[i])) {
             profiles.push(&settings[i]);
-            candidates.push(g.walk(Some(i), true));
+            candidates.push(g.walk(Some(i), true, false));
+            candidates.push(g.walk(Some(i), true, true));
         }
     }
 
@@ -321,7 +335,10 @@ impl Grouping<'_> {
     /// and opens a new batch only when none fits. A new batch opens with
     /// `start` (the first one, when it is on offer), else with the case most
     /// of the others on offer could join (`widest`), else with the first.
-    fn walk(&self, start: Option<usize>, widest: bool) -> Vec<usize> {
+    ///
+    /// With `merge`, a new batch opens first with a case on offer that needs
+    /// a reset anyway, so that reset rides the same pause as the settings.
+    fn walk(&self, start: Option<usize>, widest: bool, merge: bool) -> Vec<usize> {
         let n = self.after.len();
         let mut incoming = incoming_of(self.after);
         let mut placed = vec![false; n];
@@ -344,12 +361,24 @@ impl Grouping<'_> {
                 Some(i) => i,
                 None => {
                     batch.clear();
-                    changed.clear();
-                    match start.filter(|s| order.is_empty() && open.contains(s)) {
+                    let due: Vec<usize> = if merge {
+                        open.iter().copied().filter(|&i| self.needs[i].iter().any(|k| changed.contains(k))).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    let from = if due.is_empty() { &open } else { &due };
+                    let s = match start.filter(|s| order.is_empty() && open.contains(s)) {
                         Some(s) => s,
-                        None if widest => self.widest(&open),
-                        None => open[0],
+                        None if widest => self.widest(from),
+                        None => from[0],
+                    };
+                    // A pause that resets clears what was changed, as the
+                    // run's walk does; one that only sets settings puts
+                    // nothing back, so what was changed stays changed.
+                    if self.needs[s].iter().any(|k| changed.contains(k)) {
+                        changed.clear();
                     }
+                    s
                 }
             };
             placed[next] = true;
@@ -491,11 +520,17 @@ fn batches_spelled(
             .collect();
         let clash = !agree(&needs, &current.settings);
         if !current.ids.is_empty() && (!blocked.is_empty() || clash) {
+            // A reset pause puts things back, and starts the count of what
+            // is changed afresh (as it always has). A pause that only sets
+            // settings puts nothing back: what is changed stays changed, so
+            // a reset still due shows up at the pause where it is needed.
+            if !blocked.is_empty() {
+                changed.clear();
+            }
             walked.push(std::mem::replace(
                 &mut current,
                 Walked { ids: Vec::new(), reset: blocked, settings: Vec::new() },
             ));
-            changed.clear();
         }
         current.ids.push(id);
         for (k, v) in needs {

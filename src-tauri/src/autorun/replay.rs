@@ -101,9 +101,21 @@ pub trait Browsers {
     fn close(&mut self, d: Self::D) -> impl std::future::Future<Output = ()>;
 }
 
-/// The reason each case left when a run ends at a reset point is recorded
-/// with, and the outcome of each of its steps.
+/// The reason each case left was recorded with when a run ended at a reset
+/// point, before run batches. Runs saved then keep it; new runs say
+/// [`stopped_at_pause`].
 pub const STOPPED_AT_RESET: &str = "not run: the run stopped at a reset point";
+
+/// The words before the batch number in [`stopped_at_pause`]. The webview
+/// says the same (`src/screens/AutoRun/plan.ts`, `STOPPED_AT_PAUSE`).
+pub const STOPPED_AT_PAUSE: &str = "not run: the run stopped at a pause before Batch";
+
+/// The reason each case left is recorded with when a run ends at the pause
+/// before batch `batch`, and the outcome of each of its steps:
+/// `not run: the run stopped at a pause before Batch 2`.
+pub fn stopped_at_pause(batch: u32) -> String {
+    format!("{STOPPED_AT_PAUSE} {batch}")
+}
 
 /// Where an unattended run pauses before a batch: a reset point, settings
 /// to set, or both. The command gives one that asks the person in the app
@@ -650,13 +662,14 @@ fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecor
     }
 }
 
-/// A case left when the run ended at a reset point: not run, nothing
-/// proposed, and each step of its script (when it has one) not run for the
-/// same reason.
-fn stopped_at_reset(root: &Path, case: &CaseToRun) -> CaseRecord {
-    let mut record = unrun(case.case_id, &case.title, "", STOPPED_AT_RESET.to_string());
+/// A case left when the run ended at the pause before batch `batch`: not
+/// run, nothing proposed, and each step of its script (when it has one) not
+/// run for the same reason.
+fn stopped_at_reset(root: &Path, case: &CaseToRun, batch: u32) -> CaseRecord {
+    let why = stopped_at_pause(batch);
+    let mut record = unrun(case.case_id, &case.title, "", why.clone());
     if let Ok(Some(script)) = store::load_script(root, case.case_id) {
-        record.steps = script.steps.iter().map(|s| not_run(s, STOPPED_AT_RESET)).collect();
+        record.steps = script.steps.iter().map(|s| not_run(s, &why)).collect();
     }
     record
 }
@@ -932,7 +945,7 @@ pub async fn run_cases_checked<B: Browsers, P: StageDb>(
 /// anything. Continue runs the
 /// next phase; Stop (or the run's own Stop while paused) ends the run
 /// there, with every case left recorded as not run
-/// (`STOPPED_AT_RESET`). Each pause is kept in `run.resets` with how long
+/// (`stopped_at_pause`). Each pause is kept in `run.resets` with how long
 /// it lasted and how it ended. `cases` are in the order to run them.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
@@ -1000,7 +1013,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
             ));
             if !go_on {
                 for (k, rest) in cases.iter().enumerate().skip(i) {
-                    let record = stopped_at_reset(root, rest);
+                    let record = stopped_at_reset(root, rest, reset.batch);
                     let count = record.steps.len() as u32;
                     run.cases.push(record);
                     progress(tell(&run_id, k as u32, total, rest.case_id, &rest.title, "done", 0, count, ""));
