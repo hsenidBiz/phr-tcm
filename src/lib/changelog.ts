@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.18",
+    date: "2026-10-13",
+    items: [
+      "Export to Playwright now checks the repo first: new cases are ticked, cases already in the repo are skipped unless you tick one to replace it, and cases the repo marks as Excluded are never exported.",
+      "Sync has an Add new button that exports only the cases not in the repo yet, and lists any it could not add with the reason. Cases written in the repo itself are left alone unless you tick them.",
+    ],
+  },
+  {
     version: "2.1.3-beta.17",
     date: "2026-10-13",
     items: [
