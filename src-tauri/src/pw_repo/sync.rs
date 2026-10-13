@@ -1,50 +1,65 @@
 //! Sync: keeping the clone's copies of our Auto Run scripts current.
 //!
 //! - **The export record.** Every export (`pw_export::export::write_recorded`)
-//!   records, for each case it wrote, the script's fingerprint, when, and
-//!   the files written. One small JSON store per clone and project at
+//!   records, for each case it wrote, the fingerprint of what it read, when,
+//!   and the files written. One small JSON store per clone and project at
 //!   `<app data>/pw-sync/<clone-hash>-<project>.json`, always replaced
 //!   atomically (`ai_tools::atomic_write`). It is not a cache: nothing
 //!   expires, and it survives a restart and a sign-in as someone else.
-//! - **The states.** Each recorded case against its saved script now and
-//!   the clone now (`states`).
+//! - **The states.** Each recorded case against what an export would read
+//!   of it now, and the clone now (`states`).
 //!
 //! Update itself is the export: the same all-or-nothing write, for the
 //! cases asked for only.
 
 use crate::autorun::{approvals, recipe, store, CaseScript};
 use crate::pw_export::clone;
+use crate::pw_export::export::Fingerprinter;
 use crate::pw_repo::structure;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// The folder under the app's data folder that holds the records.
 pub const SYNC_DIR: &str = "pw-sync";
 
-/// What still has to happen in the repo for each updated case.
-pub const NEEDS_REPO: &str = "needs /gen-test stages 5 and 6 in the repo";
-
-/// The parts of a script a raw spec is made from, each hashed on its own so
+/// The parts of what an export reads of a case, each hashed on its own so
 /// an out-of-date case can say which changed.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Parts {
+    pub title: String,
     pub steps: String,
     pub area: String,
     pub account: String,
-    pub marks: String,
 }
 
-/// A script's fingerprint: SHA-256 (lowercase hex) of the canonical JSON
-/// (keys sorted all the way down) of its steps, area, account and marks.
-/// Nothing else counts: saving it again, its repair count or when it was
-/// saved changes nothing.
+/// A case's fingerprint: SHA-256 (lowercase hex) of the canonical JSON
+/// (keys sorted all the way down) of exactly what the export reads of it
+/// (`FingerprintInput`). Nothing else counts: saving the script again, its
+/// repair count, when it was saved or its marks (which the export never
+/// reads) change nothing.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Fingerprint {
     pub hash: String,
     pub parts: Parts,
+}
+
+/// What the export reads of a case (`export::Fingerprinter` gathers it).
+pub struct FingerprintInput {
+    pub title: String,
+    /// The steps with every component expanded, as JSON.
+    pub steps: Value,
+    /// The area the case starts in (or the Module it is placed by).
+    pub area: String,
+    /// That area's menu clicks, as JSON.
+    pub area_clicks: Value,
+    /// The script's account key.
+    pub account: String,
+    /// The repo user that account maps to, if it is mapped.
+    pub user_key: Option<String>,
 }
 
 fn sha(v: &Value) -> String {
@@ -52,17 +67,12 @@ fn sha(v: &Value) -> String {
     Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn trimmed(s: &Option<String>) -> String {
-    s.as_deref().map(str::trim).unwrap_or("").to_string()
-}
-
-pub fn fingerprint(script: &CaseScript) -> Fingerprint {
-    let steps = serde_json::to_value(&script.steps).unwrap_or(Value::Null);
-    let area = Value::String(trimmed(&script.area));
-    let account = Value::String(trimmed(&script.account));
-    let marks = json!({ "changes": script.changes, "needs_unchanged": script.needs_unchanged });
-    let parts = Parts { steps: sha(&steps), area: sha(&area), account: sha(&account), marks: sha(&marks) };
-    let hash = sha(&json!({ "steps": steps, "area": area, "account": account, "marks": marks }));
+pub fn fingerprint(input: &FingerprintInput) -> Fingerprint {
+    let title = Value::String(input.title.clone());
+    let area = json!({ "name": input.area, "clicks": input.area_clicks });
+    let account = json!({ "account": input.account, "user_key": input.user_key });
+    let parts = Parts { title: sha(&title), steps: sha(&input.steps), area: sha(&area), account: sha(&account) };
+    let hash = sha(&json!({ "title": title, "steps": input.steps, "area": area, "account": account }));
     Fingerprint { hash, parts }
 }
 
@@ -75,8 +85,8 @@ pub struct Exported {
     pub exported_at: String,
     /// Relative to the clone, forward slashes.
     pub files: Vec<String>,
-    /// The case's Module the export placed it by, for an Update when Azure
-    /// DevOps gives none.
+    /// The case's Module the export placed it by: the states read the case
+    /// by it, and an Update falls back on it when Azure DevOps gives none.
     #[serde(default)]
     pub module: String,
 }
@@ -101,14 +111,42 @@ pub fn record_path(dir: &Path, clone: &str, org: &str, project: &str) -> PathBuf
     dir.join(format!("{}-{}.json", clone_key(clone), recipe::project_slug(org, project)))
 }
 
-/// The record at `path`; none yet is an empty one.
+fn name_of(p: &Path) -> String {
+    p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+}
+
+/// The record at `path`; none yet is an empty one. One that cannot be
+/// parsed is moved aside as `<name>.corrupt-<ms>.json` beside it, logged,
+/// and read as empty: Sync starts again from scratch, and the next export
+/// records as usual.
 pub fn load(path: &Path) -> Result<ExportRecord, String> {
-    match std::fs::read_to_string(path) {
-        Ok(s) => serde_json::from_str(s.strip_prefix('\u{feff}').unwrap_or(&s))
-            .map_err(|e| format!("the Sync record is not readable: {e}")),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ExportRecord::default()),
-        Err(e) => Err(format!("the Sync record could not be read: {e}")),
+    let text = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ExportRecord::default()),
+        Err(e) => return Err(format!("the Sync record could not be read: {e}")),
+    };
+    let e = match serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text)) {
+        Ok(r) => return Ok(r),
+        Err(e) => e,
+    };
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let backup = path.with_file_name(format!("{stem}.corrupt-{ms}.json"));
+    match std::fs::rename(path, &backup) {
+        Ok(()) => crate::applog::warn(format!(
+            "pw-sync: the Sync record {} could not be read ({e}), so it was kept as {} and Sync starts again",
+            name_of(path),
+            name_of(&backup)
+        )),
+        Err(m) => crate::applog::warn(format!(
+            "pw-sync: the Sync record {} could not be read ({e}) nor moved aside ({m}), so it is read as empty",
+            name_of(path)
+        )),
     }
+    Ok(ExportRecord::default())
 }
 
 /// `save` with the writer passed in: the seam a test drives.
@@ -130,11 +168,16 @@ pub fn save(path: &Path, record: &ExportRecord) -> Result<(), String> {
     save_with(path, record, crate::ai_tools::atomic_write)
 }
 
+/// Held across a record's load, extend and save, so two exports at once
+/// cannot each keep only their own cases.
+static RECORDING: Mutex<()> = Mutex::new(());
+
 /// Records `cases` as just exported, keeping every other case's entry.
 pub fn record(path: &Path, cases: Vec<(i32, Exported)>) -> Result<(), String> {
     if cases.is_empty() {
         return Ok(());
     }
+    let _held = RECORDING.lock().unwrap_or_else(|e| e.into_inner());
     let mut r = load(path)?;
     r.cases.extend(cases);
     save(path, &r)
@@ -144,9 +187,9 @@ pub fn record(path: &Path, cases: Vec<(i32, Exported)>) -> Result<(), String> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(tag = "kind")]
 pub enum SyncState {
-    /// The script is unchanged since it was exported.
+    /// Nothing the export reads of it changed since it was exported.
     Current,
-    /// The script changed after it was exported; `why` says what.
+    /// Something the export reads of it changed; `why` says what.
     OutOfDate { why: String },
     /// Exported, but the clone has no section or no raw spec for it now.
     NotInRepo,
@@ -167,6 +210,9 @@ pub struct SyncRow {
 
 fn changed(was: &Parts, now: &Parts) -> String {
     let mut what = Vec::new();
+    if was.title != now.title {
+        what.push("title");
+    }
     if was.steps != now.steps {
         what.push("steps");
     }
@@ -175,9 +221,6 @@ fn changed(was: &Parts, now: &Parts) -> String {
     }
     if was.account != now.account {
         what.push("account");
-    }
-    if was.marks != now.marks {
-        what.push("marks");
     }
     if what.is_empty() {
         "the script changed since the export".to_string()
@@ -192,7 +235,8 @@ fn same(a: &Option<String>, b: &str) -> bool {
 
 /// Every case recorded for this clone and project, and every script saved
 /// in this project that never was, each with its state, by case id.
-/// `root` is Auto Run's store, `dir` the records' folder. Read only.
+/// `root` is Auto Run's store, `dir` the records' folder. Read only, but
+/// for a record that cannot be parsed (`load`).
 pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &str) -> Result<Vec<SyncRow>, String> {
     let clone = Path::new(clone_path.trim());
     let repo = clone::open(clone)?;
@@ -205,6 +249,7 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
         .filter_map(|(id, _)| id.parse().ok())
         .collect();
     let record = load(&record_path(dir, clone_path, org, project))?;
+    let fingerprints = Fingerprinter::load(root, org, project)?;
 
     let mut scripts: BTreeMap<i32, CaseScript> = store::list_scripts(root)
         .into_iter()
@@ -228,14 +273,11 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
             (None, _) => SyncState::NeverExported,
             (Some(_), _) if !(sections.contains(&id) && raw.contains(&id)) => SyncState::NotInRepo,
             (Some(_), None) => SyncState::OutOfDate { why: "its script is no longer in Auto Run".into() },
-            (Some(r), Some(s)) => {
-                let now = fingerprint(s);
-                if now.hash == r.fingerprint.hash {
-                    SyncState::Current
-                } else {
-                    SyncState::OutOfDate { why: changed(&r.fingerprint.parts, &now.parts) }
-                }
-            }
+            (Some(r), Some(_)) => match fingerprints.of(root, org, project, id, &r.module)? {
+                Some(now) if now.hash == r.fingerprint.hash => SyncState::Current,
+                Some(now) => SyncState::OutOfDate { why: changed(&r.fingerprint.parts, &now.parts) },
+                None => SyncState::OutOfDate { why: "its script is no longer in Auto Run".into() },
+            },
         };
         rows.push(SyncRow {
             case_id: id,

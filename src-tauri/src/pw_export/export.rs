@@ -25,6 +25,7 @@ const TMP_SUFFIX: &str = ".tcm-export-tmp";
 /// `suites/_generated/seed.spec.ts` is the repo's own: never a raw spec's name.
 const SEED_SPEC: &str = "seed.spec.ts";
 const MAX_RAW_NAME: usize = 60;
+const INDEX_REL: &str = "suites/_generated/index.json";
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct PreviewCase {
@@ -138,8 +139,13 @@ const NO_PLACE: &str =
 /// whether a recorded area was found. A project with no areas runs the case
 /// from home with no menu clicks, and it is placed by its Module instead.
 fn route(ctx: &Ctx, id: i32, script: &CaseScript) -> Result<(String, Vec<Target>, bool), String> {
-    let module = ctx.modules.get(&id).map(|m| m.trim()).unwrap_or("");
-    match nav::route_for(&ctx.nav, script.area.as_deref(), Some(module), script.account.as_deref())? {
+    route_with(&ctx.nav, ctx.modules.get(&id).map(String::as_str).unwrap_or(""), script)
+}
+
+/// `route` for one case's Module.
+fn route_with(nav_file: &NavFile, module: &str, script: &CaseScript) -> Result<(String, Vec<Target>, bool), String> {
+    let module = module.trim();
+    match nav::route_for(nav_file, script.area.as_deref(), Some(module), script.account.as_deref())? {
         Some(a) => Ok((a.name().to_string(), a.clicks.clone(), true)),
         None if module.is_empty() => Err(NO_PLACE.into()),
         None => Ok((module.to_string(), Vec::new(), false)),
@@ -242,6 +248,50 @@ fn load_expanded(root: &Path, org: &str, project: &str, id: i32) -> Result<Optio
         step.actions = expanded.into_iter().map(|(a, _)| a).collect();
     }
     Ok(Some(script))
+}
+
+/// What an export reads of a case, fingerprinted (`sync::fingerprint`):
+/// loaded once for a project, then asked about each case.
+pub struct Fingerprinter {
+    map: ExportMap,
+    nav: NavFile,
+    env_id: String,
+}
+
+impl Fingerprinter {
+    pub fn load(root: &Path, org: &str, project: &str) -> Result<Fingerprinter, String> {
+        Ok(Fingerprinter {
+            map: mapping::load(root, org, project)?,
+            nav: nav::load_nav(root, org, project)?,
+            env_id: crate::environments::active_id(root)?,
+        })
+    }
+
+    /// The fingerprint of case `id` as an export would read it now, placed
+    /// by `module` when its script names no area: its title, its steps with
+    /// every component expanded, where it starts (the area and its menu
+    /// clicks) and who it runs as (the account and the repo user it maps
+    /// to). `Ok(None)` when it has no script. A script whose components
+    /// cannot be expanded, or whose area cannot be found, is fingerprinted
+    /// with that reason in place of what could not be read, so it differs
+    /// from any fingerprint taken while it could.
+    pub fn of(&self, root: &Path, org: &str, project: &str, id: i32, module: &str) -> Result<Option<sync::Fingerprint>, String> {
+        let Some(saved) = store::load_script(root, id)? else {
+            return Ok(None);
+        };
+        let (steps, title) = match load_expanded(root, org, project, id) {
+            Ok(Some(s)) => (serde_json::to_value(&s.steps).unwrap_or_default(), s.title),
+            Ok(None) => return Ok(None),
+            Err(why) => (serde_json::Value::String(format!("not expandable: {why}")), saved.title.clone()),
+        };
+        let (area, clicks) = match route_with(&self.nav, module, &saved) {
+            Ok((name, clicks, _)) => (name, serde_json::to_value(&clicks).unwrap_or_default()),
+            Err(why) => (format!("no area: {why}"), serde_json::Value::Null),
+        };
+        let account = saved.account.as_deref().map(str::trim).unwrap_or("").to_string();
+        let user_key = self.map.accounts.get(&self.env_id).and_then(|m| m.get(&account)).cloned();
+        Ok(Some(sync::fingerprint(&sync::FingerprintInput { title, steps, area, area_clicks: clicks, account, user_key })))
+    }
 }
 
 fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (PreviewCase, Option<Ready>) {
@@ -564,9 +614,11 @@ pub fn write_with(
     // then index.json, so the index never points at a file that is missing.
     let mut outs: Vec<Out> = md_files.into_iter().map(|(rel, content)| Out { rel, content }).collect();
     outs.extend(raw_files);
+    // index.json only when an entry is new or moved: a re-export of cases
+    // it already maps leaves the repo's file as it is, byte for byte.
     let last_id = ready.last().map(|(i, _)| *i);
-    if let (Some(id), Some((_, file))) = (last_id, cases.last()) {
-        outs.push(Out { rel: "suites/_generated/index.json".into(), content: index_with(&index, id, file) });
+    if let (Some(id), Some((_, file)), true) = (last_id, cases.last(), index != repo.index) {
+        outs.push(Out { rel: INDEX_REL.into(), content: index_with(&index, id, file) });
     }
 
     commit(&repo.root, &outs)?;
@@ -598,10 +650,13 @@ pub fn write_recorded(
     modules: &BTreeMap<i32, String>,
     docs: &BTreeMap<i32, CaseDoc>,
 ) -> Result<ExportResult, String> {
-    let mut saved: BTreeMap<i32, CaseScript> = BTreeMap::new();
+    // Taken before the write: a script changed while it runs shows as out of date.
+    let fingerprints = Fingerprinter::load(root, org, project)?;
+    let mut saved: BTreeMap<i32, (String, sync::Fingerprint)> = BTreeMap::new();
     for &id in case_ids {
-        if let Ok(Some(s)) = store::load_script(root, id) {
-            saved.insert(id, s);
+        let module = modules.get(&id).map(String::as_str).unwrap_or("");
+        if let (Ok(Some(s)), Ok(Some(fp))) = (store::load_script(root, id), fingerprints.of(root, org, project, id, module)) {
+            saved.insert(id, (s.title, fp));
         }
     }
     let mut result = write_with(root, org, project, case_ids, clone_path, modules, docs)?;
@@ -610,15 +665,17 @@ pub fn write_recorded(
         .cases
         .iter()
         .filter_map(|(id, file)| {
-            let script = saved.get(id)?;
+            let (title, fingerprint) = saved.get(id)?;
             let mut files: Vec<String> = result.sections.iter().filter(|(i, _)| i == id).map(|(_, f)| f.clone()).collect();
             files.push(format!("suites/_generated/{file}"));
-            files.push("suites/_generated/index.json".into());
+            if result.files.iter().any(|f| f == INDEX_REL) {
+                files.push(INDEX_REL.into());
+            }
             Some((
                 *id,
                 sync::Exported {
-                    title: script.title.clone(),
-                    fingerprint: sync::fingerprint(script),
+                    title: title.clone(),
+                    fingerprint: fingerprint.clone(),
                     exported_at: at.clone(),
                     files,
                     module: modules.get(id).cloned().unwrap_or_default(),

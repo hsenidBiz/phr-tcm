@@ -131,10 +131,23 @@ fn is_blank(line: &str) -> bool {
     line.trim().is_empty()
 }
 
+/// A markdown heading: one to six `#` at the line's start, then a space or
+/// a tab. `#11 deletes it` or `#hashtag` is text, not a heading.
+fn is_heading(line: &str) -> bool {
+    let hashes = line.len() - line.trim_start_matches('#').len();
+    (1..=6).contains(&hashes) && line[hashes..].starts_with([' ', '\t'])
+}
+
+/// A code fence's opening or closing line.
+fn is_fence(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("```") || t.starts_with("~~~")
+}
+
 /// A paragraph starting at `lines[at]`, with the blank lines after it.
 fn paragraph_from(lines: &[&str], at: usize) -> usize {
     let mut end = at + 1;
-    while end < lines.len() && !is_blank(lines[end]) && !lines[end].starts_with('#') {
+    while end < lines.len() && !is_blank(lines[end]) && !is_heading(lines[end]) {
         end += 1;
     }
     while end < lines.len() && is_blank(lines[end]) {
@@ -143,12 +156,28 @@ fn paragraph_from(lines: &[&str], at: usize) -> usize {
     end
 }
 
+/// From `lines[at]` up to the next heading outside a code fence.
+fn block_from(lines: &[&str], at: usize) -> usize {
+    let mut fenced = is_fence(lines[at]);
+    let mut end = at + 1;
+    while end < lines.len() && (fenced || !is_heading(lines[end])) {
+        if is_fence(lines[end]) {
+            fenced = !fenced;
+        }
+        end += 1;
+    }
+    end
+}
+
 /// The blocks of a case section the repo writes itself, which a re-export
-/// keeps exactly as they are (byte for byte), in the repo's own places:
+/// keeps exactly as they are (byte for byte):
 /// - `**Also:** ...`, the line `/gen-test --also` writes under the heading;
 /// - `**Added by engineer (not from ADO):**` and everything after it up to
-///   the next heading: the steps an engineer added, and their notes;
-/// - an `**Assertion floor:** ...` line that `npm run spec:floor` appended.
+///   the next markdown heading outside a code fence: the steps an engineer
+///   added, and their notes. Put back before Cleanup, or after it when the
+///   engineer had it after Cleanup;
+/// - an `**Assertion floor:** ...` paragraph that `npm run spec:floor`
+///   appended, put back at the section's end.
 ///
 /// A `## Amendment` section is a level-two heading of its own, so it is
 /// never inside a case section and `splice` leaves it where it is.
@@ -156,11 +185,17 @@ fn paragraph_from(lines: &[&str], at: usize) -> usize {
 struct LocalBlocks {
     also: String,
     engineer: String,
+    engineer_after_cleanup: bool,
     floor: String,
+}
+
+fn is_cleanup(line: &str) -> bool {
+    line.starts_with("### Cleanup")
 }
 
 fn local_blocks(old: &[&str]) -> LocalBlocks {
     let mut out = LocalBlocks::default();
+    let mut past_cleanup = false;
     let mut i = 0;
     while i < old.len() {
         let line = old[i].trim_start();
@@ -169,17 +204,16 @@ fn local_blocks(old: &[&str]) -> LocalBlocks {
             out.also.extend(old[i..end].iter().copied());
             end
         } else if line.starts_with("**Added by engineer") {
-            let mut end = i + 1;
-            while end < old.len() && !old[end].starts_with('#') {
-                end += 1;
-            }
+            let end = block_from(old, i);
             out.engineer.extend(old[i..end].iter().copied());
+            out.engineer_after_cleanup = past_cleanup;
             end
         } else if line.starts_with("**Assertion floor:**") {
             let end = paragraph_from(old, i);
             out.floor.extend(old[i..end].iter().copied());
             end
         } else {
+            past_cleanup |= is_cleanup(old[i]);
             i + 1
         };
         i = end;
@@ -188,8 +222,7 @@ fn local_blocks(old: &[&str]) -> LocalBlocks {
 }
 
 /// `section` (as `section()` writes it) with the old section's own blocks
-/// put back: Also under the heading, the engineer's steps before Cleanup,
-/// the assertion floor at the end.
+/// put back (`LocalBlocks`).
 fn with_local_blocks(section: &str, old: &[&str]) -> String {
     let local = local_blocks(old);
     if local.also.is_empty() && local.engineer.is_empty() && local.floor.is_empty() {
@@ -201,13 +234,18 @@ fn with_local_blocks(section: &str, old: &[&str]) -> String {
     while under_heading < lines.len() && is_blank(lines[under_heading]) {
         under_heading += 1;
     }
-    let cleanup = lines.iter().position(|l| l.starts_with("### Cleanup")).unwrap_or(lines.len());
+    let cleanup = lines.iter().position(|l| is_cleanup(l)).unwrap_or(lines.len()).max(under_heading);
     let mut o = String::with_capacity(section.len() + local.also.len() + local.engineer.len() + local.floor.len());
     o.extend(lines[..under_heading].iter().copied());
     o.push_str(&local.also);
-    o.extend(lines[under_heading..cleanup.max(under_heading)].iter().copied());
-    o.push_str(&local.engineer);
-    o.extend(lines[cleanup.max(under_heading)..].iter().copied());
+    o.extend(lines[under_heading..cleanup].iter().copied());
+    if !local.engineer_after_cleanup {
+        o.push_str(&local.engineer);
+    }
+    o.extend(lines[cleanup..].iter().copied());
+    if local.engineer_after_cleanup {
+        o.push_str(&local.engineer);
+    }
     o.push_str(&local.floor);
     o
 }

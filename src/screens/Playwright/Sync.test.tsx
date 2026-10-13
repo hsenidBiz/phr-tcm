@@ -65,10 +65,22 @@ const updates = (calls: Call[]) => calls.filter((c) => c.cmd === "pw_sync_update
 test("each case shows its state", async () => {
   mount();
   expect(await screen.findByText("#10 Ten")).toBeTruthy();
+  expect(screen.getByText(/every other section and file stay as they are/)).toBeTruthy();
+  expect(document.body.textContent).not.toMatch(/nothing else in the repo/i);
   expect(screen.getByText("Current")).toBeTruthy();
   expect(screen.getByText("Out of date: changed since the export: steps")).toBeTruthy();
   expect(screen.getByText("Not in the repo")).toBeTruthy();
   expect(screen.getByText("Never exported")).toBeTruthy();
+  // When, in local time, not the raw UTC stamp.
+  const local = new Date("2026-10-01T10:00:00Z").toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  expect(screen.getAllByText(`exported ${local}`).length).toBe(4);
+  expect(document.body.textContent).not.toContain("2026-10-01T10:00:00Z");
   // A case whose script is gone cannot be ticked, nor counted as updatable.
   const gone = screen.getByRole("checkbox", { name: "Tick #14 Fourteen" });
   expect(gone.hasAttribute("disabled") || gone.getAttribute("aria-disabled") === "true" || gone.hasAttribute("data-disabled")).toBe(true);

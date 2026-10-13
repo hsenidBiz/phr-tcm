@@ -216,9 +216,10 @@ pub async fn pw_sync_states(app: tauri::AppHandle, clone: String, org: String, p
 }
 
 /// Exports `cases` again through Export to Playwright's own all-or-nothing
-/// write, and records them: each one's section spliced (the repo's own
-/// blocks kept), its raw spec replaced, its `index.json` entry kept or
-/// added. Nothing else in the clone is touched. A refusal writes nothing
+/// write, and records them: each one's section rewritten from Azure DevOps
+/// (the repo's Added by engineer, Also and Assertion floor blocks kept),
+/// its raw spec replaced, its `index.json` entry kept or added. Every other
+/// section and file stays as it is. A refusal writes nothing
 /// and leaves the record as it was. Each case is placed by its Module as
 /// Azure DevOps has it now, else as it was at its last export.
 #[tauri::command]
@@ -240,6 +241,18 @@ pub async fn pw_sync_update(
     let dir = super::pw_export::sync_dir(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
     let record = sync::load(&sync::record_path(&dir, &configured, &org, &project))?;
+    // Refuse an unexportable selection before any request is made, as
+    // Export does, placing each case by the Module it was exported by. A
+    // case never exported has no Module yet: the write itself checks it,
+    // once Azure DevOps has given its Module.
+    let recorded: BTreeMap<i32, String> =
+        cases.iter().filter_map(|id| record.cases.get(id).map(|e| (*id, e.module.clone()))).collect();
+    {
+        let known: Vec<i32> = recorded.keys().copied().collect();
+        let (root, org, project, configured) = (root.clone(), org.clone(), project.clone(), configured.clone());
+        blocking(clone.clone(), false, move |_, _| export::ensure_exportable(&root, &org, &project, &known, &configured, &recorded))
+            .await?;
+    }
     let docs = super::pw_export::read_docs(&app, &org, &project, &cases, module_ref.as_deref(), preconditions_ref.as_deref()).await?;
     let modules: BTreeMap<i32, String> = cases
         .iter()

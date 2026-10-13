@@ -352,7 +352,7 @@ export default function PlaywrightExportDialog({
               ))}
             </ol>
             <p className="text-xs text-muted">
-              Exporting a case again replaces that case's section in its test-case file, keeping the repo's own blocks in it (Also, Added by engineer, Assertion floor).
+              Exporting a case again rewrites its section from Azure DevOps; the repo's Added by engineer, Also and Assertion floor blocks and every other section and file stay as they are.
             </p>
             {result.record_error && <p className="text-xs text-warning">{result.record_error}</p>}
             {refreshError && <p className="text-xs text-faint">{refreshError}</p>}

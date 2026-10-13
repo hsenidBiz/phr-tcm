@@ -7,7 +7,8 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
-use v2_lib::autorun::{store, CaseScript};
+use v2_lib::autorun::components::{self, Component};
+use v2_lib::autorun::{store, CaseScript, StepScript};
 use v2_lib::pw_export::export::{write_recorded, ExportResult};
 use v2_lib::pw_export::test_case::CaseDoc;
 use v2_lib::pw_repo::sync::{self, ExportRecord, SyncRow, SyncState};
@@ -120,52 +121,100 @@ fn a_repair_makes_a_case_out_of_date_and_an_unchanged_one_stays_current() {
 }
 
 #[test]
-fn the_fingerprint_is_the_steps_area_account_and_marks_only() {
-    let base = json!({
-        "case_id": 5, "title": "t", "account": "admin", "area": "Definition Wizard",
-        "steps": [{ "step_number": 1, "actions": [
-            { "kind": "expect_response", "url_contains": "x", "json": { "a": 1, "b": { "c": 2, "d": 3 } } }
-        ] }]
-    });
-    let parse = |v: serde_json::Value| -> CaseScript { serde_json::from_value(v).unwrap() };
-    let fp = |v: serde_json::Value| sync::fingerprint(&parse(v));
-    let first = fp(base.clone());
+fn the_fingerprint_ignores_key_order_and_names_each_part() {
+    let steps = |v: serde_json::Value| -> serde_json::Value {
+        let s: Vec<StepScript> = serde_json::from_value(v).unwrap();
+        serde_json::to_value(&s).unwrap()
+    };
+    let input = |steps: serde_json::Value| sync::FingerprintInput {
+        title: "t".into(),
+        steps,
+        area: "Definition Wizard".into(),
+        area_clicks: json!(["a.dw"]),
+        account: "admin".into(),
+        user_key: Some("REPO_KEY".into()),
+    };
+    let base = json!([{ "step_number": 1, "actions": [
+        { "kind": "expect_response", "url_contains": "x", "json": { "a": 1, "b": { "c": 2, "d": 3 } } }
+    ] }]);
+    let first = sync::fingerprint(&input(steps(base.clone())));
 
-    // The same script with its keys in another order.
-    let reordered = json!({
-        "steps": [{ "actions": [
-            { "json": { "b": { "d": 3, "c": 2 }, "a": 1 }, "url_contains": "x", "kind": "expect_response" }
-        ], "step_number": 1 }],
-        "area": "Definition Wizard", "account": "admin", "title": "t", "case_id": 5
-    });
-    assert_eq!(fp(reordered), first);
+    // The same steps with their keys in another order.
+    let reordered = json!([{ "actions": [
+        { "json": { "b": { "d": 3, "c": 2 }, "a": 1 }, "url_contains": "x", "kind": "expect_response" }
+    ], "step_number": 1 }]);
+    assert_eq!(sync::fingerprint(&input(steps(reordered))), first);
 
-    // What a save or a repair count changes does not count.
-    let mut saved = base.clone();
-    saved["saved_at"] = json!("2026-10-13T10:00:00Z");
-    saved["repairs"] = json!(3);
-    saved["title"] = json!("renamed");
-    assert_eq!(fp(saved), first);
+    // Each part changes its own hash and the whole.
+    let mut i = input(steps(base.clone()));
+    i.title = "renamed".into();
+    let t = sync::fingerprint(&i);
+    assert!(t.hash != first.hash && t.parts.title != first.parts.title && t.parts.steps == first.parts.steps);
+    let mut i = input(steps(base.clone()));
+    i.area_clicks = json!(["a.other"]);
+    assert_ne!(sync::fingerprint(&i).parts.area, first.parts.area);
+    let mut i = input(steps(base.clone()));
+    i.user_key = Some("OTHER_KEY".into());
+    assert_ne!(sync::fingerprint(&i).parts.account, first.parts.account);
+    let mut unchecked = base;
+    unchecked[0]["unchecked"] = json!("not visible");
+    assert_ne!(sync::fingerprint(&input(steps(unchecked))).parts.steps, first.parts.steps);
+}
 
-    // Each part does, and says so.
-    let mut area = base.clone();
-    area["area"] = json!("Elsewhere");
-    let a = fp(area);
-    assert_ne!(a.hash, first.hash);
-    assert_ne!(a.parts.area, first.parts.area);
-    assert_eq!(a.parts.steps, first.parts.steps);
+#[test]
+fn what_the_export_reads_decides_the_state() {
+    let sx = Sx::new();
+    let press = |selector: &str| -> Component {
+        serde_json::from_value(json!({
+            "name": "Press", "description": "d", "version": 1, "inputs": [],
+            "actions": [{ "kind": "click", "selector": selector }]
+        }))
+        .unwrap()
+    };
+    components::put(sx.root(), ORG, PROJECT, press("#go")).unwrap();
+    sx.fx.script(40, "Forty", "admin", "Definition Wizard", json!([{ "kind": "use_component", "component": "Press", "inputs": {} }]));
+    sx.fx.run("r40", "5", 40, "Passed");
+    sx.fx.good(41, "Forty one");
+    sx.export(&[40, 41], &docs(&[(40, "Forty"), (41, "Forty one")])).unwrap();
+    assert_eq!(sx.state(40), SyncState::Current);
 
-    let mut account = base.clone();
-    account["account"] = json!("other");
-    assert_ne!(fp(account).parts.account, first.parts.account);
+    // Marks are not read by the export: an edit of them alone changes nothing.
+    let mut s = sx.script(41);
+    s.changes = vec!["cycle published".into()];
+    s.needs_unchanged = vec!["draft".into()];
+    store::save_script(sx.root(), &s).unwrap();
+    assert_eq!(sx.state(41), SyncState::Current);
 
-    let mut marks = base.clone();
-    marks["changes"] = json!(["cycle published"]);
-    assert_ne!(fp(marks).parts.marks, first.parts.marks);
+    // The title is.
+    let mut s = sx.script(41);
+    s.title = "Forty one, renamed".into();
+    store::save_script(sx.root(), &s).unwrap();
+    assert_eq!(sx.state(41), SyncState::OutOfDate { why: "changed since the export: title".into() });
 
-    let mut steps = base;
-    steps["steps"][0]["unchecked"] = json!("not visible");
-    assert_ne!(fp(steps).parts.steps, first.parts.steps);
+    // A shared component the case uses changes: its expanded steps do.
+    components::put(sx.root(), ORG, PROJECT, press("#gone")).unwrap();
+    assert_eq!(sx.state(40), SyncState::OutOfDate { why: "changed since the export: steps".into() });
+}
+
+#[test]
+fn a_record_that_cannot_be_read_is_kept_aside_and_sync_starts_again() {
+    let sx = Sx::new();
+    sx.fx.good(20, "Twenty");
+    sx.stamp(20);
+    sx.export(&[20], &docs(&[(20, "Twenty")])).unwrap();
+    let path = sx.record_path();
+    fs::write(&path, "{ not json").unwrap();
+
+    assert_eq!(sx.state(20), SyncState::NeverExported);
+    let names: Vec<String> = fs::read_dir(sx.dir.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+    let backup = names.iter().find(|n| n.starts_with(&format!("{stem}.corrupt-")) && n.ends_with(".json")).expect("kept aside");
+    assert_eq!(fs::read_to_string(sx.dir.path().join(backup)).unwrap(), "{ not json");
+    assert!(!path.exists());
+
+    // The next export records as usual.
+    sx.export(&[20], &docs(&[(20, "Twenty")])).unwrap();
+    assert_eq!(sx.state(20), SyncState::Current);
 }
 
 #[test]
@@ -233,7 +282,8 @@ fn update_re_exports_only_the_given_cases() {
     assert_eq!(after.cases[&21], record_21);
     assert_eq!(
         after.cases[&20].files,
-        vec![MD_REL.to_string(), sx.raw(20), "suites/_generated/index.json".to_string()]
+        vec![MD_REL.to_string(), sx.raw(20)],
+        "20 was already in the index, so the index was not written"
     );
 }
 
@@ -263,6 +313,12 @@ fn update_leaves_the_repos_own_files_alone() {
     write(c.join(format!("{feature}/pages/proficiency-levels.page.ts")), "export class P {}\n");
     write(c.join(format!("{feature}/specs/proficiency-levels.spec.ts")), "// refactored 20\r\ntest('x', () => {});\n");
     write(c.join("suites/_generated/seed.spec.ts"), "// seed\n");
+    // The repo's index in its own layout (CRLF, its own spacing).
+    let raw_name = sx.raw(20).trim_start_matches("suites/_generated/").to_string();
+    write(
+        c.join("suites/_generated/index.json"),
+        &format!("{{\r\n    \"1\" : \"old.spec.ts\",\r\n    \"20\" : \"{raw_name}\"\r\n}}\r\n"),
+    );
     let before = snapshot(c);
     let raw = sx.raw(20);
 
@@ -271,19 +327,18 @@ fn update_leaves_the_repos_own_files_alone() {
     assert_eq!(r.record_error, None);
     let after = snapshot(c);
 
-    // Nothing but 20's section, its raw spec and the index was written,
-    // and nothing was added or removed.
+    // Nothing but 20's section and its raw spec was written, and nothing
+    // was added or removed. The index already maps 20 to its file, so it is
+    // left exactly as the repo wrote it.
     assert_eq!(before.keys().collect::<Vec<_>>(), after.keys().collect::<Vec<_>>());
     for (rel, bytes) in &before {
-        if rel == MD_REL || *rel == raw || rel == "suites/_generated/index.json" {
+        if rel == MD_REL || *rel == raw {
             continue;
         }
         assert_eq!(&after[rel], bytes, "{rel} changed");
     }
     assert_ne!(after[&raw], before[&raw]);
-    let index: serde_json::Value = serde_json::from_slice(&after["suites/_generated/index.json"]).unwrap();
-    let was: serde_json::Value = serde_json::from_slice(&before["suites/_generated/index.json"]).unwrap();
-    assert_eq!(index, was, "every index entry kept, 20 still on its file");
+    assert!(!r.files.iter().any(|f| f.ends_with("index.json")), "{:?}", r.files);
 
     // In the test-case file: everything before 20's section and everything
     // after it byte for byte, and the repo's own blocks inside it verbatim.
@@ -383,4 +438,140 @@ fn a_re_export_keeps_the_repos_blocks_in_a_section() {
     // A section without blocks of the repo's is replaced exactly as before.
     let plain = format!("# Set\n\n{ours}");
     assert_eq!(splice(&plain, 7, &section(&d2)), format!("# Set\n\n{}", section(&d2)));
+}
+
+/// 135271 as the repo has it: its section rewritten by `/gen-test`, an
+/// engineer's step 11 and its note before Cleanup, and the cases around it.
+const ENGINEER_135271: &str = concat!(
+    "**Added by engineer (not from ADO):**\n",
+    "\n",
+    "| # | Step | Expected |\n",
+    "|---|------|----------|\n",
+    "| 11 | Delete the \"Core Competencies\" group created by step 8 | The group is removed, so the template is free for the next run |\n",
+    "\n",
+    "ADO's own step numbering runs 2 to 11, skipping id 1.\n",
+    "The table above renumbers sequentially; step\n",
+    "11 (deletion) has no ADO counterpart.\n",
+    "\n",
+);
+
+fn doc_135271() -> CaseDoc {
+    let mut d = doc(135271, "Competencies - Applying a template twice is blocked");
+    d.state = "Design".into();
+    d.area_path = "HRM\\Gamma Guardians".into();
+    d.iteration_path = "HRM\\Sprint 4".into();
+    d.project = "HRM".into();
+    d.tags = String::new();
+    d.preconditions = "Signed in as an HR admin".into();
+    d.steps = vec![
+        ("Click the Core Competencies template card.".into(), "A new group appears".into()),
+        ("Click it a second time.".into(), "A warning is shown".into()),
+    ];
+    d.side = "admin".into();
+    d.navigation_captured = true;
+    d.feature_title = "Competencies".into();
+    d
+}
+
+/// The old 135271 section with `block` where the engineer's block is.
+fn file_135271(before_cleanup: &str, after_cleanup: &str) -> String {
+    format!(
+        concat!(
+            "# Test Case Set: Competencies\n\n",
+            "## 135270 \u{2014} Quick create adds a group\n\nkept\n\n",
+            "## 135271 \u{2014} Competencies - Apply template twice\n\n",
+            "### Metadata\n\n| ID | 135271 |\n\n",
+            "### Test Steps\n\n| 1 | a | b |\n\n",
+            "{}",
+            "### Cleanup / Postconditions\n\n| # | Action |\n|---|--------|\n| 1 | Deleted by step 11 |\n| 2 | Log out all actors |\n\n",
+            "{}",
+            "## 135283 \u{2014} Import Excel\n\nkept\n",
+        ),
+        before_cleanup, after_cleanup
+    )
+}
+
+#[test]
+fn the_135271_section_is_rewritten_with_the_engineers_block_before_cleanup() {
+    use v2_lib::pw_export::test_case::{section, splice};
+    let out = splice(&file_135271(ENGINEER_135271, ""), 135271, &section(&doc_135271()));
+    let expected = [
+        "# Test Case Set: Competencies\n\n",
+        "## 135270 \u{2014} Quick create adds a group\n\nkept\n\n",
+        "## 135271 \u{2014} Competencies - Applying a template twice is blocked\n\n",
+        "### Metadata\n\n",
+        "| Field | Value |\n",
+        "|-------|-------|\n",
+        "| ID | 135271 |\n",
+        "| Title | Competencies - Applying a template twice is blocked |\n",
+        "| State | Design |\n",
+        "| Area Path | HRM\\Gamma Guardians |\n",
+        "| Iteration | HRM\\Sprint 4 |\n",
+        "| Project | HRM |\n",
+        "| Module | Performance |\n",
+        "| Tags |  |\n",
+        "\n**Side:** admin \u{2014} mapped in TCM.\n\n",
+        "**Navigation:** captured in src/navigation.json.\n\n",
+        "### Preconditions\n\n| # | Condition |\n|---|-----------|\n| 1 | Signed in as an HR admin |\n",
+        "\n### Test Data & Validation\n\n",
+        "| Name | Value / Rule | Source | Expected After Save | Notes |\n",
+        "|------|--------------|--------|---------------------|-------|\n",
+        "\n### Navigation Path\n\n```text\nCompetencies\n```\n",
+        "\n### Test Steps\n\n",
+        "| Step | Action | Expected Result |\n",
+        "|------|--------|-----------------|\n",
+        "| 1 | Click the Core Competencies template card. | A new group appears |\n",
+        "| 2 | Click it a second time. | A warning is shown |\n",
+        "\n",
+        ENGINEER_135271,
+        "### Cleanup / Postconditions\n\n| # | Action |\n|---|--------|\n\n",
+        "## 135283 \u{2014} Import Excel\n\nkept\n",
+    ]
+    .concat();
+    assert_eq!(out, expected);
+}
+
+#[test]
+fn an_engineers_block_after_cleanup_stays_after_it() {
+    use v2_lib::pw_export::test_case::{section, splice};
+    let out = splice(&file_135271("", ENGINEER_135271), 135271, &section(&doc_135271()));
+    let ours = section(&doc_135271());
+    let expected_section = format!("{ours}{ENGINEER_135271}");
+    assert!(out.contains(&format!("{expected_section}## 135283 ")), "{out}");
+}
+
+#[test]
+fn a_floor_inside_a_case_section_is_kept_at_its_end() {
+    use v2_lib::pw_export::test_case::{section, splice};
+    let floor = "**Assertion floor:** 12 (raw sum 14), set by `npm run spec:floor` on 2026-09-02\n\n";
+    let out = splice(&file_135271(ENGINEER_135271, floor), 135271, &section(&doc_135271()));
+    let ours = section(&doc_135271());
+    let cleanup = ours.find("### Cleanup").unwrap();
+    let expected_section = format!("{}{ENGINEER_135271}{}{floor}", &ours[..cleanup], &ours[cleanup..]);
+    assert!(out.contains(&format!("{expected_section}## 135283 ")), "{out}");
+    assert_eq!(out.matches(floor).count(), 1);
+}
+
+#[test]
+fn a_hash_line_in_an_engineers_note_does_not_end_the_block() {
+    use v2_lib::pw_export::test_case::{section, splice};
+    let block = concat!(
+        "**Added by engineer (not from ADO):**\n",
+        "\n",
+        "| # | Step | Expected |\n",
+        "|---|------|----------|\n",
+        "| 11 | Delete the group | It is gone |\n",
+        "\n",
+        "#11 deletes what step 8 made; see #135270 for the same gap.\n",
+        "```bash\n",
+        "# a comment, not a heading\n",
+        "npm run qa\n",
+        "```\n",
+        "\n",
+    );
+    let out = splice(&file_135271(block, ""), 135271, &section(&doc_135271()));
+    let ours = section(&doc_135271());
+    let cleanup = ours.find("### Cleanup").unwrap();
+    let expected_section = format!("{}{block}{}", &ours[..cleanup], &ours[cleanup..]);
+    assert!(out.contains(&format!("{expected_section}## 135283 ")), "{out}");
 }

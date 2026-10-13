@@ -7,9 +7,11 @@
 // gone), or never exported. A script change anywhere in the app
 // (`autorunScriptsChanged`) reads the states again.
 //
-// Update replaces a case's raw spec and its section in the test-case file;
-// the repo's own blocks, other sections and files are left as they are. A
-// raw spec still needs the repo's refactorer, which each updated case says.
+// Update replaces a case's raw spec and rewrites its section in the
+// test-case file from Azure DevOps; the repo's Added by engineer, Also and
+// Assertion floor blocks, every other section and every other file are left
+// as they are. A raw spec still needs the repo's refactorer, which each
+// updated case says.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -26,7 +28,14 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** The query key of the states; the clone, org and project are part of it. */
 export const SYNC_KEY = "pw-sync";
 
-/** What each updated case still needs in the repo. */
+/** A UTC stamp as a local date and time; anything unreadable as it is. */
+function localTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** What each updated case still needs in the repo: said here only. */
 export const NEEDS_REPO = "needs /gen-test stages 5 and 6 in the repo";
 
 function stateText(s: SyncState): string {
@@ -125,8 +134,9 @@ export default function Sync({
     <section className="space-y-2" aria-label="Sync">
       <h3 className={sectionTitle}>Sync</h3>
       <p className="text-xs text-muted">
-        Whether the repo's copy of each exported script is current. Update exports the cases again: their raw specs
-        and their sections are replaced, and nothing else in the repo is changed.
+        Whether the repo's copy of each exported script is current. Update exports the cases again: each raw spec is
+        replaced and each case's section is rewritten from Azure DevOps; the repo's Added by engineer, Also and
+        Assertion floor blocks and every other section and file stay as they are.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" disabled={busy || outOfDate.length === 0} onClick={() => void update(outOfDate)}>
@@ -174,7 +184,7 @@ export default function Sync({
             />
             <span className="text-text">{`#${r.case_id} ${r.title}`}</span>
             <span className={`text-xs ${stateTone(r.state)}`}>{stateText(r.state)}</span>
-            {r.exported_at && <span className="text-xs text-muted">{`exported ${r.exported_at}`}</span>}
+            {r.exported_at && <span className="text-xs text-muted">{`exported ${localTime(r.exported_at)}`}</span>}
           </li>
         ))}
       </ul>

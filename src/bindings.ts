@@ -1325,9 +1325,10 @@ export const commands = {
 	pwSyncStates: (clone: string, org: string, project: string) => typedError<SyncRow[], string>(__TAURI_INVOKE("pw_sync_states", { clone, org, project })),
 	/**
 	 *  Exports `cases` again through Export to Playwright's own all-or-nothing
-	 *  write, and records them: each one's section spliced (the repo's own
-	 *  blocks kept), its raw spec replaced, its `index.json` entry kept or
-	 *  added. Nothing else in the clone is touched. A refusal writes nothing
+	 *  write, and records them: each one's section rewritten from Azure DevOps
+	 *  (the repo's Added by engineer, Also and Assertion floor blocks kept),
+	 *  its raw spec replaced, its `index.json` entry kept or added. Every other
+	 *  section and file stays as it is. A refusal writes nothing
 	 *  and leaves the record as it was. Each case is placed by its Module as
 	 *  Azure DevOps has it now, else as it was at its last export.
 	 */
@@ -5551,9 +5552,9 @@ export type SyncRow = {
 
 /**  Where a case stands. */
 export type SyncState = 
-/**  The script is unchanged since it was exported. */
+/**  Nothing the export reads of it changed since it was exported. */
 { kind: "Current" } | 
-/**  The script changed after it was exported; `why` says what. */
+/**  Something the export reads of it changed; `why` says what. */
 { kind: "OutOfDate"; why: string } | 
 /**  Exported, but the clone has no section or no raw spec for it now. */
 { kind: "NotInRepo" } | 
