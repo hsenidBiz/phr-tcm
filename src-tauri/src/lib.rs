@@ -45,6 +45,7 @@ pub mod note_server;
 pub mod optimize;
 pub mod pipelines;
 pub mod pw_export;
+pub mod pw_repo;
 pub mod report;
 pub mod run_order;
 pub mod saved_session;
@@ -76,7 +77,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, discovery, environments, guide, misc, prs, pw_export, queue, run_order, runs,
+        autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, discovery, environments, guide, misc, prs, pw_export, pw_repo, queue, run_order, runs,
         test_files, testplan, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
@@ -104,7 +105,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::ApiTemplatesChanged,
             events::AutorunScriptsChanged,
             events::AutorunCleanupProgress,
-            events::GuideProgress
+            events::GuideProgress,
+            events::PwOutput,
+            events::PwDone
         ])
         .commands(collect_commands![
             misc::ping,
@@ -324,6 +327,19 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             pw_export::pw_export_preview,
             pw_export::pw_export_save_map,
             pw_export::pw_export_write,
+            pw_repo::pw_repo_structure,
+            pw_repo::pw_repo_stop,
+            pw_repo::pw_repo_running,
+            pw_repo::pw_list,
+            pw_repo::pw_run,
+            pw_repo::pw_preview,
+            pw_repo::pw_reports,
+            pw_repo::pw_open_report,
+            pw_repo::pw_users_list,
+            pw_repo::pw_users_password,
+            pw_repo::pw_users_change,
+            pw_repo::pw_sync_states,
+            pw_repo::pw_sync_update,
             app_settings::set_start_minimized,
             app_settings::get_autostart,
             app_settings::set_autostart,
@@ -514,6 +530,15 @@ pub fn run() {
                 Err(_) => std::sync::Arc::new(db::CredentialManager),
             };
             app.manage(db::DbSecrets(db_store));
+
+            // npm's debug log of a Playwright tab run (its argv can hold a
+            // password) goes to this folder of the app's own, emptied after
+            // every run, never to the user's shared npm cache.
+            if let Ok(dir) = app.path().app_local_data_dir() {
+                let logs = dir.join("pw-npm-logs");
+                crate::pw_repo::process::empty_dir(&logs);
+                crate::pw_repo::process::set_npm_logs_dir(logs);
+            }
 
             // App log: file per day next to the OS's other app logs, plus
             // an in-memory tail Settings can show for bug reports.

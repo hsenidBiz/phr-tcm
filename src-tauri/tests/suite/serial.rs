@@ -143,3 +143,11 @@ pub fn app_settings() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// The Playwright tab's one run slot (`pw_repo::process`): taken by every
+/// test that starts a repo command, or ends one through the exit path, after
+/// `held_browsers`: `close_autorun_browsers` ends a running one (`stop_all`).
+pub fn pw_repo() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}

@@ -130,7 +130,7 @@ test("export_sends_the_ticked_ids_and_shows_the_summary", async () => {
   expect(screen.getByText("pm/wizard")).toBeInTheDocument();
   expect(screen.getByText(/test-refactorer/)).toBeInTheDocument();
   expect(screen.getByText(/lint:tests -- --require-specs/)).toBeInTheDocument();
-  expect(screen.getByText(/replaces that case's whole section/)).toBeInTheDocument();
+  expect(screen.getByText(/rewrites its section from Azure DevOps; the repo's Added by engineer, Also and Assertion floor blocks and every other section and file stay as they are/)).toBeInTheDocument();
 });
 
 test("a_refused_export_shows_the_reason_and_writes_nothing_else", async () => {

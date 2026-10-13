@@ -130,3 +130,14 @@ pub const SUITE_REFUSED_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 pub fn suite_refused(base_url: &str, org: &str, project: &str, area: &str) -> String {
     format!("suite-refused:{base_url}|{org}|{project}|{area}")
 }
+
+/// How long the Playwright tab reuses a clone's `playwright test --list`
+/// output (session tier only). Listing compiles every spec, so the tree is
+/// not listed again for each run; Refresh lists it now, and a run's dry
+/// count catches a listing that has gone stale.
+pub const PW_LIST_TTL: Duration = Duration::from_secs(8 * 60 * 60);
+
+/// The Playwright tab's last listing of the clone at `clone`.
+pub fn pw_list(clone: &str) -> String {
+    format!("pw-list:{clone}")
+}

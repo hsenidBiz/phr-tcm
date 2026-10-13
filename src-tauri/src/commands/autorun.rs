@@ -1017,7 +1017,13 @@ pub const RELEASED_YOURS: &str =
 /// caller's bound covers them. Then every browser still in the registry
 /// (`browser::tree`) is ended, an unattended run's included. Windows kills
 /// any that are left when the app's job handles close.
+///
+/// A Playwright tab repo command still running (`pw_repo::process`) is
+/// ended first, its whole job with it.
 pub async fn close_autorun_browsers() {
+    // The Playwright tab's repo command goes first: ending its job is
+    // immediate, and nothing below can then hold it past the caller's bound.
+    crate::pw_repo::process::stop_all();
     let held = tauri::async_runtime::spawn_blocking(crate::api_templates::held::close_all);
     let _ = crate::commands::autorun_record::auto_run_record_cancel().await;
     while crate::commands::autorun_record::recording_is_going() {

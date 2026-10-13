@@ -57,7 +57,7 @@ impl Approval {
 /// `v` with every object's keys in sorted order, all the way down: the
 /// crate keeps JSON keys in insertion order, and a fingerprint must not
 /// depend on the order a file happened to list them in.
-fn canonical(v: &Value) -> Value {
+pub(crate) fn canonical(v: &Value) -> Value {
     match v {
         Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();

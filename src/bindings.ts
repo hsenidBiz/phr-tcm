@@ -1256,12 +1256,76 @@ export const commands = {
 	 */
 	pwExportSaveMap: (organization: string, project: string, map: ExportMap) => typedError<null, string>(__TAURI_INVOKE("pw_export_save_map", { organization, project, map })),
 	/**
-	 *  Writes the cases into the clone. Reads each case's title, steps, state
-	 *  and paths from Azure DevOps first (read-only). `modules` is each case's
-	 *  Module as the screen has it - the same the preview was given, so the
-	 *  write picks the same areas the preview showed.
+	 *  Writes the cases into the clone, and records them for Sync. Reads each
+	 *  case's title, steps, state and paths from Azure DevOps first
+	 *  (read-only). `modules` is each case's Module as the screen has it - the
+	 *  same the preview was given, so the write picks the same areas the
+	 *  preview showed.
 	 */
 	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, moduleRef, preconditionsRef })),
+	/**  What the clone at `clone` holds, and the health line. Read only. */
+	pwRepoStructure: (clone: string) => typedError<RepoStructure, string>(__TAURI_INVOKE("pw_repo_structure", { clone })),
+	/**  End run `run` and every process it started. A run already over is fine. */
+	pwRepoStop: (run: number) => typedError<null, string>(__TAURI_INVOKE("pw_repo_stop", { run })),
+	/**  The repo command going now, if any. */
+	pwRepoRunning: () => typedError<{
+	run: number,
+	label: string,
+	brief: boolean,
+} | null, string>(__TAURI_INVOKE("pw_repo_running")),
+	/**
+	 *  The clone's tests as a tree, from `npx playwright test --list`. The
+	 *  session's listing is reused unless `refresh`; ADO ids and last results
+	 *  are read again either way.
+	 */
+	pwList: (clone: string, refresh: boolean) => typedError<TestTree, string>(__TAURI_INVOKE("pw_list", { clone, refresh })),
+	/**
+	 *  Runs the picked tests, every test, or last time's failures, the way
+	 *  `npm run qa` does: the run list, the dry count, then the run. A count that
+	 *  disagrees refuses with both numbers. A debug run of more than one test
+	 *  answers `ConfirmDebug` until `confirm` is true.
+	 */
+	pwRun: (clone: string, picked: string[], action: RunAction, mode: BrowserMode, confirm: boolean) => typedError<RunStart, string>(__TAURI_INVOKE("pw_run", { clone, picked, action, mode, confirm })),
+	/**  The run list and the command a run would use, without running it. */
+	pwPreview: (clone: string, picked: string[], action: RunAction, mode: BrowserMode) => typedError<RunPreview, string>(__TAURI_INVOKE("pw_preview", { clone, picked, action, mode })),
+	/**  The clone's archived reports, newest first. */
+	pwReports: (clone: string) => typedError<PwReport[], string>(__TAURI_INVOKE("pw_reports", { clone })),
+	/**  Opens one archived report's `index.html` in the default browser. */
+	pwOpenReport: (clone: string, runId: string) => typedError<null, string>(__TAURI_INVOKE("pw_open_report", { clone, runId })),
+	/**
+	 *  The clone's test accounts, from `npm run users -- list --json`. No
+	 *  password: Show asks for one with `pw_users_password`. Only the command's
+	 *  end reaches the webview (`PwDone`), never a line of its output.
+	 */
+	pwUsersList: (clone: string) => typedError<RepoAccount[], string>(__TAURI_INVOKE("pw_users_list", { clone })),
+	/**
+	 *  Account `key`'s password, for Show and nothing else. Read from the
+	 *  clone's `src/users/users.json`, never logged.
+	 */
+	pwUsersPassword: (clone: string, key: string) => typedError<string, string>(__TAURI_INVOKE("pw_users_password", { clone, key })),
+	/**
+	 *  A change to the accounts through `npm run users`. Without `apply` it
+	 *  returns the command's preview and writes nothing; with `apply` it writes
+	 *  and lists the accounts again. A refusal is the command's own words,
+	 *  passwords hidden.
+	 */
+	pwUsersChange: (clone: string, change: AccountChange, apply: boolean) => typedError<ChangeOutcome, string>(__TAURI_INVOKE("pw_users_change", { clone, change, apply })),
+	/**
+	 *  Every case exported to this clone for this project, and every script of
+	 *  the project never exported, each with its state (`pw_repo::sync`).
+	 *  Read only.
+	 */
+	pwSyncStates: (clone: string, org: string, project: string) => typedError<SyncRow[], string>(__TAURI_INVOKE("pw_sync_states", { clone, org, project })),
+	/**
+	 *  Exports `cases` again through Export to Playwright's own all-or-nothing
+	 *  write, and records them: each one's section rewritten from Azure DevOps
+	 *  (the repo's Added by engineer, Also and Assertion floor blocks kept),
+	 *  its raw spec replaced, its `index.json` entry kept or added. Every other
+	 *  section and file stays as it is. A refusal writes nothing
+	 *  and leaves the record as it was. Each case is placed by its Module as
+	 *  Azure DevOps has it now, else as it was at its last export.
+	 */
+	pwSyncUpdate: (clone: string, org: string, project: string, cases: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_sync_update", { clone, org, project, cases, moduleRef, preconditionsRef })),
 	/**
 	 *  Whether a start at sign-in stays hidden in the tray (on) or opens the
 	 *  window (off). Read at start-up, so the Windows startup entry itself never
@@ -1380,6 +1444,8 @@ export const events = {
 	guideProgress: makeEvent<GuideProgress>("guide-progress"),
 	intakeOutputPath: makeEvent<IntakeOutputPath>("intake-output-path"),
 	planCreated: makeEvent<PlanCreated>("plan-created"),
+	pwDone: makeEvent<PwDone>("pw-done"),
+	pwOutput: makeEvent<PwOutput>("pw-output"),
 	recordingEvent: makeEvent<RecordingEvent>("recording-event"),
 	replayProgress: makeEvent<ReplayProgress>("replay-progress"),
 	runOrderNotSaved: makeEvent<RunOrderNotSaved>("run-order-not-saved"),
@@ -1401,6 +1467,26 @@ export type Account = {
 	username: string,
 	password: string,
 };
+
+/**
+ *  A change to the registry. Deliberately not `Debug`: it can hold a
+ *  password, and nothing should be able to print one by accident.
+ */
+export type AccountChange = 
+/**  A new account. The optional fields are left out when empty. */
+{ kind: "Add"; key: string; username: string; password: string; employee_no: string; display_name: string; title: string; supervisor: string } | 
+/**
+ *  One field of an existing account. An empty value clears an optional
+ *  field (the CLI's `-`).
+ */
+{ kind: "Set"; key: string; field: AccountField; value: string } | 
+/**  Delete an account. The CLI refuses while anything references it. */
+{ kind: "Remove"; key: string } | 
+/**  Move an account to a new key, rewriting every reference (`--cascade`). */
+{ kind: "Rename"; from: string; to: string };
+
+/**  One field `set` changes. */
+export type AccountField = "Username" | "Password" | "EmployeeNo" | "DisplayName" | "Title" | "Supervisor";
 
 /**
  *  One proposed account a person picked to add. `password` is what they
@@ -2178,6 +2264,11 @@ export type BridgeSwitches = {
 	apiWrites: boolean,
 };
 
+/**  How the browser runs. */
+export type BrowserMode = "Hidden" | "Shown" | 
+/**  Playwright's Inspector, paused at the start of every test. */
+"Debug";
+
 /**  What the app hands the reporter. */
 export type BugReport = {
 	/**
@@ -2649,6 +2740,21 @@ export type CellSpec = {
 	match?: CellMatch,
 };
 
+/**  What a change answered. */
+export type ChangeOutcome = {
+	/**  Whether it was written (`--apply`), or only previewed. */
+	applied: boolean,
+	/**  What the CLI printed, passwords hidden. */
+	output: string[],
+	/**  After an applied change, the accounts listed again. */
+	accounts: RepoAccount[] | null,
+	/**
+	 *  Why listing again after an applied change failed, if it did. The
+	 *  change itself was written.
+	 */
+	list_error: string | null,
+};
+
 /**  One line of the preview. */
 export type CleanupLine = CleanupLine_Serialize | CleanupLine_Deserialize;
 
@@ -3100,6 +3206,10 @@ export type ExportResult = {
 	user_keys: ([number, string])[],
 	/**  `<module>/<feature>` pairs the clone's navigation.json lacks. */
 	missing_navigation: string[],
+	/**  Case id and the test-case file its section is in. */
+	sections: ([number, string])[],
+	/**  Set when the files were written but the Sync record could not be. */
+	record_error: string | null,
 };
 
 export type ExportSummary = {
@@ -3296,6 +3406,20 @@ export type GuideStatus = {
  */
 export type HeadersSpec = ({ exact: string[] }) & { contains?: never } | ({ contains: string[] }) & { exact?: never };
 
+/**
+ *  One thing that stops the tab working, in the order the health line shows
+ *  them.
+ */
+export type HealthIssue = 
+/**  The folder is not a PHR-PLAYWRIGHT-AUTOMATION clone (or none is set). */
+"NotTheRepo" | 
+/**  The clone has no `node_modules`: `npm install` has not been run there. */
+"NoNodeModules" | 
+/**  No `node` on PATH. */
+"NoNode" | 
+/**  No `qa-options.json` at the clone's root: the runner uses its defaults. */
+"NoQaOptions";
+
 export type ImportResult = ImportResult_Serialize | ImportResult_Deserialize;
 
 export type ImportResult_Deserialize = {
@@ -3338,6 +3462,35 @@ export type IterationRef = {
 	path: string,
 	start_date: string | null,
 	finish_date: string | null,
+};
+
+/**  A test's result in the newest report. */
+export type LastResult = "Passed" | "Failed" | "Flaky" | "Skipped";
+
+/**  One listed test, with the levels of the tree it hangs from. */
+export type ListedTest = {
+	/**  Unique and stable across listings: `["<file>", ...title path]`. */
+	id: string,
+	/**  `sl`, `ph`, `in`, or `common-components` for the shared tree. */
+	country: string,
+	/**  `self` or `admin`; empty under `common-components`. */
+	side: string,
+	/**  Empty under `common-components`. */
+	module: string,
+	/**  The feature folder, or the component under `common-components`. */
+	feature: string,
+	/**  The spec's file name without `.spec.ts`. */
+	spec: string,
+	/**  Relative to `suites/`, with `/`. */
+	file: string,
+	title: string,
+	/**  The describe titles, then the test's own. */
+	title_path: string[],
+	line: number,
+	/**  The project that runs it. */
+	project: string,
+	ado_id: number | null,
+	last_result: LastResult | null,
 };
 
 export type LocalRun = LocalRun_Serialize | LocalRun_Deserialize;
@@ -4095,6 +4248,43 @@ export type PullRequest = {
 };
 
 /**
+ *  A Playwright tab repo command ended, after its last `PwOutput`. `code`
+ *  is its exit code; `None` when it was stopped, or ended without one.
+ */
+export type PwDone = {
+	run: number,
+	code: number | null,
+};
+
+/**
+ *  One line of a Playwright tab repo command's output (`pw_repo::process`),
+ *  ANSI escapes stripped.
+ */
+export type PwOutput = {
+	run: number,
+	line: string,
+};
+
+/**  One `reports/<runId>/` folder holding an `index.html`. */
+export type PwReport = {
+	/**  The folder's name: the run's local start time. */
+	run_id: string,
+	/**  From the sibling `<runId>.json`, when it reads. */
+	stats: ReportStats | null,
+};
+
+/**
+ *  The repo command going now: its run id, how it is named, and whether it
+ *  is a short command (a listing, a dry count, an accounts command) rather
+ *  than a test run.
+ */
+export type PwRunning = {
+	run: number,
+	label: string,
+	brief: boolean,
+};
+
+/**
  *  Every field but `text`, `by` and `at` is `#[serde(default)]`: a file
  *  written before they existed loads unchanged, and gains ids on load
  *  (written down by the next save).
@@ -4481,9 +4671,61 @@ export type ReplayedTab = {
 	tab: string,
 };
 
+/**
+ *  One account of the repo's registry. Holds no password: Show reads one
+ *  on its own (`password`).
+ */
+export type RepoAccount = {
+	/**  `<environment>.<module>.<role>[.<discriminator>]`. */
+	key: string,
+	username: string,
+	/**  Empty when the account has none. */
+	employee_no: string,
+	display_name: string,
+	/**  `empTitle` in the registry. */
+	title: string,
+	/**  Another account's key, or empty. */
+	supervisor: string,
+	/**  Specs that sign in as it (`test.use` or `actingAs`). */
+	specs: number,
+	/**
+	 *  Other references: test case `**User:**` lines and supervisor
+	 *  pointers. Any reference at all refuses a delete.
+	 */
+	other_refs: number,
+};
+
+/**  One `suites/<country>/<side>/<module>/<feature>/` folder. */
+export type RepoFeature = {
+	country: string,
+	side: string,
+	module: string,
+	feature: string,
+	/**  `*.spec.ts` files in its `specs/`. */
+	spec_count: number,
+	/**  Test case sections (`## <id>` headings) in its `test-cases/*.md`. */
+	case_count: number,
+	/**  Those sections' ids, in file order, each once. */
+	case_ids: number[],
+};
+
 export type RepoRef = {
 	id: string,
 	name: string,
+};
+
+/**  The clone as the Playwright tab shows it. */
+export type RepoStructure = {
+	/**  Sorted by country, side, module, feature. */
+	features: RepoFeature[],
+	/**  The ids `suites/_generated/index.json` maps to a raw spec, in its order. */
+	generated_ids: number[],
+	/**  The account keys of `users.json`. Keys only. */
+	user_keys: string[],
+	/**  The entries of `navigation.json`. */
+	navigation_keys: string[],
+	/**  Empty when everything the tab needs is there. */
+	health: HealthIssue[],
 };
 
 /**  One scheme's worth of colour, named for the app's own tokens. */
@@ -4501,6 +4743,15 @@ export type ReportPalette = {
 	warning: string,
 	/**  Drives `color-scheme`, so form controls and scrollbars follow too. */
 	dark: boolean,
+};
+
+/**  One archived run's headline numbers. */
+export type ReportStats = {
+	passed: number,
+	failed: number,
+	flaky: number,
+	skipped: number,
+	duration_ms: number,
 };
 
 /**
@@ -4574,6 +4825,15 @@ export type ResultFailureDetail = {
 	comment: string,
 	bug_ids: number[],
 };
+
+/**  What to run. */
+export type RunAction = 
+/**  The ticked tests. */
+"Picked" | 
+/**  Every test in the tree. */
+"All" | 
+/**  What failed last time (`--last-failed`). */
+"Failed";
 
 export type RunAttachment = {
 	file_name: string,
@@ -4681,6 +4941,16 @@ export type RunOutcome = {
 	run_by: string,
 };
 
+/**  What a run would do, without doing it. */
+export type RunPreview = {
+	/**  The run list's text; none for a re-run of failures. */
+	run_list: string | null,
+	command: string,
+	/**  How many tests it runs. */
+	expected: number,
+	warnings: string[],
+};
+
 /**
  *  One proving or running of a template: when, as who, whether it
  *  succeeded, and - on failure - which step and what the run reported.
@@ -4720,6 +4990,15 @@ export type RunReport = {
 	 */
 	failed: string | null,
 };
+
+/**  How a run start was answered. */
+export type RunStart = 
+/**  The run is going: its output comes as `PwOutput`, its end as `PwDone`. */
+{ kind: "Started"; run: number; command: string; 
+/**  `N selected · N matched`, or how many failures re-run. */
+summary: string; warnings: string[] } | 
+/**  Debug pauses at every test: `count` tests need `confirm`. */
+{ kind: "ConfirmDebug"; count: number };
 
 /**
  *  A live run's identity plus every point's result row, so the runner can
@@ -5259,6 +5538,27 @@ export type SuspectedDefect = {
 	marked_at: string,
 };
 
+export type SyncRow = {
+	case_id: number,
+	title: string,
+	state: SyncState,
+	/**  When it was last exported, UTC. */
+	exported_at: string | null,
+	/**  Whether Auto Run still has its script, so Update can export it. */
+	has_script: boolean,
+};
+
+/**  Where a case stands. */
+export type SyncState = 
+/**  Nothing the export reads of it changed since it was exported. */
+{ kind: "Current" } | 
+/**  Something the export reads of it changed; `why` says what. */
+{ kind: "OutOfDate"; why: string } | 
+/**  Exported, but the clone has no section or no raw spec for it now. */
+{ kind: "NotInRepo" } | 
+/**  The project has a script for it that was never exported. */
+{ kind: "NeverExported" };
+
 /**
  *  What an action points at. A plain string keeps the meaning it has
  *  always had, so every script saved before locators existed still runs.
@@ -5655,6 +5955,15 @@ export type TestPoint = {
 	last_outcome: string,
 	last_run_id: number | null,
 	last_result_id: number | null,
+};
+
+/**  The clone's tests, in the tree's order. */
+export type TestTree = {
+	tests: ListedTest[],
+	/**  Every project a test belongs to, sorted. */
+	projects: string[],
+	/**  The report the results come from, if any. */
+	last_report: string | null,
 };
 
 /**

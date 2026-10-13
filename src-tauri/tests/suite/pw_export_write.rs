@@ -11,20 +11,20 @@ use v2_lib::pw_export::export::{preview_with, write_with, ExportResult};
 use v2_lib::pw_export::mapping::{save, ExportMap, Placement};
 use v2_lib::pw_export::test_case::CaseDoc;
 
-const ORG: &str = "org";
-const PROJECT: &str = "proj";
+pub(crate) const ORG: &str = "org";
+pub(crate) const PROJECT: &str = "proj";
 const REAL_PASSWORD: &str = "S3cretPw!";
 const CLONE_PASSWORD: &str = "clone-pass-9";
-const MD_REL: &str = "suites/sl/admin/performance/proficiency-levels/test-cases/proficiency-levels.md";
+pub(crate) const MD_REL: &str = "suites/sl/admin/performance/proficiency-levels/test-cases/proficiency-levels.md";
 
-struct Fx {
-    root: tempfile::TempDir,
-    clone: tempfile::TempDir,
+pub(crate) struct Fx {
+    pub(crate) root: tempfile::TempDir,
+    pub(crate) clone: tempfile::TempDir,
     /// Each case's Module, as the Auto Run screen passes it.
-    modules: std::cell::RefCell<BTreeMap<i32, String>>,
+    pub(crate) modules: std::cell::RefCell<BTreeMap<i32, String>>,
 }
 
-fn write(p: PathBuf, s: &str) {
+pub(crate) fn write(p: PathBuf, s: &str) {
     fs::create_dir_all(p.parent().unwrap()).unwrap();
     fs::write(p, s).unwrap();
 }
@@ -34,7 +34,7 @@ fn placement() -> Placement {
 }
 
 impl Fx {
-    fn new() -> Fx {
+    pub(crate) fn new() -> Fx {
         let fx = Fx {
             root: tempfile::tempdir().unwrap(),
             clone: tempfile::tempdir().unwrap(),
@@ -85,7 +85,7 @@ impl Fx {
         fx
     }
 
-    fn script(&self, id: i32, title: &str, account: &str, area: &str, actions: serde_json::Value) {
+    pub(crate) fn script(&self, id: i32, title: &str, account: &str, area: &str, actions: serde_json::Value) {
         let s: CaseScript = serde_json::from_value(json!({
             "case_id": id, "title": title, "account": account, "area": area,
             "steps": [{ "step_number": 1, "actions": actions }]
@@ -94,16 +94,16 @@ impl Fx {
         store::save_script(self.root.path(), &s).unwrap();
     }
 
-    fn click_script(&self, id: i32, title: &str, account: &str, area: &str) {
+    pub(crate) fn click_script(&self, id: i32, title: &str, account: &str, area: &str) {
         self.script(id, title, account, area, json!([{ "kind": "click", "selector": "#go" }]));
     }
 
-    fn good(&self, id: i32, title: &str) {
+    pub(crate) fn good(&self, id: i32, title: &str) {
         self.click_script(id, title, "admin", "Definition Wizard");
         self.run(&format!("r{id}"), "5", id, "Passed");
     }
 
-    fn run(&self, run_id: &str, started: &str, case: i32, verdict: &str) {
+    pub(crate) fn run(&self, run_id: &str, started: &str, case: i32, verdict: &str) {
         let run: LocalRun = serde_json::from_value(json!({
             "id": run_id, "pbi_id": 1, "started_at": started,
             "cases": [{ "case_id": case, "title": "t", "verdict": verdict, "note": "", "steps": [] }]
@@ -112,11 +112,11 @@ impl Fx {
         store::save_run(self.root.path(), &run).unwrap();
     }
 
-    fn clone_path(&self) -> String {
+    pub(crate) fn clone_path(&self) -> String {
         self.clone.path().to_string_lossy().to_string()
     }
 
-    fn read_clone(&self, rel: &str) -> String {
+    pub(crate) fn read_clone(&self, rel: &str) -> String {
         fs::read_to_string(self.clone.path().join(rel)).unwrap()
     }
 
@@ -125,7 +125,7 @@ impl Fx {
     }
 }
 
-fn doc(id: i32, title: &str) -> CaseDoc {
+pub(crate) fn doc(id: i32, title: &str) -> CaseDoc {
     CaseDoc {
         id,
         title: title.into(),
@@ -143,7 +143,7 @@ fn doc(id: i32, title: &str) -> CaseDoc {
     }
 }
 
-fn docs(list: &[(i32, &str)]) -> BTreeMap<i32, CaseDoc> {
+pub(crate) fn docs(list: &[(i32, &str)]) -> BTreeMap<i32, CaseDoc> {
     list.iter().map(|(i, t)| (*i, doc(*i, t))).collect()
 }
 

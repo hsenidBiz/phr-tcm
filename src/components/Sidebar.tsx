@@ -9,6 +9,7 @@ import {
   GlyphImport,
   GlyphManage,
   GlyphManual,
+  GlyphPlaywright,
   GlyphPrs,
   GlyphRun,
   GlyphSuites,
@@ -40,6 +41,7 @@ export type Section =
   | "manage"
   | "ai"
   | "apitemplates"
+  | "playwright"
   | "settings";
 export type WorkSection = "prs" | "board" | "create";
 
@@ -76,12 +78,15 @@ export const CASE_ITEMS: Item<Section>[] = [
   // Last, so every tab above keeps its Ctrl+number; it has none of its
   // own (see sectionShortcut). Braces, for the JSON a template is.
   { id: "apitemplates", label: "API Templates", icon: GlyphApiTemplates, tone: "nav-ico nav-ico-apitemplates" },
+  // After API Templates for the same reason: every tab above keeps its
+  // Ctrl+number. The theatre masks are Playwright's own picture.
+  { id: "playwright", label: "Playwright", icon: GlyphPlaywright, tone: "nav-ico nav-ico-playwright" },
 ];
 
 /** The tabs offered only where Auto Run is. */
-const WITH_AUTO_RUN: ReadonlySet<Section> = new Set<Section>(["autorun", "apitemplates"]);
+const WITH_AUTO_RUN: ReadonlySet<Section> = new Set<Section>(["autorun", "apitemplates", "playwright"]);
 
-/** The rows the rail shows: CASE_ITEMS, with Auto Run and API Templates
+/** The rows the rail shows: CASE_ITEMS, with Auto Run, API Templates and Playwright
  * only where they are offered - always in a development build
  * (`import.meta.env.DEV`: true for `tauri dev` and vitest, false in `tauri
  * build`), and in a release build while this machine's optional extras are

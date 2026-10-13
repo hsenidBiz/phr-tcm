@@ -1,0 +1,435 @@
+{
+  "config": {
+    "configFile": "C:\\repo\\playwright.config.ts",
+    "rootDir": "C:/repo/suites",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 4
+    },
+    "preserveOutput": "always",
+    "reporter": [
+      [
+        "json",
+        null
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "quiet": false,
+    "projects": [
+      {
+        "outputDir": "C:/repo/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {},
+        "id": "unit",
+        "name": "unit",
+        "testDir": "C:/repo",
+        "testIgnore": [],
+        "testMatch": [],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "C:/repo/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {},
+        "id": "SL",
+        "name": "SL",
+        "testDir": "C:/repo/suites",
+        "testIgnore": [],
+        "testMatch": [],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "C:/repo/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {},
+        "id": "PH",
+        "name": "PH",
+        "testDir": "C:/repo/suites",
+        "testIgnore": [],
+        "testMatch": [],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "C:/repo/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {},
+        "id": "IN",
+        "name": "IN",
+        "testDir": "C:/repo/suites",
+        "testIgnore": [],
+        "testMatch": [],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "C:/repo/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {},
+        "id": "generated-setup",
+        "name": "generated-setup",
+        "testDir": "C:/repo/suites",
+        "testIgnore": [],
+        "testMatch": [],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "C:/repo/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {},
+        "id": "generated",
+        "name": "generated",
+        "testDir": "C:/repo/suites",
+        "testIgnore": [],
+        "testMatch": [],
+        "timeout": 90000
+      }
+    ],
+    "shard": null,
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.60.0",
+    "workers": 4,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "..\\src\\users\\registry.test.ts",
+      "file": "../src/users/registry.test.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "resolves a key",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "unit",
+              "projectName": "unit",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "u1-1",
+          "file": "../src/users/registry.test.ts",
+          "line": 4,
+          "column": 3
+        }
+      ]
+    },
+    {
+      "title": "_generated\\auth.setup.ts",
+      "file": "_generated/auth.setup.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "authenticate",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "generated-setup",
+              "projectName": "generated-setup",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "g0-1",
+          "file": "_generated/auth.setup.ts",
+          "line": 6,
+          "column": 3
+        }
+      ]
+    },
+    {
+      "title": "_generated\\verify-create-rating-method.spec.ts",
+      "file": "_generated/verify-create-rating-method.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "verify-create-rating-method",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "generated",
+              "projectName": "generated",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "g1-1",
+          "file": "_generated/verify-create-rating-method.spec.ts",
+          "line": 3,
+          "column": 3
+        }
+      ]
+    },
+    {
+      "title": "common-components\\employee-search\\specs\\employee-search.spec.ts",
+      "file": "common-components/employee-search/specs/employee-search.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "finds an employee by name",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "SL",
+              "projectName": "SL",
+              "results": [],
+              "status": "skipped"
+            },
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "PH",
+              "projectName": "PH",
+              "results": [],
+              "status": "skipped"
+            },
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "IN",
+              "projectName": "IN",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "c1-1",
+          "file": "common-components/employee-search/specs/employee-search.spec.ts",
+          "line": 4,
+          "column": 3
+        }
+      ]
+    },
+    {
+      "title": "sl\\admin\\performance\\rating-methods\\specs\\rating-methods.spec.ts",
+      "file": "sl/admin/performance/rating-methods/specs/rating-methods.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Rating Methods",
+          "file": "sl/admin/performance/rating-methods/specs/rating-methods.spec.ts",
+          "line": 3,
+          "column": 6,
+          "specs": [
+            {
+              "title": "User can create a new rating method",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "SL",
+                  "projectName": "SL",
+                  "results": [],
+                  "status": "skipped"
+                },
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "PH",
+                  "projectName": "PH",
+                  "results": [],
+                  "status": "skipped"
+                },
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "IN",
+                  "projectName": "IN",
+                  "results": [],
+                  "status": "skipped"
+                }
+              ],
+              "id": "r1-1",
+              "file": "sl/admin/performance/rating-methods/specs/rating-methods.spec.ts",
+              "line": 5,
+              "column": 3
+            },
+            {
+              "title": "User can delete a rating method",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "SL",
+                  "projectName": "SL",
+                  "results": [],
+                  "status": "skipped"
+                },
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "PH",
+                  "projectName": "PH",
+                  "results": [],
+                  "status": "skipped"
+                },
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "IN",
+                  "projectName": "IN",
+                  "results": [],
+                  "status": "skipped"
+                }
+              ],
+              "id": "r1-2",
+              "file": "sl/admin/performance/rating-methods/specs/rating-methods.spec.ts",
+              "line": 7,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "sl\\self\\smoke\\framework-smoke\\specs\\framework-smoke-again.spec.ts",
+      "file": "sl/self/smoke/framework-smoke/specs/framework-smoke-again.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "the app shell loads again",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "SL",
+              "projectName": "SL",
+              "results": [],
+              "status": "skipped"
+            },
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "PH",
+              "projectName": "PH",
+              "results": [],
+              "status": "skipped"
+            },
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "IN",
+              "projectName": "IN",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "f2-1",
+          "file": "sl/self/smoke/framework-smoke/specs/framework-smoke-again.spec.ts",
+          "line": 3,
+          "column": 3
+        }
+      ]
+    },
+    {
+      "title": "sl\\self\\smoke\\framework-smoke\\specs\\framework-smoke.spec.ts",
+      "file": "sl/self/smoke/framework-smoke/specs/framework-smoke.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "the app shell loads",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "SL",
+              "projectName": "SL",
+              "results": [],
+              "status": "skipped"
+            },
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "PH",
+              "projectName": "PH",
+              "results": [],
+              "status": "skipped"
+            },
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "IN",
+              "projectName": "IN",
+              "results": [],
+              "status": "skipped"
+            }
+          ],
+          "id": "f1-1",
+          "file": "sl/self/smoke/framework-smoke/specs/framework-smoke.spec.ts",
+          "line": 3,
+          "column": 3
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-13T09:12:30.115Z",
+    "duration": 1874.2,
+    "expected": 0,
+    "skipped": 18,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

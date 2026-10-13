@@ -11,6 +11,7 @@ import { Profiler } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "../../lib/toast";
 import { resetBackgroundRun } from "../../lib/backgroundRun";
+import { clearPlaywrightExportRequest, playwrightExportSnapshot } from "../../lib/playwrightExport";
 import AutoRun from "./index";
 import ReplayPane from "./ReplayPane";
 
@@ -90,7 +91,7 @@ function openCard(id: number) {
 }
 
 /** Opens the Test cases tab's More menu and returns one of its items. */
-function moreItem(name: "Import scripts" | "Clear scripts") {
+function moreItem(name: "Import scripts" | "Clear scripts" | "Export to Playwright") {
   fireEvent.click(screen.getByRole("button", { name: "More" }));
   return screen.getByRole("menuitem", { name });
 }
@@ -447,6 +448,27 @@ test("the Execution order item in More opens the dialog", async () => {
 });
 
 // ---- Clear scripts / Clear results (shown wherever Auto Run is: dev, or unlocked) ----
+
+/// Export to Playwright lives in the Playwright tab: the menu item only
+/// hands it this PBI's cases (the App shell then opens the tab).
+test("Export to Playwright asks for the Playwright tab's Export dialog with this PBI's cases", async () => {
+  const a = { ...caseRow(1, "Alpha check"), module_value: "Definition Wizard" };
+  mockList([a, caseRow(2, "Beta check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(moreItem("Export to Playwright"));
+  expect(playwrightExportSnapshot()).toEqual({
+    pbiId: 42,
+    caseIds: [1, 2],
+    modules: [
+      [1, "Definition Wizard"],
+      [2, ""],
+    ],
+  });
+  expect(screen.queryByRole("heading", { name: "Export to Playwright" })).not.toBeInTheDocument();
+  clearPlaywrightExportRequest();
+});
 
 test("Clear scripts and Clear results are disabled when there is nothing to clear", async () => {
   // No case has a script, and no run exists on this machine.

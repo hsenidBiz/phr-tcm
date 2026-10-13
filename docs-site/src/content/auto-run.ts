@@ -258,7 +258,8 @@ export const autoRun: Screen = {
       does:
         "**Import scripts** reads one JSON file of scripts. Each one is checked the way an assistant's save is: every element it names must have been seen on the live app, and its test case is read from Azure DevOps, so sign in first. " +
         "If any script fails, nothing is imported and the message lists each element that was never seen. " +
-        "**Clear scripts** removes the scripts of the listed cases from this computer, after asking. Nothing in Azure DevOps changes.",
+        "**Clear scripts** removes the scripts of the listed cases from this computer, after asking. Nothing in Azure DevOps changes. " +
+        "**Export to Playwright** opens the Playwright tab with the export of this Product Backlog Item's scripts to your clone of the team's Playwright repo.",
     },
     {
       id: "select-case",
@@ -926,7 +927,7 @@ export const autoRun: Screen = {
       steps: [
         "Open Settings with the gear at the top right.",
         "Under **General**, turn on **Enable Advanced Features**.",
-        "**Auto Run** appears in the sidebar under Run Tests, and **API Templates** at the end.",
+        "**Auto Run** appears in the sidebar under Run Tests, and **API Templates** and **Playwright** at the end.",
       ],
     },
     {

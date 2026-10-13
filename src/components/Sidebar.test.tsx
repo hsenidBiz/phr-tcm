@@ -148,6 +148,7 @@ test("the shortcut order with and without Auto Run", () => {
     "manage",
     "ai",
     "apitemplates",
+    "playwright",
   ]);
   expect(shortcutOrder(false)).toEqual(["manual", "import", "edit", "view", "run", "suites", "manage", "ai"]);
 });
@@ -180,6 +181,35 @@ test("a locked release build hides API Templates, and unlocking shows it", async
 
   await act(() => extras.setExtrasUnlocked(false));
   expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
+
+  clearMocks();
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
+
+/// The Playwright tab is offered exactly where Auto Run is: a release
+/// build with Advanced Features off has no tab, and turning it on adds it,
+/// after API Templates and without a Ctrl number.
+test("Playwright shows only with Advanced Features on", async () => {
+  vi.stubEnv("DEV", false);
+  vi.resetModules();
+  const release = await import("./Sidebar");
+  const extras = await import("../lib/extras");
+  mockIPC(() => null);
+
+  render(<release.default section="manual" onSelect={() => {}} />);
+  expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
+  expect(release.shortcutOrder()).not.toContain("playwright");
+  expect(extras.shouldLeaveHidden("playwright", false, true)).toBe(true);
+
+  await act(() => extras.setAdvancedFeatures(true));
+  expect(screen.getByRole("button", { name: "Playwright" })).toBeInTheDocument();
+  expect(release.shortcutOrder().slice(-1)).toEqual(["playwright"]);
+  expect(release.sectionShortcut("playwright")).toBeUndefined();
+  expect(release.sectionShortcut("ai")).toBe("mod+9");
+
+  await act(() => extras.setAdvancedFeatures(false));
+  expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
 
   clearMocks();
   vi.unstubAllEnvs();

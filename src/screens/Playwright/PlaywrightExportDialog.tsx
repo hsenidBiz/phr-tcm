@@ -23,7 +23,7 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import { Select } from "../../components/ui/select";
-import { MODAL_LARGE } from "./modalWidths";
+import { MODAL_LARGE } from "../AutoRun/modalWidths";
 import { IconBrowse, IconCancel, IconConfirm, IconCopy, IconExport } from "../../lib/actionIcons";
 import { copyText } from "../../lib/clipboard";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
@@ -352,8 +352,9 @@ export default function PlaywrightExportDialog({
               ))}
             </ol>
             <p className="text-xs text-muted">
-              Exporting a case again replaces that case's whole section in its test-case file.
+              Exporting a case again rewrites its section from Azure DevOps; the repo's Added by engineer, Also and Assertion floor blocks and every other section and file stay as they are.
             </p>
+            {result.record_error && <p className="text-xs text-warning">{result.record_error}</p>}
             {refreshError && <p className="text-xs text-faint">{refreshError}</p>}
           </section>
         )}

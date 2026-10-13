@@ -16,6 +16,7 @@ use crate::autorun::recipe::{self, SignInRecipe};
 use crate::autorun::{accounts, components, runner, store, CaseScript, LocalRun};
 use crate::browser::actions::Action;
 use crate::browser::locator::Target;
+use crate::pw_repo::sync;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -24,6 +25,7 @@ const TMP_SUFFIX: &str = ".tcm-export-tmp";
 /// `suites/_generated/seed.spec.ts` is the repo's own: never a raw spec's name.
 const SEED_SPEC: &str = "seed.spec.ts";
 const MAX_RAW_NAME: usize = 60;
+const INDEX_REL: &str = "suites/_generated/index.json";
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct PreviewCase {
@@ -63,6 +65,10 @@ pub struct ExportResult {
     pub user_keys: Vec<(i32, String)>,
     /// `<module>/<feature>` pairs the clone's navigation.json lacks.
     pub missing_navigation: Vec<String>,
+    /// Case id and the test-case file its section is in.
+    pub sections: Vec<(i32, String)>,
+    /// Set when the files were written but the Sync record could not be.
+    pub record_error: Option<String>,
 }
 
 /// Everything read once per preview or write.
@@ -133,8 +139,13 @@ const NO_PLACE: &str =
 /// whether a recorded area was found. A project with no areas runs the case
 /// from home with no menu clicks, and it is placed by its Module instead.
 fn route(ctx: &Ctx, id: i32, script: &CaseScript) -> Result<(String, Vec<Target>, bool), String> {
-    let module = ctx.modules.get(&id).map(|m| m.trim()).unwrap_or("");
-    match nav::route_for(&ctx.nav, script.area.as_deref(), Some(module), script.account.as_deref())? {
+    route_with(&ctx.nav, ctx.modules.get(&id).map(String::as_str).unwrap_or(""), script)
+}
+
+/// `route` for one case's Module.
+fn route_with(nav_file: &NavFile, module: &str, script: &CaseScript) -> Result<(String, Vec<Target>, bool), String> {
+    let module = module.trim();
+    match nav::route_for(nav_file, script.area.as_deref(), Some(module), script.account.as_deref())? {
         Some(a) => Ok((a.name().to_string(), a.clicks.clone(), true)),
         None if module.is_empty() => Err(NO_PLACE.into()),
         None => Ok((module.to_string(), Vec::new(), false)),
@@ -237,6 +248,50 @@ fn load_expanded(root: &Path, org: &str, project: &str, id: i32) -> Result<Optio
         step.actions = expanded.into_iter().map(|(a, _)| a).collect();
     }
     Ok(Some(script))
+}
+
+/// What an export reads of a case, fingerprinted (`sync::fingerprint`):
+/// loaded once for a project, then asked about each case.
+pub struct Fingerprinter {
+    map: ExportMap,
+    nav: NavFile,
+    env_id: String,
+}
+
+impl Fingerprinter {
+    pub fn load(root: &Path, org: &str, project: &str) -> Result<Fingerprinter, String> {
+        Ok(Fingerprinter {
+            map: mapping::load(root, org, project)?,
+            nav: nav::load_nav(root, org, project)?,
+            env_id: crate::environments::active_id(root)?,
+        })
+    }
+
+    /// The fingerprint of case `id` as an export would read it now, placed
+    /// by `module` when its script names no area: its title, its steps with
+    /// every component expanded, where it starts (the area and its menu
+    /// clicks) and who it runs as (the account and the repo user it maps
+    /// to). `Ok(None)` when it has no script. A script whose components
+    /// cannot be expanded, or whose area cannot be found, is fingerprinted
+    /// with that reason in place of what could not be read, so it differs
+    /// from any fingerprint taken while it could.
+    pub fn of(&self, root: &Path, org: &str, project: &str, id: i32, module: &str) -> Result<Option<sync::Fingerprint>, String> {
+        let Some(saved) = store::load_script(root, id)? else {
+            return Ok(None);
+        };
+        let (steps, title) = match load_expanded(root, org, project, id) {
+            Ok(Some(s)) => (serde_json::to_value(&s.steps).unwrap_or_default(), s.title),
+            Ok(None) => return Ok(None),
+            Err(why) => (serde_json::Value::String(format!("not expandable: {why}")), saved.title.clone()),
+        };
+        let (area, clicks) = match route_with(&self.nav, module, &saved) {
+            Ok((name, clicks, _)) => (name, serde_json::to_value(&clicks).unwrap_or_default()),
+            Err(why) => (format!("no area: {why}"), serde_json::Value::Null),
+        };
+        let account = saved.account.as_deref().map(str::trim).unwrap_or("").to_string();
+        let user_key = self.map.accounts.get(&self.env_id).and_then(|m| m.get(&account)).cloned();
+        Ok(Some(sync::fingerprint(&sync::FingerprintInput { title, steps, area, area_clicks: clicks, account, user_key })))
+    }
 }
 
 fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (PreviewCase, Option<Ready>) {
@@ -468,6 +523,7 @@ pub fn write_with(
     let mut md_files: BTreeMap<String, String> = BTreeMap::new();
     let mut raw_files: Vec<Out> = Vec::new();
     let mut cases: Vec<(i32, String)> = Vec::new();
+    let mut sections: Vec<(i32, String)> = Vec::new();
     let mut missing_navigation: Vec<String> = Vec::new();
     let mut chosen: BTreeSet<String> = BTreeSet::new();
     let mut chosen_by: BTreeMap<String, i32> = BTreeMap::new();
@@ -502,6 +558,7 @@ pub fn write_with(
         }
         let current = md_files.get_mut(&md_rel).expect("inserted above");
         *current = test_case::splice(current, id, &test_case::section(&doc));
+        sections.push((id, md_rel.clone()));
 
         // The raw file: the index's own for this id, else a fresh unique name.
         let key = id.to_string();
@@ -557,14 +614,81 @@ pub fn write_with(
     // then index.json, so the index never points at a file that is missing.
     let mut outs: Vec<Out> = md_files.into_iter().map(|(rel, content)| Out { rel, content }).collect();
     outs.extend(raw_files);
+    // index.json only when an entry is new or moved: a re-export of cases
+    // it already maps leaves the repo's file as it is, byte for byte.
     let last_id = ready.last().map(|(i, _)| *i);
-    if let (Some(id), Some((_, file))) = (last_id, cases.last()) {
-        outs.push(Out { rel: "suites/_generated/index.json".into(), content: index_with(&index, id, file) });
+    if let (Some(id), Some((_, file)), true) = (last_id, cases.last(), index != repo.index) {
+        outs.push(Out { rel: INDEX_REL.into(), content: index_with(&index, id, file) });
     }
 
     commit(&repo.root, &outs)?;
     let user_keys = ready.iter().map(|(id, r)| (*id, r.user_key.clone())).collect();
-    Ok(ExportResult { files: outs.into_iter().map(|o| o.rel).collect(), cases, user_keys, missing_navigation })
+    Ok(ExportResult {
+        files: outs.into_iter().map(|o| o.rel).collect(),
+        cases,
+        user_keys,
+        missing_navigation,
+        sections,
+        record_error: None,
+    })
+}
+
+/// `write_with`, then the Sync record (`pw_repo::sync`) for every case
+/// written: its saved script's fingerprint as it was read before the write,
+/// the time, and its files. `sync_dir` is the records' folder. A refused
+/// write records nothing. A record that cannot be saved after the files
+/// were written does not undo them: it is logged and said in
+/// `record_error`.
+#[allow(clippy::too_many_arguments)]
+pub fn write_recorded(
+    root: &Path,
+    sync_dir: &Path,
+    org: &str,
+    project: &str,
+    case_ids: &[i32],
+    clone_path: &str,
+    modules: &BTreeMap<i32, String>,
+    docs: &BTreeMap<i32, CaseDoc>,
+) -> Result<ExportResult, String> {
+    // Taken before the write: a script changed while it runs shows as out of date.
+    let fingerprints = Fingerprinter::load(root, org, project)?;
+    let mut saved: BTreeMap<i32, (String, sync::Fingerprint)> = BTreeMap::new();
+    for &id in case_ids {
+        let module = modules.get(&id).map(String::as_str).unwrap_or("");
+        if let (Ok(Some(s)), Ok(Some(fp))) = (store::load_script(root, id), fingerprints.of(root, org, project, id, module)) {
+            saved.insert(id, (s.title, fp));
+        }
+    }
+    let mut result = write_with(root, org, project, case_ids, clone_path, modules, docs)?;
+    let at = crate::applog::iso_stamp();
+    let entries: Vec<(i32, sync::Exported)> = result
+        .cases
+        .iter()
+        .filter_map(|(id, file)| {
+            let (title, fingerprint) = saved.get(id)?;
+            let mut files: Vec<String> = result.sections.iter().filter(|(i, _)| i == id).map(|(_, f)| f.clone()).collect();
+            files.push(format!("suites/_generated/{file}"));
+            if result.files.iter().any(|f| f == INDEX_REL) {
+                files.push(INDEX_REL.into());
+            }
+            Some((
+                *id,
+                sync::Exported {
+                    title: title.clone(),
+                    fingerprint: fingerprint.clone(),
+                    exported_at: at.clone(),
+                    files,
+                    module: modules.get(id).cloned().unwrap_or_default(),
+                },
+            ))
+        })
+        .collect();
+    if let Err(e) = sync::record(&sync::record_path(sync_dir, clone_path, org, project), entries) {
+        crate::applog::warn(format!("pw-export: the Sync record was not saved: {e}"));
+        result.record_error =
+            Some("The files were written, but the Sync record could not be saved, so Sync may not show these cases as current. Settings → Logs has the details.".into());
+    }
+    Ok(result)
 }
 
 
