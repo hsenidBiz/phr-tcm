@@ -1341,6 +1341,14 @@ export const commands = {
 	 */
 	pwSyncStates: (clone: string, org: string, project: string) => typedError<SyncRow[], string>(__TAURI_INVOKE("pw_sync_states", { clone, org, project })),
 	/**
+	 *  Finish in the repo: for `cases` (what an export just wrote), one prompt
+	 *  per `<seg>` that runs `/gen-test` steps 5, 6 and 7 on them in the clone
+	 *  (`pw_repo::handoff`). `choices` is the spec picked for a `<seg>`; one not
+	 *  named gets its default. Each case must be one this app exported, with
+	 *  its raw spec and section in the clone. Only text: nothing is started.
+	 */
+	pwHandoff: (clone: string, org: string, project: string, cases: number[], choices: HandoffChoice[]) => typedError<HandoffCard[], string>(__TAURI_INVOKE("pw_handoff", { clone, org, project, cases, choices })),
+	/**
 	 *  Exports `cases` again through Export to Playwright's own all-or-nothing
 	 *  write, and records them: each one's section rewritten from Azure DevOps
 	 *  (the repo's Added by engineer, Also and Assertion floor blocks kept),
@@ -3478,6 +3486,27 @@ export type GuideStatus = {
 	 *  refuses `u64`, and the download is capped at 200 MB.
 	 */
 	size: number | null,
+};
+
+/**  One prompt: the cases of one `<seg>`, in the order they were asked for. */
+export type HandoffCard = {
+	seg: string,
+	case_ids: number[],
+	/**  The stems of the feature's `specs/*.spec.ts` that `valid_stem` allows, sorted. */
+	stems: string[],
+	/**  The spec the prompt names, or `None` for one spec per case. */
+	stem: string | null,
+	prompt: string,
+};
+
+/**
+ *  The person's spec choice for one `<seg>`: `stem` is the spec to put the
+ *  cases in, or `None` for one spec per case. A `<seg>` with no choice gets
+ *  `default_stem`.
+ */
+export type HandoffChoice = {
+	seg: string,
+	stem: string | null,
 };
 
 /**

@@ -130,5 +130,29 @@ pub async fn pw_export_write(
     export::ensure_exportable(&root, &organization, &project, &case_ids, &clone_path(), &modules, &replace)?;
     let docs = read_docs(&app, &organization, &project, &case_ids, module_ref.as_deref(), preconditions_ref.as_deref()).await?;
     let dir = sync_dir(&app)?;
-    export::write_recorded(&root, &dir, &organization, &project, &case_ids, &clone_path(), &modules, &docs, &replace)
+    let clone = clone_path();
+    let result = export::write_recorded(&root, &dir, &organization, &project, &case_ids, &clone, &modules, &docs, &replace)?;
+    remember_written(&clone, &result);
+    Ok(result)
+}
+
+/// Remembers, for this run, the cases `result` wrote to the clone at
+/// `clone`: Finish in the repo builds a prompt for them even when their
+/// Sync record could not be saved.
+pub(crate) fn remember_written(clone: &str, result: &ExportResult) {
+    if result.cases.is_empty() {
+        return;
+    }
+    let mut ids = written(clone);
+    ids.extend(result.cases.iter().map(|(id, _)| *id));
+    crate::cache::session_put(&crate::cache::keys::pw_written(&crate::pw_repo::sync::clone_key(clone)), ids);
+}
+
+/// The cases exports wrote to the clone at `clone` this run.
+pub(crate) fn written(clone: &str) -> std::collections::BTreeSet<i32> {
+    crate::cache::session_fresh(
+        &crate::cache::keys::pw_written(&crate::pw_repo::sync::clone_key(clone)),
+        crate::cache::keys::PW_WRITTEN_TTL,
+    )
+    .unwrap_or_default()
 }
