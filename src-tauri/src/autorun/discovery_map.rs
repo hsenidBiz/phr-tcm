@@ -227,6 +227,18 @@ pub fn plain_target(target: &Target) -> bool {
     }
 }
 
+/// Takes off page `path` what no page read could print of `target` (`a_read_can_print`):
+/// its links' sightings last seen there, the whole locator, and the
+/// elements filed as it. A role locator a read prints is left to the read.
+fn forget_unprintable(a: &mut AreaMap, path: &str, target: &Target) {
+    let keys: Vec<SeenKey> = target.links().iter().filter_map(LocatorStep::seen_key).filter(|k| !a_read_can_print(k)).collect();
+    a.sightings.retain(|s| s.page != path || !keys.contains(&s.key));
+    a.wholes.retain(|w| w.page != path || w.locator != *target);
+    if let Some(page) = a.pages.iter_mut().find(|p| p.path == path) {
+        page.elements.retain(|e| e.locator != *target || a_read_can_print_target(&e.locator));
+    }
+}
+
 /// Can a page read print a link with this key? A read prints a role and a
 /// name for each element (never a role with no locator,
 /// `snapshot::NO_LOCATOR_ROLES`), and a css step only for the iframe a
@@ -665,8 +677,10 @@ pub fn record_read_counted(
         if let Some(started) = explores {
             for e in old {
                 let matched_now = e.seen_at != 0 && e.seen_at >= started;
-                // What no read can print is not gone for not being printed.
-                let kept = matched_now || (e.seen_at != 0 && !a_read_can_print_target(&e.locator));
+                // What no read can print is not gone for not being printed,
+                // until it has not been matched for `STALE_AFTER_MS`.
+                let fresh = now.saturating_sub(e.seen_at) <= STALE_AFTER_MS;
+                let kept = matched_now || (e.seen_at != 0 && fresh && !a_read_can_print_target(&e.locator));
                 if kept && !page.elements.iter().any(|n| n.locator == e.locator) {
                     page.elements.push(e);
                 }
@@ -691,10 +705,16 @@ pub fn record_read_counted(
         // css that a probe or a try matched is never on a read's lines, so
         // its absence there says nothing about the page.
         if let Some(started) = explores {
+            let fresh = |at: u64| now.saturating_sub(at) <= STALE_AFTER_MS;
             a.sightings.retain(|s| {
-                s.page != path || s.last_seen >= started || shown.contains(&s.key) || !a_read_can_print(&s.key)
+                s.page != path
+                    || s.last_seen >= started
+                    || shown.contains(&s.key)
+                    || (!a_read_can_print(&s.key) && fresh(s.last_seen))
             });
-            a.wholes.retain(|w| w.page != path || w.last_seen >= started || !a_read_can_print_target(&w.locator));
+            a.wholes.retain(|w| {
+                w.page != path || w.last_seen >= started || (!a_read_can_print_target(&w.locator) && fresh(w.last_seen))
+            });
         }
         trim_sightings(a);
     })?;
@@ -813,7 +833,10 @@ pub fn record_matched_count(
 
 /// [`record_matched`] for a target that matched `matched` elements, `all`
 /// of them with hidden ones included (`NOT_ONE` when that is not known).
-/// `0` files nothing: a locator that matched nothing was never seen. A
+/// `0` files nothing: a locator that matched nothing was never seen. It
+/// does take off this page what no page read could ever print of it
+/// (`forget_unprintable`): a probe or a try that finds nothing there is the
+/// only evidence such a locator has gone. A
 /// plain one-link target (`plain_target`) files those numbers on its link;
 /// any other files each link as `NOT_ONE` and keeps the whole target in
 /// the area's `wholes` with `matched`. A link already seen matching one
@@ -831,7 +854,18 @@ pub fn record_matched_counts(
     now: u64,
 ) -> Result<(), String> {
     if matched == 0 {
-        return Ok(());
+        let path = self::page_path(page_path);
+        let area = canonical_area(root, org, project, area.unwrap_or(""));
+        // Only an area already mapped: matching nothing never adds one.
+        let key = area_key(&area);
+        if !load_map(root, org, project).is_ok_and(|m| m.areas.iter().any(|a| area_key(&a.area) == key)) {
+            return Ok(());
+        }
+        return update(root, org, project, |map| {
+            if let Some(a) = map.areas.iter_mut().find(|a| area_key(&a.area) == key) {
+                forget_unprintable(a, &path, target);
+            }
+        });
     }
     let matched = u32::try_from(matched).unwrap_or(NOT_ONE);
     let all = u32::try_from(all.max(1)).unwrap_or(NOT_ONE);

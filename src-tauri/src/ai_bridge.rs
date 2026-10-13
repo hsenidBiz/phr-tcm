@@ -2354,9 +2354,18 @@ pub async fn probe_page<D: crate::browser::cdp::Driver>(
         Err(e) => return (503, format!("the browser did not answer: {e}")),
     };
     if let Some(at) = at {
-        if let Some((matched, all)) = counted(d, target, &text).await {
-            let (href, _) = page_address(d).await;
-            record_matched_targets(at, &href, &[(target, matched, all)]);
+        match counted(d, target, &text).await {
+            Some((matched, all)) => {
+                let (href, _) = page_address(d).await;
+                record_matched_targets(at, &href, &[(target, matched, all)]);
+            }
+            // Nothing seen: what no page read can print of it is taken off
+            // this page (`discovery_map::record_matched_counts` with 0).
+            None if read_probe_answer(&text).visible == 0 => {
+                let (href, _) = page_address(d).await;
+                record_matched_targets(at, &href, &[(target, 0, 0)]);
+            }
+            None => {}
         }
     }
     (200, text)
