@@ -339,6 +339,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             pw_repo::pw_users_list,
             pw_repo::pw_users_password,
             pw_repo::pw_users_change,
+            pw_repo::pw_sync_states,
+            pw_repo::pw_sync_update,
             app_settings::set_start_minimized,
             app_settings::get_autostart,
             app_settings::set_autostart,

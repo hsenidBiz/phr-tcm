@@ -1256,10 +1256,11 @@ export const commands = {
 	 */
 	pwExportSaveMap: (organization: string, project: string, map: ExportMap) => typedError<null, string>(__TAURI_INVOKE("pw_export_save_map", { organization, project, map })),
 	/**
-	 *  Writes the cases into the clone. Reads each case's title, steps, state
-	 *  and paths from Azure DevOps first (read-only). `modules` is each case's
-	 *  Module as the screen has it - the same the preview was given, so the
-	 *  write picks the same areas the preview showed.
+	 *  Writes the cases into the clone, and records them for Sync. Reads each
+	 *  case's title, steps, state and paths from Azure DevOps first
+	 *  (read-only). `modules` is each case's Module as the screen has it - the
+	 *  same the preview was given, so the write picks the same areas the
+	 *  preview showed.
 	 */
 	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, moduleRef, preconditionsRef })),
 	/**  What the clone at `clone` holds, and the health line. Read only. */
@@ -1316,6 +1317,21 @@ export const commands = {
 	 *  passwords hidden.
 	 */
 	pwUsersChange: (clone: string, change: AccountChange, apply: boolean) => typedError<ChangeOutcome, string>(__TAURI_INVOKE("pw_users_change", { clone, change, apply })),
+	/**
+	 *  Every case exported to this clone for this project, and every script of
+	 *  the project never exported, each with its state (`pw_repo::sync`).
+	 *  Read only.
+	 */
+	pwSyncStates: (clone: string, org: string, project: string) => typedError<SyncRow[], string>(__TAURI_INVOKE("pw_sync_states", { clone, org, project })),
+	/**
+	 *  Exports `cases` again through Export to Playwright's own all-or-nothing
+	 *  write, and records them: each one's section spliced (the repo's own
+	 *  blocks kept), its raw spec replaced, its `index.json` entry kept or
+	 *  added. Nothing else in the clone is touched. A refusal writes nothing
+	 *  and leaves the record as it was. Each case is placed by its Module as
+	 *  Azure DevOps has it now, else as it was at its last export.
+	 */
+	pwSyncUpdate: (clone: string, org: string, project: string, cases: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_sync_update", { clone, org, project, cases, moduleRef, preconditionsRef })),
 	/**
 	 *  Whether a start at sign-in stays hidden in the tray (on) or opens the
 	 *  window (off). Read at start-up, so the Windows startup entry itself never
@@ -3196,6 +3212,10 @@ export type ExportResult = {
 	user_keys: ([number, string])[],
 	/**  `<module>/<feature>` pairs the clone's navigation.json lacks. */
 	missing_navigation: string[],
+	/**  Case id and the test-case file its section is in. */
+	sections: ([number, string])[],
+	/**  Set when the files were written but the Sync record could not be. */
+	record_error: string | null,
 };
 
 export type ExportSummary = {
@@ -5518,6 +5538,27 @@ export type SuspectedDefect = {
 	/**  Epoch milliseconds as a string, like `LocalRun::started_at`. */
 	marked_at: string,
 };
+
+export type SyncRow = {
+	case_id: number,
+	title: string,
+	state: SyncState,
+	/**  When it was last exported, UTC. */
+	exported_at: string | null,
+	/**  Whether Auto Run still has its script, so Update can export it. */
+	has_script: boolean,
+};
+
+/**  Where a case stands. */
+export type SyncState = 
+/**  The script is unchanged since it was exported. */
+{ kind: "Current" } | 
+/**  The script changed after it was exported; `why` says what. */
+{ kind: "OutOfDate"; why: string } | 
+/**  Exported, but the clone has no section or no raw spec for it now. */
+{ kind: "NotInRepo" } | 
+/**  The project has a script for it that was never exported. */
+{ kind: "NeverExported" };
 
 /**
  *  What an action points at. A plain string keeps the meaning it has

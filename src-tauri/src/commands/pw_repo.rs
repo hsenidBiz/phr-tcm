@@ -5,8 +5,11 @@
 
 use crate::pw_repo::process::{self, Launch, RunEvent};
 use crate::pw_repo::runner::{self, BrowserMode, PwReport, RunAction, RunPreview, RunStart, TestTree};
+use crate::pw_export::export::{self, ExportResult};
 use crate::pw_repo::structure::{self, RepoStructure};
+use crate::pw_repo::sync::{self, SyncRow};
 use crate::pw_repo::users::{self, AccountChange, ChangeOutcome, RepoAccount};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri_specta::Event;
@@ -198,4 +201,53 @@ pub fn pw_users_password(clone: String, key: String) -> Result<String, String> {
 pub async fn pw_users_change(app: tauri::AppHandle, clone: String, change: AccountChange, apply: bool) -> Result<ChangeOutcome, String> {
     let show = emitter(app);
     blocking_users(clone, move |clone, start| users::change(clone, &change, apply, &show, start)).await
+}
+
+/// Every case exported to this clone for this project, and every script of
+/// the project never exported, each with its state (`pw_repo::sync`).
+/// Read only.
+#[tauri::command]
+#[specta::specta]
+pub async fn pw_sync_states(app: tauri::AppHandle, clone: String, org: String, project: String) -> Result<Vec<SyncRow>, String> {
+    let root = super::autorun::root(&app)?;
+    let dir = super::pw_export::sync_dir(&app)?;
+    let configured = crate::app_settings::current().playwright_clone;
+    blocking(clone, false, move |_, _| sync::states(&dir, &root, &configured, &org, &project)).await
+}
+
+/// Exports `cases` again through Export to Playwright's own all-or-nothing
+/// write, and records them: each one's section spliced (the repo's own
+/// blocks kept), its raw spec replaced, its `index.json` entry kept or
+/// added. Nothing else in the clone is touched. A refusal writes nothing
+/// and leaves the record as it was. Each case is placed by its Module as
+/// Azure DevOps has it now, else as it was at its last export.
+#[tauri::command]
+#[specta::specta]
+pub async fn pw_sync_update(
+    app: tauri::AppHandle,
+    clone: String,
+    org: String,
+    project: String,
+    cases: Vec<i32>,
+    module_ref: Option<String>,
+    preconditions_ref: Option<String>,
+) -> Result<ExportResult, String> {
+    chosen(&clone)?;
+    if cases.is_empty() {
+        return Ok(super::pw_export::nothing_written());
+    }
+    let root = super::autorun::root(&app)?;
+    let dir = super::pw_export::sync_dir(&app)?;
+    let configured = crate::app_settings::current().playwright_clone;
+    let record = sync::load(&sync::record_path(&dir, &configured, &org, &project))?;
+    let docs = super::pw_export::read_docs(&app, &org, &project, &cases, module_ref.as_deref(), preconditions_ref.as_deref()).await?;
+    let modules: BTreeMap<i32, String> = cases
+        .iter()
+        .map(|id| {
+            let now = docs.get(id).map(|d| d.module.trim().to_string()).filter(|m| !m.is_empty());
+            let then = record.cases.get(id).map(|e| e.module.clone()).unwrap_or_default();
+            (*id, now.unwrap_or(then))
+        })
+        .collect();
+    blocking(clone, false, move |_, _| export::write_recorded(&root, &dir, &org, &project, &cases, &configured, &modules, &docs)).await
 }

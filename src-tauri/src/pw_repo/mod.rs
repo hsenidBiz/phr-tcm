@@ -14,12 +14,16 @@
 //! `users` lists and changes the repo's test accounts through its `npm run
 //! users` CLI, and keeps every password out of the log and the output.
 //!
+//! `sync` keeps the export record and says, for each case, whether the
+//! clone's copy of its script is current.
+//!
 //! Offered exactly where Auto Run is (`ai_tools::autorun_offered`): with
 //! Advanced Features off every command of the tab is refused.
 
 pub mod process;
 pub mod runner;
 pub mod structure;
+pub mod sync;
 pub mod users;
 
 /// The refusal every Playwright tab command gives where it is not offered.

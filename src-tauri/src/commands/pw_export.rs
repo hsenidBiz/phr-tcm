@@ -43,35 +43,30 @@ pub fn pw_export_save_map(
     mapping::save(&root, &organization, &project, &map)
 }
 
-/// Writes the cases into the clone. Reads each case's title, steps, state
-/// and paths from Azure DevOps first (read-only). `modules` is each case's
-/// Module as the screen has it - the same the preview was given, so the
-/// write picks the same areas the preview showed.
-#[tauri::command]
-#[specta::specta]
-pub async fn pw_export_write(
-    app: tauri::AppHandle,
-    organization: String,
-    project: String,
-    case_ids: Vec<i32>,
-    modules: Vec<(i32, String)>,
-    module_ref: Option<String>,
-    preconditions_ref: Option<String>,
-) -> Result<ExportResult, String> {
-    if case_ids.is_empty() {
-        return Ok(ExportResult { files: vec![], cases: vec![], user_keys: vec![], missing_navigation: vec![] });
-    }
-    let root = super::autorun::root(&app)?;
-    let modules: BTreeMap<i32, String> = modules.into_iter().collect();
-    // Refuse an unexportable selection before any request is made.
-    export::ensure_exportable(&root, &organization, &project, &case_ids, &clone_path(), &modules)?;
-    let token = crate::state::get_fresh_token(&app).await.map_err(|e| e.user_text())?;
+/// The folder of the Sync records (`pw_repo::sync`): beside Auto Run's
+/// files in the app's data folder.
+pub(crate) fn sync_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join(crate::pw_repo::sync::SYNC_DIR))
+}
+
+/// Each case's title, steps, state and paths, read from Azure DevOps
+/// (read-only), as the test-case section is written from them.
+pub(crate) async fn read_docs(
+    app: &tauri::AppHandle,
+    organization: &str,
+    project: &str,
+    case_ids: &[i32],
+    module_ref: Option<&str>,
+    preconditions_ref: Option<&str>,
+) -> Result<BTreeMap<i32, CaseDoc>, String> {
+    let token = crate::state::get_fresh_token(app).await.map_err(|e| e.user_text())?;
     let client = crate::ado::AdoClient::new(token);
     let cases = client
-        .get_test_cases_by_ids(&organization, &case_ids, module_ref.as_deref(), preconditions_ref.as_deref())
+        .get_test_cases_by_ids(organization, case_ids, module_ref, preconditions_ref)
         .await
         .map_err(|e| e.user_text())?;
-    let metas = client.get_case_meta(&organization, &case_ids).await.map_err(|e| e.user_text())?;
+    let metas = client.get_case_meta(organization, case_ids).await.map_err(|e| e.user_text())?;
     let meta: BTreeMap<i32, _> = metas.into_iter().map(|m| (m.id, m)).collect();
 
     let mut docs: BTreeMap<i32, CaseDoc> = BTreeMap::new();
@@ -85,7 +80,7 @@ pub async fn pw_export_write(
                 state: m.map(|m| m.state.clone()).unwrap_or_default(),
                 area_path: m.map(|m| m.area_path.clone()).unwrap_or_default(),
                 iteration_path: m.map(|m| m.iteration_path.clone()).unwrap_or_default(),
-                project: project.clone(),
+                project: project.to_string(),
                 module: c.module_value,
                 tags: c.tags,
                 preconditions: c.preconditions,
@@ -97,5 +92,45 @@ pub async fn pw_export_write(
             },
         );
     }
-    export::write_with(&root, &organization, &project, &case_ids, &clone_path(), &modules, &docs)
+    Ok(docs)
+}
+
+/// An export of nothing: what an empty selection answers.
+pub(crate) fn nothing_written() -> ExportResult {
+    ExportResult {
+        files: vec![],
+        cases: vec![],
+        user_keys: vec![],
+        missing_navigation: vec![],
+        sections: vec![],
+        record_error: None,
+    }
+}
+
+/// Writes the cases into the clone, and records them for Sync. Reads each
+/// case's title, steps, state and paths from Azure DevOps first
+/// (read-only). `modules` is each case's Module as the screen has it - the
+/// same the preview was given, so the write picks the same areas the
+/// preview showed.
+#[tauri::command]
+#[specta::specta]
+pub async fn pw_export_write(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    case_ids: Vec<i32>,
+    modules: Vec<(i32, String)>,
+    module_ref: Option<String>,
+    preconditions_ref: Option<String>,
+) -> Result<ExportResult, String> {
+    if case_ids.is_empty() {
+        return Ok(nothing_written());
+    }
+    let root = super::autorun::root(&app)?;
+    let modules: BTreeMap<i32, String> = modules.into_iter().collect();
+    // Refuse an unexportable selection before any request is made.
+    export::ensure_exportable(&root, &organization, &project, &case_ids, &clone_path(), &modules)?;
+    let docs = read_docs(&app, &organization, &project, &case_ids, module_ref.as_deref(), preconditions_ref.as_deref()).await?;
+    let dir = sync_dir(&app)?;
+    export::write_recorded(&root, &dir, &organization, &project, &case_ids, &clone_path(), &modules, &docs)
 }

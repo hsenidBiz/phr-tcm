@@ -3,7 +3,8 @@
 // is (lib/extras); Rust refuses its commands everywhere else.
 //
 // Top to bottom: the clone folder, the health line, what the clone holds,
-// the Runner (./Runner) and the test accounts (./Accounts). Export to Playwright opens here, from Auto Run's menu item
+// the Runner (./Runner), the test accounts (./Accounts) and Sync (./Sync).
+// Export to Playwright opens here, from Auto Run's menu item
 // (lib/playwrightExport).
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -22,6 +23,7 @@ import Accounts from "./Accounts";
 import HealthLine from "./HealthLine";
 import PlaywrightExportDialog from "./PlaywrightExportDialog";
 import Runner from "./Runner";
+import Sync, { SYNC_KEY } from "./Sync";
 
 const sectionTitle = "text-xs font-semibold uppercase tracking-wide text-muted";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -91,6 +93,7 @@ export default function Playwright({ org, project }: { org: string; project: str
     // The dialog can change the clone folder, and an export changes the clone.
     void qc.invalidateQueries({ queryKey: ["app-settings"] });
     void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY] });
+    void qc.invalidateQueries({ queryKey: [SYNC_KEY] });
   };
 
   const s = structure.data;
@@ -145,6 +148,16 @@ export default function Playwright({ org, project }: { org: string; project: str
 
       {runnable && (
         <Accounts key={clone} clone={clone} onChanged={() => void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY, clone] })} />
+      )}
+
+      {usable && (
+        <Sync
+          key={clone}
+          clone={clone}
+          org={org}
+          project={project}
+          onUpdated={() => void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY, clone] })}
+        />
       )}
 
       {exportRequest && (

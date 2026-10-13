@@ -352,8 +352,9 @@ export default function PlaywrightExportDialog({
               ))}
             </ol>
             <p className="text-xs text-muted">
-              Exporting a case again replaces that case's whole section in its test-case file.
+              Exporting a case again replaces that case's section in its test-case file, keeping the repo's own blocks in it (Also, Added by engineer, Assertion floor).
             </p>
+            {result.record_error && <p className="text-xs text-warning">{result.record_error}</p>}
             {refreshError && <p className="text-xs text-faint">{refreshError}</p>}
           </section>
         )}

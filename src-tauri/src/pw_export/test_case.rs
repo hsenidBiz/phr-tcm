@@ -127,6 +127,95 @@ fn is_case_heading(line: &str, id: i32) -> bool {
     rest_trim[digits..].chars().next().is_some_and(char::is_whitespace)
 }
 
+fn is_blank(line: &str) -> bool {
+    line.trim().is_empty()
+}
+
+/// A paragraph starting at `lines[at]`, with the blank lines after it.
+fn paragraph_from(lines: &[&str], at: usize) -> usize {
+    let mut end = at + 1;
+    while end < lines.len() && !is_blank(lines[end]) && !lines[end].starts_with('#') {
+        end += 1;
+    }
+    while end < lines.len() && is_blank(lines[end]) {
+        end += 1;
+    }
+    end
+}
+
+/// The blocks of a case section the repo writes itself, which a re-export
+/// keeps exactly as they are (byte for byte), in the repo's own places:
+/// - `**Also:** ...`, the line `/gen-test --also` writes under the heading;
+/// - `**Added by engineer (not from ADO):**` and everything after it up to
+///   the next heading: the steps an engineer added, and their notes;
+/// - an `**Assertion floor:** ...` line that `npm run spec:floor` appended.
+///
+/// A `## Amendment` section is a level-two heading of its own, so it is
+/// never inside a case section and `splice` leaves it where it is.
+#[derive(Default)]
+struct LocalBlocks {
+    also: String,
+    engineer: String,
+    floor: String,
+}
+
+fn local_blocks(old: &[&str]) -> LocalBlocks {
+    let mut out = LocalBlocks::default();
+    let mut i = 0;
+    while i < old.len() {
+        let line = old[i].trim_start();
+        let end = if line.starts_with("**Also:**") {
+            let end = paragraph_from(old, i);
+            out.also.extend(old[i..end].iter().copied());
+            end
+        } else if line.starts_with("**Added by engineer") {
+            let mut end = i + 1;
+            while end < old.len() && !old[end].starts_with('#') {
+                end += 1;
+            }
+            out.engineer.extend(old[i..end].iter().copied());
+            end
+        } else if line.starts_with("**Assertion floor:**") {
+            let end = paragraph_from(old, i);
+            out.floor.extend(old[i..end].iter().copied());
+            end
+        } else {
+            i + 1
+        };
+        i = end;
+    }
+    out
+}
+
+/// `section` (as `section()` writes it) with the old section's own blocks
+/// put back: Also under the heading, the engineer's steps before Cleanup,
+/// the assertion floor at the end.
+fn with_local_blocks(section: &str, old: &[&str]) -> String {
+    let local = local_blocks(old);
+    if local.also.is_empty() && local.engineer.is_empty() && local.floor.is_empty() {
+        return section.to_string();
+    }
+    let lines: Vec<&str> = section.split_inclusive('\n').collect();
+    // After the heading and the blank lines under it.
+    let mut under_heading = 1.min(lines.len());
+    while under_heading < lines.len() && is_blank(lines[under_heading]) {
+        under_heading += 1;
+    }
+    let cleanup = lines.iter().position(|l| l.starts_with("### Cleanup")).unwrap_or(lines.len());
+    let mut o = String::with_capacity(section.len() + local.also.len() + local.engineer.len() + local.floor.len());
+    o.extend(lines[..under_heading].iter().copied());
+    o.push_str(&local.also);
+    o.extend(lines[under_heading..cleanup.max(under_heading)].iter().copied());
+    o.push_str(&local.engineer);
+    o.extend(lines[cleanup.max(under_heading)..].iter().copied());
+    o.push_str(&local.floor);
+    o
+}
+
+/// `existing` with case `id`'s section replaced by `section`, or `section`
+/// appended when the file has none. Everything outside that section is kept
+/// byte for byte, and so are the repo's own blocks inside it
+/// (`local_blocks`).
 pub fn splice(existing: &str, id: i32, section: &str) -> String {
     let lines: Vec<&str> = existing.split_inclusive('\n').collect();
     if let Some(start) = lines.iter().position(|l| is_case_heading(l, id)) {
@@ -134,9 +223,10 @@ pub fn splice(existing: &str, id: i32, section: &str) -> String {
             .iter()
             .position(|l| is_h2(l))
             .map_or(lines.len(), |p| start + 1 + p);
+        let section = with_local_blocks(section, &lines[start..end]);
         let mut o = String::with_capacity(existing.len() + section.len());
         o.extend(lines[..start].iter().copied());
-        o.push_str(section);
+        o.push_str(&section);
         o.extend(lines[end..].iter().copied());
         return o;
     }

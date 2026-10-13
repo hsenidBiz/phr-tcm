@@ -16,6 +16,7 @@ use crate::autorun::recipe::{self, SignInRecipe};
 use crate::autorun::{accounts, components, runner, store, CaseScript, LocalRun};
 use crate::browser::actions::Action;
 use crate::browser::locator::Target;
+use crate::pw_repo::sync;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -63,6 +64,10 @@ pub struct ExportResult {
     pub user_keys: Vec<(i32, String)>,
     /// `<module>/<feature>` pairs the clone's navigation.json lacks.
     pub missing_navigation: Vec<String>,
+    /// Case id and the test-case file its section is in.
+    pub sections: Vec<(i32, String)>,
+    /// Set when the files were written but the Sync record could not be.
+    pub record_error: Option<String>,
 }
 
 /// Everything read once per preview or write.
@@ -468,6 +473,7 @@ pub fn write_with(
     let mut md_files: BTreeMap<String, String> = BTreeMap::new();
     let mut raw_files: Vec<Out> = Vec::new();
     let mut cases: Vec<(i32, String)> = Vec::new();
+    let mut sections: Vec<(i32, String)> = Vec::new();
     let mut missing_navigation: Vec<String> = Vec::new();
     let mut chosen: BTreeSet<String> = BTreeSet::new();
     let mut chosen_by: BTreeMap<String, i32> = BTreeMap::new();
@@ -502,6 +508,7 @@ pub fn write_with(
         }
         let current = md_files.get_mut(&md_rel).expect("inserted above");
         *current = test_case::splice(current, id, &test_case::section(&doc));
+        sections.push((id, md_rel.clone()));
 
         // The raw file: the index's own for this id, else a fresh unique name.
         let key = id.to_string();
@@ -564,7 +571,67 @@ pub fn write_with(
 
     commit(&repo.root, &outs)?;
     let user_keys = ready.iter().map(|(id, r)| (*id, r.user_key.clone())).collect();
-    Ok(ExportResult { files: outs.into_iter().map(|o| o.rel).collect(), cases, user_keys, missing_navigation })
+    Ok(ExportResult {
+        files: outs.into_iter().map(|o| o.rel).collect(),
+        cases,
+        user_keys,
+        missing_navigation,
+        sections,
+        record_error: None,
+    })
+}
+
+/// `write_with`, then the Sync record (`pw_repo::sync`) for every case
+/// written: its saved script's fingerprint as it was read before the write,
+/// the time, and its files. `sync_dir` is the records' folder. A refused
+/// write records nothing. A record that cannot be saved after the files
+/// were written does not undo them: it is logged and said in
+/// `record_error`.
+#[allow(clippy::too_many_arguments)]
+pub fn write_recorded(
+    root: &Path,
+    sync_dir: &Path,
+    org: &str,
+    project: &str,
+    case_ids: &[i32],
+    clone_path: &str,
+    modules: &BTreeMap<i32, String>,
+    docs: &BTreeMap<i32, CaseDoc>,
+) -> Result<ExportResult, String> {
+    let mut saved: BTreeMap<i32, CaseScript> = BTreeMap::new();
+    for &id in case_ids {
+        if let Ok(Some(s)) = store::load_script(root, id) {
+            saved.insert(id, s);
+        }
+    }
+    let mut result = write_with(root, org, project, case_ids, clone_path, modules, docs)?;
+    let at = crate::applog::iso_stamp();
+    let entries: Vec<(i32, sync::Exported)> = result
+        .cases
+        .iter()
+        .filter_map(|(id, file)| {
+            let script = saved.get(id)?;
+            let mut files: Vec<String> = result.sections.iter().filter(|(i, _)| i == id).map(|(_, f)| f.clone()).collect();
+            files.push(format!("suites/_generated/{file}"));
+            files.push("suites/_generated/index.json".into());
+            Some((
+                *id,
+                sync::Exported {
+                    title: script.title.clone(),
+                    fingerprint: sync::fingerprint(script),
+                    exported_at: at.clone(),
+                    files,
+                    module: modules.get(id).cloned().unwrap_or_default(),
+                },
+            ))
+        })
+        .collect();
+    if let Err(e) = sync::record(&sync::record_path(sync_dir, clone_path, org, project), entries) {
+        crate::applog::warn(format!("pw-export: the Sync record was not saved: {e}"));
+        result.record_error =
+            Some("The files were written, but the Sync record could not be saved, so Sync may not show these cases as current. Settings → Logs has the details.".into());
+    }
+    Ok(result)
 }
 
 
