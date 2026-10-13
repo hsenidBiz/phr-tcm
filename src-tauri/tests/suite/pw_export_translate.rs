@@ -326,10 +326,7 @@ fn each_unexportable_kind_says_why() {
         ("expect_dialog", json!({ "kind": "expect_dialog", "answer": "accept" })),
         ("expect_download", json!({ "kind": "expect_download", "name": "a.xlsx", "sheet": "S" })),
         ("expect_download", json!({ "kind": "expect_download", "name": "a.xlsx", "contains_text": ["x"] })),
-        ("expect_row", json!({ "kind": "expect_row", "table": "#t", "cells": { "A": "b" } })),
-        ("expect_no_row", json!({ "kind": "expect_no_row", "table": "#t", "cells": { "A": "b" } })),
-        ("expect_sorted", json!({ "kind": "expect_sorted", "table": "#t", "column": "A", "order": "ascending" })),
-        ("expect_row_count", json!({ "kind": "expect_row_count", "table": "#t", "equals": 1 })),
+        ("expect_row_count", json!({ "kind": "expect_row_count", "table": "#t", "at_least": 1, "at_most": 3 })),
     ];
     for (kind, action) in table {
         let s = script(json!([{ "step_number": 1, "actions": [action.clone()] }]));
