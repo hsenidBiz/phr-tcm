@@ -4,7 +4,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import Sidebar, { WORK_ITEMS, sectionShortcut, shortcutOrder, type WorkSection } from "./Sidebar";
+import Sidebar, { WORK_ITEMS, sectionShortcut, shortcutOrder, visibleCaseItems, type WorkSection } from "./Sidebar";
 import { clearTourExpanded, setTourExpanded } from "../lib/sidebarState";
 
 afterEach(() => {
@@ -148,9 +148,19 @@ test("the shortcut order with and without Auto Run", () => {
     "manage",
     "ai",
     "apitemplates",
-    "playwright",
   ]);
   expect(shortcutOrder(false)).toEqual(["manual", "import", "edit", "view", "run", "suites", "manage", "ai"]);
+});
+
+/// Playwright sits right under Auto Run in the rail, but has no Ctrl number,
+/// so Search Suites, Suite Management and AI Bridge keep theirs.
+test("Playwright sits under Auto Run and moves no one's Ctrl number", () => {
+  const rows = visibleCaseItems(true).map((i) => i.id);
+  expect(rows.indexOf("playwright")).toBe(rows.indexOf("autorun") + 1);
+  expect(sectionShortcut("playwright", true)).toBeUndefined();
+  expect(sectionShortcut("suites", true)).toBe("mod+7");
+  expect(sectionShortcut("manage", true)).toBe("mod+8");
+  expect(sectionShortcut("ai", true)).toBe("mod+9");
 });
 
 /// API Templates sits after AI Bridge so every existing tab keeps its
@@ -189,7 +199,7 @@ test("a locked release build hides API Templates, and unlocking shows it", async
 
 /// The Playwright tab is offered exactly where Auto Run is: a release
 /// build with Advanced Features off has no tab, and turning it on adds it,
-/// after API Templates and without a Ctrl number.
+/// under Auto Run and without a Ctrl number.
 test("Playwright shows only with Advanced Features on", async () => {
   vi.stubEnv("DEV", false);
   vi.resetModules();
@@ -204,7 +214,7 @@ test("Playwright shows only with Advanced Features on", async () => {
 
   await act(() => extras.setAdvancedFeatures(true));
   expect(screen.getByRole("button", { name: "Playwright" })).toBeInTheDocument();
-  expect(release.shortcutOrder().slice(-1)).toEqual(["playwright"]);
+  expect(release.shortcutOrder()).not.toContain("playwright");
   expect(release.sectionShortcut("playwright")).toBeUndefined();
   expect(release.sectionShortcut("ai")).toBe("mod+9");
 

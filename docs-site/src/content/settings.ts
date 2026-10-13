@@ -104,7 +104,7 @@ export const settings: Screen = {
       locate: { role: "switch", name: "Enable Advanced Features" },
       name: "Enable Advanced Features",
       does:
-        "Off by default. On: the sidebar adds **Auto Run**, under Run Tests, and **API Templates** and **Playwright**, at the end, and the AI Bridge tab adds the environments they work in and the AI tools that go with them. " +
+        "Off by default. On: the sidebar adds **Auto Run**, under Run Tests, **Playwright**, under Auto Run, and **API Templates**, at the end, and the AI Bridge tab adds the environments they work in and the AI tools that go with them. " +
         "Off again: they are hidden, and your scripts, runs and templates are kept on this computer for when you turn it back on.",
       tips: ["With the advanced features on, the sidebar's shortcuts run from [[Ctrl+1]] to [[Ctrl+9]]: Auto Run takes [[Ctrl+6]] and the screens after it move down one."],
     },

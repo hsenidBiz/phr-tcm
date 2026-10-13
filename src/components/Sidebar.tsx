@@ -71,6 +71,10 @@ export const CASE_ITEMS: Item<Section>[] = [
   // A radar sweep, not a second play button: Run Tests owns the play
   // glyph, and the rail has to stay scannable at 16px.
   { id: "autorun", label: "Auto Run", icon: GlyphAutoRun, tone: "nav-ico nav-ico-autorun", note: "In Dev" },
+  // Beside Auto Run, whose scripts it exports, but left out of the Ctrl+N
+  // order (NO_SHORTCUT) so every tab below keeps its number. The theatre
+  // masks are Playwright's own picture.
+  { id: "playwright", label: "Playwright", icon: GlyphPlaywright, tone: "nav-ico nav-ico-playwright" },
   { id: "suites", label: "Search Suites", icon: GlyphSuites, tone: "nav-ico nav-ico-suites" },
   // An ordered list, because ordering is the first thing this screen does.
   { id: "manage", label: "Suite Management", icon: GlyphManage, tone: "nav-ico nav-ico-manage" },
@@ -78,13 +82,14 @@ export const CASE_ITEMS: Item<Section>[] = [
   // Last, so every tab above keeps its Ctrl+number; it has none of its
   // own (see sectionShortcut). Braces, for the JSON a template is.
   { id: "apitemplates", label: "API Templates", icon: GlyphApiTemplates, tone: "nav-ico nav-ico-apitemplates" },
-  // After API Templates for the same reason: every tab above keeps its
-  // Ctrl+number. The theatre masks are Playwright's own picture.
-  { id: "playwright", label: "Playwright", icon: GlyphPlaywright, tone: "nav-ico nav-ico-playwright" },
 ];
 
 /** The tabs offered only where Auto Run is. */
 const WITH_AUTO_RUN: ReadonlySet<Section> = new Set<Section>(["autorun", "apitemplates", "playwright"]);
+
+/** Rows shown in the rail but left out of the Ctrl+N order, so the tabs
+ * after them keep their numbers. */
+const NO_SHORTCUT: ReadonlySet<Section> = new Set<Section>(["playwright"]);
 
 /** The rows the rail shows: CASE_ITEMS, with Auto Run, API Templates and Playwright
  * only where they are offered - always in a development build
@@ -98,9 +103,12 @@ export function visibleCaseItems(autoRun: boolean = autoRunVisible()): Item<Sect
   return CASE_ITEMS.filter((i) => !WITH_AUTO_RUN.has(i.id) || autoRun);
 }
 
-/** Section ids in Ctrl+N order: 1-based index = the shortcut digit. */
+/** Section ids in Ctrl+N order: 1-based index = the shortcut digit. Rows in
+ * NO_SHORTCUT are skipped, so they have no number and move no one else's. */
 export function shortcutOrder(autoRun: boolean = autoRunVisible()): Section[] {
-  return visibleCaseItems(autoRun).map((i) => i.id);
+  return visibleCaseItems(autoRun)
+    .map((i) => i.id)
+    .filter((id) => !NO_SHORTCUT.has(id));
 }
 
 /** The shortcut string for a section ("mod+3"), or undefined for sections

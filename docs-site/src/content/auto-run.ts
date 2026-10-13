@@ -927,7 +927,7 @@ export const autoRun: Screen = {
       steps: [
         "Open Settings with the gear at the top right.",
         "Under **General**, turn on **Enable Advanced Features**.",
-        "**Auto Run** appears in the sidebar under Run Tests, and **API Templates** and **Playwright** at the end.",
+        "**Auto Run** appears in the sidebar under Run Tests, **Playwright** under Auto Run, and **API Templates** at the end.",
       ],
     },
     {

@@ -19,7 +19,7 @@ export const playwright: Screen = {
   summary:
     "Work with your clone of the team's Playwright repo without leaving the app: run its tests, manage its test accounts, and keep the repo's copies of your Auto Run scripts up to date. " +
     "The app runs only the repo's own commands, in the clone, and never commits, pulls or pushes. " +
-    "Playwright is part of the advanced features: turn on **Enable Advanced Features** in Settings, under General, and it appears at the end of the sidebar.",
+    "Playwright is part of the advanced features: turn on **Enable Advanced Features** in Settings, under General, and it appears in the sidebar under Auto Run.",
   shots: [],
   controls: [],
   tips: [
