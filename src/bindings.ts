@@ -1341,6 +1341,14 @@ export const commands = {
 	 */
 	pwSyncStates: (clone: string, org: string, project: string) => typedError<SyncRow[], string>(__TAURI_INVOKE("pw_sync_states", { clone, org, project })),
 	/**
+	 *  Finish in the repo: for `cases` (what an export just wrote), one prompt
+	 *  per test-case file that runs `/gen-test` steps 4, 5, 6 and 7 on them in
+	 *  the clone (`pw_repo::handoff`), into the spec of the same stem. Each case
+	 *  must be one this app exported, with
+	 *  its raw spec and section in the clone. Only text: nothing is started.
+	 */
+	pwHandoff: (clone: string, org: string, project: string, cases: number[]) => typedError<HandoffCard[], string>(__TAURI_INVOKE("pw_handoff", { clone, org, project, cases })),
+	/**
 	 *  Exports `cases` again through Export to Playwright's own all-or-nothing
 	 *  write, and records them: each one's section rewritten from Azure DevOps
 	 *  (the repo's Added by engineer, Also and Assertion floor blocks kept),
@@ -3478,6 +3486,22 @@ export type GuideStatus = {
 	 *  refuses `u64`, and the download is capped at 200 MB.
 	 */
 	size: number | null,
+};
+
+/**  One prompt: the cases of one test-case file, in the order they were asked for. */
+export type HandoffCard = {
+	/**  `<country>/<side>/<module>/<feature>`. */
+	seg: string,
+	/**  The test-case file's stem, and so the spec's: `--spec <stem>`. */
+	stem: string,
+	/**  The cases the prompt finishes. */
+	case_ids: number[],
+	/**  Empty when `problem` is set or every case is in `already`. */
+	prompt: string,
+	/**  Why this file's prompt cannot be built; the other files still get theirs. */
+	problem: string | null,
+	/**  One sentence per case left out because a spec already has it. */
+	already: string[],
 };
 
 /**

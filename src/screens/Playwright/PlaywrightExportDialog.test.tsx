@@ -47,6 +47,10 @@ function mount(handlers: Record<string, (args: Record<string, unknown>) => unkno
     if (handlers[cmd]) return handlers[cmd]((args ?? {}) as Record<string, unknown>);
     if (cmd === "pw_export_preview") return preview;
     if (cmd === "get_app_settings") return { playwright_clone: "C:/repo" };
+    if (cmd === "pw_handoff") {
+      const ids = (args as { cases: number[] }).cases;
+      return [{ seg: "sl/admin/pm", stem: "wizard", case_ids: ids, prompt: `finish ${ids.join(" ")}`, problem: null, already: [] }];
+    }
     return null;
   });
   const onClose = vi.fn();
@@ -130,6 +134,9 @@ test("export_sends_the_ticked_ids_and_shows_the_summary", async () => {
   expect(screen.getByText("pm/wizard")).toBeInTheDocument();
   expect(screen.getByText(/test-refactorer/)).toBeInTheDocument();
   expect(screen.getByText(/lint:tests -- --require-specs/)).toBeInTheDocument();
+  // Finish in the repo: the prompt for the cases just written, in the clone chosen.
+  expect(((await screen.findByLabelText("Prompt for sl/admin/pm/wizard")) as HTMLTextAreaElement).value).toBe("finish 10");
+  expect(calls.find((c) => c.cmd === "pw_handoff")?.args).toMatchObject({ clone: "C:/repo", org: "acme", project: "Web", cases: [10] });
   expect(screen.getByText(/rewrites its section from Azure DevOps; the repo's Added by engineer, Also and Assertion floor blocks and every other section and file stay as they are/)).toBeInTheDocument();
 });
 

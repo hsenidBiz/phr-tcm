@@ -141,3 +141,14 @@ pub const PW_LIST_TTL: Duration = Duration::from_secs(8 * 60 * 60);
 pub fn pw_list(clone: &str) -> String {
     format!("pw-list:{clone}")
 }
+
+/// How long the cases an export wrote this run are remembered for Finish in
+/// the repo (session tier only): in effect the session.
+pub const PW_WRITTEN_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// The case ids exports wrote to the clone at `clone` this run
+/// (`commands::pw_export::remember_written`): a case Finish in the repo may
+/// build a prompt for even when its Sync record could not be saved.
+pub fn pw_written(clone: &str) -> String {
+    format!("pw-written:{clone}")
+}

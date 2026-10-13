@@ -17,12 +17,16 @@
 //! `sync` keeps the export record and says, for each case, whether the
 //! clone's copy of its script is current.
 //!
+//! `handoff` builds the prompt that finishes exported cases in the repo
+//! (`/gen-test` steps 4, 5, 6 and 7); the app only copies it.
+//!
 //! `presence` finds which ADO ids the clone already has, and where: what
 //! Export skips by default and what Sync's Add new leaves alone.
 //!
 //! Offered exactly where Auto Run is (`ai_tools::autorun_offered`): with
 //! Advanced Features off every command of the tab is refused.
 
+pub mod handoff;
 pub mod presence;
 pub mod process;
 pub mod runner;

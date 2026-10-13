@@ -2,7 +2,8 @@
 // local clone of the team's PHR-PLAYWRIGHT-AUTOMATION repo, as raw specs plus
 // a section in the area's test-case file. TCM only writes files; running,
 // refactoring and committing them is the person's (or Claude Code's) job in
-// the clone, which the summary says in order.
+// the clone, which the summary says in order; Finish in the repo gives the
+// prompt that has Claude Code there run the repo's own last steps.
 //
 // Four parts, top to bottom: the clone folder, where each area's specs live,
 // which repo user each of TCM's accounts signs in as, and the cases. The
@@ -33,6 +34,7 @@ import { IconBrowse, IconCancel, IconConfirm, IconCopy, IconExport } from "../..
 import { copyText } from "../../lib/clipboard";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrapStr } from "../../lib/ipc";
+import FinishInRepo from "./FinishInRepo";
 
 const SIDES = ["admin", "self"];
 const sectionTitle = "text-xs font-semibold uppercase tracking-wide text-muted";
@@ -40,9 +42,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const NEXT_STEPS = [
   "Capture navigation for any area listed above as missing.",
-  "Run each raw spec in the generated project, with the seed set to the case's user key.",
-  "Ask Claude Code to run test-refactorer on the raw specs.",
-  "Run npm run lint:tests -- --require-specs",
+  "Paste the Finish in the repo prompt below into Claude Code in your clone: it runs the raw specs, the repo's test-refactorer, npm run lint:tests -- --require-specs and the live check.",
   "Review the changes and commit them.",
 ];
 
@@ -393,6 +393,7 @@ export default function PlaywrightExportDialog({
             {refreshError && <p className="text-xs text-faint">{refreshError}</p>}
           </section>
         )}
+        {result && <FinishInRepo clone={clone} org={org} project={project} result={result} />}
       </div>
 
       <div className="flex items-center justify-end gap-2">

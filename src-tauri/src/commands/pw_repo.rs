@@ -6,6 +6,7 @@
 use crate::pw_repo::process::{self, Launch, RunEvent};
 use crate::pw_repo::runner::{self, BrowserMode, PwReport, RunAction, RunPreview, RunStart, TestTree};
 use crate::pw_export::export::{self, ExportResult};
+use crate::pw_repo::handoff;
 use crate::pw_repo::structure::{self, RepoStructure};
 use crate::pw_repo::sync::{self, SyncRow};
 use crate::pw_repo::users::{self, AccountChange, ChangeOutcome, RepoAccount};
@@ -203,6 +204,35 @@ pub async fn pw_sync_states(app: tauri::AppHandle, clone: String, org: String, p
     blocking(clone, false, move |_, _| sync::states(&dir, &root, &configured, &org, &project)).await
 }
 
+/// Finish in the repo: for `cases` (what an export just wrote), one prompt
+/// per test-case file that runs `/gen-test` steps 4, 5, 6 and 7 on them in
+/// the clone (`pw_repo::handoff`), into the spec of the same stem. Each case
+/// must be one this app exported, with
+/// its raw spec and section in the clone. Only text: nothing is started.
+#[tauri::command]
+#[specta::specta]
+pub async fn pw_handoff(
+    app: tauri::AppHandle,
+    clone: String,
+    org: String,
+    project: String,
+    cases: Vec<i32>,
+) -> Result<Vec<handoff::HandoffCard>, String> {
+    let dir = super::pw_export::sync_dir(&app)?;
+    let autorun = super::autorun::root(&app)?;
+    let configured = crate::app_settings::current().playwright_clone;
+    let written = super::pw_export::written(&configured);
+    blocking(clone, false, move |root, _| {
+        let record = sync::load(&sync::record_path(&dir, &configured, &org, &project))?;
+        let mapped: BTreeMap<i32, String> = cases
+            .iter()
+            .filter_map(|&id| export::mapped_user_key(&autorun, &org, &project, id).map(|k| (id, k)))
+            .collect();
+        handoff::cards_at(root, &record, &written, &mapped, &cases)
+    })
+    .await
+}
+
 /// Exports `cases` again through Export to Playwright's own all-or-nothing
 /// write, and records them: each one's section rewritten from Azure DevOps
 /// (the repo's Added by engineer, Also and Assertion floor blocks kept),
@@ -262,10 +292,12 @@ pub async fn pw_sync_add_new(
     let to_read = export::worth_reading(&root, &cases);
     let (docs, unread) = read_docs_each(&app, &org, &project, &to_read, module_ref.as_deref(), preconditions_ref.as_deref()).await;
     let modules = modules_for(&cases, &docs, &record);
-    blocking(clone, false, move |_, _| {
+    let result = blocking(clone, false, move |_, _| {
         export::add_new_with(&root, &dir, &org, &project, &cases, &configured, &modules, &docs, &unread)
     })
-    .await
+    .await?;
+    super::pw_export::remember_written(&crate::app_settings::current().playwright_clone, &result);
+    Ok(result)
 }
 
 /// `read_docs` for `cases` together, and when that fails, for each case on
@@ -356,8 +388,11 @@ async fn update(
     }
     let docs = super::pw_export::read_docs(&app, &org, &project, &cases, module_ref.as_deref(), preconditions_ref.as_deref()).await?;
     let modules = modules_for(&cases, &docs, &record);
-    blocking(clone, false, move |_, _| {
+    let written_to = configured.clone();
+    let result = blocking(clone, false, move |_, _| {
         export::write_recorded(&root, &dir, &org, &project, &cases, &configured, &modules, &docs, &replace)
     })
-    .await
+    .await?;
+    super::pw_export::remember_written(&written_to, &result);
+    Ok(result)
 }

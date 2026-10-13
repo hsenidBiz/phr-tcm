@@ -37,6 +37,10 @@ function mount(opts: { update?: (args: Record<string, unknown>) => ExportResult 
       calls.push({ cmd, args });
       if (cmd === "pw_sync_states") return rows;
       if (cmd === "list_test_case_fields") return [];
+      if (cmd === "pw_handoff") {
+        const ids = args.cases as number[];
+        return [{ seg: "sl/admin/pm", stem: "wizard", case_ids: ids, prompt: `finish ${ids.join(" ")}`, problem: null, already: [] }];
+      }
       if (cmd === "pw_sync_update" || cmd === "pw_sync_add_new") {
         const cases = (args.cases as number[] | undefined) ?? ROWS.filter((r) => r.has_script && !r.in_repo).map((r) => r.case_id);
         const r = opts.update?.(args) ?? {
@@ -104,6 +108,9 @@ test("Update out of date sends only the out-of-date cases and says what each sti
   expect(updates(m.calls)[0].args).toMatchObject({ clone: CLONE, org: "org", project: "proj", cases: [11], replace: [] });
   expect(await screen.findByText(`#11 → case-11.spec.ts: ${NEEDS_REPO}`)).toBeTruthy();
   expect(m.updated()).toBe(1);
+  // Finish in the repo: the prompt for exactly what was written.
+  expect(((await screen.findByLabelText("Prompt for sl/admin/pm/wizard")) as HTMLTextAreaElement).value).toBe("finish 11");
+  expect(m.calls.find((c) => c.cmd === "pw_handoff")?.args).toMatchObject({ clone: CLONE, org: "org", project: "proj", cases: [11] });
   // The states are read again.
   await waitFor(() => expect(screen.getByRole("button", { name: "Update out of date (0)" })).toBeTruthy());
 });

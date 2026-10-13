@@ -17,7 +17,7 @@
 // test-case file from Azure DevOps; the repo's Added by engineer, Also and
 // Assertion floor blocks, every other section and every other file are left
 // as they are. A raw spec still needs the repo's refactorer, which each
-// updated case says.
+// updated case says, and Finish in the repo gives the prompt for it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -27,6 +27,7 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { IconAdd, IconExport, IconRefresh } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
+import FinishInRepo from "./FinishInRepo";
 
 const sectionTitle = "text-xs font-semibold uppercase tracking-wide text-muted";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -42,7 +43,7 @@ function localTime(iso: string): string {
 }
 
 /** What each updated case still needs in the repo: said here only. */
-export const NEEDS_REPO = "needs /gen-test stages 5 and 6 in the repo";
+export const NEEDS_REPO = "needs /gen-test steps 4, 5, 6 and 7 in the repo (Finish in the repo, below)";
 
 function stateText(s: SyncState): string {
   switch (s.kind) {
@@ -216,6 +217,7 @@ export default function Sync({
             <p className="text-xs text-warning">{`The clone's navigation.json has no entry for: ${result.missing_navigation.join(", ")}`}</p>
           )}
           {result.record_error && <p className="text-xs text-warning">{result.record_error}</p>}
+          <FinishInRepo clone={clone} org={org} project={project} result={result} />
         </div>
       )}
 
