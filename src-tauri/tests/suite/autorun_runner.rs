@@ -990,6 +990,7 @@ fn every_action_kind_says_whether_it_changes_the_page() {
         (json!({ "kind": "expect_attribute", "selector": css, "name": "n", "equals": "v" }), false),
         (json!({ "kind": "expect_enabled", "selector": css }), false),
         (json!({ "kind": "expect_disabled", "selector": css }), false),
+        (json!({ "kind": "expect_checked", "selector": css, "checked": true }), false),
         (json!({ "kind": "expect_response", "url_contains": "/api" }), false),
         (json!({ "kind": "expect_focused", "selector": css }), false),
         (json!({ "kind": "expect_download", "name": "*.csv" }), false),

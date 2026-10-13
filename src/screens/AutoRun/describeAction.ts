@@ -416,6 +416,12 @@ function describeKnown(a: Action): Sentence {
       return [words("Check "), ...describeTarget(a.selector), words(` can be used${upTo(a.timeout_ms)}`)];
     case "expect_disabled":
       return [words("Check "), ...describeTarget(a.selector), words(` is disabled${upTo(a.timeout_ms)}`)];
+    case "expect_checked":
+      return [
+        words("Check "),
+        ...describeTarget(a.selector),
+        words(` is ${a.checked === false ? "not ticked" : "ticked"}${upTo(a.timeout_ms)}`),
+      ];
     case "sign_in":
       return [words(`Sign in as ${str(a.account)}`)];
     case "upload":

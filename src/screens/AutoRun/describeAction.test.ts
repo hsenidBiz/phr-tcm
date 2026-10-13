@@ -52,6 +52,14 @@ describe("a sentence for every action kind", () => {
     ],
     [{ kind: "expect_enabled", selector: SAVE }, 'Check the "Save & Continue" button can be used'],
     [{ kind: "expect_disabled", selector: SAVE, timeout_ms: 2000 }, 'Check the "Save & Continue" button is disabled (up to 2 s)'],
+    [
+      { kind: "expect_checked", selector: { role: "checkbox", name: "Remember me" }, checked: true },
+      'Check the "Remember me" checkbox is ticked',
+    ],
+    [
+      { kind: "expect_checked", selector: { role: "checkbox", name: "Remember me" }, checked: false },
+      'Check the "Remember me" checkbox is not ticked',
+    ],
     [{ kind: "sign_in", account: "hr.admin" }, "Sign in as hr.admin"],
     [
       { kind: "upload", selector: { role: "button", name: "Browse" }, file: "employees.xlsx" },
@@ -201,7 +209,7 @@ describe("a sentence for every action kind", () => {
       [
         "navigate", "click", "fill", "wait_for", "check_text", "check_url", "expect_visible", "expect_hidden",
         "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "expect_enabled", "expect_disabled",
-        "sign_in", "upload",
+        "expect_checked", "sign_in", "upload",
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
         "expect_tab_closed", "drag", "expect_dialog", "expect_row", "expect_no_row", "expect_sorted", "expect_row_count",

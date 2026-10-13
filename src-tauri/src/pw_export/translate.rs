@@ -92,6 +92,7 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         | Action::ExpectAttribute { selector, .. }
         | Action::ExpectEnabled { selector, .. }
         | Action::ExpectDisabled { selector, .. }
+        | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. } => check_target(selector),
         Action::Drag { from, to, position, .. } => {
             if matches!(position, Some(DropAt::Before | DropAt::After)) {
@@ -698,6 +699,15 @@ impl Em<'_> {
             Action::ExpectDisabled { selector, timeout_ms } => self.line(
                 indent,
                 &format!("await expect({}).{};", one(selector), call("toBeDisabled", &[], *timeout_ms)),
+            ),
+            Action::ExpectChecked { selector, checked, timeout_ms } => self.line(
+                indent,
+                &format!(
+                    "await expect({}).{}{};",
+                    one(selector),
+                    if *checked { "" } else { "not." },
+                    call("toBeChecked", &[], *timeout_ms)
+                ),
             ),
             Action::ExpectFocused { selector, timeout_ms } => {
                 self.line(

@@ -30,6 +30,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_attribute",
     "expect_enabled",
     "expect_disabled",
+    "expect_checked",
     "sign_in",
     "upload",
     "expect_response",
@@ -132,8 +133,8 @@ without `quick` and read the full guide.
   `save_autorun_component`, then save it unchanged from the draft that
   worked.
 - A step is either `unchecked` (no checks at all, and the reason) or
-  checked, never both. Check a state with `expect_attribute` (`checked`,
-  `aria-checked` or `disabled`), not by adding a state to its selector.
+  checked, never both. Check a ticked box with `expect_checked`, and any
+  other state with `expect_attribute`, never by adding a state to its selector.
 - A `{{fixture.*}}` or `{{setup.*}}` placeholder may stand in a name or a
   text, in a quoted attribute value, or next to fixed text in an id or
   class. `{{prefix}}` and `{{now:...}}` are refused.
@@ -205,6 +206,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_count", "selector": ..., "equals": 3 }`
 - `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute
 - `{ "kind": "expect_enabled", "selector": ... }` - the element can be used
+- `{ "kind": "expect_checked", "selector": ..., "checked": true }` - the checkbox or radio is ticked (`"checked": false`: it is not), read from its live state, which follows clicks; any other element answers by its `aria-checked`, and a partly ticked box (`mixed`) is neither. `checked` is true when left out
 - `{ "kind": "expect_disabled", "selector": ... }` - the element is disabled: its `disabled` property is set, it or an element around it has `aria-disabled="true"`, or it is a form control (button, input, select, textarea) a disabled fieldset holds outside that fieldset's first legend; a link in a disabled fieldset is not disabled. A click waits out the same rule
 - `{ "kind": "sign_in", "account": "hr.supervisor" }` - change who is signed in, in the middle of a case
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page (same-origin frames included), right now? A hidden frame is not searched, and a frame holding a page from another site is not searched.
@@ -1312,7 +1314,7 @@ What a save checks:
   action (click, fill, upload, press_key, drag), the selector a
   `when_visible` waits for, and the checks that read one element (`expect_visible`, `expect_text`,
   `expect_contains_text`, `expect_attribute`, `expect_enabled`,
-  `expect_disabled`, `expect_focused`, and the table checks, whose table
+  `expect_disabled`, `expect_checked`, `expect_focused`, and the table checks, whose table
   must be one). A locator never seen matching
   anything is refused for every use, `expect_hidden` included: probe it
   while what it names is on the page.
@@ -1522,8 +1524,12 @@ Before every save:
 - A step is either `unchecked` (no checks at all, and the reason) or
   checked, never both. A step marked `unchecked` that also checks
   something is refused.
-- Check a state with `expect_attribute` on the element you saw (`checked`,
-  `aria-checked` or `disabled`), not by adding a state to its selector.
+- Check a ticked box with `expect_checked` on the element you saw (a
+  checkbox, radio or switch): it reads the box's live state, which
+  follows clicks. Never `expect_attribute` with `checked`: the `checked`
+  attribute does not follow a click, it only says how the box started.
+  Check any other state with `expect_attribute`, never by adding a state
+  to its selector.
   Whether a control can be used is `expect_enabled` or `expect_disabled`,
   which read the `disabled` property, `aria-disabled` on it or around it,
   and a disabled fieldset around a form control, together. An attribute that must not be there is

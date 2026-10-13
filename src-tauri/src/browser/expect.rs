@@ -33,6 +33,8 @@ pub enum Check<'a> {
     Enabled,
     /// The one match is disabled (`DISABLED_JS`).
     Disabled,
+    /// The one match is ticked (true) or not (false), by `CHECKED_JS`.
+    Checked(bool),
 }
 
 /// `this` is the element. Why it is disabled, in a few words, or `""` when
@@ -66,6 +68,34 @@ pub const FOCUSED_JS: &str = r#"function() {
   while (host) { if (host === this || this.contains(host)) return true; host = host.getRootNode && host.getRootNode().host; }
   return false;
 }"#;
+
+/// `this` is the element. Is it ticked: `"true"`, `"false"` or `"mixed"`,
+/// or null when it says nothing. A checkbox or radio input answers by its
+/// live `checked` property (and `indeterminate` for `"mixed"`), which
+/// follows every click; the `checked` ATTRIBUTE is only where it started.
+/// Anything else answers by its own `aria-checked`, then by the input a
+/// label is for or holds.
+pub const CHECKED_JS: &str = r#"function() {
+  const box = (e) => e instanceof HTMLInputElement && (e.type === 'checkbox' || e.type === 'radio');
+  const said = (e) => e.indeterminate ? 'mixed' : (e.checked ? 'true' : 'false');
+  if (box(this)) return said(this);
+  const aria = (this.getAttribute('aria-checked') || '').trim().toLowerCase();
+  if (aria === 'true' || aria === 'false' || aria === 'mixed') return aria;
+  const inner = this.control || (this.querySelector && this.querySelector('input[type=checkbox],input[type=radio]'));
+  if (inner && box(inner)) return said(inner);
+  return null;
+}"#;
+
+/// `expect_checked` on a box that is ticked when it should not be.
+pub const IS_CHECKED: &str = "is checked";
+/// `expect_checked` on a box that is not ticked when it should be.
+pub const IS_NOT_CHECKED: &str = "is not checked";
+/// `expect_checked` on a box that is partly ticked (`aria-checked="mixed"`
+/// or an indeterminate checkbox): neither ticked nor clear.
+pub const IS_MIXED: &str = "is partly checked (mixed)";
+/// `expect_checked` on an element with no checked state at all.
+pub const NOT_CHECKABLE: &str =
+    "has no checked state: it is not a checkbox or radio, and has no aria-checked - point it at the box itself";
 
 /// `expect_focused` on an element that does not have the focus.
 pub const NOT_FOCUSED: &str = "does not have the focus";
@@ -247,6 +277,20 @@ pub(crate) async fn look<D: Driver>(
                     (true, false) => Err(format!("{IS_DISABLED}{why}")),
                     (false, false) => Ok(format!("{what} {IS_DISABLED}{why}")),
                     (false, true) => Err(IS_ENABLED.to_string()),
+                }
+            }
+        },
+        Check::Checked(want) => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let got = page::call_value(d, h, CHECKED_JS, &[]).await?;
+                match (got.as_str(), *want) {
+                    (Some("true"), true) => Ok(format!("{what} {IS_CHECKED}")),
+                    (Some("false"), false) => Ok(format!("{what} {IS_NOT_CHECKED}")),
+                    (Some("true"), false) => Err(IS_CHECKED.to_string()),
+                    (Some("false"), true) => Err(IS_NOT_CHECKED.to_string()),
+                    (Some("mixed"), _) => Err(IS_MIXED.to_string()),
+                    _ => Err(NOT_CHECKABLE.to_string()),
                 }
             }
         },

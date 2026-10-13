@@ -19,6 +19,11 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+/// `expect_checked` with no `checked` asks for a ticked box.
+fn ticked() -> bool {
+    true
+}
+
 fn ok_status() -> u16 {
     200
 }
@@ -91,6 +96,17 @@ pub enum Action {
     /// (outside that fieldset's first legend) - `expect::DISABLED_JS`.
     ExpectDisabled {
         selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// The one checkbox or radio is ticked (`checked`, the default) or not:
+    /// its live `checked` state, which follows clicks, never the `checked`
+    /// attribute, which does not. Any other element answers by its
+    /// `aria-checked` (`expect::CHECKED_JS`).
+    ExpectChecked {
+        selector: Target,
+        #[serde(default = "ticked")]
+        checked: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
@@ -981,7 +997,8 @@ impl Action {
             | Action::ExpectText { selector, .. }
             | Action::ExpectCount { selector, .. }
             | Action::ExpectEnabled { selector, .. }
-            | Action::ExpectDisabled { selector, .. } => selector.validate(),
+            | Action::ExpectDisabled { selector, .. }
+            | Action::ExpectChecked { selector, .. } => selector.validate(),
             Action::ExpectContainsText { selector, value, .. } => {
                 if value.trim().is_empty() {
                     return Err("expect_contains_text has an empty value - everything contains nothing".to_string());
@@ -1214,6 +1231,7 @@ impl Action {
             | Action::ExpectAttribute { selector, .. }
             | Action::ExpectEnabled { selector, .. }
             | Action::ExpectDisabled { selector, .. }
+            | Action::ExpectChecked { selector, .. }
             | Action::Upload { selector, .. }
             | Action::ExpectFocused { selector, .. } => vec![selector],
             Action::WhenVisible { selector, then, .. } => {
@@ -1260,6 +1278,7 @@ impl Action {
             | Action::ExpectAttribute { selector, .. }
             | Action::ExpectEnabled { selector, .. }
             | Action::ExpectDisabled { selector, .. }
+            | Action::ExpectChecked { selector, .. }
             | Action::Upload { selector, .. }
             | Action::ExpectFocused { selector, .. } => vec![selector],
             Action::WhenVisible { selector, then, .. } => {
@@ -1323,6 +1342,7 @@ impl Action {
                 | Action::ExpectAttribute { .. }
                 | Action::ExpectEnabled { .. }
                 | Action::ExpectDisabled { .. }
+                | Action::ExpectChecked { .. }
                 | Action::ExpectFocused { .. }
                 | Action::ExpectResponse { .. }
                 | Action::ApiRequest { .. }
@@ -1632,6 +1652,9 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         }
         Action::ExpectDisabled { selector, timeout_ms } => {
             expect::expect(d, selector, Check::Disabled, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectChecked { selector, checked, timeout_ms } => {
+            expect::expect(d, selector, Check::Checked(*checked), wait(timeout_ms, timing), timing.poll_ms).await
         }
         // The runner intercepts `sign_in` before it ever reaches this
         // executor (it alone has the tester's accounts and the project's

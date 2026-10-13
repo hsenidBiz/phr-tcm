@@ -3363,6 +3363,41 @@ async fn states_enabled_and_disabled_are_read_from_the_page() {
     refused(run(&mut live, absent("type")).await, "still has type=\"button\"");
 }
 
+/// `expect_checked` on a real page follows clicks, where the `checked`
+/// attribute does not: a plain checkbox starts clear, a click ticks it, and
+/// the attribute is still absent. An `aria-checked` switch answers by that,
+/// a radio by its live state, and a button with no checked state is refused.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_expect_checked_follows_clicks() {
+    let mut live = open_states().await;
+    let checked = |selector: serde_json::Value, ticked: bool| {
+        json!({ "kind": "expect_checked", "selector": selector, "checked": ticked, "timeout_ms": 300 })
+    };
+    let plain = json!({ "role": "checkbox", "name": "Plain checkbox" });
+    must(run(&mut live, checked(plain.clone(), false)).await);
+    refused(run(&mut live, checked(plain.clone(), true)).await, "is not checked");
+    must(run(&mut live, json!({ "kind": "click", "selector": plain.clone() })).await);
+    must(run(&mut live, checked(plain.clone(), true)).await);
+    refused(run(&mut live, checked(plain.clone(), false)).await, "is checked");
+    // The attribute never followed the click: why expect_attribute misleads.
+    let attr = json!({ "kind": "expect_attribute", "selector": plain.clone(), "name": "checked", "absent": true });
+    must(run(&mut live, attr).await);
+    // And back again.
+    must(run(&mut live, json!({ "kind": "click", "selector": plain.clone() })).await);
+    must(run(&mut live, checked(plain, false)).await);
+
+    let radio = json!({ "role": "radio", "name": "Plain radio" });
+    must(run(&mut live, checked(radio.clone(), false)).await);
+    must(run(&mut live, json!({ "kind": "click", "selector": radio.clone() })).await);
+    must(run(&mut live, checked(radio, true)).await);
+
+    must(run(&mut live, checked(json!({ "role": "switch", "name": "Weekly digest" }), true)).await);
+    must(run(&mut live, checked(json!({ "role": "switch", "name": "Dark mode" }), false)).await);
+    let button = json!({ "role": "button", "name": "Enabled action", "exact": true });
+    refused(run(&mut live, checked(button, true)).await, "has no checked state");
+}
+
 /// A bare css `within`, as an assistant most often writes one, counts every
 /// visible match: "section" on a page of several sections is refused with
 /// the count, never read as its first match.

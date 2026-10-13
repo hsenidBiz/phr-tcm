@@ -210,6 +210,20 @@ fn enabled_disabled_and_an_absent_attribute_translate() {
     assert!(got.contains("await expect(cur.locator('#t').first()).not.toHaveAttribute('aria-pressed', { timeout: 10000 });"), "{got}");
 }
 
+/// `expect_checked` becomes Playwright's `toBeChecked`, negated for a box
+/// that must be clear; both read the live state, as Auto Run does.
+#[test]
+fn checked_translates_to_to_be_checked() {
+    let got = one_step(json!([
+        { "kind": "expect_checked", "selector": "#agree" },
+        { "kind": "expect_checked", "selector": "#news", "checked": false, "timeout_ms": 300 }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("await expect(cur.locator('#agree').first()).toBeChecked({ timeout: 10000 });"), "{got}");
+    assert!(got.contains("await expect(cur.locator('#news').first()).not.toBeChecked({ timeout: 300 });"), "{got}");
+}
+
 #[test]
 fn tab_switching_moves_cur() {
     let got = one_step(json!([
