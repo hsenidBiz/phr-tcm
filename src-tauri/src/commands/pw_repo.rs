@@ -6,6 +6,7 @@
 use crate::pw_repo::process::{self, Launch, RunEvent};
 use crate::pw_repo::runner::{self, BrowserMode, PwReport, RunAction, RunPreview, RunStart, TestTree};
 use crate::pw_repo::structure::{self, RepoStructure};
+use crate::pw_repo::users::{self, AccountChange, ChangeOutcome, RepoAccount};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri_specta::Event;
@@ -58,10 +59,11 @@ pub struct PwRunning {
     pub label: String,
 }
 
-/// Start `npx playwright …` or `npm run users …` in the clone, in a job of
-/// its own. Its output comes as `PwOutput` events and its end as `PwDone`.
-/// Any other program or command is refused, and so is a second start while
-/// one runs, with a sentence naming it.
+/// Start `npx playwright …` in the clone, in a job of its own. Its output
+/// comes as `PwOutput` events and its end as `PwDone`. Any other program or
+/// command is refused (`npm run users` goes through `pw_users_*`, which keep
+/// passwords out of the output), and so is a second start while one runs,
+/// with a sentence naming it.
 #[tauri::command]
 #[specta::specta]
 pub async fn pw_repo_start(app: tauri::AppHandle, clone: String, program: String, args: Vec<String>) -> Result<u32, String> {
@@ -147,4 +149,48 @@ pub fn pw_open_report(clone: String, run_id: String) -> Result<(), String> {
         crate::applog::warn(format!("pw-repo: a report could not be opened: {e}"));
         runner::REPORT_NOT_OPENED.to_string()
     })
+}
+
+/// Runs `body` off the async workers with the clone's path and a starter
+/// for `npm run users …` there.
+async fn blocking_users<T: Send + 'static>(
+    clone: String,
+    body: impl FnOnce(&std::path::Path, users::Starter) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let clone = chosen(&clone)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let start = |args: &[String]| Launch::repo(&clone, "npm", args, process::resolve_here);
+        body(&clone, &start)
+    })
+    .await
+    .map_err(|_| process::COULD_NOT_START.to_string())?
+}
+
+/// The clone's test accounts, from `npm run users -- list --json`. No
+/// password: Show asks for one with `pw_users_password`. Only the command's
+/// end reaches the webview (`PwDone`), never a line of its output.
+#[tauri::command]
+#[specta::specta]
+pub async fn pw_users_list(app: tauri::AppHandle, clone: String) -> Result<Vec<RepoAccount>, String> {
+    let show = emitter(app);
+    blocking_users(clone, move |clone, start| users::list(clone, &show, start)).await
+}
+
+/// Account `key`'s password, for Show and nothing else. Read from the
+/// clone's `src/users/users.json`, never logged.
+#[tauri::command]
+#[specta::specta]
+pub fn pw_users_password(clone: String, key: String) -> Result<String, String> {
+    users::password(&chosen(&clone)?, &key)
+}
+
+/// A change to the accounts through `npm run users`. Without `apply` it
+/// returns the command's preview and writes nothing; with `apply` it writes
+/// and lists the accounts again. A refusal is the command's own words,
+/// passwords hidden.
+#[tauri::command]
+#[specta::specta]
+pub async fn pw_users_change(app: tauri::AppHandle, clone: String, change: AccountChange, apply: bool) -> Result<ChangeOutcome, String> {
+    let show = emitter(app);
+    blocking_users(clone, move |clone, start| users::change(clone, &change, apply, &show, start)).await
 }

@@ -3,7 +3,7 @@
 // is (lib/extras); Rust refuses its commands everywhere else.
 //
 // Top to bottom: the clone folder, the health line, what the clone holds,
-// and the Runner (./Runner). Export to Playwright opens here, from Auto Run's menu item
+// the Runner (./Runner) and the test accounts (./Accounts). Export to Playwright opens here, from Auto Run's menu item
 // (lib/playwrightExport).
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -18,6 +18,7 @@ import {
   useClearExportRequestOnUnmount,
   usePlaywrightExportRequest,
 } from "../../lib/playwrightExport";
+import Accounts from "./Accounts";
 import HealthLine from "./HealthLine";
 import PlaywrightExportDialog from "./PlaywrightExportDialog";
 import Runner from "./Runner";
@@ -141,6 +142,10 @@ export default function Playwright({ org, project }: { org: string; project: str
       )}
 
       {runnable && <Runner key={clone} clone={clone} />}
+
+      {runnable && (
+        <Accounts key={clone} clone={clone} onChanged={() => void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY, clone] })} />
+      )}
 
       {exportRequest && (
         <PlaywrightExportDialog

@@ -602,10 +602,19 @@ pub fn start_split(launch: Launch, out: Sink, err: Sink) -> Result<RunId, String
     Ok(id)
 }
 
+/// The refusal `start_repo` gives `npm`: its output would stream to the
+/// webview, and `npm run users -- list --json` prints every password.
+pub const ACCOUNTS_ONLY: &str = "npm run users runs only from the Accounts section, which keeps passwords out of the output.";
+
 /// The command's body: refused where the tab is not offered, then
-/// `Launch::repo` with npx and npm found on PATH, then `start`.
+/// `Launch::repo` with npx found on PATH, then `start`. `npm run users` is
+/// refused here: its output streams as it is, and the accounts commands
+/// (`users`) are the only way to it.
 pub fn start_repo(offered: bool, clone: &str, program: &str, args: &[String], sink: Sink) -> Result<RunId, String> {
     super::ensure_offered(offered)?;
+    if program == Program::Npm.name() {
+        return Err(ACCOUNTS_ONLY.to_string());
+    }
     let launch = Launch::repo(Path::new(clone.trim()), program, args, resolve_here)?;
     start(launch, sink)
 }

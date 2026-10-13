@@ -11,12 +11,16 @@
 //! `runner` lists the tests, writes the run list, dry-counts and runs them
 //! the way the repo's `npm run qa` does.
 //!
+//! `users` lists and changes the repo's test accounts through its `npm run
+//! users` CLI, and keeps every password out of the log and the output.
+//!
 //! Offered exactly where Auto Run is (`ai_tools::autorun_offered`): with
 //! Advanced Features off every command of the tab is refused.
 
 pub mod process;
 pub mod runner;
 pub mod structure;
+pub mod users;
 
 /// The refusal every Playwright tab command gives where it is not offered.
 pub const NOT_OFFERED: &str = "not available in this build";

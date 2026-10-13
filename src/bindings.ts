@@ -1265,10 +1265,11 @@ export const commands = {
 	/**  What the clone at `clone` holds, and the health line. Read only. */
 	pwRepoStructure: (clone: string) => typedError<RepoStructure, string>(__TAURI_INVOKE("pw_repo_structure", { clone })),
 	/**
-	 *  Start `npx playwright …` or `npm run users …` in the clone, in a job of
-	 *  its own. Its output comes as `PwOutput` events and its end as `PwDone`.
-	 *  Any other program or command is refused, and so is a second start while
-	 *  one runs, with a sentence naming it.
+	 *  Start `npx playwright …` in the clone, in a job of its own. Its output
+	 *  comes as `PwOutput` events and its end as `PwDone`. Any other program or
+	 *  command is refused (`npm run users` goes through `pw_users_*`, which keep
+	 *  passwords out of the output), and so is a second start while one runs,
+	 *  with a sentence naming it.
 	 */
 	pwRepoStart: (clone: string, program: string, args: string[]) => typedError<number, string>(__TAURI_INVOKE("pw_repo_start", { clone, program, args })),
 	/**  End run `run` and every process it started. A run already over is fine. */
@@ -1297,6 +1298,24 @@ export const commands = {
 	pwReports: (clone: string) => typedError<PwReport[], string>(__TAURI_INVOKE("pw_reports", { clone })),
 	/**  Opens one archived report's `index.html` in the default browser. */
 	pwOpenReport: (clone: string, runId: string) => typedError<null, string>(__TAURI_INVOKE("pw_open_report", { clone, runId })),
+	/**
+	 *  The clone's test accounts, from `npm run users -- list --json`. No
+	 *  password: Show asks for one with `pw_users_password`. Only the command's
+	 *  end reaches the webview (`PwDone`), never a line of its output.
+	 */
+	pwUsersList: (clone: string) => typedError<RepoAccount[], string>(__TAURI_INVOKE("pw_users_list", { clone })),
+	/**
+	 *  Account `key`'s password, for Show and nothing else. Read from the
+	 *  clone's `src/users/users.json`, never logged.
+	 */
+	pwUsersPassword: (clone: string, key: string) => typedError<string, string>(__TAURI_INVOKE("pw_users_password", { clone, key })),
+	/**
+	 *  A change to the accounts through `npm run users`. Without `apply` it
+	 *  returns the command's preview and writes nothing; with `apply` it writes
+	 *  and lists the accounts again. A refusal is the command's own words,
+	 *  passwords hidden.
+	 */
+	pwUsersChange: (clone: string, change: AccountChange, apply: boolean) => typedError<ChangeOutcome, string>(__TAURI_INVOKE("pw_users_change", { clone, change, apply })),
 	/**
 	 *  Whether a start at sign-in stays hidden in the tray (on) or opens the
 	 *  window (off). Read at start-up, so the Windows startup entry itself never
@@ -1438,6 +1457,26 @@ export type Account = {
 	username: string,
 	password: string,
 };
+
+/**
+ *  A change to the registry. Deliberately not `Debug`: it can hold a
+ *  password, and nothing should be able to print one by accident.
+ */
+export type AccountChange = 
+/**  A new account. The optional fields are left out when empty. */
+{ kind: "Add"; key: string; username: string; password: string; employee_no: string; display_name: string; title: string; supervisor: string } | 
+/**
+ *  One field of an existing account. An empty value clears an optional
+ *  field (the CLI's `-`).
+ */
+{ kind: "Set"; key: string; field: AccountField; value: string } | 
+/**  Delete an account. The CLI refuses while anything references it. */
+{ kind: "Remove"; key: string } | 
+/**  Move an account to a new key, rewriting every reference (`--cascade`). */
+{ kind: "Rename"; from: string; to: string };
+
+/**  One field `set` changes. */
+export type AccountField = "Username" | "Password" | "EmployeeNo" | "DisplayName" | "Title" | "Supervisor";
 
 /**
  *  One proposed account a person picked to add. `password` is what they
@@ -2689,6 +2728,21 @@ export type CellSpec = {
 	ref: string,
 	text: string,
 	match?: CellMatch,
+};
+
+/**  What a change answered. */
+export type ChangeOutcome = {
+	/**  Whether it was written (`--apply`), or only previewed. */
+	applied: boolean,
+	/**  What the CLI printed, passwords hidden. */
+	output: string[],
+	/**  After an applied change, the accounts listed again. */
+	accounts: RepoAccount[] | null,
+	/**
+	 *  Why listing again after an applied change failed, if it did. The
+	 *  change itself was written.
+	 */
+	list_error: string | null,
 };
 
 /**  One line of the preview. */
@@ -4596,6 +4650,30 @@ export type ReplayProgress = {
 export type ReplayedTab = {
 	step: number,
 	tab: string,
+};
+
+/**
+ *  One account of the repo's registry. Holds no password: Show reads one
+ *  on its own (`password`).
+ */
+export type RepoAccount = {
+	/**  `<environment>.<module>.<role>[.<discriminator>]`. */
+	key: string,
+	username: string,
+	/**  Empty when the account has none. */
+	employee_no: string,
+	display_name: string,
+	/**  `empTitle` in the registry. */
+	title: string,
+	/**  Another account's key, or empty. */
+	supervisor: string,
+	/**  Specs that sign in as it (`test.use` or `actingAs`). */
+	specs: number,
+	/**
+	 *  Other references: test case `**User:**` lines and supervisor
+	 *  pointers. Any reference at all refuses a delete.
+	 */
+	other_refs: number,
 };
 
 /**  One `suites/<country>/<side>/<module>/<feature>/` folder. */
