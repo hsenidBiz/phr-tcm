@@ -224,6 +224,7 @@ impl OneReplay {
             .map_err(|_| ALREADY_RUNNING.to_string())?;
         CANCEL.store(false, Ordering::SeqCst);
         PROGRESS.store(0, Ordering::SeqCst);
+        ACTIONS.reset();
         Ok(OneReplay(()))
     }
 }
@@ -244,6 +245,16 @@ static PROGRESS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 pub fn note_progress(step: i32, of: i32) {
     let packed = (u64::from(step.max(0) as u32) << 32) | u64::from(of.max(0) as u32);
     PROGRESS.store(packed, Ordering::SeqCst);
+    ACTIONS.reset();
+}
+
+/// The action the replay going is on, within its step (`runner::StepProgress`).
+pub static ACTIONS: runner::StepProgress = runner::StepProgress::new();
+
+/// The action the replay going is on, and how many of its step's actions
+/// have failed: none before its first step's first action.
+pub fn action_now() -> runner::ActionNow {
+    ACTIONS.now()
 }
 
 /// The step the replay going is running and how many it runs, `(0, 0)`
@@ -565,6 +576,7 @@ async fn run_steps<D: Driver>(
             fail_on_unexpected_dialog: script.fail_on_unexpected_dialog,
             page_errors: script.page_errors,
             ignore_page_errors: script.ignore_page_errors.clone(),
+            progress: Some(&ACTIONS),
             ..Default::default()
         };
         let ran = runner::run_step_in_run(

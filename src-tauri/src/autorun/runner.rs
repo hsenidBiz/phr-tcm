@@ -459,6 +459,90 @@ pub struct InRun<'a> {
     /// The step before's picture, maybe still being taken: settled before
     /// this step's first action that changes the page.
     pub picture: Option<&'a mut Picture>,
+    /// Told each action as it begins and ends, for whoever asks how far
+    /// the step has got (a replay's "still running" answer).
+    pub progress: Option<&'a StepProgress>,
+}
+
+/// The action a step is on, as `StepProgress` keeps it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ActionNow {
+    /// The action's place in the step, from 1; 0 before the first. A
+    /// component's actions count one by one, as they run.
+    pub index: usize,
+    /// How many actions the step runs, components expanded.
+    pub of: usize,
+    pub kind: String,
+    /// What it acts on, in short (`Target::describe`), or blank.
+    pub target: String,
+    /// When it began.
+    pub since: Option<Instant>,
+    /// How many of the step's actions have already failed (a wait that ran
+    /// out of time included). A step carries on past a failed action, and
+    /// never tries one again.
+    pub failed: u32,
+}
+
+/// The longest target `ActionNow` keeps.
+const SHORT_TARGET: usize = 80;
+
+/// Where a step is, action by action: set by the runner's step loop
+/// (`InRun::progress`), read by anyone, never held across an await.
+pub struct StepProgress(std::sync::Mutex<ActionNow>);
+
+impl StepProgress {
+    pub const fn new() -> Self {
+        StepProgress(std::sync::Mutex::new(ActionNow {
+            index: 0,
+            of: 0,
+            kind: String::new(),
+            target: String::new(),
+            since: None,
+            failed: 0,
+        }))
+    }
+
+    fn held(&self) -> std::sync::MutexGuard<'_, ActionNow> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// A new step, nothing run of it yet.
+    pub fn reset(&self) {
+        *self.held() = ActionNow::default();
+    }
+
+    /// Action `index` (from 1) of `of` begins now.
+    pub fn began(&self, index: usize, of: usize, action: &Action) {
+        let target: String = action.targets().first().map(|t| t.describe()).unwrap_or_default();
+        let target = if target.chars().count() > SHORT_TARGET {
+            format!("{}...", target.chars().take(SHORT_TARGET).collect::<String>())
+        } else {
+            target
+        };
+        let mut now = self.held();
+        now.index = index;
+        now.of = of;
+        now.kind = action.kind();
+        now.target = target;
+        now.since = Some(Instant::now());
+    }
+
+    /// The action begun last ended, passing or not.
+    pub fn ended(&self, ok: bool) {
+        if !ok {
+            self.held().failed += 1;
+        }
+    }
+
+    pub fn now(&self) -> ActionNow {
+        self.held().clone()
+    }
+}
+
+impl Default for StepProgress {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// The longest an `expect_download` waits in a watched run or a try, which
@@ -620,7 +704,7 @@ async fn run_expanded<D: Driver>(
     // Until then a save the guard stopped was sent while the step before's
     // picture was still being taken: it is that step's, not this one's.
     let mut acted = false;
-    for action in &step.actions {
+    for (index, action) in step.actions.iter().enumerate() {
         if let Some(why) = blocked {
             out.push(ActionOutcome::failed(why));
             continue;
@@ -675,6 +759,9 @@ async fn run_expanded<D: Driver>(
         if let Some(gone) = in_missing_tab(d, action) {
             out.push(gone);
             continue;
+        }
+        if let Some(p) = run.progress {
+            p.began(index + 1, step.actions.len(), action);
         }
         let mut outcome = match action {
             Action::SignIn { account: key } => match signin::prepare(root, organization, project, key) {
@@ -808,6 +895,9 @@ async fn run_expanded<D: Driver>(
             }
         }
         unexpected_dialog(d, &mut dialogs_read, fail_on_unexpected, &mut outcome);
+        if let Some(p) = run.progress {
+            p.ended(outcome.ok);
+        }
         // The application refused the session the browser holds ("Cookie
         // has been tampered", an empty 400): the account is signed in fresh
         // so its saved session is repaired, and the action fails saying so,

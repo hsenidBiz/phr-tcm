@@ -1779,8 +1779,8 @@ pub async fn supervised_page_within(
     limit: usize,
     within: Option<&crate::browser::locator::Target>,
 ) -> (u16, String) {
-    if let Some(going) = replay_is_holding_the_browser() {
-        return going;
+    if crate::autorun::replay_to::is_running() {
+        return (409, replay_going_for_a_page_read());
     }
     // The lock is held for exactly one protocol job - whoever holds it
     // holds the browser, and the person may be using it.
@@ -2489,6 +2489,24 @@ pub fn probe_target(selector: serde_json::Value) -> Result<crate::browser::locat
 /// for its whole run, so waiting on it could outlast the call.
 pub const REPLAY_GOING: &str =
     "a replay is going - call replay_autorun_to_step with the same case and step to wait for it";
+
+/// Said, with 409, to a page read while a replay holds the browser. The
+/// page is not read beside the replay: the replay holds the browser's one
+/// connection for its whole run, and that connection is what answers the
+/// page's dialogs and the requests a no-save guard pauses, so a second
+/// reader would either wait out the replay or act behind it. The replay's
+/// own call says where it is, and hands back the page once it stands
+/// before its step.
+pub fn replay_going_for_a_page_read() -> String {
+    let which = assistant_run().as_ref().filter(|r| r.answer.borrow().is_none()).map(|r| (r.case_id, r.step));
+    let call = match which {
+        Some((case_id, step)) => format!("call replay_autorun_to_step with case {case_id} and step {step}"),
+        None => "call replay_autorun_to_step with the same case and step".to_string(),
+    };
+    format!(
+        "the page cannot be read while a replay drives the browser - {call}: it waits for the replay, says the step and the action it is on, and hands back the page once the browser stands before the step"
+    )
+}
 
 /// `REPLAY_GOING` while a replay to a step holds the browser.
 pub fn replay_is_holding_the_browser() -> Option<(u16, String)> {
@@ -4784,14 +4802,66 @@ pub fn replay_running_elsewhere(case_id: i32, step: i32) -> String {
 /// Said, with 202, when the replay has not reached its stop point within
 /// the call's wait: where it is, and how to keep waiting.
 pub fn replay_still_running(case_id: i32, step: i32, at: i32, of: i32) -> String {
-    let now = if at > 0 {
+    replay_still_running_on(case_id, step, at, of, None)
+}
+
+/// `replay_still_running`, saying too which action of the step it is on
+/// (`runner::ActionNow`), for how long, and how many of the step's actions
+/// already failed. A replay never tries an action again: a failed one is
+/// pictured and the step carries on to its end, and the replay stops after
+/// that step.
+pub fn replay_still_running_on(
+    case_id: i32,
+    step: i32,
+    at: i32,
+    of: i32,
+    action: Option<&crate::autorun::runner::ActionNow>,
+) -> String {
+    let mut now = if at > 0 {
         format!("now at step {at} of {of}")
     } else {
         "now signing in and going to the case's area".to_string()
     };
+    if let Some(a) = action.filter(|a| at > 0 && a.index > 0) {
+        let what = if a.target.is_empty() { a.kind.clone() } else { format!("{} {}", a.kind, a.target) };
+        let secs = a.since.map_or(0, |s| s.elapsed().as_secs());
+        now.push_str(&format!(", on action {} of {} ({what}) for {secs} s", a.index, a.of));
+        match a.failed {
+            0 => now.push_str(", none of this step's actions has failed yet"),
+            1 => now.push_str(", 1 of this step's actions already failed (a replay never tries an action again)"),
+            n => now.push_str(&format!(", {n} of this step's actions already failed (a replay never tries an action again)")),
+        }
+    }
     format!(
         "still running, {now} - call replay_autorun_to_step again with the same case ({case_id}) and step ({step}) to keep waiting"
     )
+}
+
+/// The 202 a replay call answers while its replay still runs: the sentence
+/// (`replay_still_running_on`), the step and how many, and once a step's
+/// action has begun, `action` (its place, kind, target and seconds on it),
+/// `failed_in_step`, and `retries: false` (a replay never retries).
+pub fn replay_still_running_answer(
+    case_id: i32,
+    step: i32,
+    at: i32,
+    of: i32,
+    action: &crate::autorun::runner::ActionNow,
+) -> serde_json::Value {
+    let sentence = replay_still_running_on(case_id, step, at, of, Some(action));
+    let mut v = serde_json::json!({ "status": "running", "sentence": sentence, "step": at, "of": of });
+    if at > 0 && action.index > 0 {
+        v["action"] = serde_json::json!({
+            "index": action.index,
+            "of": action.of,
+            "kind": action.kind,
+            "target": action.target,
+            "seconds": action.since.map_or(0, |s| s.elapsed().as_secs()),
+        });
+        v["failed_in_step"] = serde_json::json!(action.failed);
+        v["retries"] = serde_json::json!(false);
+    }
+    v
 }
 
 /// Said when a replay ended without handing back its answer: its task
@@ -4823,8 +4893,8 @@ async fn wait_for_replay(
         Ok(_) => taken((500, REPLAY_LOST.to_string())),
         Err(_) => {
             let (at, of) = crate::autorun::replay_to::progress();
-            let sentence = replay_still_running(case_id, step, at, of);
-            (202, serde_json::json!({ "status": "running", "sentence": sentence, "step": at, "of": of }).to_string())
+            let action = crate::autorun::replay_to::action_now();
+            (202, replay_still_running_answer(case_id, step, at, of, &action).to_string())
         }
     }
 }
