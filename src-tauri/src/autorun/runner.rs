@@ -135,6 +135,22 @@ pub fn area_route(root: &Path, organization: &str, project: &str, case_id: i32) 
     let script = store::load_script(root, case_id)?
         .ok_or_else(|| format!("return_to_area: case {case_id} has no saved script to name its area"))?;
     let area = script.area.as_deref().map(str::trim).filter(|a| !a.is_empty()).ok_or(NEEDS_SCRIPT_AREA)?;
+    area_route_named(root, organization, project, area)
+}
+
+/// Said to a bare `return_to_area` in a discovery that has no area yet:
+/// it goes to the discovery's own area, so one must be named.
+pub const NEEDS_DISCOVERY_AREA: &str = "return_to_area in a discovery goes back to the discovery's area, and none is named yet - pass `area` with the area's name, or name the area in the action";
+
+/// The route a discovery's bare `return_to_area` takes: the discovery's own
+/// area, as `area_route` would take the case's.
+pub fn discovery_area_route(root: &Path, organization: &str, project: &str, area: Option<&str>) -> Result<Route, String> {
+    let area = area.map(str::trim).filter(|a| !a.is_empty()).ok_or(NEEDS_DISCOVERY_AREA)?;
+    area_route_named(root, organization, project, area)
+}
+
+/// The route to the recorded area `area`, from the recipe's home.
+fn area_route_named(root: &Path, organization: &str, project: &str, area: &str) -> Result<Route, String> {
     let nav_file = nav::load_nav(root, organization, project)?;
     let path = nav::find_area(&nav_file, area).ok_or_else(|| nav::unrecorded_area(area))?;
     let home = recipe::load_effective_recipe_if_any(root, organization, project)?.ok_or(NO_HOME_FOR_AREA)?;

@@ -3113,6 +3113,32 @@ async fn a_blank_or_error_page_records_nothing_with_or_without_a_recipe() {
     }
 }
 
+/// A bare `return_to_area` in a discovery goes back to the discovery's own
+/// area: a discovery is no case, so there is no script to name one. With
+/// no area named yet it says how to name one, never "case 0".
+#[tokio::test]
+async fn a_bare_return_to_area_in_a_discovery_goes_to_its_own_area() {
+    let dir = root_with_recipe_and_account();
+    put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Person, vec![css("#apply")], "/hr/leave/apply")).unwrap();
+    let back = Action::ReturnToArea { area: None };
+
+    let (mut browser, _) = slot(menu_app(true, "/hr/leave/balance"), exploring("Leave Apply"));
+    browser.as_mut().unwrap().account = Some("admin".into());
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &back, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert!(!body.contains("case 0"), "{body}");
+    assert_eq!(v["ok"], true, "{body}");
+    assert_eq!(v["path"], "/hr/leave/apply", "{body}");
+
+    let (mut browser, _) = slot(menu_app(true, "/hr/leave/balance"), opened_for_discovery());
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &back, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], false, "{body}");
+    assert!(v["detail"].as_str().unwrap().contains(v2_lib::autorun::runner::NEEDS_DISCOVERY_AREA), "{body}");
+}
+
 /// The answer names the area as the map files it: the recorded area's own
 /// spelling, not the one the discovery was given.
 #[tokio::test]

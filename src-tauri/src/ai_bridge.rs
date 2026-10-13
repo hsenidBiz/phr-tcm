@@ -5084,10 +5084,17 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     action: &crate::browser::actions::Action,
 ) -> Result<Tried, (u16, String)> {
     use crate::autorun::runner::{area_route, area_routes, named_areas, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
-    // A bare `return_to_area` goes to the case's own area; one that names
-    // an area goes to that one.
+    // A bare `return_to_area` goes to the case's own area - in a discovery
+    // (case 0, which has no script), the discovery's own area; one that
+    // names an area goes to that one.
     let resolved = (matches!(action, crate::browser::actions::Action::ReturnToArea { .. }) && action.area_named().is_none())
-        .then(|| area_route(root, organization, project, case_id));
+        .then(|| {
+            if case_id == 0 {
+                crate::autorun::runner::discovery_area_route(root, organization, project, discovery_area)
+            } else {
+                area_route(root, organization, project, case_id)
+            }
+        });
     let area = match &resolved {
         Some(Ok(r)) => AreaRoute::To(r),
         Some(Err(why)) => AreaRoute::Unknown(why),
