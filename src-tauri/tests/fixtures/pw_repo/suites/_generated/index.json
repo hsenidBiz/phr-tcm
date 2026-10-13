@@ -1,4 +1,5 @@
 {
   "135152": "verify-create-rating-method.spec.ts",
-  "135179": "delete-rating-method.spec.ts"
+  "135179": "delete-rating-method.spec.ts",
+  "135190": "copy-rating-method.spec.ts"
 }

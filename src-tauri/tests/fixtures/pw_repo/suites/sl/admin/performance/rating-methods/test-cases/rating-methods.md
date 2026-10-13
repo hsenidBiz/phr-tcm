@@ -23,3 +23,7 @@ Added by engineer: a note that is not a test case.
 ### Steps
 
 1. Rename the method.
+
+## Excluded 135185 — Rating Methods - User can archive a rating method
+
+Left out on purpose: archiving is not offered in this build.

@@ -5,7 +5,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import PlaywrightExportDialog from "./PlaywrightExportDialog";
+import PlaywrightExportDialog, { SKIP_NOTE } from "./PlaywrightExportDialog";
 
 const pick = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: pick, save: vi.fn() }));
@@ -121,7 +121,7 @@ test("export_sends_the_ticked_ids_and_shows_the_summary", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Export" }));
   expect(await screen.findByText("suites/sl/admin/pm/wizard/test-cases/wizard.md")).toBeInTheDocument();
   const write = calls.find((c) => c.cmd === "pw_export_write")!;
-  expect(write.args).toMatchObject({ organization: "acme", project: "Web", caseIds: [10] });
+  expect(write.args).toMatchObject({ organization: "acme", project: "Web", caseIds: [10], replace: [] });
   // The same Modules the preview was given, so the write picks the same areas.
   const modules = [[10, "Definition Wizard"], [11, ""], [12, "Performance"]];
   expect(write.args.modules).toEqual(modules);
@@ -215,4 +215,99 @@ test("a_saved_user_the_clone_no_longer_has_is_shown_with_a_hint", async () => {
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
   expect(screen.getByText("GONE_KEY is not in this clone's users.json")).toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "User for hr.admin" })).toHaveTextContent("GONE_KEY");
+});
+
+const IN_REPO = {
+  ...PREVIEW,
+  cases: [
+    { ...PREVIEW.cases[0], in_repo: false, repo_note: null, from_app: false },
+    {
+      case_id: 13,
+      title: "Close the cycle",
+      exportable: true,
+      reason: null,
+      seg: "sl/admin/pm/wizard",
+      user_key: "REPO_ADMIN",
+      add_user_command: null,
+      in_repo: true,
+      repo_note: "in wizard.md and specs/wizard.spec.ts",
+      from_app: false,
+    },
+    {
+      case_id: 14,
+      title: "Reopen the cycle",
+      exportable: true,
+      reason: null,
+      seg: "sl/admin/pm/wizard",
+      user_key: "REPO_ADMIN",
+      add_user_command: null,
+      in_repo: true,
+      repo_note: "in wizard.md and index.json",
+      from_app: true,
+    },
+  ],
+};
+
+test("new cases are ticked and cases the repo has are not, each saying where", async () => {
+  mount({}, IN_REPO);
+  expect(await screen.findByRole("checkbox", { name: /Create a cycle/ })).toHaveAttribute("aria-checked", "true");
+  expect(screen.getByRole("checkbox", { name: /Close the cycle/ })).toHaveAttribute("aria-checked", "false");
+  expect(screen.getByRole("checkbox", { name: /Reopen the cycle/ })).toHaveAttribute("aria-checked", "false");
+  expect(screen.getByText(SKIP_NOTE)).toBeInTheDocument();
+  expect(SKIP_NOTE).toBe("Cases already in the repo are skipped. Tick one to replace it.");
+  expect(screen.getByText("New")).toBeInTheDocument();
+  expect(screen.getByText("In the repo: in wizard.md and specs/wizard.spec.ts")).toBeInTheDocument();
+  expect(screen.getByText("In the repo: in wizard.md and index.json (exported by this app)")).toBeInTheDocument();
+  expect(document.body.textContent).not.toMatch(/[–—]/);
+});
+
+test("ticking a case the repo has sends it as a replace", async () => {
+  const { calls } = mount(
+    { pw_export_write: () => ({ files: ["a/b.md"], cases: [], user_keys: [], missing_navigation: [] }) },
+    IN_REPO,
+  );
+  // Left as it is, only the new case goes and nothing is replaced.
+  fireEvent.click(await screen.findByRole("button", { name: "Export" }));
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_write")).toHaveLength(1));
+  expect(calls.filter((c) => c.cmd === "pw_export_write")[0].args).toMatchObject({ caseIds: [10], replace: [] });
+
+  fireEvent.click(screen.getByRole("checkbox", { name: /Close the cycle/ }));
+  expect(screen.getByRole("checkbox", { name: /Close the cycle/ })).toHaveAttribute("aria-checked", "true");
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_write")).toHaveLength(2));
+  expect(calls.filter((c) => c.cmd === "pw_export_write")[1].args).toMatchObject({ caseIds: [10, 13], replace: [13] });
+});
+
+test("a case the repo excludes is unticked, cannot be ticked and is never sent", async () => {
+  const excluded = {
+    ...IN_REPO,
+    cases: [
+      IN_REPO.cases[0],
+      {
+        case_id: 16,
+        title: "Copy from Previous",
+        exportable: false,
+        reason: null,
+        seg: "sl/admin/pm/wizard",
+        user_key: "REPO_ADMIN",
+        add_user_command: null,
+        in_repo: true,
+        repo_note: "Excluded in the repo (in pc-cycle-setup.md)",
+        from_app: false,
+        excluded: true,
+      },
+    ],
+  };
+  const { calls } = mount(
+    { pw_export_write: () => ({ files: ["a/b.md"], cases: [], user_keys: [], missing_navigation: [] }) },
+    excluded,
+  );
+  const box = await screen.findByRole("checkbox", { name: /Copy from Previous/ });
+  expect(box).toHaveAttribute("aria-checked", "false");
+  expect(box.hasAttribute("disabled") || box.getAttribute("aria-disabled") === "true" || box.hasAttribute("data-disabled")).toBe(true);
+  expect(screen.getByText("Excluded in the repo (in pc-cycle-setup.md)")).toBeInTheDocument();
+  fireEvent.click(box);
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_write")).toHaveLength(1));
+  expect(calls.find((c) => c.cmd === "pw_export_write")!.args).toMatchObject({ caseIds: [10], replace: [] });
 });

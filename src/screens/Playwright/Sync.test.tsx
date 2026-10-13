@@ -14,12 +14,16 @@ import Sync, { NEEDS_REPO } from "./Sync";
 afterEach(() => clearMocks());
 
 const CLONE = "C:\\clone";
+const IN = { in_repo: true, repo_note: "in fixture.md and index.json" };
+const OUT = { in_repo: false, repo_note: null };
 const ROWS: SyncRow[] = [
-  { case_id: 10, title: "Ten", state: { kind: "Current" }, exported_at: "2026-10-01T10:00:00Z", has_script: true },
-  { case_id: 11, title: "Eleven", state: { kind: "OutOfDate", why: "changed since the export: steps" }, exported_at: "2026-10-01T10:00:00Z", has_script: true },
-  { case_id: 12, title: "Twelve", state: { kind: "NotInRepo" }, exported_at: "2026-10-01T10:00:00Z", has_script: true },
-  { case_id: 13, title: "Thirteen", state: { kind: "NeverExported" }, exported_at: null, has_script: true },
-  { case_id: 14, title: "Fourteen", state: { kind: "OutOfDate", why: "its script is no longer in Auto Run" }, exported_at: "2026-10-01T10:00:00Z", has_script: false },
+  { case_id: 10, title: "Ten", state: { kind: "Current" }, exported_at: "2026-10-01T10:00:00Z", has_script: true, ...IN },
+  { case_id: 11, title: "Eleven", state: { kind: "OutOfDate", why: "changed since the export: steps" }, exported_at: "2026-10-01T10:00:00Z", has_script: true, ...IN },
+  { case_id: 12, title: "Twelve", state: { kind: "NotInRepo" }, exported_at: "2026-10-01T10:00:00Z", has_script: true, ...OUT },
+  { case_id: 13, title: "Thirteen", state: { kind: "NeverExported" }, exported_at: null, has_script: true, ...OUT },
+  { case_id: 14, title: "Fourteen", state: { kind: "OutOfDate", why: "its script is no longer in Auto Run" }, exported_at: "2026-10-01T10:00:00Z", has_script: false, ...IN },
+  { case_id: 15, title: "Fifteen", state: { kind: "InRepoNotFromApp" }, exported_at: null, has_script: true, in_repo: true, repo_note: "in specs/fifteen.spec.ts" },
+  { case_id: 16, title: "Sixteen", state: { kind: "ExcludedInRepo" }, exported_at: null, has_script: true, in_repo: true, repo_note: "Excluded in the repo (in pc-cycle-setup.md)" },
 ];
 
 type Call = { cmd: string; args: Record<string, unknown> };
@@ -33,8 +37,8 @@ function mount(opts: { update?: (args: Record<string, unknown>) => ExportResult 
       calls.push({ cmd, args });
       if (cmd === "pw_sync_states") return rows;
       if (cmd === "list_test_case_fields") return [];
-      if (cmd === "pw_sync_update") {
-        const cases = args.cases as number[];
+      if (cmd === "pw_sync_update" || cmd === "pw_sync_add_new") {
+        const cases = (args.cases as number[] | undefined) ?? ROWS.filter((r) => r.has_script && !r.in_repo).map((r) => r.case_id);
         const r = opts.update?.(args) ?? {
           files: [],
           cases: cases.map((id) => [id, `case-${id}.spec.ts`]),
@@ -42,6 +46,7 @@ function mount(opts: { update?: (args: Record<string, unknown>) => ExportResult 
           missing_navigation: [],
           sections: [],
           record_error: null,
+          skipped: [],
         };
         rows = rows.map((row) => (cases.includes(row.case_id) ? { ...row, state: { kind: "Current" } } : row));
         return r;
@@ -61,6 +66,7 @@ function mount(opts: { update?: (args: Record<string, unknown>) => ExportResult 
 }
 
 const updates = (calls: Call[]) => calls.filter((c) => c.cmd === "pw_sync_update");
+const addNews = (calls: Call[]) => calls.filter((c) => c.cmd === "pw_sync_add_new");
 
 test("each case shows its state", async () => {
   mount();
@@ -71,6 +77,8 @@ test("each case shows its state", async () => {
   expect(screen.getByText("Out of date: changed since the export: steps")).toBeTruthy();
   expect(screen.getByText("Not in the repo")).toBeTruthy();
   expect(screen.getByText("Never exported")).toBeTruthy();
+  expect(screen.getByText("In the repo (not from this app)")).toBeTruthy();
+  expect(screen.getByText("in specs/fifteen.spec.ts")).toBeTruthy();
   // When, in local time, not the raw UTC stamp.
   const local = new Date("2026-10-01T10:00:00Z").toLocaleString(undefined, {
     day: "numeric",
@@ -92,7 +100,8 @@ test("Update out of date sends only the out-of-date cases and says what each sti
   const m = mount();
   fireEvent.click(await screen.findByRole("button", { name: "Update out of date (1)" }));
   await waitFor(() => expect(updates(m.calls)).toHaveLength(1));
-  expect(updates(m.calls)[0].args).toMatchObject({ clone: CLONE, org: "org", project: "proj", cases: [11] });
+  // Out of date cases are this app's own: nothing is sent to replace.
+  expect(updates(m.calls)[0].args).toMatchObject({ clone: CLONE, org: "org", project: "proj", cases: [11], replace: [] });
   expect(await screen.findByText(`#11 → case-11.spec.ts: ${NEEDS_REPO}`)).toBeTruthy();
   expect(m.updated()).toBe(1);
   // The states are read again.
@@ -106,6 +115,7 @@ test("Update ticked sends the ticked cases", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Update ticked (2)" }));
   await waitFor(() => expect(updates(m.calls)).toHaveLength(1));
   expect(updates(m.calls)[0].args.cases).toEqual([12, 13]);
+  expect(updates(m.calls)[0].args.replace).toEqual([12, 13]);
   expect(await screen.findByText(`#13 → case-13.spec.ts: ${NEEDS_REPO}`)).toBeTruthy();
 });
 
@@ -127,4 +137,78 @@ test("a script change anywhere reads the states again", async () => {
   const before = m.calls.filter((c) => c.cmd === "pw_sync_states").length;
   await emit("autorun-scripts-changed", { case_ids: [10] });
   await waitFor(() => expect(m.calls.filter((c) => c.cmd === "pw_sync_states").length).toBeGreaterThan(before));
+});
+
+test("Add new counts the cases the repo does not have and leaves the rest to Rust", async () => {
+  const m = mount();
+  // 12 (gone from the repo) and 13 (never exported); not 15, which the repo has.
+  fireEvent.click(await screen.findByRole("button", { name: "Add new (2)" }));
+  await waitFor(() => expect(addNews(m.calls)).toHaveLength(1));
+  expect(addNews(m.calls)[0].args).toEqual({ clone: CLONE, org: "org", project: "proj", moduleRef: null, preconditionsRef: null });
+  expect(updates(m.calls)).toHaveLength(0);
+  expect(await screen.findByText(`#13 → case-13.spec.ts: ${NEEDS_REPO}`)).toBeTruthy();
+  expect(m.updated()).toBe(1);
+});
+
+test("Sync explains Add new in plain words", async () => {
+  mount();
+  await screen.findByText("#10 Ten");
+  expect(document.body.textContent).toContain("Add new exports every case the repo does not have yet.");
+  expect(document.body.textContent).not.toMatch(/[–—]/);
+});
+
+test("a case in the repo not from this app is replaced only when ticked", async () => {
+  const m = mount();
+  // Update out of date never sends it.
+  fireEvent.click(await screen.findByRole("button", { name: "Update out of date (1)" }));
+  await waitFor(() => expect(updates(m.calls)).toHaveLength(1));
+  expect(updates(m.calls)[0].args.cases).not.toContain(15);
+  // Ticked, it goes as chosen to replace.
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Tick #15 Fifteen" }));
+  fireEvent.click(screen.getByRole("button", { name: "Update ticked (1)" }));
+  await waitFor(() => expect(updates(m.calls)).toHaveLength(2));
+  expect(updates(m.calls)[1].args).toMatchObject({ cases: [15], replace: [15] });
+});
+
+test("Add new lists each new case it left out, with why", async () => {
+  const m = mount({
+    update: () => ({
+      files: ["suites/_generated/case-13.spec.ts"],
+      cases: [[13, "case-13.spec.ts"]],
+      user_keys: [],
+      missing_navigation: [],
+      sections: [],
+      record_error: null,
+      skipped: [[12, "latest run: Failed"]],
+    }),
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Add new (2)" }));
+  await waitFor(() => expect(addNews(m.calls)).toHaveLength(1));
+  expect(await screen.findByText(`#13 → case-13.spec.ts: ${NEEDS_REPO}`)).toBeTruthy();
+  expect(screen.getByText("Not added, and why:")).toBeTruthy();
+  expect(screen.getByText("#12: latest run: Failed")).toBeTruthy();
+});
+
+test("a case the repo excludes has its own state and cannot be ticked", async () => {
+  const m = mount();
+  expect(await screen.findByText("Excluded in the repo")).toBeTruthy();
+  expect(screen.getByText("Excluded in the repo (in pc-cycle-setup.md)")).toBeTruthy();
+  const box = screen.getByRole("checkbox", { name: "Tick #16 Sixteen" });
+  expect(box.hasAttribute("disabled") || box.getAttribute("aria-disabled") === "true" || box.hasAttribute("data-disabled")).toBe(true);
+  fireEvent.click(box);
+  expect((screen.getByRole("button", { name: "Update ticked (0)" }) as HTMLButtonElement).disabled).toBe(true);
+  // Neither Update out of date nor Add new counts it.
+  expect(screen.getByRole("button", { name: "Update out of date (1)" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Add new (2)" })).toBeTruthy();
+  expect(m.calls.some((c) => c.cmd === "pw_sync_update")).toBe(false);
+});
+
+test("an Add new that writes and skips nothing says there is nothing new", async () => {
+  const m = mount({
+    update: () => ({ files: [], cases: [], user_keys: [], missing_navigation: [], sections: [], record_error: null, skipped: [] }),
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Add new (2)" }));
+  await waitFor(() => expect(addNews(m.calls)).toHaveLength(1));
+  expect(await screen.findByText("Nothing new to add")).toBeTruthy();
+  expect(screen.queryByLabelText("Updated")).toBeNull();
 });

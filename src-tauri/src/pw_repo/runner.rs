@@ -419,15 +419,29 @@ pub fn marker_above(source: &[String], line: u32) -> Option<i32> {
     while i > 0 {
         i -= 1;
         let text = source.get(i)?.trim();
-        let comment = text.strip_prefix("//")?;
-        if let Some(rest) = comment.trim().strip_prefix("ADO") {
-            let digits: String = rest.trim().chars().take_while(char::is_ascii_digit).collect();
-            if let Ok(id) = digits.parse() {
-                return Some(id);
-            }
+        text.strip_prefix("//")?;
+        if let Some(id) = marker_in(text) {
+            return Some(id);
         }
     }
     None
+}
+
+/// The id of a `// ADO <id>` marker line: the comment is exactly that,
+/// with any spaces around it and nothing after the digits, the way the
+/// repo's specs mark their tests. Prose that mentions a case, such as
+/// `// ADO 136431's own deviation`, is not a marker.
+pub fn marker_in(line: &str) -> Option<i32> {
+    let comment = line.trim().strip_prefix("//")?;
+    let rest = comment.trim_start().strip_prefix("ADO")?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let digits = rest.trim();
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 /// The test titles of the raw specs `index.json` maps, to their ids. A

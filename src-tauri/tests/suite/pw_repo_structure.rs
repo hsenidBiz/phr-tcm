@@ -61,7 +61,7 @@ fn the_fixture_repo_reads_as_its_features_ids_and_keys() {
         ],
         "_generated, common-components and an empty country are not features"
     );
-    assert_eq!(s.generated_ids, vec![135152, 135179]);
+    assert_eq!(s.generated_ids, vec![135152, 135179, 135190]);
     assert_eq!(s.user_keys, vec!["FixtureSL.performance.general", "FixtureSL.performance.supervisor"]);
     assert_eq!(s.navigation_keys, vec!["performance/rating-methods"]);
 }

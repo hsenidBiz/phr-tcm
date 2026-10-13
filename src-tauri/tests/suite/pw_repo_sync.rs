@@ -27,8 +27,14 @@ impl Sx {
         self.fx.root.path()
     }
 
+    /// An export with every case chosen to replace, as an Update of cases
+    /// this app exported is (`sync::update_replace`).
     fn export(&self, ids: &[i32], d: &BTreeMap<i32, CaseDoc>) -> Result<ExportResult, String> {
-        write_recorded(self.root(), self.dir.path(), ORG, PROJECT, ids, &self.fx.clone_path(), &self.fx.modules.borrow(), d)
+        self.export_replacing(ids, d, ids)
+    }
+
+    fn export_replacing(&self, ids: &[i32], d: &BTreeMap<i32, CaseDoc>, replace: &[i32]) -> Result<ExportResult, String> {
+        write_recorded(self.root(), self.dir.path(), ORG, PROJECT, ids, &self.fx.clone_path(), &self.fx.modules.borrow(), d, replace)
     }
 
     fn rows(&self) -> BTreeMap<i32, SyncRow> {
@@ -74,7 +80,7 @@ impl Sx {
 }
 
 /// Every file under `dir`, by path relative to it, with its bytes.
-fn snapshot(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+pub(crate) fn snapshot(dir: &Path) -> BTreeMap<String, Vec<u8>> {
     fn walk(base: &Path, dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) {
         for e in fs::read_dir(dir).unwrap().flatten() {
             let p = e.path();
@@ -205,7 +211,8 @@ fn a_record_that_cannot_be_read_is_kept_aside_and_sync_starts_again() {
     let path = sx.record_path();
     fs::write(&path, "{ not json").unwrap();
 
-    assert_eq!(sx.state(20), SyncState::NeverExported);
+    // The repo still has it, and the record no longer says this app wrote it.
+    assert_eq!(sx.state(20), SyncState::InRepoNotFromApp);
     let names: Vec<String> = fs::read_dir(sx.dir.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
     let stem = path.file_stem().unwrap().to_string_lossy().to_string();
     let backup = names.iter().find(|n| n.starts_with(&format!("{stem}.corrupt-")) && n.ends_with(".json")).expect("kept aside");
@@ -574,4 +581,269 @@ fn a_hash_line_in_an_engineers_note_does_not_end_the_block() {
     let cleanup = ours.find("### Cleanup").unwrap();
     let expected_section = format!("{}{block}{}", &ours[..cleanup], &ours[cleanup..]);
     assert!(out.contains(&format!("{expected_section}## 135283 ")), "{out}");
+}
+
+/// A clone with one case in each state Add new and Update tell apart: 20
+/// current, 21 out of date, 22 in the repo by hand (InRepoNotFromApp), 23
+/// never exported, 24 exported but since gone from all three places.
+fn every_state() -> Sx {
+    let sx = Sx::new();
+    for (id, title) in [(20, "Twenty"), (21, "Twenty one"), (22, "Twenty two"), (23, "Twenty three"), (24, "Twenty four")] {
+        sx.fx.good(id, title);
+        sx.stamp(id);
+    }
+    sx.export(&[20, 21, 24], &docs(&[(20, "Twenty"), (21, "Twenty one"), (24, "Twenty four")])).unwrap();
+    sx.repair(21, "#went");
+    // 24 is taken out of the repo: its section, its index entry, its raw spec.
+    let md = sx.fx.read_clone(MD_REL);
+    write(sx.fx.clone.path().join(MD_REL), &md[..md.find("## 24 ").unwrap()]);
+    fs::remove_file(sx.fx.clone.path().join(sx.raw(24))).unwrap();
+    let mut index: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&sx.fx.read_clone("suites/_generated/index.json")).unwrap();
+    index.remove("24");
+    write(sx.fx.clone.path().join("suites/_generated/index.json"), &serde_json::to_string_pretty(&index).unwrap());
+    // 22 was written in the repo by hand.
+    write(
+        sx.fx.clone.path().join("suites/sl/admin/performance/proficiency-levels/specs/proficiency-levels.spec.ts"),
+        "// ADO 22\ntest('twenty two, by hand', async () => {});\n",
+    );
+    sx
+}
+
+#[test]
+fn a_case_the_repo_has_that_this_app_never_exported_says_so() {
+    let sx = every_state();
+    let rows = sx.rows();
+    assert_eq!(rows[&20].state, SyncState::Current);
+    assert!(matches!(rows[&21].state, SyncState::OutOfDate { .. }));
+    assert_eq!(rows[&22].state, SyncState::InRepoNotFromApp);
+    assert!(rows[&22].in_repo && rows[&22].exported_at.is_none());
+    assert_eq!(rows[&22].repo_note.as_deref(), Some("in specs/proficiency-levels.spec.ts"));
+    assert_eq!(rows[&23].state, SyncState::NeverExported);
+    assert!(!rows[&23].in_repo && rows[&23].repo_note.is_none());
+    assert_eq!(rows[&24].state, SyncState::NotInRepo);
+    assert!(!rows[&24].in_repo);
+}
+
+#[test]
+fn add_new_exports_only_the_new_cases_and_leaves_every_other_file_alone() {
+    let sx = every_state();
+    let rows: Vec<SyncRow> = sx.rows().into_values().collect();
+    // Never exported, and exported but gone from every place: both are new.
+    let new = sync::add_new(&rows);
+    assert_eq!(new, vec![23, 24]);
+
+    let c = sx.fx.clone.path();
+    let before = snapshot(c);
+    let md_before = sx.fx.read_clone(MD_REL);
+    let record_before = sync::load(&sx.record_path()).unwrap();
+    let r = sx.export_replacing(&new, &docs(&[(23, "Twenty three"), (24, "Twenty four")]), &[]).unwrap();
+    assert_eq!(r.cases.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![23, 24]);
+
+    let after = snapshot(c);
+    let added: std::collections::BTreeSet<String> = after.keys().filter(|k| !before.contains_key(*k)).cloned().collect();
+    assert_eq!(added, [sx.raw(23), sx.raw(24)].into_iter().collect());
+    assert!(before.keys().all(|k| after.contains_key(k)), "nothing was removed");
+    for (rel, bytes) in &before {
+        if rel == MD_REL || rel == "suites/_generated/index.json" {
+            continue;
+        }
+        assert_eq!(&after[rel], bytes, "{rel} changed");
+    }
+    // The test-case file only grew: every section already there is as it was.
+    let md_after = sx.fx.read_clone(MD_REL);
+    assert!(md_after.starts_with(md_before.trim_end()), "{md_after}");
+    assert!(md_after.contains("## 23 ") && md_after.contains("## 24 "));
+
+    // Nothing else moved: 21 is still out of date, 22 still the repo's own.
+    let after_rows = sx.rows();
+    assert!(matches!(after_rows[&21].state, SyncState::OutOfDate { .. }));
+    assert_eq!(after_rows[&22].state, SyncState::InRepoNotFromApp);
+    assert_eq!(after_rows[&23].state, SyncState::Current);
+    assert_eq!(after_rows[&24].state, SyncState::Current);
+    let record_after = sync::load(&sx.record_path()).unwrap();
+    assert_eq!(record_after.cases[&20], record_before.cases[&20]);
+    assert_eq!(record_after.cases[&21], record_before.cases[&21]);
+    assert!(!record_after.cases.contains_key(&22));
+    // Nothing is left to add.
+    assert!(sync::add_new(&after_rows.into_values().collect::<Vec<_>>()).is_empty());
+}
+
+#[test]
+fn update_out_of_date_and_add_new_never_touch_a_case_this_app_did_not_export() {
+    let sx = every_state();
+    let record = sync::load(&sx.record_path()).unwrap();
+    let rows: Vec<SyncRow> = sx.rows().into_values().collect();
+    assert!(!sync::add_new(&rows).contains(&22));
+    let out_of_date: Vec<i32> =
+        rows.iter().filter(|r| matches!(r.state, SyncState::OutOfDate { .. }) && r.has_script).map(|r| r.case_id).collect();
+    assert_eq!(out_of_date, vec![21]);
+
+    // What this app exported may be replaced; 22 only once it is ticked.
+    assert_eq!(sync::update_replace(&record, &[21, 22], &[]), vec![21]);
+    assert_eq!(sync::update_replace(&record, &[21, 22], &[22]), vec![21, 22]);
+
+    // Sent without the tick, 22 refuses the whole write.
+    let before = snapshot(sx.fx.clone.path());
+    let d = docs(&[(21, "Twenty one"), (22, "Twenty two")]);
+    let err = sx.export_replacing(&[21, 22], &d, &sync::update_replace(&record, &[21, 22], &[])).unwrap_err();
+    assert!(err.contains("case 22 is already in the repo"), "{err}");
+    assert_eq!(snapshot(sx.fx.clone.path()), before);
+
+    // Update out of date writes 21 and leaves 22's file as it is.
+    let marker = "suites/sl/admin/performance/proficiency-levels/specs/proficiency-levels.spec.ts";
+    sx.export_replacing(&[21], &docs(&[(21, "Twenty one")]), &sync::update_replace(&record, &[21], &[])).unwrap();
+    assert_eq!(snapshot(sx.fx.clone.path())[marker], before[marker]);
+    assert_eq!(sx.state(21), SyncState::Current);
+    assert_eq!(sx.state(22), SyncState::InRepoNotFromApp);
+
+    // Ticked, Update ticked replaces it, and it is this app's from then on.
+    sx.export_replacing(&[22], &docs(&[(22, "Twenty two")]), &sync::update_replace(&record, &[22], &[22])).unwrap();
+    assert_eq!(sx.state(22), SyncState::Current);
+}
+
+#[test]
+fn add_new_leaves_out_a_case_that_cannot_go_and_writes_the_rest() {
+    let sx = every_state();
+    // 25 is new too, but its newest run failed: it cannot be exported.
+    sx.fx.click_script(25, "Twenty five", "admin", "Definition Wizard");
+    sx.fx.run("r25", "9", 25, "Failed");
+    sx.stamp(25);
+    let rows: Vec<SyncRow> = sx.rows().into_values().collect();
+    let new = sync::add_new(&rows);
+    assert_eq!(new, vec![23, 24, 25]);
+    // Only 23 is asked for here, with 25: one goes, one is listed.
+    let c = sx.fx.clone.path();
+    let before = snapshot(c);
+    let md_before = sx.fx.read_clone(MD_REL);
+    let r = v2_lib::pw_export::export::add_new_with(
+        sx.root(),
+        sx.dir.path(),
+        ORG,
+        PROJECT,
+        &[23, 25],
+        &sx.fx.clone_path(),
+        &sx.fx.modules.borrow(),
+        &docs(&[(23, "Twenty three"), (25, "Twenty five")]),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(r.cases.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![23]);
+    assert_eq!(r.skipped, vec![(25, "latest run: Failed".to_string())]);
+
+    // The repo otherwise unchanged: 23's raw spec added, its section appended,
+    // its index entry added, and nothing else.
+    let after = snapshot(c);
+    let added: std::collections::BTreeSet<String> = after.keys().filter(|k| !before.contains_key(*k)).cloned().collect();
+    assert_eq!(added, [sx.raw(23)].into_iter().collect());
+    for (rel, bytes) in &before {
+        if rel == MD_REL || rel == "suites/_generated/index.json" {
+            continue;
+        }
+        assert_eq!(&after[rel], bytes, "{rel} changed");
+    }
+    let md_after = sx.fx.read_clone(MD_REL);
+    assert!(md_after.starts_with(md_before.trim_end()));
+    assert!(md_after.contains("## 23 ") && !md_after.contains("## 25 "));
+    assert_eq!(sx.state(25), SyncState::NeverExported);
+    assert_eq!(sx.state(23), SyncState::Current);
+
+    // Nothing that can go: nothing is written, and each is listed.
+    let before = snapshot(c);
+    let r = v2_lib::pw_export::export::add_new_with(
+        sx.root(),
+        sx.dir.path(),
+        ORG,
+        PROJECT,
+        &[25, 22],
+        &sx.fx.clone_path(),
+        &sx.fx.modules.borrow(),
+        &docs(&[(25, "Twenty five"), (22, "Twenty two")]),
+        &[],
+    )
+    .unwrap();
+    assert!(r.cases.is_empty() && r.files.is_empty());
+    assert_eq!(r.skipped[0], (25, "latest run: Failed".to_string()));
+    assert_eq!(r.skipped[1], (22, "already in the repo (in specs/proficiency-levels.spec.ts)".to_string()));
+    assert_eq!(snapshot(c), before);
+}
+
+const EXCLUDED_26: &str = "## Excluded 26 \u{2014} Twenty six\n\nLeft out on purpose.\n";
+
+#[test]
+fn a_case_the_repo_excludes_has_its_own_state_and_add_new_skips_it() {
+    let sx = every_state();
+    // 26 is new to this app, 20 was exported by it: the team excludes both.
+    sx.fx.good(26, "Twenty six");
+    sx.stamp(26);
+    let md = sx.fx.read_clone(MD_REL);
+    let md = format!("{}\n{EXCLUDED_26}", md.replacen("## 20 ", "## Excluded 20 ", 1).trim_end());
+    write(sx.fx.clone.path().join(MD_REL), &md);
+
+    let rows = sx.rows();
+    assert_eq!(rows[&26].state, SyncState::ExcludedInRepo);
+    assert_eq!(rows[&26].repo_note.as_deref(), Some("Excluded in the repo (in proficiency-levels.md)"));
+    assert_eq!(rows[&20].state, SyncState::ExcludedInRepo, "even one this app exported");
+    let all: Vec<SyncRow> = rows.into_values().collect();
+    assert!(!sync::add_new(&all).contains(&26));
+
+    // Asked for anyway, Add new lists it with the reason and writes nothing.
+    let before = snapshot(sx.fx.clone.path());
+    let r = v2_lib::pw_export::export::add_new_with(
+        sx.root(),
+        sx.dir.path(),
+        ORG,
+        PROJECT,
+        &[26],
+        &sx.fx.clone_path(),
+        &sx.fx.modules.borrow(),
+        &docs(&[(26, "Twenty six")]),
+        &[],
+    )
+    .unwrap();
+    assert!(r.cases.is_empty());
+    assert_eq!(r.skipped, vec![(26, "Excluded in the repo (in proficiency-levels.md)".to_string())]);
+    assert_eq!(snapshot(sx.fx.clone.path()), before);
+
+    // Update, ticked or not, refuses it too.
+    let record = sync::load(&sx.record_path()).unwrap();
+    for (cases, ticked) in [(vec![20], vec![]), (vec![20], vec![20]), (vec![26], vec![26])] {
+        let err = sx
+            .export_replacing(&cases, &docs(&[(20, "Twenty"), (26, "Twenty six")]), &sync::update_replace(&record, &cases, &ticked))
+            .unwrap_err();
+        assert!(err.contains("Excluded in the repo (in proficiency-levels.md)"), "{err}");
+    }
+    assert_eq!(snapshot(sx.fx.clone.path()), before);
+}
+
+#[test]
+fn add_new_reads_only_what_could_go_and_lists_a_case_it_could_not_read() {
+    let sx = every_state();
+    sx.fx.click_script(25, "Twenty five", "admin", "Definition Wizard");
+    sx.fx.run("r25", "9", 25, "Failed");
+    sx.stamp(25);
+    // 25's newest run failed and 99 has no script: neither is read.
+    assert_eq!(v2_lib::pw_export::export::worth_reading(sx.root(), &[23, 24, 25, 99]), vec![23, 24]);
+
+    // 23 could not be read: it is listed, and 24 still goes.
+    let r = v2_lib::pw_export::export::add_new_with(
+        sx.root(),
+        sx.dir.path(),
+        ORG,
+        PROJECT,
+        &[23, 24, 25],
+        &sx.fx.clone_path(),
+        &sx.fx.modules.borrow(),
+        &docs(&[(24, "Twenty four")]),
+        &[23],
+    )
+    .unwrap();
+    assert_eq!(r.cases.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![24]);
+    assert_eq!(
+        r.skipped,
+        vec![(23, v2_lib::pw_export::export::NOT_READ.to_string()), (25, "latest run: Failed".to_string())]
+    );
+    assert!(!v2_lib::pw_export::export::NOT_READ.contains("http"));
+    assert_eq!(sx.state(23), SyncState::NeverExported);
+    assert_eq!(sx.state(24), SyncState::Current);
 }

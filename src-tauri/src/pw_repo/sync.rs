@@ -10,12 +10,13 @@
 //!   of it now, and the clone now (`states`).
 //!
 //! Update itself is the export: the same all-or-nothing write, for the
-//! cases asked for only.
+//! cases asked for only. Add new is the export of every case with a script
+//! the repo has in none of its places (`pw_repo::presence`, `add_new`).
 
 use crate::autorun::{approvals, recipe, store, CaseScript};
 use crate::pw_export::clone;
 use crate::pw_export::export::Fingerprinter;
-use crate::pw_repo::structure;
+use crate::pw_repo::{presence, structure};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -193,8 +194,17 @@ pub enum SyncState {
     OutOfDate { why: String },
     /// Exported, but the clone has no section or no raw spec for it now.
     NotInRepo,
-    /// The project has a script for it that was never exported.
+    /// The project has a script for it that was never exported, and the
+    /// repo has it nowhere.
     NeverExported,
+    /// The repo has it, but this app has no export of it on record: someone
+    /// wrote it by hand, or exported it from another machine. Update out of
+    /// date and Add new never touch it; Update ticked replaces it only when
+    /// it is ticked.
+    InRepoNotFromApp,
+    /// The repo has it under `## Excluded <id>`: the team left it out on
+    /// purpose. Nothing in Sync ever writes it.
+    ExcludedInRepo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
@@ -206,6 +216,10 @@ pub struct SyncRow {
     pub exported_at: Option<String>,
     /// Whether Auto Run still has its script, so Update can export it.
     pub has_script: bool,
+    /// The repo has it in at least one place (`pw_repo::presence`).
+    pub in_repo: bool,
+    /// Where, short: "in competencies.md and specs/competencies.spec.ts".
+    pub repo_note: Option<String>,
 }
 
 fn changed(was: &Parts, now: &Parts) -> String {
@@ -248,6 +262,7 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
         .filter(|(_, f)| repo.generated_files.iter().any(|g| g == f))
         .filter_map(|(id, _)| id.parse().ok())
         .collect();
+    let found = presence::scan_repo(&repo);
     let record = load(&record_path(dir, clone_path, org, project))?;
     let fingerprints = Fingerprinter::load(root, org, project)?;
 
@@ -270,6 +285,8 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
         let script = scripts.get(&id);
         let rec = record.cases.get(&id);
         let state = match (rec, script) {
+            _ if found.excluded(id) => SyncState::ExcludedInRepo,
+            (None, _) if found.has(id) => SyncState::InRepoNotFromApp,
             (None, _) => SyncState::NeverExported,
             (Some(_), _) if !(sections.contains(&id) && raw.contains(&id)) => SyncState::NotInRepo,
             (Some(_), None) => SyncState::OutOfDate { why: "its script is no longer in Auto Run".into() },
@@ -285,7 +302,27 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
             state,
             exported_at: rec.map(|r| r.exported_at.clone()),
             has_script: script.is_some(),
+            in_repo: found.has(id),
+            repo_note: found.excluded_note(id).or_else(|| found.note(id)),
         });
     }
     Ok(rows)
+}
+
+/// The cases Add new exports: every one with a script that the repo has in
+/// none of its places. That is each never-exported case, and each NotInRepo
+/// case whose section, index entry and spec marker are all gone: it is not in
+/// the repo, so adding it back is adding a new case. A NotInRepo case the
+/// repo still has somewhere (its section, say) is left alone, as is every
+/// InRepoNotFromApp, Current and OutOfDate case.
+pub fn add_new(rows: &[SyncRow]) -> Vec<i32> {
+    rows.iter().filter(|r| r.has_script && !r.in_repo).map(|r| r.case_id).collect()
+}
+
+/// The cases of an Update the write may replace although the repo has them
+/// (`export::refuse_present`): the ones this app exported (on `record`),
+/// which is what Sync is for, and the ones the person ticked (`ticked`).
+/// An InRepoNotFromApp case is replaced only when it is ticked.
+pub fn update_replace(record: &ExportRecord, cases: &[i32], ticked: &[i32]) -> Vec<i32> {
+    cases.iter().copied().filter(|id| record.cases.contains_key(id) || ticked.contains(id)).collect()
 }
