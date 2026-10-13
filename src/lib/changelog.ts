@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.20",
+    date: "2026-10-13",
+    items: [
+      "Auto Run groups a run into batches wherever it has to pause, and shows Batch 1, Batch 2 and so on in the execution order, while it runs, and in past runs.",
+      "Scripts can now say which settings they need, such as Approval workflow ON. Auto Run groups the cases so each batch agrees, tries to keep the pauses few, and pauses before each batch to tell you what to set and what to put back.",
+    ],
+  },
+  {
     version: "2.1.3-beta.19",
     date: "2026-10-13",
     items: [
