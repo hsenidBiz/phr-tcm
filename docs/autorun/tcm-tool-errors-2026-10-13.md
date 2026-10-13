@@ -1,6 +1,6 @@
 # tcm tool errors seen while writing and healing Auto Run scripts
 
-Errors the `tcm` MCP tools returned to assistants on 2026-10-11 and 2026-10-12,
+Errors the `tcm` MCP tools returned to assistants from 2026-10-11 to 2026-10-13,
 while about 50 scripts were written for PBI 135592 (Cycle Setup, Timeline,
 Evaluators), three Timeline scripts were healed and a shared draft was rebuilt. Kept apart from
 `agent-pitfalls.md` (what an assistant should do differently) and
@@ -147,3 +147,112 @@ were asserted by proxy.
 - **Wizard step counters change with the Eval Rules choices.** "Step 2 of 8"
   with only Goals or only Competencies on, "of 9" with both. Wait for
   "— Eval Rules", not the full name.
+
+## Added 2026-10-13: errors from writing the Goal Groups scripts (PBI 135592)
+
+| Tool | What was sent | What came back | Who |
+|---|---|---|---|
+| `save_autorun_script` | a locator checked earlier with `expect_visible` in discovery (`cell "Decrease value 100 Increase value %"`) | `never seen on the live app` | **app** - an `expect_visible` that passes in discovery records no sighting; only page reads (`get_autorun_page`, an action's page dump) do. A check the agent just watched pass is refused. |
+| `get_autorun_guide` | no options | about 111k characters, saved to a file | **app** - too long to read in one go; every agent pays for it at the start. A short or sectioned guide (`quick`, or by topic) would help. |
+| `discover_autorun_actions` | `return_to_area` with no saved script for the case | `case 0 has no saved script to name its area` | **app/agent** - discovery has the area it started in; it could use that instead of refusing. |
+| `discover_autorun_actions` | 24 actions | `at most 20 actions in one call` | agent |
+| `discover_autorun_actions` | `expect_attribute` name `checked` on a checkbox | `no checked attribute` | **app/agent** - the checked state is a property, not an attribute; the guide should say how to check a checkbox's state (or `expect_attribute` could read the `checked` property). |
+| `discover_autorun_action` | a row-by-name chain for a row's Edit button | not found | agent - the grid's rows have empty accessible names |
+| `replay_autorun_to_step` | after a discovery | ends the discovery and holds the browser | app (section 1); `release_autorun_browser` freed it every time |
+| `run_api_fixture` | any fixture | `cycle ... does not start with the test prefix` | app (known): the fixture records the cycle under its id, not its name |
+
+**What would help.** Record a sighting when an `expect_*` passes in discovery
+(the element was found, so it was seen); offer the guide in sections; let
+`return_to_area` in discovery use the discovery's own area; document (or
+support) checkbox state checks.
+
+## Added 2026-10-13: a waiting replay says too little
+
+`replay_autorun_to_step` no longer times out on the assistant's side: each
+call waits about 48 s and, while the replay is still going, answers
+
+    {"status":"running","sentence":"still running, now at step 1 of 4 - call replay_autorun_to_step again with the same case (137605) and step (5) to keep waiting","step":1,"of":4}
+
+The polling itself works. What is missing showed on case 137605: the replay
+stood at "step 1 of 4" for over five minutes while step 1's actions timed
+out one after another (a new failure picture every ~30 s, every one the
+Definition Wizard on Rating Methods). The answers only ever said "step 1 of
+4", so the assistant kept polling with no sign anything was wrong; meanwhile
+`get_autorun_page` is refused with `a replay is going`, so it could not look.
+
+| Tool | What came back | Who |
+|---|---|---|
+| `replay_autorun_to_step` (polled 4+ times) | `still running, now at step 1 of 4` each time | **app** - no hint the step is stuck on timeouts |
+| `get_autorun_page` during the replay | `409: a replay is going - call replay_autorun_to_step ... to wait for it` | app (by design, but it leaves the assistant blind) |
+
+**What would help.** Say in the "still running" answer which action the
+replay is on (its kind and target), how long it has been on it, and how many
+actions in this step have already failed or timed out; when the current step
+has been failing for longer than its own timeouts allow, stop the replay and
+answer with the failure instead of "still running". Optionally let
+`get_autorun_page` (read-only) answer during a replay.
+
+## Added 2026-10-13: "Must not save" does not stop every save (Goal Groups)
+
+While scripting 137623-137625 and 137605, an assistant tried Distribute Evenly
+with `try_autorun_action` for case 137596, a script marked `no_save: true`.
+The click went through and the new weights **were saved** - Distribute Evenly
+saves from the page straight away, and the must-not-save guard did not stop
+it. It left the shared "AUTOTEST Goal Groups Look 2027" draft (cycle 10578) at
+33/33 with a stale row; it was put back to 50/50 through the UI.
+
+Related behaviour found the same day (PBI 135592, cycle Goal Groups step):
+
+- Loading the Goal Groups step re-syncs its rows with the active Definition
+  Wizard goal groups (adds new active ones, drops removed ones) and **writes
+  them to the database on load** (`perf_cycle_goal_group`). A look-only script
+  can therefore change its draft just by opening the step when the Definition
+  Wizard's groups changed in between.
+- Distribute Evenly saves immediately (one earlier agent reported its result
+  was lost on Exit - the two reports disagree; the save-on-click one was seen
+  on the database).
+
+| Tool | What was sent | What came back | Who |
+|---|---|---|---|
+| `try_autorun_action` | click "Distribute Evenly" for no_save case 137596 | ok - and the weights were saved | **app** - the guard missed a save the page sends on click; it must stop every write a no_save case's page sends, or the try must refuse a no_save case's write |
+| `discover_autorun_actions` | Continue right after the Proficiency Profile title appeared | click did nothing; next wait timed out (twice) | **app** - click swallowed while the step was still loading; fixed by waiting for "Manager (Saved)" |
+| `save_autorun_script` | `[data-role="group-active-switch"] ... #2/#3`, `[data-role="group-status"] ... #3` used only in checks | never seen | **app** - a passing `expect_*` records no sighting (see above); clicking once fixed it |
+| `save_autorun_script` | `main span[class*="-valid"]` | never seen, though probed earlier | **app** - the probe's sighting was lost when discovery ended |
+| `save_autorun_script` (dry run) | `button "Edit" in div[data-cycle-id="{{setup.cycle_id}}"]` | seen but never counted as exactly one; the probe cannot take a chain | **app** |
+| `start_autorun_discovery` after a replay/fixture run | 409 the browser did not answer on port 55079 | first release said nothing was held; next start worked | **app** - stale held browser |
+| `get_autorun_failures` 137605 | 404 no run has case 137605 | | **app** - a replay is not a run, so its failure cannot be read or marked |
+| `get_autorun_guide`, `list_api_fixtures` | full answers | over the size limit, saved to a file | **app** - too large |
+| `db_query` with `statements` | 400 create, update and delete are switched off | | environment (setting) |
+| `discover_autorun_actions` | a selector with both `css` and `text` | 400 one of role, text or css | agent |
+| restore draft with `expect_hidden` inside `when_visible` `then` | 400 `then` cannot hold expect_hidden | | agent |
+| `release_autorun_browser`, `end_autorun_discovery` while a replay ran | 409 a replay is going | | agent |
+
+**What would help.** Make the must-not-save guard cover saves sent on click
+(any write request from the page while a no_save case runs or is tried), or
+have `try_autorun_action` refuse an action for a no_save case when it writes;
+keep probe sightings after discovery ends; let a replay's failure be read and
+marked like a run's.
+
+## Added 2026-10-13: healing 137624 (Goal Groups, Definition Wizard restore)
+
+137624's case checks all passed; the restore at the end of step 4 failed
+because Rating Methods' Save & Continue, clicked the instant it appeared,
+sent the browser to the PeoplesHR home page, so the restore never ran and the
+Definition Wizard was left with 3 active goal groups (the look-only Goal
+Groups cases then see 3 rows). Fixed by waiting for the Rating Methods list
+(button "Expand 5-Point Scale") before the click - component "Open Definition
+Wizard Goal Groups" v2. Not reproduced by hand, so a probable cause only.
+
+| Tool | What was sent | What came back | Who |
+|---|---|---|---|
+| a run (unattended) | click `#btnRatingMethodsContinue-button` found the same instant | the page went to the home page; every later action timed out | **app** - a button present before its page has finished loading takes the click; a run could wait for the page to settle (no pending requests) before clicking |
+| `record_autorun_quirk` | one new quirk | `400: 40 active quirks` - retire one first | **app limit** - with 40+ PBIs' worth of notes the cap is reached; consider a higher cap or per-area quirks |
+| `try_autorun_action` | `use_component` during a replay | only the first action's detail, not a pass/fail for the whole component | **app** - a component try should answer each action, as `discover_autorun_action` does |
+| `discover_autorun_actions` | click link "Home" (listed in the page tree) | `link "Home" not found` | **app** - the snapshot shows a name the click locator does not match |
+| `discover_autorun_action` (draft) | `when_visible` whose `then` held `return_to_area` | `then cannot hold return_to_area` | agent (stated rule) - so a script cannot recover from a home-page bounce inside a guard |
+| `replay_autorun_to_step` | replay to a step past the case's last | `the browser is on the page before step N` - reads like a stop partway | **app** - say the whole case was replayed |
+| `list_api_fixtures` | no filter | about 58k characters | **app** - needs a filter or paging, like `list_api_templates` |
+
+**Quirk housekeeping.** q2f0a34 (Timeline Combine toggle redraw; never
+confirmed, only case 136601 is skipped) was retired to make room for the
+Rating Methods note above.
