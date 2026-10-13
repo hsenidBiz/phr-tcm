@@ -530,6 +530,15 @@ pub fn run() {
             };
             app.manage(db::DbSecrets(db_store));
 
+            // npm's debug log of a Playwright tab run (its argv can hold a
+            // password) goes to this folder of the app's own, emptied after
+            // every run, never to the user's shared npm cache.
+            if let Ok(dir) = app.path().app_local_data_dir() {
+                let logs = dir.join("pw-npm-logs");
+                crate::pw_repo::process::empty_dir(&logs);
+                crate::pw_repo::process::set_npm_logs_dir(logs);
+            }
+
             // App log: file per day next to the OS's other app logs, plus
             // an in-memory tail Settings can show for bug reports.
             if let Ok(dir) = app.path().app_log_dir() {

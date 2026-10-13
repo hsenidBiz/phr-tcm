@@ -25,17 +25,29 @@
 //! stdin and no environment variable for it. So for the few seconds an
 //! `add` or a password `set` runs, the password is in the command line of
 //! that process (and of the `cmd.exe` npm runs the script through), where
-//! any program of the same user that lists processes can read it. That is
-//! accepted: the same user can read `users.json` itself.
+//! any program of the same user that lists processes can read it, for that
+//! run's lifetime. That is accepted: the same user can read `users.json`
+//! itself. No file keeps it: npm's own debug log, which records the whole
+//! argv, goes to the app's own folder with `--logs-max=0` and that folder is
+//! emptied after every run (`process::npm_args`), never to the user's
+//! shared `npm-cache/_logs`.
 //!
 //! **Where a password never goes.** Not into the app's log (`process` logs
 //! only the run's label, `npm run users`), not into `PwOutput` (no output
 //! line of an accounts command is emitted, only its `PwDone`), and not into
 //! an error or a preview: every line the CLI prints is cleaned
-//! (`clean_line`) before it is kept, with the change's password and every
-//! password in `users.json` replaced by `HIDDEN`, and a JSON parse error
-//! (whose message can quote the file) replaced whole. `--silent` (added by
-//! `process`) keeps npm's `> node … <args>` banner out of the output.
+//! (`clean_line`) before it is kept, with passwords replaced by `HIDDEN` and
+//! a JSON parse error (whose message can quote the file) replaced whole.
+//! The change's own password is always hidden, whatever its length; the
+//! other passwords in `users.json` only from `MIN_HIDDEN` characters up, so
+//! a one or two letter password does not blank every match of those letters
+//! in the output. `--silent` (added by `process`) keeps npm's `> node …
+//! <args>` banner out of the output.
+//!
+//! **Values.** A value starting with `--` (the CLI would read it as an
+//! option) or holding a control character (a line break ends `cmd.exe`'s
+//! command line there, silently dropping what follows, `--apply` included)
+//! is refused before anything runs.
 
 use super::process::{self, Launch, RunEvent, Sink};
 use serde::{Deserialize, Serialize};
@@ -60,6 +72,11 @@ pub const NO_PASSWORD: &str = "That account has no password in src/users/users.j
 pub const LIST_UNREADABLE: &str = "The list of accounts from npm run users could not be read.";
 pub const USERS_STOPPED: &str = "The users command was stopped before it finished.";
 pub const USERS_TIMED_OUT: &str = "The users command did not finish within 2 minutes, so it was stopped.";
+pub const CONTROL_CHARACTER: &str =
+    "A value cannot hold a line break, a tab or another control character, because npm run users would not receive it whole. Nothing was run.";
+/// The shortest password in `users.json` hidden in output (the change's own
+/// password is hidden whatever its length).
+pub const MIN_HIDDEN: usize = 4;
 pub const OPTION_LIKE: &str = "A value cannot start with --, because npm run users would read it as an option. Nothing was run.";
 
 /// Starts `npm` with arguments (`run users -- …`): in the app
@@ -188,6 +205,9 @@ pub fn change_args(change: &AccountChange, apply: bool) -> Result<Vec<String>, S
     if values(change).iter().any(|v| v.trim_start().starts_with("--")) {
         return Err(OPTION_LIKE.to_string());
     }
+    if values(change).iter().any(|v| v.chars().any(char::is_control)) {
+        return Err(CONTROL_CHARACTER.to_string());
+    }
     if apply {
         rest.push(s("--apply"));
     }
@@ -230,8 +250,7 @@ fn read_registry(clone: &Path) -> Result<serde_json::Map<String, Value>, String>
     }
 }
 
-/// Every password in the clone's registry, for hiding them in output.
-/// Empty when it cannot be read.
+/// Every password in the clone's registry. Empty when it cannot be read.
 pub fn registry_passwords(clone: &Path) -> Vec<String> {
     read_registry(clone)
         .map(|m| m.values().filter_map(|e| e.get("password")?.as_str().map(String::from)).filter(|p| !p.is_empty()).collect())
@@ -254,6 +273,12 @@ pub fn password(clone: &Path, key: &str) -> Result<String, String> {
         Some(p) if !p.is_empty() => Ok(p.to_string()),
         _ => Err(NO_PASSWORD.to_string()),
     }
+}
+
+/// The registry's passwords hidden in output: those of `MIN_HIDDEN`
+/// characters or more.
+fn hidden_registry_passwords(clone: &Path) -> Vec<String> {
+    registry_passwords(clone).into_iter().filter(|p| p.chars().count() >= MIN_HIDDEN).collect()
 }
 
 // ---- Parsing and cleaning output -------------------------------------------------
@@ -329,7 +354,8 @@ struct Captured {
 /// Runs `args` (after `npm`) as a repo command, keeping its output to
 /// itself. Only its end reaches `show` (`PwDone`); no line does.
 fn capture(args: &[String], secrets: &[String], show: &Sink, launch: Starter) -> Result<Captured, String> {
-    let launched = launch(args)?;
+    // Short: a listing may wait for it rather than be refused.
+    let launched = launch(args)?.brief();
     let (tx, rx) = mpsc::channel::<(bool, RunEvent)>();
     let sink = |from_err: bool| -> Sink {
         let tx = Mutex::new(tx.clone());
@@ -383,7 +409,7 @@ fn refusal(lines: &[String], code: i32) -> String {
 
 /// The clone's accounts, from `npm run users -- list --json`.
 pub fn list(clone: &Path, show: &Sink, launch: Starter) -> Result<Vec<RepoAccount>, String> {
-    let secrets = registry_passwords(clone);
+    let secrets = hidden_registry_passwords(clone);
     let c = capture(&list_args(), &secrets, show, launch)?;
     if c.code != 0 {
         // Only stderr: a listing's stdout is the JSON with every password.
@@ -398,7 +424,7 @@ pub fn list(clone: &Path, show: &Sink, launch: Starter) -> Result<Vec<RepoAccoun
 pub fn change(clone: &Path, change: &AccountChange, apply: bool, show: &Sink, launch: Starter) -> Result<ChangeOutcome, String> {
     let args = change_args(change, apply)?;
     let mut secrets = change_secrets(change);
-    secrets.extend(registry_passwords(clone));
+    secrets.extend(hidden_registry_passwords(clone));
     let c = capture(&args, &secrets, show, launch)?;
     let output: Vec<String> = c.lines.into_iter().map(|(_, l)| l).collect();
     if c.code != 0 {

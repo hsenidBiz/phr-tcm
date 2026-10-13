@@ -15,10 +15,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use v2_lib::pw_repo::process::{self, Launch, RunEvent, Sink};
 use v2_lib::pw_repo::users::{
     self, change_args, clean_line, list_args, parse_list, AccountChange, AccountField, HIDDEN, LIST_UNREADABLE, NO_REGISTRY,
-    NO_SUCH_ACCOUNT, OPTION_LIKE, REGISTRY_NOT_JSON,
+    NO_SUCH_ACCOUNT, OPTION_LIKE, REGISTRY_NOT_JSON, CONTROL_CHARACTER,
 };
 
 const PASS_A: &str = "Made-Up-Pass-4417";
@@ -105,6 +106,16 @@ fn the_arguments_for_each_change() {
     // A value the CLI would read as an option is refused, never sent.
     assert_eq!(change_args(&add("--apply"), false).unwrap_err(), OPTION_LIKE);
     assert_eq!(change_args(&set(AccountField::DisplayName, "--x"), false).unwrap_err(), OPTION_LIKE);
+
+    // A control character anywhere is refused: a line break would end
+    // cmd.exe's command line there and drop `--apply` without a word.
+    for bad in ["a\nb", "a\r", "\0", "a\tb", "x\u{1b}[31m", "\u{7f}"] {
+        assert_eq!(change_args(&add(bad), true).unwrap_err(), CONTROL_CHARACTER, "{bad:?}");
+        assert_eq!(change_args(&set(AccountField::Username, bad), true).unwrap_err(), CONTROL_CHARACTER, "{bad:?}");
+        let rename = AccountChange::Rename { from: "FakeSL.eim.general".into(), to: format!("FakeSL.eim.general{bad}") };
+        assert_eq!(change_args(&rename, true).unwrap_err(), CONTROL_CHARACTER, "{bad:?}");
+        assert_eq!(change_args(&AccountChange::Remove { key: bad.into() }, true).unwrap_err(), CONTROL_CHARACTER);
+    }
 }
 
 // ---- Parsing --------------------------------------------------------------------------
@@ -229,6 +240,9 @@ impl Fake {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("list.json"), listing()).unwrap();
         fs::write(dir.path().join("change.cmd"), format!("@echo off\r\n{change_script}\r\n")).unwrap();
+        // A listing that takes about a second.
+        let typed = dir.path().join("list.json");
+        fs::write(dir.path().join("slow-list.cmd"), format!("@echo off\r\nping -n 2 127.0.0.1 >nul\r\ntype \"{}\"\r\n", typed.display())).unwrap();
         Fake { dir, asked: Mutex::new(vec![]) }
     }
 
@@ -242,6 +256,15 @@ impl Fake {
             vec![OsString::from("/D"), OsString::from("/C"), file("change.cmd")]
         };
         Ok(Launch::test_program(cmd(), a, self.dir.path().to_path_buf(), "npm run users"))
+    }
+
+    /// A listing that takes about a second and, as the app's listings do,
+    /// waits for another short command to free the slot.
+    fn slow_waiting(&self, args: &[String], wait: Duration) -> Result<Launch, String> {
+        assert_eq!(args, list_args());
+        self.asked.lock().unwrap().push(args.to_vec());
+        let a = vec![OsString::from("/D"), OsString::from("/C"), self.dir.path().join("slow-list.cmd").into_os_string()];
+        Ok(Launch::test_program(cmd(), a, self.dir.path().to_path_buf(), "npm run users").waiting(wait))
     }
 
     fn asked(&self) -> Vec<Vec<String>> {
@@ -396,4 +419,123 @@ fn a_registry_that_is_missing_or_broken_hides_nothing_it_should_not() {
     let mut found = users::registry_passwords(d.path());
     found.sort();
     assert_eq!(found, [PASS_A, PASS_B]);
+}
+
+// ---- npm's own log -----------------------------------------------------------------
+
+#[test]
+fn logs_max_zero_never_goes_without_the_app_folder() {
+    assert_eq!(process::npm_args(None).unwrap_err(), process::NO_NPM_LOGS_DIR);
+    assert_eq!(process::npm_args(Some(std::path::Path::new(""))).unwrap_err(), process::NO_NPM_LOGS_DIR);
+    let dir = std::env::temp_dir().join("tcm-tests-pw-npm-logs");
+    let args: Vec<String> = process::npm_args(Some(&dir)).unwrap().iter().map(|a| a.to_string_lossy().to_string()).collect();
+    assert_eq!(args, ["run".to_string(), "--silent".into(), format!("--logs-dir={}", dir.display()), "--logs-max=0".into()]);
+    // Wherever --logs-max=0 is, --logs-dir= with the app's folder is too.
+    let max = args.iter().position(|a| a == "--logs-max=0").unwrap();
+    let logs = args.iter().position(|a| a.starts_with("--logs-dir=")).unwrap();
+    assert!(logs < max && !args[logs].trim_start_matches("--logs-dir=").is_empty());
+}
+
+fn wait_done(rx: &Receiver<RunEvent>, run: u32) -> Option<i32> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).expect("the run ended") {
+            RunEvent::Done { run: r, code } if r == run => return code,
+            _ => {}
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn the_npm_log_folder_is_emptied_after_a_run() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let logs = tempfile::tempdir().unwrap();
+    fs::write(logs.path().join("2026-10-13T05_00_00_000Z-debug-0.log"), format!("verbose argv \"--password\" \"{PASS_A}\"")).unwrap();
+    fs::create_dir_all(logs.path().join("nested")).unwrap();
+    fs::write(logs.path().join("nested/x.log"), "x").unwrap();
+    let launch = Launch::test_program(cmd(), ["/D", "/C", "echo", "ran"].map(OsString::from).to_vec(), logs.path().to_path_buf(), "npm run users")
+        .with_npm_logs(logs.path().to_path_buf());
+    let (sink, rx) = collect();
+    let run = process::start(launch, sink).unwrap();
+    assert_eq!(wait_done(&rx, run), Some(0));
+    assert!(logs.path().is_dir(), "the folder itself stays");
+    assert_eq!(fs::read_dir(logs.path()).unwrap().count(), 0, "nothing is left in it");
+}
+
+// ---- Waiting for the slot ----------------------------------------------------------
+
+#[cfg(windows)]
+#[test]
+fn two_listings_started_together_both_succeed() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let d = clone();
+    let fake = Fake::new("exit /b 0");
+    let (show, _rx) = collect();
+    let (a, b) = std::thread::scope(|s| {
+        let one = s.spawn(|| users::list(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, process::SLOT_WAIT)));
+        let two = s.spawn(|| users::list(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, process::SLOT_WAIT)));
+        (one.join().unwrap(), two.join().unwrap())
+    });
+    assert_eq!(a.unwrap().len(), 2);
+    assert_eq!(b.unwrap().len(), 2);
+    assert_eq!(fake.asked().len(), 2);
+    assert_eq!(process::running(), None);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_start_that_does_not_wait_or_meets_a_real_run_is_refused_at_once() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let d = clone();
+    let fake = Fake::new("exit /b 0");
+    let (show, _rx) = collect();
+
+    // Behind a short listing, a start that did not ask to wait is refused.
+    std::thread::scope(|s| {
+        let first = s.spawn(|| users::list(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, process::SLOT_WAIT)));
+        let at = Instant::now();
+        while process::running().is_none() && at.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let asked = Instant::now();
+        let e = users::list(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, Duration::ZERO)).unwrap_err();
+        assert_eq!(e, process::busy_sentence("npm run users"));
+        assert!(asked.elapsed() < Duration::from_millis(500));
+        assert!(first.join().unwrap().is_ok());
+    });
+
+    // Behind a real run (not a short command), even a waiting one is refused at once.
+    let ping = ["/D", "/C", "ping", "-n", "30", "127.0.0.1"].map(OsString::from).to_vec();
+    let (sink, rx) = collect();
+    let run = process::start(Launch::test_program(cmd(), ping, std::env::temp_dir(), "npx playwright test"), sink).unwrap();
+    let asked = Instant::now();
+    let e = users::list(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, process::SLOT_WAIT)).unwrap_err();
+    assert_eq!(e, process::busy_sentence("npx playwright test"));
+    assert!(asked.elapsed() < Duration::from_secs(1));
+    process::stop(run).unwrap();
+    assert_eq!(wait_done(&rx, run), None);
+}
+
+// ---- Which passwords are hidden ------------------------------------------------------
+
+#[cfg(windows)]
+#[test]
+fn short_registry_passwords_show_but_the_changes_own_never_does() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let d = clone();
+    fs::write(
+        d.path().join("src/users/users.json"),
+        format!(r#"{{ "FakeSL.a.general": {{ "username": "u", "password": "xyz" }}, "FakeSL.b.general": {{ "username": "v", "password": "{PASS_A}" }} }}"#),
+    )
+    .unwrap();
+    assert_eq!(users::MIN_HIDDEN, 4);
+    let fake = Fake::new(&format!("echo pq xyz {PASS_A}\r\nexit /b 0"));
+    let (show, _rx) = collect();
+    let out = users::change(d.path(), &add("pq"), false, &show, &|a: &[String]| fake.launch(a)).unwrap();
+    assert_eq!(out.output, [format!("{HIDDEN} xyz {HIDDEN}")]);
 }

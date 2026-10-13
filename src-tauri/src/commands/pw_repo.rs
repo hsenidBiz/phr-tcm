@@ -31,14 +31,18 @@ fn chosen(clone: &str) -> Result<PathBuf, String> {
 }
 
 /// Runs `body` off the async workers with the clone's path and a starter
-/// for `npx playwright …` there: it waits on repo commands.
+/// for `npx playwright …` there: it waits on repo commands. With `wait`,
+/// each start waits for a short command (another listing, an accounts
+/// command) to free the slot instead of being refused at once.
 async fn blocking<T: Send + 'static>(
     clone: String,
+    wait: bool,
     body: impl FnOnce(&std::path::Path, runner::Starter) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     let clone = chosen(&clone)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let start = |args: &[String]| Launch::repo(&clone, "npx", args, process::resolve_here);
+        let wait = if wait { process::SLOT_WAIT } else { std::time::Duration::ZERO };
+        let start = |args: &[String]| Launch::repo(&clone, "npx", args, process::resolve_here).map(|l| l.waiting(wait));
         body(&clone, &start)
     })
     .await
@@ -98,7 +102,7 @@ pub fn pw_repo_running() -> Result<Option<PwRunning>, String> {
 #[specta::specta]
 pub async fn pw_list(app: tauri::AppHandle, clone: String, refresh: bool) -> Result<TestTree, String> {
     let show = emitter(app);
-    blocking(clone, move |clone, start| runner::list(clone, refresh, &show, start)).await
+    blocking(clone, true, move |clone, start| runner::list(clone, refresh, &show, start)).await
 }
 
 /// Runs the picked tests, every test, or last time's failures, the way
@@ -116,7 +120,7 @@ pub async fn pw_run(
     confirm: bool,
 ) -> Result<RunStart, String> {
     let show = emitter(app);
-    blocking(clone, move |clone, start| runner::run(clone, &picked, action, mode, confirm, &show, start)).await
+    blocking(clone, false, move |clone, start| runner::run(clone, &picked, action, mode, confirm, &show, start)).await
 }
 
 /// The run list and the command a run would use, without running it.
@@ -130,7 +134,7 @@ pub async fn pw_preview(
     mode: BrowserMode,
 ) -> Result<RunPreview, String> {
     let show = emitter(app);
-    blocking(clone, move |clone, start| runner::preview(clone, &picked, action, mode, &show, start)).await
+    blocking(clone, false, move |clone, start| runner::preview(clone, &picked, action, mode, &show, start)).await
 }
 
 /// The clone's archived reports, newest first.
@@ -152,14 +156,15 @@ pub fn pw_open_report(clone: String, run_id: String) -> Result<(), String> {
 }
 
 /// Runs `body` off the async workers with the clone's path and a starter
-/// for `npm run users …` there.
+/// for `npm run users …` there, which waits for a short command (a
+/// listing, another accounts command) to free the slot.
 async fn blocking_users<T: Send + 'static>(
     clone: String,
     body: impl FnOnce(&std::path::Path, users::Starter) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     let clone = chosen(&clone)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let start = |args: &[String]| Launch::repo(&clone, "npm", args, process::resolve_here);
+        let start = |args: &[String]| Launch::repo(&clone, "npm", args, process::resolve_here).map(|l| l.waiting(process::SLOT_WAIT));
         body(&clone, &start)
     })
     .await

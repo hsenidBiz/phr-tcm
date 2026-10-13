@@ -46,6 +46,21 @@ fn strings(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
 
+/// The app's npm log folder for these tests. Every test sets the same one,
+/// so setting it again never changes it under another test.
+pub fn npm_logs() -> PathBuf {
+    let d = std::env::temp_dir().join("tcm-tests-pw-npm-logs");
+    process::set_npm_logs_dir(d.clone());
+    d
+}
+
+/// `--logs-dir=<dir>`.
+fn logs_dir_arg(dir: &Path) -> OsString {
+    let mut a = OsString::from("--logs-dir=");
+    a.push(dir.as_os_str());
+    a
+}
+
 fn fake_node(_: Program) -> Option<Resolved> {
     Some(Resolved { exe: PathBuf::from("C:/node/node.exe"), lead: vec![OsString::from("C:/node/cli.js")] })
 }
@@ -87,13 +102,27 @@ fn only_npx_and_npm_are_allowed() {
     assert_eq!(npx.cwd(), d.path());
     assert_eq!(npx.label(), "npx playwright test");
 
+    let logs = npm_logs();
     let npm = Launch::repo(d.path(), "npm", &strings(&["run", "users", "--", "list", "--json"]), fake_node).unwrap();
     // The app's own `--silent`: npm prints no banner carrying the arguments.
-    assert_eq!(npm.args(), ["C:/node/cli.js", "run", "--silent", "users", "--", "list", "--json"].map(OsString::from));
+    // Its debug log goes to the app's folder, kept for no run.
+    let lead = |rest: &[&str]| {
+        let mut a: Vec<OsString> = ["C:/node/cli.js", "run", "--silent"].map(OsString::from).to_vec();
+        a.push(logs_dir_arg(&logs));
+        a.push("--logs-max=0".into());
+        a.push("users".into());
+        a.extend(rest.iter().map(OsString::from));
+        a
+    };
+    assert_eq!(npm.args(), lead(&["--", "list", "--json"]));
     assert_eq!(npm.label(), "npm run users");
+    assert_eq!(npm.npm_logs(), Some(logs.as_path()));
     // Options after `--` are the users script's, not npm's.
     let npm = Launch::repo(d.path(), "npm", &strings(&["run", "users", "--", "--prefix", "x"]), fake_node).unwrap();
-    assert_eq!(npm.args(), ["C:/node/cli.js", "run", "--silent", "users", "--", "--prefix", "x"].map(OsString::from));
+    assert_eq!(npm.args(), lead(&["--", "--prefix", "x"]));
+    // npx gets neither, and empties no folder.
+    assert!(!npx.args().iter().any(|a| a.to_string_lossy().starts_with("--logs")));
+    assert_eq!(npx.npm_logs(), None);
 }
 
 #[test]
@@ -180,6 +209,7 @@ fn a_long_line_is_cut_and_every_line_is_passed_on() {
 #[test]
 fn the_label_never_carries_an_option_or_a_value() {
     let d = clone_with_node_modules();
+    npm_logs();
     let l = Launch::repo(d.path(), "npm", &strings(&["run", "users", "--", "set", "A", "--password", "s3cret"]), fake_node);
     assert_eq!(l.unwrap().label(), "npm run users");
     let l = Launch::repo(d.path(), "npx", &strings(&["playwright", "--list"]), fake_node);

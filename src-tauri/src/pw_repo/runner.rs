@@ -828,7 +828,9 @@ pub fn plan(clone: &Path, tree: &TestTree, picked: &[String], action: RunAction,
 /// Runs `args` (after `npx`) as a repo command and returns its stdout.
 /// stderr goes to `show`, so Playwright's warnings reach the output panel.
 fn capture(args: &[String], show: &Sink, launch: Starter) -> Result<String, String> {
-    let launched = launch(args)?;
+    // A listing or a dry count: short, so another short command may wait
+    // for it rather than be refused.
+    let launched = launch(args)?.brief();
     let (tx, rx) = mpsc::channel::<RunEvent>();
     let tx = Mutex::new(tx);
     let out: Sink = Arc::new(move |e| {

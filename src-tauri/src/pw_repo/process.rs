@@ -33,6 +33,18 @@
 //!   `RunEvent::Done` comes after the last line, and always comes: the
 //!   output is waited for at most `OUTPUT_GRACE` once the run has ended.
 //!   The arguments are never logged: they can hold a password.
+//! - **npm's debug log.** npm writes a debug log of every run, with its
+//!   whole argv (a password included), under the user's shared
+//!   `npm-cache/_logs`. So every npm run gets `--logs-dir=<the app's own
+//!   folder>` and `--logs-max=0` beside `--silent` (`npm_args`), never the
+//!   second without the first (npm would then clear the user's own logs),
+//!   and the app's folder is emptied again when the run ends. With no such
+//!   folder set (`set_npm_logs_dir`, from the app's setup) npm is not run.
+//! - **Waiting for the slot.** A short command (a listing, a dry count, an
+//!   accounts command: `Launch::brief`) that asks to wait
+//!   (`Launch::waiting`) waits up to that long while another short command
+//!   holds the slot, instead of being refused at once. Behind a real test
+//!   run, or without asking to wait, a start is refused at once.
 
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader, Read};
@@ -79,6 +91,53 @@ pub const NODE_NOT_FOUND: &str =
     "Node.js (npx and npm) was not found on PATH, so nothing was started. Install Node.js, then restart the app.";
 /// The refusal when the run cannot be started.
 pub const COULD_NOT_START: &str = "The command could not be started. Settings → Logs has the details.";
+
+/// The refusal for npm when the app has no folder of its own for npm's
+/// debug log.
+pub const NO_NPM_LOGS_DIR: &str =
+    "npm run users was not started: the app has no folder of its own for npm's log, which would keep its arguments.";
+/// How long a listing or an accounts command waits for another short
+/// command to finish (`Launch::waiting`).
+pub const SLOT_WAIT: Duration = Duration::from_secs(60);
+
+fn npm_logs_cell() -> std::sync::MutexGuard<'static, Option<PathBuf>> {
+    static DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+    DIR.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Sets the app's own folder for npm's debug log (under its local data),
+/// from the app's setup. npm is never run without it.
+pub fn set_npm_logs_dir(dir: PathBuf) {
+    *npm_logs_cell() = Some(dir);
+}
+
+/// The folder `set_npm_logs_dir` set, if any.
+pub fn npm_logs_dir() -> Option<PathBuf> {
+    npm_logs_cell().clone()
+}
+
+/// The arguments npm gets ahead of `users`: `run --silent`, then npm's log
+/// sent to `logs` and kept for no run (`--logs-max=0`). Refused without
+/// `logs`: `--logs-max=0` alone would clear the user's shared log folder,
+/// and without it the log keeps every argument.
+pub fn npm_args(logs: Option<&Path>) -> Result<Vec<OsString>, String> {
+    let logs = logs.filter(|d| !d.as_os_str().is_empty()).ok_or_else(|| NO_NPM_LOGS_DIR.to_string())?;
+    let mut dir = OsString::from("--logs-dir=");
+    dir.push(logs.as_os_str());
+    Ok(vec!["run".into(), "--silent".into(), dir, "--logs-max=0".into()])
+}
+
+/// Removes everything inside `dir` (only ever the app's own npm log
+/// folder), keeping the folder itself.
+pub fn empty_dir(dir: &Path) {
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = e.path();
+        let gone = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+        if let Err(err) = gone {
+            crate::applog::warn(format!("pw-repo: npm's log folder could not be emptied: {:?}", err.kind()));
+        }
+    }
+}
 
 /// The programs a repo command can be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +233,13 @@ pub struct Launch {
     args: Vec<OsString>,
     cwd: PathBuf,
     label: String,
+    /// The app's npm log folder, emptied when the run ends.
+    npm_logs: Option<PathBuf>,
+    /// A short command (a listing, a dry count, an accounts command), which
+    /// another short command may wait behind.
+    brief: bool,
+    /// How long this start waits for a short command to free the slot.
+    wait: Duration,
 }
 
 impl Launch {
@@ -208,6 +274,7 @@ impl Launch {
             confine_playwright_args(clone, &args[1..])?;
         }
         let resolved = resolve(program).ok_or_else(|| NODE_NOT_FOUND.to_string())?;
+        let npm_logs = if program == Program::Npm { npm_logs_dir() } else { None };
 
         let mut all = resolved.lead;
         match program {
@@ -218,18 +285,54 @@ impl Launch {
             }
             Program::Npm => {
                 // `--silent`: no `> node … <args>` banner in the output.
-                all.extend(["run", "--silent", "users"].map(OsString::from));
+                // npm's debug log goes to the app's own folder, kept for no run.
+                all.extend(npm_args(npm_logs.as_deref())?);
+                all.push("users".into());
                 all.extend(args[2..].iter().map(OsString::from));
             }
         }
-        Ok(Launch { exe: resolved.exe, args: all, cwd: clone.to_path_buf(), label: label(program, args) })
+        Ok(Launch {
+            exe: resolved.exe,
+            args: all,
+            cwd: clone.to_path_buf(),
+            label: label(program, args),
+            npm_logs,
+            brief: false,
+            wait: Duration::ZERO,
+        })
     }
 
     /// Any program, for the tests of the job and the output: never reached
     /// from a command, which only builds `Launch::repo`.
     #[doc(hidden)]
     pub fn test_program(exe: PathBuf, args: Vec<OsString>, cwd: PathBuf, label: &str) -> Launch {
-        Launch { exe, args, cwd, label: label.to_string() }
+        Launch { exe, args, cwd, label: label.to_string(), npm_logs: None, brief: false, wait: Duration::ZERO }
+    }
+
+    /// The same command with `dir` as its npm log folder, emptied when it
+    /// ends: for the tests of that emptying.
+    #[doc(hidden)]
+    pub fn with_npm_logs(mut self, dir: PathBuf) -> Launch {
+        self.npm_logs = Some(dir);
+        self
+    }
+
+    /// A short command: another short command may wait for it to end.
+    pub fn brief(mut self) -> Launch {
+        self.brief = true;
+        self
+    }
+
+    /// Wait up to `wait` for a short command to free the slot, instead of
+    /// being refused at once. Never waits behind a real test run.
+    pub fn waiting(mut self, wait: Duration) -> Launch {
+        self.wait = wait;
+        self
+    }
+
+    /// The app's npm log folder this run empties when it ends, if any.
+    pub fn npm_logs(&self) -> Option<&Path> {
+        self.npm_logs.as_deref()
     }
 
     pub fn exe(&self) -> &Path {
@@ -411,6 +514,7 @@ pub fn strip_ansi(s: &str) -> String {
 struct Current {
     id: RunId,
     label: String,
+    brief: bool,
     state: Mutex<RunState>,
     #[cfg(windows)]
     job: crate::browser::tree::job::Job,
@@ -480,9 +584,20 @@ pub fn start(launch: Launch, sink: Sink) -> Result<RunId, String> {
 /// Playwright's warnings on stderr still reach the output panel.
 pub fn start_split(launch: Launch, out: Sink, err: Sink) -> Result<RunId, String> {
     let sink = out;
+    let asked = std::time::Instant::now();
     let mut current = slot();
-    if let Some(c) = current.as_ref() {
-        return Err(busy_sentence(&c.label));
+    // Behind a short command, a start that asked to wait polls until it
+    // ends or the wait is over; behind a real run it is refused at once.
+    while let Some(c) = current.as_ref() {
+        if !(c.brief && asked.elapsed() < launch.wait) {
+            return Err(busy_sentence(&c.label));
+        }
+        drop(current);
+        std::thread::sleep(Duration::from_millis(100));
+        current = slot();
+    }
+    if let Some(dir) = &launch.npm_logs {
+        let _ = std::fs::create_dir_all(dir);
     }
 
     #[cfg(windows)]
@@ -544,9 +659,11 @@ pub fn start_split(launch: Launch, out: Sink, err: Sink) -> Result<RunId, String
     drop(read_done);
 
     let child = Arc::new(Mutex::new(child));
+    let npm_logs = launch.npm_logs.clone();
     let run = Arc::new(Current {
         id,
         label: launch.label.clone(),
+        brief: launch.brief,
         state: Mutex::new(RunState::default()),
         #[cfg(windows)]
         job,
@@ -585,6 +702,10 @@ pub fn start_split(launch: Launch, out: Sink, err: Sink) -> Result<RunId, String
             }
         }
         open.store(false, Ordering::SeqCst);
+        // npm's log of this run held its arguments: none is kept.
+        if let Some(dir) = &npm_logs {
+            empty_dir(dir);
+        }
         let code = if stopped { None } else { status.and_then(|s| s.code()) };
         {
             let mut current = slot();
