@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.14",
+    date: "2026-10-13",
+    items: [
+      "New Playwright tab (with Advanced Features on): point it at your clone of the team's Playwright repo to run its tests, manage its test accounts and keep exported scripts up to date.",
+      "Runner: pick tests from the repo's tree and run them hidden, shown or in debug, with the same count check as npm run qa, live output, Stop, and past reports.",
+      "Accounts: add, edit, rename and delete the repo's test accounts through npm run users, with a preview before anything is applied. Passwords show only when you ask.",
+      "Sync: see which exported cases changed since they were exported and update just those.",
+      "Export to Playwright now lives in the Playwright tab, and re-exporting a case keeps the repo's Added by engineer, Also and Assertion floor blocks.",
+    ],
+  },
+  {
     version: "2.1.3-beta.13",
     date: "2026-10-13",
     items: [
