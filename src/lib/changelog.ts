@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.19",
+    date: "2026-10-13",
+    items: [
+      "Auto Run opens and refreshes much faster on a PBI with many cases, and no longer freezes the window while it loads the scripts.",
+    ],
+  },
+  {
     version: "2.1.3-beta.18",
     date: "2026-10-13",
     items: [
