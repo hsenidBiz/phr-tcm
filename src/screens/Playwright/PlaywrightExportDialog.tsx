@@ -42,8 +42,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const NEXT_STEPS = [
   "Capture navigation for any area listed above as missing.",
-  "Run each raw spec in the generated project, with the seed set to the case's user key.",
-  "Paste the Finish in the repo prompt below into Claude Code in your clone: it runs the repo's test-refactorer, npm run lint:tests -- --require-specs and the live check.",
+  "Paste the Finish in the repo prompt below into Claude Code in your clone: it runs the raw specs, the repo's test-refactorer, npm run lint:tests -- --require-specs and the live check.",
   "Review the changes and commit them.",
 ];
 

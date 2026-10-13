@@ -1,11 +1,12 @@
 //! Finish in the repo: the prompt a person pastes into Claude Code opened in
 //! their clone, so the repo's own `/gen-test` finishes what an export began.
 //!
-//! An export does `/gen-test`'s first four steps' work (each case's raw spec
-//! in `suites/_generated/`, its `index.json` entry and its section in the
-//! feature's test-case file). Steps 5 (refactor), 6 (verify) and 7 (run
-//! summary) are the repo's, and `.claude/commands/gen-test.md` has no "start
-//! at step 5" mode: a bare `/gen-test <id>` would fetch the ticket and
+//! An export does `/gen-test`'s first three steps' work (each case's raw
+//! spec in `suites/_generated/`, its `index.json` entry and its section in
+//! the feature's test-case file) but never runs a raw spec. Steps 4 (run
+//! and heal the raw spec), 5 (refactor), 6 (verify) and 7 (run summary) are
+//! the repo's, and `.claude/commands/gen-test.md` has no "start at step 4"
+//! mode: a bare `/gen-test <id>` would fetch the ticket and
 //! generate a new raw spec over the export. So the prompt names the steps
 //! and the files instead.
 //!
@@ -90,11 +91,18 @@ pub fn prompt(seg: &str, ids: &[i32], raw_specs: &[String], sections: &[String],
         ),
         None => "One spec per case (no --spec).".to_string(),
     };
+    let step4 = if several {
+        "In step 4, run those raw specs and heal them in place if they fail; never regenerate them from the tickets."
+    } else {
+        "In step 4, run that raw spec and heal it in place if it fails; never regenerate it from the ticket."
+    };
     format!(
-        "Run steps 5, 6 and 7 of .claude/commands/gen-test.md for ADO {cases} {} in {seg}. \
-         Steps 1-4 are already done: the Test Case Manager exported {whose} raw spec ({}) and its {section} ({}). \
-         Do not fetch the tickets, do not regenerate or edit the raw specs, and do not run git. \
+        "Run steps 4, 5, 6 and 7 of .claude/commands/gen-test.md for ADO {cases} {} in {seg}. \
+         Steps 1-3 are already done: the Test Case Manager exported {whose} raw spec ({}) and its {section} ({}). \
+         {step4} \
+         Do not fetch the tickets and do not run git. \
          {spec_line} \
+         The tests are independent (no --chain). \
          Stop and report on any stop-and-report condition the command defines.",
         and_list(&id_list),
         ticks(raw_specs),

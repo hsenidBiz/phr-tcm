@@ -1,7 +1,8 @@
 // Finish in the repo: under an export's result (the Export dialog and Sync),
 // one ready-to-paste prompt per feature folder (<seg>) for Claude Code opened
-// in the person's clone. It runs steps 5, 6 and 7 of the repo's /gen-test
-// (refactor, lint and live check, run summary) on exactly the cases just
+// in the person's clone. It runs steps 4, 5, 6 and 7 of the repo's /gen-test
+// (run and heal the raw specs, which the export never runs, then refactor,
+// lint and live check, run summary) on exactly the cases just
 // written. Rust builds the text from checked values (pw_repo::handoff); this
 // only shows it, offers the spec to put the cases in, and copies it. Nothing
 // is started.
@@ -21,7 +22,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** The one line under the heading. */
 export const HANDOFF_NOTE =
-  "Paste this into Claude Code opened in your clone. It runs the repo's refactor, lint and live check.";
+  "Paste this into Claude Code opened in your clone. It runs the raw specs, the repo's refactor, lint and live check.";
 
 /** The rule Rust checks a typed spec name against (pw_repo::handoff::valid_stem). */
 const STEM = /^[a-z0-9][a-z0-9-]*$/;

@@ -43,7 +43,7 @@ function localTime(iso: string): string {
 }
 
 /** What each updated case still needs in the repo: said here only. */
-export const NEEDS_REPO = "needs /gen-test steps 5, 6 and 7 in the repo (Finish in the repo, below)";
+export const NEEDS_REPO = "needs /gen-test steps 4, 5, 6 and 7 in the repo (Finish in the repo, below)";
 
 function stateText(s: SyncState): string {
   switch (s.kind) {

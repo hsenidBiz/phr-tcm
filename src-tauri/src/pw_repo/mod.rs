@@ -18,7 +18,7 @@
 //! clone's copy of its script is current.
 //!
 //! `handoff` builds the prompt that finishes exported cases in the repo
-//! (`/gen-test` steps 5, 6 and 7); the app only copies it.
+//! (`/gen-test` steps 4, 5, 6 and 7); the app only copies it.
 //!
 //! `presence` finds which ADO ids the clone already has, and where: what
 //! Export skips by default and what Sync's Add new leaves alone.

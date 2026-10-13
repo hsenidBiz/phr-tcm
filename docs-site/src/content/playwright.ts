@@ -70,7 +70,7 @@ export const playwright: Screen = {
         "Press **Add new** to export every case with a script that the repo does not have yet. A case counts as in the repo when a test-case file has its heading, the generated index lists it, or a spec has its ADO marker. A new case that cannot be exported yet is left out, and the summary lists it with why.",
         "Update out of date and Add new never touch a case that is in the repo but not from this app. To replace one on purpose, tick it and press **Update ticked**.",
         "Update replaces each case's raw spec and rewrites its section in the test-case file from Azure DevOps. The repo's Added by engineer, Also and Assertion floor blocks stay as they are, and so does every other section and file.",
-        "Each updated case is listed with its file. An updated raw spec still needs /gen-test steps 5, 6 and 7 in the repo to become a finished spec: **Finish in the repo**, below the list, gives the prompt for that.",
+        "Each updated case is listed with its file. An updated raw spec still needs /gen-test steps 4, 5, 6 and 7 in the repo to become a finished spec: **Finish in the repo**, below the list, gives the prompt for that.",
       ],
     },
     {
@@ -86,7 +86,7 @@ export const playwright: Screen = {
     {
       title: "Finish exported cases in the repo",
       steps: [
-        "After an export, an Update or Add new, **Finish in the repo** shows a ready-made prompt for each feature folder the cases went to. It asks Claude Code to run steps 5, 6 and 7 of the repo's /gen-test on exactly those cases: the refactor, the lint and live check, and the run summary. It tells Claude Code not to fetch the tickets again or regenerate the raw specs.",
+        "After an export, an Update or Add new, **Finish in the repo** shows a ready-made prompt for each feature folder the cases went to. It asks Claude Code to run steps 4, 5, 6 and 7 of the repo's /gen-test on exactly those cases: run the raw specs (the export never runs them) and fix them in place if they fail, then the refactor, the lint and live check, and the run summary. It tells Claude Code not to fetch the tickets again or regenerate the raw specs.",
         "Pick where the cases go: add them to one of the feature's specs, one spec per case, or **New spec…** and type a name in lower-case letters, digits and hyphens. When the feature has exactly one spec, that one is picked for you.",
         "Press **Copy**, open Claude Code in your clone and paste the prompt. The app only copies the text: it does not start Claude Code or anything else.",
       ],

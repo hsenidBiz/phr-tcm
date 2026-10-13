@@ -1,5 +1,5 @@
 //! Finish in the repo (`pw_repo::handoff`): the prompt that runs `/gen-test`
-//! steps 5, 6 and 7 on what an export wrote, one per `<seg>`, and the
+//! steps 4, 5, 6 and 7 on what an export wrote, one per `<seg>`, and the
 //! refusals. Each clone is made here in a temp folder whose path has a
 //! space. Every id and name is made up.
 
@@ -76,12 +76,14 @@ fn one_seg_with_its_single_spec_appends_to_it_by_default() {
     assert_eq!(cards[0].stem.as_deref(), Some("pc-cycle-setup"));
     assert_eq!(
         cards[0].prompt,
-        "Run steps 5, 6 and 7 of .claude/commands/gen-test.md for ADO cases 9001 and 9002 in sl/admin/performance/pc-cycle-setup. \
-         Steps 1-4 are already done: the Test Case Manager exported each case's raw spec \
+        "Run steps 4, 5, 6 and 7 of .claude/commands/gen-test.md for ADO cases 9001 and 9002 in sl/admin/performance/pc-cycle-setup. \
+         Steps 1-3 are already done: the Test Case Manager exported each case's raw spec \
          (`suites/_generated/pc-one.spec.ts`, `suites/_generated/pc-two.spec.ts`) and its test-case section \
          (`suites/sl/admin/performance/pc-cycle-setup/test-cases/pc-cycle-setup.md`). \
-         Do not fetch the tickets, do not regenerate or edit the raw specs, and do not run git. \
+         In step 4, run those raw specs and heal them in place if they fail; never regenerate them from the tickets. \
+         Do not fetch the tickets and do not run git. \
          Put them in `suites/sl/admin/performance/pc-cycle-setup/specs/pc-cycle-setup.spec.ts` (append; the --spec contract). \
+         The tests are independent (no --chain). \
          Stop and report on any stop-and-report condition the command defines."
     );
     // Never a bare /gen-test, which would fetch and regenerate; no dash but a hyphen.
@@ -103,7 +105,11 @@ fn several_segs_make_one_card_each_in_the_order_asked() {
     assert!(cards[0].prompt.contains("for ADO case 9003 in sl/admin/performance/rating-methods."));
     assert!(cards[0].prompt.contains("exported the case's raw spec (`suites/_generated/rm-three.spec.ts`)"));
     assert!(cards[0].prompt.contains(&format!("its test-case section (`{RM_MD}`)")));
-    assert!(cards[0].prompt.contains(" One spec per case (no --spec). "));
+    assert!(cards[0].prompt.contains(" One spec per case (no --spec). The tests are independent (no --chain). "));
+    // One case: the singular forms.
+    assert!(cards[0]
+        .prompt
+        .contains(" In step 4, run that raw spec and heal it in place if it fails; never regenerate it from the ticket. "));
     assert_eq!(cards[1].stem.as_deref(), Some("pc-cycle-setup"));
 }
 

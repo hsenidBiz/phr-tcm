@@ -205,7 +205,7 @@ pub async fn pw_sync_states(app: tauri::AppHandle, clone: String, org: String, p
 }
 
 /// Finish in the repo: for `cases` (what an export just wrote), one prompt
-/// per `<seg>` that runs `/gen-test` steps 5, 6 and 7 on them in the clone
+/// per `<seg>` that runs `/gen-test` steps 4, 5, 6 and 7 on them in the clone
 /// (`pw_repo::handoff`). `choices` is the spec picked for a `<seg>`; one not
 /// named gets its default. Each case must be one this app exported, with
 /// its raw spec and section in the clone. Only text: nothing is started.
