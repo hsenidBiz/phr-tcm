@@ -21,6 +21,11 @@
   <p><a id="svg-title" href="#svg-title-done"><svg width="20" height="20"><title>Home svg</title><rect width="20" height="20" fill="#888"></rect></svg></a></p>
   <p><a id="img-alt" href="#img-alt-done"><img alt="Home image" width="20" height="20" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a></p>
   <p><a id="block-child" href="#block-child-done"><span class="block-in-inline">Home block</span></a></p>
+  <!-- Collapsed: no box, and its words overflow what it clips. -->
+  <div id="collapsed" style="height: 0; overflow: hidden">Collapsed panel words that overflow</div>
+  <div id="max-collapsed" style="max-height: 0; overflow: hidden">Max-height panel words</div>
+  <!-- No box of its own, and nothing it holds can be seen. -->
+  <div id="contents-hidden" style="display: contents"><span style="visibility: hidden">Ghost words</span></div>
   <p id="clicked">none</p>
   <script>
     for (const a of document.querySelectorAll('a')) {

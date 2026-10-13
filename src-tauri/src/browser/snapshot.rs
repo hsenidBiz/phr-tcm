@@ -553,10 +553,14 @@ async fn frames_in<D: Driver>(d: &mut D, nodes: &[AxNode]) -> Vec<FrameTree> {
 
 /// `this` is an iframe: its place among the visible iframes of its own
 /// document, which is what `{"css": "iframe", "nth": k}` counts.
-const IFRAME_INDEX_JS: &str = r#"function() {
-  const seen = (e) => { const r = e.getBoundingClientRect(); return e.checkVisibility({ visibilityProperty: true }) && r.width > 0 && r.height > 0; };
+const IFRAME_INDEX_JS: &str = concat!(
+    r#"function() {
+  const seen = "#,
+    seen_js!(),
+    r#";
   return Array.from(this.ownerDocument.querySelectorAll('iframe')).filter(seen).indexOf(this);
-}"#;
+}"#
+);
 
 /// Said under an iframe Chrome gave no DOM node for.
 pub const NO_FRAME_NODE: &str = "Chrome gave no node for it";

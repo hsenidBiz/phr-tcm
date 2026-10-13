@@ -3439,6 +3439,23 @@ async fn links_every_link_the_read_prints_is_found_and_clicked() {
         }
     }
     assert!(report.is_empty(), "{}\n---\n{text}", report.join("\n"));
+    // A css or a text locator agrees with the role one on each shape.
+    for (css, words) in [("#float-img", None), ("#abs-span", Some("Home absolute")), ("#contents", Some("Home contents"))] {
+        let by_css = action_target(json!({ "css": css }));
+        assert_eq!(resolve(&mut live.cdp, &by_css).await.unwrap().len(), 1, "css {css}");
+        if let Some(w) = words {
+            let by_text = action_target(json!({ "text": w, "exact": true }));
+            assert_eq!(resolve(&mut live.cdp, &by_text).await.unwrap().len(), 1, "text {w}");
+        }
+    }
+    // Collapsed panels are hidden, whatever overflows them, and so is a
+    // wrapper with no box whose content is all hidden.
+    for css in ["#collapsed", "#max-collapsed", "#contents-hidden"] {
+        must(run(&mut live, json!({ "kind": "expect_hidden", "selector": { "css": css }, "timeout_ms": 500 })).await);
+        assert!(resolve(&mut live.cdp, &action_target(json!({ "css": css }))).await.unwrap().is_empty(), "{css} was seen");
+    }
+    let ghost = action_target(json!({ "text": "Ghost words" }));
+    assert!(resolve(&mut live.cdp, &ghost).await.unwrap().is_empty(), "hidden words were seen");
     // A link hidden around its visible content is still hidden.
     live.cdp.eval("document.getElementById('abs-span').style.visibility = 'hidden'").await.unwrap();
     let gone = action_target(json!({ "role": "link", "name": "Home absolute" }));

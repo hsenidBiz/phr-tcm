@@ -102,21 +102,13 @@ pub const PROBE_JS: &str = concat!(
   // An element with no box of its own (a link around a floated or placed
   // icon, or `display: contents`) is aimed at through what it holds: the
   // box of its content (`locator::VISIBLE_JS` counts it seen the same way).
-  const contentBox = (e) => {
-    if (sized(e)) return null;
-    const range = e.ownerDocument.createRange();
-    range.selectNodeContents(e);
-    const c = range.getBoundingClientRect();
-    return c.width > 0 && c.height > 0 ? c : null;
-  };
-  // Seen through its content: its own visibility, and the nearest element
-  // around it that has a box is not hidden.
-  const seenThroughContent = () => {
-    if (stand || sized(el) || !contentBox(el) || getComputedStyle(this).visibility !== 'visible') return false;
-    let boxed = this;
-    while (boxed && getComputedStyle(boxed).display === 'contents') boxed = boxed.parentElement;
-    return !!boxed && boxed.checkVisibility({ visibilityProperty: true });
-  };
+  const seenContent = "#,
+    content_box_js!(),
+    r#";
+  const contentBox = (e) => sized(e) ? null : seenContent(e);
+  const seen = "#,
+    seen_js!(),
+    r#";
   const measure = (scroll) => {
     if (scroll) {
       const into = stand || sized(el) ? el : (Array.from(el.querySelectorAll('*')).find(sized) || el);
@@ -200,8 +192,7 @@ pub const PROBE_JS: &str = concat!(
     }
     const allHit = hit && allOnscreen && outer === null;
     return {
-      visible: (this.checkVisibility({ visibilityProperty: true }) && (!!stand || (b.width > 0 && b.height > 0))) ||
-        seenThroughContent(),
+      visible: seen(this),
       enabled: disabledWhy(this) === '',
       editable: !!editable,
       onscreen: allOnscreen, hit: allHit, nospot, x: lx + ox, y: ly + oy,
