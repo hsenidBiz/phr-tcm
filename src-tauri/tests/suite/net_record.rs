@@ -366,3 +366,28 @@ fn quiet_counts_what_is_in_flight_and_how_long_since_a_change() {
     assert_eq!(rec.quiet(Instant::now()).in_flight, 1);
     assert_eq!(rec.quiet(Instant::now() + LONG_LIVED + Duration::from_secs(1)).in_flight, 0);
 }
+
+/// A page that polls - the same method and path again within `POLL_REPEAT`,
+/// whatever the query - is not loading: neither poll counts, in flight or
+/// as a change, so a click does not wait its whole cap on every action.
+/// Another path, or the same path long after, still counts.
+#[test]
+fn a_request_the_page_repeats_is_a_poll_and_never_counts() {
+    use std::time::{Duration, Instant};
+    use v2_lib::browser::net_record::POLL_REPEAT;
+    let mut rec = NetRecord::default();
+    rec.observe(&sent("1", "GET", "https://hr.example/api/notifications?_=1"));
+    assert_eq!(rec.quiet(Instant::now()).in_flight, 1, "one request is not a poll yet");
+    rec.observe(&finished("1"));
+    rec.observe(&sent("2", "GET", "https://hr.example/api/notifications?_=2"));
+    let q = rec.quiet(Instant::now());
+    assert_eq!((q.in_flight, q.since_change), (0, None), "both are polls: {q:?}");
+    // The same method only: a POST there is the page's own.
+    rec.observe(&sent("3", "POST", "https://hr.example/api/notifications"));
+    assert_eq!(rec.quiet(Instant::now()).in_flight, 1);
+    rec.observe(&finished("3"));
+    // Another path counts as ever.
+    rec.observe(&sent("4", "GET", "https://hr.example/api/list"));
+    assert_eq!(rec.quiet(Instant::now()).in_flight, 1);
+    assert!(POLL_REPEAT >= Duration::from_secs(1));
+}

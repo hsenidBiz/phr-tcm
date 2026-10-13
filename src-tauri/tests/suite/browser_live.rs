@@ -3355,6 +3355,59 @@ async fn settle_a_click_waits_for_the_pages_request_to_end() {
     assert!(at.elapsed() >= Duration::from_millis(1100), "the click did not wait: {:?}", at.elapsed());
 }
 
+/// A page that polls faster than `SETTLE_QUIET` - the same path again every
+/// 150 ms - is not loading: a click on it does not wait its whole cap. And
+/// a dialog the page opened is closed by the time the click is done, so the
+/// wait is never held off by one either.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn settle_a_page_that_polls_is_clicked_without_the_cap() {
+    use v2_lib::browser::actions::SETTLE_CAP;
+    const PAGE: &str = r#"<!doctype html><html><head><title>Polls</title></head><body>
+<p id="out">not clicked</p>
+<button id="go" onclick="document.getElementById('out').textContent = 'clicked'">Continue</button>
+<button id="warn" onclick="alert('Saved')">Warn</button>
+<script>setInterval(() => { fetch('/poll?_=' + Date.now()); }, 150);</script>
+</body></html>"#;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            std::thread::spawn(move || {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut buf = [0u8; 4096];
+                let Ok(n) = stream.read(&mut buf) else { return };
+                let line = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string();
+                let (kind, body) = if line.starts_with("GET /poll") {
+                    std::thread::sleep(Duration::from_millis(60));
+                    ("text/plain", "{}".to_string())
+                } else {
+                    ("text/html; charset=utf-8", PAGE.to_string())
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+        }
+    });
+    let mut live = open().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.expect("the network domain did not switch on");
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    let at = std::time::Instant::now();
+    must(run(&mut live, json!({ "kind": "click", "selector": "#go" })).await);
+    let took = at.elapsed();
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#out", "equals": "clicked" })).await);
+    assert!(took < SETTLE_CAP / 2, "a polling page made the click wait {took:?}");
+
+    must(run(&mut live, json!({ "kind": "click", "selector": "#warn" })).await);
+    let _ = live.cdp.eval("1").await;
+    assert!(!live.cdp.dialog_open(), "the answered dialog still counts as open");
+}
+
 /// A request that outlasts the cap never fails the click: it waits about
 /// `SETTLE_CAP`, then clicks as it always did.
 #[tokio::test]

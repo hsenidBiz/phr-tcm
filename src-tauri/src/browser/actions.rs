@@ -1580,17 +1580,21 @@ pub const SETTLE_CAP: Duration = Duration::from_secs(2);
 /// Before a click or a fill: let the page's own requests settle. A button
 /// can be there before its page has finished loading, and a click it takes
 /// then can land on a page that is about to change under it (a run's click
-/// once sent the browser home). Waits while a document, an XHR or a fetch
-/// is in flight (a long poll never counts, `net_record::LONG_LIVED`), until
-/// none has started or ended for `SETTLE_QUIET` - at most `SETTLE_CAP`, and
-/// it never fails: on a page that is still busy at the cap the action goes
-/// ahead, as it always did. A page with nothing in flight and nothing just
-/// ended costs one light call. Reads the network record the page log
-/// already keeps (`Driver::net_quiet`); a driver with none waits for
+/// once sent the browser home). Waits while a request the network record
+/// keeps is in flight - a document, an XHR, a fetch, or one of type Other
+/// or of no type (`net_record::NetQuiet`) - until none has started or
+/// ended for `SETTLE_QUIET`: at most `SETTLE_CAP`, and it never fails: on a
+/// page still busy at the cap the action goes ahead, as it always did. A
+/// long poll (`net_record::LONG_LIVED`) and a request the page repeats to
+/// the same path (`net_record::POLL_REPEAT`) never count, so a page that
+/// polls does not make every action wait. Nothing is waited for while a
+/// JavaScript dialog is open (`Driver::dialog_open`): the page is held by
+/// it, not loading. A page with nothing in flight and nothing just ended
+/// costs one light call. A driver with no network record waits for
 /// nothing. How long it waited.
 pub async fn settle<D: Driver>(d: &mut D, timing: &Timing) -> Duration {
     let began = Instant::now();
-    if d.net_quiet().is_none() {
+    if d.net_quiet().is_none() || d.dialog_open() {
         return Duration::ZERO;
     }
     let cap = began + SETTLE_CAP;
@@ -1598,6 +1602,9 @@ pub async fn settle<D: Driver>(d: &mut D, timing: &Timing) -> Duration {
     loop {
         // Carries nothing: reading its answer reads every event before it.
         let _ = d.call("Runtime.evaluate", json!({ "expression": "1", "returnByValue": true })).await;
+        if d.dialog_open() {
+            break;
+        }
         let Some(q) = d.net_quiet() else { break };
         let still_for = q.since_change.unwrap_or(SETTLE_QUIET);
         let now = Instant::now();
