@@ -26,9 +26,9 @@ export const BUILT_IN_SAVE_WORDS = [
   "approve",
   "publish",
   "assign",
+  "add",
   "create",
   "insert",
-  "add",
 ];
 
 export default function SaveWordsDialog({

@@ -507,7 +507,7 @@ let autoRunNav: NavView = {
     { area: "Profile", module: "Profile", clicks: ['button "Account"', 'link "Profile"'], arrived: `${SITE}/profile`, recorded: at(2026, 9, 24, 11, 5) },
   ],
   save_words: ["confirm"],
-  built_in_save_words: ["save", "update", "delete", "submit", "approve", "publish", "assign"],
+  built_in_save_words: ["save", "update", "delete", "submit", "approve", "publish", "assign", "add", "create", "insert"],
 };
 
 let testFiles: TestFile[] = [
