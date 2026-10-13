@@ -336,3 +336,33 @@ async fn the_scripted_driver_keeps_a_record_through_a_forget() {
     assert_eq!(plain.net_mark(), 0);
     assert!(plain.net_since(0).is_empty());
 }
+
+/// What a click or a fill waits on (`actions::settle`): the requests still
+/// in flight, and how long since one last started or ended. A request in
+/// flight longer than `LONG_LIVED` (a long poll) never counts.
+#[test]
+fn quiet_counts_what_is_in_flight_and_how_long_since_a_change() {
+    use std::time::{Duration, Instant};
+    use v2_lib::browser::net_record::LONG_LIVED;
+    let mut rec = NetRecord::default();
+    let q = rec.quiet(Instant::now());
+    assert_eq!((q.in_flight, q.since_change), (0, None), "a page that sent nothing is quiet");
+
+    rec.observe(&sent("1", "GET", "https://hr.example/api/list"));
+    rec.observe(&sent("2", "POST", "https://hr.example/api/save"));
+    let q = rec.quiet(Instant::now());
+    assert_eq!(q.in_flight, 2);
+    assert!(q.since_change.unwrap() < Duration::from_secs(1));
+
+    rec.observe(&finished("1"));
+    rec.observe(&failed("2", "net::ERR_ABORTED"));
+    let later = Instant::now() + Duration::from_millis(500);
+    let q = rec.quiet(later);
+    assert_eq!(q.in_flight, 0);
+    assert!(q.since_change.unwrap() >= Duration::from_millis(500));
+
+    // Still in flight long after it began: a long poll, not a page loading.
+    rec.observe(&sent("3", "GET", "https://hr.example/signalr/poll"));
+    assert_eq!(rec.quiet(Instant::now()).in_flight, 1);
+    assert_eq!(rec.quiet(Instant::now() + LONG_LIVED + Duration::from_secs(1)).in_flight, 0);
+}

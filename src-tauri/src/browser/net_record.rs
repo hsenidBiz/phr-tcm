@@ -17,6 +17,7 @@
 use super::cdp::Event;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
 
 /// Requests remembered at once; the oldest goes first.
 pub const MAX_REQUESTS: usize = 400;
@@ -65,7 +66,28 @@ pub struct NetRecord {
     /// Request id to `seq`, for the requests still kept.
     by_id: HashMap<String, u64>,
     next_seq: u64,
+    /// When each kept request was first seen, by `seq`: how long one has
+    /// been in flight (`quiet`).
+    seen_at: HashMap<u64, Instant>,
+    /// When a kept request last started, finished or failed.
+    last_change: Option<Instant>,
 }
+
+/// How busy the page's own requests are right now (`NetRecord::quiet`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetQuiet {
+    /// Requests still in flight that started within `LONG_LIVED` - a
+    /// document, an XHR or a fetch.
+    pub in_flight: usize,
+    /// How long since a request last started, finished or failed; `None`
+    /// when none ever did.
+    pub since_change: Option<Duration>,
+}
+
+/// A request in flight for longer than this is a long poll or a stream
+/// (SignalR, server-sent events) that may never end: it never holds the
+/// page unsettled.
+pub const LONG_LIVED: Duration = Duration::from_secs(10);
 
 impl NetRecord {
     /// Note what this event says about a request. Never claims the event:
@@ -83,12 +105,14 @@ impl NetRecord {
             "Network.loadingFinished" => {
                 if let Some(e) = self.entry(p) {
                     e.state = NetState::Finished;
+                    self.last_change = Some(Instant::now());
                 }
             }
             "Network.loadingFailed" => {
                 let why = p["errorText"].as_str().unwrap_or("failed").to_string();
                 if let Some(e) = self.entry(p) {
                     e.state = NetState::Failed(why);
+                    self.last_change = Some(Instant::now());
                 }
             }
             _ => {}
@@ -129,6 +153,9 @@ impl NetRecord {
         let seq = self.next_seq;
         self.next_seq += 1;
         self.by_id.insert(id.to_string(), seq);
+        let now = Instant::now();
+        self.seen_at.insert(seq, now);
+        self.last_change = Some(now);
         self.entries.push_back(NetEntry {
             seq,
             id: id.to_string(),
@@ -146,6 +173,7 @@ impl NetRecord {
                 if self.by_id.get(&old.id) == Some(&old.seq) {
                     self.by_id.remove(&old.id);
                 }
+                self.seen_at.remove(&old.seq);
             }
         }
     }
@@ -161,6 +189,19 @@ impl NetRecord {
     /// it begins and later asks for what came `since`.
     pub fn mark(&self) -> u64 {
         self.next_seq
+    }
+
+    /// How busy the page's requests are at `now`: those still in flight
+    /// that are not long-lived (`LONG_LIVED`), and how long since any
+    /// started or ended. What a click or a fill waits on (`actions::settle`).
+    pub fn quiet(&self, now: Instant) -> NetQuiet {
+        let in_flight = self
+            .entries
+            .iter()
+            .filter(|e| e.state == NetState::Pending)
+            .filter(|e| self.seen_at.get(&e.seq).is_some_and(|at| now.saturating_duration_since(*at) < LONG_LIVED))
+            .count();
+        NetQuiet { in_flight, since_change: self.last_change.map(|at| now.saturating_duration_since(at)) }
     }
 
     /// The requests that started at or after `mark`, oldest first, as they

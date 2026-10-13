@@ -1571,10 +1571,56 @@ fn wait(own: &Option<u32>, timing: &Timing) -> u64 {
     own.map(u64::from).unwrap_or(timing.expect_ms)
 }
 
+/// How long the page's requests must have been still before a click or a
+/// fill (`settle`).
+pub const SETTLE_QUIET: Duration = Duration::from_millis(300);
+/// The longest a click or a fill waits for the page's requests to settle.
+pub const SETTLE_CAP: Duration = Duration::from_secs(2);
+
+/// Before a click or a fill: let the page's own requests settle. A button
+/// can be there before its page has finished loading, and a click it takes
+/// then can land on a page that is about to change under it (a run's click
+/// once sent the browser home). Waits while a document, an XHR or a fetch
+/// is in flight (a long poll never counts, `net_record::LONG_LIVED`), until
+/// none has started or ended for `SETTLE_QUIET` - at most `SETTLE_CAP`, and
+/// it never fails: on a page that is still busy at the cap the action goes
+/// ahead, as it always did. A page with nothing in flight and nothing just
+/// ended costs one light call. Reads the network record the page log
+/// already keeps (`Driver::net_quiet`); a driver with none waits for
+/// nothing. How long it waited.
+pub async fn settle<D: Driver>(d: &mut D, timing: &Timing) -> Duration {
+    let began = Instant::now();
+    if d.net_quiet().is_none() {
+        return Duration::ZERO;
+    }
+    let cap = began + SETTLE_CAP;
+    d.set_deadline(Some(cap));
+    loop {
+        // Carries nothing: reading its answer reads every event before it.
+        let _ = d.call("Runtime.evaluate", json!({ "expression": "1", "returnByValue": true })).await;
+        let Some(q) = d.net_quiet() else { break };
+        let still_for = q.since_change.unwrap_or(SETTLE_QUIET);
+        let now = Instant::now();
+        if (q.in_flight == 0 && still_for >= SETTLE_QUIET) || now >= cap {
+            break;
+        }
+        // Nothing in flight: only the rest of the quiet time is left.
+        let pause = if q.in_flight == 0 {
+            SETTLE_QUIET - still_for
+        } else {
+            Duration::from_millis(timing.poll_ms.max(10))
+        };
+        d.idle(pause.min(cap - now)).await;
+    }
+    d.set_deadline(None);
+    began.elapsed()
+}
+
 async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Policy) -> ActionOutcome {
     match action {
         Action::Navigate { url } => navigate(d, url.trim(), timing, policy).await,
         Action::Click { selector } => {
+            settle(d, timing).await;
             let ready = match input::wait_ready(d, selector, false, timing).await {
                 Ok(r) => r,
                 Err(b) => return blocked(b),
@@ -1588,6 +1634,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             }
         }
         Action::Fill { selector, value } => {
+            settle(d, timing).await;
             let ready = match input::wait_ready(d, selector, true, timing).await {
                 Ok(r) => r,
                 Err(b) => return blocked(b),

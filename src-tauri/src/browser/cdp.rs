@@ -2480,6 +2480,12 @@ impl<T: Transport> Cdp<T> {
         id
     }
 
+    /// How busy the current tab's requests are (`NetRecord::quiet`), as far
+    /// as the events read so far say. `None` with no tab.
+    pub fn net_quiet(&self) -> Option<super::net_record::NetQuiet> {
+        self.current().map(|t| t.net_record.quiet(Instant::now()))
+    }
+
     /// The requests the current tab started since `mark`, oldest first
     /// (`NetRecord::since`). Empty unless `page_log::watch` switched the
     /// Network domain on.
@@ -2593,6 +2599,11 @@ pub trait Driver {
     /// driver that keeps no record.
     fn net_since(&self, _mark: u64) -> Vec<super::net_record::NetEntry> {
         Vec::new()
+    }
+    /// How busy the page's requests are (`Cdp::net_quiet`). `None` for a
+    /// driver that keeps no record: nothing is ever waited on.
+    fn net_quiet(&self) -> Option<super::net_record::NetQuiet> {
+        None
     }
     /// See `Cdp::set_deadline`. Every wait loop sets one and clears it on
     /// every path out.
@@ -2771,6 +2782,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn net_since(&self, mark: u64) -> Vec<super::net_record::NetEntry> {
         Cdp::net_since(self, mark)
+    }
+    fn net_quiet(&self) -> Option<super::net_record::NetQuiet> {
+        Cdp::net_quiet(self)
     }
     fn set_deadline(&mut self, deadline: Option<Instant>) {
         Cdp::set_deadline(self, deadline)
