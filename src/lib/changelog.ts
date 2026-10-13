@@ -27,6 +27,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.21",
+    date: "2026-10-13",
+    items: [
+      "A discovery for a case marked Must not save now blocks every save the page sends, not just reports it, and more kinds of save request are recognised.",
+      "Before each click or fill, Auto Run waits briefly for the page to finish loading, so a button that appears early no longer sends the page somewhere else.",
+      "New check: whether a checkbox or switch is ticked. Links whose text sits outside their own box can now be clicked, and collapsed panels count as hidden.",
+      "Your assistant gets clearer answers: what a long replay is doing, every step of a tried component, a shorter fixture list, and more room for notes about the app. A script can now return to its area from inside a when-visible step.",
+    ],
+  },
+  {
     version: "2.1.3-beta.20",
     date: "2026-10-13",
     items: [
