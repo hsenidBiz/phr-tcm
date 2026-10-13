@@ -3482,3 +3482,43 @@ async fn the_quick_guide_holds_the_rules_and_the_live_sections() {
     assert!(full.contains("## Quick rules"), "the full guide opens with the Quick rules too");
     assert!(quick.len() * 4 < full.len(), "the quick guide is not short: {} of {}", quick.len(), full.len());
 }
+
+/// A tried `use_component` answers every one of its actions, ok or failed,
+/// as a discovery's does: the first line is the try as a whole (ok only
+/// when all passed, else the first failure by its place), then one line
+/// per action.
+#[tokio::test]
+async fn a_tried_component_answers_each_of_its_actions() {
+    let dir = TempDir::new();
+    let c: v2_lib::autorun::components::Component = serde_json::from_value(serde_json::json!({
+        "name": "Three checks",
+        "description": "Checks two texts and the Save button",
+        "inputs": [],
+        "actions": [
+            { "kind": "check_text", "value": "Draft" },
+            { "kind": "check_text", "value": "Pending" },
+            { "kind": "expect_visible", "selector": { "css": "#save" } }
+        ]
+    }))
+    .unwrap();
+    v2_lib::autorun::components::put(dir.path(), "acme", "Web", c).unwrap();
+    let use_it = Action::UseComponent { component: "Three checks".into(), inputs: serde_json::Map::new() };
+
+    let (mut account, mut lease) = (None, v2_lib::autorun::lease::Held::supervised());
+    let mut d = crate::common::FakePage { body_has_text: false, ..crate::common::FakePage::default() }.driver();
+    let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &use_it).await;
+    assert_eq!(status, 200, "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 4, "{text}");
+    assert!(lines[0].starts_with("failed: action 1 (check_text") && lines[0].contains("(2 of 3 failed)"), "{text}");
+    assert!(lines[1].starts_with("1. failed: check_text"), "{text}");
+    assert!(lines[2].starts_with("2. failed: check_text"), "{text}");
+    assert!(lines[3].starts_with("3. ok: expect_visible"), "{text}");
+
+    let mut d = crate::common::FakePage::default().driver();
+    let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &use_it).await;
+    assert_eq!(status, 200, "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "ok: all 3 of its actions passed", "{text}");
+    assert!(lines[1..].iter().all(|l| l.contains(". ok: ")), "{text}");
+}

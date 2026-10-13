@@ -5138,6 +5138,27 @@ pub fn try_case_id(body: &str) -> Result<i32, (u16, String)> {
     }
 }
 
+/// A component's try as one outcome, from each of its actions' (`steps`):
+/// ok when every one passed; otherwise the first failure's detail, named by
+/// its place and action, and its picture.
+fn component_outcome(steps: &[(String, crate::browser::actions::ActionOutcome)]) -> crate::browser::actions::ActionOutcome {
+    use crate::browser::actions::ActionOutcome;
+    match steps.iter().enumerate().find(|(_, (_, o))| !o.ok) {
+        None => {
+            let n = steps.len();
+            ActionOutcome::passed(if n == 1 { "its 1 action passed".to_string() } else { format!("all {n} of its actions passed") })
+        }
+        Some((i, (what, o))) => {
+            let failed = steps.iter().filter(|(_, o)| !o.ok).count();
+            let more = if failed > 1 { format!(" ({failed} of {} failed)", steps.len()) } else { String::new() };
+            let mut out = ActionOutcome::failed(format!("action {} ({what}) failed: {}{more}", i + 1, o.detail));
+            out.screenshot = o.screenshot.clone();
+            out.harness = o.harness;
+            out
+        }
+    }
+}
+
 /// One tried action in a browser already guarded for its case
 /// (`commands::autorun::guard_for_case`), as the route answers it.
 /// `case_id` is the case the try is for: a tried `return_to_area` goes to
@@ -5172,13 +5193,19 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
     let tried = try_action(d, account, lease, root, organization, project, case_id, discovery_area, false, action).await;
-    let outcome = match tried {
-        Ok(tried) => tried.outcome,
+    let (outcome, steps) = match tried {
+        Ok(tried) => (tried.outcome, tried.steps),
         Err(refused) => return refused,
     };
     let mut text = format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
     if let Some(shot) = &outcome.screenshot {
         text.push_str(&format!(" (picture: {})", crate::autorun::store::shot_path(root, shot).display()));
+    }
+    // A component's try answers each of its actions, as a discovery's does.
+    for (i, (what, o)) in steps.iter().enumerate() {
+        let detail = o.detail.trim();
+        let said = if detail.is_empty() { what.clone() } else { format!("{what}: {}", one_short_line(detail)) };
+        text.push_str(&format!("\n{}. {}: {said}", i + 1, if o.ok { "ok" } else { "failed" }));
     }
     (200, text)
 }
@@ -5186,6 +5213,9 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
 /// What one action an assistant ran did: its outcome, and the dialog the
 /// page raised while it ran, if any.
 struct Tried {
+    /// A `use_component`'s actions, each described with its outcome; empty
+    /// for any other action.
+    steps: Vec<(String, crate::browser::actions::ActionOutcome)>,
     outcome: crate::browser::actions::ActionOutcome,
     dialog: Option<crate::autorun::StepDialog>,
 }
@@ -5294,8 +5324,28 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         Ok(v) => v,
         Err(why) => return Err((500, why)),
     };
-    let Some(outcome) = outcomes.into_iter().next() else {
-        return Err((500, "the action produced no outcome".to_string()));
+    // A `use_component` runs as its component's actions, one outcome each:
+    // every one is answered, and the try as a whole is ok only when all are.
+    let steps: Vec<(String, crate::browser::actions::ActionOutcome)> = match action {
+        crate::browser::actions::Action::UseComponent { .. } => {
+            let expanded = crate::autorun::components::expand_step(root, organization, project, std::slice::from_ref(action))
+                .map(|(x, _)| x.into_iter().map(|(a, _)| describe_action(&a)).collect::<Vec<_>>())
+                .unwrap_or_default();
+            outcomes
+                .iter()
+                .enumerate()
+                .map(|(i, o)| (expanded.get(i).cloned().unwrap_or_else(|| format!("action {}", i + 1)), o.clone()))
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+    let outcome = if steps.is_empty() {
+        let Some(outcome) = outcomes.into_iter().next() else {
+            return Err((500, "the action produced no outcome".to_string()));
+        };
+        outcome
+    } else {
+        component_outcome(&steps)
     };
     // Shown to a person reading Settings -> Logs, never returned to the
     // assistant - and never a `fill`'s VALUE, which `describe_try` never
@@ -5328,7 +5378,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         }
         record_matched_targets(&at, &started_on, &matched);
     }
-    Ok(Tried { outcome, dialog: run.dialog })
+    Ok(Tried { outcome, dialog: run.dialog, steps })
 }
 
 /// A run's failed cases, as text an assistant can act on - and, when it
