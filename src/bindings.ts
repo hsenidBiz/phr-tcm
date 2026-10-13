@@ -4156,6 +4156,12 @@ export type PreviewCase = {
 	repo_note: string | null,
 	/**  The Sync record has an export of it by this app. */
 	from_app: boolean,
+	/**
+	 *  The repo has it under `## Excluded <id>`: the team left it out on
+	 *  purpose, so it is never exported and cannot be ticked. `repo_note`
+	 *  then says "Excluded in the repo (in <file>)".
+	 */
+	excluded: boolean,
 };
 
 export type Project = {
@@ -5603,7 +5609,12 @@ export type SyncState =
  *  date and Add new never touch it; Update ticked replaces it only when
  *  it is ticked.
  */
-{ kind: "InRepoNotFromApp" };
+{ kind: "InRepoNotFromApp" } | 
+/**
+ *  The repo has it under `## Excluded <id>`: the team left it out on
+ *  purpose. Nothing in Sync ever writes it.
+ */
+{ kind: "ExcludedInRepo" };
 
 /**
  *  What an action points at. A plain string keeps the meaning it has

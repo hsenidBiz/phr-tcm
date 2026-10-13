@@ -257,9 +257,46 @@ pub async fn pw_sync_add_new(
         return Ok(super::pw_export::nothing_written());
     }
     let record = sync::load(&sync::record_path(&dir, &configured, &org, &project))?;
-    let docs = super::pw_export::read_docs(&app, &org, &project, &cases, module_ref.as_deref(), preconditions_ref.as_deref()).await?;
+    // Only the cases that could go are read; a read that fails for one is
+    // that case left out, not Add new refused.
+    let to_read = export::worth_reading(&root, &cases);
+    let (docs, unread) = read_docs_each(&app, &org, &project, &to_read, module_ref.as_deref(), preconditions_ref.as_deref()).await;
     let modules = modules_for(&cases, &docs, &record);
-    blocking(clone, false, move |_, _| export::add_new_with(&root, &dir, &org, &project, &cases, &configured, &modules, &docs)).await
+    blocking(clone, false, move |_, _| {
+        export::add_new_with(&root, &dir, &org, &project, &cases, &configured, &modules, &docs, &unread)
+    })
+    .await
+}
+
+/// `read_docs` for `cases` together, and when that fails, for each case on
+/// its own: the docs read, and the cases that could not be. Each failure is
+/// logged.
+async fn read_docs_each(
+    app: &tauri::AppHandle,
+    org: &str,
+    project: &str,
+    cases: &[i32],
+    module_ref: Option<&str>,
+    preconditions_ref: Option<&str>,
+) -> (BTreeMap<i32, crate::pw_export::test_case::CaseDoc>, Vec<i32>) {
+    if cases.is_empty() {
+        return (BTreeMap::new(), vec![]);
+    }
+    match super::pw_export::read_docs(app, org, project, cases, module_ref, preconditions_ref).await {
+        Ok(docs) => return (docs, vec![]),
+        Err(e) => crate::applog::warn(format!("pw-sync: Add new could not read its cases together ({e}), so each is read on its own")),
+    }
+    let (mut docs, mut unread) = (BTreeMap::new(), Vec::new());
+    for &id in cases {
+        match super::pw_export::read_docs(app, org, project, &[id], module_ref, preconditions_ref).await {
+            Ok(one) => docs.extend(one),
+            Err(e) => {
+                crate::applog::warn(format!("pw-sync: Add new could not read case {id}: {e}"));
+                unread.push(id);
+            }
+        }
+    }
+    (docs, unread)
 }
 
 /// Each case's Module as Azure DevOps has it now, else as it was at its

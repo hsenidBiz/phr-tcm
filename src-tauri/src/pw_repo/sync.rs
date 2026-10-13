@@ -202,6 +202,9 @@ pub enum SyncState {
     /// date and Add new never touch it; Update ticked replaces it only when
     /// it is ticked.
     InRepoNotFromApp,
+    /// The repo has it under `## Excluded <id>`: the team left it out on
+    /// purpose. Nothing in Sync ever writes it.
+    ExcludedInRepo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
@@ -282,6 +285,7 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
         let script = scripts.get(&id);
         let rec = record.cases.get(&id);
         let state = match (rec, script) {
+            _ if found.excluded(id) => SyncState::ExcludedInRepo,
             (None, _) if found.has(id) => SyncState::InRepoNotFromApp,
             (None, _) => SyncState::NeverExported,
             (Some(_), _) if !(sections.contains(&id) && raw.contains(&id)) => SyncState::NotInRepo,
@@ -299,7 +303,7 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
             exported_at: rec.map(|r| r.exported_at.clone()),
             has_script: script.is_some(),
             in_repo: found.has(id),
-            repo_note: found.note(id),
+            repo_note: found.excluded_note(id).or_else(|| found.note(id)),
         });
     }
     Ok(rows)

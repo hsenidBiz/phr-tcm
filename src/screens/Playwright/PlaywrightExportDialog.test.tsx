@@ -277,3 +277,37 @@ test("ticking a case the repo has sends it as a replace", async () => {
   await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_write")).toHaveLength(2));
   expect(calls.filter((c) => c.cmd === "pw_export_write")[1].args).toMatchObject({ caseIds: [10, 13], replace: [13] });
 });
+
+test("a case the repo excludes is unticked, cannot be ticked and is never sent", async () => {
+  const excluded = {
+    ...IN_REPO,
+    cases: [
+      IN_REPO.cases[0],
+      {
+        case_id: 16,
+        title: "Copy from Previous",
+        exportable: false,
+        reason: null,
+        seg: "sl/admin/pm/wizard",
+        user_key: "REPO_ADMIN",
+        add_user_command: null,
+        in_repo: true,
+        repo_note: "Excluded in the repo (in pc-cycle-setup.md)",
+        from_app: false,
+        excluded: true,
+      },
+    ],
+  };
+  const { calls } = mount(
+    { pw_export_write: () => ({ files: ["a/b.md"], cases: [], user_keys: [], missing_navigation: [] }) },
+    excluded,
+  );
+  const box = await screen.findByRole("checkbox", { name: /Copy from Previous/ });
+  expect(box).toHaveAttribute("aria-checked", "false");
+  expect(box.hasAttribute("disabled") || box.getAttribute("aria-disabled") === "true" || box.hasAttribute("data-disabled")).toBe(true);
+  expect(screen.getByText("Excluded in the repo (in pc-cycle-setup.md)")).toBeInTheDocument();
+  fireEvent.click(box);
+  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_write")).toHaveLength(1));
+  expect(calls.find((c) => c.cmd === "pw_export_write")!.args).toMatchObject({ caseIds: [10], replace: [] });
+});

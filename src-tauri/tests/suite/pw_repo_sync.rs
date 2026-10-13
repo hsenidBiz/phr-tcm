@@ -725,6 +725,7 @@ fn add_new_leaves_out_a_case_that_cannot_go_and_writes_the_rest() {
         &sx.fx.clone_path(),
         &sx.fx.modules.borrow(),
         &docs(&[(23, "Twenty three"), (25, "Twenty five")]),
+        &[],
     )
     .unwrap();
     assert_eq!(r.cases.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![23]);
@@ -758,10 +759,91 @@ fn add_new_leaves_out_a_case_that_cannot_go_and_writes_the_rest() {
         &sx.fx.clone_path(),
         &sx.fx.modules.borrow(),
         &docs(&[(25, "Twenty five"), (22, "Twenty two")]),
+        &[],
     )
     .unwrap();
     assert!(r.cases.is_empty() && r.files.is_empty());
     assert_eq!(r.skipped[0], (25, "latest run: Failed".to_string()));
     assert_eq!(r.skipped[1], (22, "already in the repo (in specs/proficiency-levels.spec.ts)".to_string()));
     assert_eq!(snapshot(c), before);
+}
+
+const EXCLUDED_26: &str = "## Excluded 26 \u{2014} Twenty six\n\nLeft out on purpose.\n";
+
+#[test]
+fn a_case_the_repo_excludes_has_its_own_state_and_add_new_skips_it() {
+    let sx = every_state();
+    // 26 is new to this app, 20 was exported by it: the team excludes both.
+    sx.fx.good(26, "Twenty six");
+    sx.stamp(26);
+    let md = sx.fx.read_clone(MD_REL);
+    let md = format!("{}\n{EXCLUDED_26}", md.replacen("## 20 ", "## Excluded 20 ", 1).trim_end());
+    write(sx.fx.clone.path().join(MD_REL), &md);
+
+    let rows = sx.rows();
+    assert_eq!(rows[&26].state, SyncState::ExcludedInRepo);
+    assert_eq!(rows[&26].repo_note.as_deref(), Some("Excluded in the repo (in proficiency-levels.md)"));
+    assert_eq!(rows[&20].state, SyncState::ExcludedInRepo, "even one this app exported");
+    let all: Vec<SyncRow> = rows.into_values().collect();
+    assert!(!sync::add_new(&all).contains(&26));
+
+    // Asked for anyway, Add new lists it with the reason and writes nothing.
+    let before = snapshot(sx.fx.clone.path());
+    let r = v2_lib::pw_export::export::add_new_with(
+        sx.root(),
+        sx.dir.path(),
+        ORG,
+        PROJECT,
+        &[26],
+        &sx.fx.clone_path(),
+        &sx.fx.modules.borrow(),
+        &docs(&[(26, "Twenty six")]),
+        &[],
+    )
+    .unwrap();
+    assert!(r.cases.is_empty());
+    assert_eq!(r.skipped, vec![(26, "Excluded in the repo (in proficiency-levels.md)".to_string())]);
+    assert_eq!(snapshot(sx.fx.clone.path()), before);
+
+    // Update, ticked or not, refuses it too.
+    let record = sync::load(&sx.record_path()).unwrap();
+    for (cases, ticked) in [(vec![20], vec![]), (vec![20], vec![20]), (vec![26], vec![26])] {
+        let err = sx
+            .export_replacing(&cases, &docs(&[(20, "Twenty"), (26, "Twenty six")]), &sync::update_replace(&record, &cases, &ticked))
+            .unwrap_err();
+        assert!(err.contains("Excluded in the repo (in proficiency-levels.md)"), "{err}");
+    }
+    assert_eq!(snapshot(sx.fx.clone.path()), before);
+}
+
+#[test]
+fn add_new_reads_only_what_could_go_and_lists_a_case_it_could_not_read() {
+    let sx = every_state();
+    sx.fx.click_script(25, "Twenty five", "admin", "Definition Wizard");
+    sx.fx.run("r25", "9", 25, "Failed");
+    sx.stamp(25);
+    // 25's newest run failed and 99 has no script: neither is read.
+    assert_eq!(v2_lib::pw_export::export::worth_reading(sx.root(), &[23, 24, 25, 99]), vec![23, 24]);
+
+    // 23 could not be read: it is listed, and 24 still goes.
+    let r = v2_lib::pw_export::export::add_new_with(
+        sx.root(),
+        sx.dir.path(),
+        ORG,
+        PROJECT,
+        &[23, 24, 25],
+        &sx.fx.clone_path(),
+        &sx.fx.modules.borrow(),
+        &docs(&[(24, "Twenty four")]),
+        &[23],
+    )
+    .unwrap();
+    assert_eq!(r.cases.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![24]);
+    assert_eq!(
+        r.skipped,
+        vec![(23, v2_lib::pw_export::export::NOT_READ.to_string()), (25, "latest run: Failed".to_string())]
+    );
+    assert!(!v2_lib::pw_export::export::NOT_READ.contains("http"));
+    assert_eq!(sx.state(23), SyncState::NeverExported);
+    assert_eq!(sx.state(24), SyncState::Current);
 }

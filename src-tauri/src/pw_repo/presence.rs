@@ -2,7 +2,9 @@
 //!
 //! A case is in the repo when any one of these names it:
 //! - a `## <id>` heading in a test-case file, `suites/**/test-cases/*.md`
-//!   (`structure::case_headings`);
+//!   (`structure::case_headings`), or a `## Excluded <id>` one
+//!   (`structure::excluded_headings`): the team left that case out on
+//!   purpose, and it is never exported, not even when chosen to replace;
 //! - an entry in `suites/_generated/index.json` (`pw_export::clone::open`);
 //! - a `// ADO <id>` marker in a spec, `suites/**/specs/*.spec.ts`
 //!   (`runner::marker_in`).
@@ -28,6 +30,14 @@ pub struct Found {
     pub places: Vec<String>,
     /// The Sync record has an export of it by this app.
     pub from_app: bool,
+    /// The test-case files that have it under `## Excluded <id>`.
+    pub excluded_in: Vec<String>,
+}
+
+impl Found {
+    pub fn excluded(&self) -> bool {
+        !self.excluded_in.is_empty()
+    }
 }
 
 /// Every id the repo has, by id.
@@ -52,12 +62,18 @@ impl Presence {
         if places.is_empty() {
             return None;
         }
-        let short: Vec<String> = places.iter().map(|p| short_place(p)).collect();
-        let joined = match short.split_last() {
-            Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
-            _ => short.join(""),
-        };
-        Some(format!("in {joined}"))
+        Some(in_places(places))
+    }
+
+    pub fn excluded(&self, id: i32) -> bool {
+        self.cases.get(&id).is_some_and(Found::excluded)
+    }
+
+    /// "Excluded in the repo (in pc-cycle-setup.md)" for a case the team
+    /// left out on purpose; `None` for any other.
+    pub fn excluded_note(&self, id: i32) -> Option<String> {
+        let found = self.cases.get(&id).filter(|f| f.excluded())?;
+        Some(format!("Excluded in the repo ({})", in_places(&found.excluded_in)))
     }
 
     /// Marks each id the Sync record has an export of as this app's.
@@ -67,6 +83,16 @@ impl Presence {
         }
         self
     }
+}
+
+/// "in a.md, index.json and specs/a.spec.ts".
+fn in_places(places: &[String]) -> String {
+    let short: Vec<String> = places.iter().map(|p| short_place(p)).collect();
+    let joined = match short.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => short.join(""),
+    };
+    format!("in {joined}")
 }
 
 /// A place as the note names it: a test-case file by its name, a spec as
@@ -88,8 +114,9 @@ pub fn scan(root: &Path) -> Result<Presence, String> {
 /// What the clone `repo` (already opened) has.
 pub fn scan_repo(repo: &ClonedRepo) -> Presence {
     let mut md: Vec<(i32, String)> = Vec::new();
+    let mut excluded: Vec<(i32, String)> = Vec::new();
     let mut specs: Vec<(i32, String)> = Vec::new();
-    walk(&repo.root, &repo.root.join("suites"), &mut md, &mut specs);
+    walk(&repo.root, &repo.root.join("suites"), &mut md, &mut excluded, &mut specs);
 
     let mut out = Presence::default();
     let mut add = |id: i32, place: String| {
@@ -98,8 +125,8 @@ pub fn scan_repo(repo: &ClonedRepo) -> Presence {
             found.places.push(place);
         }
     };
-    for (id, place) in md {
-        add(id, place);
+    for (id, place) in md.iter().chain(excluded.iter()) {
+        add(*id, place.clone());
     }
     for (id, _) in &repo.index {
         if let Ok(id) = id.trim().parse::<i32>() {
@@ -109,12 +136,24 @@ pub fn scan_repo(repo: &ClonedRepo) -> Presence {
     for (id, place) in specs {
         add(id, place);
     }
+    for (id, place) in excluded {
+        let found = out.cases.entry(id).or_default();
+        if !found.excluded_in.contains(&place) {
+            found.excluded_in.push(place);
+        }
+    }
     out
 }
 
 /// Every test-case file and spec under `dir`, sorted, skipping
 /// `node_modules` and dot-folders.
-fn walk(root: &Path, dir: &Path, md: &mut Vec<(i32, String)>, specs: &mut Vec<(i32, String)>) {
+fn walk(
+    root: &Path,
+    dir: &Path,
+    md: &mut Vec<(i32, String)>,
+    excluded: &mut Vec<(i32, String)>,
+    specs: &mut Vec<(i32, String)>,
+) {
     let mut entries: Vec<_> = std::fs::read_dir(dir).into_iter().flatten().flatten().collect();
     entries.sort_by_key(|e| e.file_name());
     let parent = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -123,7 +162,7 @@ fn walk(root: &Path, dir: &Path, md: &mut Vec<(i32, String)>, specs: &mut Vec<(i
         let name = e.file_name().to_string_lossy().to_string();
         if path.is_dir() {
             if name != "node_modules" && !name.starts_with('.') {
-                walk(root, &path, md, specs);
+                walk(root, &path, md, excluded, specs);
             }
             continue;
         }
@@ -132,6 +171,9 @@ fn walk(root: &Path, dir: &Path, md: &mut Vec<(i32, String)>, specs: &mut Vec<(i
             let text = std::fs::read_to_string(&path).unwrap_or_default();
             for id in structure::case_headings(&text) {
                 md.push((id, rel()));
+            }
+            for id in structure::excluded_headings(&text) {
+                excluded.push((id, rel()));
             }
         } else if parent == "specs" && name.ends_with(".spec.ts") {
             let text = std::fs::read_to_string(&path).unwrap_or_default();

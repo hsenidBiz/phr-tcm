@@ -23,6 +23,7 @@ const ROWS: SyncRow[] = [
   { case_id: 13, title: "Thirteen", state: { kind: "NeverExported" }, exported_at: null, has_script: true, ...OUT },
   { case_id: 14, title: "Fourteen", state: { kind: "OutOfDate", why: "its script is no longer in Auto Run" }, exported_at: "2026-10-01T10:00:00Z", has_script: false, ...IN },
   { case_id: 15, title: "Fifteen", state: { kind: "InRepoNotFromApp" }, exported_at: null, has_script: true, in_repo: true, repo_note: "in specs/fifteen.spec.ts" },
+  { case_id: 16, title: "Sixteen", state: { kind: "ExcludedInRepo" }, exported_at: null, has_script: true, in_repo: true, repo_note: "Excluded in the repo (in pc-cycle-setup.md)" },
 ];
 
 type Call = { cmd: string; args: Record<string, unknown> };
@@ -186,4 +187,28 @@ test("Add new lists each new case it left out, with why", async () => {
   expect(await screen.findByText(`#13 → case-13.spec.ts: ${NEEDS_REPO}`)).toBeTruthy();
   expect(screen.getByText("Not added, and why:")).toBeTruthy();
   expect(screen.getByText("#12: latest run: Failed")).toBeTruthy();
+});
+
+test("a case the repo excludes has its own state and cannot be ticked", async () => {
+  const m = mount();
+  expect(await screen.findByText("Excluded in the repo")).toBeTruthy();
+  expect(screen.getByText("Excluded in the repo (in pc-cycle-setup.md)")).toBeTruthy();
+  const box = screen.getByRole("checkbox", { name: "Tick #16 Sixteen" });
+  expect(box.hasAttribute("disabled") || box.getAttribute("aria-disabled") === "true" || box.hasAttribute("data-disabled")).toBe(true);
+  fireEvent.click(box);
+  expect((screen.getByRole("button", { name: "Update ticked (0)" }) as HTMLButtonElement).disabled).toBe(true);
+  // Neither Update out of date nor Add new counts it.
+  expect(screen.getByRole("button", { name: "Update out of date (1)" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Add new (2)" })).toBeTruthy();
+  expect(m.calls.some((c) => c.cmd === "pw_sync_update")).toBe(false);
+});
+
+test("an Add new that writes and skips nothing says there is nothing new", async () => {
+  const m = mount({
+    update: () => ({ files: [], cases: [], user_keys: [], missing_navigation: [], sections: [], record_error: null, skipped: [] }),
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Add new (2)" }));
+  await waitFor(() => expect(addNews(m.calls)).toHaveLength(1));
+  expect(await screen.findByText("Nothing new to add")).toBeTruthy();
+  expect(screen.queryByLabelText("Updated")).toBeNull();
 });

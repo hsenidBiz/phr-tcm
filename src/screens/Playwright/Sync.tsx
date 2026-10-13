@@ -56,6 +56,8 @@ function stateText(s: SyncState): string {
       return "Never exported";
     case "InRepoNotFromApp":
       return "In the repo (not from this app)";
+    case "ExcludedInRepo":
+      return "Excluded in the repo";
   }
 }
 
@@ -68,6 +70,7 @@ function stateTone(s: SyncState): string {
       return "text-warning";
     case "NeverExported":
     case "InRepoNotFromApp":
+    case "ExcludedInRepo":
       return "text-muted";
   }
 }
@@ -96,6 +99,8 @@ export default function Sync({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<ExportResult | null>(null);
+  /** The last write was Add new: an empty one says there was nothing new. */
+  const [wasAddNew, setWasAddNew] = useState(false);
 
   // A script saved, repaired or removed anywhere: its state may have changed.
   useEffect(() => {
@@ -109,12 +114,15 @@ export default function Sync({
 
   const rows: SyncRow[] = states.data ?? [];
   const outOfDate = rows.filter((r) => r.state.kind === "OutOfDate" && r.has_script).map((r) => r.case_id);
-  const picked = rows.filter((r) => r.has_script && ticked.has(r.case_id)).map((r) => r.case_id);
+  // A case the team excluded in the repo is never written, so never ticked.
+  const tickable = (r: SyncRow) => r.has_script && r.state.kind !== "ExcludedInRepo";
+  const picked = rows.filter((r) => tickable(r) && ticked.has(r.case_id)).map((r) => r.case_id);
   // The same rule as Rust's `sync::add_new`, which picks the cases itself.
   const addNew = rows.filter((r) => r.has_script && !r.in_repo).length;
 
   /** Runs one write: Update (with what was ticked to replace) or Add new. */
-  const write = async (work: () => Promise<ExportResult>) => {
+  const write = async (work: () => Promise<ExportResult>, addNew = false) => {
+    setWasAddNew(addNew);
     setBusy(true);
     setError("");
     setResult(null);
@@ -139,7 +147,10 @@ export default function Sync({
   // export is replaced only this way.
   const updateTicked = () =>
     write(() => unwrapStr(commands.pwSyncUpdate(clone, org, project, picked, picked, ...refs)));
-  const addNewCases = () => write(() => unwrapStr(commands.pwSyncAddNew(clone, org, project, ...refs)));
+  const addNewCases = () => write(() => unwrapStr(commands.pwSyncAddNew(clone, org, project, ...refs)), true);
+  const nothingNew = Boolean(
+    result && wasAddNew && result.cases.length === 0 && (result.skipped ?? []).length === 0,
+  );
 
   const tick = (id: number, on: boolean) =>
     setTicked((cur) => {
@@ -182,7 +193,8 @@ export default function Sync({
       {busy && <p className="text-xs text-muted">Updating…</p>}
       {error && <p className="whitespace-pre-wrap text-xs text-danger">{error}</p>}
 
-      {result && (
+      {nothingNew && <p className="text-xs text-muted">Nothing new to add</p>}
+      {result && !nothingNew && (
         <div className="space-y-1" aria-label="Updated">
           {result.cases.length > 0 && <p className="text-xs text-text">Updated:</p>}
           <ul className="space-y-0.5 text-xs text-text">
@@ -215,14 +227,14 @@ export default function Sync({
           <li key={r.case_id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
             <Checkbox
               checked={ticked.has(r.case_id)}
-              disabled={!r.has_script || busy}
+              disabled={!tickable(r) || busy}
               ariaLabel={`Tick #${r.case_id} ${r.title}`}
               onCheckedChange={(on) => tick(r.case_id, on)}
             />
             <span className="text-text">{`#${r.case_id} ${r.title}`}</span>
             <span className={`text-xs ${stateTone(r.state)}`}>{stateText(r.state)}</span>
             {r.exported_at && <span className="text-xs text-muted">{`exported ${localTime(r.exported_at)}`}</span>}
-            {r.state.kind === "InRepoNotFromApp" && r.repo_note && (
+            {(r.state.kind === "InRepoNotFromApp" || r.state.kind === "ExcludedInRepo") && r.repo_note && (
               <span className="text-xs text-muted">{r.repo_note}</span>
             )}
           </li>

@@ -177,11 +177,25 @@ fn features(suites: &Path) -> Vec<RepoFeature> {
 
 /// The ids of a test-case file's `## <id>` headings, in order: a level-two
 /// heading whose first word is all digits. `## Amendment`, `## Steps` and
-/// deeper headings are not test cases.
+/// deeper headings are not test cases, and nor is `## Excluded <id>`
+/// (`excluded_headings`): the summary counts the cases the repo tests.
 pub fn case_headings(text: &str) -> Vec<i32> {
+    headings(text, "")
+}
+
+/// The ids of a test-case file's `## Excluded <id>` headings, in order: the
+/// cases the team left out of the repo on purpose. `Excluded` is the only
+/// such word the repo uses.
+pub fn excluded_headings(text: &str) -> Vec<i32> {
+    headings(text, "Excluded ")
+}
+
+/// The ids of the level-two headings that start with `prefix` and then a
+/// word that is all digits.
+fn headings(text: &str, prefix: &str) -> Vec<i32> {
     text.lines()
         .filter_map(|line| {
-            let rest = line.trim_end_matches('\r').strip_prefix("## ")?;
+            let rest = line.trim_end_matches('\r').strip_prefix("## ")?.strip_prefix(prefix)?;
             let word: &str = rest.split_whitespace().next()?;
             if word.is_empty() || !word.bytes().all(|b| b.is_ascii_digit()) {
                 return None;

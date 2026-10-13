@@ -44,6 +44,10 @@ pub struct PreviewCase {
     pub repo_note: Option<String>,
     /// The Sync record has an export of it by this app.
     pub from_app: bool,
+    /// The repo has it under `## Excluded <id>`: the team left it out on
+    /// purpose, so it is never exported and cannot be ticked. `repo_note`
+    /// then says "Excluded in the repo (in <file>)".
+    pub excluded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -330,6 +334,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
         in_repo: false,
         repo_note: None,
         from_app: false,
+        excluded: false,
     };
     let fail = |mut pc: PreviewCase, why: String| {
         pc.reason = Some(why);
@@ -346,11 +351,8 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
     pc.title = script.title.clone();
 
     // The person's verdict on the newest run that holds the case.
-    let record = ctx.runs.iter().find_map(|r| r.cases.iter().find(|c| c.case_id == id));
-    let verdict = record.map(|c| c.verdict.trim()).unwrap_or("");
-    if verdict != "Passed" {
-        let said = if verdict.is_empty() { "not reviewed" } else { verdict };
-        return fail(pc, format!("latest run: {said}"));
+    if let Some(why) = verdict_fails(&ctx.runs, id) {
+        return fail(pc, why);
     }
 
     let (area_name, area_clicks, routed) = match route(ctx, id, &script) {
@@ -475,7 +477,11 @@ pub fn preview_with(
         }
         let mut pc = evaluate(&ctx, id, script).0;
         pc.in_repo = found.has(id);
-        pc.repo_note = found.note(id);
+        pc.excluded = found.excluded(id);
+        pc.repo_note = found.excluded_note(id).or_else(|| found.note(id));
+        if pc.excluded {
+            pc.exportable = false;
+        }
         cases.push(pc);
     }
     Ok(Preview {
@@ -513,9 +519,13 @@ pub fn preview_recorded(
 /// The guard on writing over what the repo has: every case in `case_ids`
 /// the repo already has (`pw_repo::presence`) must be in `replace`, the
 /// cases the person chose to replace on purpose. What the webview ticks by
-/// default is not enough on its own.
+/// default is not enough on its own. A case the repo has under
+/// `## Excluded <id>` is refused even in `replace`.
 pub fn refuse_present(found: &Presence, case_ids: &[i32], replace: &[i32]) -> Result<(), String> {
     for &id in case_ids {
+        if let Some(note) = found.excluded_note(id) {
+            return Err(format!("case {id} cannot be exported: {note}. Nothing was written."));
+        }
         if found.has(id) && !replace.contains(&id) {
             let note = found.note(id).unwrap_or_default();
             return Err(format!(
@@ -545,6 +555,10 @@ pub fn split_exportable(
         if ok.contains(&id) || skipped.iter().any(|(s, _)| *s == id) {
             continue;
         }
+        if let Some(note) = found.excluded_note(id) {
+            skipped.push((id, note));
+            continue;
+        }
         if let Some(note) = found.note(id) {
             skipped.push((id, format!("already in the repo ({note})")));
             continue;
@@ -561,8 +575,8 @@ pub fn split_exportable(
 /// that can be exported on their own are written together, all or nothing
 /// as one write with nothing to replace (`write_recorded`); every other one
 /// is left out and listed in `skipped` with why, so one case that cannot go
-/// does not hold back the rest. A case Azure DevOps did not give (`docs`)
-/// is left out the same way.
+/// does not hold back the rest. `unread` is the cases Azure DevOps could
+/// not give: each is left out the same way, as is one missing from `docs`.
 #[allow(clippy::too_many_arguments)]
 pub fn add_new_with(
     root: &Path,
@@ -573,10 +587,12 @@ pub fn add_new_with(
     clone_path: &str,
     modules: &BTreeMap<i32, String>,
     docs: &BTreeMap<i32, CaseDoc>,
+    unread: &[i32],
 ) -> Result<ExportResult, String> {
-    let (ok, mut skipped) = split_exportable(root, org, project, case_ids, clone_path, modules)?;
-    let (ok, unread): (Vec<i32>, Vec<i32>) = ok.into_iter().partition(|id| docs.contains_key(id));
-    skipped.extend(unread.into_iter().map(|id| (id, "it could not be read from Azure DevOps".to_string())));
+    let checked: Vec<i32> = case_ids.iter().copied().filter(|id| !unread.contains(id)).collect();
+    let (ok, mut skipped) = split_exportable(root, org, project, &checked, clone_path, modules)?;
+    let (ok, missing): (Vec<i32>, Vec<i32>) = ok.into_iter().partition(|id| docs.contains_key(id));
+    skipped.extend(unread.iter().copied().chain(missing).map(|id| (id, NOT_READ.to_string())));
     skipped.sort_by_key(|(id, _)| case_ids.iter().position(|c| c == id));
     let mut result = if ok.is_empty() {
         nothing_written()
@@ -585,6 +601,34 @@ pub fn add_new_with(
     };
     result.skipped = skipped;
     Ok(result)
+}
+
+/// Why Add new left out a case Azure DevOps could not give.
+pub const NOT_READ: &str = "it could not be read from Azure DevOps. Settings, Logs has the details";
+
+/// Of the new cases, the ones worth reading from Azure DevOps for Add new:
+/// those with a script whose newest run Passed. The rest cannot be exported
+/// whatever Azure DevOps says (`evaluate` checks the same first), so they
+/// are not read and `add_new_with` gives their reason.
+pub fn worth_reading(root: &Path, case_ids: &[i32]) -> Vec<i32> {
+    let runs = store::list_runs(root);
+    case_ids
+        .iter()
+        .copied()
+        .filter(|&id| matches!(store::load_script(root, id), Ok(Some(_))) && verdict_fails(&runs, id).is_none())
+        .collect()
+}
+
+/// Why the newest run that holds case `id` keeps it from being exported:
+/// `None` when the person marked it Passed.
+fn verdict_fails(runs: &[LocalRun], id: i32) -> Option<String> {
+    let record = runs.iter().find_map(|r| r.cases.iter().find(|c| c.case_id == id));
+    let verdict = record.map(|c| c.verdict.trim()).unwrap_or("");
+    if verdict == "Passed" {
+        return None;
+    }
+    let said = if verdict.is_empty() { "not reviewed" } else { verdict };
+    Some(format!("latest run: {said}"))
 }
 
 /// Every selected case, or the first reason one cannot be exported. Reads

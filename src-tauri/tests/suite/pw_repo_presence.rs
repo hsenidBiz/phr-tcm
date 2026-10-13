@@ -43,7 +43,14 @@ fn each_of_the_three_places_is_found_on_the_fixture() {
     // Nowhere: not in the repo. A heading that is not a case is no id.
     assert!(!p.has(135999));
     assert_eq!(p.note(135999), None);
-    assert_eq!(p.cases.keys().copied().collect::<Vec<_>>(), vec![135152, 135179, 135180, 135190, 135301]);
+    assert_eq!(p.cases.keys().copied().collect::<Vec<_>>(), vec![135152, 135179, 135180, 135185, 135190, 135301]);
+
+    // A `## Excluded <id>` section: in the repo, and left out on purpose.
+    assert!(p.excluded(135185) && p.has(135185));
+    assert_eq!(p.cases[&135185].excluded_in, [RATING_MD.to_string()]);
+    assert_eq!(p.excluded_note(135185).as_deref(), Some("Excluded in the repo (in rating-methods.md)"));
+    assert!(!p.excluded(135180));
+    assert_eq!(p.excluded_note(135180), None);
 
     // Whether this app exported it comes from the Sync record only.
     assert!(p.cases.values().all(|f| !f.from_app));
@@ -157,4 +164,27 @@ fn only_an_exact_marker_line_counts() {
     let p = scan(fx.clone.path()).unwrap();
     assert!(!p.has(136431));
     assert!(p.has(40));
+}
+
+#[test]
+fn an_excluded_case_is_never_exported_even_when_chosen_to_replace() {
+    let fx = Fx::new();
+    fx.good(26, "Twenty six");
+    write(fx.clone.path().join(MD_REL), "# Proficiency Levels\n\n## Excluded 26 \u{2014} Twenty six\n\nLeft out on purpose.\n");
+    let before = snapshot(fx.clone.path());
+    let sentence = "Excluded in the repo (in proficiency-levels.md)";
+
+    let p = preview_with(fx.root.path(), ORG, PROJECT, &[26], &fx.clone_path(), &fx.modules.borrow()).unwrap();
+    let c = &p.cases[0];
+    assert!(c.excluded && c.in_repo && !c.exportable);
+    assert_eq!(c.repo_note.as_deref(), Some(sentence));
+
+    let d = docs(&[(26, "Twenty six")]);
+    for replace in [&[][..], &[26][..]] {
+        let err = write_with(fx.root.path(), ORG, PROJECT, &[26], &fx.clone_path(), &fx.modules.borrow(), &d, replace).unwrap_err();
+        assert!(err.contains(sentence) && err.contains("Nothing was written"), "{err}");
+        let early = ensure_exportable(fx.root.path(), ORG, PROJECT, &[26], &fx.clone_path(), &fx.modules.borrow(), replace).unwrap_err();
+        assert_eq!(early, err);
+    }
+    assert_eq!(snapshot(fx.clone.path()), before);
 }

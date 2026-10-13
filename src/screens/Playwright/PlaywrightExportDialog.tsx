@@ -50,7 +50,8 @@ const NEXT_STEPS = [
 export const SKIP_NOTE = "Cases already in the repo are skipped. Tick one to replace it.";
 
 /** "New", or "In the repo" with where, and whether this app put it there. */
-export function repoStatus(c: Pick<PreviewCase, "in_repo" | "repo_note" | "from_app">): string {
+export function repoStatus(c: Pick<PreviewCase, "in_repo" | "repo_note" | "from_app"> & { excluded?: boolean }): string {
+  if (c.excluded) return c.repo_note ?? "Excluded in the repo";
   if (!c.in_repo) return "New";
   const where = c.repo_note ? `: ${c.repo_note}` : "";
   return `In the repo${where}${c.from_app ? " (exported by this app)" : ""}`;
@@ -319,6 +320,13 @@ export default function PlaywrightExportDialog({
                     />
                     <span>{`#${c.case_id} ${c.title}`}</span>
                     <span className={`text-xs ${c.in_repo ? "text-warning" : "text-success"}`}>{repoStatus(c)}</span>
+                  </label>
+                ) : c.excluded ? (
+                  // The team left it out of the repo on purpose: never exported.
+                  <label key={c.case_id} className="flex flex-wrap items-center gap-2 text-sm text-faint">
+                    <Checkbox checked={false} disabled ariaLabel={`#${c.case_id} ${c.title}`} onCheckedChange={() => {}} />
+                    <span>{`#${c.case_id} ${c.title}`}</span>
+                    <span className="text-xs">{repoStatus(c)}</span>
                   </label>
                 ) : (
                   <div key={c.case_id} className="space-y-1 text-sm text-faint">
