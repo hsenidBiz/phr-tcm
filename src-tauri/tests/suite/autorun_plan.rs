@@ -25,6 +25,11 @@ fn map(cases: &[(i32, Marks)]) -> HashMap<i32, Marks> {
     cases.iter().cloned().collect()
 }
 
+/// The reset parts of a view's pauses.
+fn resets_of(view: &v2_lib::commands::autorun::PlanView) -> Vec<Reset> {
+    view.pauses.iter().filter_map(v2_lib::autorun::plan::Pause::reset).collect()
+}
+
 fn reset(before: i32, changed: &[(&str, &[i32])]) -> Reset {
     Reset {
         before_case_id: before,
@@ -369,6 +374,7 @@ fn script(case_id: i32, changes: &[&str], needs: &[&str]) -> CaseScript {
         setup: None,
         changes: names(changes),
         needs_unchanged: names(needs),
+        needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
         page_errors: None, ignore_page_errors: vec![], organization: None, project: None, checked: false,
@@ -388,7 +394,7 @@ fn the_plan_command_reads_marks_and_the_saved_order_from_the_store() {
     let view = v2_lib::commands::autorun::plan_at(dir.path(), 100, &[1, 2, 3], None);
     assert_eq!(view.order, vec![2, 1, 3]);
     assert_eq!(view.phases, vec![vec![2, 1, 3]]);
-    assert!(view.resets.is_empty());
+    assert!(view.pauses.is_empty());
     assert_eq!(view.counts, None);
     assert!(!view.saved);
 
@@ -396,7 +402,7 @@ fn the_plan_command_reads_marks_and_the_saved_order_from_the_store() {
     let view = v2_lib::commands::autorun::plan_at(dir.path(), 100, &[1, 2, 3], None);
     assert_eq!(view.order, vec![1, 2, 3]);
     assert_eq!(view.phases, vec![vec![1], vec![2, 3]]);
-    assert_eq!(view.resets, vec![reset(2, &[("x", &[1])])]);
+    assert_eq!(resets_of(&view), vec![reset(2, &[("x", &[1])])]);
     assert_eq!(view.counts, Some((1, 0)));
     assert!(view.saved);
 
@@ -418,7 +424,7 @@ fn a_preview_order_is_planned_without_being_saved() {
     let view = v2_lib::commands::autorun::plan_at(dir.path(), 100, &[1, 2, 3], Some(&[1, 99, 2]));
     assert_eq!(view.order, vec![1, 2, 3]);
     assert_eq!(view.phases, vec![vec![1], vec![2, 3]]);
-    assert_eq!(view.resets, vec![reset(2, &[("x", &[1])])]);
+    assert_eq!(resets_of(&view), vec![reset(2, &[("x", &[1])])]);
     assert_eq!(view.counts, Some((1, 0)));
     assert!(!view.saved);
 

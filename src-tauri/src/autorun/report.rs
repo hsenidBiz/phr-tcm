@@ -469,18 +469,46 @@ fn case_section(
     h
 }
 
-/// The lines a reset point the run paused at is shown with, one per name:
-/// `Reset: revert "<name>" - continued` (or `- stopped`). An outcome that is
-/// neither is left off.
+/// The lines a pause the run made is shown with: one per setting to set
+/// (`Before Batch 1: make sure <name> is <value>`, later `Set <name> to
+/// <value>`), then one per name to revert (`Reset: revert "<name>"`), each
+/// ending ` - continued` (or `- stopped`). An outcome that is neither is
+/// left off.
 pub fn reset_lines(reset: &ResetRecord) -> Vec<String> {
     let ended = match reset.outcome.as_str() {
         o @ (super::RESET_CONTINUED | super::RESET_STOPPED) => format!(" - {o}"),
         _ => String::new(),
     };
-    reset.names.iter().map(|name| format!("Reset: revert \"{name}\"{ended}")).collect()
+    let set = reset.set.iter().map(|(name, value)| {
+        if reset.batch == 1 {
+            format!("Before Batch 1: make sure {name} is {value}{ended}")
+        } else {
+            format!("Set {name} to {value}{ended}")
+        }
+    });
+    set.chain(reset.names.iter().map(|name| format!("Reset: revert \"{name}\"{ended}"))).collect()
 }
 
-/// The reset lines due before case `case_id`, escaped.
+/// Whether a run's cases are shown under batch headings: when it recorded
+/// a pause with its batch (runs saved before batches never did).
+pub fn in_batches(run: &LocalRun) -> bool {
+    run.resets.iter().any(|r| r.batch > 0)
+}
+
+/// The batch heading due before case `case_id`, if one starts there:
+/// `Batch N` for a recorded pause, and `Batch 1` before the first case of
+/// a run shown in batches.
+pub fn batch_heading(run: &LocalRun, case_id: i32) -> Option<String> {
+    if !in_batches(run) {
+        return None;
+    }
+    if let Some(r) = run.resets.iter().find(|r| r.before_case_id == case_id && r.batch > 0) {
+        return Some(format!("Batch {}", r.batch));
+    }
+    (run.cases.first().map(|c| c.case_id) == Some(case_id)).then(|| "Batch 1".to_string())
+}
+
+/// The pause lines due before case `case_id`, escaped.
 fn resets_before(run: &LocalRun, case_id: i32) -> Vec<String> {
     run.resets.iter().filter(|r| r.before_case_id == case_id).flat_map(reset_lines).map(|l| esc(&l)).collect()
 }
@@ -518,7 +546,7 @@ th{background:#f6f8fa}.id{font-family:Consolas,monospace;color:#59636e}.b-passed
 .b-failed{color:#cf222e;font-weight:600}.b-blocked{color:#9a6700;font-weight:600}.b-notrun{color:#59636e;font-weight:600}\
 .took{color:#59636e;font-size:12px;font-weight:400}.retried{color:#9a6700;font-size:12px;font-weight:600;border:1px solid #d4a72c;border-radius:10px;padding:0 6px;margin-left:6px}\
 .case{border:1px solid #d0d7de;border-radius:6px;padding:8px 12px;margin:0 0 12px}.case>summary{cursor:pointer;font-weight:600;font-size:15px}\
-.note{color:#59636e;font-style:italic}.reset{color:#9a6700;font-weight:600}.step{margin:10px 0 0}h4{font-size:14px;margin:0 0 4px}\
+.note{color:#59636e;font-style:italic}.reset{color:#9a6700;font-weight:600}.batch{text-align:left;font-weight:600}.step{margin:10px 0 0}h4{font-size:14px;margin:0 0 4px}\
 .actions{list-style:none;margin:0 0 4px;padding:0}.actions li{margin:0 0 2px}.ok{color:#1a7f37}.bad{color:#cf222e}\
 figure{margin:8px 0}figure img{max-width:100%;border:1px solid #d0d7de}figcaption{font-size:12px;color:#59636e}\
 @media print{body{margin:0}.case,.step,tr,figure{break-inside:avoid}a{color:inherit}}";
@@ -611,6 +639,9 @@ pub fn build_with_components(
 
     h.push_str("<h2>Cases</h2><table class=\"cases\"><thead><tr><th>ID</th><th>Title</th><th>Result</th><th>Decided by</th><th>Account</th><th>Area</th></tr></thead><tbody>");
     for case in &run.cases {
+        if let Some(heading) = batch_heading(run, case.case_id) {
+            h.push_str(&format!("<tr class=\"batch\"><th colspan=\"6\">{}</th></tr>", esc(&heading)));
+        }
         for line in resets_before(run, case.case_id) {
             h.push_str(&format!("<tr class=\"reset\"><td colspan=\"6\">{line}</td></tr>"));
         }
@@ -637,6 +668,9 @@ pub fn build_with_components(
     if !run.cases.is_empty() {
         h.push_str("<h2>Cases in detail</h2>");
         for case in &run.cases {
+            if let Some(heading) = batch_heading(run, case.case_id) {
+                h.push_str(&format!("<h3 class=\"batch\">{}</h3>", esc(&heading)));
+            }
             for line in resets_before(run, case.case_id) {
                 h.push_str(&format!("<p class=\"reset\">{line}</p>"));
             }

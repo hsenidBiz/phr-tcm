@@ -149,9 +149,9 @@ without `quick` and read the full guide.
   open (never the person's). Never ask the person to restart the app.
 - If a case creates, deletes, publishes or submits shared data, or needs the
   site in a particular state, mark it `changes` or `needs_unchanged`,
-  reusing one name for one change across the PBI. Then call
-  `set_autorun_order` if an order is needed and report the order and any
-  reset points. State needed before a run: a precondition.
+  reusing one name for one change across the PBI; a setting it needs at one
+  value goes in `needs_state`. Then call `set_autorun_order` if an order is
+  needed and report the order and any reset points. State needed before a run: a precondition.
 "##;
 
 const GUIDE_BODY: &str = r##"An action script drives ONE test case through a real, visible browser -
@@ -1018,8 +1018,39 @@ does not need setting up again. When a case creates, deletes, publishes or
 submits shared data, or needs the site in a particular state, mark it
 `changes` or `needs_unchanged`, reusing one name for one change across the
 PBI. Once its scripts are written, call `set_autorun_order` if an order is
-needed and report the order and any reset points. State needed before a
-run: a precondition, declared in the case's `preconditions`, not a mark.
+needed and report the order and any reset points and settings to set.
+State needed before a run: a precondition, declared in the case's
+`preconditions`, not a mark.
+
+## Settings a case needs
+
+Some cases need an application setting at one value, for example an
+approval workflow switched on, while other cases need it off. A person
+switches such a setting by hand between runs of cases. A script says so
+with `needs_state`: each setting the case needs, with the value it needs.
+
+    { "case_id": 701, "title": "...", "needs_state": { "Approval workflow": "ON" }, "steps": [ ... ] }
+    { "case_id": 702, "title": "...", "needs_state": { "Approval workflow": "OFF", "Rating scale": "5 point" }, "steps": [ ... ] }
+    { "case_id": 703, "title": "...", "steps": [ ... ] }
+
+Auto Run groups the cases into batches whose cases agree on every
+setting they name, trying to keep the pauses few, and the run pauses
+before each batch for a person to set what changes, for example "Before
+Batch 2: Set Approval workflow to OFF". Case 703 names no setting, so it
+can run in any batch.
+
+Use `needs_state` for a setting a person switches between values, where a
+case needs one of them. Use `changes` with `needs_unchanged` for state a
+case uses up or changes as it runs, such as publishing a cycle, that a
+person must put back. A case can carry both.
+
+Setting names and values compare like mark names: trimmed, ignoring case,
+with spaces inside collapsed.
+Each is 1 to 60 characters, and a script names at most 10 settings. One
+setting needed at two values in the same script is refused:
+`needs_state: "<name>" cannot need both "<value>" and "<value>" - pick one value`.
+Like marks, settings are not a repair; when you save a script that has
+them, send them back as they are.
 
 ## Every expected result is checked
 

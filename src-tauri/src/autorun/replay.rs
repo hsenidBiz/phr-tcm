@@ -14,7 +14,7 @@ use super::nav::{self, Route};
 use super::runner::{self, as_action_outcome};
 use super::lease::{Held, Holder};
 use super::{preconditions, recipe, setup, signin, transient};
-use super::plan::Reset;
+use super::plan::Pause;
 use super::{store, CasePhases, CaseRecord, CaseScript, LocalRun, ResetRecord, StepRecord, StepScript, RESET_CONTINUED, RESET_STOPPED};
 use crate::api_templates::gate::StageDb;
 use crate::browser::actions::{Action, ActionOutcome};
@@ -101,19 +101,31 @@ pub trait Browsers {
     fn close(&mut self, d: Self::D) -> impl std::future::Future<Output = ()>;
 }
 
-/// The reason each case left when a run ends at a reset point is recorded
-/// with, and the outcome of each of its steps.
+/// The reason each case left was recorded with when a run ended at a reset
+/// point, before run batches. Runs saved then keep it; new runs say
+/// [`stopped_at_pause`].
 pub const STOPPED_AT_RESET: &str = "not run: the run stopped at a reset point";
 
-/// Where an unattended run pauses at a reset point. The command gives one
-/// that asks the person in the app (`reset_wait::AppGate`); the tests give
-/// one that answers as told.
+/// The words before the batch number in [`stopped_at_pause`]. The webview
+/// says the same (`src/screens/AutoRun/plan.ts`, `STOPPED_AT_PAUSE`).
+pub const STOPPED_AT_PAUSE: &str = "not run: the run stopped at a pause before Batch";
+
+/// The reason each case left is recorded with when a run ends at the pause
+/// before batch `batch`, and the outcome of each of its steps:
+/// `not run: the run stopped at a pause before Batch 2`.
+pub fn stopped_at_pause(batch: u32) -> String {
+    format!("{STOPPED_AT_PAUSE} {batch}")
+}
+
+/// Where an unattended run pauses before a batch: a reset point, settings
+/// to set, or both. The command gives one that asks the person in the app
+/// (`reset_wait::AppGate`); the tests give one that answers as told.
 pub trait ResetGate {
     /// Wait at `reset` until a person answers: `true` carries on with the
-    /// next phase, `false` ends the run there. `remaining` is every case
+    /// next batch, `false` ends the run there. `remaining` is every case
     /// still to run, the next one first. A Stop (`cancel`) while waiting
     /// answers `false`. There is no time limit.
-    fn wait(&mut self, reset: &Reset, remaining: &[i32], cancel: &AtomicBool) -> impl std::future::Future<Output = bool>;
+    fn wait(&mut self, reset: &Pause, remaining: &[i32], cancel: &AtomicBool) -> impl std::future::Future<Output = bool>;
 }
 
 /// A gate for a run with no reset points: it is never asked, and would
@@ -121,7 +133,7 @@ pub trait ResetGate {
 pub struct NeverPauses;
 
 impl ResetGate for NeverPauses {
-    async fn wait(&mut self, _reset: &Reset, _remaining: &[i32], _cancel: &AtomicBool) -> bool {
+    async fn wait(&mut self, _reset: &Pause, _remaining: &[i32], _cancel: &AtomicBool) -> bool {
         true
     }
 }
@@ -650,13 +662,14 @@ fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecor
     }
 }
 
-/// A case left when the run ended at a reset point: not run, nothing
-/// proposed, and each step of its script (when it has one) not run for the
-/// same reason.
-fn stopped_at_reset(root: &Path, case: &CaseToRun) -> CaseRecord {
-    let mut record = unrun(case.case_id, &case.title, "", STOPPED_AT_RESET.to_string());
+/// A case left when the run ended at the pause before batch `batch`: not
+/// run, nothing proposed, and each step of its script (when it has one) not
+/// run for the same reason.
+fn stopped_at_reset(root: &Path, case: &CaseToRun, batch: u32) -> CaseRecord {
+    let why = stopped_at_pause(batch);
+    let mut record = unrun(case.case_id, &case.title, "", why.clone());
     if let Ok(Some(script)) = store::load_script(root, case.case_id) {
-        record.steps = script.steps.iter().map(|s| not_run(s, STOPPED_AT_RESET)).collect();
+        record.steps = script.steps.iter().map(|s| not_run(s, &why)).collect();
     }
     record
 }
@@ -925,12 +938,14 @@ pub async fn run_cases_checked<B: Browsers, P: StageDb>(
     .await
 }
 
-/// [`run_cases_checked`] with the plan's reset points (design §3). Before a
-/// case that a reset in `resets` names, once the case before it has ended
-/// and its browser has closed, the run pauses at `gate`. Continue runs the
+/// [`run_cases_checked`] with the plan's pauses (design §3, run batches).
+/// Before a case that a pause in `resets` names, once the case before it
+/// has ended and its browser has closed, the run pauses at `gate`; a pause
+/// before Batch 1 (settings to set) comes before the first case opens
+/// anything. Continue runs the
 /// next phase; Stop (or the run's own Stop while paused) ends the run
 /// there, with every case left recorded as not run
-/// (`STOPPED_AT_RESET`). Each pause is kept in `run.resets` with how long
+/// (`stopped_at_pause`). Each pause is kept in `run.resets` with how long
 /// it lasted and how it ended. `cases` are in the order to run them.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
@@ -945,7 +960,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
     timing: &Timing,
     cancel: &AtomicBool,
     precondition_db: &preconditions::PreconditionDb<P>,
-    resets: &[Reset],
+    resets: &[Pause],
     gate: &mut G,
     progress: &mut (dyn FnMut(ReplayProgress) + Send),
 ) -> Result<(), String> {
@@ -970,29 +985,35 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
         if cancel.load(Ordering::SeqCst) {
             break;
         }
-        // A reset point before this case: the case before it has ended and
-        // its browser is closed, so the person can put things back now.
-        if let Some(reset) = resets.iter().filter(|_| i > 0).find(|r| r.before_case_id == case.case_id) {
+        // A pause before this case's batch: the case before it has ended
+        // and its browser is closed (or nothing has started yet, before
+        // Batch 1), so the person can set and put things back now.
+        if let Some(reset) = resets.iter().find(|r| r.before_case_id == case.case_id && (i > 0 || r.names.is_empty())) {
             let remaining: Vec<i32> = cases[i..].iter().map(|c| c.case_id).collect();
-            crate::applog::info(format!("Auto-run unattended: paused before case {} for a reset", case.case_id));
+            crate::applog::info(format!(
+                "Auto-run unattended: paused before case {} (batch {})",
+                case.case_id, reset.batch
+            ));
             let paused = Instant::now();
             let go_on = gate.wait(reset, &remaining, cancel).await && !cancel.load(Ordering::SeqCst);
             let waited_ms = u32::try_from(paused.elapsed().as_millis()).unwrap_or(u32::MAX);
             run.resets.push(ResetRecord {
                 before_case_id: reset.before_case_id,
+                batch: reset.batch,
+                set: reset.set.clone(),
                 names: reset.names.clone(),
                 changed_by: reset.changed_by.clone(),
                 waited_ms,
                 outcome: if go_on { RESET_CONTINUED } else { RESET_STOPPED }.to_string(),
             });
             crate::applog::info(format!(
-                "Auto-run unattended: the reset before case {} {} after {waited_ms} ms",
+                "Auto-run unattended: the pause before case {} {} after {waited_ms} ms",
                 case.case_id,
                 if go_on { "continued" } else { "stopped the run" },
             ));
             if !go_on {
                 for (k, rest) in cases.iter().enumerate().skip(i) {
-                    let record = stopped_at_reset(root, rest);
+                    let record = stopped_at_reset(root, rest, reset.batch);
                     let count = record.steps.len() as u32;
                     run.cases.push(record);
                     progress(tell(&run_id, k as u32, total, rest.case_id, &rest.title, "done", 0, count, ""));

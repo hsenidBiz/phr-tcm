@@ -5869,7 +5869,7 @@ fn repair_source(
 /// that merely REORDERS the same steps counts as a change and goes
 /// through the gate rather than around it. `repairs` is deliberately
 /// not compared: it is never the sender's to set. Nor are the marks
-/// (`changes`, `needs_unchanged`): they affect order, not safety, so
+/// (`changes`, `needs_unchanged`, `needs_state`): they affect order, not safety, so
 /// marking a saved script is no repair and does not add to its count. The
 /// sent marks are what is saved.
 fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::CaseScript) -> bool {
@@ -6028,7 +6028,9 @@ async fn save_autorun_scripts(
                 }
                 script.repairs = old.repairs;
                 script.last_repair = old.last_repair.clone();
-                let marks_changed = old.changes != sent.changes || old.needs_unchanged != sent.needs_unchanged;
+                let marks_changed = old.changes != sent.changes
+                    || old.needs_unchanged != sent.needs_unchanged
+                    || old.needs_state != sent.needs_state;
                 let said = if marks_changed { "marks updated" } else { "unchanged" };
                 lines.push(format!("case {} ({said})", script.case_id));
             }

@@ -24,7 +24,8 @@ export function runPillView(
     return { text: "Run stopped with an error", action: "Open the run window to see the error", tone: "danger" };
   }
   if (run.resetNeeded) {
-    return { text: "Reset needed", action: "Open the run window to continue or stop the run", tone: "warning" };
+    const before = run.resetNeeded.batch > 0 ? ` before Batch ${run.resetNeeded.batch}` : "";
+    return { text: `Paused${before}`, action: "Open the run window to continue or stop the run", tone: "warning" };
   }
   const at = run.position ? run.position.index + 1 : 1;
   const of = run.position ? run.position.total : run.cases.length;
@@ -39,7 +40,7 @@ const TONES = {
 } as const;
 
 /** The unattended run in the window's title bar, while one exists: how far
- * it has got, that it is paused at a reset point, or that it has ended.
+ * it has got, that it is paused before a batch, or that it has ended.
  * A click opens its window (as an app-level dialog, wherever the person
  * is) or, once it has finished, its review. Its accessible name says what
  * the click does. With no run to show, a discovery holding the Auto Run

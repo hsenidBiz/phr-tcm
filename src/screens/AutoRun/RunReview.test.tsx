@@ -931,6 +931,58 @@ test("saving a review keeps the run's reset points", async () => {
   expect(saved!.run.resets).toEqual(RESET_RUN.resets);
 });
 
+/** A run in two batches: before Batch 1 it made sure a setting was on;
+ * before Batch 2 (case 203) it switched it off and put state back. */
+const BATCH_RUN = {
+  ...RUN,
+  resets: [
+    { before_case_id: 201, batch: 1, set: [["Approval workflow", "ON"]], waited_ms: 5, outcome: "continued" },
+    {
+      before_case_id: 203,
+      batch: 2,
+      set: [["Approval workflow", "OFF"]],
+      names: ["cycle published"],
+      waited_ms: 5,
+      outcome: "continued",
+    },
+  ],
+};
+
+test("the review groups the cases under their batches with each pause between them", async () => {
+  renderReview(BATCH_RUN);
+  const one = (await screen.findByRole("heading", { name: "Batch 1" })).closest("li")!;
+  const items = Array.from(one.closest("ul")!.children);
+  const at = (el: Element) => items.indexOf(el.closest("li")!);
+  const two = screen.getByRole("heading", { name: "Batch 2" });
+  const first = screen.getByText("Before Batch 1: make sure Approval workflow is ON - continued");
+  const set = screen.getByText("Set Approval workflow to OFF - continued");
+  const back = screen.getByText('Reset: revert "cycle published" - continued');
+  expect(at(one)).toBeLessThan(at(first));
+  expect(at(first)).toBeLessThan(at(caseCard(201)));
+  expect(at(caseCard(202))).toBeLessThan(at(two));
+  expect(at(two)).toBeLessThan(at(set));
+  expect(at(set)).toBeLessThan(at(back));
+  expect(at(back)).toBeLessThan(at(caseCard(203)));
+});
+
+test("a batch heading stays when the filter hides the case its batch starts with", async () => {
+  renderReview(BATCH_RUN);
+  await screen.findByRole("heading", { name: "Batch 1" });
+  // 202 passed; 201, which Batch 1 starts with, failed.
+  fireEvent.click(filterButton(/^Passed/));
+  expect(screen.getByRole("heading", { name: "Batch 1" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Batch 2" })).not.toBeInTheDocument();
+  fireEvent.click(filterButton(/^Not run/));
+  expect(screen.getByRole("heading", { name: "Batch 2" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Batch 1" })).not.toBeInTheDocument();
+});
+
+test("a run recorded before batches shows no batch heading", async () => {
+  renderReview(RESET_RUN);
+  await screen.findByText('Reset: revert "cycle published" - continued');
+  expect(screen.queryByText(/^Batch \d/)).not.toBeInTheDocument();
+});
+
 test("while discovery holds the browser, Replay to step is off and says why", async () => {
   const onReplay = vi.fn();
   renderReview(RUN, { onReplay, replayBlocked: "Discovery is using the Auto Run browser" });

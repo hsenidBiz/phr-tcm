@@ -192,16 +192,20 @@ pub struct AutorunDiscoveryChanged {
     pub active: bool,
 }
 
-/// Emitted when an unattended run pauses at a reset point: before case
-/// `before_case_id` runs, a person reverts `names` (`changed_by` gives, per
-/// name, the cases that changed it), then answers with
+/// Emitted when an unattended run pauses before a batch: before case
+/// `before_case_id` runs, which opens batch `batch`, a person sets each
+/// setting in `set` to its value and reverts `names` (`changed_by` gives,
+/// per name, the cases that changed it), then answers with
 /// `auto_run_answer_reset`. `remaining` is every case still to run, the
-/// next one first. Case ids and names only: never a host, an address or a
-/// password. The screen supplies the titles from its own case list.
+/// next one first. Case ids, names and values only: never a host, an
+/// address or a password. The screen supplies the titles from its own case
+/// list.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct AutorunResetNeeded {
     pub run_id: String,
     pub before_case_id: i32,
+    pub batch: u32,
+    pub set: Vec<(String, String)>,
     pub names: Vec<String>,
     pub changed_by: Vec<(String, Vec<i32>)>,
     pub remaining: Vec<i32>,

@@ -574,6 +574,16 @@ export const commands = {
 	 */
 	needs_unchanged?: string[],
 	/**
+	 *  Settings this case needs, by name, each with the value it needs:
+	 *  `{"Approval workflow": "ON"}`. A case that does not name a setting
+	 *  does not care about it. The planner groups cases into batches that
+	 *  agree on every setting they name, and the run pauses between
+	 *  batches for a person to set what changes (`plan`). Names and values
+	 *  compare by `marks::normalise`; every save validates them
+	 *  (`marks::check_state`). Written only when there are any.
+	 */
+	needs_state?: { [key in string]: string },
+	/**
 	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
 	 *  every save (`store::save_scripts_atomically`), whatever was sent.
 	 *  Absent on scripts saved before it existed.
@@ -701,9 +711,10 @@ export const commands = {
 	 */
 	environment?: string | null,
 	/**
-	 *  Each reset point the run paused at, in run order, with how it ended
-	 *  (`reset_wait`). Written only when there are any, so a run without
-	 *  reset points reads exactly as it always did.
+	 *  Each pause the run made between batches (and before Batch 1, when it
+	 *  needs settings), in run order, with how it ended (`reset_wait`).
+	 *  Written only when there are any, so a run without pauses reads
+	 *  exactly as it always did.
 	 */
 	resets?: ResetRecord_Serialize[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_run", { runId })),
@@ -867,6 +878,8 @@ export const commands = {
 	autoRunWaitingReset: () => __TAURI_INVOKE<{
 	run_id: string,
 	before_case_id: number,
+	batch: number,
+	set: ([string, string])[],
 	names: string[],
 	changed_by: ([string, number[]])[],
 	remaining: number[],
@@ -2188,16 +2201,20 @@ export type AutorunReplayProgress = {
 };
 
 /**
- *  Emitted when an unattended run pauses at a reset point: before case
- *  `before_case_id` runs, a person reverts `names` (`changed_by` gives, per
- *  name, the cases that changed it), then answers with
+ *  Emitted when an unattended run pauses before a batch: before case
+ *  `before_case_id` runs, which opens batch `batch`, a person sets each
+ *  setting in `set` to its value and reverts `names` (`changed_by` gives,
+ *  per name, the cases that changed it), then answers with
  *  `auto_run_answer_reset`. `remaining` is every case still to run, the
- *  next one first. Case ids and names only: never a host, an address or a
- *  password. The screen supplies the titles from its own case list.
+ *  next one first. Case ids, names and values only: never a host, an
+ *  address or a password. The screen supplies the titles from its own case
+ *  list.
  */
 export type AutorunResetNeeded = {
 	run_id: string,
 	before_case_id: number,
+	batch: number,
+	set: ([string, string])[],
 	names: string[],
 	changed_by: ([string, number[]])[],
 	remaining: number[],
@@ -2590,6 +2607,16 @@ export type CaseScript_Deserialize = {
 	 */
 	needs_unchanged?: string[],
 	/**
+	 *  Settings this case needs, by name, each with the value it needs:
+	 *  `{"Approval workflow": "ON"}`. A case that does not name a setting
+	 *  does not care about it. The planner groups cases into batches that
+	 *  agree on every setting they name, and the run pauses between
+	 *  batches for a person to set what changes (`plan`). Names and values
+	 *  compare by `marks::normalise`; every save validates them
+	 *  (`marks::check_state`). Written only when there are any.
+	 */
+	needs_state?: { [key in string]: string },
+	/**
 	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
 	 *  every save (`store::save_scripts_atomically`), whatever was sent.
 	 *  Absent on scripts saved before it existed.
@@ -2711,6 +2738,16 @@ export type CaseScript_Serialize = {
 	 *  same names as `changes`. Written only when there are any.
 	 */
 	needs_unchanged?: string[],
+	/**
+	 *  Settings this case needs, by name, each with the value it needs:
+	 *  `{"Approval workflow": "ON"}`. A case that does not name a setting
+	 *  does not care about it. The planner groups cases into batches that
+	 *  agree on every setting they name, and the run pauses between
+	 *  batches for a person to set what changes (`plan`). Names and values
+	 *  compare by `marks::normalise`; every save validates them
+	 *  (`marks::check_state`). Written only when there are any.
+	 */
+	needs_state?: { [key in string]: string },
 	/**
 	 *  When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
 	 *  every save (`store::save_scripts_atomically`), whatever was sent.
@@ -3543,9 +3580,10 @@ export type LocalRun_Deserialize = {
 	 */
 	environment?: string | null,
 	/**
-	 *  Each reset point the run paused at, in run order, with how it ended
-	 *  (`reset_wait`). Written only when there are any, so a run without
-	 *  reset points reads exactly as it always did.
+	 *  Each pause the run made between batches (and before Batch 1, when it
+	 *  needs settings), in run order, with how it ended (`reset_wait`).
+	 *  Written only when there are any, so a run without pauses reads
+	 *  exactly as it always did.
 	 */
 	resets?: ResetRecord_Deserialize[],
 };
@@ -3569,9 +3607,10 @@ export type LocalRun_Serialize = {
 	 */
 	environment?: string | null,
 	/**
-	 *  Each reset point the run paused at, in run order, with how it ended
-	 *  (`reset_wait`). Written only when there are any, so a run without
-	 *  reset points reads exactly as it always did.
+	 *  Each pause the run made between batches (and before Batch 1, when it
+	 *  needs settings), in run order, with how it ended (`reset_wait`).
+	 *  Written only when there are any, so a run without pauses reads
+	 *  exactly as it always did.
 	 */
 	resets?: ResetRecord_Serialize[],
 };
@@ -3829,6 +3868,21 @@ export type Param_Serialize = {
 	default?: unknown | null,
 };
 
+/**
+ *  A pause before batch `batch` (1-based), which starts with
+ *  `before_case_id`: a person sets each setting in `set` to its value and
+ *  reverts `names` (`changed_by` as in [`Reset`]), then continues. Before
+ *  Batch 1 there is only `set`, and only when that batch needs settings.
+ *  Every spelling is a display one.
+ */
+export type Pause = {
+	batch: number,
+	before_case_id: number,
+	set: ([string, string])[],
+	names: string[],
+	changed_by: ([string, number[]])[],
+};
+
 export type PbiHit = {
 	id: number,
 	title: string,
@@ -3908,16 +3962,18 @@ export type PlanCreated = {
 
 /**
  *  The plan for a selection, as the screen shows it: the order, the order
- *  split into phases at each reset point, and the reset points. `counts`
- *  is `(this order's resets, the suggested order's resets)`, only when
- *  Auto Run's own order for the PBI needs more resets than the suggestion.
- *  `saved` says whether the PBI has an order of its own on this machine.
- *  Titles are the screen's: it has the case list.
+ *  split into batches (`phases`) at each pause, and the pauses: one before
+ *  each batch after the first (settings to set, state to put back), and one
+ *  before Batch 1 when it needs settings. `counts` is `(this order's
+ *  pauses, the suggested order's pauses)`, only when Auto Run's own order
+ *  for the PBI needs more pauses than the suggestion. `saved` says whether
+ *  the PBI has an order of its own on this machine. Titles are the
+ *  screen's: it has the case list.
  */
 export type PlanView = {
 	order: number[],
 	phases: number[][],
-	resets: Reset[],
+	pauses: Pause[],
 	counts: [number, number] | null,
 	saved: boolean,
 };
@@ -4799,33 +4855,25 @@ export type ReportStats = {
 };
 
 /**
- *  A reset point: before `before_case_id` runs, a person reverts `names`.
- *  `names` are display spellings, in the order the case lists them;
- *  `changed_by` gives, for each of those names, the cases that changed it
- *  since the last reset, in run order.
- */
-export type Reset = {
-	before_case_id: number,
-	names: string[],
-	changed_by: ([string, number[]])[],
-};
-
-/**
- *  One reset point a run paused at: before `before_case_id` ran, a person
- *  was asked to revert `names` (`changed_by` gives, per name, the cases
- *  that changed it). `waited_ms` is the wall time spent paused; `outcome`
- *  is "continued" or "stopped".
+ *  One pause a run made: before `before_case_id` ran, which opens batch
+ *  `batch`, a person was asked to set `set` (setting, value) and revert
+ *  `names` (`changed_by` gives, per name, the cases that changed it).
+ *  `waited_ms` is the wall time spent paused; `outcome` is "continued" or
+ *  "stopped". `batch` is 0 on a run saved before batches existed.
  */
 export type ResetRecord = ResetRecord_Serialize | ResetRecord_Deserialize;
 
 /**
- *  One reset point a run paused at: before `before_case_id` ran, a person
- *  was asked to revert `names` (`changed_by` gives, per name, the cases
- *  that changed it). `waited_ms` is the wall time spent paused; `outcome`
- *  is "continued" or "stopped".
+ *  One pause a run made: before `before_case_id` ran, which opens batch
+ *  `batch`, a person was asked to set `set` (setting, value) and revert
+ *  `names` (`changed_by` gives, per name, the cases that changed it).
+ *  `waited_ms` is the wall time spent paused; `outcome` is "continued" or
+ *  "stopped". `batch` is 0 on a run saved before batches existed.
  */
 export type ResetRecord_Deserialize = {
 	before_case_id: number,
+	batch?: number,
+	set?: ([string, string])[],
 	names?: string[],
 	changed_by?: ([string, number[]])[],
 	/**
@@ -4838,13 +4886,16 @@ export type ResetRecord_Deserialize = {
 };
 
 /**
- *  One reset point a run paused at: before `before_case_id` ran, a person
- *  was asked to revert `names` (`changed_by` gives, per name, the cases
- *  that changed it). `waited_ms` is the wall time spent paused; `outcome`
- *  is "continued" or "stopped".
+ *  One pause a run made: before `before_case_id` ran, which opens batch
+ *  `batch`, a person was asked to set `set` (setting, value) and revert
+ *  `names` (`changed_by` gives, per name, the cases that changed it).
+ *  `waited_ms` is the wall time spent paused; `outcome` is "continued" or
+ *  "stopped". `batch` is 0 on a run saved before batches existed.
  */
 export type ResetRecord_Serialize = {
 	before_case_id: number,
+	batch?: number,
+	set?: ([string, string])[],
 	names?: string[],
 	changed_by?: ([string, number[]])[],
 	/**

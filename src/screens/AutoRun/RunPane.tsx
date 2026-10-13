@@ -15,7 +15,7 @@ import {
   type CaseRecord,
   type PlanView,
   type ReplayEnd,
-  type Reset,
+  type Pause,
   type ResetRecord_Serialize,
   type SignInOutcome,
   type StepDialog,
@@ -33,7 +33,8 @@ import { dbReadAccessOn } from "../../lib/mcpTools";
 import OutcomeGroups from "./OutcomeGroups";
 import VerdictPicker from "./VerdictPicker";
 import ResetNeededPanel from "./ResetNeededPanel";
-import { STOPPED_AT_RESET } from "./plan";
+import BatchList from "./BatchList";
+import { stoppedAtPause } from "./plan";
 
 const BROWSERS = [
   { value: "edge", label: "Microsoft Edge" },
@@ -83,9 +84,10 @@ export default function RunPane({
    * browser the replay opens itself when none is open, and the person
    * carries on from this step by hand. */
   replayTo?: number;
-  /** The plan for `cases`: before a case its reset points name, the pane
-   * pauses with the Reset needed panel, once the case before has ended and
-   * before the next case's browser is used. */
+  /** The plan for `cases`: before a case a pause names, the pane pauses
+   * with the pause panel, once the case before has ended and before the
+   * next case's browser is used - and before the first case, when Batch 1
+   * needs settings. */
   plan?: PlanView | null;
   onClose: () => void;
   /** Why Open browser waits, when it does: a discovery holds the Auto Run
@@ -107,10 +109,14 @@ export default function RunPane({
    * half-way through does not throw away the verdicts already given. */
   const [records, setRecords] = useState<CaseRecord[]>([]);
 
-  /** The reset point the pane is paused at, and since when. The case before
-   * it is banked; the next case starts on Continue. */
-  const [pausedAt, setPausedAt] = useState<{ reset: Reset; since: number } | null>(null);
-  /** Each reset point this run paused at, kept with the run. */
+  /** The pause the pane is at, since when, and the index of the case it
+   * comes before. The case before it is banked; that case starts on
+   * Continue. A run whose Batch 1 needs settings starts paused. */
+  const [pausedAt, setPausedAt] = useState<{ reset: Pause; since: number; next: number } | null>(() => {
+    const first = plan?.pauses?.find((p) => p.batch === 1 && p.before_case_id === cases[0]?.id);
+    return first ? { reset: first, since: Date.now(), next: 0 } : null;
+  });
+  /** Each pause this run made, kept with the run. */
   const [resets, setResets] = useState<ResetRecord_Serialize[]>([]);
 
   /** Which browser to watch in. Remembered, because a person who prefers
@@ -628,12 +634,13 @@ export default function RunPane({
         setSignIn({ state: "idle", account: "", out: null });
         setPre({ state: "idle", reason: "", notice: "" });
         const nextId = cases[idx + 1]?.id;
-        const reset = plan?.resets.find((r) => r.before_case_id === nextId) ?? null;
+        const reset = plan?.pauses?.find((r) => r.before_case_id === nextId) ?? null;
         if (reset) {
-          // A reset point: the case before has ended, its browser closes,
-          // and the next case's opens only once the person says Continue.
+          // A pause before the next batch: the case before has ended, its
+          // browser closes, and the next case's opens only once the person
+          // says Continue.
           await commands.autoRunCloseBrowser().catch(() => {});
-          setPausedAt({ reset, since: Date.now() });
+          setPausedAt({ reset, since: Date.now(), next: idx + 1 });
           return;
         }
         setIdx((i) => i + 1);
@@ -654,20 +661,24 @@ export default function RunPane({
   };
 
   /** The record of the pause the pane is at, ended `outcome`. */
-  const resetRecord = (at: { reset: Reset; since: number }, outcome: "continued" | "stopped"): ResetRecord_Serialize => ({
+  const resetRecord = (at: { reset: Pause; since: number }, outcome: "continued" | "stopped"): ResetRecord_Serialize => ({
     before_case_id: at.reset.before_case_id,
+    ...(at.reset.batch > 0 ? { batch: at.reset.batch } : {}),
+    ...(at.reset.set.length > 0 ? { set: at.reset.set } : {}),
     names: at.reset.names,
     changed_by: at.reset.changed_by,
     waited_ms: Math.max(0, Date.now() - at.since),
     outcome,
   });
 
-  /** Continue at a reset point: the next case starts in a fresh browser. */
+  /** Continue at a pause: the next case starts in a fresh browser. Before
+   * Batch 1 nothing has opened yet, so the first case starts as usual. */
   const continueAfterReset = async () => {
     if (!pausedAt || inFlight.current) return;
     setResets((r) => [...r, resetRecord(pausedAt, "continued")]);
     setPausedAt(null);
-    setIdx((i) => i + 1);
+    if (pausedAt.next === 0) return;
+    setIdx(pausedAt.next);
     await freshBrowser();
   };
 
@@ -678,13 +689,13 @@ export default function RunPane({
     inFlight.current = true;
     setSaving(true);
     try {
-      const left: CaseRecord[] = cases.slice(idx + 1).map((c) => ({
+      const left: CaseRecord[] = cases.slice(pausedAt.next).map((c) => ({
         case_id: c.id,
         title: c.title,
         verdict: "",
         note: "",
         steps: [],
-        reason: STOPPED_AT_RESET,
+        reason: stoppedAtPause(pausedAt.reset.batch),
       }));
       if (!(await writeRun([...records, ...left], [...resets, resetRecord(pausedAt, "stopped")]))) return;
       closedRef.current = true;
@@ -793,19 +804,20 @@ export default function RunPane({
     // Walking away at a reset point ends the run there, as Stop does.
     <Modal onClose={pausedAt ? stopAtReset : close} className={`${MODAL_LARGE} space-y-3 overflow-y-auto p-4`}>
       <h2 className="text-sm font-semibold text-text">
-        <span className="id-mono text-faint">#{pausedAt ? cases[idx + 1]?.id : caseId}</span>{" "}
-        {pausedAt ? cases[idx + 1]?.title : title}
+        <span className="id-mono text-faint">#{pausedAt ? cases[pausedAt.next]?.id : caseId}</span>{" "}
+        {pausedAt ? cases[pausedAt.next]?.title : title}
         {cases.length > 1 && (
           <span className="ml-2 text-xs font-normal text-faint">
-            case {pausedAt ? idx + 2 : idx + 1} of {cases.length}
+            case {pausedAt ? pausedAt.next + 1 : idx + 1} of {cases.length}
           </span>
         )}
       </h2>
+      <BatchList plan={plan} currentId={pausedAt ? cases[pausedAt.next]?.id : caseId} />
 
       {pausedAt ? (
         <ResetNeededPanel
           reset={pausedAt.reset}
-          remaining={cases.slice(idx + 1).map((c) => c.id)}
+          remaining={cases.slice(pausedAt.next).map((c) => c.id)}
           titleOf={(id) => cases.find((c) => c.id === id)?.title}
           busy={saving}
           onContinue={() => void continueAfterReset()}

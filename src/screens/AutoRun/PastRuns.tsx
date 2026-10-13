@@ -17,7 +17,7 @@ import RetriedBadge from "./RetriedBadge";
 import RunDownloads from "./RunDownloads";
 import NoticeBadge from "./NoticeBadge";
 import PageErrorsBadge from "./PageErrorsBadge";
-import { resetLinesBefore } from "./plan";
+import { recordedBatches, resetLinesBefore, shownBatchHeading } from "./plan";
 import {
   RESULT_BUCKETS,
   bucketTone,
@@ -232,11 +232,19 @@ export default function PastRuns({
                 ))}
               </div>
               <ul className="space-y-1">
-                {run.cases.filter((c) => matchesFilter(c, filter)).map((c) => {
+                {run.cases.filter((c) => matchesFilter(c, filter)).map((c, i, shown) => {
                   const replayTo = onReplay && !otherPbi ? replayStep(c) : null;
+                  const heading = shownBatchHeading(recordedBatches(run), shown, i);
                   return (
                     <Fragment key={`${run.id}-${c.case_id}`}>
-                      {/* Where the run paused for a reset, and how it went on. */}
+                      {/* The batch that starts here (or its first case this
+                          filter shows), where the run paused before it and
+                          how it went on. */}
+                      {heading && (
+                        <li className="pt-1">
+                          <h3 className="text-xs font-semibold text-text">{heading}</h3>
+                        </li>
+                      )}
                       {resetLinesBefore(run.resets, c.case_id).map((line) => (
                         <li key={line} className="border-l-2 border-l-warning pl-2 text-xs text-warning">
                           {line}

@@ -12,9 +12,9 @@ use crate::common;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use v2_lib::autorun::plan::Reset;
+use v2_lib::autorun::plan::Pause;
 use v2_lib::autorun::preconditions::{NoDb, PreconditionDb, NEED_DB};
-use v2_lib::autorun::replay::{run_cases_planned, Browsers, CaseToRun, ResetGate, STOPPED_AT_RESET};
+use v2_lib::autorun::replay::{stopped_at_pause, run_cases_planned, Browsers, CaseToRun, ResetGate, STOPPED_AT_PAUSE, STOPPED_AT_RESET};
 use v2_lib::autorun::reset_wait::{AppGate, ResetWaits, NOT_WAITING};
 use v2_lib::autorun::{report, store, CaseScript, LocalRun, ResetRecord, RESET_CONTINUED, RESET_STOPPED};
 use v2_lib::browser::timing::Timing;
@@ -52,7 +52,7 @@ struct ToldGate {
 }
 
 impl ResetGate for ToldGate {
-    async fn wait(&mut self, reset: &Reset, remaining: &[i32], _cancel: &AtomicBool) -> bool {
+    async fn wait(&mut self, reset: &Pause, remaining: &[i32], _cancel: &AtomicBool) -> bool {
         self.asked.push((reset.before_case_id, remaining.to_vec(), self.closed.load(Ordering::SeqCst)));
         self.answer
     }
@@ -93,8 +93,10 @@ fn to_run(ids: &[i32]) -> Vec<CaseToRun> {
 }
 
 /// Before case 2, revert "cycle published", which case 1 changed.
-fn reset_before_2() -> Reset {
-    Reset {
+fn reset_before_2() -> Pause {
+    Pause {
+        batch: 2,
+        set: vec![],
         before_case_id: 2,
         names: vec!["cycle published".into()],
         changed_by: vec![("cycle published".into(), vec![1])],
@@ -194,11 +196,11 @@ async fn stop_ends_the_run_and_records_every_case_left_as_not_run() {
     assert_eq!(run.cases.len(), 3);
     assert_eq!(run.cases[0].proposed, "Passed");
     for c in &run.cases[1..] {
-        assert_eq!(c.reason, STOPPED_AT_RESET);
+        assert_eq!(c.reason, stopped_at_pause(2));
         assert_eq!(c.proposed, "");
         assert_eq!(c.verdict, "");
         assert!(!c.steps.is_empty());
-        assert!(c.steps.iter().flat_map(|s| &s.outcomes).all(|o| !o.ok && o.detail == STOPPED_AT_RESET));
+        assert!(c.steps.iter().flat_map(|s| &s.outcomes).all(|o| !o.ok && o.detail == stopped_at_pause(2)));
     }
     assert_eq!(run.resets.len(), 1);
     assert_eq!(run.resets[0].outcome, RESET_STOPPED);
@@ -260,6 +262,8 @@ async fn the_panel_is_told_ids_and_names_and_its_continue_reaches_only_the_waiti
         vec![AutorunResetNeeded {
             run_id: "run-app".into(),
             before_case_id: 2,
+            batch: 2,
+            set: vec![],
             names: vec!["cycle published".into()],
             changed_by: vec![("cycle published".into(), vec![1])],
             remaining: vec![2, 3],
@@ -289,7 +293,7 @@ async fn the_runs_own_stop_while_paused_counts_as_stop() {
 
     assert_eq!(b.opened, 1);
     assert_eq!(run.resets[0].outcome, RESET_STOPPED);
-    assert!(run.cases[1..].iter().all(|c| c.reason == STOPPED_AT_RESET), "{:?}", run.cases);
+    assert!(run.cases[1..].iter().all(|c| c.reason == stopped_at_pause(2)), "{:?}", run.cases);
     assert_eq!(waits.waiting(), None, "a stopped wait leaves nothing to answer");
 }
 
@@ -317,7 +321,7 @@ async fn closing_the_app_while_paused_stops_the_run_and_saves_it_as_stopped() {
     assert_eq!(saved.resets.len(), 1);
     assert_eq!(saved.resets[0].outcome, RESET_STOPPED);
     assert_eq!(saved.cases.len(), 3, "every case is on disk: none is left waiting");
-    assert!(saved.cases[1..].iter().all(|c| c.reason == STOPPED_AT_RESET));
+    assert!(saved.cases[1..].iter().all(|c| c.reason == stopped_at_pause(2)));
 }
 
 #[test]
@@ -328,6 +332,8 @@ fn the_resets_record_is_written_only_when_there_is_one() {
     let mut run = new_run("run-b");
     run.resets.push(ResetRecord {
         before_case_id: 2,
+        batch: 0,
+        set: vec![],
         names: vec!["cycle published".into()],
         changed_by: vec![("cycle published".into(), vec![1])],
         waited_ms: 1234,
@@ -382,6 +388,8 @@ fn the_report_shows_the_reset_line_between_the_cases() {
     }
     run.resets.push(ResetRecord {
         before_case_id: 2,
+        batch: 0,
+        set: vec![],
         names: vec!["cycle <published>".into(), "rota".into()],
         changed_by: vec![],
         waited_ms: 10,
@@ -419,11 +427,11 @@ fn the_run_plans_again_from_the_scripts_and_its_order_wins_over_the_order_sent()
     store::save_script(root, &marked(20, &["y"], &["x"])).unwrap();
     store::save_script(root, &marked(30, &[], &[])).unwrap();
     let want = v2_lib::commands::autorun::plan_at(root, 5, &[10, 20, 30], None);
-    assert_eq!(want.resets.len(), 1);
+    assert_eq!(want.pauses.len(), 1);
 
     let (list, resets) = planned_cases(root, 5, &to_run(&[10, 20, 30]));
     assert_eq!(list.iter().map(|c| c.case_id).collect::<Vec<_>>(), want.order);
-    assert_eq!(resets, want.resets);
+    assert_eq!(resets, want.pauses);
     assert_eq!(list[0].title, format!("case {}", want.order[0]), "each case keeps what was sent with it");
 
     // A saved order wins over whatever order arrives.
@@ -441,6 +449,8 @@ async fn waiting_gives_the_panels_payload_until_the_pause_is_answered() {
     let needed = AutorunResetNeeded {
         run_id: "run-w".into(),
         before_case_id: 2,
+        batch: 2,
+        set: vec![],
         names: vec!["cycle published".into()],
         changed_by: vec![("cycle published".into(), vec![1])],
         remaining: vec![2, 3],
@@ -456,4 +466,195 @@ async fn waiting_gives_the_panels_payload_until_the_pause_is_answered() {
     let (go_on, ()) = tokio::join!(waits.wait(needed.clone(), &cancel), answer);
     assert!(!go_on);
     assert_eq!(waits.waiting(), None);
+}
+
+// ------------------------------------------------------------ run batches
+
+/// A one-step script with one passing check that needs `state`.
+fn needing(case_id: i32, state: serde_json::Value) -> CaseScript {
+    serde_json::from_value(serde_json::json!({
+        "case_id": case_id,
+        "title": format!("case {case_id}"),
+        "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }],
+        "needs_state": state,
+    }))
+    .unwrap()
+}
+
+/// Batch 1 needs a setting: the run pauses before the first case opens any
+/// browser, then between the batches to change it; both pauses are on the
+/// run's record with their batch and what to set.
+#[tokio::test]
+async fn a_run_pauses_before_batch_1_when_it_needs_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &needing(1, serde_json::json!({ "Approval workflow": "ON" }))).unwrap();
+    store::save_script(root, &needing(2, serde_json::json!({ "Approval workflow": "OFF" }))).unwrap();
+    store::save_script(root, &needing(3, serde_json::json!({ "Approval workflow": "ON" }))).unwrap();
+    let (list, pauses) = planned_cases(root, 5, &to_run(&[1, 2, 3]));
+    assert_eq!(list.iter().map(|c| c.case_id).collect::<Vec<_>>(), vec![1, 3, 2]);
+    assert_eq!(pauses.iter().map(|p| (p.batch, p.before_case_id)).collect::<Vec<_>>(), vec![(1, 1), (2, 2)]);
+
+    let mut b = browsers();
+    let mut gate = ToldGate { answer: true, closed: Arc::clone(&b.closed), asked: vec![] };
+    let mut run = new_run("run-batches");
+    let cancel = AtomicBool::new(false);
+    run_cases_planned(
+        &mut b,
+        root,
+        "Acme",
+        "Web",
+        &mut run,
+        &list,
+        None,
+        false,
+        &quick(),
+        &cancel,
+        &no_db(),
+        &pauses,
+        &mut gate,
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
+
+    // Before case 1 nothing had opened or closed; before case 2, both
+    // cases of Batch 1 had closed their browsers.
+    assert_eq!(gate.asked, vec![(1, vec![1, 3, 2], 0), (2, vec![2], 2)]);
+    assert!(run.cases.iter().all(|c| c.proposed == "Passed"), "{:?}", run.cases);
+    let recorded: Vec<(u32, Vec<(String, String)>, String)> =
+        run.resets.iter().map(|r| (r.batch, r.set.clone(), r.outcome.clone())).collect();
+    let set = |v: &str| vec![("Approval workflow".to_string(), v.to_string())];
+    assert_eq!(
+        recorded,
+        vec![(1, set("ON"), RESET_CONTINUED.to_string()), (2, set("OFF"), RESET_CONTINUED.to_string())]
+    );
+    assert_eq!(store::load_run(root, "run-batches").unwrap().unwrap().resets, run.resets);
+}
+
+/// Stop before Batch 1: no browser opens and every case is recorded as not
+/// run.
+#[tokio::test]
+async fn stop_before_batch_1_runs_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &needing(1, serde_json::json!({ "Approval workflow": "ON" }))).unwrap();
+    let (list, pauses) = planned_cases(root, 5, &to_run(&[1]));
+    let mut b = browsers();
+    let mut gate = ToldGate { answer: false, closed: Arc::clone(&b.closed), asked: vec![] };
+    let mut run = new_run("run-stop-first");
+    let cancel = AtomicBool::new(false);
+    run_cases_planned(
+        &mut b, root, "Acme", "Web", &mut run, &list, None, false, &quick(), &cancel, &no_db(), &pauses, &mut gate,
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(b.opened, 0);
+    assert_eq!(run.cases.len(), 1);
+    assert_eq!(run.cases[0].reason, "not run: the run stopped at a pause before Batch 1");
+    assert_eq!(run.resets[0].outcome, RESET_STOPPED);
+}
+
+/// The panel is told the batch and the settings to set.
+#[tokio::test]
+async fn the_panel_is_told_the_batch_and_what_to_set() {
+    let waits = ResetWaits::new();
+    let told: Arc<Mutex<Vec<AutorunResetNeeded>>> = Arc::default();
+    let sink = Arc::clone(&told);
+    let notify = move |n: &AutorunResetNeeded| sink.lock().unwrap().push(n.clone());
+    let mut gate = app_gate(&waits, "run-set", &notify);
+    let pause = Pause {
+        batch: 1,
+        before_case_id: 4,
+        set: vec![("Approval workflow".into(), "ON".into())],
+        ..Pause::default()
+    };
+    let cancel = AtomicBool::new(false);
+    let answer = async {
+        until_waiting(&waits).await;
+        waits.answer("run-set", true).unwrap();
+    };
+    let (went_on, ()) = tokio::join!(gate.wait(&pause, &[4, 5], &cancel), answer);
+    assert!(went_on);
+    assert_eq!(
+        *told.lock().unwrap(),
+        vec![AutorunResetNeeded {
+            run_id: "run-set".into(),
+            before_case_id: 4,
+            batch: 1,
+            set: vec![("Approval workflow".into(), "ON".into())],
+            names: vec![],
+            changed_by: vec![],
+            remaining: vec![4, 5],
+        }]
+    );
+}
+
+/// The report groups the cases under their batches, with each pause and
+/// how it ended between them; a run recorded before batches has none.
+#[test]
+fn the_report_shows_batches_and_the_pauses_between_them() {
+    let mut run = new_run("run-report-batches");
+    for id in [1, 2, 3] {
+        run.cases.push(serde_json::from_value(serde_json::json!({
+            "case_id": id, "title": format!("case {id}"), "verdict": "", "note": "", "steps": [], "proposed": "Passed"
+        })).unwrap());
+    }
+    run.resets.push(ResetRecord {
+        before_case_id: 2,
+        batch: 2,
+        set: vec![("Approval workflow".into(), "OFF".into())],
+        names: vec!["cycle published".into()],
+        changed_by: vec![],
+        waited_ms: 10,
+        outcome: RESET_CONTINUED.into(),
+    });
+    assert_eq!(
+        report::reset_lines(&run.resets[0]),
+        vec![
+            "Set Approval workflow to OFF - continued".to_string(),
+            "Reset: revert \"cycle published\" - continued".to_string(),
+        ]
+    );
+    assert_eq!(report::batch_heading(&run, 1).as_deref(), Some("Batch 1"));
+    assert_eq!(report::batch_heading(&run, 2).as_deref(), Some("Batch 2"));
+    assert_eq!(report::batch_heading(&run, 3), None);
+    let html = report::build_with_downloads(&run, &[], "", &|_| false, &|_| None);
+    let b1 = html.find(">Batch 1<").unwrap_or_else(|| panic!("no Batch 1 in {html}"));
+    let one = html.find("<td class=\"id\">#1</td>").unwrap();
+    let b2 = html.find(">Batch 2<").unwrap();
+    let set = html.find("Set Approval workflow to OFF - continued").unwrap();
+    let two = html.find("<td class=\"id\">#2</td>").unwrap();
+    assert!(b1 < one && one < b2 && b2 < set && set < two, "{html}");
+
+    // Before Batch 1 the line asks to make sure.
+    let first = ResetRecord {
+        before_case_id: 1,
+        batch: 1,
+        set: vec![("Approval workflow".into(), "ON".into())],
+        outcome: RESET_STOPPED.into(),
+        ..ResetRecord::default()
+    };
+    assert_eq!(report::reset_lines(&first), vec!["Before Batch 1: make sure Approval workflow is ON - stopped".to_string()]);
+
+    // A run saved before batches shows no headings.
+    let mut old = run.clone();
+    old.resets[0].batch = 0;
+    assert_eq!(report::batch_heading(&old, 1), None);
+    assert!(!report::build_with_downloads(&old, &[], "", &|_| false, &|_| None).contains(">Batch "));
+}
+
+/// New runs name the batch they stopped before; the webview says the same
+/// words, and runs saved before batches keep their own.
+#[test]
+fn the_not_run_reason_names_the_batch_and_the_webview_agrees() {
+    assert_eq!(stopped_at_pause(3), "not run: the run stopped at a pause before Batch 3");
+    let ts = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/screens/AutoRun/plan.ts"))
+        .unwrap()
+        .replace("
+", "
+");
+    assert!(ts.contains(&format!("export const STOPPED_AT_PAUSE = \"{STOPPED_AT_PAUSE}\";")), "plan.ts disagrees");
+    assert!(ts.contains(&format!("export const STOPPED_AT_RESET = \"{STOPPED_AT_RESET}\";")), "plan.ts disagrees");
 }

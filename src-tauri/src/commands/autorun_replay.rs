@@ -5,7 +5,7 @@
 
 use crate::api_templates::held::{HeldBrowser, Keeps};
 use crate::autorun::one_browser::{Launcher, OneBrowser};
-use crate::autorun::plan::Reset;
+use crate::autorun::plan::Pause;
 use crate::autorun::replay::{self, Browsers, CaseToRun};
 use crate::autorun::reset_wait::{self, AppGate};
 use crate::autorun::{sessions, store, LocalRun};
@@ -394,12 +394,12 @@ pub fn auto_run_replay_cancel() {
     CANCEL.store(true, Ordering::SeqCst);
 }
 
-/// The selection in the order to run it, and the reset points in that
-/// order: the plan worked out from the scripts on disk and the PBI's own
+/// The selection in the order to run it, and the pauses in that order
+/// (reset points, and settings to set before a batch): the plan worked out from the scripts on disk and the PBI's own
 /// order (`autorun::auto_run_plan`'s `plan_at`), whatever order the cases
 /// were sent in. Where the two orders differ the plan wins, and the
 /// difference is logged (ids only).
-pub fn planned_cases(root: &std::path::Path, pbi_id: i32, sent: &[CaseToRun]) -> (Vec<CaseToRun>, Vec<Reset>) {
+pub fn planned_cases(root: &std::path::Path, pbi_id: i32, sent: &[CaseToRun]) -> (Vec<CaseToRun>, Vec<Pause>) {
     let ids: Vec<i32> = sent.iter().map(|c| c.case_id).collect();
     let plan = super::autorun::plan_at(root, pbi_id, &ids, None);
     if plan.order != ids {
@@ -409,7 +409,7 @@ pub fn planned_cases(root: &std::path::Path, pbi_id: i32, sent: &[CaseToRun]) ->
         ));
     }
     let list = plan.order.iter().filter_map(|id| sent.iter().find(|c| c.case_id == *id).cloned()).collect();
-    (list, plan.resets)
+    (list, plan.pauses)
 }
 
 /// The person's answer at the reset point run `run_id` is waiting at:

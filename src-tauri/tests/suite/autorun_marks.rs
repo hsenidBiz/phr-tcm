@@ -212,3 +212,80 @@ fn a_mark_name_treats_a_unicode_space_as_a_space() {
         assert!(why.iter().any(|w| w.contains("is listed twice")), "{sp:?}: {why:?}");
     }
 }
+
+// ------------------------------------------------------------ settings
+
+/// Settings (`needs_state`) are held to the marks' rules, and one setting
+/// spelled twice with two different values contradicts itself: refused with
+/// a plain sentence. The same value twice is fine.
+#[test]
+fn a_setting_that_needs_two_values_is_refused() {
+    use std::collections::BTreeMap;
+    use v2_lib::autorun::marks::check_state;
+    let map = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<BTreeMap<_, _>>();
+
+    assert_eq!(check_state(&map(&[("Approval workflow", "ON"), ("Rating scale", "5 point")])), Ok(()));
+    assert_eq!(check_state(&map(&[("Approval workflow", "ON"), ("approval  workflow", "on")])), Ok(()));
+    assert_eq!(
+        check_state(&map(&[("Approval workflow", "ON"), ("approval workflow", "OFF")])),
+        Err(vec!["needs_state: \"Approval workflow\" cannot need both \"ON\" and \"OFF\" - pick one value".to_string()])
+    );
+    assert_eq!(
+        check_state(&map(&[(" ", "ON"), ("Rating scale", " ")])),
+        Err(vec![
+            "needs_state: a setting's name cannot be empty".to_string(),
+            "needs_state: \"Rating scale\" needs a value".to_string(),
+        ])
+    );
+    let long = "v".repeat(61);
+    assert_eq!(
+        check_state(&map(&[("Rating scale", &long)])),
+        Err(vec!["needs_state: the value for \"Rating scale\" is longer than 60 characters".to_string()])
+    );
+    let eleven: Vec<(String, String)> = (0..11).map(|i| (format!("setting {i}"), "on".to_string())).collect();
+    let eleven: BTreeMap<String, String> = eleven.into_iter().collect();
+    assert_eq!(check_state(&eleven), Err(vec!["needs_state holds more than 10 settings".to_string()]));
+}
+
+/// Every door refuses a contradiction in a script's settings, and the
+/// editor keeps good ones as written.
+#[tokio::test]
+async fn every_save_path_refuses_a_contradictory_setting() {
+    use v2_lib::ai_bridge::{route, BridgeContext};
+    use v2_lib::autorun::store::{load_script, set_root};
+    use v2_lib::commands::autorun::{import_scripts_from_path, save_script_from_editor};
+
+    let _root = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("data");
+    let with_state = |case_id: i32, state: Value| {
+        let mut v = script_with(case_id, json!([]), json!([]));
+        v["needs_state"] = state;
+        v
+    };
+    let bad = json!({ "Approval workflow": "ON", "approval workflow": "OFF" });
+    let expected = |id: i32| {
+        format!("case {id}: needs_state: \"Approval workflow\" cannot need both \"ON\" and \"OFF\" - pick one value")
+    };
+
+    let script: CaseScript = serde_json::from_value(with_state(7, bad.clone())).unwrap();
+    assert_eq!(save_script_from_editor(&root, "acme", "Web", script).unwrap_err(), expected(7));
+    assert!(load_script(&root, 7).unwrap().is_none());
+
+    let file = dir.path().join("bundle.json");
+    std::fs::write(&file, json!([with_state(9, bad.clone())]).to_string()).unwrap();
+    assert_eq!(import_scripts_from_path(&root, "acme", "Web", file.to_str().unwrap(), None).unwrap_err(), expected(9));
+
+    set_root(root.clone());
+    let ctx = BridgeContext { org: "acme".into(), project: "Web".into(), ..BridgeContext::default() };
+    let body = json!([with_state(10, bad.clone())]).to_string();
+    let (status, out) = route(&ctx, None, "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!((status, out), (400, expected(10)));
+
+    let good: CaseScript = serde_json::from_value(with_state(11, json!({ "Approval workflow": "ON" }))).unwrap();
+    save_script_from_editor(&root, "acme", "Web", good).unwrap();
+    let back = load_script(&root, 11).unwrap().unwrap();
+    assert_eq!(back.needs_state.get("Approval workflow").map(String::as_str), Some("ON"));
+    let text = serde_json::to_string(&back).unwrap();
+    assert!(text.contains("\"needs_state\":{\"Approval workflow\":\"ON\"}"), "{text}");
+}

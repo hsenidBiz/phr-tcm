@@ -13,7 +13,7 @@
 // it without touching the run, and the title-bar pill opens it again from
 // any section.
 
-import { useEffect, useId, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { commands, type PlanView, type StepRecord } from "../../bindings";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import { Button } from "../../components/ui/button";
@@ -46,8 +46,9 @@ import { cn } from "../../lib/cn";
 import { DISCOVERY_BUSY, useDiscoveryActiveNow } from "../../lib/discoveryActive";
 import { dbReadAccessOn } from "../../lib/mcpTools";
 import { useMediaQuery } from "../../lib/useMediaQuery";
-import { resetLines } from "./plan";
+import { batchLabel, pauseLines, planBatches } from "./plan";
 import ResetNeededPanel from "./ResetNeededPanel";
+import BatchList from "./BatchList";
 
 export { statusOf, type WrittenStep } from "../../lib/backgroundRun";
 
@@ -87,21 +88,20 @@ export function runAccountKey(org: string, project: string): string {
   return `tcm-v2-autorun-run-account:${org}/${project}`;
 }
 
-/** Each phase with its case count, and a reset line at each boundary. */
+/** Each batch with its case count, and the pause before it: settings to
+ * set and state to put back. */
 function PlanSummary({ plan, cases }: { plan: PlanView; cases: { id: number; title: string }[] }) {
   const titleOf = (id: number) => cases.find((c) => c.id === id)?.title;
   return (
     <div aria-label="Run plan" className="space-y-1 rounded-md border border-border bg-surface-2 p-2 text-xs">
-      {plan.phases.map((ids, i) => {
-        const lines = i === 0 ? [] : plan.resets.filter((r) => r.before_case_id === ids[0]).flatMap((r) => resetLines(r, titleOf));
+      {planBatches(plan).map((b) => {
+        const lines = b.pause ? pauseLines(b.pause, titleOf) : [];
         return (
-          <div key={ids[0]} className="space-y-1">
+          <div key={b.n} className="space-y-1">
+            <p className="text-text">{batchLabel(b.n, b.ids.length)}</p>
             {lines.map((l) => (
               <p key={l} className="border-l-2 border-l-warning pl-2 text-warning">{l}</p>
             ))}
-            <p className="text-text">
-              Phase {i + 1}: {ids.length} {ids.length === 1 ? "case" : "cases"}
-            </p>
           </div>
         );
       })}
@@ -253,6 +253,8 @@ function RunWindow({ run }: { run: BackgroundRun }) {
 
   /** The case running now: the newest event's, unless that said "done". */
   const runningId = latest && latest.phase !== "done" ? latest.caseId : null;
+  /** The plan's batches, headed in the case list; none without pauses. */
+  const batches = planBatches(plan);
   /** The case after the running one - or, between two cases, after the one
    * that just finished, which is about to start. */
   const afterId = runningId ?? (latest ? latest.caseId : null);
@@ -298,7 +300,7 @@ function RunWindow({ run }: { run: BackgroundRun }) {
       {settingUp ? (
         <div className="space-y-3">
           {run.error && <p className="text-xs text-danger">{run.error}</p>}
-          {plan && plan.phases.length > 1 && <PlanSummary plan={plan} cases={cases} />}
+          {planBatches(plan).length > 0 && plan && <PlanSummary plan={plan} cases={cases} />}
           <label className="flex items-center gap-2 text-xs text-muted">
             Sign in as
             <Select
@@ -413,6 +415,7 @@ function RunWindow({ run }: { run: BackgroundRun }) {
               case {position.index + 1} of {position.total}
             </p>
           )}
+          <BatchList plan={plan} currentId={resetNeeded ? resetNeeded.before_case_id : afterId} />
           {resetNeeded && (
             <ResetNeededPanel
               reset={resetNeeded}
@@ -444,9 +447,13 @@ function RunWindow({ run }: { run: BackgroundRun }) {
               const open = isOpen(c.id);
               const running = c.id === runningId;
               const bodyId = `${idPrefix}-steps-${c.id}`;
+              const batch = batches.find((b) => b.ids[0] === c.id);
               return (
+                <Fragment key={c.id}>
+                {batch && (
+                  <li className="pt-1 text-xs font-semibold text-text">{batchLabel(batch.n, batch.ids.length)}</li>
+                )}
                 <li
-                  key={c.id}
                   ref={(el) => {
                     if (el) rowRefs.current.set(c.id, el);
                     else rowRefs.current.delete(c.id);
@@ -491,6 +498,7 @@ function RunWindow({ run }: { run: BackgroundRun }) {
                     )}
                   </div>
                 </li>
+                </Fragment>
               );
             })}
           </ul>

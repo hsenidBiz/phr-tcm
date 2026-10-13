@@ -137,6 +137,15 @@ pub struct CaseScript {
     /// same names as `changes`. Written only when there are any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub needs_unchanged: Vec<String>,
+    /// Settings this case needs, by name, each with the value it needs:
+    /// `{"Approval workflow": "ON"}`. A case that does not name a setting
+    /// does not care about it. The planner groups cases into batches that
+    /// agree on every setting they name, and the run pauses between
+    /// batches for a person to set what changes (`plan`). Names and values
+    /// compare by `marks::normalise`; every save validates them
+    /// (`marks::check_state`). Written only when there are any.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub needs_state: std::collections::BTreeMap<String, String>,
     /// When the script was last saved, UTC "YYYY-MM-DDTHH:MM:SSZ" - set by
     /// every save (`store::save_scripts_atomically`), whatever was sent.
     /// Absent on scripts saved before it existed.
@@ -408,20 +417,26 @@ pub struct LocalRun {
     /// `None` for a run saved before environments existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<String>,
-    /// Each reset point the run paused at, in run order, with how it ended
-    /// (`reset_wait`). Written only when there are any, so a run without
-    /// reset points reads exactly as it always did.
+    /// Each pause the run made between batches (and before Batch 1, when it
+    /// needs settings), in run order, with how it ended (`reset_wait`).
+    /// Written only when there are any, so a run without pauses reads
+    /// exactly as it always did.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resets: Vec<ResetRecord>,
 }
 
-/// One reset point a run paused at: before `before_case_id` ran, a person
-/// was asked to revert `names` (`changed_by` gives, per name, the cases
-/// that changed it). `waited_ms` is the wall time spent paused; `outcome`
-/// is "continued" or "stopped".
+/// One pause a run made: before `before_case_id` ran, which opens batch
+/// `batch`, a person was asked to set `set` (setting, value) and revert
+/// `names` (`changed_by` gives, per name, the cases that changed it).
+/// `waited_ms` is the wall time spent paused; `outcome` is "continued" or
+/// "stopped". `batch` is 0 on a run saved before batches existed.
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct ResetRecord {
     pub before_case_id: i32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub batch: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub set: Vec<(String, String)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub names: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

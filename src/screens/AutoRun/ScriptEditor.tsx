@@ -6,7 +6,7 @@
 // readable view returns once the JSON parses.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type Action, type StepScript } from "../../bindings";
 import { loadScript } from "../../lib/scriptBatch";
@@ -112,6 +112,12 @@ export default function ScriptEditor({
   const [pickedNeeds, setPickedNeeds] = useState<string[] | null>(null);
   const changes = pickedChanges ?? existing.data?.changes ?? [];
   const needsUnchanged = pickedNeeds ?? existing.data?.needs_unchanged ?? [];
+  // The settings the case needs, each with its value. Same rule: null =
+  // untouched. The save refuses one setting needed at two values.
+  const [pickedState, setPickedState] = useState<[string, string][] | null>(null);
+  const needsState: [string, string][] =
+    pickedState ??
+    Object.entries(existing.data?.needs_state ?? {}).flatMap(([k, v]) => (typeof v === "string" ? [[k, v] as [string, string]] : []));
 
   const [text, setText] = useState<string | null>(null);
   const [problem, setProblem] = useState("");
@@ -202,6 +208,7 @@ export default function ScriptEditor({
       // stored for the case whatever a save sends.
       ...(changes.length ? { changes } : {}),
       ...(needsUnchanged.length ? { needs_unchanged: needsUnchanged } : {}),
+      ...(needsState.length ? { needs_state: Object.fromEntries(needsState) } : {}),
       // Settings this editor has no control for are carried through as the
       // script has them, so a save from here never drops them.
       ...(existing.data?.fail_on_unexpected_dialog ? { fail_on_unexpected_dialog: true } : {}),
@@ -353,18 +360,23 @@ export default function ScriptEditor({
             </div>
           )}
 
-          <MarkRow
-            label="Changes"
-            noun="change"
-            names={changes}
-            onChange={setPickedChanges}
-          />
-          <MarkRow
-            label="Needs unchanged"
-            noun="needs unchanged"
-            names={needsUnchanged}
-            onChange={setPickedNeeds}
-          />
+          {/* Side by side where there is room, so the settings row below
+              them costs the window no height. */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <MarkRow
+              label="Changes"
+              noun="change"
+              names={changes}
+              onChange={setPickedChanges}
+            />
+            <MarkRow
+              label="Needs unchanged"
+              noun="needs unchanged"
+              names={needsUnchanged}
+              onChange={setPickedNeeds}
+            />
+          </div>
+          <SettingRow settings={needsState} onChange={setPickedState} />
 
           <SetupSection org={org} project={project} caseId={caseId} />
 
@@ -556,6 +568,81 @@ function ReadableScript({
  * takes it: trimmed, inner whitespace collapsed, lowercased. */
 function markKey(name: string): string {
   return name.trim().split(/\s+/).join(" ").toLowerCase();
+}
+
+/** The settings a case needs: each `name: value` a chip with a remove
+ * button, and a setting box and a value box to add one with Enter or Add.
+ * A setting already in the row, as `markKey` compares names, takes the new
+ * value. The run pauses between batches to change them. */
+function SettingRow({
+  settings,
+  onChange,
+}: {
+  settings: [string, string][];
+  onChange: (settings: [string, string][]) => void;
+}) {
+  const label = "Needs these settings";
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+  const add = () => {
+    const n = name.trim();
+    const v = value.trim();
+    if (!n || !v) return;
+    setName("");
+    setValue("");
+    onChange([...settings.filter(([k]) => markKey(k) !== markKey(n)), [n, v]]);
+  };
+  const onEnter = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      add();
+    }
+  };
+  return (
+    <div className="space-y-1">
+      <span className="text-xs font-medium text-muted">{label}</span>
+      {settings.length > 0 && (
+        <ul aria-label={label} className="flex flex-wrap gap-1 text-xs">
+          {settings.map(([k, v], i) => (
+            <li key={`${i}-${k}`} className="flex items-center gap-1 rounded bg-surface-2 py-0.5 pl-2 text-text">
+              {k}: {v}
+              <Button
+                size="sm"
+                variant="ghost"
+                className="px-1.5 py-0.5"
+                aria-label={`Remove setting ${k}`}
+                onClick={() => onChange(settings.filter((_, j) => j !== i))}
+              >
+                <IconRemove aria-hidden />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex items-center gap-2">
+        <Input
+          aria-label="Setting"
+          placeholder="Setting"
+          className="min-w-0 flex-1 px-2 py-1 text-xs"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={onEnter}
+        />
+        <Input
+          aria-label="Value"
+          placeholder="Value"
+          className="w-32 px-2 py-1 text-xs"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={onEnter}
+        />
+        <Button size="sm" variant="outline" aria-label="Add setting" onClick={add}>
+          <IconAdd aria-hidden />
+          Add
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 /** One row of marks: each name a chip with a remove button, and a box to

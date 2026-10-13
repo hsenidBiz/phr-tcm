@@ -1,5 +1,6 @@
-// Auto Run's Execution order dialog: the planned order with its reset
-// points, moving cases, and the two ways of keeping or dropping an order.
+// Auto Run's Execution order dialog: the planned order with its batches and
+// the pauses between them, moving cases, and the two ways of keeping or
+// dropping an order.
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -20,7 +21,7 @@ const CASES = [
 const PLAN = {
   order: [1, 2, 3],
   phases: [[1], [2, 3]],
-  resets: [{ before_case_id: 2, names: ["Cycle"], changed_by: [["Cycle", [1]]] }],
+  pauses: [{ batch: 2, before_case_id: 2, set: [], names: ["Cycle"], changed_by: [["Cycle", [1]]] }],
   counts: null,
   saved: false,
 };
@@ -48,6 +49,38 @@ test("lists the planned order with the reset line between its rows", async () =>
   expect(screen.queryByText(/this order needs/)).not.toBeInTheDocument();
 });
 
+test("each batch has a heading with its size, and the pause before it says what to set", async () => {
+  mount({
+    order: [1, 2, 3],
+    phases: [[1], [2, 3]],
+    pauses: [
+      { batch: 1, before_case_id: 1, set: [["Approval workflow", "ON"]], names: [], changed_by: [] },
+      { batch: 2, before_case_id: 2, set: [["Approval workflow", "OFF"]], names: ["Cycle"], changed_by: [["Cycle", [1]]] },
+    ],
+    counts: null,
+    saved: false,
+  });
+  expect(await screen.findByRole("heading", { name: "Batch 1 (1 case)" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Batch 2 (2 cases)" })).toBeInTheDocument();
+  expect(screen.getByText("Make sure Approval workflow is ON")).toBeInTheDocument();
+  expect(screen.getByText("Set Approval workflow to OFF")).toBeInTheDocument();
+  // The heading first, then the pause before that batch, as in the review.
+  const two = screen.getByRole("heading", { name: "Batch 2 (2 cases)" });
+  const set = screen.getByText("Set Approval workflow to OFF");
+  expect(two.compareDocumentPosition(set) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByText('Reset: revert "Cycle" (changed by #1 Publish the cycle)')).toBeInTheDocument();
+  // The rows are still the cases alone, in order.
+  expect(rows()[0]).toContain("Publish the cycle");
+  expect(rows()[1]).toContain("Open the report");
+});
+
+test("a plan with no pause shows no batch headings", async () => {
+  mount({ order: [1, 2, 3], phases: [[1, 2, 3]], pauses: [], counts: null, saved: false });
+  await waitFor(() => expect(rows()[0]).toContain("Publish the cycle"));
+  await new Promise((r) => setTimeout(r, 20));
+  expect(screen.queryByRole("heading", { name: /^Batch / })).not.toBeInTheDocument();
+});
+
 test("up and down reorder, Save order sends the new order and closes", async () => {
   const { calls, onClose } = mount();
   await screen.findByText(/Reset: revert/);
@@ -67,9 +100,9 @@ test("Use suggested order is offered only when an order is saved", async () => {
   expect(screen.queryByRole("button", { name: "Use suggested order" })).not.toBeInTheDocument();
 });
 
-test("a saved order that needs more resets says so, and Use suggested order calls clear_order", async () => {
+test("a saved order that needs more pauses says so, and Use suggested order calls clear_order", async () => {
   const { calls, onClose } = mount({ ...PLAN, saved: true, counts: [3, 1] });
-  expect(await screen.findByText("this order needs 3 resets; the suggested order needs 1")).toBeInTheDocument();
+  expect(await screen.findByText("this order needs 3 pauses; the suggested order needs 1")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Use suggested order" }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
   expect(calls.find((c) => c.cmd === "auto_run_clear_order")?.args).toEqual({ pbiId: 42 });
@@ -82,9 +115,9 @@ test("moving a case asks again and shows the new reset lines and count", async (
     return {
       order,
       phases: [[3], [1], [2]],
-      resets: [
-        { before_case_id: 1, names: ["Cycle"], changed_by: [["Cycle", [3]]] },
-        { before_case_id: 2, names: ["Cycle"], changed_by: [["Cycle", [1]]] },
+      pauses: [
+        { batch: 2, before_case_id: 1, set: [], names: ["Cycle"], changed_by: [["Cycle", [3]]] },
+        { batch: 3, before_case_id: 2, set: [], names: ["Cycle"], changed_by: [["Cycle", [1]]] },
       ],
       counts: [2, 1],
       saved: false,
@@ -93,7 +126,7 @@ test("moving a case asks again and shows the new reset lines and count", async (
   await screen.findByText(/Reset: revert/);
   fireEvent.click(screen.getByRole("button", { name: "Move #3 up" }));
   fireEvent.click(screen.getByRole("button", { name: "Move #3 up" }));
-  expect(await screen.findByText("this order needs 2 resets; the suggested order needs 1")).toBeInTheDocument();
+  expect(await screen.findByText("this order needs 2 pauses; the suggested order needs 1")).toBeInTheDocument();
   expect(screen.getByText('Reset: revert "Cycle" (changed by #3 Close the cycle)')).toBeInTheDocument();
   expect(asked[asked.length - 1]).toEqual([3, 1, 2]);
   // The baseline is the first plan: the moved list can be saved.
@@ -117,8 +150,8 @@ test("an older answer does not overwrite a newer one", async () => {
   await waitFor(() => expect(waiting).toHaveLength(2));
   const reply = (order: number[], who: number) => ({
     order,
-    phases: [order],
-    resets: [{ before_case_id: order[1], names: ["N"], changed_by: [["N", [who]]] }],
+    phases: [[order[0]], order.slice(1)],
+    pauses: [{ batch: 2, before_case_id: order[1], set: [], names: ["N"], changed_by: [["N", [who]]] }],
     counts: null,
     saved: false,
   });
@@ -141,7 +174,7 @@ test("when the plan cannot be worked out it says so and Save order is off", asyn
 });
 
 test("a case whose title is unknown falls back to its number alone", async () => {
-  mount({ ...PLAN, resets: [{ before_case_id: 2, names: ["Cycle"], changed_by: [["Cycle", [99]]] }] });
+  mount({ ...PLAN, pauses: [{ batch: 2, before_case_id: 2, set: [], names: ["Cycle"], changed_by: [["Cycle", [99]]] }] });
   expect(await screen.findByText('Reset: revert "Cycle" (changed by #99)')).toBeInTheDocument();
 });
 

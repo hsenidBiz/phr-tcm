@@ -1,7 +1,9 @@
 // Auto Run's own execution order for a PBI. The list starts in the planned
-// order (the saved one, else the suggested one) with a line between rows
-// wherever the shared state has to be put back. Run Tests has its own
-// order and this does not touch it.
+// order (the saved one, else the suggested one). When the run pauses, the
+// list is split into batches: a "Batch N (k cases)" heading, then the pause
+// before that batch (settings to set, shared state to put back), then its
+// cases - the order the review, Past runs and the report use too. Run Tests
+// has its own order and this does not touch it.
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { commands, type PlanView } from "../../bindings";
@@ -13,7 +15,7 @@ import { unwrapStr } from "../../lib/ipc";
 import { logUi } from "../../lib/uiLog";
 import type { SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList from "../ManageCases/CaseOrderList";
-import { fetchPlan, resetLines } from "./plan";
+import { batchLabel, fetchPlan, pauseLines, planBatches } from "./plan";
 
 export default function ExecutionOrderDialog({
   org,
@@ -110,7 +112,7 @@ export default function ExecutionOrderDialog({
       </p>
       {plan?.counts && (
         <p className="text-xs text-warning">
-          {`this order needs ${plan.counts[0]} resets; the suggested order needs ${plan.counts[1]}`}
+          {`this order needs ${plan.counts[0]} pauses; the suggested order needs ${plan.counts[1]}`}
         </p>
       )}
       {!loaded && <p className="text-xs text-muted">Working out the order…</p>}
@@ -126,16 +128,19 @@ export default function ExecutionOrderDialog({
             ariaLabel="Auto Run execution order"
             disabled={busy}
             noteBefore={(id) => {
-              if (!plan) return null;
-              const lines = plan.resets
-                .filter((r) => r.before_case_id === id)
-                .flatMap((r) => resetLines(r, titleOf));
-              if (lines.length === 0) return null;
+              const batch = planBatches(plan).find((b) => b.ids[0] === id);
+              if (!batch) return null;
+              const lines = batch.pause ? pauseLines(batch.pause, titleOf) : [];
               return (
-                <div className="space-y-0.5 border-l-2 border-l-warning bg-surface-2 px-3 py-1.5 text-xs text-warning">
-                  {lines.map((l) => (
-                    <p key={l}>{l}</p>
-                  ))}
+                <div className="space-y-1 pt-1">
+                  <h3 className="text-xs font-semibold text-text">{batchLabel(batch.n, batch.ids.length)}</h3>
+                  {lines.length > 0 && (
+                    <div className="space-y-0.5 border-l-2 border-l-warning bg-surface-2 px-3 py-1.5 text-xs text-warning">
+                      {lines.map((l) => (
+                        <p key={l}>{l}</p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             }}

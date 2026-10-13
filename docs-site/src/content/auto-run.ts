@@ -616,7 +616,7 @@ export const autoRun: Screen = {
       does:
         "Starts the run. The window follows it case by case, and each case can be opened to see its steps as they go, with the lines of a component grouped under its name; **Stop** ends the run after the step it is on. " +
         "**Run in background** (or Escape) closes the window and the run carries on: a pill in the window's title bar shows how far it has got, such as **Auto Run 3 of 8**, and clicking it opens the window again from any part of the app. " +
-        "At a reset point the pill turns amber and reads **Reset needed**; click it to Continue or Stop. " +
+        "When the run pauses before a batch the pill turns amber and reads, for example, **Paused before Batch 2**; click it to Continue or Stop. " +
         "When the run finishes with its window open, its review opens. Finished in the background, a message and the pill say **Run finished, Review**: click either to open the review on **Past runs**. " +
         "While a run is going, the other Run buttons wait for it. " +
         "While your assistant's discovery is using the Auto Run browser and no run is going, the pill reads **Discovering**, and no run can start until **End discovery** (or the assistant) ends it.",
@@ -966,8 +966,18 @@ export const autoRun: Screen = {
         "Press **Run N unattended**.",
         "Choose who to sign in as and whether to watch, then press **Start**.",
         "To carry on with other work, press **Run in background**. The pill in the title bar shows how far the run has got; click it to open the run again.",
-        "If the pill turns amber and reads **Reset needed**, click it, put the named data back, and press **Continue**.",
+        "If the pill turns amber and reads **Paused before Batch 2** (or another batch), click it, do what the window lists under **Set** and **Put back**, and press **Continue**.",
         "When the run finishes its review opens (from the background, click **Review** on the message or the pill): confirm each case, or press **Accept all**, then **Send to Azure DevOps**.",
+      ],
+    },
+    {
+      title: "Run cases that need different settings",
+      steps: [
+        "In the case's script, under **Needs these settings**, type the setting and the value the case needs, such as **Approval workflow** and **ON**, and press **Add**. A case that does not name a setting runs with it either way.",
+        "Under **Changes** and **Needs unchanged**, name shared data a case changes, such as a published cycle, and the cases that need it as it was.",
+        "Run the selection. Auto Run puts cases that need the same settings together, in as few batches as it can, and shows each one as **Batch 1 (6 cases)**, **Batch 2 (4 cases)** and so on.",
+        "Before each batch the run pauses: under **Set** it lists the settings to change, such as **Set Approval workflow to OFF**, and under **Put back** the data to put back. Do them in the app you test and press **Continue**, or **Stop** to end the run there.",
+        "The run window says which batch is running, such as **Batch 2 of 3**. The review and the report list the cases under their batches, with each pause and whether the run continued.",
       ],
     },
     {
