@@ -53,6 +53,16 @@ fn the_page_under_test_is_never_throttled_for_being_in_the_background() {
     }
 }
 
+/// Edge signs a new profile into the Windows account and syncs it, so the
+/// person's extensions arrive in the throwaway profile and one opens a tab
+/// over the page under test, which then stops drawing and stops answering
+/// role lookups (`browser_live::role_lookups_keep_answering_...`).
+#[test]
+fn the_throwaway_profile_is_never_synced() {
+    let args = launch_args(9666, Path::new(r"C:\tmp\p"));
+    assert!(args.contains(&"--disable-sync".to_string()), "{args:?}");
+}
+
 /// Extra switches are for the live tests only (they run headless so they
 /// do not take over the desktop). The app's own arguments must stay
 /// exactly as they were, with the start page last.

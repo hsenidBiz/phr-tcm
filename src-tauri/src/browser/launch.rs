@@ -87,6 +87,13 @@ pub fn edge_candidates(program_files: &str, program_files_x86: &str) -> Vec<Path
 /// crawl, and a run that was fine while somebody watched it fails the
 /// moment the window is put in the background. They do not hide the window
 /// and they do not change what the page does - only when it gets to do it.
+///
+/// `--disable-sync` keeps the throwaway profile throwaway. Edge signs a new
+/// profile into the Windows account by itself and syncs it: the person's
+/// extensions install, one opens a tab of its own, and that tab is shown
+/// instead of the page under test. A page that is not shown draws no
+/// frames, and every role lookup (`Accessibility.queryAXTree`, which
+/// answers only after a frame) then goes unanswered.
 pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
     vec![
         format!("--remote-debugging-port={port}"),
@@ -97,6 +104,7 @@ pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
         "--disable-background-timer-throttling".to_string(),
         "--disable-backgrounding-occluded-windows".to_string(),
         "--disable-renderer-backgrounding".to_string(),
+        "--disable-sync".to_string(),
         "about:blank".to_string(),
     ]
 }
