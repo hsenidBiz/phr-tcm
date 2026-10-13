@@ -225,6 +225,20 @@ fn name_problem(f: &Fixture, c: &Creates, uses_prefix: bool) -> Option<String> {
     (uses_prefix && !step.params.values().any(starts_with_prefix)).then(|| name_without_prefix(&c.kind, name.0))
 }
 
+/// How a fixture names what it creates, checked where a fixture is SAVED
+/// (`fixture_store::save`), never where one runs: a fixture saved before
+/// these rules keeps running (its run warns about a name without the
+/// prefix, as it always did). Each `creates` from one creating step whose
+/// name is its id's own capture (`name_is_the_id`), or whose step sends no
+/// value starting with `{{prefix}}` (`name_without_prefix`, only when the
+/// fixture uses `{{prefix}}` at all - one that never does is told so by
+/// `validate`'s `NEEDS_PREFIX`).
+pub fn naming_problems(f: &Fixture) -> Vec<String> {
+    let uses_prefix =
+        f.steps.iter().any(|s| s.params.values().any(|v| exec::placeholders(v).iter().any(|n| n == "prefix")));
+    f.creates.iter().filter_map(|c| name_problem(f, c, uses_prefix)).collect()
+}
+
 /// Whether `c`'s id and name are both `{{steps.<m>.<x>}}` of the same step
 /// m, and step m's template creates: its effect is `create` and it sends at
 /// least one POST. A step that only reads (a GET) or edits found something
@@ -300,10 +314,6 @@ pub fn validate(
         // and the id and the name are that one step's.
         if from_steps && !from_one_creating_step(f, templates, c) {
             problems.push(creates_one_step(&c.kind));
-        } else if from_steps {
-            // A fixture that never uses {{prefix}} is told so once
-            // (`NEEDS_PREFIX`), not once per thing it creates.
-            problems.extend(name_problem(f, c, uses_prefix));
         }
     }
 

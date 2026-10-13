@@ -74,6 +74,12 @@ pub fn save(root: &Path, org: &str, project: &str, f: &Fixture) -> Result<(), Ve
     let lookup = |id: &str| template_store::load(root, org, project, id).ok().flatten();
     let flows = |id: &str| super::flow_store::load(root, org, project, id).ok().flatten();
     validate(f, &lookup, &flows)?;
+    // Only a save is held to how what it creates is named: a fixture saved
+    // before that rule still runs (`fixture::naming_problems`).
+    let naming = super::fixture::naming_problems(f);
+    if !naming.is_empty() {
+        return Err(naming);
+    }
     let dir = fixtures_dir(root, org, project);
     std::fs::create_dir_all(&dir).map_err(|e| vec![e.to_string()])?;
     let json = serde_json::to_string_pretty(f).map_err(|e| vec![e.to_string()])?;
