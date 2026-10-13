@@ -39,7 +39,7 @@ function mount(opts: { update?: (args: Record<string, unknown>) => ExportResult 
       if (cmd === "list_test_case_fields") return [];
       if (cmd === "pw_handoff") {
         const ids = args.cases as number[];
-        return [{ seg: "sl/admin/pm/wizard", case_ids: ids, stems: [], stem: null, prompt: `finish ${ids.join(" ")}`, problem: null }];
+        return [{ seg: "sl/admin/pm", stem: "wizard", case_ids: ids, prompt: `finish ${ids.join(" ")}`, problem: null, already: [] }];
       }
       if (cmd === "pw_sync_update" || cmd === "pw_sync_add_new") {
         const cases = (args.cases as number[] | undefined) ?? ROWS.filter((r) => r.has_script && !r.in_repo).map((r) => r.case_id);

@@ -1,15 +1,16 @@
 //! Finish in the repo (`pw_repo::handoff`): the prompt that runs `/gen-test`
-//! steps 4, 5, 6 and 7 on what an export wrote, one per `<seg>`, and the
-//! refusals. Each clone is made here in a temp folder whose path has a
-//! space. Every id and name is made up.
+//! steps 4, 5, 6 and 7 on what an export wrote, one per test-case file into
+//! the spec of the same stem, and every refusal. Each clone is made here in a
+//! temp folder whose path has a space. Every id, name and key is made up.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use v2_lib::pw_repo::handoff::{cards_at, default_stem, no_user_key, prompt, valid_stem, HandoffChoice};
+use v2_lib::pw_repo::handoff::{already_in, cards_at, declared_user_key, no_user_key, user_key, valid_name};
 use v2_lib::pw_repo::sync::{ExportRecord, Exported};
 
 const PC: &str = "sl/admin/performance/pc-cycle-setup";
 const PC_MD: &str = "suites/sl/admin/performance/pc-cycle-setup/test-cases/pc-cycle-setup.md";
+const PC_SPEC: &str = "suites/sl/admin/performance/pc-cycle-setup/specs/pc-cycle-setup.spec.ts";
 const RM: &str = "sl/admin/performance/rating-methods";
 const RM_MD: &str = "suites/sl/admin/performance/rating-methods/test-cases/rating-methods.md";
 
@@ -24,35 +25,47 @@ fn put(root: &Path, rel: &str, text: &str) {
     std::fs::write(p, text).unwrap();
 }
 
-/// A clone with pc-cycle-setup (one spec) and rating-methods (two specs),
-/// cases 9001 and 9002 in pc-cycle-setup, 9003 in rating-methods, 9004 in
-/// the index only, and 9005 excluded.
+/// Adds `id -> file` to index.json, and the raw spec itself when `file` can
+/// be a file name.
+fn index_add(root: &Path, id: i32, file: &str) {
+    let path = root.join("suites/_generated/index.json");
+    let mut index: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    index.insert(id.to_string(), file.into());
+    std::fs::write(&path, serde_json::to_string(&index).unwrap()).unwrap();
+    if !file.contains('\n') && !file.contains('/') {
+        put(root, &format!("suites/_generated/{file}"), "");
+    }
+}
+
+/// A clone with pc-cycle-setup (cases 9001, 9002 and 9006, 9005 excluded; its
+/// spec runs as REPO_HR and already has 9006) and rating-methods (case 9003,
+/// no spec yet, no navigation entry); 9004 is in the index only.
 fn clone() -> Clone {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("my clone");
     put(&root, "playwright.config.ts", "");
-    put(&root, "src/navigation.json", r#"{"entries":{}}"#);
-    put(&root, "src/users/users.json", "{}");
+    put(&root, "src/navigation.json", r#"{"entries":{"performance/pc-cycle-setup":{}}}"#);
+    put(&root, "src/users/users.json", r#"{"REPO_HR":{},"REPO_EMP":{},"it's":{},"a`b":{},"a\nb":{}}"#);
+    put(&root, "suites/_generated/index.json", "{}");
+    for (id, f) in [
+        (9001, "pc-one.spec.ts"),
+        (9002, "pc-two.spec.ts"),
+        (9003, "rm-three.spec.ts"),
+        (9004, "orphan.spec.ts"),
+        (9005, "gone.spec.ts"),
+        (9006, "pc-six.spec.ts"),
+    ] {
+        index_add(&root, id, f);
+    }
+    put(&root, PC_MD, "# PC\n\n## 9001 One\n\n## 9002 Two\n\n## 9006 Six\n\n## Excluded 9005 Gone\n");
     put(
         &root,
-        "suites/_generated/index.json",
-        r#"{"9001":"pc-one.spec.ts","9002":"pc-two.spec.ts","9003":"rm-three.spec.ts","9004":"orphan.spec.ts","9005":"gone.spec.ts"}"#,
+        PC_SPEC,
+        "import { test } from '@fixtures';\n\ntest.use({ userKey: 'REPO_HR' });\n\ntest('six', async () => {\n  // ADO 9006\n});\n",
     );
-    for f in ["pc-one", "pc-two", "rm-three", "orphan", "gone"] {
-        put(&root, &format!("suites/_generated/{f}.spec.ts"), "");
-    }
-    put(&root, PC_MD, "# PC\n\n## 9001 One\n\n## 9002 Two\n\n## Excluded 9005 Gone\n");
-    put(&root, &format!("suites/{PC}/specs/pc-cycle-setup.spec.ts"), "");
     put(&root, RM_MD, "# RM\n\n## 9003 Three\n");
-    put(&root, &format!("suites/{RM}/specs/rating-methods.spec.ts"), "");
-    put(&root, &format!("suites/{RM}/specs/rating-items.spec.ts"), "");
-    put(&root, &format!("suites/{RM}/specs/NotAStem.spec.ts"), "");
     Clone { _dir: dir, root }
-}
-
-/// Each case recorded as exported with the user key `REPO_ADMIN`.
-fn record(ids: &[i32]) -> ExportRecord {
-    keyed(&ids.iter().map(|&id| (id, "REPO_ADMIN")).collect::<Vec<_>>())
 }
 
 /// Each case recorded as exported with its own user key ("" for none).
@@ -74,29 +87,44 @@ fn keyed(ids: &[(i32, &str)]) -> ExportRecord {
     r
 }
 
+/// Each case recorded as exported, running as REPO_HR.
+fn record(ids: &[i32]) -> ExportRecord {
+    keyed(&ids.iter().map(|&id| (id, "REPO_HR")).collect::<Vec<_>>())
+}
+
 fn none() -> BTreeMap<i32, String> {
     BTreeMap::new()
 }
 
+fn map(pairs: &[(i32, &str)]) -> BTreeMap<i32, String> {
+    pairs.iter().map(|(id, k)| (*id, k.to_string())).collect()
+}
+
 #[test]
-fn one_seg_with_its_single_spec_appends_to_it_by_default() {
+fn the_prompt_for_one_file_names_every_step_its_spec_and_its_user() {
     let c = clone();
-    let cards = cards_at(&c.root, &record(&[9001, 9002]), &none(), &none(), &[9001, 9002], &[]).unwrap();
+    let cards = cards_at(&c.root, &record(&[9001, 9002]), &none(), &none(), &[9001, 9002]).unwrap();
     assert_eq!(cards.len(), 1);
-    assert_eq!(cards[0].seg, PC);
+    assert_eq!((cards[0].seg.as_str(), cards[0].stem.as_str()), (PC, "pc-cycle-setup"));
     assert_eq!(cards[0].case_ids, vec![9001, 9002]);
-    assert_eq!(cards[0].stems, vec!["pc-cycle-setup".to_string()]);
-    assert_eq!(cards[0].stem.as_deref(), Some("pc-cycle-setup"));
+    assert_eq!(cards[0].problem, None);
+    assert!(cards[0].already.is_empty());
     assert_eq!(
         cards[0].prompt,
         "Run steps 4, 5, 6 and 7 of .claude/commands/gen-test.md for ADO cases 9001 and 9002 in sl/admin/performance/pc-cycle-setup. \
          Steps 1-3 are already done: the Test Case Manager exported each case's raw spec \
          (`suites/_generated/pc-one.spec.ts`, `suites/_generated/pc-two.spec.ts`) and its test-case section \
          (`suites/sl/admin/performance/pc-cycle-setup/test-cases/pc-cycle-setup.md`). \
-         Each raw spec runs as the seed's user: set `test.use({ userKey: 'REPO_ADMIN' })` in `suites/_generated/seed.spec.ts` to REPO_ADMIN before running them. \
-         In step 4, run those raw specs and heal them in place if they fail; never regenerate them from the tickets. \
+         Each raw spec runs as the seed's user: set `test.use({ userKey: 'REPO_HR' })` in `suites/_generated/seed.spec.ts` to REPO_HR before running them. \
+         In step 4, run those raw specs. Classify each failure first, as step 4 says. \
+         If it is a missing precondition, record it and stop. Otherwise heal it in place within the healer's bounds, and never regenerate it from the ticket. \
+         Afterwards, put suites/_generated/seed.spec.ts back the way it was. \
+         Before step 5, run step 2's shared-component checkpoint: if any steps belong to a component under suites/common-components, add its **Uses:** line to the test case. \
+         The values in the raw specs were taken from each case's Test Case Manager script, which passed against the live app: \
+         in step 7, report them as taken from the case's script, not as invented or assumed. \
          Do not fetch the tickets and do not run git. \
-         Put them in `suites/sl/admin/performance/pc-cycle-setup/specs/pc-cycle-setup.spec.ts` (append; the --spec contract). \
+         Put them in `suites/sl/admin/performance/pc-cycle-setup/specs/pc-cycle-setup.spec.ts` with --spec pc-cycle-setup \
+         (it creates the spec or appends to it; the --spec contract). \
          The tests are independent (no --chain). \
          Stop and report on any stop-and-report condition the command defines."
     );
@@ -106,179 +134,206 @@ fn one_seg_with_its_single_spec_appends_to_it_by_default() {
 }
 
 #[test]
-fn several_segs_make_one_card_each_in_the_order_asked() {
+fn each_test_case_file_gets_its_own_card_in_the_order_asked() {
     let c = clone();
-    let cards = cards_at(&c.root, &record(&[9001, 9002, 9003]), &none(), &none(), &[9003, 9001, 9002, 9003], &[]).unwrap();
+    let cards = cards_at(&c.root, &record(&[9001, 9002, 9003]), &none(), &none(), &[9003, 9001, 9002, 9003]).unwrap();
     assert_eq!(cards.iter().map(|c| c.seg.as_str()).collect::<Vec<_>>(), vec![RM, PC]);
     assert_eq!(cards[0].case_ids, vec![9003]);
     assert_eq!(cards[1].case_ids, vec![9001, 9002]);
-    // rating-methods has two usable specs (a name outside the rule is not
-    // offered), so its default is one spec per case.
-    assert_eq!(cards[0].stems, vec!["rating-items".to_string(), "rating-methods".to_string()]);
-    assert_eq!(cards[0].stem, None);
-    assert!(cards[0].prompt.contains("for ADO case 9003 in sl/admin/performance/rating-methods."));
-    assert!(cards[0].prompt.contains("exported the case's raw spec (`suites/_generated/rm-three.spec.ts`)"));
-    assert!(cards[0].prompt.contains(&format!("its test-case section (`{RM_MD}`)")));
-    assert!(cards[0].prompt.contains(" One spec per case (no --spec). The tests are independent (no --chain). "));
-    // One case: the singular forms.
-    assert!(cards[0]
-        .prompt
-        .contains(" In step 4, run that raw spec and heal it in place if it fails; never regenerate it from the ticket. "));
-    assert_eq!(cards[1].stem.as_deref(), Some("pc-cycle-setup"));
+    // A spec that does not exist yet is created: the stem is the file's.
+    assert_eq!(cards[0].stem, "rating-methods");
+    let p = &cards[0].prompt;
+    assert!(p.contains("for ADO case 9003 in sl/admin/performance/rating-methods."));
+    assert!(p.contains("exported the case's raw spec (`suites/_generated/rm-three.spec.ts`)"));
+    assert!(p.contains("to REPO_HR before running it."));
+    assert!(p.contains("In step 4, run that raw spec. Classify a failure first, as step 4 says."));
+    assert!(p.contains(
+        "Put it in `suites/sl/admin/performance/rating-methods/specs/rating-methods.spec.ts` with --spec rating-methods"
+    ));
+    // rating-methods has no navigation entry: capture comes first.
+    assert!(p.contains(
+        "src/navigation.json has no entry for performance/rating-methods yet: do step 2's navigation capture with me before step 5."
+    ));
+    assert!(!cards[1].prompt.contains("navigation.json has no entry"));
 }
 
 #[test]
-fn a_chosen_stem_or_one_per_case_is_used_for_its_seg_only() {
+fn a_case_a_spec_already_has_is_left_out_and_listed() {
     let c = clone();
-    let choices = vec![
-        HandoffChoice { seg: RM.into(), stem: Some("rating-items".into()) },
-        HandoffChoice { seg: PC.into(), stem: None },
-    ];
-    let cards = cards_at(&c.root, &record(&[9001, 9003]), &none(), &none(), &[9001, 9003], &choices).unwrap();
-    assert_eq!(cards[0].stem, None);
-    assert!(cards[0].prompt.contains(" One spec per case (no --spec). "));
-    assert_eq!(cards[1].stem.as_deref(), Some("rating-items"));
-    assert!(cards[1]
-        .prompt
-        .contains("Put it in `suites/sl/admin/performance/rating-methods/specs/rating-items.spec.ts` (append; the --spec contract)."));
+    let cards = cards_at(&c.root, &record(&[9001, 9006]), &none(), &none(), &[9001, 9006]).unwrap();
+    assert_eq!(cards[0].case_ids, vec![9001]);
+    assert_eq!(cards[0].already, vec![already_in(9006, &["specs/pc-cycle-setup.spec.ts".into()])]);
+    assert_eq!(
+        cards[0].already[0],
+        "#9006 is already in specs/pc-cycle-setup.spec.ts: change that test with /edit-spec in the repo."
+    );
+    assert!(cards[0].prompt.contains("for ADO case 9001 in"));
+    assert!(!cards[0].prompt.contains("9006"));
 
-    // A new stem the person typed, if it follows the rule.
-    let typed = vec![HandoffChoice { seg: PC.into(), stem: Some(" cycle-dates-2 ".into()) }];
-    let cards = cards_at(&c.root, &record(&[9001]), &none(), &none(), &[9001], &typed).unwrap();
-    assert_eq!(cards[0].stem.as_deref(), Some("cycle-dates-2"));
-    assert!(cards[0].prompt.contains("/specs/cycle-dates-2.spec.ts`"));
+    // Every case already in a spec: no prompt at all.
+    let cards = cards_at(&c.root, &record(&[9006]), &none(), &none(), &[9006]).unwrap();
+    assert!(cards[0].case_ids.is_empty());
+    assert_eq!(cards[0].prompt, "");
+    assert_eq!(cards[0].problem, None);
+    assert_eq!(cards[0].already.len(), 1);
 }
 
 #[test]
-fn a_bad_stem_is_refused() {
+fn one_spec_runs_as_one_account() {
     let c = clone();
-    for bad in ["Cycle", "-cycle", "cycle setup", "cycle`x", "../up", ""] {
-        let choices = vec![HandoffChoice { seg: PC.into(), stem: Some(bad.into()) }];
-        let e = cards_at(&c.root, &record(&[9001]), &none(), &none(), &[9001], &choices).unwrap_err();
-        assert!(e.contains("cannot be a spec name"), "{bad}: {e}");
+    // Cases of one file with different keys.
+    let cards = cards_at(&c.root, &keyed(&[(9001, "REPO_HR"), (9002, "REPO_EMP")]), &none(), &none(), &[9001, 9002]).unwrap();
+    assert_eq!(
+        cards[0].problem.as_deref(),
+        Some(
+            "One spec runs as one account, but these cases run as different ones (#9001 as REPO_HR, #9002 as REPO_EMP): \
+             map the cases to the same account, or export them in separate runs."
+        )
+    );
+    assert_eq!(cards[0].prompt, "");
+
+    // A key that is not the existing spec's.
+    let cards = cards_at(&c.root, &keyed(&[(9001, "REPO_EMP"), (9003, "REPO_EMP")]), &none(), &none(), &[9001, 9003]).unwrap();
+    assert_eq!(
+        cards[0].problem.as_deref(),
+        Some(
+            format!("{PC_SPEC} runs as REPO_HR, but these cases run as REPO_EMP: map the cases to REPO_HR, or export them in separate runs.")
+                .as_str()
+        )
+    );
+    // rating-methods has no spec yet, so any key the repo has will do.
+    assert_eq!(cards[1].problem, None);
+    assert!(cards[1].prompt.contains("to REPO_EMP before running it."));
+}
+
+#[test]
+fn a_key_must_be_in_users_json_and_carriable() {
+    let c = clone();
+    let cards = cards_at(&c.root, &keyed(&[(9003, "REPO_GONE")]), &none(), &none(), &[9003]).unwrap();
+    assert_eq!(cards[0].problem.as_deref(), Some("Account REPO_GONE is not in the repo's users.json."));
+    for bad in ["it's", "a`b", "a\nb"] {
+        let cards = cards_at(&c.root, &keyed(&[(9003, bad)]), &none(), &none(), &[9003]).unwrap();
+        assert_eq!(
+            cards[0].problem.as_deref(),
+            Some(format!("Account {bad} has a name the prompt cannot carry as it is.").as_str()),
+            "{bad:?}"
+        );
+        assert_eq!(cards[0].prompt, "");
     }
 }
 
 #[test]
-fn paths_with_spaces_are_carried_in_backticks() {
+fn a_case_with_no_user_key_refuses_its_file_only() {
     let c = clone();
-    let md = "suites/sl/self/my area/new feature/test-cases/new feature.md";
-    put(&c.root, md, "## 9010 Spaced\n");
-    let mut index = std::fs::read_to_string(c.root.join("suites/_generated/index.json")).unwrap();
-    index = index.replace('}', r#","9010":"spaced case.spec.ts"}"#);
-    put(&c.root, "suites/_generated/index.json", &index);
-    put(&c.root, "suites/_generated/spaced case.spec.ts", "");
-    let cards = cards_at(&c.root, &record(&[9010]), &none(), &none(), &[9010], &[]).unwrap();
-    assert_eq!(cards[0].seg, "sl/self/my area/new feature");
-    assert!(cards[0].prompt.contains("in sl/self/my area/new feature."));
-    assert!(cards[0].prompt.contains("(`suites/_generated/spaced case.spec.ts`)"));
-    assert!(cards[0].prompt.contains(&format!("(`{md}`)")));
-    // The clone's own folder (with its space) is never in the prompt.
-    assert!(!cards[0].prompt.contains("my clone"));
+    // 9002's record predates the key and the mapping gives none; 9003 is in another file.
+    let r = keyed(&[(9001, "REPO_HR"), (9002, ""), (9003, "REPO_HR")]);
+    let cards = cards_at(&c.root, &r, &none(), &none(), &[9001, 9002, 9003]).unwrap();
+    assert_eq!(cards[0].problem.as_deref(), Some(no_user_key(9002).as_str()));
+    assert!(no_user_key(9002).starts_with("Case 9002 needs a user key mapped in the export first"));
+    assert_eq!(cards[0].prompt, "");
+    assert_eq!(cards[1].problem, None);
+
+    // The export's mapping fills a key the record does not have.
+    let cards = cards_at(&c.root, &r, &none(), &map(&[(9002, "REPO_HR")]), &[9001, 9002]).unwrap();
+    assert_eq!(cards[0].problem, None);
 }
 
 #[test]
-fn refusals_name_the_case_and_the_reason() {
+fn the_key_is_this_runs_export_then_the_record_then_the_mapping() {
+    let r = keyed(&[(1, "RECORDED"), (2, "RECORDED"), (3, "")]);
+    let written = map(&[(1, "WRITTEN"), (3, " ")]);
+    let mapped = map(&[(1, "MAPPED"), (2, "MAPPED"), (3, "MAPPED"), (4, "MAPPED")]);
+    assert_eq!(user_key(&r, &written, &mapped, 1).as_deref(), Some("WRITTEN"));
+    assert_eq!(user_key(&r, &written, &mapped, 2).as_deref(), Some("RECORDED"));
+    // A blank one is no key: the next place is asked.
+    assert_eq!(user_key(&r, &written, &mapped, 3).as_deref(), Some("MAPPED"));
+    assert_eq!(user_key(&r, &written, &mapped, 4).as_deref(), Some("MAPPED"));
+    assert_eq!(user_key(&r, &written, &mapped, 5), None);
+
+    // Through cards: this run's key wins over the record's.
     let c = clone();
-    // Unknown to the clone and to this app.
-    let e = cards_at(&c.root, &record(&[]), &none(), &none(), &[9999], &[]).unwrap_err();
-    assert_eq!(e, "Case 9999 was not exported by this app, so there is nothing to finish for it here.");
-    // In the repo, but not exported by this app.
-    let e = cards_at(&c.root, &record(&[9001]), &none(), &none(), &[9001, 9002], &[]).unwrap_err();
-    assert!(e.starts_with("Case 9002 was not exported by this app"), "{e}");
-    // Exported, but the clone lost its section.
-    let e = cards_at(&c.root, &record(&[9004]), &none(), &none(), &[9004], &[]).unwrap_err();
-    assert_eq!(e, "Case 9004 has no section in a test-case file. Export it again first.");
-    // Exported, but not in index.json.
-    let e = cards_at(&c.root, &record(&[9020]), &none(), &none(), &[9020], &[]).unwrap_err();
-    assert_eq!(e, "Case 9020 has no entry in suites/_generated/index.json. Export it again first.");
-    // Excluded by the team.
-    let e = cards_at(&c.root, &record(&[9005]), &none(), &none(), &[9005], &[]).unwrap_err();
-    assert!(e.contains("excluded in the repo"), "{e}");
-    // Its raw spec is gone.
-    std::fs::remove_file(c.root.join("suites/_generated/pc-two.spec.ts")).unwrap();
-    let e = cards_at(&c.root, &record(&[9002]), &none(), &none(), &[9002], &[]).unwrap_err();
-    assert!(e.contains("pc-two.spec.ts is not in the clone"), "{e}");
-    // Nothing asked.
-    assert!(cards_at(&c.root, &record(&[]), &none(), &none(), &[], &[]).is_err());
-    // Not a clone.
-    let d = tempfile::tempdir().unwrap();
-    assert!(cards_at(d.path(), &record(&[9001]), &none(), &none(), &[9001], &[]).is_err());
+    let cards = cards_at(&c.root, &keyed(&[(9003, "REPO_HR")]), &map(&[(9003, "REPO_EMP")]), &none(), &[9003]).unwrap();
+    assert!(cards[0].prompt.contains("to REPO_EMP before running it."));
 }
 
 #[test]
 fn a_case_written_this_run_needs_no_record() {
     let c = clone();
-    let written: BTreeMap<i32, String> = [(9001, "REPO_EMP".to_string())].into_iter().collect();
-    let cards = cards_at(&c.root, &record(&[]), &written, &none(), &[9001], &[]).unwrap();
+    let cards = cards_at(&c.root, &ExportRecord::default(), &map(&[(9001, "REPO_HR")]), &none(), &[9001]).unwrap();
     assert_eq!(cards[0].case_ids, vec![9001]);
-    assert!(cards[0].prompt.contains("to REPO_EMP before running it."), "{}", cards[0].prompt);
-}
-
-#[test]
-fn the_stem_rule_and_the_default() {
-    for ok in ["pc-cycle-setup", "a", "9", "rating-methods-2"] {
-        assert!(valid_stem(ok), "{ok}");
-    }
-    for bad in ["", "-a", "A", "a_b", "a.b", "a b", "é"] {
-        assert!(!valid_stem(bad), "{bad}");
-    }
-    assert_eq!(default_stem(&["only".to_string()]).as_deref(), Some("only"));
-    assert_eq!(default_stem(&[]), None);
-    assert_eq!(default_stem(&["a".to_string(), "b".to_string()]), None);
-}
-
-#[test]
-fn three_ids_are_listed_with_commas_and_and() {
-    let keys: Vec<String> = vec!["K".into(), "K".into(), "K".into()];
-    let p = prompt("sl/a/b/c", &[1, 2, 3], &["x".into()], &["y".into(), "z".into()], None, &keys);
-    assert!(p.contains("for ADO cases 1, 2 and 3 in sl/a/b/c."));
-    assert!(p.contains("its test-case sections (`y`, `z`)"));
-}
-
-#[test]
-fn one_shared_user_key_sets_the_seed_once() {
-    let c = clone();
-    let cards = cards_at(&c.root, &keyed(&[(9001, "REPO_HR"), (9002, "REPO_HR")]), &none(), &none(), &[9001, 9002], &[]).unwrap();
     assert_eq!(cards[0].problem, None);
-    assert!(cards[0].prompt.contains(
-        "(`suites/sl/admin/performance/pc-cycle-setup/test-cases/pc-cycle-setup.md`). \
-         Each raw spec runs as the seed's user: set `test.use({ userKey: 'REPO_HR' })` in `suites/_generated/seed.spec.ts` to REPO_HR before running them. \
-         In step 4, run those raw specs"
-    ), "{}", cards[0].prompt);
 }
 
 #[test]
-fn different_user_keys_are_listed_case_by_case() {
+fn a_raw_spec_name_from_index_json_must_be_plain() {
+    for (i, bad) in ["x`y.spec.ts", "x\ny.spec.ts", "../up.spec.ts", "sub/x.spec.ts", "x.ts"].into_iter().enumerate() {
+        let c = clone();
+        let id = 9100 + i as i32;
+        index_add(&c.root, id, bad);
+        put(&c.root, PC_MD, &format!("## 9001 One\n\n## {id} Bad\n"));
+        let e = cards_at(&c.root, &record(&[id]), &none(), &none(), &[id]).unwrap_err();
+        assert!(e.contains("is not a plain .spec.ts file name"), "{bad:?}: {e}");
+    }
+    // A space is fine: the name is carried in backticks.
     let c = clone();
-    let cards = cards_at(&c.root, &keyed(&[(9001, "REPO_HR"), (9002, "REPO_EMP")]), &none(), &none(), &[9001, 9002], &[]).unwrap();
-    assert!(cards[0].prompt.contains(
-        "Each raw spec runs as the seed's user: before running each one, set `test.use({ userKey: ... })` in \
-         `suites/_generated/seed.spec.ts` to its key: 9001 \u{2192} REPO_HR, 9002 \u{2192} REPO_EMP. In step 4,"
-    ), "{}", cards[0].prompt);
+    index_add(&c.root, 9200, "spaced case.spec.ts");
+    put(&c.root, RM_MD, "## 9200 Spaced\n");
+    let cards = cards_at(&c.root, &record(&[9200]), &none(), &none(), &[9200]).unwrap();
+    assert!(cards[0].prompt.contains("(`suites/_generated/spaced case.spec.ts`)"));
+    assert!(!cards[0].prompt.contains("my clone"));
 }
 
 #[test]
-fn a_case_with_no_user_key_refuses_its_seg_only() {
+fn every_seg_part_and_the_file_stem_must_be_a_plain_name() {
+    for md in [
+        "suites/sl/admin/My Module/feature/test-cases/feature.md",
+        "suites/sl/admin/mod`x/feature/test-cases/feature.md",
+        // A folder name no other path shares, so a case-blind file system keeps its capital.
+        "suites/sl/self/Module/feature/test-cases/feature.md",
+        "suites/sl/admin/module/feature/test-cases/Feature Cases.md",
+        "suites/sl/admin/module/feat`ure/test-cases/feature.md",
+    ] {
+        let c = clone();
+        index_add(&c.root, 9300, "bad-seg.spec.ts");
+        put(&c.root, md, "## 9300 Bad\n");
+        let e = cards_at(&c.root, &record(&[9300]), &none(), &none(), &[9300]).unwrap_err();
+        assert!(e.contains("names in lower-case letters, digits and hyphens"), "{md}: {e}");
+    }
+}
+
+#[test]
+fn refusals_name_the_case_and_the_reason() {
     let c = clone();
-    // 9002's record predates the key and the mapping gives none; 9003 is in another seg.
-    let r = keyed(&[(9001, "REPO_HR"), (9002, ""), (9003, "REPO_HR")]);
-    let cards = cards_at(&c.root, &r, &none(), &none(), &[9001, 9002, 9003], &[]).unwrap();
-    assert_eq!(cards[0].seg, PC);
-    assert_eq!(cards[0].problem.as_deref(), Some(no_user_key(9002).as_str()));
-    assert_eq!(cards[0].prompt, "");
-    assert!(no_user_key(9002).starts_with("Case 9002 needs a user key mapped in the export first"));
-    assert_eq!(cards[1].seg, RM);
-    assert_eq!(cards[1].problem, None);
-    assert!(cards[1].prompt.contains("to REPO_HR before running it."));
+    let e = cards_at(&c.root, &record(&[]), &none(), &none(), &[9999]).unwrap_err();
+    assert_eq!(e, "Case 9999 was not exported by this app, so there is nothing to finish for it here.");
+    let e = cards_at(&c.root, &record(&[9001]), &none(), &none(), &[9001, 9002]).unwrap_err();
+    assert!(e.starts_with("Case 9002 was not exported by this app"), "{e}");
+    let e = cards_at(&c.root, &record(&[9004]), &none(), &none(), &[9004]).unwrap_err();
+    assert_eq!(e, "Case 9004 has no section in a test-case file. Export it again first.");
+    let e = cards_at(&c.root, &record(&[9020]), &none(), &none(), &[9020]).unwrap_err();
+    assert_eq!(e, "Case 9020 has no entry in suites/_generated/index.json. Export it again first.");
+    let e = cards_at(&c.root, &record(&[9005]), &none(), &none(), &[9005]).unwrap_err();
+    assert!(e.contains("excluded in the repo"), "{e}");
+    std::fs::remove_file(c.root.join("suites/_generated/pc-two.spec.ts")).unwrap();
+    let e = cards_at(&c.root, &record(&[9002]), &none(), &none(), &[9002]).unwrap_err();
+    assert!(e.contains("pc-two.spec.ts is not in the clone"), "{e}");
+    assert!(cards_at(&c.root, &record(&[]), &none(), &none(), &[]).is_err());
+    let d = tempfile::tempdir().unwrap();
+    assert!(cards_at(d.path(), &record(&[9001]), &none(), &none(), &[9001]).is_err());
+}
 
-    // The export's mapping fills a key the record does not have.
-    let mapped: BTreeMap<i32, String> = [(9002, "REPO_HR".to_string())].into_iter().collect();
-    let cards = cards_at(&c.root, &r, &none(), &mapped, &[9001, 9002], &[]).unwrap();
-    assert_eq!(cards[0].problem, None);
-    assert!(cards[0].prompt.contains("to REPO_HR before running them."));
-
-    // A key the prompt could not carry as it is counts as none.
-    let cards = cards_at(&c.root, &keyed(&[(9001, "it's")]), &none(), &none(), &[9001], &[]).unwrap();
-    assert_eq!(cards[0].problem.as_deref(), Some(no_user_key(9001).as_str()));
+#[test]
+fn the_spec_user_and_the_name_rule() {
+    assert_eq!(
+        declared_user_key("x\ntest.use({ userKey: 'AutomationSL.a.general' });\n").as_deref(),
+        Some("AutomationSL.a.general")
+    );
+    assert_eq!(declared_user_key("  test.use({userKey:\"K\"});").as_deref(), Some("K"));
+    assert_eq!(declared_user_key("test.use({ viewport: null });\n// userKey: 'no'"), None);
+    for ok in ["pc-cycle-setup", "a", "9", "sl"] {
+        assert!(valid_name(ok), "{ok}");
+    }
+    for bad in ["", "-a", "A", "a_b", "a.b", "a b", "a`b", "a\nb"] {
+        assert!(!valid_name(bad), "{bad:?}");
+    }
 }

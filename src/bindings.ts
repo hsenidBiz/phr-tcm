@@ -1342,12 +1342,12 @@ export const commands = {
 	pwSyncStates: (clone: string, org: string, project: string) => typedError<SyncRow[], string>(__TAURI_INVOKE("pw_sync_states", { clone, org, project })),
 	/**
 	 *  Finish in the repo: for `cases` (what an export just wrote), one prompt
-	 *  per `<seg>` that runs `/gen-test` steps 4, 5, 6 and 7 on them in the clone
-	 *  (`pw_repo::handoff`). `choices` is the spec picked for a `<seg>`; one not
-	 *  named gets its default. Each case must be one this app exported, with
+	 *  per test-case file that runs `/gen-test` steps 4, 5, 6 and 7 on them in
+	 *  the clone (`pw_repo::handoff`), into the spec of the same stem. Each case
+	 *  must be one this app exported, with
 	 *  its raw spec and section in the clone. Only text: nothing is started.
 	 */
-	pwHandoff: (clone: string, org: string, project: string, cases: number[], choices: HandoffChoice[]) => typedError<HandoffCard[], string>(__TAURI_INVOKE("pw_handoff", { clone, org, project, cases, choices })),
+	pwHandoff: (clone: string, org: string, project: string, cases: number[]) => typedError<HandoffCard[], string>(__TAURI_INVOKE("pw_handoff", { clone, org, project, cases })),
 	/**
 	 *  Exports `cases` again through Export to Playwright's own all-or-nothing
 	 *  write, and records them: each one's section rewritten from Azure DevOps
@@ -3488,31 +3488,20 @@ export type GuideStatus = {
 	size: number | null,
 };
 
-/**  One prompt: the cases of one `<seg>`, in the order they were asked for. */
+/**  One prompt: the cases of one test-case file, in the order they were asked for. */
 export type HandoffCard = {
+	/**  `<country>/<side>/<module>/<feature>`. */
 	seg: string,
+	/**  The test-case file's stem, and so the spec's: `--spec <stem>`. */
+	stem: string,
+	/**  The cases the prompt finishes. */
 	case_ids: number[],
-	/**  The stems of the feature's `specs/*.spec.ts` that `valid_stem` allows, sorted. */
-	stems: string[],
-	/**  The spec the prompt names, or `None` for one spec per case. */
-	stem: string | null,
-	/**  Empty when `problem` is set. */
+	/**  Empty when `problem` is set or every case is in `already`. */
 	prompt: string,
-	/**
-	 *  Why this `<seg>`'s prompt cannot be built (a case with no user key);
-	 *  the other `<seg>`s still get theirs.
-	 */
+	/**  Why this file's prompt cannot be built; the other files still get theirs. */
 	problem: string | null,
-};
-
-/**
- *  The person's spec choice for one `<seg>`: `stem` is the spec to put the
- *  cases in, or `None` for one spec per case. A `<seg>` with no choice gets
- *  `default_stem`.
- */
-export type HandoffChoice = {
-	seg: string,
-	stem: string | null,
+	/**  One sentence per case left out because a spec already has it. */
+	already: string[],
 };
 
 /**

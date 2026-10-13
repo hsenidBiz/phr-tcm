@@ -205,9 +205,9 @@ pub async fn pw_sync_states(app: tauri::AppHandle, clone: String, org: String, p
 }
 
 /// Finish in the repo: for `cases` (what an export just wrote), one prompt
-/// per `<seg>` that runs `/gen-test` steps 4, 5, 6 and 7 on them in the clone
-/// (`pw_repo::handoff`). `choices` is the spec picked for a `<seg>`; one not
-/// named gets its default. Each case must be one this app exported, with
+/// per test-case file that runs `/gen-test` steps 4, 5, 6 and 7 on them in
+/// the clone (`pw_repo::handoff`), into the spec of the same stem. Each case
+/// must be one this app exported, with
 /// its raw spec and section in the clone. Only text: nothing is started.
 #[tauri::command]
 #[specta::specta]
@@ -217,7 +217,6 @@ pub async fn pw_handoff(
     org: String,
     project: String,
     cases: Vec<i32>,
-    choices: Vec<handoff::HandoffChoice>,
 ) -> Result<Vec<handoff::HandoffCard>, String> {
     let dir = super::pw_export::sync_dir(&app)?;
     let autorun = super::autorun::root(&app)?;
@@ -229,7 +228,7 @@ pub async fn pw_handoff(
             .iter()
             .filter_map(|&id| export::mapped_user_key(&autorun, &org, &project, id).map(|k| (id, k)))
             .collect();
-        handoff::cards_at(root, &record, &written, &mapped, &cases, &choices)
+        handoff::cards_at(root, &record, &written, &mapped, &cases)
     })
     .await
 }

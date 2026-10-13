@@ -86,8 +86,11 @@ export const playwright: Screen = {
     {
       title: "Finish exported cases in the repo",
       steps: [
-        "After an export, an Update or Add new, **Finish in the repo** shows a ready-made prompt for each feature folder the cases went to. It asks Claude Code to run steps 4, 5, 6 and 7 of the repo's /gen-test on exactly those cases: run the raw specs (the export never runs them) and fix them in place if they fail, then the refactor, the lint and live check, and the run summary. It tells Claude Code not to fetch the tickets again or regenerate the raw specs.",
-        "Pick where the cases go: add them to one of the feature's specs, one spec per case, or **New spec…** and type a name in lower-case letters, digits and hyphens. When the feature has exactly one spec, that one is picked for you.",
+        "After an export, an Update or Add new, **Finish in the repo** shows a ready-made prompt for each test-case file the cases went to. It asks Claude Code to run steps 4, 5, 6 and 7 of the repo's /gen-test on exactly those cases: run the raw specs (the export never runs them) and fix them in place if they fail, then the refactor, the lint and live check, and the run summary. It tells Claude Code not to fetch the tickets again or regenerate the raw specs.",
+        "The cases go into the spec named like their test-case file, which is how the repo pairs a spec with its test cases: it is created if it does not exist yet, and added to if it does.",
+        "Before the raw specs run, the prompt has Claude Code set the repo's seed to the user each case was exported to run as, and put the seed back afterwards.",
+        "One spec runs as one account. When the cases of one file were exported to run as different accounts, or as a different account than the spec already uses, the card says so instead of giving a prompt: map the cases to the same account, or export them in separate runs. A case whose account is not in the repo's users.json is refused the same way.",
+        "A case a spec already has is left out of the prompt and listed: change that test with /edit-spec in the repo.",
         "Press **Copy**, open Claude Code in your clone and paste the prompt. The app only copies the text: it does not start Claude Code or anything else.",
       ],
     },
