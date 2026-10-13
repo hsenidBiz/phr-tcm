@@ -49,9 +49,9 @@ function runIn(over: Partial<BackgroundRun>): BackgroundRun {
   };
 }
 
-const RESET = { run_id: "run-9", before_case_id: 4, names: ["x"], changed_by: [], remaining: [4] };
+const RESET = { run_id: "run-9", before_case_id: 4, batch: 2, set: [], names: ["x"], changed_by: [], remaining: [4] };
 
-test("running: how far it has got; paused: amber Reset needed; finished: Review", () => {
+test("running: how far it has got; paused: amber Paused before Batch N; finished: Review", () => {
   expect(runPillView(runIn({ position: { index: 2, total: 8 } }))).toEqual({
     text: "Auto Run 3 of 8",
     action: "Open the run window",
@@ -60,7 +60,7 @@ test("running: how far it has got; paused: amber Reset needed; finished: Review"
   // Before the first case reports, it is on the first.
   expect(runPillView(runIn({}))?.text).toBe("Auto Run 1 of 8");
   expect(runPillView(runIn({ position: { index: 2, total: 8 }, resetNeeded: RESET }))).toEqual({
-    text: "Reset needed",
+    text: "Paused before Batch 2",
     action: "Open the run window to continue or stop the run",
     tone: "warning",
   });

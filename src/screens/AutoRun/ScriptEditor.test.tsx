@@ -441,6 +441,44 @@ test("a script's marks are kept when it is saved untouched", async () => {
   );
 });
 
+// ---- Settings: what the case needs set, each at one value ----
+
+test("settings show as chips, a setting is added with its value, and Save sends them", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, needs_state: { "Approval workflow": "ON" } }, ACCOUNTS, saved);
+  const list = await screen.findByRole("list", { name: "Needs these settings" });
+  expect(within(list).getAllByRole("listitem").map((r) => r.textContent)).toEqual(["Approval workflow: ON"]);
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Setting" }), { target: { value: " Rating scale " } });
+  const value = screen.getByRole("textbox", { name: "Value" });
+  fireEvent.change(value, { target: { value: "5 point" } });
+  fireEvent.keyDown(value, { key: "Enter" });
+  // The same setting again takes the new value rather than a second chip.
+  fireEvent.change(screen.getByRole("textbox", { name: "Setting" }), { target: { value: "approval  workflow" } });
+  fireEvent.change(value, { target: { value: "OFF" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add setting" }));
+  expect(within(list).getAllByRole("listitem").map((r) => r.textContent)).toEqual([
+    "Rating scale: 5 point",
+    "approval  workflow: OFF",
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "Remove setting Rating scale" }));
+
+  const save = screen.getByRole("button", { name: "Save script" });
+  await waitFor(() => expect(save).not.toBeDisabled());
+  fireEvent.click(save);
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect((saved[0] as { needs_state?: unknown }).needs_state).toEqual({ "approval  workflow": "OFF" });
+});
+
+test("a script without settings is saved without the key", async () => {
+  const saved: unknown[] = [];
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP, needs_state: { "Approval workflow": "ON" } }, ACCOUNTS, saved);
+  fireEvent.click(await screen.findByRole("button", { name: "Remove setting Approval workflow" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).not.toHaveProperty("needs_state");
+});
+
 // ---- The Setup section -------------------------------------------------
 
 const SETUP_SCRIPT = { case_id: 7, title: "t", steps: ONE_STEP, setup: { fixture: "Draft cycle" } };

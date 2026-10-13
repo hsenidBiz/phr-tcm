@@ -1159,7 +1159,15 @@ test("a replay that signs the browser in as another account is said, and this ca
 const RESET_PLAN = {
   order: [1, 2, 3],
   phases: [[1], [2, 3]],
-  resets: [{ before_case_id: 2, names: ["cycle published"], changed_by: [["cycle published", [1]]] as [string, number[]][] }],
+  pauses: [
+    {
+      batch: 2,
+      before_case_id: 2,
+      set: [] as [string, string][],
+      names: ["cycle published"],
+      changed_by: [["cycle published", [1]]] as [string, number[]][],
+    },
+  ],
   counts: null,
   saved: false,
 };
@@ -1186,7 +1194,7 @@ async function reachTheReset(s: ReturnType<typeof mockSession>) {
   await waitFor(() => expect(s.launched).toEqual(["edge"]));
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
-  return screen.findByRole("region", { name: "Reset needed" });
+  return screen.findByRole("region", { name: "Before Batch 2" });
 }
 
 test("the supervised pane pauses at a reset point before the next case's browser is used", async () => {
@@ -1215,10 +1223,10 @@ test("Continue at a reset point opens a fresh browser for the next case and the 
   const onClose = renderPlanned();
   await reachTheReset(s);
 
-  fireEvent.click(screen.getByRole("button", { name: "Continue after reset" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue the run" }));
   expect(await screen.findByText("case 2 of 3")).toBeInTheDocument();
   await waitFor(() => expect(s.launched).toEqual(["edge", "edge"]));
-  expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
 
   // Case 2 and 3, then the one write.
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
@@ -1241,7 +1249,7 @@ test("Stop at a reset point ends the supervised run with the rest recorded as no
   const onClose = renderPlanned();
   await reachTheReset(s);
 
-  fireEvent.click(screen.getByRole("button", { name: "Stop the run at this reset" }));
+  fireEvent.click(screen.getByRole("button", { name: "Stop the run at this pause" }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
 
   expect(s.launched).toEqual(["edge"]);
@@ -1266,7 +1274,7 @@ test("without a plan the supervised pane never pauses", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
   expect(await screen.findByText("case 2 of 3")).toBeInTheDocument();
-  expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
 });
 
 test("while discovery holds the browser, Open browser is off and says why", async () => {
@@ -1290,3 +1298,89 @@ test("while discovery holds the browser, Open browser is off and says why", asyn
   fireEvent.click(open);
   expect(s.launched).toEqual([]);
 });
+
+/** Two batches by a setting: Batch 1 needs it ON, Batch 2 OFF, with a
+ * reset too. */
+const BATCH_PLAN = {
+  order: [1, 2, 3],
+  phases: [[1], [2, 3]],
+  pauses: [
+    { batch: 1, before_case_id: 1, set: [["Approval workflow", "ON"]] as [string, string][], names: [], changed_by: [] },
+    {
+      batch: 2,
+      before_case_id: 2,
+      set: [["Approval workflow", "OFF"]] as [string, string][],
+      names: ["cycle published"],
+      changed_by: [["cycle published", [1]]] as [string, number[]][],
+    },
+  ],
+  counts: null,
+  saved: false,
+};
+
+test("a run whose Batch 1 needs settings starts paused, then pauses again with Set and Put back", async () => {
+  const s = mockSession();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onClose = vi.fn();
+  render(
+    <QueryClientProvider client={qc}>
+      <RunPane org="acme" project="Web" pbiId={42} cases={RESET_CASES} plan={BATCH_PLAN} onClose={onClose} />
+    </QueryClientProvider>,
+  );
+  const first = await screen.findByRole("region", { name: "Before Batch 1" });
+  expect(within(first).getByRole("list", { name: "Set" })).toHaveTextContent("Make sure Approval workflow is ON");
+  expect(within(first).queryByRole("list", { name: "Put back" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Batch 1 of 2");
+  expect(within(screen.getByRole("list", { name: "Batches" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+    "Batch 1 (1 case)",
+    "Batch 2 (2 cases)",
+  ]);
+  // Nothing opened before Continue.
+  expect(s.launched).toEqual([]);
+
+  fireEvent.click(within(first).getByRole("button", { name: "Continue the run" }));
+  const panel = await reachTheResetNamed(s, "Before Batch 2");
+  expect(within(panel).getByRole("list", { name: "Set" })).toHaveTextContent("Set Approval workflow to OFF");
+  expect(within(panel).getByRole("list", { name: "Put back" })).toHaveTextContent(
+    'Reset: revert "cycle published" (changed by #1 Publish the cycle)',
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Batch 2 of 2");
+
+  fireEvent.click(within(panel).getByRole("button", { name: "Stop the run at this pause" }));
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+  const run = s.saved[0] as unknown as { resets?: { batch?: number; set?: [string, string][]; outcome: string }[] };
+  expect(run.resets?.map((r) => [r.batch, r.set, r.outcome])).toEqual([
+    [1, [["Approval workflow", "ON"]], "continued"],
+    [2, [["Approval workflow", "OFF"]], "stopped"],
+  ]);
+});
+
+test("Stop before Batch 1 records every case as not run and opens nothing", async () => {
+  const s = mockSession();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onClose = vi.fn();
+  render(
+    <QueryClientProvider client={qc}>
+      <RunPane org="acme" project="Web" pbiId={42} cases={RESET_CASES} plan={BATCH_PLAN} onClose={onClose} />
+    </QueryClientProvider>,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Stop the run at this pause" }));
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+  expect(s.launched).toEqual([]);
+  const run = s.saved[0] as unknown as { cases: { case_id: number; reason?: string }[] };
+  expect(run.cases.map((c) => [c.case_id, c.reason])).toEqual([
+    [1, "not run: the run stopped at a reset point"],
+    [2, "not run: the run stopped at a reset point"],
+    [3, "not run: the run stopped at a reset point"],
+  ]);
+});
+
+/** Open the browser, pass case 1 and move on: the pane pauses before the
+ * next batch, whose panel is named `name`. */
+async function reachTheResetNamed(s: ReturnType<typeof mockSession>, name: string) {
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  await waitFor(() => expect(s.launched).toEqual(["edge"]));
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
+  return screen.findByRole("region", { name });
+}

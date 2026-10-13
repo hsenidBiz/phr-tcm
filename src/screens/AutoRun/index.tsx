@@ -51,7 +51,7 @@ import CaseSearch, { matchesSearch } from "./CaseSearch";
 import ExecutionOrderDialog from "./ExecutionOrderDialog";
 import { requestPlaywrightExport } from "../../lib/playwrightExport";
 import ResetNeededPanel from "./ResetNeededPanel";
-import { fetchPlan } from "./plan";
+import { fetchPlan, pauseHeading } from "./plan";
 import PastRuns from "./PastRuns";
 import ReadinessStrip from "./ReadinessStrip";
 import RunPane from "./RunPane";
@@ -1057,7 +1057,7 @@ export default function AutoRun({
 
       {waitingReset && !runGoing && (
         // Only Continue or Stop ends the pause: the run waits for one.
-        <Modal onClose={() => {}} label="Reset needed" className="w-full max-w-2xl p-4">
+        <Modal onClose={() => {}} label={pauseHeading(waitingReset.batch)} className="w-full max-w-2xl p-4">
           <ResetNeededPanel
             reset={waitingReset}
             remaining={waitingReset.remaining}

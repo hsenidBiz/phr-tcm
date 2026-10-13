@@ -330,7 +330,7 @@ test("with cases ticked the bar offers both a supervised and an unattended run",
 
 // ---- Execution order: both run buttons use the plan ----
 
-const PLANNED = (order: number[]) => ({ order, phases: [order], resets: [], counts: null, saved: true });
+const PLANNED = (order: number[]) => ({ order, phases: [order], pauses: [], counts: null, saved: true });
 
 test("Run selected starts from the planned order, not list order", async () => {
   mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2], [], (cmd) =>
@@ -1654,6 +1654,8 @@ test("Replay in the review closes the review and shows the pane replaying", asyn
 const WAITING = {
   run_id: "run-7",
   before_case_id: 2,
+  batch: 2,
+  set: [],
   names: ["cycle published"],
   changed_by: [["cycle published", [1]]],
   remaining: [2, 9],
@@ -1685,11 +1687,11 @@ test("coming back to Auto Run finds a run paused at a reset point, and Continue 
   const answers: { runId: string; continueRun: boolean }[] = [];
   mockWaiting(waiting, answers);
   const first = renderScreen();
-  await screen.findByRole("region", { name: "Reset needed" });
+  await screen.findByRole("region", { name: "Before Batch 2" });
   // The person leaves Auto Run and comes back: the pause is found again.
   first.unmount();
   renderScreen();
-  const panel = await screen.findByRole("region", { name: "Reset needed" });
+  const panel = await screen.findByRole("region", { name: "Before Batch 2" });
   expect(
     within(panel).getByText('Reset: revert "cycle published" (changed by #1 Publish the cycle)'),
   ).toBeInTheDocument();
@@ -1699,30 +1701,30 @@ test("coming back to Auto Run finds a run paused at a reset point, and Continue 
     "#2 Edit a draft cycle",
     "#9",
   ]);
-  fireEvent.click(within(panel).getByRole("button", { name: "Continue after reset" }));
+  fireEvent.click(within(panel).getByRole("button", { name: "Continue the run" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-7", continueRun: true }]));
-  await waitFor(() => expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument());
 });
 
 test("Stop on a paused run found again answers Stop", async () => {
   const answers: { runId: string; continueRun: boolean }[] = [];
   mockWaiting({ current: WAITING }, answers);
   renderScreen();
-  fireEvent.click(await screen.findByRole("button", { name: "Stop the run at this reset" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Stop the run at this pause" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-7", continueRun: false }]));
-  await waitFor(() => expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument());
 });
 
 test("a pause that comes while the run's own dialog is closed shows the panel", async () => {
   mockWaiting({ current: null }, []);
   renderScreen();
   await screen.findByText("Publish the cycle");
-  expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
   const { emit } = await import("@tauri-apps/api/event");
   await act(async () => {
     await emit("autorun-reset-needed", WAITING);
   });
-  expect(await screen.findByRole("region", { name: "Reset needed" })).toBeInTheDocument();
+  expect(await screen.findByRole("region", { name: "Before Batch 2" })).toBeInTheDocument();
 });
 
 // ---- Discovery holds the Auto Run browser ----

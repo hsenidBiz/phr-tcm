@@ -27,7 +27,7 @@ import NoticeBadge from "./NoticeBadge";
 import OutcomeGroups from "./OutcomeGroups";
 import PageErrorsBadge from "./PageErrorsBadge";
 import VerdictPicker from "./VerdictPicker";
-import { resetLinesBefore } from "./plan";
+import { batchHeadingBefore, resetLinesBefore } from "./plan";
 import { countBuckets, matchesFilter, replayStep, type ResultFilter } from "./verdicts";
 
 /** The result of a successful send - never the "refused" branch, which
@@ -368,7 +368,11 @@ export default function RunReview(props: {
           const replayTo = onReplay && !mismatch ? replayStep(c) : null;
           return (
             <Fragment key={c.case_id}>
-              {/* Where the run paused for a reset, and how it went on. */}
+              {/* The batch that starts here, where the run paused before it
+                  and how it went on. */}
+              {batchHeadingBefore(run, c.case_id) && (
+                <li className="pt-1 text-xs font-semibold text-text">{batchHeadingBefore(run, c.case_id)}</li>
+              )}
               {resetLinesBefore(run.resets, c.case_id).map((line) => (
                 <li key={line} className="border-l-2 border-l-warning pl-2 text-xs text-warning">
                   {line}

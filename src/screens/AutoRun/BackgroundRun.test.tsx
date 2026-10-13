@@ -87,7 +87,7 @@ function mockScreen(extra?: (cmd: string, args: unknown) => unknown) {
       }
       if (cmd === "auto_run_list_runs") return [RUN];
       if (cmd === "auto_run_list_accounts") return [];
-      if (cmd === "auto_run_plan") return { order: [1, 2], phases: [[1, 2]], resets: [], counts: null, saved: true };
+      if (cmd === "auto_run_plan") return { order: [1, 2], phases: [[1, 2]], pauses: [], counts: null, saved: true };
       if (cmd === "auto_run_load_run") return RUN;
       if (cmd === "auto_run_replay") {
         return new Promise((resolve, reject) => {
@@ -275,6 +275,8 @@ test("a pause at a reset point while in the background turns the pill amber and 
     await emit("autorun-reset-needed", {
       run_id: "run-9",
       before_case_id: 2,
+      batch: 2,
+      set: [],
       names: ["cycle published"],
       changed_by: [["cycle published", [1]]],
       remaining: [2],
@@ -282,16 +284,16 @@ test("a pause at a reset point while in the background turns the pill amber and 
   });
 
   // One place shows the pause: not the screen's own fallback modal.
-  expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
   const pill = screen.getByRole("button", {
-    name: "Reset needed. Open the run window to continue or stop the run",
+    name: "Paused before Batch 2. Open the run window to continue or stop the run",
   });
   expect(pill.className).toMatch(/text-warning/);
 
   fireEvent.click(pill);
-  const panel = await screen.findByRole("region", { name: "Reset needed" });
-  expect(screen.getAllByRole("region", { name: "Reset needed" })).toHaveLength(1);
-  fireEvent.click(within(panel).getByRole("button", { name: "Continue after reset" }));
+  const panel = await screen.findByRole("region", { name: "Before Batch 2" });
+  expect(screen.getAllByRole("region", { name: "Before Batch 2" })).toHaveLength(1);
+  fireEvent.click(within(panel).getByRole("button", { name: "Continue the run" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-9", continueRun: true }]));
 });
 

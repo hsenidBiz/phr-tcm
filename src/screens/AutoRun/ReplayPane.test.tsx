@@ -777,29 +777,29 @@ test("scrolling the list by keyboard or touch also pauses following, but a plain
 
 // ---- the plan in the run dialog ----
 
-const planOf = (phases: number[][], resets: unknown[]) =>
-  ({ order: phases.flat(), phases, resets, counts: null, saved: false }) as never;
+const planOf = (phases: number[][], pauses: unknown[]) =>
+  ({ order: phases.flat(), phases, pauses, counts: null, saved: false }) as never;
 
-test("with more than one phase the dialog lists the phases and the reset line", async () => {
+test("with a pause the dialog lists the batches and the pause line", async () => {
   mockIPC(() => null, { shouldMockEvents: true });
   mountPane([
         { id: 1, title: "Publish the cycle" },
         { id: 2, title: "Open the report" },
-      ], planOf([[1], [2]], [{ before_case_id: 2, names: ["Cycle"], changed_by: [["Cycle", [1]]] }]));
+      ], planOf([[1], [2]], [{ batch: 2, before_case_id: 2, set: [], names: ["Cycle"], changed_by: [["Cycle", [1]]] }]));
   const plan = await screen.findByLabelText("Run plan");
-  expect(within(plan).getByText("Phase 1: 1 case")).toBeInTheDocument();
-  expect(within(plan).getByText("Phase 2: 1 case")).toBeInTheDocument();
+  expect(within(plan).getByText("Batch 1 (1 case)")).toBeInTheDocument();
+  expect(within(plan).getByText("Batch 2 (1 case)")).toBeInTheDocument();
   expect(
     within(plan).getByText('Reset: revert "Cycle" (changed by #1 Publish the cycle)'),
   ).toBeInTheDocument();
 });
 
-test("with one phase the dialog shows nothing extra", async () => {
+test("with no pause the dialog shows nothing extra", async () => {
   mockIPC(() => null, { shouldMockEvents: true });
   mountPane([{ id: 1, title: "A" }, { id: 2, title: "B" }], planOf([[1, 2]], []));
   await screen.findByRole("button", { name: "Start" });
   expect(screen.queryByLabelText("Run plan")).not.toBeInTheDocument();
-  expect(screen.queryByText(/Phase \d/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Batch \d/)).not.toBeInTheDocument();
 });
 
 /** A run of three cases that pauses before case 2 to put "cycle published"
@@ -830,6 +830,8 @@ async function pausedRun(answers: { runId: string; continueRun: boolean }[]) {
     await emit("autorun-reset-needed", {
       run_id: "run-9",
       before_case_id: 2,
+      batch: 2,
+      set: [],
       names: ["cycle published"],
       changed_by: [["cycle published", [1]]],
       remaining: [2, 3],
@@ -838,10 +840,10 @@ async function pausedRun(answers: { runId: string; continueRun: boolean }[]) {
   return emit;
 }
 
-test("a run paused at a reset point shows Reset needed, what to revert and what is left", async () => {
+test("a run paused before a batch shows Before Batch N, what to put back and what is left", async () => {
   await pausedRun([]);
-  const panel = await screen.findByRole("region", { name: "Reset needed" });
-  expect(within(panel).getByRole("heading", { name: "Reset needed" })).toBeInTheDocument();
+  const panel = await screen.findByRole("region", { name: "Before Batch 2" });
+  expect(within(panel).getByRole("heading", { name: "Before Batch 2" })).toBeInTheDocument();
   expect(
     within(panel).getByText('Reset: revert "cycle published" (changed by #1 Publish the cycle)'),
   ).toBeInTheDocument();
@@ -851,25 +853,25 @@ test("a run paused at a reset point shows Reset needed, what to revert and what 
     "#3 Other",
   ]);
   // Visible labels stay short; the accessible names say what they do.
-  expect(within(panel).getByRole("button", { name: "Continue after reset" })).toHaveTextContent("Continue");
-  expect(within(panel).getByRole("button", { name: "Stop the run at this reset" })).toHaveTextContent("Stop");
+  expect(within(panel).getByRole("button", { name: "Continue the run" })).toHaveTextContent("Continue");
+  expect(within(panel).getByRole("button", { name: "Stop the run at this pause" })).toHaveTextContent("Stop");
 });
 
 test("Continue at a reset point answers the run and the panel goes", async () => {
   const answers: { runId: string; continueRun: boolean }[] = [];
   await pausedRun(answers);
-  fireEvent.click(await screen.findByRole("button", { name: "Continue after reset" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Continue the run" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-9", continueRun: true }]));
-  await waitFor(() => expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument());
 });
 
 test("Stop at a reset point answers Stop, and the run is shown stopping", async () => {
   const answers: { runId: string; continueRun: boolean }[] = [];
   await pausedRun(answers);
-  fireEvent.click(await screen.findByRole("button", { name: "Stop the run at this reset" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Stop the run at this pause" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-9", continueRun: false }]));
   expect(await screen.findByRole("button", { name: "Stopping after this step" })).toBeDisabled();
-  expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
 });
 
 test("a reset point of another run is not shown", async () => {
@@ -884,12 +886,14 @@ test("a reset point of another run is not shown", async () => {
     await emit("autorun-reset-needed", {
       run_id: "run-other",
       before_case_id: 2,
+      batch: 2,
+      set: [],
       names: ["x"],
       changed_by: [["x", [1]]],
       remaining: [2],
     });
   });
-  expect(screen.queryByRole("region", { name: "Reset needed" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Before Batch 2" })).not.toBeInTheDocument();
 });
 
 // ---- the run outlives its window ----
