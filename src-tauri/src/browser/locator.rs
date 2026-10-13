@@ -387,8 +387,25 @@ pub const VISIBLE_JS: &str = r#"function() {
     const r = e.getBoundingClientRect();
     return e.checkVisibility({ visibilityProperty: true }) && r.width > 0 && r.height > 0;
   };
+  // An element with no box of its own, whose content a person sees: a link
+  // around a floated or absolutely placed icon or text, or one that is
+  // `display: contents`. The page read lists it by its role and name, so
+  // it counts as seen when what it holds is drawn and nothing around it is
+  // hidden. Its own visibility still counts.
+  const contentDrawn = (e) => {
+    const view = e.ownerDocument.defaultView;
+    if (view.getComputedStyle(e).visibility !== 'visible') return false;
+    let boxed = e;
+    while (boxed && view.getComputedStyle(boxed).display === 'contents') boxed = boxed.parentElement;
+    if (!boxed || !boxed.checkVisibility({ visibilityProperty: true })) return false;
+    const range = e.ownerDocument.createRange();
+    range.selectNodeContents(e);
+    const r = range.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
   return drawn(this) ||
-    (!!this.labels && this.checkVisibility({ visibilityProperty: true }) && Array.from(this.labels).some(drawn));
+    (!!this.labels && this.checkVisibility({ visibilityProperty: true }) && Array.from(this.labels).some(drawn)) ||
+    contentDrawn(this);
 }"#;
 
 async fn by_role<D: Driver>(

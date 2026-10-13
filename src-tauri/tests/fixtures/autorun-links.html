@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Links</title>
+<style>
+  body { font-family: sans-serif; }
+  .bar { height: 40px; }
+  .float-icon { float: left; width: 24px; height: 24px; background: #888; }
+  .abs-wrap { position: relative; height: 30px; }
+  .abs-text { position: absolute; left: 0; top: 0; }
+  .block-in-inline { display: block; width: 60px; height: 20px; }
+</style>
+</head>
+<body>
+  <!-- Link shapes a header uses for "Home": each is listed by the page read
+       as a link with a name, and each is clicked by that name. -->
+  <div class="bar"><a id="float-img" href="#float-img-done" aria-label="Home float"><img class="float-icon" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a></div>
+  <div class="abs-wrap"><a id="abs-span" href="#abs-span-done"><span class="abs-text">Home absolute</span></a></div>
+  <p><a id="contents" href="#contents-done" style="display: contents">Home contents</a></p>
+  <p><a id="svg-title" href="#svg-title-done"><svg width="20" height="20"><title>Home svg</title><rect width="20" height="20" fill="#888"></rect></svg></a></p>
+  <p><a id="img-alt" href="#img-alt-done"><img alt="Home image" width="20" height="20" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a></p>
+  <p><a id="block-child" href="#block-child-done"><span class="block-in-inline">Home block</span></a></p>
+  <p id="clicked">none</p>
+  <script>
+    for (const a of document.querySelectorAll('a')) {
+      a.addEventListener('click', (e) => { e.preventDefault(); document.getElementById('clicked').textContent = a.id; });
+    }
+  </script>
+</body>
+</html>

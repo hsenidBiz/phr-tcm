@@ -3290,6 +3290,58 @@ async fn states_every_line_the_page_read_prints_resolves() {
     }
 }
 
+fn links_fixture_url() -> String {
+    fixture_url().replace("autorun-live.html", "autorun-links.html")
+}
+
+/// The report's `link "Home"`: listed by the page read, then not found by
+/// a click on that very name. The cause: a link with no box of its own - its
+/// icon floated or absolutely placed, or the link `display: contents` -
+/// which the read lists from the accessibility tree, but which the
+/// resolver's visibility test dropped for its zero-size box. Each shape a
+/// header draws a link in is read, resolved as the read printed it, and
+/// clicked, and the page hears the click on that link.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn links_every_link_the_read_prints_is_found_and_clicked() {
+    use v2_lib::browser::snapshot::snapshot_with_lines;
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "navigate", "url": links_fixture_url() })).await);
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": "#clicked" })).await);
+    let (text, lines) = snapshot_with_lines(&mut live.cdp, 400).await.expect("the page read failed");
+    let mut report = Vec::new();
+    for (name, id) in [
+        ("Home float", "float-img"),
+        ("Home absolute", "abs-span"),
+        ("Home contents", "contents"),
+        ("Home svg", "svg-title"),
+        ("Home image", "img-alt"),
+        ("Home block", "block-child"),
+    ] {
+        let Some(line) = lines.iter().find(|l| l.role == "link" && l.name == name) else {
+            report.push(format!("{name}: NOT PRINTED"));
+            continue;
+        };
+        let found = resolve(&mut live.cdp, &line.locator).await.expect("resolve failed").len();
+        if found != 1 {
+            report.push(format!("{name}: the read printed it, and the resolver found {found}"));
+            continue;
+        }
+        let selector = serde_json::to_value(&line.locator).unwrap();
+        let out = run(&mut live, json!({ "kind": "click", "selector": selector })).await;
+        let clicked = live.cdp.eval("document.getElementById('clicked').textContent").await.unwrap();
+        let clicked = clicked["result"]["value"].as_str().unwrap_or("").to_string();
+        if !out.ok || clicked != id {
+            report.push(format!("{name}: click ok {} ({}), the page heard {clicked:?}, not {id}", out.ok, out.detail));
+        }
+    }
+    assert!(report.is_empty(), "{}\n---\n{text}", report.join("\n"));
+    // A link hidden around its visible content is still hidden.
+    live.cdp.eval("document.getElementById('abs-span').style.visibility = 'hidden'").await.unwrap();
+    let gone = action_target(json!({ "role": "link", "name": "Home absolute" }));
+    assert!(resolve(&mut live.cdp, &gone).await.unwrap().is_empty(), "a hidden link was found");
+}
+
 /// The report's switch: the usual toggle, an `<input role="switch">` sized
 /// to nothing under a slider drawn in its label. The page read lists it,
 /// so a probe by its role finds it, as visible, and a click on it is a
