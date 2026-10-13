@@ -664,8 +664,11 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "list_api_fixtures",
-            "description": "The fixtures saved for the current project, each with its steps, outputs, what it creates, its current outputs (from its newest successful run) and its last run. Read-only; answers with the API templates switch off.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
+            "description": "The fixtures saved for the current project. By default each in short: its id, name, output names, what it creates (kind and name) and its last run's status. Pass `id` for one fixture in full (its steps, outputs, what it creates, its current outputs from its newest successful run, and its last run), or `full: true` for every one in full. Read-only; answers with the API templates switch off.",
+            "inputSchema": schema(serde_json::json!({
+                "id": { "type": "string", "description": "Optional: one fixture's id, answered in full." },
+                "full": { "type": "boolean", "description": "Optional: true answers every fixture in full. Long; prefer `id`." },
+            }), &[]),
         },
         {
             "name": "record_app_quirk",
@@ -1173,7 +1176,11 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // arguments object travels whole.
         "save_api_fixture" => call("POST", "/api-template-fixture-save", &args.to_string()),
         "run_api_fixture" => call("POST", "/api-template-fixture-run", &args.to_string()),
-        "list_api_fixtures" => call("GET", "/api-template-fixtures", ""),
+        "list_api_fixtures" => match args["id"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(id) => call("GET", &format!("/api-template-fixtures?id={}", percent_encode(id)), ""),
+            None if args["full"].as_bool().unwrap_or(false) => call("GET", "/api-template-fixtures?full=true", ""),
+            None => call("GET", "/api-template-fixtures", ""),
+        },
         // The API templates row's own names for the quirk tools: the same
         // routes, with `from` set here rather than trusted to the caller.
         "record_app_quirk" | "retire_app_quirk" => {

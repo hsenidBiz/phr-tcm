@@ -1254,11 +1254,35 @@ mod running {
         assert_eq!(status, 200, "{out}");
         assert_eq!(fixture_store::load(dir.path(), ORG, PROJECT, "draft-cycle").unwrap(), Some(fixture()));
 
+        // In short by default: no steps, output names only.
         let (status, out) = route(&off, None, "GET", "/api-template-fixtures", "", "1.0.0").await;
         assert_eq!(status, 200, "{out}");
         let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["fixtures"][0]["id"], "draft-cycle");
-        assert_eq!(v["fixtures"][0]["current_outputs"], Value::Null, "never built");
+        let short = &v["fixtures"][0];
+        assert_eq!(short["id"], "draft-cycle");
+        assert_eq!(short["name"], fixture().name);
+        assert_eq!(short["outputs"], json!(fixture().outputs.keys().collect::<Vec<_>>()));
+        assert_eq!(short["creates"].as_array().unwrap().len(), fixture().creates.len());
+        assert!(short.get("steps").is_none() && short.get("current_outputs").is_none(), "{short}");
+        assert_eq!(short["last_run"], Value::Null);
+        assert_eq!(v["note"], v2_lib::ai_bridge::FIXTURES_IN_SHORT);
+
+        // One in full by its id.
+        let (status, out) = route(&off, None, "GET", "/api-template-fixtures?id=draft-cycle", "", "1.0.0").await;
+        assert_eq!(status, 200, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["fixture"]["id"], "draft-cycle");
+        assert_eq!(v["fixture"]["steps"], serde_json::to_value(&fixture().steps).unwrap());
+        assert_eq!(v["fixture"]["current_outputs"], Value::Null, "never built");
+        let (status, out) = route(&off, None, "GET", "/api-template-fixtures?id=nope", "", "1.0.0").await;
+        assert_eq!(status, 404, "{out}");
+        assert!(out.contains("draft-cycle"), "{out}");
+
+        // Every one in full.
+        let (status, out) = route(&off, None, "GET", "/api-template-fixtures?full=true", "", "1.0.0").await;
+        assert_eq!(status, 200, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v["fixtures"][0]["steps"].is_array(), "{out}");
         assert_eq!(v["fixtures"][0]["last_run"], Value::Null);
     }
 }

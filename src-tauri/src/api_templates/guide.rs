@@ -357,8 +357,8 @@ with every problem, one sentence each. `run_api_fixture { id }` runs it and
 answers with its outputs, what it made and its warnings; it stops at the
 first failed step, with `step <n>: ` and that template's own sentence. A
 successful run's outputs become the fixture's current outputs; a failed one
-keeps the ones before. `list_api_fixtures` shows each fixture with its
-current outputs and last run. Saving and running need the API templates
+keeps the ones before. `list_api_fixtures` shows each fixture in short;
+with `id` it shows that one in full, with its current outputs and last run. Saving and running need the API templates
 switch; listing does not. Each template step has its own 3-minute limit.
 
 When a shared draft is damaged, use Rebuild (run the fixture again), never

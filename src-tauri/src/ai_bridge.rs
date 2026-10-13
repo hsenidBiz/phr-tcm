@@ -374,7 +374,7 @@ pub async fn route(
         // run then follows. The list is a read and answers either way.
         // None of these writes the record of test-made drafts itself: only
         // the fixture runner adds to it, and only Clean up changes it.
-        ("GET", "/api-template-fixtures") => api_fixture_list(ctx),
+        ("GET", "/api-template-fixtures") => api_fixture_list(ctx, target),
         ("POST", "/api-template-fixture-save") => api_fixture_save(ctx, body),
         ("POST", "/api-template-fixture-run") => {
             api_fixture_run(ctx, body, real_template_browsers, &crate::commands::autorun_replay::replay_timing(false))
@@ -1238,10 +1238,18 @@ fn browser_arg(v: &serde_json::Value) -> Result<crate::browser::launch::Browser,
     }
 }
 
-/// `GET /api-template-fixtures`: every saved fixture of the project, with
-/// its current outputs (from its newest successful run) and its last run.
-/// A read: it answers with the API templates switch off.
-fn api_fixture_list(ctx: &BridgeContext) -> (u16, String) {
+/// Said beside a summary list of fixtures: how to read one in full.
+pub const FIXTURES_IN_SHORT: &str =
+    "each fixture in short - call list_api_fixtures with id for one in full (its steps, current outputs and last run), or full: true for all";
+
+/// `GET /api-template-fixtures`: the project's saved fixtures. By default a
+/// summary of each - its id, name, output names, what it creates (kind and
+/// name) and its last run's status - since the whole of every fixture
+/// outgrows what an assistant can read. `?id=` answers that one fixture in
+/// full (`fixture`), and `?full=true` every one in full, each with its
+/// current outputs (from its newest successful run) and its last run. A
+/// read: it answers with the API templates switch off.
+fn api_fixture_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
     use crate::api_templates::fixture_store;
     let root = match autorun_root() {
         Ok(r) => r,
@@ -1254,23 +1262,54 @@ fn api_fixture_list(ctx: &BridgeContext) -> (u16, String) {
             return (500, "the fixtures could not be listed - see Settings, Logs".to_string());
         }
     };
+    let in_full = |s: &crate::api_templates::fixture_store::SavedFixture| {
+        let f = &s.fixture;
+        serde_json::json!({
+            "id": f.id,
+            "name": f.name,
+            "account": f.account,
+            "steps": f.steps,
+            "outputs": f.outputs,
+            "creates": f.creates,
+            "current_outputs": s.runs.iter().find(|r| r.ok).map(|r| &r.outputs),
+            "last_run": s.runs.first(),
+        })
+    };
+    if let Some(id) = q(target, "id").map(|i| i.trim().to_string()).filter(|i| !i.is_empty()) {
+        return match saved.iter().find(|s| s.fixture.id == id) {
+            Some(s) => (200, serde_json::json!({ "fixture": in_full(s) }).to_string()),
+            None => {
+                let ids: Vec<&str> = saved.iter().map(|s| s.fixture.id.as_str()).collect();
+                let known = if ids.is_empty() { "none is saved".to_string() } else { format!("the saved ones are {}", ids.join(", ")) };
+                (404, format!("no fixture \"{id}\" is saved in this project - {known}"))
+            }
+        };
+    }
+    if q(target, "full").is_some_and(|v| v.trim().eq_ignore_ascii_case("true")) {
+        let fixtures: Vec<serde_json::Value> = saved.iter().map(in_full).collect();
+        return (200, serde_json::json!({ "fixtures": fixtures }).to_string());
+    }
     let fixtures: Vec<serde_json::Value> = saved
         .iter()
         .map(|s| {
             let f = &s.fixture;
+            let last = s.runs.first().map(|r| {
+                let mut v = serde_json::json!({ "at": r.at, "ok": r.ok });
+                if let Some(step) = r.failed_step {
+                    v["failed_step"] = serde_json::json!(step);
+                }
+                v
+            });
             serde_json::json!({
                 "id": f.id,
                 "name": f.name,
-                "account": f.account,
-                "steps": f.steps,
-                "outputs": f.outputs,
-                "creates": f.creates,
-                "current_outputs": s.runs.iter().find(|r| r.ok).map(|r| &r.outputs),
-                "last_run": s.runs.first(),
+                "outputs": f.outputs.keys().collect::<Vec<_>>(),
+                "creates": f.creates.iter().map(|c| serde_json::json!({ "kind": c.kind, "name": c.name })).collect::<Vec<_>>(),
+                "last_run": last,
             })
         })
         .collect();
-    (200, serde_json::json!({ "fixtures": fixtures }).to_string())
+    (200, serde_json::json!({ "fixtures": fixtures, "note": FIXTURES_IN_SHORT }).to_string())
 }
 
 /// `POST /api-template-fixture-save`: checks the fixture against the saved

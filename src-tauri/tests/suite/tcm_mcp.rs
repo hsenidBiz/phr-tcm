@@ -846,6 +846,8 @@ fn the_api_template_tools_call_their_routes() {
         ("save_api_fixture", fixture_args.clone(), "POST", "/api-template-fixture-save", Some(fixture_args)),
         ("run_api_fixture", run_fixture_args.clone(), "POST", "/api-template-fixture-run", Some(run_fixture_args)),
         ("list_api_fixtures", serde_json::json!({}), "GET", "/api-template-fixtures", None),
+        ("list_api_fixtures", serde_json::json!({ "id": "draft cycle" }), "GET", "/api-template-fixtures?id=draft%20cycle", None),
+        ("list_api_fixtures", serde_json::json!({ "full": true }), "GET", "/api-template-fixtures?full=true", None),
     ];
     for (name, args, method, path, body) in cases {
         let req = serde_json::json!({
