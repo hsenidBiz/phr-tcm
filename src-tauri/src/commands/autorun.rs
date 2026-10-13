@@ -743,8 +743,16 @@ async fn open_into(
         close_session(old);
     }
     let browser = launch_in(which)?;
-    // The browser needs a moment to bind its port before it will answer.
-    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    // The browser binds its port when it is ready, which varies with what
+    // else the machine is doing: asked until it answers, as an unattended
+    // run's launch asks, rather than after one fixed sleep that a busy
+    // machine outlasts.
+    let port = browser.port;
+    if let Err(last) = until_answers(|| Cdp::answers(port), ANSWER_TRIES, ANSWER_PAUSE).await {
+        close_browser(browser);
+        crate::applog::warn(format!("Auto-run browser never answered: {last}"));
+        return Err(crate::commands::autorun_replay::NEVER_ANSWERED.to_string());
+    }
     let mut cdp = match Cdp::connect(browser.port).await {
         Ok(cdp) => cdp,
         Err(e) => {
@@ -795,6 +803,30 @@ async fn open_into(
     answer_between_commands();
     crate::applog::info(format!("Auto-run opened {}", which.label()));
     Ok(())
+}
+
+/// How many times, and how far apart, a browser just started is asked
+/// whether its DevTools port answers: about 15 seconds in all.
+pub const ANSWER_TRIES: u32 = 60;
+pub const ANSWER_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Ask `ask` up to `tries` times, `every` apart (the first after one
+/// pause), until it answers. `Err` is the last refusal, for the log: it
+/// names a local port, nothing a person can act on.
+pub async fn until_answers<F, Fut>(mut ask: F, tries: u32, every: std::time::Duration) -> Result<(), String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    let mut last = String::from("it was never asked");
+    for _ in 0..tries {
+        tokio::time::sleep(every).await;
+        match ask().await {
+            Ok(()) => return Ok(()),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
 }
 
 /// End the browser's whole process tree and drop its throwaway profile

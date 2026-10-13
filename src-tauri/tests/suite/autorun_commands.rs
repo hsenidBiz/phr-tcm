@@ -638,3 +638,29 @@ fn an_import_lists_a_missing_component_and_a_wrong_kind_input() {
         assert!(load_script(&root, id).unwrap().is_none(), "case {id} was written");
     }
 }
+
+/// A browser just started is asked until its DevTools port answers, never
+/// once after a fixed sleep: one that answers on the third ask is used,
+/// and one that never answers is given up with the last refusal, after
+/// every ask.
+#[tokio::test]
+async fn a_new_browser_is_asked_until_it_answers() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use v2_lib::commands::autorun::until_answers;
+    let pause = std::time::Duration::from_millis(1);
+    let asked = AtomicU32::new(0);
+    let late = || {
+        let n = asked.fetch_add(1, Ordering::SeqCst) + 1;
+        async move { if n >= 3 { Ok(()) } else { Err(format!("not yet ({n})")) } }
+    };
+    assert_eq!(until_answers(late, 10, pause).await, Ok(()));
+    assert_eq!(asked.load(Ordering::SeqCst), 3, "it was asked again after it answered");
+
+    let never_asked = AtomicU32::new(0);
+    let never = || {
+        let n = never_asked.fetch_add(1, Ordering::SeqCst) + 1;
+        async move { Err::<(), String>(format!("refused {n}")) }
+    };
+    assert_eq!(until_answers(never, 5, pause).await, Err("refused 5".to_string()));
+    assert_eq!(never_asked.load(Ordering::SeqCst), 5);
+}
