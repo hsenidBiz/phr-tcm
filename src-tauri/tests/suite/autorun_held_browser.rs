@@ -462,7 +462,8 @@ async fn the_assistants_release_never_stops_a_replay() {
     let _a = crate::serial::autorun();
     let replay = v2_lib::autorun::replay_to::OneReplay::claim().unwrap();
     let (status, said) = release_for_assistant().await;
-    assert_eq!((status, said.as_str()), (409, v2_lib::autorun::replay_to::ALREADY_RUNNING));
+    assert_eq!((status, said.clone()), (409, v2_lib::ai_bridge::replay_going_for_a_release()));
+    assert!(said.contains("call replay_autorun_to_step"), "{said}");
     assert!(!v2_lib::autorun::replay_to::CANCEL.load(Ordering::SeqCst), "the replay was asked to stop");
     drop(replay);
 }

@@ -171,6 +171,28 @@ pub fn as_run(r: &ReplayRecord) -> LocalRun {
     }
 }
 
+/// The newest word on any case: the newest kept failing replay of any case,
+/// read as a run (`as_run`), when it is newer than the newest run on this
+/// machine or there is no run; that run otherwise.
+pub fn latest(root: &Path) -> Option<LocalRun> {
+    let newest_replay = std::fs::read_dir(dir(root))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let id: i32 = name.strip_suffix(".json")?.parse().ok()?;
+            load(root, id)
+        })
+        .max_by_key(|r| r.at);
+    let run = failures::latest_run(root, None);
+    match (run, newest_replay) {
+        (None, Some(r)) => Some(as_run(&r)),
+        (Some(run), Some(r)) if r.at > run.started_at.parse::<u64>().unwrap_or(0) => Some(as_run(&r)),
+        (run, _) => run,
+    }
+}
+
 /// The newest word on case `case_id`: its kept failing replay, read as a
 /// run (`as_run`), when no run on this machine has the case or the replay
 /// is newer than the newest one that does; that run otherwise.

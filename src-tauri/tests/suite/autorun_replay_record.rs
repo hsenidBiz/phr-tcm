@@ -137,6 +137,32 @@ async fn the_newer_of_the_run_and_the_replay_is_read() {
     assert!(out.contains("run run-3000") && !out.contains("replay"), "{out}");
 }
 
+/// With no case named, the newest word is the newest of every kept replay
+/// and the newest run: a replay newer than the run is read, and a run
+/// newer than every replay is.
+#[tokio::test]
+async fn with_no_case_named_the_newer_of_any_replay_and_the_newest_run_is_read() {
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    setup(dir.path());
+    let (status, out) = route(&ctx(), None, "GET", "/autorun-failures", "", "1.0.0").await;
+    assert_eq!((status, out.as_str()), (404, "no run on this machine yet"));
+
+    note(dir.path(), ID, "Leave request", 3, &stopped_at_2(), None, 2_000);
+    let (status, out) = route(&ctx(), None, "GET", "/autorun-failures", "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("from a replay to step 3"), "{out}");
+
+    save_run(dir.path(), &run_failing_step_1(1_000)).unwrap();
+    assert_eq!(v2_lib::autorun::replay_record::latest(dir.path()).map(|r| r.mode), Some(REPLAY_MODE.to_string()));
+    let (_, out) = route(&ctx(), None, "GET", "/autorun-failures", "", "1.0.0").await;
+    assert!(out.contains("from a replay to step 3"), "{out}");
+
+    save_run(dir.path(), &run_failing_step_1(3_000)).unwrap();
+    let (_, out) = route(&ctx(), None, "GET", "/autorun-failures", "", "1.0.0").await;
+    assert!(out.contains("run run-3000") && !out.contains("replay"), "{out}");
+}
+
 /// A suspected defect can be marked straight after a replay that stopped
 /// at the step, with no run of the case on this machine.
 #[tokio::test]

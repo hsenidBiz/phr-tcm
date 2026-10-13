@@ -1016,7 +1016,7 @@ pub async fn auto_run_release_browser() -> Result<String, String> {
 /// going holds the lock, and the answer says to wait.
 pub async fn release_for_assistant() -> (u16, String) {
     if crate::autorun::replay_to::is_running() {
-        return (409, crate::autorun::replay_to::ALREADY_RUNNING.to_string());
+        return (409, crate::ai_bridge::replay_going_for_a_release());
     }
     crate::ai_bridge::stop_batch();
     let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, SESSION.lock()).await else {

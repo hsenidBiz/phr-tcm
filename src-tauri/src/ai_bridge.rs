@@ -2537,13 +2537,28 @@ pub const REPLAY_GOING: &str =
 /// own call says where it is, and hands back the page once it stands
 /// before its step.
 pub fn replay_going_for_a_page_read() -> String {
-    let which = assistant_run().as_ref().filter(|r| r.answer.borrow().is_none()).map(|r| (r.case_id, r.step));
-    let call = match which {
-        Some((case_id, step)) => format!("call replay_autorun_to_step with case {case_id} and step {step}"),
-        None => "call replay_autorun_to_step with the same case and step".to_string(),
-    };
+    let call = call_the_replay_going();
     format!(
         "the page cannot be read while a replay drives the browser - {call}: it waits for the replay, says the step and the action it is on, and hands back the page once the browser stands before the step"
+    )
+}
+
+/// How to wait on the replay going: the assistant's own names its case and
+/// step; the person's, or one not known, says "the same case and step".
+fn call_the_replay_going() -> String {
+    let which = assistant_run().as_ref().filter(|r| r.answer.borrow().is_none()).map(|r| (r.case_id, r.step));
+    match which {
+        Some((case_id, step)) => format!("call replay_autorun_to_step with case {case_id} and step {step}"),
+        None => "call replay_autorun_to_step with the same case and step".to_string(),
+    }
+}
+
+/// Said, with 409, to the assistant's release while a replay holds the
+/// browser: a release never stops a replay, so it says how to wait for it.
+pub fn replay_going_for_a_release() -> String {
+    format!(
+        "a replay is going and holds the browser, and a release never stops one - {} to wait for it, then release",
+        call_the_replay_going()
     )
 }
 
@@ -5343,8 +5358,10 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
         },
         // A case's newest word may be a replay that stopped on a failure,
         // when it is newer than the case's newest run or no run has it.
+        // With no case named, a replay that stopped on a failure counts as
+        // the newest word too, when it is newer than the newest run.
         None => match case_id.map_or_else(
-            || crate::autorun::failures::latest_run(&root, None),
+            || crate::autorun::replay_record::latest(&root),
             |id| crate::autorun::replay_record::latest_for_case(&root, id),
         ) {
             Some(run) => run,
