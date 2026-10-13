@@ -1747,6 +1747,7 @@ pub fn save_script_from_editor(
         setup: None,
         changes: Vec::new(),
         needs_unchanged: Vec::new(),
+        needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
         page_errors: None,
@@ -1766,6 +1767,7 @@ pub fn save_script_from_editor(
         preconditions: _,
         changes: _,
         needs_unchanged: _,
+        needs_state: _,
         // Reset above: a person's save starts the repair count afresh.
         repairs: _,
         last_repair: _,
@@ -1825,16 +1827,18 @@ pub fn clear_suspected_defect(root: &std::path::Path, case_id: i32) -> Result<()
 }
 
 /// The plan for a selection, as the screen shows it: the order, the order
-/// split into phases at each reset point, and the reset points. `counts`
-/// is `(this order's resets, the suggested order's resets)`, only when
-/// Auto Run's own order for the PBI needs more resets than the suggestion.
-/// `saved` says whether the PBI has an order of its own on this machine.
-/// Titles are the screen's: it has the case list.
+/// split into batches (`phases`) at each pause, and the pauses: one before
+/// each batch after the first (settings to set, state to put back), and one
+/// before Batch 1 when it needs settings. `counts` is `(this order's
+/// pauses, the suggested order's pauses)`, only when Auto Run's own order
+/// for the PBI needs more pauses than the suggestion. `saved` says whether
+/// the PBI has an order of its own on this machine. Titles are the
+/// screen's: it has the case list.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 pub struct PlanView {
     pub order: Vec<i32>,
     pub phases: Vec<Vec<i32>>,
-    pub resets: Vec<crate::autorun::plan::Reset>,
+    pub pauses: Vec<crate::autorun::plan::Pause>,
     pub counts: Option<(u32, u32)>,
     pub saved: bool,
 }
@@ -1864,30 +1868,27 @@ pub fn auto_run_plan(
 /// `AppHandle`. A script that cannot be read counts as no marks (and is
 /// logged), so one bad file never stops the plan.
 pub fn plan_at(root: &std::path::Path, pbi_id: i32, case_ids: &[i32], preview_order: Option<&[i32]>) -> PlanView {
-    use crate::autorun::plan::{plan_for, Marks};
-    let selected: Vec<(i32, Marks)> = case_ids
+    use crate::autorun::plan::{batches_for, needs_of, Marks, Needs};
+    let selected: Vec<(i32, Marks, Needs)> = case_ids
         .iter()
-        .map(|&id| {
-            let marks = match store::load_script(root, id) {
-                Ok(Some(script)) => Marks::of(&script),
-                Ok(None) => Marks::default(),
-                Err(e) => {
-                    crate::applog::warn(format!("auto-run: case {id}'s script could not be read for the plan: {e}"));
-                    Marks::default()
-                }
-            };
-            (id, marks)
+        .map(|&id| match store::load_script(root, id) {
+            Ok(Some(script)) => (id, Marks::of(&script), needs_of(&script)),
+            Ok(None) => (id, Marks::default(), Needs::new()),
+            Err(e) => {
+                crate::applog::warn(format!("auto-run: case {id}'s script could not be read for the plan: {e}"));
+                (id, Marks::default(), Needs::new())
+            }
         })
         .collect();
     let saved = match preview_order {
         Some(p) => Some(p.to_vec()),
         None => store::load_order(root, pbi_id),
     };
-    let (plan, counts) = plan_for(&selected, saved.as_deref());
+    let (plan, counts) = batches_for(&selected, saved.as_deref());
     PlanView {
         order: plan.order,
-        phases: plan.phases,
-        resets: plan.resets,
+        phases: plan.batches,
+        pauses: plan.pauses,
         counts: counts.map(|(a, b)| (a as u32, b as u32)),
         saved: preview_order.is_none() && saved.is_some(),
     }

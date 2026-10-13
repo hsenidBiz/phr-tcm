@@ -1967,11 +1967,11 @@ async fn a_retried_case_closes_the_tabs_of_each_go() {
 /// tabs, and the case after starts with none.
 #[tokio::test]
 async fn a_reset_pause_comes_after_the_case_before_closed_its_tabs() {
-    use v2_lib::autorun::plan::Reset;
+    use v2_lib::autorun::plan::Pause;
     use v2_lib::autorun::replay::{run_cases_planned, ResetGate};
     struct Carry;
     impl ResetGate for Carry {
-        async fn wait(&mut self, _reset: &Reset, _remaining: &[i32], _cancel: &AtomicBool) -> bool {
+        async fn wait(&mut self, _reset: &Pause, _remaining: &[i32], _cancel: &AtomicBool) -> bool {
             true
         }
     }
@@ -1987,7 +1987,7 @@ async fn a_reset_pause_comes_after_the_case_before_closed_its_tabs() {
     };
     let mut run = new_run("run-reset-tabs");
     let cancel = AtomicBool::new(false);
-    let reset = Reset { before_case_id: 2, names: vec!["x".into()], changed_by: vec![] };
+    let reset = Pause { batch: 2, before_case_id: 2, names: vec!["x".into()], ..Pause::default() };
     run_cases_planned(
         &mut browsers,
         root,

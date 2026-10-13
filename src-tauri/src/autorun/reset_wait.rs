@@ -1,4 +1,5 @@
-//! An unattended run waiting at a reset point for the person.
+//! An unattended run waiting at a pause (a reset point, or settings to set
+//! before a batch) for the person.
 //!
 //! At a reset point (design §3) the run tells the app (`AutorunResetNeeded`,
 //! shown as the Reset needed panel) and waits for Continue or Stop. One
@@ -8,7 +9,7 @@
 //! with the app closing (`stop_for_exit`), and the last two both answer
 //! Stop, so the run is always saved as stopped rather than left waiting.
 
-use super::plan::Reset;
+use super::plan::Pause;
 use super::replay::ResetGate;
 use crate::events::AutorunResetNeeded;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -162,10 +163,12 @@ pub struct AppGate<'a> {
 }
 
 impl ResetGate for AppGate<'_> {
-    async fn wait(&mut self, reset: &Reset, remaining: &[i32], cancel: &AtomicBool) -> bool {
+    async fn wait(&mut self, reset: &Pause, remaining: &[i32], cancel: &AtomicBool) -> bool {
         let needed = AutorunResetNeeded {
             run_id: self.run_id.clone(),
             before_case_id: reset.before_case_id,
+            batch: reset.batch,
+            set: reset.set.clone(),
             names: reset.names.clone(),
             changed_by: reset.changed_by.clone(),
             remaining: remaining.to_vec(),

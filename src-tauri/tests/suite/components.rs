@@ -92,6 +92,7 @@ fn script(case_id: i32, actions: Vec<Action>) -> CaseScript {
         setup: None,
         changes: vec![],
         needs_unchanged: vec![],
+        needs_state: Default::default(),
         saved_at: None,
         fail_on_unexpected_dialog: false,
         page_errors: None,
