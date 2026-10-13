@@ -512,6 +512,47 @@ fn a_locator_matched_in_an_older_discovery_is_dropped_on_re_read() {
     assert_eq!(names_on(dir.path(), "/p"), ["Save"]);
 }
 
+/// A later discovery's whole-page read drops only what a read could have
+/// printed: a css or text locator a probe matched, a narrowed one, or a
+/// chain through css is never on a read's lines, so it stays. A role
+/// locator the read no longer shows is gone, as before.
+#[test]
+fn a_re_read_keeps_what_no_read_can_print() {
+    use v2_lib::autorun::discovery_map::{a_read_can_print, a_read_can_print_target};
+    use v2_lib::browser::locator::SeenKey;
+    let dir = tempfile::tempdir().unwrap();
+    let css = Target::One(LocatorStep { css: Some("#grid .row-edit".into()), ..LocatorStep::default() });
+    let text = Target::One(LocatorStep { text: Some("Pending approval".into()), ..LocatorStep::default() });
+    let chain = Target::Chain(vec![
+        LocatorStep { css: Some(".grid".into()), ..LocatorStep::default() },
+        LocatorStep { role: Some("button".into()), name: Some("Edit".into()), ..LocatorStep::default() },
+    ]);
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(1000), 1000).unwrap();
+    for t in [&css, &text, &chain, &deep()] {
+        record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", t, 1500).unwrap();
+    }
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(5000), 5000).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let keys: Vec<&SeenKey> = map.areas[0].sightings.iter().map(|s| &s.key).collect();
+    assert!(keys.contains(&&SeenKey::Css("#grid .row-edit".into())), "{keys:?}");
+    assert!(keys.contains(&&SeenKey::Text("Pending approval".into())), "{keys:?}");
+    assert!(keys.contains(&&SeenKey::Css(".grid".into())), "{keys:?}");
+    assert!(
+        !keys.contains(&&SeenKey::Role { role: "button".into(), name: "deep".into() }),
+        "a role a read prints and no longer shows was kept: {keys:?}"
+    );
+    assert!(map.areas[0].wholes.iter().any(|w| w.locator == chain), "{:?}", map.areas[0].wholes);
+    let names = names_on(dir.path(), "/p");
+    assert!(names.contains(&"Save".to_string()) && !names.contains(&"Deep".to_string()), "{names:?}");
+
+    assert!(a_read_can_print(&SeenKey::Role { role: "button".into(), name: "save".into() }));
+    assert!(a_read_can_print(&SeenKey::Css("iframe#pay".into())));
+    assert!(!a_read_can_print(&SeenKey::Css("#x".into())));
+    assert!(!a_read_can_print(&SeenKey::Text("x".into())));
+    assert!(!a_read_can_print_target(&chain));
+    assert!(a_read_can_print_target(&deep()));
+}
+
 /// A page read while healing or replaying adds what it shows and drops
 /// nothing: it is not a discovery.
 #[test]

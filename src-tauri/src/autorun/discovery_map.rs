@@ -227,6 +227,29 @@ pub fn plain_target(target: &Target) -> bool {
     }
 }
 
+/// Can a page read print a link with this key? A read prints a role and a
+/// name for each element (never a role with no locator,
+/// `snapshot::NO_LOCATOR_ROLES`), and a css step only for the iframe a
+/// line sits in (`snapshot::frame_step`). A text locator, and any other
+/// css, only a probe or a try ever matches.
+pub fn a_read_can_print(key: &SeenKey) -> bool {
+    match key {
+        SeenKey::Role { role, .. } => {
+            !crate::browser::snapshot::NO_LOCATOR_ROLES.iter().any(|r| crate::browser::locator::fold_name(r) == *role)
+        }
+        SeenKey::Css(css) => css.starts_with("iframe"),
+        SeenKey::Text(_) => false,
+    }
+}
+
+/// Can a page read print this whole locator? Every link plain
+/// (`plain_link`) and printable (`a_read_can_print`), ending in a role.
+pub fn a_read_can_print_target(target: &Target) -> bool {
+    let links = target.links();
+    links.last().is_some_and(|l| l.role.is_some())
+        && links.iter().all(|l| plain_link(l) && l.seen_key().is_some_and(|k| a_read_can_print(&k)))
+}
+
 /// How many listed lines in the same frame as `line` its locator would
 /// match: the same role, and a name holding its name, as a role locator
 /// matches (`locator::name_matches`, not exact). A line whose locator is
@@ -642,7 +665,9 @@ pub fn record_read_counted(
         if let Some(started) = explores {
             for e in old {
                 let matched_now = e.seen_at != 0 && e.seen_at >= started;
-                if matched_now && !page.elements.iter().any(|n| n.locator == e.locator) {
+                // What no read can print is not gone for not being printed.
+                let kept = matched_now || (e.seen_at != 0 && !a_read_can_print_target(&e.locator));
+                if kept && !page.elements.iter().any(|n| n.locator == e.locator) {
                     page.elements.push(e);
                 }
             }
@@ -661,9 +686,15 @@ pub fn record_read_counted(
                 }
             }
         }
+        // Only what a read can print is dropped for not being printed: a
+        // css locator, a text locator, a narrowed one or a chain through
+        // css that a probe or a try matched is never on a read's lines, so
+        // its absence there says nothing about the page.
         if let Some(started) = explores {
-            a.sightings.retain(|s| s.page != path || s.last_seen >= started || shown.contains(&s.key));
-            a.wholes.retain(|w| w.page != path || w.last_seen >= started);
+            a.sightings.retain(|s| {
+                s.page != path || s.last_seen >= started || shown.contains(&s.key) || !a_read_can_print(&s.key)
+            });
+            a.wholes.retain(|w| w.page != path || w.last_seen >= started || !a_read_can_print_target(&w.locator));
         }
         trim_sightings(a);
     })?;
