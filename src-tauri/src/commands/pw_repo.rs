@@ -233,7 +233,9 @@ pub async fn pw_sync_update(
 /// Add new: exports every case with a script that the repo has in none of
 /// its places (`sync::add_new`), through the same write as Update, and
 /// nothing else. Which cases is worked out here, not taken from the
-/// webview, and the write refuses any case the repo has.
+/// webview, and the write refuses any case the repo has. A new case that
+/// cannot be exported on its own is left out and listed with why
+/// (`export::add_new_with`); the rest go as one all-or-nothing write.
 #[tauri::command]
 #[specta::specta]
 pub async fn pw_sync_add_new(
@@ -248,9 +250,33 @@ pub async fn pw_sync_add_new(
     let dir = super::pw_export::sync_dir(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
     let (o, p) = (org.clone(), project.clone());
-    let rows = blocking(clone.clone(), false, move |_, _| sync::states(&dir, &root, &configured, &o, &p)).await?;
+    let (d, r, c) = (dir.clone(), root.clone(), configured.clone());
+    let rows = blocking(clone.clone(), false, move |_, _| sync::states(&d, &r, &c, &o, &p)).await?;
     let cases = sync::add_new(&rows);
-    update(app, clone, org, project, cases, vec![], module_ref, preconditions_ref).await
+    if cases.is_empty() {
+        return Ok(super::pw_export::nothing_written());
+    }
+    let record = sync::load(&sync::record_path(&dir, &configured, &org, &project))?;
+    let docs = super::pw_export::read_docs(&app, &org, &project, &cases, module_ref.as_deref(), preconditions_ref.as_deref()).await?;
+    let modules = modules_for(&cases, &docs, &record);
+    blocking(clone, false, move |_, _| export::add_new_with(&root, &dir, &org, &project, &cases, &configured, &modules, &docs)).await
+}
+
+/// Each case's Module as Azure DevOps has it now, else as it was at its
+/// last export.
+fn modules_for(
+    cases: &[i32],
+    docs: &BTreeMap<i32, crate::pw_export::test_case::CaseDoc>,
+    record: &sync::ExportRecord,
+) -> BTreeMap<i32, String> {
+    cases
+        .iter()
+        .map(|id| {
+            let now = docs.get(id).map(|d| d.module.trim().to_string()).filter(|m| !m.is_empty());
+            let then = record.cases.get(id).map(|e| e.module.clone()).unwrap_or_default();
+            (*id, now.unwrap_or(then))
+        })
+        .collect()
 }
 
 /// The body of Update and Add new.
@@ -292,14 +318,7 @@ async fn update(
         .await?;
     }
     let docs = super::pw_export::read_docs(&app, &org, &project, &cases, module_ref.as_deref(), preconditions_ref.as_deref()).await?;
-    let modules: BTreeMap<i32, String> = cases
-        .iter()
-        .map(|id| {
-            let now = docs.get(id).map(|d| d.module.trim().to_string()).filter(|m| !m.is_empty());
-            let then = record.cases.get(id).map(|e| e.module.clone()).unwrap_or_default();
-            (*id, now.unwrap_or(then))
-        })
-        .collect();
+    let modules = modules_for(&cases, &docs, &record);
     blocking(clone, false, move |_, _| {
         export::write_recorded(&root, &dir, &org, &project, &cases, &configured, &modules, &docs, &replace)
     })

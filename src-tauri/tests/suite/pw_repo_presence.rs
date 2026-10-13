@@ -135,3 +135,26 @@ fn a_case_the_repo_has_is_refused_unless_it_is_chosen_to_replace() {
     assert_eq!(r.cases.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![22]);
     assert!(!fx.read_clone(MD_REL).contains("Hand written"));
 }
+
+#[test]
+fn only_an_exact_marker_line_counts() {
+    use v2_lib::pw_repo::runner::marker_in;
+    assert_eq!(marker_in("  // ADO 135270"), Some(135270));
+    assert_eq!(marker_in("//ADO 7  "), Some(7));
+    assert_eq!(marker_in("// ADO   99\r"), Some(99));
+    assert_eq!(marker_in("// ADO 136431's finding that validation fires"), None);
+    assert_eq!(marker_in("// see ADO 136430"), None);
+    assert_eq!(marker_in("// ADO 136430."), None);
+    assert_eq!(marker_in("// ADO136430"), None);
+    assert_eq!(marker_in("// ADO"), None);
+
+    // In a spec, prose that names a case does not put it in the repo.
+    let fx = Fx::new();
+    write(
+        fx.clone.path().join("suites/sl/admin/performance/proficiency-levels/specs/proficiency-levels.spec.ts"),
+        "test('a', async () => {\n    // ADO 136431's finding that validation fires via a toast\n});\n  // ADO 40\ntest('b', async () => {});\n",
+    );
+    let p = scan(fx.clone.path()).unwrap();
+    assert!(!p.has(136431));
+    assert!(p.has(40));
+}

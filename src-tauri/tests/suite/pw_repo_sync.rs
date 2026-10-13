@@ -701,3 +701,67 @@ fn update_out_of_date_and_add_new_never_touch_a_case_this_app_did_not_export() {
     sx.export_replacing(&[22], &docs(&[(22, "Twenty two")]), &sync::update_replace(&record, &[22], &[22])).unwrap();
     assert_eq!(sx.state(22), SyncState::Current);
 }
+
+#[test]
+fn add_new_leaves_out_a_case_that_cannot_go_and_writes_the_rest() {
+    let sx = every_state();
+    // 25 is new too, but its newest run failed: it cannot be exported.
+    sx.fx.click_script(25, "Twenty five", "admin", "Definition Wizard");
+    sx.fx.run("r25", "9", 25, "Failed");
+    sx.stamp(25);
+    let rows: Vec<SyncRow> = sx.rows().into_values().collect();
+    let new = sync::add_new(&rows);
+    assert_eq!(new, vec![23, 24, 25]);
+    // Only 23 is asked for here, with 25: one goes, one is listed.
+    let c = sx.fx.clone.path();
+    let before = snapshot(c);
+    let md_before = sx.fx.read_clone(MD_REL);
+    let r = v2_lib::pw_export::export::add_new_with(
+        sx.root(),
+        sx.dir.path(),
+        ORG,
+        PROJECT,
+        &[23, 25],
+        &sx.fx.clone_path(),
+        &sx.fx.modules.borrow(),
+        &docs(&[(23, "Twenty three"), (25, "Twenty five")]),
+    )
+    .unwrap();
+    assert_eq!(r.cases.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![23]);
+    assert_eq!(r.skipped, vec![(25, "latest run: Failed".to_string())]);
+
+    // The repo otherwise unchanged: 23's raw spec added, its section appended,
+    // its index entry added, and nothing else.
+    let after = snapshot(c);
+    let added: std::collections::BTreeSet<String> = after.keys().filter(|k| !before.contains_key(*k)).cloned().collect();
+    assert_eq!(added, [sx.raw(23)].into_iter().collect());
+    for (rel, bytes) in &before {
+        if rel == MD_REL || rel == "suites/_generated/index.json" {
+            continue;
+        }
+        assert_eq!(&after[rel], bytes, "{rel} changed");
+    }
+    let md_after = sx.fx.read_clone(MD_REL);
+    assert!(md_after.starts_with(md_before.trim_end()));
+    assert!(md_after.contains("## 23 ") && !md_after.contains("## 25 "));
+    assert_eq!(sx.state(25), SyncState::NeverExported);
+    assert_eq!(sx.state(23), SyncState::Current);
+
+    // Nothing that can go: nothing is written, and each is listed.
+    let before = snapshot(c);
+    let r = v2_lib::pw_export::export::add_new_with(
+        sx.root(),
+        sx.dir.path(),
+        ORG,
+        PROJECT,
+        &[25, 22],
+        &sx.fx.clone_path(),
+        &sx.fx.modules.borrow(),
+        &docs(&[(25, "Twenty five"), (22, "Twenty two")]),
+    )
+    .unwrap();
+    assert!(r.cases.is_empty() && r.files.is_empty());
+    assert_eq!(r.skipped[0], (25, "latest run: Failed".to_string()));
+    assert_eq!(r.skipped[1], (22, "already in the repo (in specs/proficiency-levels.spec.ts)".to_string()));
+    assert_eq!(snapshot(c), before);
+}

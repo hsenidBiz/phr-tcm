@@ -427,11 +427,20 @@ pub fn marker_above(source: &[String], line: u32) -> Option<i32> {
     None
 }
 
-/// The id of one `// ADO <id>` comment line, if `line` is one.
+/// The id of a `// ADO <id>` marker line: the comment is exactly that,
+/// with any spaces around it and nothing after the digits, the way the
+/// repo's specs mark their tests. Prose that mentions a case, such as
+/// `// ADO 136431's own deviation`, is not a marker.
 pub fn marker_in(line: &str) -> Option<i32> {
     let comment = line.trim().strip_prefix("//")?;
-    let rest = comment.trim().strip_prefix("ADO")?;
-    let digits: String = rest.trim().chars().take_while(char::is_ascii_digit).collect();
+    let rest = comment.trim_start().strip_prefix("ADO")?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let digits = rest.trim();
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
     digits.parse().ok()
 }
 

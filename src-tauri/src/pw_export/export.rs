@@ -77,6 +77,22 @@ pub struct ExportResult {
     pub sections: Vec<(i32, String)>,
     /// Set when the files were written but the Sync record could not be.
     pub record_error: Option<String>,
+    /// Cases asked for but left out, each with why: only Sync's Add new
+    /// leaves any out (`add_new_with`); every other write is all or nothing.
+    pub skipped: Vec<(i32, String)>,
+}
+
+/// An export of nothing.
+pub fn nothing_written() -> ExportResult {
+    ExportResult {
+        files: vec![],
+        cases: vec![],
+        user_keys: vec![],
+        missing_navigation: vec![],
+        sections: vec![],
+        record_error: None,
+        skipped: vec![],
+    }
 }
 
 /// Everything read once per preview or write.
@@ -510,6 +526,67 @@ pub fn refuse_present(found: &Presence, case_ids: &[i32], replace: &[i32]) -> Re
     Ok(())
 }
 
+/// `case_ids` split into the ones that could be exported on their own and
+/// the rest, each with why not: the repo already has it, or the reason the
+/// preview gives. Reads only local files.
+pub fn split_exportable(
+    root: &Path,
+    org: &str,
+    project: &str,
+    case_ids: &[i32],
+    clone_path: &str,
+    modules: &BTreeMap<i32, String>,
+) -> Result<(Vec<i32>, Vec<(i32, String)>), String> {
+    let ctx = Ctx::load(root, org, project, clone_path, modules)?;
+    let repo = ctx.clone.as_ref().map_err(|e| e.clone())?;
+    let found = presence::scan_repo(repo);
+    let (mut ok, mut skipped): (Vec<i32>, Vec<(i32, String)>) = (Vec::new(), Vec::new());
+    for &id in case_ids {
+        if ok.contains(&id) || skipped.iter().any(|(s, _)| *s == id) {
+            continue;
+        }
+        if let Some(note) = found.note(id) {
+            skipped.push((id, format!("already in the repo ({note})")));
+            continue;
+        }
+        match evaluate(&ctx, id, load_expanded(root, org, project, id)) {
+            (_, Some(_)) => ok.push(id),
+            (pc, None) => skipped.push((id, pc.reason.unwrap_or_default())),
+        }
+    }
+    Ok((ok, skipped))
+}
+
+/// Sync's Add new: of `case_ids` (the new cases, `sync::add_new`), the ones
+/// that can be exported on their own are written together, all or nothing
+/// as one write with nothing to replace (`write_recorded`); every other one
+/// is left out and listed in `skipped` with why, so one case that cannot go
+/// does not hold back the rest. A case Azure DevOps did not give (`docs`)
+/// is left out the same way.
+#[allow(clippy::too_many_arguments)]
+pub fn add_new_with(
+    root: &Path,
+    sync_dir: &Path,
+    org: &str,
+    project: &str,
+    case_ids: &[i32],
+    clone_path: &str,
+    modules: &BTreeMap<i32, String>,
+    docs: &BTreeMap<i32, CaseDoc>,
+) -> Result<ExportResult, String> {
+    let (ok, mut skipped) = split_exportable(root, org, project, case_ids, clone_path, modules)?;
+    let (ok, unread): (Vec<i32>, Vec<i32>) = ok.into_iter().partition(|id| docs.contains_key(id));
+    skipped.extend(unread.into_iter().map(|id| (id, "it could not be read from Azure DevOps".to_string())));
+    skipped.sort_by_key(|(id, _)| case_ids.iter().position(|c| c == id));
+    let mut result = if ok.is_empty() {
+        nothing_written()
+    } else {
+        write_recorded(root, sync_dir, org, project, &ok, clone_path, modules, docs, &[])?
+    };
+    result.skipped = skipped;
+    Ok(result)
+}
+
 /// Every selected case, or the first reason one cannot be exported. Reads
 /// only local files, so a caller can refuse before any network call.
 fn eligible(ctx: &Ctx, root: &Path, org: &str, project: &str, case_ids: &[i32]) -> Result<Vec<(i32, Ready)>, String> {
@@ -689,6 +766,7 @@ pub fn write_with(
         missing_navigation,
         sections,
         record_error: None,
+        skipped: vec![],
     })
 }
 

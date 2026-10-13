@@ -184,12 +184,22 @@ export default function Sync({
 
       {result && (
         <div className="space-y-1" aria-label="Updated">
-          <p className="text-xs text-text">Updated:</p>
+          {result.cases.length > 0 && <p className="text-xs text-text">Updated:</p>}
           <ul className="space-y-0.5 text-xs text-text">
             {result.cases.map(([id, file]) => (
               <li key={id}>{`#${id} → ${file}: ${NEEDS_REPO}`}</li>
             ))}
           </ul>
+          {(result.skipped ?? []).length > 0 && (
+            <div className="space-y-0.5" aria-label="Skipped">
+              <p className="text-xs text-warning">Not added, and why:</p>
+              <ul className="space-y-0.5 text-xs text-warning">
+                {(result.skipped ?? []).map(([id, why]) => (
+                  <li key={id}>{`#${id}: ${why}`}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {result.missing_navigation.length > 0 && (
             <p className="text-xs text-warning">{`The clone's navigation.json has no entry for: ${result.missing_navigation.join(", ")}`}</p>
           )}

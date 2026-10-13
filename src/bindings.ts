@@ -1339,7 +1339,9 @@ export const commands = {
 	 *  Add new: exports every case with a script that the repo has in none of
 	 *  its places (`sync::add_new`), through the same write as Update, and
 	 *  nothing else. Which cases is worked out here, not taken from the
-	 *  webview, and the write refuses any case the repo has.
+	 *  webview, and the write refuses any case the repo has. A new case that
+	 *  cannot be exported on its own is left out and listed with why
+	 *  (`export::add_new_with`); the rest go as one all-or-nothing write.
 	 */
 	pwSyncAddNew: (clone: string, org: string, project: string, moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_sync_add_new", { clone, org, project, moduleRef, preconditionsRef })),
 	/**
@@ -3226,6 +3228,11 @@ export type ExportResult = {
 	sections: ([number, string])[],
 	/**  Set when the files were written but the Sync record could not be. */
 	record_error: string | null,
+	/**
+	 *  Cases asked for but left out, each with why: only Sync's Add new
+	 *  leaves any out (`add_new_with`); every other write is all or nothing.
+	 */
+	skipped: ([number, string])[],
 };
 
 export type ExportSummary = {

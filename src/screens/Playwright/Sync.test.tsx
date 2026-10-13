@@ -45,6 +45,7 @@ function mount(opts: { update?: (args: Record<string, unknown>) => ExportResult 
           missing_navigation: [],
           sections: [],
           record_error: null,
+          skipped: [],
         };
         rows = rows.map((row) => (cases.includes(row.case_id) ? { ...row, state: { kind: "Current" } } : row));
         return r;
@@ -166,4 +167,23 @@ test("a case in the repo not from this app is replaced only when ticked", async 
   fireEvent.click(screen.getByRole("button", { name: "Update ticked (1)" }));
   await waitFor(() => expect(updates(m.calls)).toHaveLength(2));
   expect(updates(m.calls)[1].args).toMatchObject({ cases: [15], replace: [15] });
+});
+
+test("Add new lists each new case it left out, with why", async () => {
+  const m = mount({
+    update: () => ({
+      files: ["suites/_generated/case-13.spec.ts"],
+      cases: [[13, "case-13.spec.ts"]],
+      user_keys: [],
+      missing_navigation: [],
+      sections: [],
+      record_error: null,
+      skipped: [[12, "latest run: Failed"]],
+    }),
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Add new (2)" }));
+  await waitFor(() => expect(addNews(m.calls)).toHaveLength(1));
+  expect(await screen.findByText(`#13 → case-13.spec.ts: ${NEEDS_REPO}`)).toBeTruthy();
+  expect(screen.getByText("Not added, and why:")).toBeTruthy();
+  expect(screen.getByText("#12: latest run: Failed")).toBeTruthy();
 });

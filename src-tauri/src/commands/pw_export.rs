@@ -99,14 +99,7 @@ pub(crate) async fn read_docs(
 
 /// An export of nothing: what an empty selection answers.
 pub(crate) fn nothing_written() -> ExportResult {
-    ExportResult {
-        files: vec![],
-        cases: vec![],
-        user_keys: vec![],
-        missing_navigation: vec![],
-        sections: vec![],
-        record_error: None,
-    }
+    export::nothing_written()
 }
 
 /// Writes the cases into the clone, and records them for Sync. Reads each
