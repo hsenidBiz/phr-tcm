@@ -70,9 +70,9 @@ export const gettingStarted: Screen = {
       name: "Sidebar",
       does:
         "Lists the test case screens: Manual Entry, Import Test Cases, Update Test Cases, View Test Cases, Run Tests, Search Suites, Suite Management and AI Bridge. " +
-        "With **Enable Advanced Features** on in Settings, it also lists Auto Run, under Run Tests, and API Templates and Playwright, at the end. " +
+        "With **Enable Advanced Features** on in Settings, it also lists Auto Run, under Run Tests, Playwright, under Auto Run, and API Templates, at the end." +
         "Click one to open it. The highlighted row is the screen you are on.",
-      tips: ["[[Ctrl+1]] to [[Ctrl+8]] open the screens in the order they are listed, or [[Ctrl+1]] to [[Ctrl+9]] with the advanced features on. API Templates and Playwright have no shortcut."],
+      tips: ["[[Ctrl+1]] to [[Ctrl+8]] open the screens in the order they are listed, or [[Ctrl+1]] to [[Ctrl+9]] with the advanced features on. Playwright and API Templates have no shortcut and are skipped in that count."],
     },
     {
       id: "organization",
