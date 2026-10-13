@@ -518,7 +518,7 @@ pub fn auto_run_reset_map(app: tauri::AppHandle, organization: String, project: 
 
 /// The project's last mapping run's summary, for the Discovery dialog:
 /// `None` until a mapping run has ended.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_load_mapping_summary(
     app: tauri::AppHandle,
@@ -573,7 +573,7 @@ pub fn components_view(root: &std::path::Path, org: &str, project: &str) -> Resu
 }
 
 /// The project's components, for the Components dialog and its Setup row.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_load_components(
     app: tauri::AppHandle,
@@ -1670,13 +1670,22 @@ pub fn auto_run_shot(app: tauri::AppHandle, name: String) -> Result<String, Stri
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_load_script(
     app: tauri::AppHandle,
     case_id: i32,
 ) -> Result<Option<CaseScript>, String> {
     store::load_script(&root(&app)?, case_id)
+}
+
+/// Every listed case's script in one call - what the Auto Run screen asks
+/// for when it opens. Off the main thread, as every read here is: the
+/// window stays responsive while hundreds of files are read.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_load_scripts(app: tauri::AppHandle, case_ids: Vec<i32>) -> Result<Vec<store::ScriptLookup>, String> {
+    Ok(store::load_scripts(&root(&app)?, &case_ids))
 }
 
 #[tauri::command]
@@ -2164,7 +2173,7 @@ pub fn save_run_at(root: &std::path::Path, mut run: LocalRun) -> Result<(), Stri
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_list_runs(app: tauri::AppHandle) -> Vec<LocalRun> {
     match root(&app) {
@@ -2176,7 +2185,7 @@ pub fn auto_run_list_runs(app: tauri::AppHandle) -> Vec<LocalRun> {
 /// `Ok(None)` for a run id nobody has saved - the review screen uses this
 /// to load a run for the Send-to-Azure-DevOps screen without pulling every
 /// run in the list.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_load_run(app: tauri::AppHandle, run_id: String) -> Result<Option<LocalRun>, String> {
     store::load_run(&root(&app)?, &run_id)
@@ -2338,7 +2347,7 @@ pub fn auto_run_new_id() -> String {
 /// The tester's accounts, passwords included: the Accounts dialog edits
 /// them in place. This is the one IPC call that carries a password, by the
 /// owner's decision (see `autorun::accounts`). It is never logged.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_list_accounts(
     app: tauri::AppHandle,
@@ -2359,7 +2368,7 @@ pub fn auto_run_save_accounts(
     Ok(dropped)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_load_recipe(
     app: tauri::AppHandle,
@@ -2382,7 +2391,7 @@ pub fn auto_run_save_recipe(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_load_quirks(
     app: tauri::AppHandle,
@@ -2504,7 +2513,7 @@ pub fn auto_run_delete_quirk(
 
 /// The project's areas and its address switch, as the Areas dialog shows
 /// them. A project with no file reads as no areas, switch on.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_load_nav(
     app: tauri::AppHandle,

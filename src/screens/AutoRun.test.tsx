@@ -651,6 +651,7 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "list_test_case_fields", // read-only: field discovery for module/preconditions refs
     "pbi_test_cases_full", // read-only: the case list itself, from ADO
     "auto_run_load_script",
+    "auto_run_load_scripts",
     "auto_run_new_id",
     "auto_run_open_browser",
     "auto_run_step",
@@ -1878,4 +1879,25 @@ test("closing a review opened from Past runs leaves focus on the Review button t
   await waitFor(() => expect(screen.getByRole("button", { name: "Review" })).toHaveFocus());
   expect(tab("Past runs")).not.toHaveFocus();
   expect(tab("Past runs")).toHaveAttribute("aria-selected", "true");
+});
+
+/// Opening the screen reads every listed case's script in one call, not one
+/// call per case: a PBI of hundreds of cases was hundreds of round trips,
+/// and the screen froze while they ran.
+test("opening the screen reads all its cases' scripts in one call", async () => {
+  const batches: number[][] = [];
+  mockReady((cmd, args) => {
+    if (cmd === "auto_run_load_scripts") {
+      const ids = (args as { caseIds: number[] }).caseIds;
+      batches.push(ids);
+      return ids.map((id) => ({ case_id: id, script: null, error: null }));
+    }
+    if (cmd === "auto_run_load_script") throw new Error("one case at a time");
+    return undefined;
+  });
+  renderAutoRun("Test cases");
+  await expandCards();
+  await screen.findByRole("button", { name: "Add script for #201" });
+  await screen.findByRole("button", { name: "Add script for #202" });
+  expect(batches).toEqual([[201, 202]]);
 });

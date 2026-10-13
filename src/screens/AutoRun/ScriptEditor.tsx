@@ -9,6 +9,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type Action, type StepScript } from "../../bindings";
+import { loadScript } from "../../lib/scriptBatch";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Select } from "../../components/ui/select";
@@ -61,7 +62,7 @@ export default function ScriptEditor({
 
   const existing = useQuery({
     queryKey: ["autorun-script", caseId],
-    queryFn: () => unwrapStr(commands.autoRunLoadScript(caseId)),
+    queryFn: () => loadScript(caseId),
     retry: false,
   });
 
