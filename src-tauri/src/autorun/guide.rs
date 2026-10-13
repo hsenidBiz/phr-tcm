@@ -834,9 +834,10 @@ not change it. While it runs, the app stops every save the page tries to
 send before it leaves the browser. A save is a POST, PUT, PATCH or DELETE
 whose address path (the query is ignored, and case does not matter)
 contains one of the built-in save words - save, update, delete, submit,
-approve, publish, assign, create, insert - or has a path segment that
-starts with the word add (AddEmployee, add-leave; never address), or
-contains one of the project's own save words, which a person adds on the
+approve, publish, assign - or holds add, create or insert as a word of
+its own (AddEmployee, add-leave, /create, CreateCycle, insertRow; never
+address, createdBy or recreate), or contains one of the project's own
+save words, which a person adds on the
 Auto Run Setup tab. Every other request goes through
 unchanged. The sign-in is not checked: it is the app's own.
 

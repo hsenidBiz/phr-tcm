@@ -6,7 +6,7 @@
 //! this module decides, purely, which requests are saves: a POST, PUT,
 //! PATCH or DELETE whose path, lowercased and with the query left out,
 //! contains a built-in save word or one of the project's own words, or has
-//! a segment that starts with the word "add" (`adds`). A save
+//! a word of its own that is "add", "create" or "insert" (`adds`). A save
 //! is failed inside the browser, so it never reaches the server, and the
 //! case fails with `blocked`'s sentence.
 //!
@@ -17,15 +17,12 @@ use serde_json::{json, Value};
 
 /// The words that make a request with a writing method a save. Fixed: a
 /// project can add its own (`check_words`), never remove one of these.
-pub const SAVE_WORDS: [&str; 9] =
-    ["save", "update", "delete", "submit", "approve", "publish", "assign", "create", "insert"];
+pub const SAVE_WORDS: [&str; 7] = ["save", "update", "delete", "submit", "approve", "publish", "assign"];
 
-/// "add" is a save word too, but only as a word of its own: matched as a
-/// substring it would stop every POST to an address book or a padding
-/// setting. A path segment is a save when it is "add", or starts with "add"
-/// followed by a capital letter, a digit, `-`, `_` or `.` (`AddEmployee`,
-/// `add-leave`), judged before the path is lowercased.
-pub const ADD_WORD: &str = "add";
+/// Save words matched only as a word of their own (`adds`): as substrings
+/// they would stop a POST to an address book, a padding setting, a
+/// `GetCreatedLeaves` read or a `/recreate` preview.
+pub const WORD_SAVES: [&str; 3] = ["add", "create", "insert"];
 
 /// The methods that can write. Every other method (GET, HEAD, OPTIONS)
 /// always goes through.
@@ -76,22 +73,55 @@ pub fn is_save(method: &str, url: &str, patterns: &[String]) -> bool {
             .any(|p| !p.is_empty() && path.contains(&p))
 }
 
-/// Does a segment of `path` start with the word "add" (`ADD_WORD`): the
-/// whole segment, or "add" in any case followed by a capital, a digit,
-/// `-`, `_` or `.`? `address` and `padding` are not.
+/// Does `path` hold a word of `WORD_SAVES` as a word of its own: at the
+/// start of a path segment, after a `-`, `_` or `.`, or at a camelCase hump
+/// (`CreateCycle`, `insertRow`, `getAddForm`), and ended by the end of the
+/// segment, a separator, a digit, or - when the word is written in small or
+/// capital-then-small letters - a capital (`AddEmployee`). A word written all
+/// in capitals goes on through capitals (`ADDRESS` is one word). Judged
+/// before the path is lowercased. `GetCreatedLeaves`, `createdBy`,
+/// `/recreate`, `address` and `padding` hold no such word.
 pub fn adds(path: &str) -> bool {
     path.split('/').any(|segment| {
-        let Some(head) = segment.get(..ADD_WORD.len()) else {
-            return false;
-        };
-        if !head.eq_ignore_ascii_case(ADD_WORD) {
-            return false;
-        }
-        match segment[ADD_WORD.len()..].chars().next() {
-            None => true,
-            Some(c) => c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'),
-        }
+        let chars: Vec<char> = segment.chars().collect();
+        (0..chars.len()).filter(|&i| starts_a_word(&chars, i)).any(|i| WORD_SAVES.iter().any(|w| word_at(&chars, i, w)))
     })
+}
+
+/// Does a word start at `i`: the segment's start, after a separator, or a
+/// camelCase hump (a capital after a small letter or a digit, or the last
+/// capital of a run followed by a small letter: the `C` of `APICreate`)?
+fn starts_a_word(c: &[char], i: usize) -> bool {
+    if i == 0 {
+        return true;
+    }
+    let (prev, here) = (c[i - 1], c[i]);
+    if matches!(prev, '-' | '_' | '.') {
+        return true;
+    }
+    if !here.is_ascii_uppercase() {
+        return false;
+    }
+    prev.is_ascii_lowercase()
+        || prev.is_ascii_digit()
+        || (prev.is_ascii_uppercase() && c.get(i + 1).is_some_and(|n| n.is_ascii_lowercase()))
+}
+
+/// Is `word` written at `i` and ended there (see `adds`)?
+fn word_at(c: &[char], i: usize, word: &str) -> bool {
+    let n = word.chars().count();
+    let Some(written) = c.get(i..i + n) else { return false };
+    let written: String = written.iter().collect();
+    if !written.eq_ignore_ascii_case(word) {
+        return false;
+    }
+    let all_caps = written.chars().all(|ch| ch.is_ascii_uppercase());
+    match c.get(i + n) {
+        None => true,
+        Some(&next) => {
+            next.is_ascii_digit() || matches!(next, '-' | '_' | '.') || (next.is_ascii_uppercase() && !all_caps)
+        }
+    }
 }
 
 /// The case's failure when the page tried to save: the method and the path,
@@ -165,7 +195,7 @@ pub fn check_words(words: &[String]) -> Result<Vec<String>, String> {
         if word.contains('?') || word.contains('#') {
             return Err(format!("\"{word}\" cannot match - a save word is matched against the path, never the query or a fragment"));
         }
-        if SAVE_WORDS.contains(&word.as_str()) || word == ADD_WORD {
+        if SAVE_WORDS.contains(&word.as_str()) || WORD_SAVES.contains(&word.as_str()) {
             return Err(format!("\"{word}\" is already a built-in save word"));
         }
         if !kept.contains(&word) {
