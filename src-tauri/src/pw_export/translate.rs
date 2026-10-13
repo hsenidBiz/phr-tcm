@@ -8,6 +8,7 @@
 //! already picks one (`nth`, or a Legacy `text=` which ends in `.last()`).
 //! Counting (`expect_count`) never gets one.
 
+use super::table_ts::tables_ts;
 use super::ts::{lit, locator};
 use crate::autorun::recipe::{origin_of, RecipeStep};
 use crate::autorun::runner::WATCHED_DOWNLOAD_WAIT_MS;
@@ -16,6 +17,7 @@ use crate::browser::actions::{Action, DropAt, TAB_WAIT_MS, WHEN_VISIBLE_FLOOR_MS
 use crate::browser::expect::READ_TEXT_JS;
 use crate::browser::keys;
 use crate::browser::locator::Target;
+use crate::browser::table::{self, RowCount, SortAs, SortKind, TableCheck};
 use crate::browser::timing::Timing;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -150,11 +152,13 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         Action::ExpectDialog { .. } => {
             no("expect_dialog cannot be exported: Playwright answers dialogs with a handler, not a check at a place in the steps")
         }
-        Action::ExpectRow { .. } => no("expect_row cannot be exported: Playwright has no table-row check to translate it to"),
-        Action::ExpectNoRow { .. } => no("expect_no_row cannot be exported: Playwright has no table-row check to translate it to"),
-        Action::ExpectSorted { .. } => no("expect_sorted cannot be exported: Playwright has no column-order check to translate it to"),
-        Action::ExpectRowCount { .. } => {
-            no("expect_row_count cannot be exported: Playwright has no table-row check to translate it to")
+        Action::ExpectRow { table, .. } | Action::ExpectNoRow { table, .. } | Action::ExpectSorted { table, .. } => {
+            check_target(table)
+        }
+        // The app refuses any other mix of the three, so the export does too.
+        Action::ExpectRowCount { table, equals, at_least, at_most, .. } => {
+            table::row_count(*equals, *at_least, *at_most).map_err(Untranslatable)?;
+            check_target(table)
         }
     }
 }
@@ -182,6 +186,14 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
     em.line(4, "let cur = page;");
     if uses(input, &|a| matches!(a, Action::ExpectText { .. } | Action::ExpectContainsText { .. })) {
         em.read_text();
+    }
+    if uses(input, &|a| {
+        matches!(a, Action::ExpectRow { .. } | Action::ExpectNoRow { .. } | Action::ExpectSorted { .. } | Action::ExpectRowCount { .. })
+    }) {
+        for l in tables_ts(4) {
+            em.out.push_str(&l);
+            em.out.push('\n');
+        }
     }
     if tabs {
         em.collector();
@@ -807,18 +819,79 @@ impl Em<'_> {
                 self.line(indent, &format!("await {t}.waitForEvent('close', {{ timeout: {ms} }});"));
                 self.line(indent, &format!("if (cur === {t}) {{ cur = page; }}"));
             }
+            // The table checks poll the `tables` helper, which reads the table
+            // the way the app does and answers null when the check holds.
+            Action::ExpectRow { table, cells, exact, timeout_ms } => self.line(
+                indent,
+                &format!(
+                    "await expect.poll(() => tables.row({}, {}, {exact}){}).toBeNull();",
+                    one(table),
+                    ts_cells(&cells.0),
+                    poll_opts(*timeout_ms)
+                ),
+            ),
+            Action::ExpectNoRow { table, cells, exact, timeout_ms } => self.line(
+                indent,
+                &format!(
+                    "await expect.poll(() => tables.noRow({}, {}, {exact}){}).toBeNull();",
+                    one(table),
+                    ts_cells(&cells.0),
+                    poll_opts(*timeout_ms)
+                ),
+            ),
+            Action::ExpectSorted { table, column, order, sort_as, timeout_ms } => self.line(
+                indent,
+                &format!(
+                    "await expect.poll(() => tables.sorted({}, {}, {}, {}){}).toBeNull();",
+                    one(table),
+                    lit(column),
+                    lit(order.word()),
+                    ts_sort_as(sort_as.as_ref()),
+                    poll_opts(*timeout_ms)
+                ),
+            ),
+            Action::ExpectRowCount { table, equals, at_least, at_most, timeout_ms } => {
+                let want = table::row_count(*equals, *at_least, *at_most).map_err(Untranslatable)?;
+                let settle = TableCheck::Count(want).needs_settling();
+                let matcher = match want {
+                    RowCount::Equals(n) => format!("toBe({n})"),
+                    RowCount::AtLeast(n) => format!("toBeGreaterThanOrEqual({n})"),
+                    RowCount::AtMost(n) => format!("toBeLessThanOrEqual({n})"),
+                };
+                self.line(
+                    indent,
+                    &format!(
+                        "await expect.poll(() => tables.rows({}, {settle}){}).{matcher};",
+                        one(table),
+                        poll_opts(*timeout_ms)
+                    ),
+                )
+            }
             // Refused by `check_action` above; written out so that a new
             // action has to be decided here.
-            Action::SignIn { .. }
-            | Action::UseComponent { .. }
-            | Action::Upload { .. }
-            | Action::ExpectDialog { .. }
-            | Action::ExpectRow { .. }
-            | Action::ExpectNoRow { .. }
-            | Action::ExpectSorted { .. }
-            | Action::ExpectRowCount { .. } => return check_action(a, self.input.origins),
+            Action::SignIn { .. } | Action::UseComponent { .. } | Action::Upload { .. } | Action::ExpectDialog { .. } => {
+                return check_action(a, self.input.origins)
+            }
         }
         Ok(())
+    }
+}
+
+/// The cells a row check looks for, in the script's order, as
+/// `[['Column', 'text'], ...]`.
+fn ts_cells(cells: &[(String, String)]) -> String {
+    let pairs: Vec<String> = cells.iter().map(|(c, t)| format!("[{}, {}]", lit(c), lit(t))).collect();
+    format!("[{}]", pairs.join(", "))
+}
+
+/// How `expect_sorted` reads the column; text when the script says nothing,
+/// as in the app.
+fn ts_sort_as(sort_as: Option<&SortAs>) -> String {
+    match sort_as {
+        None | Some(SortAs::Kind(SortKind::Text)) => "'text'".to_string(),
+        Some(SortAs::Kind(SortKind::Number)) => "'number'".to_string(),
+        Some(SortAs::Kind(SortKind::Date)) => "'date'".to_string(),
+        Some(SortAs::Format { date }) => format!("{{ date: {} }}", lit(date)),
     }
 }
 

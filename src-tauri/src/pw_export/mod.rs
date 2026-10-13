@@ -3,6 +3,7 @@
 pub mod clone;
 pub mod export;
 pub mod mapping;
+pub mod table_ts;
 pub mod test_case;
 pub mod translate;
 pub mod ts;

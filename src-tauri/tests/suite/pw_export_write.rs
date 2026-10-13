@@ -410,7 +410,7 @@ fn an_untranslatable_sign_in_step_shows_in_the_preview() {
     let mut rc = recipe::builtin_recipe();
     rc.start_url = "https://app.example/login".into();
     rc.after_sign_in = serde_json::from_value(json!([
-        { "kind": "expect_row_count", "table": "table.grid", "at_least": 1 }
+        { "kind": "drag", "from": "#card", "to": "#lane", "position": "before" }
     ]))
     .unwrap();
     recipe::save_recipe(fx.root.path(), ORG, PROJECT, &rc).unwrap();
