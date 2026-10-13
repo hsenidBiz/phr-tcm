@@ -711,11 +711,13 @@ fn check_guarded(then: &[Action]) -> Result<(), String> {
                 "when_visible \"then\" cannot hold sign_in - change who is signed in as an action of its own".to_string()
             );
         }
-        // Both move the whole case - out of its session, or back to its
-        // area - which is never a tidy-up that may or may not happen.
+        // Each moves the whole case - out of its session, or to another
+        // tab - which is never a tidy-up that may or may not happen. A
+        // `return_to_area` may: it is how a guard recovers from a bounce
+        // to the home page, walking back to the area before the step goes on.
         if matches!(
             a,
-            Action::ExpireSession | Action::ReturnToArea { .. } | Action::OpenTab { .. } | Action::SwitchTab { .. } | Action::CloseTab { .. }
+            Action::ExpireSession | Action::OpenTab { .. } | Action::SwitchTab { .. } | Action::CloseTab { .. }
         ) {
             return Err(format!(
                 "when_visible \"then\" cannot hold {} - write it as an action of its own",

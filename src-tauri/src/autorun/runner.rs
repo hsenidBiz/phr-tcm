@@ -806,37 +806,11 @@ async fn run_expanded<D: Driver>(
             // wrong screen.
             // A named area: its own route, read before the steps. Not
             // reaching it stops the step the same way.
-            Action::ReturnToArea { .. } if action.area_named().is_some() => {
-                let name = action.area_named().unwrap_or_default();
-                match named_route(areas, name) {
-                    Ok(rt) => {
-                        let who = format!("Auto Run, step {}", step.step_number);
-                        let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;
-                        if !went.ok {
-                            blocked = Some(AFTER_NAMED_AREA_UNREACHED);
-                        }
-                        went
-                    }
-                    Err(why) => {
-                        blocked = Some(AFTER_NAMED_AREA_UNREACHED);
-                        ActionOutcome::failed(format!("return_to_area: {why}"))
-                    }
-                }
+            Action::ReturnToArea { .. } => {
+                let (went, stop) = return_to_area(d, action, &area, areas, step.step_number, timing).await;
+                blocked = stop;
+                went
             }
-            Action::ReturnToArea { .. } => match &area {
-                AreaRoute::To(rt) => {
-                    let who = format!("Auto Run, step {}", step.step_number);
-                    let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;
-                    if !went.ok {
-                        blocked = Some(AFTER_AREA_UNREACHED);
-                    }
-                    went
-                }
-                AreaRoute::Unknown(why) => {
-                    blocked = Some(AFTER_AREA_UNREACHED);
-                    ActionOutcome::failed(*why)
-                }
-            },
             // Only the runner knows where the step began.
             Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
             Action::ApiRequest { path, .. } => {
@@ -868,7 +842,7 @@ async fn run_expanded<D: Driver>(
                 outcome
             }
             Action::WhenVisible { .. } => {
-                let (outcome, stop) = when_visible(d, &here, action, timing).await;
+                let (outcome, stop) = when_visible(d, &here, action, &area, areas, timing).await;
                 blocked = stop;
                 outcome
             }
@@ -1109,6 +1083,8 @@ async fn when_visible<D: Driver>(
     d: &mut D,
     here: &Here<'_>,
     action: &Action,
+    area: &AreaRoute<'_>,
+    areas: Option<&NamedAreas>,
     timing: &Timing,
 ) -> (ActionOutcome, Option<&'static str>) {
     if let Err(why) = action.validate() {
@@ -1125,7 +1101,13 @@ async fn when_visible<D: Driver>(
     }
     let mut said: Vec<String> = Vec::with_capacity(then.len());
     for guarded in then {
-        let (out, stop) = plain(d, here, guarded, timing).await;
+        // A bounce the guard caught (the page went home) is recovered by
+        // walking back to the area, as the step's own `return_to_area`
+        // would; not reaching it stops the step the same way.
+        let (out, stop) = match guarded {
+            Action::ReturnToArea { .. } => return_to_area(d, guarded, area, areas, here.step, timing).await,
+            _ => plain(d, here, guarded, timing).await,
+        };
         said.push(out.detail);
         if !out.ok {
             let mut failed = ActionOutcome::failed(format!("{target} showed: {}", said.join("; ")));
@@ -1134,6 +1116,39 @@ async fn when_visible<D: Driver>(
         }
     }
     (ActionOutcome::passed(format!("{target} showed: {}", said.join("; "))), None)
+}
+
+/// A `return_to_area`, on its own or inside a `when_visible`'s `then`: a
+/// named area by its own route (`areas`), a bare one to the case's area
+/// (`area`). Not reaching it stops the rest of the step: what follows would
+/// act on the wrong screen.
+async fn return_to_area<D: Driver>(
+    d: &mut D,
+    action: &Action,
+    area: &AreaRoute<'_>,
+    areas: Option<&NamedAreas>,
+    step_number: i32,
+    timing: &Timing,
+) -> (ActionOutcome, Option<&'static str>) {
+    let who = format!("Auto Run, step {step_number}");
+    if let Some(name) = action.area_named() {
+        return match named_route(areas, name) {
+            Ok(rt) => {
+                let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;
+                let stop = (!went.ok).then_some(AFTER_NAMED_AREA_UNREACHED);
+                (went, stop)
+            }
+            Err(why) => (ActionOutcome::failed(format!("return_to_area: {why}")), Some(AFTER_NAMED_AREA_UNREACHED)),
+        };
+    }
+    match area {
+        AreaRoute::To(rt) => {
+            let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;
+            let stop = (!went.ok).then_some(AFTER_AREA_UNREACHED);
+            (went, stop)
+        }
+        AreaRoute::Unknown(why) => (ActionOutcome::failed(*why), Some(AFTER_AREA_UNREACHED)),
+    }
 }
 
 /// An `upload`, carried out here because only the runner knows the

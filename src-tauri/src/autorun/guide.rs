@@ -410,7 +410,15 @@ not appear. Guard the click with `when_visible` instead:
   `sign_in`, and no checks (`expect_`, `check_`, `api_request`,
   `expect_response`). A guarded click is a tidy-up, not an assertion, so
   nothing inside it counts toward the expected-result floor. Put the
-  check after the guard.
+  check after the guard. No `expire_session` or tab action either.
+- `then` may hold `return_to_area`, to recover from a bounce to the home
+  page: guard on something only the home page shows, and walk back to the
+  case's area (or a named one); the step carries on at its next action.
+  Not reaching the area stops the step, as a `return_to_area` of its own
+  does.
+
+    { "kind": "when_visible", "selector": { "role": "heading", "name": "Welcome" }, "then": [ { "kind": "return_to_area" } ] }
+
 - A `then` action that fails fails the step, as any action would.
 - Close a banner with its own close button, never Accept All, so a run
   records no consent.

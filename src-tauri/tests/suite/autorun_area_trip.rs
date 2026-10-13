@@ -400,3 +400,35 @@ fn an_area_name_treats_a_unicode_space_as_a_space() {
         assert_eq!(route.path.name(), "Common Configurator");
     }
 }
+
+/// A `when_visible` may hold `return_to_area`, so a script recovers from a
+/// bounce to the home page: when what it waits for shows up, the case walks
+/// back to its area and the step carries on at its next action. Anything
+/// else that moves the whole case is still refused in `then`.
+#[tokio::test]
+async fn a_guard_walks_back_to_the_area_and_the_step_carries_on() {
+    let ok = action(json!({ "kind": "when_visible", "selector": { "role": "link", "name": "Leave" },
+        "then": [ { "kind": "return_to_area" } ] }));
+    ok.validate().unwrap();
+    let named = action(json!({ "kind": "when_visible", "selector": "#x",
+        "then": [ { "kind": "return_to_area", "area": "Common Configurator" } ] }));
+    named.validate().unwrap();
+    let expire = action(json!({ "kind": "when_visible", "selector": "#x", "then": [ { "kind": "expire_session" } ] }));
+    assert!(expire.validate().unwrap_err().contains("cannot hold expire_session"));
+
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    let (mut d, app) = menu();
+    let own = Route::new(&menu_recipe(), leave());
+    let s = step(2, json!([
+        { "kind": "when_visible", "selector": { "role": "link", "name": "Leave" }, "then": [ { "kind": "return_to_area" } ] },
+        { "kind": "check_text", "value": "yes" }
+    ]));
+    let out = run_one(&mut d, dir.path(), &s, &own, None).await;
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert!(out[0].detail.contains("showed"), "{out:?}");
+    let seen = log(&app);
+    let at = |what: &str| seen.iter().rposition(|l| l == what).unwrap_or_else(|| panic!("no {what:?} in {seen:?}"));
+    assert!(at("click Leave") < at("check yes"), "the step carried on after the walk back: {seen:?}");
+    assert_eq!(*app.path.lock().unwrap(), "/hr/leave");
+}

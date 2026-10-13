@@ -5241,7 +5241,11 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     // A bare `return_to_area` goes to the case's own area - in a discovery
     // (case 0, which has no script), the discovery's own area; one that
     // names an area goes to that one.
-    let resolved = (matches!(action, crate::browser::actions::Action::ReturnToArea { .. }) && action.area_named().is_none())
+    // A `when_visible` may hold one in its `then`, to recover from a bounce.
+    let bare = |a: &crate::browser::actions::Action| {
+        matches!(a, crate::browser::actions::Action::ReturnToArea { .. }) && a.area_named().is_none()
+    };
+    let resolved = action.each().into_iter().any(bare)
         .then(|| {
             if case_id == 0 {
                 crate::autorun::runner::discovery_area_route(root, organization, project, discovery_area)
