@@ -125,7 +125,8 @@ pub fn prompt(p: &PromptInput) -> String {
             .to_string(),
     );
     out.push(
-        "The values in the raw specs were taken from each case's Test Case Manager script, which passed against the live app: in step 7, report them as taken from the case's script, not as invented or assumed."
+        "The values in the raw specs come from each case's Test Case Manager script, which passed against the live app. \
+         Tag them by the repo's own provenance rules: `from-ticket` where the test-case section states the value, otherwise `invented`, `assumed` or `derived` as usual."
             .to_string(),
     );
     out.push("Do not fetch the tickets and do not run git.".to_string());
@@ -284,8 +285,9 @@ fn one_key(repo: &ClonedRepo, ids: &[i32], keys: &[Option<String>], spec_rel: &s
     if let Ok(text) = std::fs::read_to_string(repo.root.join(spec_rel)) {
         if let Some(declared) = declared_user_key(&text) {
             if declared != key {
+                let short = spec_rel.rsplit('/').next().unwrap_or(spec_rel);
                 return Err(format!(
-                    "{spec_rel} runs as {declared}, but these cases run as {key}: map the cases to {declared}, or export them in separate runs."
+                    "These cases run as {key}. Map these cases to {declared}, the account specs/{short} already runs as, then export them again."
                 ));
             }
         }

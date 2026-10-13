@@ -120,8 +120,9 @@ fn the_prompt_for_one_file_names_every_step_its_spec_and_its_user() {
          If it is a missing precondition, record it and stop. Otherwise heal it in place within the healer's bounds, and never regenerate it from the ticket. \
          Afterwards, put suites/_generated/seed.spec.ts back the way it was. \
          Before step 5, run step 2's shared-component checkpoint: if any steps belong to a component under suites/common-components, add its **Uses:** line to the test case. \
-         The values in the raw specs were taken from each case's Test Case Manager script, which passed against the live app: \
-         in step 7, report them as taken from the case's script, not as invented or assumed. \
+         The values in the raw specs come from each case's Test Case Manager script, which passed against the live app. \
+         Tag them by the repo's own provenance rules: `from-ticket` where the test-case section states the value, \
+         otherwise `invented`, `assumed` or `derived` as usual. \
          Do not fetch the tickets and do not run git. \
          Put them in `suites/sl/admin/performance/pc-cycle-setup/specs/pc-cycle-setup.spec.ts` with --spec pc-cycle-setup \
          (it creates the spec or appends to it; the --spec contract). \
@@ -197,8 +198,7 @@ fn one_spec_runs_as_one_account() {
     assert_eq!(
         cards[0].problem.as_deref(),
         Some(
-            format!("{PC_SPEC} runs as REPO_HR, but these cases run as REPO_EMP: map the cases to REPO_HR, or export them in separate runs.")
-                .as_str()
+            "These cases run as REPO_EMP. Map these cases to REPO_HR, the account specs/pc-cycle-setup.spec.ts already runs as, then export them again."
         )
     );
     // rating-methods has no spec yet, so any key the repo has will do.
