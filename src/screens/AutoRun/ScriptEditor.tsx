@@ -360,18 +360,22 @@ export default function ScriptEditor({
             </div>
           )}
 
-          <MarkRow
-            label="Changes"
-            noun="change"
-            names={changes}
-            onChange={setPickedChanges}
-          />
-          <MarkRow
-            label="Needs unchanged"
-            noun="needs unchanged"
-            names={needsUnchanged}
-            onChange={setPickedNeeds}
-          />
+          {/* Side by side where there is room, so the settings row below
+              them costs the window no height. */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <MarkRow
+              label="Changes"
+              noun="change"
+              names={changes}
+              onChange={setPickedChanges}
+            />
+            <MarkRow
+              label="Needs unchanged"
+              noun="needs unchanged"
+              names={needsUnchanged}
+              onChange={setPickedNeeds}
+            />
+          </div>
           <SettingRow settings={needsState} onChange={setPickedState} />
 
           <SetupSection org={org} project={project} caseId={caseId} />

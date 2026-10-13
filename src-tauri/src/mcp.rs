@@ -334,7 +334,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "scripts": {
                     "type": "array",
-                    "description": "One entry per test case: { case_id, title, account?, area, steps }",
+                    "description": "One entry per test case: { case_id, title, account?, area, steps, changes?, needs_unchanged?, needs_state? }. needs_state maps each setting the case needs to its value, e.g. { \"Approval workflow\": \"ON\" }; see get_autorun_guide.",
                     "items": { "type": "object" },
                 },
                 "edits": {
@@ -542,7 +542,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "set_autorun_order",
-            "description": "Set the order Auto Run runs a PBI's test cases in on this machine, for Run selected and Run unattended. Put each case that needs shared state unchanged before the cases that change it, so a run needs as few resets as possible; the scripts' changes and needs_unchanged marks say which those are. It does not change Run Tests' order. Every id must be one of the PBI's test cases: one that is not is refused with `case <id> is not in PBI <pbi>`, and nothing is saved. Cases you leave out run after the listed ones, in list order. A listed case with no saved script is saved in the order and named back: `case <id> has no saved script`.",
+            "description": "Set the order Auto Run runs a PBI's test cases in on this machine, for Run selected and Run unattended. Put each case that needs shared state unchanged before the cases that change it, and keep cases that need the same settings together, so a run needs as few pauses as possible; the scripts' changes, needs_unchanged and needs_state marks say which those are. It does not change Run Tests' order. Every id must be one of the PBI's test cases: one that is not is refused with `case <id> is not in PBI <pbi>`, and nothing is saved. Cases you leave out run after the listed ones, in list order. A listed case with no saved script is saved in the order and named back: `case <id> has no saved script`.",
             "inputSchema": schema(serde_json::json!({
                 "pbi_id": { "type": "number", "description": "The PBI whose cases these are." },
                 "case_ids": {

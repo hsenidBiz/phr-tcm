@@ -2829,6 +2829,29 @@ async fn marking_a_saved_script_is_no_repair() {
     assert_eq!(on_disk.repairs, 0);
 }
 
+/// The assistant's save takes `needs_state` like the other marks: saved as
+/// sent, no repair, and the save says the marks changed.
+#[tokio::test]
+async fn the_assistant_saves_settings_as_marks() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+    let send = |body: serde_json::Value| {
+        let client = &client;
+        async move { route(&ctx(), Some(client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await }
+    };
+    see_scripts(dir.path(), &case_7("#toast", "Saved").to_string());
+    assert_eq!(send(case_7("#toast", "Saved")).await.0, 200);
+    let mut marked = case_7("#toast", "Saved");
+    marked[0]["needs_state"] = serde_json::json!({ "Approval workflow": "ON" });
+    assert_eq!(send(marked.clone()).await, (200, "saved 1 script(s): case 7 (marks updated)".to_string()));
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.repairs, 0);
+    assert_eq!(on_disk.needs_state.get("Approval workflow").map(String::as_str), Some("ON"));
+    assert_eq!(send(marked).await, (200, "saved 1 script(s): case 7 (unchanged)".to_string()));
+}
+
 // ------------------------------------------------------------ Auto Run's own order
 
 /// A signed-in client whose PBI `pbi` is tested by `cases`: the PBI read

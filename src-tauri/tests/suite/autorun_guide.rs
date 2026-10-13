@@ -1351,6 +1351,32 @@ fn every_quick_rule_is_in_the_full_guide() {
     }
 }
 
+/// The guide says when to use `needs_state` rather than `needs_unchanged`,
+/// with a made-up example, and quotes the refusal a save gives for a
+/// setting needed at two values in the words the save uses.
+#[test]
+fn the_guide_explains_settings_and_when_to_use_them() {
+    use std::collections::BTreeMap;
+    use v2_lib::autorun::guide::quick_rules;
+    use v2_lib::autorun::marks::check_state;
+    let g = autorun_guide();
+    let from = g.find("
+## Settings a case needs
+").expect("a Settings section");
+    let rest = &g[from + 1..];
+    let section = &rest[..rest[3..].find("
+## ").map(|e| e + 3).unwrap_or(rest.len())];
+    for word in ["`needs_state`", "`needs_unchanged`", "`changes`", "Before
+Batch 2: Set Approval workflow to OFF", "\"case_id\": 701"] {
+        assert!(section.contains(word), "the Settings section never says {word:?}: {section}");
+    }
+    let refused = check_state(&BTreeMap::from([("A".to_string(), "on".to_string()), ("a".to_string(), "off".to_string())]))
+        .unwrap_err();
+    let pattern = refused[0].replace("\"A\"", "\"<name>\"").replace("\"on\"", "\"<value>\"").replace("\"off\"", "\"<value>\"");
+    assert!(section.contains(&pattern), "the guide does not quote {pattern:?}");
+    assert!(quick_rules().contains("`needs_state`"));
+}
+
 /// The quick rules prompt an assistant to mark the state a case changes or
 /// needs, and to set the run order once a PBI's scripts are written.
 #[test]
