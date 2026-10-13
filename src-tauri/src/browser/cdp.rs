@@ -679,6 +679,8 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// (`dialogs`). One for the whole run, never per tab: an
     /// `expect_dialog` claims the next dialog wherever it opens.
     book: super::dialogs::DialogBook,
+    /// JavaScript dialogs opened and not yet closed (`dialog_open`).
+    dialogs_open: u32,
     /// The page errors every tab met since the runner last took them
     /// (`page_errors`). One for the whole run, like `book`.
     page_errors: super::page_errors::PageErrorBook,
@@ -862,6 +864,7 @@ impl<T: Transport> Cdp<T> {
             setup: HashMap::new(),
             deferred: HashMap::new(),
             book: super::dialogs::DialogBook::default(),
+            dialogs_open: 0,
             page_errors: super::page_errors::PageErrorBook::default(),
             context: None,
         }
@@ -2316,7 +2319,11 @@ impl<T: Transport> Cdp<T> {
         if ev.method == "Fetch.requestPaused" {
             return self.answer_paused(at, session, &ev.params).await;
         }
+        if ev.method == "Page.javascriptDialogClosed" {
+            self.dialogs_open = self.dialogs_open.saturating_sub(1);
+        }
         if ev.method == "Page.javascriptDialogOpening" {
+            self.dialogs_open = self.dialogs_open.saturating_add(1);
             // A dialog in a tab not registered yet (one the page opened a
             // moment ago) is still answered on its own session: left open,
             // it would hold that page up.
@@ -2480,6 +2487,20 @@ impl<T: Transport> Cdp<T> {
         id
     }
 
+    /// Is a JavaScript dialog open in any tab: one opened that has not yet
+    /// closed (`Page.javascriptDialogClosed`), as far as the events read so
+    /// far say. Each is answered the moment it is read, so this is true
+    /// only until the page says it closed.
+    pub fn dialog_open(&self) -> bool {
+        self.dialogs_open > 0
+    }
+
+    /// How busy the current tab's requests are (`NetRecord::quiet`), as far
+    /// as the events read so far say. `None` with no tab.
+    pub fn net_quiet(&self) -> Option<super::net_record::NetQuiet> {
+        self.current().map(|t| t.net_record.quiet(Instant::now()))
+    }
+
     /// The requests the current tab started since `mark`, oldest first
     /// (`NetRecord::since`). Empty unless `page_log::watch` switched the
     /// Network domain on.
@@ -2593,6 +2614,16 @@ pub trait Driver {
     /// driver that keeps no record.
     fn net_since(&self, _mark: u64) -> Vec<super::net_record::NetEntry> {
         Vec::new()
+    }
+    /// How busy the page's requests are (`Cdp::net_quiet`). `None` for a
+    /// driver that keeps no record: nothing is ever waited on.
+    fn net_quiet(&self) -> Option<super::net_record::NetQuiet> {
+        None
+    }
+    /// Is a JavaScript dialog open, as far as the events read so far say
+    /// (`Cdp::dialog_open`)? A driver that reads no dialogs says no.
+    fn dialog_open(&self) -> bool {
+        false
     }
     /// See `Cdp::set_deadline`. Every wait loop sets one and clears it on
     /// every path out.
@@ -2771,6 +2802,12 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn net_since(&self, mark: u64) -> Vec<super::net_record::NetEntry> {
         Cdp::net_since(self, mark)
+    }
+    fn net_quiet(&self) -> Option<super::net_record::NetQuiet> {
+        Cdp::net_quiet(self)
+    }
+    fn dialog_open(&self) -> bool {
+        Cdp::dialog_open(self)
     }
     fn set_deadline(&mut self, deadline: Option<Instant>) {
         Cdp::set_deadline(self, deadline)

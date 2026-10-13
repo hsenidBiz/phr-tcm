@@ -211,6 +211,51 @@ fn a_creates_entry_must_come_from_one_creating_step() {
     assert_eq!(refused(&f), vec![creates_one_step("cycle")]);
 }
 
+/// A `creates` name that is its id's own capture, or that the creating step
+/// never sends with `{{prefix}}` at its start, is refused at save, saying
+/// what to use: Clean up finds a test-made thing by that prefix.
+#[test]
+fn a_creates_name_must_be_a_prefixed_name_and_not_its_id() {
+    use v2_lib::api_templates::fixture::{name_is_the_id, name_without_prefix, naming_problems};
+    let mut f = fixture();
+    f.creates[0].name = "{{steps.1.cycleId}}".into();
+    assert_eq!(naming_problems(&f), vec![name_is_the_id("cycle", "{{steps.1.cycleId}}")]);
+    assert!(naming_problems(&f)[0].contains("{{prefix}}"));
+    // Only a save is held to it: the checks a run makes pass it.
+    validate(&f, &lookup, &no_flow).unwrap();
+
+    // The prefix is used, but not at the start of anything step 1 sends.
+    let mut f = fixture();
+    f.steps[0].params.insert("cycleName".into(), "cycle {{prefix}}".into());
+    f.steps[1].params.insert("note".into(), "{{prefix}} note".into());
+    assert_eq!(naming_problems(&f), vec![name_without_prefix("cycle", 1)]);
+
+    // Spaces inside the braces are the same placeholder.
+    let mut f = fixture();
+    f.steps[0].params.insert("cycleName".into(), "  {{ prefix }} cycle".into());
+    assert!(naming_problems(&f).is_empty());
+
+    // A fixture that never uses the prefix is told so once, by validate.
+    let mut f = fixture();
+    f.steps[0].params.insert("cycleName".into(), "plain name".into());
+    assert!(naming_problems(&f).is_empty());
+}
+
+/// Saving a fixture that names its thing by its id is refused, and writes
+/// nothing.
+#[test]
+fn saving_a_fixture_named_by_its_id_is_refused() {
+    use v2_lib::api_templates::fixture::name_is_the_id;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save(root, ORG, PROJECT, &template("make-cycle", "create", true)).unwrap();
+    store::save(root, ORG, PROJECT, &template("make-suite", "create", true)).unwrap();
+    let mut f = fixture();
+    f.creates[0].name = "{{steps.1.cycleId}}".into();
+    assert_eq!(fixture_store::save(root, ORG, PROJECT, &f), Err(vec![name_is_the_id("cycle", "{{steps.1.cycleId}}")]));
+    assert_eq!(fixture_store::load(root, ORG, PROJECT, &f.id).unwrap(), None);
+}
+
 #[test]
 fn a_fixture_with_creates_must_use_the_prefix() {
     let mut f = fixture();
@@ -898,6 +943,29 @@ mod running {
         assert_eq!(history(&r, "draft-cycle")[0].failed_step, Some(1));
     }
 
+    /// A fixture saved before the naming rule, its name the id's own
+    /// capture, still runs: Run, Rebuild and the setups that use it keep
+    /// working, and the run only warns, as before.
+    #[tokio::test]
+    async fn a_fixture_saved_before_the_naming_rule_still_runs() {
+        let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
+        let mut f = fixture();
+        f.creates[0].name = "{{steps.1.cycleId}}".into();
+        let mut r = rig(vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))], None);
+        for t in [make_cycle(), add_suite()] {
+            store::save(r.root.path(), ORG, PROJECT, &t).unwrap();
+        }
+        // Written as an older app saved it, past today's save rules.
+        let dir = fixture_store::fixtures_dir(r.root.path(), ORG, PROJECT);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{}.json", f.id)), serde_json::to_string_pretty(&f).unwrap()).unwrap();
+        assert!(fixture_store::load(r.root.path(), ORG, PROJECT, &f.id).unwrap().is_some(), "the old file did not load");
+        let report = run(&mut r, &f).await;
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.warnings, vec![prefix_warning("cycle", "274")]);
+    }
+
     #[tokio::test]
     async fn a_name_without_the_prefix_is_recorded_with_a_warning() {
         let _act = crate::serial::activity_log();
@@ -1254,11 +1322,35 @@ mod running {
         assert_eq!(status, 200, "{out}");
         assert_eq!(fixture_store::load(dir.path(), ORG, PROJECT, "draft-cycle").unwrap(), Some(fixture()));
 
+        // In short by default: no steps, output names only.
         let (status, out) = route(&off, None, "GET", "/api-template-fixtures", "", "1.0.0").await;
         assert_eq!(status, 200, "{out}");
         let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["fixtures"][0]["id"], "draft-cycle");
-        assert_eq!(v["fixtures"][0]["current_outputs"], Value::Null, "never built");
+        let short = &v["fixtures"][0];
+        assert_eq!(short["id"], "draft-cycle");
+        assert_eq!(short["name"], fixture().name);
+        assert_eq!(short["outputs"], json!(fixture().outputs.keys().collect::<Vec<_>>()));
+        assert_eq!(short["creates"].as_array().unwrap().len(), fixture().creates.len());
+        assert!(short.get("steps").is_none() && short.get("current_outputs").is_none(), "{short}");
+        assert_eq!(short["last_run"], Value::Null);
+        assert_eq!(v["note"], v2_lib::ai_bridge::FIXTURES_IN_SHORT);
+
+        // One in full by its id.
+        let (status, out) = route(&off, None, "GET", "/api-template-fixtures?id=draft-cycle", "", "1.0.0").await;
+        assert_eq!(status, 200, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["fixture"]["id"], "draft-cycle");
+        assert_eq!(v["fixture"]["steps"], serde_json::to_value(&fixture().steps).unwrap());
+        assert_eq!(v["fixture"]["current_outputs"], Value::Null, "never built");
+        let (status, out) = route(&off, None, "GET", "/api-template-fixtures?id=nope", "", "1.0.0").await;
+        assert_eq!(status, 404, "{out}");
+        assert!(out.contains("draft-cycle"), "{out}");
+
+        // Every one in full.
+        let (status, out) = route(&off, None, "GET", "/api-template-fixtures?full=true", "", "1.0.0").await;
+        assert_eq!(status, 200, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v["fixtures"][0]["steps"].is_array(), "{out}");
         assert_eq!(v["fixtures"][0]["last_run"], Value::Null);
     }
 }

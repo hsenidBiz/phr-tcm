@@ -54,7 +54,15 @@ pub enum ReplayPhase {
 pub enum ReplayEnd {
     /// Every step before `step` ran: the browser is on the page before it.
     /// `notice` is said beside it: the preconditions were not checked.
-    Ready { case_id: i32, step: i32, notice: Option<String> },
+    /// `whole` is how many steps the case has, when `step` is past its last:
+    /// the whole case ran, and the browser is on the page its last step left.
+    Ready {
+        case_id: i32,
+        step: i32,
+        notice: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        whole: Option<i32>,
+    },
     /// The replay failed in `phase`: step `step` when it is `Step`; the
     /// case's sign-in or its trip to the area before step 1 otherwise (then
     /// `step` is 1, the step it never reached). `why` is the failure's
@@ -84,6 +92,10 @@ impl ReplayEnd {
     /// What the pane, and the assistant, are told.
     pub fn sentence(&self) -> String {
         match self {
+            ReplayEnd::Ready { case_id, whole: Some(all), .. } => {
+                let steps = if *all == 1 { "its 1 step".to_string() } else { format!("all {all} steps") };
+                format!("replayed the whole of case {case_id} ({steps}) - the browser is on the page its last step left")
+            }
             ReplayEnd::Ready { case_id, step, .. } => {
                 format!("replayed case {case_id} to step {step} - the browser is on the page before step {step} runs")
             }
@@ -224,6 +236,7 @@ impl OneReplay {
             .map_err(|_| ALREADY_RUNNING.to_string())?;
         CANCEL.store(false, Ordering::SeqCst);
         PROGRESS.store(0, Ordering::SeqCst);
+        ACTIONS.reset();
         Ok(OneReplay(()))
     }
 }
@@ -244,6 +257,16 @@ static PROGRESS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 pub fn note_progress(step: i32, of: i32) {
     let packed = (u64::from(step.max(0) as u32) << 32) | u64::from(of.max(0) as u32);
     PROGRESS.store(packed, Ordering::SeqCst);
+    ACTIONS.reset();
+}
+
+/// The action the replay going is on, within its step (`runner::StepProgress`).
+pub static ACTIONS: runner::StepProgress = runner::StepProgress::new();
+
+/// The action the replay going is on, and how many of its step's actions
+/// have failed: none before its first step's first action.
+pub fn action_now() -> runner::ActionNow {
+    ACTIONS.now()
 }
 
 /// The step the replay going is running and how many it runs, `(0, 0)`
@@ -515,7 +538,14 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     {
         return stopped;
     }
-    ReplayEnd::Ready { case_id: id, step: n, notice: checked.notice }
+    ReplayEnd::Ready { case_id: id, step: n, notice: checked.notice, whole: whole_case(&script, n) }
+}
+
+/// How many steps `script` has when `step` is past its last, so a replay to
+/// it ran the whole case; `None` otherwise.
+pub fn whole_case(script: &CaseScript, step: i32) -> Option<i32> {
+    let last = script.steps.iter().map(|s| s.step_number).max().unwrap_or(0);
+    (step > last).then(|| i32::try_from(script.steps.len()).unwrap_or(i32::MAX))
 }
 
 /// Run case `script`'s steps `from` to `n` - 1, in its order, in the
@@ -565,6 +595,7 @@ async fn run_steps<D: Driver>(
             fail_on_unexpected_dialog: script.fail_on_unexpected_dialog,
             page_errors: script.page_errors,
             ignore_page_errors: script.ignore_page_errors.clone(),
+            progress: Some(&ACTIONS),
             ..Default::default()
         };
         let ran = runner::run_step_in_run(
@@ -787,5 +818,5 @@ pub async fn carry_on<D: Driver>(
     {
         return stopped;
     }
-    ReplayEnd::Ready { case_id: id, step: n, notice: None }
+    ReplayEnd::Ready { case_id: id, step: n, notice: None, whole: whole_case(&script, n) }
 }

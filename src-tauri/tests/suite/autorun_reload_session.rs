@@ -72,16 +72,17 @@ fn only_expect_focused_counts_as_a_check() {
 }
 
 #[test]
-fn a_guard_may_press_a_key_but_never_end_the_session_or_move_the_case() {
+fn a_guard_may_press_a_key_or_walk_back_but_never_end_the_session() {
     let guarded = |inner: Value| {
         action(json!({ "kind": "when_visible", "selector": { "css": "#banner" }, "then": [inner] })).validate()
     };
     assert!(guarded(json!({ "kind": "press_key", "key": "Escape" })).is_ok());
     assert!(guarded(json!({ "kind": "reload" })).is_ok());
-    for k in ["expire_session", "return_to_area"] {
-        let why = guarded(json!({ "kind": k })).unwrap_err();
-        assert!(why.contains(k), "{why}");
-    }
+    // Walking back to the area recovers from a bounce home; ending the
+    // session is never a tidy-up.
+    assert!(guarded(json!({ "kind": "return_to_area" })).is_ok());
+    let why = guarded(json!({ "kind": "expire_session" })).unwrap_err();
+    assert!(why.contains("expire_session"), "{why}");
     // expect_focused is a check, and a guard holds none.
     assert!(guarded(json!({ "kind": "expect_focused", "selector": { "css": "#a" } })).is_err());
 }

@@ -19,6 +19,11 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+/// `expect_checked` with no `checked` asks for a ticked box.
+fn ticked() -> bool {
+    true
+}
+
 fn ok_status() -> u16 {
     200
 }
@@ -91,6 +96,17 @@ pub enum Action {
     /// (outside that fieldset's first legend) - `expect::DISABLED_JS`.
     ExpectDisabled {
         selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// The one checkbox or radio is ticked (`checked`, the default) or not:
+    /// its live `checked` state, which follows clicks, never the `checked`
+    /// attribute, which does not. Any other element answers by its
+    /// `aria-checked` (`expect::CHECKED_JS`).
+    ExpectChecked {
+        selector: Target,
+        #[serde(default = "ticked")]
+        checked: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
@@ -695,11 +711,13 @@ fn check_guarded(then: &[Action]) -> Result<(), String> {
                 "when_visible \"then\" cannot hold sign_in - change who is signed in as an action of its own".to_string()
             );
         }
-        // Both move the whole case - out of its session, or back to its
-        // area - which is never a tidy-up that may or may not happen.
+        // Each moves the whole case - out of its session, or to another
+        // tab - which is never a tidy-up that may or may not happen. A
+        // `return_to_area` may: it is how a guard recovers from a bounce
+        // to the home page, walking back to the area before the step goes on.
         if matches!(
             a,
-            Action::ExpireSession | Action::ReturnToArea { .. } | Action::OpenTab { .. } | Action::SwitchTab { .. } | Action::CloseTab { .. }
+            Action::ExpireSession | Action::OpenTab { .. } | Action::SwitchTab { .. } | Action::CloseTab { .. }
         ) {
             return Err(format!(
                 "when_visible \"then\" cannot hold {} - write it as an action of its own",
@@ -981,7 +999,8 @@ impl Action {
             | Action::ExpectText { selector, .. }
             | Action::ExpectCount { selector, .. }
             | Action::ExpectEnabled { selector, .. }
-            | Action::ExpectDisabled { selector, .. } => selector.validate(),
+            | Action::ExpectDisabled { selector, .. }
+            | Action::ExpectChecked { selector, .. } => selector.validate(),
             Action::ExpectContainsText { selector, value, .. } => {
                 if value.trim().is_empty() {
                     return Err("expect_contains_text has an empty value - everything contains nothing".to_string());
@@ -1214,6 +1233,7 @@ impl Action {
             | Action::ExpectAttribute { selector, .. }
             | Action::ExpectEnabled { selector, .. }
             | Action::ExpectDisabled { selector, .. }
+            | Action::ExpectChecked { selector, .. }
             | Action::Upload { selector, .. }
             | Action::ExpectFocused { selector, .. } => vec![selector],
             Action::WhenVisible { selector, then, .. } => {
@@ -1260,6 +1280,7 @@ impl Action {
             | Action::ExpectAttribute { selector, .. }
             | Action::ExpectEnabled { selector, .. }
             | Action::ExpectDisabled { selector, .. }
+            | Action::ExpectChecked { selector, .. }
             | Action::Upload { selector, .. }
             | Action::ExpectFocused { selector, .. } => vec![selector],
             Action::WhenVisible { selector, then, .. } => {
@@ -1323,6 +1344,7 @@ impl Action {
                 | Action::ExpectAttribute { .. }
                 | Action::ExpectEnabled { .. }
                 | Action::ExpectDisabled { .. }
+                | Action::ExpectChecked { .. }
                 | Action::ExpectFocused { .. }
                 | Action::ExpectResponse { .. }
                 | Action::ApiRequest { .. }
@@ -1549,10 +1571,63 @@ fn wait(own: &Option<u32>, timing: &Timing) -> u64 {
     own.map(u64::from).unwrap_or(timing.expect_ms)
 }
 
+/// How long the page's requests must have been still before a click or a
+/// fill (`settle`).
+pub const SETTLE_QUIET: Duration = Duration::from_millis(300);
+/// The longest a click or a fill waits for the page's requests to settle.
+pub const SETTLE_CAP: Duration = Duration::from_secs(2);
+
+/// Before a click or a fill: let the page's own requests settle. A button
+/// can be there before its page has finished loading, and a click it takes
+/// then can land on a page that is about to change under it (a run's click
+/// once sent the browser home). Waits while a request the network record
+/// keeps is in flight - a document, an XHR, a fetch, or one of type Other
+/// or of no type (`net_record::NetQuiet`) - until none has started or
+/// ended for `SETTLE_QUIET`: at most `SETTLE_CAP`, and it never fails: on a
+/// page still busy at the cap the action goes ahead, as it always did. A
+/// long poll (`net_record::LONG_LIVED`) and a request the page repeats to
+/// the same path (`net_record::POLL_REPEAT`) never count, so a page that
+/// polls does not make every action wait. Nothing is waited for while a
+/// JavaScript dialog is open (`Driver::dialog_open`): the page is held by
+/// it, not loading. A page with nothing in flight and nothing just ended
+/// costs one light call. A driver with no network record waits for
+/// nothing. How long it waited.
+pub async fn settle<D: Driver>(d: &mut D, timing: &Timing) -> Duration {
+    let began = Instant::now();
+    if d.net_quiet().is_none() || d.dialog_open() {
+        return Duration::ZERO;
+    }
+    let cap = began + SETTLE_CAP;
+    d.set_deadline(Some(cap));
+    loop {
+        // Carries nothing: reading its answer reads every event before it.
+        let _ = d.call("Runtime.evaluate", json!({ "expression": "1", "returnByValue": true })).await;
+        if d.dialog_open() {
+            break;
+        }
+        let Some(q) = d.net_quiet() else { break };
+        let still_for = q.since_change.unwrap_or(SETTLE_QUIET);
+        let now = Instant::now();
+        if (q.in_flight == 0 && still_for >= SETTLE_QUIET) || now >= cap {
+            break;
+        }
+        // Nothing in flight: only the rest of the quiet time is left.
+        let pause = if q.in_flight == 0 {
+            SETTLE_QUIET - still_for
+        } else {
+            Duration::from_millis(timing.poll_ms.max(10))
+        };
+        d.idle(pause.min(cap - now)).await;
+    }
+    d.set_deadline(None);
+    began.elapsed()
+}
+
 async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Policy) -> ActionOutcome {
     match action {
         Action::Navigate { url } => navigate(d, url.trim(), timing, policy).await,
         Action::Click { selector } => {
+            settle(d, timing).await;
             let ready = match input::wait_ready(d, selector, false, timing).await {
                 Ok(r) => r,
                 Err(b) => return blocked(b),
@@ -1566,6 +1641,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
             }
         }
         Action::Fill { selector, value } => {
+            settle(d, timing).await;
             let ready = match input::wait_ready(d, selector, true, timing).await {
                 Ok(r) => r,
                 Err(b) => return blocked(b),
@@ -1632,6 +1708,9 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         }
         Action::ExpectDisabled { selector, timeout_ms } => {
             expect::expect(d, selector, Check::Disabled, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectChecked { selector, checked, timeout_ms } => {
+            expect::expect(d, selector, Check::Checked(*checked), wait(timeout_ms, timing), timing.poll_ms).await
         }
         // The runner intercepts `sign_in` before it ever reaches this
         // executor (it alone has the tester's accounts and the project's

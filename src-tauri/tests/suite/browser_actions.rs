@@ -630,6 +630,7 @@ fn only_checks_and_expectations_are_checks() {
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), absent: false, timeout_ms: None },
         Action::ExpectEnabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectDisabled { selector: "s".into(), timeout_ms: None },
+        Action::ExpectChecked { selector: "s".into(), checked: true, timeout_ms: None },
         Action::SignIn { account: "a".into() },
         Action::Upload { selector: "s".into(), file: "f.pdf".into() },
         Action::ExpectResponse { method: None, url_contains: "/x".into(), status: 200, json: None, timeout_ms: None, stray: Default::default() },
@@ -674,6 +675,7 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_attribute"
                 | "expect_enabled"
                 | "expect_disabled"
+                | "expect_checked"
                 | "expect_response"
                 | "api_request"
                 | "expect_download"

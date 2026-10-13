@@ -18,7 +18,18 @@ import { IconAdd, IconCancel, IconConfirm, IconRemove } from "../../lib/actionIc
 import { toast } from "../../lib/toast";
 
 /** The built-in words, for a view written before the app kept them there. */
-export const BUILT_IN_SAVE_WORDS = ["save", "update", "delete", "submit", "approve", "publish", "assign"];
+export const BUILT_IN_SAVE_WORDS = [
+  "save",
+  "update",
+  "delete",
+  "submit",
+  "approve",
+  "publish",
+  "assign",
+  "add",
+  "create",
+  "insert",
+];
 
 export default function SaveWordsDialog({
   org,

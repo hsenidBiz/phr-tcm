@@ -99,12 +99,25 @@ pub const PROBE_JS: &str = concat!(
     const b = e && e.closest ? e.closest(BLOCKS) : null;
     return !!b && b !== this && !!stand && stand.contains(b);
   };
+  // An element with no box of its own (a link around a floated or placed
+  // icon, or `display: contents`) is aimed at through what it holds: the
+  // box of its content (`locator::VISIBLE_JS` counts it seen the same way).
+  const seenContent = "#,
+    content_box_js!(),
+    r#";
+  const contentBox = (e) => sized(e) ? null : seenContent(e);
+  const seen = "#,
+    seen_js!(),
+    r#";
   const measure = (scroll) => {
-    if (scroll) el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    if (scroll) {
+      const into = stand || sized(el) ? el : (Array.from(el.querySelectorAll('*')).find(sized) || el);
+      into.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    }
     const b = el.getBoundingClientRect();
     const drawn = Array.from(el.getClientRects()).find((c) =>
       c.width > 0 && c.height > 0 && c.right > 0 && c.left < innerWidth && c.bottom > 0 && c.top < innerHeight);
-    const a = drawn || b;
+    const a = drawn || (stand ? null : contentBox(el)) || b;
     const l = Math.max(a.left, 0), r = Math.min(a.right, innerWidth), t = Math.max(a.top, 0), bt = Math.min(a.bottom, innerHeight);
     const onscreen = r > l && bt > t;
     // Inside a same-origin frame everything here is measured in the frame.
@@ -179,11 +192,11 @@ pub const PROBE_JS: &str = concat!(
     }
     const allHit = hit && allOnscreen && outer === null;
     return {
-      visible: this.checkVisibility({ visibilityProperty: true }) && (!!stand || (b.width > 0 && b.height > 0)),
+      visible: seen(this),
       enabled: disabledWhy(this) === '',
       editable: !!editable,
       onscreen: allOnscreen, hit: allHit, nospot, x: lx + ox, y: ly + oy,
-      rect: [b.left + ox, b.top + oy, b.width, b.height],
+      rect: [a.left + ox, a.top + oy, a.width, a.height],
       covered_by: !allOnscreen || allHit ? '' : (outer !== null ? say(outer || null) : say(top)),
     };
   };

@@ -99,7 +99,7 @@ impl FakeHost {
         }
     }
     fn ready() -> Self {
-        Self::ending(ReplayEnd::Ready { case_id: ID, step: 3, notice: None })
+        Self::ending(ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None })
     }
     fn replays(&self) -> Vec<ReplayRequest> {
         self.replays.lock().unwrap().iter().map(|r| r.2.clone()).collect()
@@ -658,8 +658,51 @@ async fn calls_that_need_the_browser_are_refused_at_once_while_a_replay_runs() {
         let answer = tokio::time::timeout(Duration::from_secs(2), route(&ctx(), None, method, path, &body, "test"))
             .await
             .unwrap_or_else(|_| panic!("{path} waited on the replay"));
+        if path == "/autorun-page" {
+            // A page read says what to call instead, and why it is not read.
+            assert_eq!(answer, (409, v2_lib::ai_bridge::replay_going_for_a_page_read()), "{path}");
+            assert!(answer.1.contains("call replay_autorun_to_step"), "{}", answer.1);
+            assert!(answer.1.contains("hands back the page"), "{}", answer.1);
+            continue;
+        }
         assert_eq!(answer, (409, REPLAY_GOING.to_string()), "{path}");
     }
     drop(one);
     assert_eq!(REPLAY_GOING, "a replay is going - call replay_autorun_to_step with the same case and step to wait for it");
+}
+
+/// While a step runs, the 202 says which action it is on, for how long, and
+/// how many of the step's actions already failed; a replay never retries.
+/// Before any action has begun it says only the step, as before.
+#[test]
+fn still_running_names_the_action_and_the_failures_so_far() {
+    use v2_lib::ai_bridge::replay_still_running_answer;
+    use v2_lib::autorun::runner::ActionNow;
+    let on = ActionNow {
+        index: 2,
+        of: 4,
+        kind: "click".into(),
+        target: "button \"Save\"".into(),
+        since: Some(std::time::Instant::now() - Duration::from_secs(12)),
+        failed: 1,
+    };
+    let v = replay_still_running_answer(77, 3, 2, 2, &on);
+    assert_eq!(v["status"], "running");
+    assert_eq!(
+        v["sentence"],
+        "still running, now at step 2 of 2, on action 2 of 4 (click button \"Save\") for 12 s, 1 of this step's actions already failed (a replay never tries an action again) - call replay_autorun_to_step again with the same case (77) and step (3) to keep waiting"
+    );
+    assert_eq!(v["action"]["index"], 2);
+    assert_eq!(v["action"]["of"], 4);
+    assert_eq!(v["action"]["kind"], "click");
+    assert_eq!(v["action"]["seconds"], 12);
+    assert_eq!(v["failed_in_step"], 1);
+    assert_eq!(v["retries"], false);
+
+    let none = replay_still_running_answer(77, 3, 0, 0, &ActionNow::default());
+    assert_eq!(
+        none["sentence"],
+        "still running, now signing in and going to the case's area - call replay_autorun_to_step again with the same case (77) and step (3) to keep waiting"
+    );
+    assert!(none.get("action").is_none());
 }

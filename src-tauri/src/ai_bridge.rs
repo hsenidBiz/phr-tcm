@@ -374,7 +374,7 @@ pub async fn route(
         // run then follows. The list is a read and answers either way.
         // None of these writes the record of test-made drafts itself: only
         // the fixture runner adds to it, and only Clean up changes it.
-        ("GET", "/api-template-fixtures") => api_fixture_list(ctx),
+        ("GET", "/api-template-fixtures") => api_fixture_list(ctx, target),
         ("POST", "/api-template-fixture-save") => api_fixture_save(ctx, body),
         ("POST", "/api-template-fixture-run") => {
             api_fixture_run(ctx, body, real_template_browsers, &crate::commands::autorun_replay::replay_timing(false))
@@ -1238,10 +1238,18 @@ fn browser_arg(v: &serde_json::Value) -> Result<crate::browser::launch::Browser,
     }
 }
 
-/// `GET /api-template-fixtures`: every saved fixture of the project, with
-/// its current outputs (from its newest successful run) and its last run.
-/// A read: it answers with the API templates switch off.
-fn api_fixture_list(ctx: &BridgeContext) -> (u16, String) {
+/// Said beside a summary list of fixtures: how to read one in full.
+pub const FIXTURES_IN_SHORT: &str =
+    "each fixture in short - call list_api_fixtures with id for one in full (its steps, current outputs and last run), or full: true for all";
+
+/// `GET /api-template-fixtures`: the project's saved fixtures. By default a
+/// summary of each - its id, name, output names, what it creates (kind and
+/// name) and its last run's status - since the whole of every fixture
+/// outgrows what an assistant can read. `?id=` answers that one fixture in
+/// full (`fixture`), and `?full=true` every one in full, each with its
+/// current outputs (from its newest successful run) and its last run. A
+/// read: it answers with the API templates switch off.
+fn api_fixture_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
     use crate::api_templates::fixture_store;
     let root = match autorun_root() {
         Ok(r) => r,
@@ -1254,23 +1262,54 @@ fn api_fixture_list(ctx: &BridgeContext) -> (u16, String) {
             return (500, "the fixtures could not be listed - see Settings, Logs".to_string());
         }
     };
+    let in_full = |s: &crate::api_templates::fixture_store::SavedFixture| {
+        let f = &s.fixture;
+        serde_json::json!({
+            "id": f.id,
+            "name": f.name,
+            "account": f.account,
+            "steps": f.steps,
+            "outputs": f.outputs,
+            "creates": f.creates,
+            "current_outputs": s.runs.iter().find(|r| r.ok).map(|r| &r.outputs),
+            "last_run": s.runs.first(),
+        })
+    };
+    if let Some(id) = q(target, "id").map(|i| i.trim().to_string()).filter(|i| !i.is_empty()) {
+        return match saved.iter().find(|s| s.fixture.id == id) {
+            Some(s) => (200, serde_json::json!({ "fixture": in_full(s) }).to_string()),
+            None => {
+                let ids: Vec<&str> = saved.iter().map(|s| s.fixture.id.as_str()).collect();
+                let known = if ids.is_empty() { "none is saved".to_string() } else { format!("the saved ones are {}", ids.join(", ")) };
+                (404, format!("no fixture \"{id}\" is saved in this project - {known}"))
+            }
+        };
+    }
+    if q(target, "full").is_some_and(|v| v.trim().eq_ignore_ascii_case("true")) {
+        let fixtures: Vec<serde_json::Value> = saved.iter().map(in_full).collect();
+        return (200, serde_json::json!({ "fixtures": fixtures }).to_string());
+    }
     let fixtures: Vec<serde_json::Value> = saved
         .iter()
         .map(|s| {
             let f = &s.fixture;
+            let last = s.runs.first().map(|r| {
+                let mut v = serde_json::json!({ "at": r.at, "ok": r.ok });
+                if let Some(step) = r.failed_step {
+                    v["failed_step"] = serde_json::json!(step);
+                }
+                v
+            });
             serde_json::json!({
                 "id": f.id,
                 "name": f.name,
-                "account": f.account,
-                "steps": f.steps,
-                "outputs": f.outputs,
-                "creates": f.creates,
-                "current_outputs": s.runs.iter().find(|r| r.ok).map(|r| &r.outputs),
-                "last_run": s.runs.first(),
+                "outputs": f.outputs.keys().collect::<Vec<_>>(),
+                "creates": f.creates.iter().map(|c| serde_json::json!({ "kind": c.kind, "name": c.name })).collect::<Vec<_>>(),
+                "last_run": last,
             })
         })
         .collect();
-    (200, serde_json::json!({ "fixtures": fixtures }).to_string())
+    (200, serde_json::json!({ "fixtures": fixtures, "note": FIXTURES_IN_SHORT }).to_string())
 }
 
 /// `POST /api-template-fixture-save`: checks the fixture against the saved
@@ -1779,8 +1818,8 @@ pub async fn supervised_page_within(
     limit: usize,
     within: Option<&crate::browser::locator::Target>,
 ) -> (u16, String) {
-    if let Some(going) = replay_is_holding_the_browser() {
-        return going;
+    if crate::autorun::replay_to::is_running() {
+        return (409, replay_going_for_a_page_read());
     }
     // The lock is held for exactly one protocol job - whoever holds it
     // holds the browser, and the person may be using it.
@@ -2179,6 +2218,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::ExpectAttribute { selector, .. }
         | Action::ExpectEnabled { selector, .. }
         | Action::ExpectDisabled { selector, .. }
+        | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. } => vec![(selector, 1)],
         Action::ExpectCount { selector, equals, .. } => {
             if *equals >= 1 {
@@ -2314,9 +2354,18 @@ pub async fn probe_page<D: crate::browser::cdp::Driver>(
         Err(e) => return (503, format!("the browser did not answer: {e}")),
     };
     if let Some(at) = at {
-        if let Some((matched, all)) = counted(d, target, &text).await {
-            let (href, _) = page_address(d).await;
-            record_matched_targets(at, &href, &[(target, matched, all)]);
+        match counted(d, target, &text).await {
+            Some((matched, all)) => {
+                let (href, _) = page_address(d).await;
+                record_matched_targets(at, &href, &[(target, matched, all)]);
+            }
+            // Nothing seen: what no page read can print of it is taken off
+            // this page (`discovery_map::record_matched_counts` with 0).
+            None if read_probe_answer(&text).visible == 0 => {
+                let (href, _) = page_address(d).await;
+                record_matched_targets(at, &href, &[(target, 0, 0)]);
+            }
+            None => {}
         }
     }
     (200, text)
@@ -2489,6 +2538,39 @@ pub fn probe_target(selector: serde_json::Value) -> Result<crate::browser::locat
 pub const REPLAY_GOING: &str =
     "a replay is going - call replay_autorun_to_step with the same case and step to wait for it";
 
+/// Said, with 409, to a page read while a replay holds the browser. The
+/// page is not read beside the replay: the replay holds the browser's one
+/// connection for its whole run, and that connection is what answers the
+/// page's dialogs and the requests a no-save guard pauses, so a second
+/// reader would either wait out the replay or act behind it. The replay's
+/// own call says where it is, and hands back the page once it stands
+/// before its step.
+pub fn replay_going_for_a_page_read() -> String {
+    let call = call_the_replay_going();
+    format!(
+        "the page cannot be read while a replay drives the browser - {call}: it waits for the replay, says the step and the action it is on, and hands back the page once the browser stands before the step"
+    )
+}
+
+/// How to wait on the replay going: the assistant's own names its case and
+/// step; the person's, or one not known, says "the same case and step".
+fn call_the_replay_going() -> String {
+    let which = assistant_run().as_ref().filter(|r| r.answer.borrow().is_none()).map(|r| (r.case_id, r.step));
+    match which {
+        Some((case_id, step)) => format!("call replay_autorun_to_step with case {case_id} and step {step}"),
+        None => "call replay_autorun_to_step with the same case and step".to_string(),
+    }
+}
+
+/// Said, with 409, to the assistant's release while a replay holds the
+/// browser: a release never stops a replay, so it says how to wait for it.
+pub fn replay_going_for_a_release() -> String {
+    format!(
+        "a replay is going and holds the browser, and a release never stops one - {} to wait for it, then release",
+        call_the_replay_going()
+    )
+}
+
 /// `REPLAY_GOING` while a replay to a step holds the browser.
 pub fn replay_is_holding_the_browser() -> Option<(u16, String)> {
     crate::autorun::replay_to::is_running().then(|| (409, REPLAY_GOING.to_string()))
@@ -2587,6 +2669,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::ExpectAttribute { selector, .. }
         | Action::ExpectEnabled { selector, .. }
         | Action::ExpectDisabled { selector, .. }
+        | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. } => selector.describe(),
@@ -2940,18 +3023,28 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     }
                 });
                 let is_mapping = mapping.is_some();
-                *p.discovery = Some(crate::commands::autorun::DiscoveryState {
+                let (case_id, no_save) = p.discovery.as_ref().map_or((None, false), |s| (s.case_id, s.no_save));
+                let state = crate::commands::autorun::DiscoveryState {
                     area,
                     account: Some(key.to_string()),
                     started_at,
                     tried,
                     mapping,
-                });
-                // A mapping run saves nothing: its guard goes on once the
+                    case_id,
+                    no_save,
+                };
+                let must_not_save = discovery_must_not_save(root, &state);
+                *p.discovery = Some(crate::commands::autorun::DiscoveryState { no_save: must_not_save, ..state });
+                // A mapping run saves nothing, and neither does a discovery
+                // for a case that must not save: the guard goes on once the
                 // sign-in (which itself sends a form) has arrived, and before
                 // the page is touched again. A guard that will not go on
-                // closes the browser: a mapping run never goes unguarded.
-                if let Err(why) = guard_a_mapping_run(p.driver, is_mapping, root, organization, project).await {
+                // closes the browser: neither ever goes unguarded.
+                let guarded = match guard_a_mapping_run(p.driver, is_mapping, root, organization, project).await {
+                    Ok(()) => guard_a_no_save_discovery(p.driver, must_not_save, root, organization, project).await,
+                    Err(why) => Err(why),
+                };
+                if let Err(why) = guarded {
                     why
                 } else {
                     // The landing page is filed, but does not mark the area
@@ -2970,6 +3063,14 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     });
                     if status != 200 {
                         answer["page_unavailable"] = serde_json::json!(page);
+                    }
+                    if must_not_save && !is_mapping {
+                        answer["no_save"] = serde_json::json!(true);
+                        let blocked = take_no_save_blocks(p.driver, &[]);
+                        if !blocked.is_empty() {
+                            answer["blocked"] = serde_json::json!(blocked.len());
+                            answer["blocked_writes"] = serde_json::json!(blocked);
+                        }
                     }
                     let what = if is_mapping { "mapping run" } else { "discovery" };
                     crate::applog::info(format!("Auto Run {what} started as {key}"));
@@ -3001,6 +3102,41 @@ async fn guard_a_mapping_run<D: crate::browser::cdp::Driver>(
     let nav = crate::autorun::nav::load_nav(root, organization, project)
         .map_err(|why| crate::browser::save_guard::setup_failed(&why))?;
     d.guard_saves(&nav.save_words).await.map_err(|e| crate::browser::save_guard::setup_failed(&e.to_string()))
+}
+
+/// Put a discovery's save guard on when it must not save
+/// (`discovery_must_not_save`) and the guard is not on already, as a Must
+/// not save case's is: the built-in save words and the project's own.
+/// Asked before every action, so a guard something lifted between two
+/// actions is back on before the next. `Err` is the guard's own sentence:
+/// such a discovery never acts unguarded.
+pub(crate) async fn guard_a_no_save_discovery<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    must_not_save: bool,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+) -> Result<(), String> {
+    if !must_not_save || d.is_guarding_saves() {
+        return Ok(());
+    }
+    guard_a_mapping_run(d, true, root, organization, project).await
+}
+
+/// The saves the guard stopped for a discovery that must not save since
+/// this was last asked, each as `METHOD /path` (never a host, a query or a
+/// value an action in `ran` typed). The stop's pending sentence goes with
+/// them: a save stopped between two actions is reported here, and never
+/// fails the next action.
+fn take_no_save_blocks<D: crate::browser::cdp::Driver>(d: &mut D, ran: &[&crate::browser::actions::Action]) -> Vec<String> {
+    let _ = crate::browser::cdp::Driver::take_save_blocked(d);
+    crate::browser::cdp::Driver::take_saves_stopped(d)
+        .into_iter()
+        .map(|(method, path)| {
+            let path = ran.iter().fold(crate::autorun::discovery_map::path_only(&path), |p, a| without_typed(&p, a));
+            format!("{method} {path}")
+        })
+        .collect()
 }
 
 /// The saves the guard stopped since the last time this was asked, for a
@@ -3079,11 +3215,21 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     }
     let area_name = state.area.clone();
     let mapping = state.mapping.is_some();
+    // Once a discovery must not save, it stays so (`DiscoveryState::no_save`).
+    let must_not_save = discovery_must_not_save(root, state);
+    state.no_save = must_not_save;
     let d = p.driver;
     let runs: Vec<&crate::browser::actions::Action> = match &component {
         Some((_, actions)) => actions.iter().collect(),
         None => vec![action],
     };
+    // Its guard is on before the action, or the action does not run; a save
+    // it stopped between calls is reported with this action, never failing it.
+    if let Err(why) = guard_a_no_save_discovery(d, must_not_save, root, organization, project).await {
+        return (409, why);
+    }
+    let reports_blocks = must_not_save && !mapping;
+    let mut blocked_writes = if reports_blocks { take_no_save_blocks(d, &runs) } else { Vec::new() };
     let (mut steps, mut writes, mut dialogs) = (Vec::new(), Vec::new(), Vec::new());
     let mut last = None;
     let mut after = String::new();
@@ -3127,7 +3273,11 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     }
     let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref());
     let (status, page) = read_page(d, crate::browser::snapshot::PAGE_LINES_DEFAULT, at.as_ref()).await;
-    let blocked = count_blocked_writes(d, p.discovery.as_mut(), &runs);
+    let mut blocked = count_blocked_writes(d, p.discovery.as_mut(), &runs);
+    if reports_blocks {
+        blocked_writes.extend(take_no_save_blocks(d, &runs));
+        blocked = Some(blocked_writes.len());
+    }
     let mut answer = serde_json::json!({
         "ok": outcome.ok,
         "detail": outcome.detail,
@@ -3138,6 +3288,10 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     });
     if let Some(n) = blocked {
         answer["blocked"] = serde_json::json!(n);
+    }
+    if reports_blocks {
+        answer["no_save"] = serde_json::json!(true);
+        answer["blocked_writes"] = serde_json::json!(blocked_writes);
     }
     if component.is_some() {
         answer["steps"] = serde_json::json!(steps);
@@ -3207,6 +3361,9 @@ fn batch_line(n: usize, action: &crate::browser::actions::Action, v: &serde_json
     for write in v["writes"].as_array().into_iter().flatten() {
         let (method, path) = (write["method"].as_str().unwrap_or(""), write["path"].as_str().unwrap_or(""));
         said.push_str(&format!("; wrote {method} {path}"));
+    }
+    for stopped in v["blocked_writes"].as_array().into_iter().flatten().filter_map(|w| w.as_str()) {
+        said.push_str(&format!("; blocked {stopped}"));
     }
     if let Some(path) = v["path"].as_str().filter(|p| !p.trim().is_empty()) {
         if last_path.as_deref() != Some(path) {
@@ -3307,6 +3464,7 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
     if let Some(moved) = named(area) {
         state.area = Some(crate::autorun::discovery_map::canonical_area(root, organization, project, &moved));
     }
+    let blocked_by = if state.mapping.is_some() { "the mapping run" } else { "the no-save guard" };
     let mut lines = Vec::new();
     let mut blocked = 0usize;
     let mut last_path = None;
@@ -3346,7 +3504,7 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
         lines.push(not_run_line(actions.len() - ran));
     }
     if blocked > 0 {
-        lines.push(format!("Saves blocked by the mapping run: {blocked}."));
+        lines.push(format!("Saves blocked by {blocked_by}: {blocked}."));
     }
     let Some(browser) = slot.as_mut() else {
         return (409, NO_DISCOVERY.to_string());
@@ -3885,7 +4043,7 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
 /// anything opens, while anything else holds the browser, and for an
 /// account or recipe that is not there.
 async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    const SHAPE: &str = "{ \"account\": <an account key>, \"area\": <an area name, optional>, \"browser\": \"edge\" | \"chrome\", optional, \"mapping\": true | false, optional, \"modules\": [<a module name>], for a mapping run }";
+    const SHAPE: &str = "{ \"account\": <an account key>, \"area\": <an area name, optional>, \"browser\": \"edge\" | \"chrome\", optional, \"mapping\": true | false, optional, \"modules\": [<a module name>], for a mapping run, \"case_id\": <the case explored for, optional>, \"no_save\": true | false, optional }";
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(e) => return (400, format!("that is not readable JSON: {e}. Expected {SHAPE}.")),
@@ -3935,12 +4093,18 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
         Ok(r) => r,
         Err(refused) => return refused,
     };
+    // A discovery for a case that must not save is guarded from its
+    // sign-in on: settled before a browser opens.
+    let asked = match discovery_for(&root, body) {
+        Ok(asked) => asked,
+        Err(refused) => return refused,
+    };
     // No account, no recipe: said before a browser opens for nothing.
     if let Err(why) = crate::autorun::signin::prepare(&root, &ctx.org, &ctx.project, &account) {
         return (409, why);
     }
     let browser = browser.unwrap_or_else(|| crate::autorun::store::last_browser(&root));
-    let closed_left_open = match crate::commands::autorun::open_for_discovery(&browser, mapping).await {
+    let closed_left_open = match crate::commands::autorun::open_for_discovery(&browser, mapping, asked).await {
         Ok(closed) => closed,
         Err(why) => return (409, why),
     };
@@ -3963,6 +4127,59 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
         crate::commands::autorun::answer_between_commands();
     }
     said_closed_left_open(closed_left_open, answer)
+}
+
+/// The case a discovery call names (`case_id`, optional) and whether it
+/// said `no_save` (optional). `no_save` is also true when the case's saved
+/// script on this machine is marked `no_save`, so naming such a case is
+/// enough. A script that cannot be read refuses the call: a case that may
+/// be marked `no_save` is never explored unguarded.
+pub fn discovery_for(root: &std::path::Path, body: &str) -> Result<crate::commands::autorun::DiscoveryFor, (u16, String)> {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    let case_id = match v.get("case_id") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(id) => Some(
+            id.as_i64()
+                .and_then(|n| i32::try_from(n).ok())
+                .filter(|n| *n > 0)
+                .ok_or((400, "case_id must be a test case id: a positive number".to_string()))?,
+        ),
+    };
+    let said = match v.get("no_save") {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(_) => return Err((400, "no_save is true or false".to_string())),
+    };
+    let marked = match case_id {
+        None => false,
+        Some(id) => crate::autorun::store::load_script(root, id).map_err(|why| (409, why))?.is_some_and(|s| s.no_save),
+    };
+    Ok(crate::commands::autorun::DiscoveryFor { case_id, no_save: said || marked })
+}
+
+/// Put what a discovery call named (`discovery_for`) on the discovery in
+/// `slot`: it becomes a discovery that must not save when the call said so,
+/// and it never stops being one. The first case named is the one it
+/// explores for. Nothing to do with no discovery going.
+pub fn mark_discovery_for<B: DiscoveryBrowser>(slot: &mut Option<B>, asked: crate::commands::autorun::DiscoveryFor) {
+    let Some(state) = slot.as_mut().and_then(|b| b.parts().discovery.as_mut()) else {
+        return;
+    };
+    state.no_save |= asked.no_save;
+    if state.case_id.is_none() {
+        state.case_id = asked.case_id;
+    }
+}
+
+/// Whether a discovery must not save: it was told so, or the case it
+/// explores for is marked `no_save` now (read again each time, so a mark
+/// added on the Setup tab counts from the next action). A script that
+/// cannot be read counts as marked.
+pub fn discovery_must_not_save(root: &std::path::Path, state: &crate::commands::autorun::DiscoveryState) -> bool {
+    state.no_save
+        || state
+            .case_id
+            .is_some_and(|id| crate::autorun::store::load_script(root, id).map_or(true, |s| s.is_some_and(|s| s.no_save)))
 }
 
 /// A discovery start's answer, saying first that it closed the browser the
@@ -3988,7 +4205,7 @@ pub fn said_closed_left_open(closed: bool, (status, text): (u16, String)) -> (u1
 /// recipe's, before the browser is touched. A `use_component` may carry a
 /// `draft` component, tried in place of the saved one.
 async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    const SHAPE: &str = "{ \"action\": <one script action>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional> }";
+    const SHAPE: &str = "{ \"action\": <one script action>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional>, \"case_id\": <the case explored for, optional>, \"no_save\": true | false, optional }";
     let raw = match body_field(body, "action", SHAPE) {
         Ok(v) => v,
         Err(refused) => return refused,
@@ -4033,7 +4250,12 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
     if let Err(refused) = refuse_outside_the_recipe(&policy, &action) {
         return refused;
     }
+    let asked = match discovery_for(&root, body) {
+        Ok(asked) => asked,
+        Err(refused) => return refused,
+    };
     let mut slot = crate::commands::autorun::supervised().lock().await;
+    mark_discovery_for(&mut slot, asked);
     let answer = discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, draft.as_ref(), area.as_deref()).await;
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery(&slot);
@@ -4047,7 +4269,7 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
 /// `draft` is tried by each `use_component` that names it; `area` moves the
 /// discovery before the first action.
 async fn autorun_discover_actions(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    const SHAPE: &str = concat!("{ \"actions\": [<script actions, at most ", max_batch!(), ">], \"stop_on_failure\": <true or false, optional, true by default>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional> }");
+    const SHAPE: &str = concat!("{ \"actions\": [<script actions, at most ", max_batch!(), ">], \"stop_on_failure\": <true or false, optional, true by default>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional>, \"case_id\": <the case explored for, optional>, \"no_save\": true | false, optional }");
     let raw = match body_field(body, "actions", SHAPE) {
         Ok(v) => v,
         Err(refused) => return refused,
@@ -4123,6 +4345,10 @@ async fn autorun_discover_actions(ctx: &BridgeContext, body: &str) -> (u16, Stri
             }
         }
     }
+    let asked = match discovery_for(&root, body) {
+        Ok(asked) => asked,
+        Err(refused) => return refused,
+    };
     // A stop asked for before this batch is not this batch's.
     BATCH_STOP.store(false, std::sync::atomic::Ordering::SeqCst);
     // Held for the whole batch: nothing else drives the browser between
@@ -4130,6 +4356,7 @@ async fn autorun_discover_actions(ctx: &BridgeContext, body: &str) -> (u16, Stri
     // give way (`BATCH_STOP`). A gone browser is let go inside, keeping
     // the lines of the actions that ran.
     let mut slot = crate::commands::autorun::supervised().lock().await;
+    mark_discovery_for(&mut slot, asked);
     let answer = discover_actions_in(
         &mut slot,
         &root,
@@ -4638,14 +4865,66 @@ pub fn replay_running_elsewhere(case_id: i32, step: i32) -> String {
 /// Said, with 202, when the replay has not reached its stop point within
 /// the call's wait: where it is, and how to keep waiting.
 pub fn replay_still_running(case_id: i32, step: i32, at: i32, of: i32) -> String {
-    let now = if at > 0 {
+    replay_still_running_on(case_id, step, at, of, None)
+}
+
+/// `replay_still_running`, saying too which action of the step it is on
+/// (`runner::ActionNow`), for how long, and how many of the step's actions
+/// already failed. A replay never tries an action again: a failed one is
+/// pictured and the step carries on to its end, and the replay stops after
+/// that step.
+pub fn replay_still_running_on(
+    case_id: i32,
+    step: i32,
+    at: i32,
+    of: i32,
+    action: Option<&crate::autorun::runner::ActionNow>,
+) -> String {
+    let mut now = if at > 0 {
         format!("now at step {at} of {of}")
     } else {
         "now signing in and going to the case's area".to_string()
     };
+    if let Some(a) = action.filter(|a| at > 0 && a.index > 0) {
+        let what = if a.target.is_empty() { a.kind.clone() } else { format!("{} {}", a.kind, a.target) };
+        let secs = a.since.map_or(0, |s| s.elapsed().as_secs());
+        now.push_str(&format!(", on action {} of {} ({what}) for {secs} s", a.index, a.of));
+        match a.failed {
+            0 => now.push_str(", none of this step's actions has failed yet"),
+            1 => now.push_str(", 1 of this step's actions already failed (a replay never tries an action again)"),
+            n => now.push_str(&format!(", {n} of this step's actions already failed (a replay never tries an action again)")),
+        }
+    }
     format!(
         "still running, {now} - call replay_autorun_to_step again with the same case ({case_id}) and step ({step}) to keep waiting"
     )
+}
+
+/// The 202 a replay call answers while its replay still runs: the sentence
+/// (`replay_still_running_on`), the step and how many, and once a step's
+/// action has begun, `action` (its place, kind, target and seconds on it),
+/// `failed_in_step`, and `retries: false` (a replay never retries).
+pub fn replay_still_running_answer(
+    case_id: i32,
+    step: i32,
+    at: i32,
+    of: i32,
+    action: &crate::autorun::runner::ActionNow,
+) -> serde_json::Value {
+    let sentence = replay_still_running_on(case_id, step, at, of, Some(action));
+    let mut v = serde_json::json!({ "status": "running", "sentence": sentence, "step": at, "of": of });
+    if at > 0 && action.index > 0 {
+        v["action"] = serde_json::json!({
+            "index": action.index,
+            "of": action.of,
+            "kind": action.kind,
+            "target": action.target,
+            "seconds": action.since.map_or(0, |s| s.elapsed().as_secs()),
+        });
+        v["failed_in_step"] = serde_json::json!(action.failed);
+        v["retries"] = serde_json::json!(false);
+    }
+    v
 }
 
 /// Said when a replay ended without handing back its answer: its task
@@ -4677,8 +4956,8 @@ async fn wait_for_replay(
         Ok(_) => taken((500, REPLAY_LOST.to_string())),
         Err(_) => {
             let (at, of) = crate::autorun::replay_to::progress();
-            let sentence = replay_still_running(case_id, step, at, of);
-            (202, serde_json::json!({ "status": "running", "sentence": sentence, "step": at, "of": of }).to_string())
+            let action = crate::autorun::replay_to::action_now();
+            (202, replay_still_running_answer(case_id, step, at, of, &action).to_string())
         }
     }
 }
@@ -4868,6 +5147,27 @@ pub fn try_case_id(body: &str) -> Result<i32, (u16, String)> {
     }
 }
 
+/// A component's try as one outcome, from each of its actions' (`steps`):
+/// ok when every one passed; otherwise the first failure's detail, named by
+/// its place and action, and its picture.
+fn component_outcome(steps: &[(String, crate::browser::actions::ActionOutcome)]) -> crate::browser::actions::ActionOutcome {
+    use crate::browser::actions::ActionOutcome;
+    match steps.iter().enumerate().find(|(_, (_, o))| !o.ok) {
+        None => {
+            let n = steps.len();
+            ActionOutcome::passed(if n == 1 { "its 1 action passed".to_string() } else { format!("all {n} of its actions passed") })
+        }
+        Some((i, (what, o))) => {
+            let failed = steps.iter().filter(|(_, o)| !o.ok).count();
+            let more = if failed > 1 { format!(" ({failed} of {} failed)", steps.len()) } else { String::new() };
+            let mut out = ActionOutcome::failed(format!("action {} ({what}) failed: {}{more}", i + 1, o.detail));
+            out.screenshot = o.screenshot.clone();
+            out.harness = o.harness;
+            out
+        }
+    }
+}
+
 /// One tried action in a browser already guarded for its case
 /// (`commands::autorun::guard_for_case`), as the route answers it.
 /// `case_id` is the case the try is for: a tried `return_to_area` goes to
@@ -4902,13 +5202,19 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
     let tried = try_action(d, account, lease, root, organization, project, case_id, discovery_area, false, action).await;
-    let outcome = match tried {
-        Ok(tried) => tried.outcome,
+    let (outcome, steps) = match tried {
+        Ok(tried) => (tried.outcome, tried.steps),
         Err(refused) => return refused,
     };
     let mut text = format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
     if let Some(shot) = &outcome.screenshot {
         text.push_str(&format!(" (picture: {})", crate::autorun::store::shot_path(root, shot).display()));
+    }
+    // A component's try answers each of its actions, as a discovery's does.
+    for (i, (what, o)) in steps.iter().enumerate() {
+        let detail = o.detail.trim();
+        let said = if detail.is_empty() { what.clone() } else { format!("{what}: {}", one_short_line(detail)) };
+        text.push_str(&format!("\n{}. {}: {said}", i + 1, if o.ok { "ok" } else { "failed" }));
     }
     (200, text)
 }
@@ -4916,6 +5222,9 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
 /// What one action an assistant ran did: its outcome, and the dialog the
 /// page raised while it ran, if any.
 struct Tried {
+    /// A `use_component`'s actions, each described with its outcome; empty
+    /// for any other action.
+    steps: Vec<(String, crate::browser::actions::ActionOutcome)>,
     outcome: crate::browser::actions::ActionOutcome,
     dialog: Option<crate::autorun::StepDialog>,
 }
@@ -4938,10 +5247,21 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     action: &crate::browser::actions::Action,
 ) -> Result<Tried, (u16, String)> {
     use crate::autorun::runner::{area_route, area_routes, named_areas, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
-    // A bare `return_to_area` goes to the case's own area; one that names
-    // an area goes to that one.
-    let resolved = (matches!(action, crate::browser::actions::Action::ReturnToArea { .. }) && action.area_named().is_none())
-        .then(|| area_route(root, organization, project, case_id));
+    // A bare `return_to_area` goes to the case's own area - in a discovery
+    // (case 0, which has no script), the discovery's own area; one that
+    // names an area goes to that one.
+    // A `when_visible` may hold one in its `then`, to recover from a bounce.
+    let bare = |a: &crate::browser::actions::Action| {
+        matches!(a, crate::browser::actions::Action::ReturnToArea { .. }) && a.area_named().is_none()
+    };
+    let resolved = action.each().into_iter().any(bare)
+        .then(|| {
+            if case_id == 0 {
+                crate::autorun::runner::discovery_area_route(root, organization, project, discovery_area)
+            } else {
+                area_route(root, organization, project, case_id)
+            }
+        });
     let area = match &resolved {
         Some(Ok(r)) => AreaRoute::To(r),
         Some(Err(why)) => AreaRoute::Unknown(why),
@@ -5017,8 +5337,28 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         Ok(v) => v,
         Err(why) => return Err((500, why)),
     };
-    let Some(outcome) = outcomes.into_iter().next() else {
-        return Err((500, "the action produced no outcome".to_string()));
+    // A `use_component` runs as its component's actions, one outcome each:
+    // every one is answered, and the try as a whole is ok only when all are.
+    let steps: Vec<(String, crate::browser::actions::ActionOutcome)> = match action {
+        crate::browser::actions::Action::UseComponent { .. } => {
+            let expanded = crate::autorun::components::expand_step(root, organization, project, std::slice::from_ref(action))
+                .map(|(x, _)| x.into_iter().map(|(a, _)| describe_action(&a)).collect::<Vec<_>>())
+                .unwrap_or_default();
+            outcomes
+                .iter()
+                .enumerate()
+                .map(|(i, o)| (expanded.get(i).cloned().unwrap_or_else(|| format!("action {}", i + 1)), o.clone()))
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+    let outcome = if steps.is_empty() {
+        let Some(outcome) = outcomes.into_iter().next() else {
+            return Err((500, "the action produced no outcome".to_string()));
+        };
+        outcome
+    } else {
+        component_outcome(&steps)
     };
     // Shown to a person reading Settings -> Logs, never returned to the
     // assistant - and never a `fill`'s VALUE, which `describe_try` never
@@ -5051,7 +5391,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         }
         record_matched_targets(&at, &started_on, &matched);
     }
-    Ok(Tried { outcome, dialog: run.dialog })
+    Ok(Tried { outcome, dialog: run.dialog, steps })
 }
 
 /// A run's failed cases, as text an assistant can act on - and, when it
@@ -5081,8 +5421,10 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
         },
         // A case's newest word may be a replay that stopped on a failure,
         // when it is newer than the case's newest run or no run has it.
+        // With no case named, a replay that stopped on a failure counts as
+        // the newest word too, when it is newer than the newest run.
         None => match case_id.map_or_else(
-            || crate::autorun::failures::latest_run(&root, None),
+            || crate::autorun::replay_record::latest(&root),
             |id| crate::autorun::replay_record::latest_for_case(&root, id),
         ) {
             Some(run) => run,

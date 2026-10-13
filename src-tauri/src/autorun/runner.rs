@@ -135,6 +135,22 @@ pub fn area_route(root: &Path, organization: &str, project: &str, case_id: i32) 
     let script = store::load_script(root, case_id)?
         .ok_or_else(|| format!("return_to_area: case {case_id} has no saved script to name its area"))?;
     let area = script.area.as_deref().map(str::trim).filter(|a| !a.is_empty()).ok_or(NEEDS_SCRIPT_AREA)?;
+    area_route_named(root, organization, project, area)
+}
+
+/// Said to a bare `return_to_area` in a discovery that has no area yet:
+/// it goes to the discovery's own area, so one must be named.
+pub const NEEDS_DISCOVERY_AREA: &str = "return_to_area in a discovery goes back to the discovery's area, and none is named yet - pass `area` with the area's name, or name the area in the action";
+
+/// The route a discovery's bare `return_to_area` takes: the discovery's own
+/// area, as `area_route` would take the case's.
+pub fn discovery_area_route(root: &Path, organization: &str, project: &str, area: Option<&str>) -> Result<Route, String> {
+    let area = area.map(str::trim).filter(|a| !a.is_empty()).ok_or(NEEDS_DISCOVERY_AREA)?;
+    area_route_named(root, organization, project, area)
+}
+
+/// The route to the recorded area `area`, from the recipe's home.
+fn area_route_named(root: &Path, organization: &str, project: &str, area: &str) -> Result<Route, String> {
     let nav_file = nav::load_nav(root, organization, project)?;
     let path = nav::find_area(&nav_file, area).ok_or_else(|| nav::unrecorded_area(area))?;
     let home = recipe::load_effective_recipe_if_any(root, organization, project)?.ok_or(NO_HOME_FOR_AREA)?;
@@ -327,6 +343,7 @@ pub fn changes_the_page(action: &Action) -> bool {
             | Action::ExpectAttribute { .. }
             | Action::ExpectEnabled { .. }
             | Action::ExpectDisabled { .. }
+            | Action::ExpectChecked { .. }
             | Action::ExpectResponse { .. }
             | Action::ExpectFocused { .. }
             | Action::ExpectDownload { .. }
@@ -442,6 +459,90 @@ pub struct InRun<'a> {
     /// The step before's picture, maybe still being taken: settled before
     /// this step's first action that changes the page.
     pub picture: Option<&'a mut Picture>,
+    /// Told each action as it begins and ends, for whoever asks how far
+    /// the step has got (a replay's "still running" answer).
+    pub progress: Option<&'a StepProgress>,
+}
+
+/// The action a step is on, as `StepProgress` keeps it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ActionNow {
+    /// The action's place in the step, from 1; 0 before the first. A
+    /// component's actions count one by one, as they run.
+    pub index: usize,
+    /// How many actions the step runs, components expanded.
+    pub of: usize,
+    pub kind: String,
+    /// What it acts on, in short (`Target::describe`), or blank.
+    pub target: String,
+    /// When it began.
+    pub since: Option<Instant>,
+    /// How many of the step's actions have already failed (a wait that ran
+    /// out of time included). A step carries on past a failed action, and
+    /// never tries one again.
+    pub failed: u32,
+}
+
+/// The longest target `ActionNow` keeps.
+const SHORT_TARGET: usize = 80;
+
+/// Where a step is, action by action: set by the runner's step loop
+/// (`InRun::progress`), read by anyone, never held across an await.
+pub struct StepProgress(std::sync::Mutex<ActionNow>);
+
+impl StepProgress {
+    pub const fn new() -> Self {
+        StepProgress(std::sync::Mutex::new(ActionNow {
+            index: 0,
+            of: 0,
+            kind: String::new(),
+            target: String::new(),
+            since: None,
+            failed: 0,
+        }))
+    }
+
+    fn held(&self) -> std::sync::MutexGuard<'_, ActionNow> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// A new step, nothing run of it yet.
+    pub fn reset(&self) {
+        *self.held() = ActionNow::default();
+    }
+
+    /// Action `index` (from 1) of `of` begins now.
+    pub fn began(&self, index: usize, of: usize, action: &Action) {
+        let target: String = action.targets().first().map(|t| t.describe()).unwrap_or_default();
+        let target = if target.chars().count() > SHORT_TARGET {
+            format!("{}...", target.chars().take(SHORT_TARGET).collect::<String>())
+        } else {
+            target
+        };
+        let mut now = self.held();
+        now.index = index;
+        now.of = of;
+        now.kind = action.kind();
+        now.target = target;
+        now.since = Some(Instant::now());
+    }
+
+    /// The action begun last ended, passing or not.
+    pub fn ended(&self, ok: bool) {
+        if !ok {
+            self.held().failed += 1;
+        }
+    }
+
+    pub fn now(&self) -> ActionNow {
+        self.held().clone()
+    }
+}
+
+impl Default for StepProgress {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// The longest an `expect_download` waits in a watched run or a try, which
@@ -603,7 +704,7 @@ async fn run_expanded<D: Driver>(
     // Until then a save the guard stopped was sent while the step before's
     // picture was still being taken: it is that step's, not this one's.
     let mut acted = false;
-    for action in &step.actions {
+    for (index, action) in step.actions.iter().enumerate() {
         if let Some(why) = blocked {
             out.push(ActionOutcome::failed(why));
             continue;
@@ -659,6 +760,9 @@ async fn run_expanded<D: Driver>(
             out.push(gone);
             continue;
         }
+        if let Some(p) = run.progress {
+            p.began(index + 1, step.actions.len(), action);
+        }
         let mut outcome = match action {
             Action::SignIn { account: key } => match signin::prepare(root, organization, project, key) {
                 Err(why) => {
@@ -702,37 +806,11 @@ async fn run_expanded<D: Driver>(
             // wrong screen.
             // A named area: its own route, read before the steps. Not
             // reaching it stops the step the same way.
-            Action::ReturnToArea { .. } if action.area_named().is_some() => {
-                let name = action.area_named().unwrap_or_default();
-                match named_route(areas, name) {
-                    Ok(rt) => {
-                        let who = format!("Auto Run, step {}", step.step_number);
-                        let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;
-                        if !went.ok {
-                            blocked = Some(AFTER_NAMED_AREA_UNREACHED);
-                        }
-                        went
-                    }
-                    Err(why) => {
-                        blocked = Some(AFTER_NAMED_AREA_UNREACHED);
-                        ActionOutcome::failed(format!("return_to_area: {why}"))
-                    }
-                }
+            Action::ReturnToArea { .. } => {
+                let (went, stop) = return_to_area(d, action, &area, areas, step.step_number, timing).await;
+                blocked = stop;
+                went
             }
-            Action::ReturnToArea { .. } => match &area {
-                AreaRoute::To(rt) => {
-                    let who = format!("Auto Run, step {}", step.step_number);
-                    let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;
-                    if !went.ok {
-                        blocked = Some(AFTER_AREA_UNREACHED);
-                    }
-                    went
-                }
-                AreaRoute::Unknown(why) => {
-                    blocked = Some(AFTER_AREA_UNREACHED);
-                    ActionOutcome::failed(*why)
-                }
-            },
             // Only the runner knows where the step began.
             Action::ExpectResponse { .. } => api_checks::expect_response(d, action, mark, timing).await,
             Action::ApiRequest { path, .. } => {
@@ -764,7 +842,7 @@ async fn run_expanded<D: Driver>(
                 outcome
             }
             Action::WhenVisible { .. } => {
-                let (outcome, stop) = when_visible(d, &here, action, timing).await;
+                let (outcome, stop) = when_visible(d, &here, action, &area, areas, timing).await;
                 blocked = stop;
                 outcome
             }
@@ -791,6 +869,9 @@ async fn run_expanded<D: Driver>(
             }
         }
         unexpected_dialog(d, &mut dialogs_read, fail_on_unexpected, &mut outcome);
+        if let Some(p) = run.progress {
+            p.ended(outcome.ok);
+        }
         // The application refused the session the browser holds ("Cookie
         // has been tampered", an empty 400): the account is signed in fresh
         // so its saved session is repaired, and the action fails saying so,
@@ -1002,6 +1083,8 @@ async fn when_visible<D: Driver>(
     d: &mut D,
     here: &Here<'_>,
     action: &Action,
+    area: &AreaRoute<'_>,
+    areas: Option<&NamedAreas>,
     timing: &Timing,
 ) -> (ActionOutcome, Option<&'static str>) {
     if let Err(why) = action.validate() {
@@ -1018,7 +1101,13 @@ async fn when_visible<D: Driver>(
     }
     let mut said: Vec<String> = Vec::with_capacity(then.len());
     for guarded in then {
-        let (out, stop) = plain(d, here, guarded, timing).await;
+        // A bounce the guard caught (the page went home) is recovered by
+        // walking back to the area, as the step's own `return_to_area`
+        // would; not reaching it stops the step the same way.
+        let (out, stop) = match guarded {
+            Action::ReturnToArea { .. } => return_to_area(d, guarded, area, areas, here.step, timing).await,
+            _ => plain(d, here, guarded, timing).await,
+        };
         said.push(out.detail);
         if !out.ok {
             let mut failed = ActionOutcome::failed(format!("{target} showed: {}", said.join("; ")));
@@ -1027,6 +1116,39 @@ async fn when_visible<D: Driver>(
         }
     }
     (ActionOutcome::passed(format!("{target} showed: {}", said.join("; "))), None)
+}
+
+/// A `return_to_area`, on its own or inside a `when_visible`'s `then`: a
+/// named area by its own route (`areas`), a bare one to the case's area
+/// (`area`). Not reaching it stops the rest of the step: what follows would
+/// act on the wrong screen.
+async fn return_to_area<D: Driver>(
+    d: &mut D,
+    action: &Action,
+    area: &AreaRoute<'_>,
+    areas: Option<&NamedAreas>,
+    step_number: i32,
+    timing: &Timing,
+) -> (ActionOutcome, Option<&'static str>) {
+    let who = format!("Auto Run, step {step_number}");
+    if let Some(name) = action.area_named() {
+        return match named_route(areas, name) {
+            Ok(rt) => {
+                let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;
+                let stop = (!went.ok).then_some(AFTER_NAMED_AREA_UNREACHED);
+                (went, stop)
+            }
+            Err(why) => (ActionOutcome::failed(format!("return_to_area: {why}")), Some(AFTER_NAMED_AREA_UNREACHED)),
+        };
+    }
+    match area {
+        AreaRoute::To(rt) => {
+            let went = nav::reach_module(d, rt, nav::TripFrom::Elsewhere, timing, &who).await;
+            let stop = (!went.ok).then_some(AFTER_AREA_UNREACHED);
+            (went, stop)
+        }
+        AreaRoute::Unknown(why) => (ActionOutcome::failed(*why), Some(AFTER_AREA_UNREACHED)),
+    }
 }
 
 /// An `upload`, carried out here because only the runner knows the

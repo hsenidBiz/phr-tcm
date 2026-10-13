@@ -99,6 +99,9 @@ pub fn action_words(action: &Action) -> String {
         }
         Action::ExpectEnabled { selector, .. } => format!("expect {} to be enabled", selector.describe()),
         Action::ExpectDisabled { selector, .. } => format!("expect {} to be disabled", selector.describe()),
+        Action::ExpectChecked { selector, checked, .. } => {
+            format!("expect {} to be {}", selector.describe(), if *checked { "checked" } else { "not checked" })
+        }
         Action::SignIn { account } => format!("sign in as {account}"),
         Action::Upload { selector, file } => format!("upload {file} into {}", selector.describe()),
         Action::ExpectResponse { method, url_contains, status, .. } => {

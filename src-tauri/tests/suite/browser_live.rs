@@ -2959,7 +2959,7 @@ async fn a_replay_to_step_3_leaves_the_page_where_step_2_left_it() {
         |_, _| {},
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: 31, step: 3, notice: None }, "{}", end.sentence());
+    assert_eq!(end, ReplayEnd::Ready { case_id: 31, step: 3, notice: None, whole: None }, "{}", end.sentence());
     let state = page::eval_value(
         &mut live.cdp,
         "[location.pathname, document.getElementById('form').hidden, document.querySelector('[aria-label=Reason]').value, document.getElementById('msg').textContent]",
@@ -3290,6 +3290,231 @@ async fn states_every_line_the_page_read_prints_resolves() {
     }
 }
 
+/// A server for the settle tests: `/` is a page whose button is there at
+/// once while the page's own request to `/slow` is still in flight; `/slow`
+/// answers after `slow_ms`. A click on the button says whether that request
+/// had ended. Each connection is answered on a thread of its own, so the
+/// slow one holds up nothing else.
+fn settle_server(slow_ms: u64) -> u16 {
+    const PAGE: &str = r#"<!doctype html><html><head><title>Settle</title></head><body>
+<p id="out">not clicked</p>
+<script>
+  let done = false;
+  fetch('/slow').then(r => r.text()).then(() => { done = true; });
+  const b = document.createElement('button');
+  b.id = 'go';
+  b.textContent = 'Continue';
+  b.onclick = () => { document.getElementById('out').textContent = done ? 'after the request' : 'before the request'; };
+  document.body.append(b);
+</script>
+</body></html>"#;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
+    let port = listener.local_addr().unwrap().port();
+    // The thread ends with the test process; the listener has no other owner.
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            std::thread::spawn(move || {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut buf = [0u8; 4096];
+                let Ok(n) = stream.read(&mut buf) else { return };
+                let line = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string();
+                let (kind, body) = if line.starts_with("GET /slow") {
+                    std::thread::sleep(Duration::from_millis(slow_ms));
+                    ("text/plain", "ok".to_string())
+                } else if line.starts_with("GET / ") {
+                    ("text/html; charset=utf-8", PAGE.to_string())
+                } else {
+                    let _ = write!(stream, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    return;
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+        }
+    });
+    port
+}
+
+/// The report's click taken before its page settled: the button is there
+/// while the page's own request is still in flight, and the click waits for
+/// that request to end before it lands.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn settle_a_click_waits_for_the_pages_request_to_end() {
+    let port = settle_server(1200);
+    let mut live = open().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.expect("the network domain did not switch on");
+    let at = std::time::Instant::now();
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
+    must(run(&mut live, json!({ "kind": "click", "selector": "#go" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#out", "equals": "after the request" })).await);
+    assert!(at.elapsed() >= Duration::from_millis(1100), "the click did not wait: {:?}", at.elapsed());
+}
+
+/// A page that polls faster than `SETTLE_QUIET` - the same path again every
+/// 150 ms - is not loading: a click on it does not wait its whole cap. And
+/// a dialog the page opened is closed by the time the click is done, so the
+/// wait is never held off by one either.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn settle_a_page_that_polls_is_clicked_without_the_cap() {
+    use v2_lib::browser::actions::SETTLE_CAP;
+    const PAGE: &str = r#"<!doctype html><html><head><title>Polls</title></head><body>
+<p id="out">not clicked</p>
+<button id="go" onclick="document.getElementById('out').textContent = 'clicked'">Continue</button>
+<button id="warn" onclick="alert('Saved')">Warn</button>
+<script>setInterval(() => { fetch('/poll?_=' + Date.now()); }, 150);</script>
+</body></html>"#;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            std::thread::spawn(move || {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut buf = [0u8; 4096];
+                let Ok(n) = stream.read(&mut buf) else { return };
+                let line = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string();
+                let (kind, body) = if line.starts_with("GET /poll") {
+                    std::thread::sleep(Duration::from_millis(60));
+                    ("text/plain", "{}".to_string())
+                } else {
+                    ("text/html; charset=utf-8", PAGE.to_string())
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+        }
+    });
+    let mut live = open().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.expect("the network domain did not switch on");
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    let at = std::time::Instant::now();
+    must(run(&mut live, json!({ "kind": "click", "selector": "#go" })).await);
+    let took = at.elapsed();
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#out", "equals": "clicked" })).await);
+    assert!(took < SETTLE_CAP / 2, "a polling page made the click wait {took:?}");
+
+    must(run(&mut live, json!({ "kind": "click", "selector": "#warn" })).await);
+    let _ = live.cdp.eval("1").await;
+    assert!(!live.cdp.dialog_open(), "the answered dialog still counts as open");
+}
+
+/// A request that outlasts the cap never fails the click: it waits about
+/// `SETTLE_CAP`, then clicks as it always did.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn settle_a_page_still_busy_at_the_cap_is_clicked_anyway() {
+    use v2_lib::browser::actions::SETTLE_CAP;
+    let port = settle_server(6000);
+    let mut live = open().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.expect("the network domain did not switch on");
+    must(run(&mut live, json!({ "kind": "navigate", "url": format!("http://127.0.0.1:{port}/") })).await);
+    let at = std::time::Instant::now();
+    must(run(&mut live, json!({ "kind": "click", "selector": "#go" })).await);
+    let took = at.elapsed();
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#out", "equals": "before the request" })).await);
+    assert!(took >= SETTLE_CAP - Duration::from_millis(300) && took < SETTLE_CAP + Duration::from_secs(2), "{took:?}");
+}
+
+/// What the wait costs on a quiet page: one light call per click or fill.
+/// Measured over 30 rounds on the states page with the network record on.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn settle_on_a_quiet_page_costs_next_to_nothing() {
+    use v2_lib::browser::actions::settle;
+    let mut live = open_states().await;
+    v2_lib::browser::page_log::watch(&mut live.cdp).await.expect("the network domain did not switch on");
+    // Whatever loading the page did ends first.
+    settle(&mut live.cdp, &timing()).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let rounds = 30u32;
+    let mut total = Duration::ZERO;
+    for _ in 0..rounds {
+        total += settle(&mut live.cdp, &timing()).await;
+    }
+    let each = total / rounds;
+    eprintln!("settle on a quiet page: {each:?} per click or fill ({rounds} rounds)");
+    assert!(each < Duration::from_millis(50), "{each:?} per action");
+}
+
+fn links_fixture_url() -> String {
+    fixture_url().replace("autorun-live.html", "autorun-links.html")
+}
+
+/// The report's `link "Home"`: listed by the page read, then not found by
+/// a click on that very name. The cause: a link with no box of its own - its
+/// icon floated or absolutely placed, or the link `display: contents` -
+/// which the read lists from the accessibility tree, but which the
+/// resolver's visibility test dropped for its zero-size box. Each shape a
+/// header draws a link in is read, resolved as the read printed it, and
+/// clicked, and the page hears the click on that link.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn links_every_link_the_read_prints_is_found_and_clicked() {
+    use v2_lib::browser::snapshot::snapshot_with_lines;
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "navigate", "url": links_fixture_url() })).await);
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": "#clicked" })).await);
+    let (text, lines) = snapshot_with_lines(&mut live.cdp, 400).await.expect("the page read failed");
+    let mut report = Vec::new();
+    for (name, id) in [
+        ("Home float", "float-img"),
+        ("Home absolute", "abs-span"),
+        ("Home contents", "contents"),
+        ("Home svg", "svg-title"),
+        ("Home image", "img-alt"),
+        ("Home block", "block-child"),
+    ] {
+        let Some(line) = lines.iter().find(|l| l.role == "link" && l.name == name) else {
+            report.push(format!("{name}: NOT PRINTED"));
+            continue;
+        };
+        let found = resolve(&mut live.cdp, &line.locator).await.expect("resolve failed").len();
+        if found != 1 {
+            report.push(format!("{name}: the read printed it, and the resolver found {found}"));
+            continue;
+        }
+        let selector = serde_json::to_value(&line.locator).unwrap();
+        let out = run(&mut live, json!({ "kind": "click", "selector": selector })).await;
+        let clicked = live.cdp.eval("document.getElementById('clicked').textContent").await.unwrap();
+        let clicked = clicked["result"]["value"].as_str().unwrap_or("").to_string();
+        if !out.ok || clicked != id {
+            report.push(format!("{name}: click ok {} ({}), the page heard {clicked:?}, not {id}", out.ok, out.detail));
+        }
+    }
+    assert!(report.is_empty(), "{}\n---\n{text}", report.join("\n"));
+    // A css or a text locator agrees with the role one on each shape.
+    for (css, words) in [("#float-img", None), ("#abs-span", Some("Home absolute")), ("#contents", Some("Home contents"))] {
+        let by_css = action_target(json!({ "css": css }));
+        assert_eq!(resolve(&mut live.cdp, &by_css).await.unwrap().len(), 1, "css {css}");
+        if let Some(w) = words {
+            let by_text = action_target(json!({ "text": w, "exact": true }));
+            assert_eq!(resolve(&mut live.cdp, &by_text).await.unwrap().len(), 1, "text {w}");
+        }
+    }
+    // Collapsed panels are hidden, whatever overflows them, and so is a
+    // wrapper with no box whose content is all hidden.
+    for css in ["#collapsed", "#max-collapsed", "#contents-hidden"] {
+        must(run(&mut live, json!({ "kind": "expect_hidden", "selector": { "css": css }, "timeout_ms": 500 })).await);
+        assert!(resolve(&mut live.cdp, &action_target(json!({ "css": css }))).await.unwrap().is_empty(), "{css} was seen");
+    }
+    let ghost = action_target(json!({ "text": "Ghost words" }));
+    assert!(resolve(&mut live.cdp, &ghost).await.unwrap().is_empty(), "hidden words were seen");
+    // A link hidden around its visible content is still hidden.
+    live.cdp.eval("document.getElementById('abs-span').style.visibility = 'hidden'").await.unwrap();
+    let gone = action_target(json!({ "role": "link", "name": "Home absolute" }));
+    assert!(resolve(&mut live.cdp, &gone).await.unwrap().is_empty(), "a hidden link was found");
+}
+
 /// The report's switch: the usual toggle, an `<input role="switch">` sized
 /// to nothing under a slider drawn in its label. The page read lists it,
 /// so a probe by its role finds it, as visible, and a click on it is a
@@ -3361,6 +3586,44 @@ async fn states_enabled_and_disabled_are_read_from_the_page() {
     let absent = |name: &str| json!({ "kind": "expect_attribute", "selector": "#enabled", "name": name, "absent": true });
     must(run(&mut live, absent("aria-pressed")).await);
     refused(run(&mut live, absent("type")).await, "still has type=\"button\"");
+}
+
+/// `expect_checked` on a real page follows clicks, where the `checked`
+/// attribute does not: a plain checkbox starts clear, a click ticks it, and
+/// the attribute is still absent. An `aria-checked` switch answers by that,
+/// a radio by its live state, and a button with no checked state is refused.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn states_expect_checked_follows_clicks() {
+    let mut live = open_states().await;
+    let checked = |selector: serde_json::Value, ticked: bool| {
+        json!({ "kind": "expect_checked", "selector": selector, "checked": ticked, "timeout_ms": 300 })
+    };
+    let plain = json!({ "role": "checkbox", "name": "Plain checkbox" });
+    must(run(&mut live, checked(plain.clone(), false)).await);
+    refused(run(&mut live, checked(plain.clone(), true)).await, "is not checked");
+    must(run(&mut live, json!({ "kind": "click", "selector": plain.clone() })).await);
+    must(run(&mut live, checked(plain.clone(), true)).await);
+    refused(run(&mut live, checked(plain.clone(), false)).await, "is checked");
+    // The attribute never followed the click: why expect_attribute misleads.
+    let attr = json!({ "kind": "expect_attribute", "selector": plain.clone(), "name": "checked", "absent": true });
+    must(run(&mut live, attr).await);
+    // And back again.
+    must(run(&mut live, json!({ "kind": "click", "selector": plain.clone() })).await);
+    must(run(&mut live, checked(plain, false)).await);
+
+    let radio = json!({ "role": "radio", "name": "Plain radio" });
+    must(run(&mut live, checked(radio.clone(), false)).await);
+    must(run(&mut live, json!({ "kind": "click", "selector": radio.clone() })).await);
+    must(run(&mut live, checked(radio, true)).await);
+
+    must(run(&mut live, checked(json!({ "role": "switch", "name": "Weekly digest" }), true)).await);
+    must(run(&mut live, checked(json!({ "role": "switch", "name": "Dark mode" }), false)).await);
+    let button = json!({ "role": "button", "name": "Enabled action", "exact": true });
+    refused(run(&mut live, checked(button, true)).await, "has no checked state");
+    // A container is never read for the first box inside it.
+    let region = json!({ "role": "region", "name": "Switches" });
+    refused(run(&mut live, checked(region, true)).await, "matches a container, point at the checkbox");
 }
 
 /// A bare css `within`, as an assistant most often writes one, counts every

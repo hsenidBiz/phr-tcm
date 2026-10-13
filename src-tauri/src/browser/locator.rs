@@ -289,15 +289,15 @@ pub fn name_matches(got: &str, want: &str, exact: bool) -> bool {
 
 /// `this` is the root. Arguments: selector, visibleOnly. What counts as
 /// seen is `VISIBLE_JS`'s rule.
-pub const CSS_JS: &str = r#"function(sel, visibleOnly) {
-  const drawn = (e) => {
-    const r = e.getBoundingClientRect();
-    return e.checkVisibility({ visibilityProperty: true }) && r.width > 0 && r.height > 0;
-  };
-  const seen = (e) => !visibleOnly || drawn(e) ||
-    (!!e.labels && e.checkVisibility({ visibilityProperty: true }) && Array.from(e.labels).some(drawn));
+pub const CSS_JS: &str = concat!(
+    r#"function(sel, visibleOnly) {
+  const isSeen = "#,
+    seen_js!(),
+    r#";
+  const seen = (e) => !visibleOnly || isSeen(e);
   return Array.from(this.querySelectorAll(sel)).filter(seen);
-}"#;
+}"#
+);
 
 /// `this` is the root. Arguments: text, exact, visibleOnly. The DEEPEST
 /// element carrying the text wins: the control itself, not the panel it
@@ -305,7 +305,11 @@ pub const CSS_JS: &str = r#"function(sel, visibleOnly) {
 /// Both go through `norm()`, which folds a text the way `name_matches`
 /// folds a name: whitespace collapsed, an em or en dash a hyphen, and no
 /// space beside a hyphen.
-pub const TEXT_JS: &str = r#"function(want, exact, visibleOnly) {
+pub const TEXT_JS: &str = concat!(
+    r#"function(want, exact, visibleOnly) {
+  const isSeen = "#,
+    seen_js!(),
+    r#";
   const norm = (s) => (s || '').replace(/[\u2014\u2013]/g, '-').replace(/\s+/g, ' ').trim().replace(/ ?- ?/g, '-');
   const needle = norm(want);
   const lower = needle.toLowerCase();
@@ -316,12 +320,7 @@ pub const TEXT_JS: &str = r#"function(want, exact, visibleOnly) {
     const t = textOf(e);
     return exact ? t === needle : t.toLowerCase().includes(lower);
   };
-  const drawn = (e) => {
-    const r = e.getBoundingClientRect();
-    return e.checkVisibility({ visibilityProperty: true }) && r.width > 0 && r.height > 0;
-  };
-  const seen = (e) => !visibleOnly || drawn(e) ||
-    (!!e.labels && e.checkVisibility({ visibilityProperty: true }) && Array.from(e.labels).some(drawn));
+  const seen = (e) => !visibleOnly || isSeen(e);
   const skip = /^(SCRIPT|STYLE|HEAD|HTML|BODY|NOSCRIPT|TEMPLATE)$/;
   const all = Array.from(this.querySelectorAll('*'))
     .filter((e) => e instanceof HTMLElement && !skip.test(e.tagName) && hit(e));
@@ -331,7 +330,8 @@ pub const TEXT_JS: &str = r#"function(want, exact, visibleOnly) {
     for (let p = e.parentElement; p; p = p.parentElement) if (matched.has(p)) parents.add(p);
   }
   return all.filter((e) => !parents.has(e) && seen(e));
-}"#;
+}"#
+);
 
 /// The selector strings scripts have always used: CSS (first match), or
 /// `text=words` (last match). No visibility filter, exactly as before.
@@ -381,15 +381,14 @@ pub async fn legacy_count<D: Driver>(d: &mut D, sel: &str) -> Result<usize, CdpE
 /// person's click on the slider does. A node that is not an element (the
 /// document a `RootWebArea` names, a list marker's pseudo-element) is
 /// never seen: nothing can be done to it.
-pub const VISIBLE_JS: &str = r#"function() {
+pub const VISIBLE_JS: &str = concat!(
+    r#"function() {
   if (!(this instanceof Element)) return false;
-  const drawn = (e) => {
-    const r = e.getBoundingClientRect();
-    return e.checkVisibility({ visibilityProperty: true }) && r.width > 0 && r.height > 0;
-  };
-  return drawn(this) ||
-    (!!this.labels && this.checkVisibility({ visibilityProperty: true }) && Array.from(this.labels).some(drawn));
-}"#;
+  return "#,
+    seen_js!(),
+    r#"(this);
+}"#
+);
 
 async fn by_role<D: Driver>(
     d: &mut D,

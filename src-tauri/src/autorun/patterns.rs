@@ -400,6 +400,7 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectAttribute { selector, .. }
         | Action::ExpectEnabled { selector, .. }
         | Action::ExpectDisabled { selector, .. }
+        | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. } => Some(selector.describe()),

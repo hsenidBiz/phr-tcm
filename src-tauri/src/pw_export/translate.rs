@@ -92,6 +92,7 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         | Action::ExpectAttribute { selector, .. }
         | Action::ExpectEnabled { selector, .. }
         | Action::ExpectDisabled { selector, .. }
+        | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. } => check_target(selector),
         Action::Drag { from, to, position, .. } => {
             if matches!(position, Some(DropAt::Before | DropAt::After)) {
@@ -699,6 +700,23 @@ impl Em<'_> {
                 indent,
                 &format!("await expect({}).{};", one(selector), call("toBeDisabled", &[], *timeout_ms)),
             ),
+            // Clear is not partly ticked: a native box reads its own state,
+            // and an aria widget saying "mixed" fails, as it does in a run.
+            Action::ExpectChecked { selector, checked: true, timeout_ms } => self.line(
+                indent,
+                &format!("await expect({}).{};", one(selector), call("toBeChecked", &[], *timeout_ms)),
+            ),
+            Action::ExpectChecked { selector, checked: false, timeout_ms } => {
+                self.line(indent, &format!("await expect({}).not.{};", one(selector), call("toBeChecked", &[], *timeout_ms)));
+                self.line(
+                    indent,
+                    &format!(
+                        "await expect({}).not.{};",
+                        one(selector),
+                        call("toHaveAttribute", &[lit("aria-checked"), lit("mixed")], *timeout_ms)
+                    ),
+                );
+            }
             Action::ExpectFocused { selector, timeout_ms } => {
                 self.line(
                     indent,

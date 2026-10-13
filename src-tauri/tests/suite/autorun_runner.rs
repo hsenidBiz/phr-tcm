@@ -990,6 +990,7 @@ fn every_action_kind_says_whether_it_changes_the_page() {
         (json!({ "kind": "expect_attribute", "selector": css, "name": "n", "equals": "v" }), false),
         (json!({ "kind": "expect_enabled", "selector": css }), false),
         (json!({ "kind": "expect_disabled", "selector": css }), false),
+        (json!({ "kind": "expect_checked", "selector": css, "checked": true }), false),
         (json!({ "kind": "expect_response", "url_contains": "/api" }), false),
         (json!({ "kind": "expect_focused", "selector": css }), false),
         (json!({ "kind": "expect_download", "name": "*.csv" }), false),
@@ -1011,4 +1012,44 @@ fn every_action_kind_says_whether_it_changes_the_page() {
         assert!(kinds.contains(*kind), "{kind} is missing from the table");
     }
     assert_eq!(kinds.len(), table.len(), "a kind is in the table twice");
+}
+
+/// A step tells its progress, action by action: the action it is on, its
+/// kind and target, and how many of its actions failed. A failed action
+/// never stops the step and is never tried again.
+#[tokio::test]
+async fn a_step_tells_which_action_it_is_on_and_how_many_failed() {
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, StepProgress, NEEDS_SCRIPT_AREA};
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = common::FakePage { body_has_text: false, ..common::FakePage::default() }.driver();
+    let s = tab_step(json!([
+        { "kind": "check_text", "value": "a" },
+        { "kind": "check_text", "value": "b" },
+        { "kind": "expect_visible", "selector": { "css": "#save" } }
+    ]));
+    let progress = StepProgress::new();
+    let (mut acc, mut lease) = (None, v2_lib::autorun::lease::Held::supervised());
+    let mut run = InRun { progress: Some(&progress), ..Default::default() };
+    let out = run_step_in_run(
+        &mut d,
+        dir.path(),
+        "Acme",
+        "Web",
+        &s,
+        &quick(),
+        &mut acc,
+        &mut lease,
+        None,
+        AreaRoute::Unknown(NEEDS_SCRIPT_AREA),
+        &mut run,
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.iter().map(|o| o.ok).collect::<Vec<_>>(), [false, false, true], "{out:?}");
+    let now = progress.now();
+    assert_eq!((now.index, now.of, now.kind.as_str(), now.target.as_str()), (3, 3, "expect_visible", "#save"));
+    assert_eq!(now.failed, 2);
+    assert!(now.since.is_some());
+    progress.reset();
+    assert_eq!(progress.now().index, 0);
 }

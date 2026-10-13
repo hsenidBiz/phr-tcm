@@ -187,6 +187,58 @@ pub fn creates_one_step(kind: &str) -> String {
     format!("creates: {kind} must come from one step whose template creates")
 }
 
+/// Said when a `creates` names its thing by its id's own capture: Clean up
+/// finds a test-made thing by its name starting with the test prefix, and
+/// an id never does.
+pub fn name_is_the_id(kind: &str, name: &str) -> String {
+    format!(
+        "creates: {kind}'s name {} is the same capture as its id - use the capture that holds the name the step gave it (one starting with {{{{prefix}}}}), so Clean up can find it",
+        name.trim()
+    )
+}
+
+/// Said when the step that makes a `creates` thing sends no value that
+/// starts with `{{prefix}}`: its name cannot start with the test prefix, and
+/// Clean up would never offer to delete it.
+pub fn name_without_prefix(kind: &str, step: usize) -> String {
+    format!(
+        "creates: {kind}'s name cannot start with the test prefix - step {step} sends no value starting with {{{{prefix}}}}; give it a name such as \"{{{{prefix}}}} {kind}\" and capture that name"
+    )
+}
+
+/// What is wrong with how `c` (from one creating step, `from_one_creating_step`)
+/// names its thing: the same capture as its id (`name_is_the_id`), or a step
+/// that sends no value starting with `{{prefix}}` (`name_without_prefix`) -
+/// said only when the fixture uses `{{prefix}}` somewhere (`uses_prefix`):
+/// one that never does is told so once (`NEEDS_PREFIX`).
+fn name_problem(f: &Fixture, c: &Creates, uses_prefix: bool) -> Option<String> {
+    let id = step_ref_of(&c.id, f.steps.len() + 1)?;
+    let name = step_ref_of(&c.name, f.steps.len() + 1)?;
+    if id == name {
+        return Some(name_is_the_id(&c.kind, &c.name));
+    }
+    let starts_with_prefix = |v: &String| {
+        let v = v.trim();
+        v.strip_prefix("{{").and_then(|r| r.split_once("}}")).is_some_and(|(inner, _)| inner.trim() == "prefix")
+    };
+    let step = &f.steps[name.0 - 1];
+    (uses_prefix && !step.params.values().any(starts_with_prefix)).then(|| name_without_prefix(&c.kind, name.0))
+}
+
+/// How a fixture names what it creates, checked where a fixture is SAVED
+/// (`fixture_store::save`), never where one runs: a fixture saved before
+/// these rules keeps running (its run warns about a name without the
+/// prefix, as it always did). Each `creates` from one creating step whose
+/// name is its id's own capture (`name_is_the_id`), or whose step sends no
+/// value starting with `{{prefix}}` (`name_without_prefix`, only when the
+/// fixture uses `{{prefix}}` at all - one that never does is told so by
+/// `validate`'s `NEEDS_PREFIX`).
+pub fn naming_problems(f: &Fixture) -> Vec<String> {
+    let uses_prefix =
+        f.steps.iter().any(|s| s.params.values().any(|v| exec::placeholders(v).iter().any(|n| n == "prefix")));
+    f.creates.iter().filter_map(|c| name_problem(f, c, uses_prefix)).collect()
+}
+
 /// Whether `c`'s id and name are both `{{steps.<m>.<x>}}` of the same step
 /// m, and step m's template creates: its effect is `create` and it sends at
 /// least one POST. A step that only reads (a GET) or edits found something

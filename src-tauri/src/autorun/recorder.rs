@@ -33,8 +33,14 @@ pub const BINDING: &str = "__tcmRecordClick";
 /// listens: it never stops or changes a click. It reports words a locator
 /// can use and nothing a person typed: a field's value is never read, and
 /// a click in a field or an editable area sends no text at all.
-pub const LISTENER_JS: &str = r#"(() => {
+pub const LISTENER_JS: &str = concat!(
+    r#"(() => {
   if (window.__tcmRecArmed) return;
+  // What the runner counts as seen (`seen_js!`), so a count here is the
+  // count a text locator gets.
+  const seen = "#,
+    seen_js!(),
+    r#";
   window.__tcmRecArmed = true;
   const doc = Math.random().toString(36).slice(2) + Date.now().toString(36);
   const held = [];
@@ -54,11 +60,7 @@ pub const LISTENER_JS: &str = r#"(() => {
       norm(x.textContent).toLowerCase().includes(lower) && norm(x.innerText) === want);
     const set = new Set(all), parents = new Set();
     for (const x of all) for (let p = x.parentElement; p; p = p.parentElement) if (set.has(p)) parents.add(p);
-    return all.filter((x) => {
-      if (parents.has(x)) return false;
-      const r = x.getBoundingClientRect();
-      return x.checkVisibility({ visibilityProperty: true }) && r.width > 0 && r.height > 0;
-    });
+    return all.filter((x) => !parents.has(x) && seen(x));
   };
   // Counted now, at the click: the click that ends a path takes the page
   // away before anything could ask afterwards.
@@ -100,7 +102,8 @@ pub const LISTENER_JS: &str = r#"(() => {
     };
     try { window.__tcmRecordClick(JSON.stringify(payload)); } catch (_) {}
   }, true);
-})()"#;
+})()"#
+);
 
 /// `this` is the document. Arguments: the document token, the index. The
 /// element as a one-item list, or an empty list when it is gone.

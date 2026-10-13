@@ -7,6 +7,11 @@
 // with the flow tools.
 #![recursion_limit = "256"]
 
+// The page scripts' shared rules (`seen_js!`, `content_box_js!`): first, so
+// every module after it can build a script around them.
+#[macro_use]
+mod js_rules;
+
 pub mod ado;
 pub mod ado_git;
 pub mod ado_share;

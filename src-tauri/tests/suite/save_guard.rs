@@ -21,8 +21,8 @@ use v2_lib::autorun::{CaseRecord, CaseScript, StepRecord};
 use v2_lib::browser::actions::ActionOutcome;
 use v2_lib::browser::cdp::{Cdp, CdpError, Transport};
 use v2_lib::browser::save_guard::{
-    blocked, check_words, fetch_enable_all_params, fetch_enable_params, is_blocked, is_save, path_of, setup_failed,
-    SAVE_WORDS, TYPED_REFUSED, UNPAUSED_TYPES,
+    adds, blocked, check_words, fetch_enable_all_params, fetch_enable_params, is_blocked, is_save, path_of, setup_failed,
+    SAVE_WORDS, TYPED_REFUSED, UNPAUSED_TYPES, WORD_SAVES,
 };
 use v2_lib::browser::timing::Timing;
 use v2_lib::commands::autorun::guard_for_case;
@@ -44,6 +44,71 @@ fn every_writing_method_with_every_save_word_is_a_save() {
             assert!(is_save(method, &url, &[]), "{method} {url} should be a save");
         }
     }
+}
+
+/// A create or an insert is a save, as a word of its own: `POST
+/// /api/.../create` once went through untouched. A read that only holds the
+/// letters (`GetCreatedLeaves`, `createdBy`, `/recreate`) is not.
+#[test]
+fn create_and_insert_are_saves_as_words_of_their_own() {
+    for url in [
+        "https://hr.example/api/leave/create",
+        "https://hr.example/api/Leave/CreateCycle?x=1",
+        "https://hr.example/api/leave/create-cycle",
+        "https://hr.example/api/employee/insertRow",
+        "https://hr.example/api/employee/insert",
+        "https://hr.example/api/InsertRow",
+        "https://hr.example/api/APICreate",
+        "https://hr.example/api/leave.create",
+    ] {
+        assert!(is_save("POST", url, &[]), "{url} went through");
+    }
+    for url in [
+        "https://hr.example/api/GetCreatedLeaves",
+        "https://hr.example/api/leave?createdBy=7",
+        "https://hr.example/api/leave/createdBy",
+        "https://hr.example/api/recreate",
+        "https://hr.example/api/reinserted",
+    ] {
+        assert!(!is_save("POST", url, &[]), "{url} was stopped");
+    }
+    assert!(!is_save("GET", "https://hr.example/api/leave/create", &[]));
+}
+
+/// "add" stops a path segment that starts with the word, never one that
+/// only contains the letters: an address book or a padding setting is read
+/// with a POST in some applications.
+#[test]
+fn add_is_a_save_only_as_a_word_of_its_own() {
+    for url in [
+        "https://hr.example/api/employee/add",
+        "https://hr.example/api/Employee/AddEmployee",
+        "https://hr.example/api/addLeave",
+        "https://hr.example/api/add-leave",
+        "https://hr.example/api/add_leave",
+        "https://hr.example/api/ADD/1",
+        "https://hr.example/api/Add2",
+    ] {
+        assert!(is_save("POST", url, &[]), "{url} went through");
+        assert!(adds(&path_of(url)), "{url}");
+    }
+    for url in [
+        "https://hr.example/api/address/search",
+        "https://hr.example/api/AddressBook/list",
+        "https://hr.example/api/padding",
+        "https://hr.example/api/loadAll",
+        "https://hr.example/api/search?add=1",
+        "https://hr.example/api/addresses",
+        "https://hr.example/api/ADDRESS",
+        "https://hr.example/api/ADDRESSES/list",
+    ] {
+        assert!(!is_save("POST", url, &[]), "{url} was stopped");
+    }
+    assert!(!is_save("GET", "https://hr.example/api/employee/add", &[]));
+    // A project cannot take it on as its own: it is already built in.
+    assert!(check_words(&words(&["add"])).is_err());
+    assert!(check_words(&words(&["create"])).is_err());
+    assert!(check_words(&words(&["insert"])).is_err());
 }
 
 #[test]
@@ -127,7 +192,9 @@ fn the_project_words_live_in_its_settings_file_and_its_view_shows_both_lists() {
     assert_eq!(load_nav(dir.path(), "acme", "PMS").unwrap().save_words, words(&["recalc"]));
     let v = view(&nav);
     assert_eq!(v.save_words, words(&["recalc"]));
-    assert_eq!(v.built_in_save_words, SAVE_WORDS.iter().map(|w| w.to_string()).collect::<Vec<_>>());
+    let mut built_in: Vec<String> = SAVE_WORDS.iter().map(|w| w.to_string()).collect();
+    built_in.extend(WORD_SAVES.iter().map(|w| w.to_string()));
+    assert_eq!(v.built_in_save_words, built_in);
     // Removing goes through the same call.
     let nav = set_save_words(dir.path(), "acme", "PMS", &[]).unwrap();
     assert!(nav.save_words.is_empty());

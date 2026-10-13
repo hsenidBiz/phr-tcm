@@ -179,7 +179,7 @@ async fn steps_before_n_run_after_the_sign_in_and_the_trip_and_step_n_does_not()
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
     let mut heard = vec![];
     let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |k, of| heard.push((k, of))).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None });
     assert_eq!(end.sentence(), "replayed case 77 to step 3 - the browser is on the page before step 3 runs");
     let seen = log(&app);
     let at = |what: &str| seen.iter().position(|l| l == what).unwrap_or_else(|| panic!("no {what:?} in {seen:?}"));
@@ -199,7 +199,10 @@ async fn the_last_step_plus_1_replays_every_step() {
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
     let mut heard = vec![];
     let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |k, of| heard.push((k, of))).await;
-    assert_eq!(end.sentence(), "replayed case 77 to step 4 - the browser is on the page before step 4 runs");
+    // Past the last step: the whole case ran, said as such, never as a
+    // replay that stopped partway.
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3) });
+    assert_eq!(end.sentence(), "replayed the whole of case 77 (all 3 steps) - the browser is on the page its last step left");
     for s in ["#s1", "#s2", "#s3"] {
         assert!(clicked(&app, s), "{s} did not run: {:?}", log(&app));
     }
@@ -244,7 +247,7 @@ async fn a_replayed_step_in_a_second_tab_carries_its_tab() {
         &mut tabs,
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: None }, "{:?}", log(&app));
     // Step 1 opened the tab from main, step 2 ran in it, step 3 went back.
     assert_eq!(tabs, vec![ReplayedTab { step: 2, tab: "report".into() }]);
     // The person's command answers with them beside the end.
@@ -439,7 +442,7 @@ async fn with_database_read_access_off_no_database_is_asked_and_the_notice_is_ca
         |_, _| {},
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: Some(NOT_CHECKED.into()) });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: Some(NOT_CHECKED.into()), whole: None });
     assert!(db.calls().is_empty(), "the database was asked: {:?}", db.calls());
     assert!(clicked(&app, "#s1"));
 }
@@ -588,7 +591,7 @@ fn a_stop_before_the_browser_opens_ends_the_replay_there() {
 /// The person's command answers with the sentence already said.
 #[test]
 fn the_answer_carries_the_finished_sentence() {
-    let answer: ReplayAnswer = ReplayEnd::Ready { case_id: ID, step: 3, notice: None }.into();
+    let answer: ReplayAnswer = ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }.into();
     assert_eq!(answer.sentence, "replayed case 77 to step 3 - the browser is on the page before step 3 runs");
     let answer: ReplayAnswer = ReplayEnd::Refused(ALREADY_RUNNING.into()).into();
     assert_eq!(answer.sentence, ALREADY_RUNNING);
@@ -784,7 +787,7 @@ async fn a_replay_closes_the_tabs_left_from_before_and_recreates_the_cases_own()
     // A click opens a tab, as the case's link does.
     d.tabs.opens_on = Some("Input.dispatchMouseEvent".into());
     let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
     assert_eq!(d.tabs.closed_others, 1, "the tabs from before were not closed first");
     assert_eq!(d.tabs.open, ["report"], "the case's own tab was not opened again");
     assert_eq!(d.tab_name(), "report", "the replay leaves the browser where step 2 left it");
@@ -863,12 +866,12 @@ async fn a_replay_carries_on_from_where_the_last_one_stood() {
         |_, _| {},
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None, whole: None });
     assert_eq!(from_here(Some(&stand(&saved, 2)), &saved, 4), ReplayFrom::CarriedOn(2));
 
     let before = log(&app).len();
     let end = carry(&mut d, dir.path(), &req(4), 2, &mut account, &mut held, &mut guarded).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3) });
     let after: Vec<String> = log(&app)[before..].to_vec();
     assert!(after.contains(&"click #s2".to_string()) && after.contains(&"click #s3".to_string()), "{after:?}");
     for not_again in ["click #go", "click Leave", "click #s1"] {

@@ -73,7 +73,7 @@ pub struct ReplayCase {
 }
 
 /// What a person reads when a browser started and never answered.
-const NEVER_ANSWERED: &str =
+pub(crate) const NEVER_ANSWERED: &str =
     "it started but never answered - try again, and see Settings, Logs if it keeps happening";
 
 /// Start a browser and wait until its DevTools port answers. Used by the
@@ -129,14 +129,13 @@ impl Launcher for RealLauncher {
         let extra = background_args();
         let browser = launch_with(self.which, if self.watch { &[] } else { &extra })?;
         // Asked until it answers, as `open_real` does.
-        let mut last = String::new();
-        for _ in 0..60 {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            match Cdp::answers(browser.port).await {
-                Ok(()) => return Ok(browser),
-                Err(e) => last = e,
-            }
-        }
+        let port = browser.port;
+        let asked =
+            super::autorun::until_answers(|| Cdp::answers(port), super::autorun::ANSWER_TRIES, super::autorun::ANSWER_PAUSE)
+                .await;
+        let Err(last) = asked else {
+            return Ok(browser);
+        };
         super::autorun::close_browser(browser);
         crate::applog::warn(format!("Auto-run browser never answered: {last}"));
         Err(NEVER_ANSWERED.to_string())

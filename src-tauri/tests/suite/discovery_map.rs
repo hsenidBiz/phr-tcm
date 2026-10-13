@@ -512,6 +512,103 @@ fn a_locator_matched_in_an_older_discovery_is_dropped_on_re_read() {
     assert_eq!(names_on(dir.path(), "/p"), ["Save"]);
 }
 
+/// A later discovery's whole-page read drops only what a read could have
+/// printed: a css or text locator a probe matched, a narrowed one, or a
+/// chain through css is never on a read's lines, so it stays. A role
+/// locator the read no longer shows is gone, as before.
+#[test]
+fn a_re_read_keeps_what_no_read_can_print() {
+    use v2_lib::autorun::discovery_map::{a_read_can_print, a_read_can_print_target};
+    use v2_lib::browser::locator::SeenKey;
+    let dir = tempfile::tempdir().unwrap();
+    let css = Target::One(LocatorStep { css: Some("#grid .row-edit".into()), ..LocatorStep::default() });
+    let text = Target::One(LocatorStep { text: Some("Pending approval".into()), ..LocatorStep::default() });
+    let chain = Target::Chain(vec![
+        LocatorStep { css: Some(".grid".into()), ..LocatorStep::default() },
+        LocatorStep { role: Some("button".into()), name: Some("Edit".into()), ..LocatorStep::default() },
+    ]);
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(1000), 1000).unwrap();
+    for t in [&css, &text, &chain, &deep()] {
+        record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", t, 1500).unwrap();
+    }
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(5000), 5000).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let keys: Vec<&SeenKey> = map.areas[0].sightings.iter().map(|s| &s.key).collect();
+    assert!(keys.contains(&&SeenKey::Css("#grid .row-edit".into())), "{keys:?}");
+    assert!(keys.contains(&&SeenKey::Text("Pending approval".into())), "{keys:?}");
+    assert!(keys.contains(&&SeenKey::Css(".grid".into())), "{keys:?}");
+    assert!(
+        !keys.contains(&&SeenKey::Role { role: "button".into(), name: "deep".into() }),
+        "a role a read prints and no longer shows was kept: {keys:?}"
+    );
+    assert!(map.areas[0].wholes.iter().any(|w| w.locator == chain), "{:?}", map.areas[0].wholes);
+    let names = names_on(dir.path(), "/p");
+    assert!(names.contains(&"Save".to_string()) && !names.contains(&"Deep".to_string()), "{names:?}");
+
+    assert!(a_read_can_print(&SeenKey::Role { role: "button".into(), name: "save".into() }));
+    assert!(a_read_can_print(&SeenKey::Css("iframe#pay".into())));
+    assert!(!a_read_can_print(&SeenKey::Css("#x".into())));
+    assert!(!a_read_can_print(&SeenKey::Text("x".into())));
+    assert!(!a_read_can_print_target(&chain));
+    assert!(a_read_can_print_target(&deep()));
+}
+
+/// What no read can print still ages out: a css sighting not matched for
+/// `STALE_AFTER_MS` is dropped by the next whole-page read of its page.
+#[test]
+fn a_kept_unprintable_sighting_ages_out() {
+    use v2_lib::autorun::discovery_map::STALE_AFTER_MS;
+    use v2_lib::browser::locator::SeenKey;
+    let dir = tempfile::tempdir().unwrap();
+    let css = Target::One(LocatorStep { css: Some("#grid .row-edit".into()), ..LocatorStep::default() });
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(1000), 1000).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &css, 1500).unwrap();
+    let key = SeenKey::Css("#grid .row-edit".into());
+    let has = |dir: &std::path::Path| load_map(dir, "Acme", "Web").unwrap().areas[0].sightings.iter().any(|s| s.key == key);
+    // Within the time: kept.
+    let soon = 1500 + STALE_AFTER_MS;
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(soon), soon).unwrap();
+    assert!(has(dir.path()), "dropped before its time");
+    // Past it: dropped, element and all.
+    let late = 1501 + STALE_AFTER_MS;
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(late), late).unwrap();
+    assert!(!has(dir.path()), "a stale unprintable sighting was kept");
+    assert_eq!(names_on(dir.path(), "/p"), ["Save"]);
+}
+
+/// A probe or a try that matches nothing on a page takes off that page what
+/// no read could print of the locator; the same locator on another page,
+/// and what a read prints, are left alone.
+#[test]
+fn matching_nothing_on_a_page_forgets_what_no_read_prints() {
+    use v2_lib::autorun::discovery_map::record_matched_counts;
+    use v2_lib::browser::locator::SeenKey;
+    let dir = tempfile::tempdir().unwrap();
+    let css = Target::One(LocatorStep { css: Some("#grid .row-edit".into()), ..LocatorStep::default() });
+    let chain = Target::Chain(vec![
+        LocatorStep { css: Some(".grid".into()), ..LocatorStep::default() },
+        LocatorStep { role: Some("button".into()), name: Some("Edit".into()), ..LocatorStep::default() },
+    ]);
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &css, 1000).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &chain, 1000).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/q", &css, 1000).unwrap();
+    record_matched_counts(dir.path(), "Acme", "Web", Some("A"), "/p", &css, 0, 0, 2000).unwrap();
+    record_matched_counts(dir.path(), "Acme", "Web", Some("A"), "/p", &chain, 0, 0, 2000).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let a = &map.areas[0];
+    let on = |key: &SeenKey, page: &str| a.sightings.iter().any(|s| s.key == *key && s.page == page);
+    let grid_edit = SeenKey::Css("#grid .row-edit".into());
+    // The css sighting moved to /q when it was matched there last.
+    assert!(on(&grid_edit, "/q"), "{:?}", a.sightings);
+    assert!(!a.sightings.iter().any(|s| s.key == SeenKey::Css(".grid".into())), "{:?}", a.sightings);
+    assert!(a.sightings.iter().any(|s| s.key == SeenKey::Role { role: "button".into(), name: "edit".into() }), "a printable link was dropped");
+    assert!(!a.wholes.iter().any(|w| w.locator == chain), "{:?}", a.wholes);
+    let p = a.pages.iter().find(|p| p.path == "/p").unwrap();
+    assert!(!p.elements.iter().any(|e| e.locator == css), "{:?}", p.elements);
+    let q = a.pages.iter().find(|p| p.path == "/q").unwrap();
+    assert!(q.elements.iter().any(|e| e.locator == css), "the other page lost it");
+}
+
 /// A page read while healing or replaying adds what it shows and drops
 /// nothing: it is not a discovery.
 #[test]

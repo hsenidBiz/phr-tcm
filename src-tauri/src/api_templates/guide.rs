@@ -290,7 +290,7 @@ When this project has any, this guide ends with them, under
 `## Known quirks of this application`. Record something you learned
 building a template (a handler that needs a header the screen sends, an
 id the response returns as text) with `record_app_quirk { text }`; it is
-shown as `(assistant, API)`. A project keeps 40 active quirks: past that
+shown as `(assistant, API)`. A project keeps 60 active quirks: past that
 the call is refused with up to three of the assistant's notes worth
 retiring. Retire one with `retire_app_quirk { id, reason, replacement? }`.
 A note a person wrote is theirs to remove, and a line a person retired is
@@ -350,15 +350,18 @@ step whose flow, or whose stage, is no longer saved is refused.
 Name what it makes with `{{prefix}}`: a fixture with `creates` must use it
 in a step's params. Everything a run makes is recorded as test-made - even
 when a later step fails - and Clean up only finds a name that starts with
-the prefix; the run warns about one that does not.
+the prefix; the run warns about one that does not. A `creates` name is the
+capture holding the name the creating step sent, and that step must send a
+value starting with `{{prefix}}`; a name that is the same capture as its id
+is refused at save.
 
 `save_api_fixture { fixture }` checks the fixture and saves it, or answers
 with every problem, one sentence each. `run_api_fixture { id }` runs it and
 answers with its outputs, what it made and its warnings; it stops at the
 first failed step, with `step <n>: ` and that template's own sentence. A
 successful run's outputs become the fixture's current outputs; a failed one
-keeps the ones before. `list_api_fixtures` shows each fixture with its
-current outputs and last run. Saving and running need the API templates
+keeps the ones before. `list_api_fixtures` shows each fixture in short;
+with `id` it shows that one in full, with its current outputs and last run. Saving and running need the API templates
 switch; listing does not. Each template step has its own 3-minute limit.
 
 When a shared draft is damaged, use Rebuild (run the fixture again), never

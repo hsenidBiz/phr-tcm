@@ -17,7 +17,7 @@ use v2_lib::browser::cdp::{
 use v2_lib::browser::dialogs::DialogBook;
 use v2_lib::browser::page_errors::PageErrorBook;
 use v2_lib::browser::downloads::DownloadEntry;
-use v2_lib::browser::expect::{DISABLED_JS, READ_ATTR_JS, READ_TEXT_JS};
+use v2_lib::browser::expect::{CHECKED_JS, DISABLED_JS, READ_ATTR_JS, READ_TEXT_JS};
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
 use v2_lib::browser::net_record::{NetEntry, NetRecord};
@@ -538,6 +538,8 @@ pub struct FakePage {
     pub attribute: Option<&'static str>,
     /// What `DISABLED_JS` answers: why the element is disabled, or `""`.
     pub disabled_why: &'static str,
+    /// What `CHECKED_JS` answers: "true", "false", "mixed", or None.
+    pub checked: Option<&'static str>,
     /// How many `Runtime.getProperties` / `PROBE_JS` / `READ_TEXT_JS` calls
     /// `answer` has already replied to. `Cell`, not a plain field, so
     /// `answer` can take `&self` - letting a test hold onto a `FakePage`
@@ -570,6 +572,7 @@ impl Default for FakePage {
             texts: vec!["Saved"],
             attribute: None,
             disabled_why: "",
+            checked: None,
             looks: Cell::new(0),
             probed: Cell::new(0),
             read: Cell::new(0),
@@ -625,6 +628,7 @@ impl FakePage {
             }
             "Runtime.callFunctionOn" if f == READ_ATTR_JS => json!({ "result": { "value": self.attribute } }),
             "Runtime.callFunctionOn" if f == DISABLED_JS => json!({ "result": { "value": self.disabled_why } }),
+            "Runtime.callFunctionOn" if f == CHECKED_JS => json!({ "result": { "value": self.checked } }),
             // Any locator function: an array of elements.
             "Runtime.callFunctionOn" => json!({ "result": { "objectId": "arr" } }),
             "Runtime.getProperties" => {
