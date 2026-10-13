@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.17",
+    date: "2026-10-13",
+    items: [
+      "Auto Run in Edge no longer stops answering partway through a run on a computer where Edge syncs your account: steps that find an element by its role kept failing with \"the browser did not answer\" after about ten seconds. Auto Run's browser now starts without syncing, so your extensions no longer open tabs over the page being tested.",
+    ],
+  },
+  {
     version: "2.1.3-beta.16",
     date: "2026-10-13",
     items: [
