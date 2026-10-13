@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.16",
+    date: "2026-10-13",
+    items: [
+      "Export to Playwright no longer refuses scripts with table checks: row present, row absent, row count and column order now export, and read the table the same way Auto Run does.",
+    ],
+  },
+  {
     version: "2.1.3-beta.15",
     date: "2026-10-13",
     items: [
