@@ -241,7 +241,9 @@ sent the browser to the PeoplesHR home page, so the restore never ran and the
 Definition Wizard was left with 3 active goal groups (the look-only Goal
 Groups cases then see 3 rows). Fixed by waiting for the Rating Methods list
 (button "Expand 5-Point Scale") before the click - component "Open Definition
-Wizard Goal Groups" v2. Not reproduced by hand, so a probable cause only.
+Wizard Goal Groups" v2. Not reproduced by hand, so a probable cause only;
+the re-run with v2 (run-1791887237157) passed, and only goal groups 697 and
+698 were left active.
 
 | Tool | What was sent | What came back | Who |
 |---|---|---|---|
