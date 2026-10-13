@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.15",
+    date: "2026-10-13",
+    items: [
+      "The Playwright tab now sits right under Auto Run in the sidebar. The other tabs keep their Ctrl+number shortcuts.",
+    ],
+  },
+  {
     version: "2.1.3-beta.14",
     date: "2026-10-13",
     items: [
