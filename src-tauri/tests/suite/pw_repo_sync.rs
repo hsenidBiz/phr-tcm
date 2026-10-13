@@ -292,6 +292,10 @@ fn update_re_exports_only_the_given_cases() {
         vec![MD_REL.to_string(), sx.raw(20)],
         "20 was already in the index, so the index was not written"
     );
+    // The seed's user it runs as, for Finish in the repo.
+    let key = r.user_keys.iter().find(|(id, _)| *id == 20).map(|(_, k)| k.clone()).unwrap();
+    assert!(!key.is_empty());
+    assert_eq!(after.cases[&20].user_key, key);
 }
 
 #[test]
@@ -401,6 +405,7 @@ fn the_record_is_written_atomically() {
         exported_at: "2026-10-13T00:00:00Z".into(),
         files: vec!["suites/_generated/a.spec.ts".into()],
         module: String::new(),
+        user_key: String::new(),
     };
     sync::record(&path, vec![(1, entry("one"))]).unwrap();
     let good = fs::read(&path).unwrap();

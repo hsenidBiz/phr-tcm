@@ -90,6 +90,10 @@ pub struct Exported {
     /// by it, and an Update falls back on it when Azure DevOps gives none.
     #[serde(default)]
     pub module: String,
+    /// The repo user key its raw spec runs as (the seed's user). Empty in a
+    /// record from before it was kept.
+    #[serde(default)]
+    pub user_key: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

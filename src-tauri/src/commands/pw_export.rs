@@ -137,19 +137,23 @@ pub async fn pw_export_write(
 }
 
 /// Remembers, for this run, the cases `result` wrote to the clone at
-/// `clone`: Finish in the repo builds a prompt for them even when their
-/// Sync record could not be saved.
+/// `clone`, each with the user key its raw spec runs as: Finish in the
+/// repo builds a prompt for them even when their Sync record could not be
+/// saved.
 pub(crate) fn remember_written(clone: &str, result: &ExportResult) {
     if result.cases.is_empty() {
         return;
     }
     let mut ids = written(clone);
-    ids.extend(result.cases.iter().map(|(id, _)| *id));
+    for (id, _) in &result.cases {
+        let key = result.user_keys.iter().find(|(i, _)| i == id).map(|(_, k)| k.clone()).unwrap_or_default();
+        ids.insert(*id, key);
+    }
     crate::cache::session_put(&crate::cache::keys::pw_written(&crate::pw_repo::sync::clone_key(clone)), ids);
 }
 
-/// The cases exports wrote to the clone at `clone` this run.
-pub(crate) fn written(clone: &str) -> std::collections::BTreeSet<i32> {
+/// The cases exports wrote to the clone at `clone` this run, each with its user key.
+pub(crate) fn written(clone: &str) -> BTreeMap<i32, String> {
     crate::cache::session_fresh(
         &crate::cache::keys::pw_written(&crate::pw_repo::sync::clone_key(clone)),
         crate::cache::keys::PW_WRITTEN_TTL,

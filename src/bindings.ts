@@ -3496,7 +3496,13 @@ export type HandoffCard = {
 	stems: string[],
 	/**  The spec the prompt names, or `None` for one spec per case. */
 	stem: string | null,
+	/**  Empty when `problem` is set. */
 	prompt: string,
+	/**
+	 *  Why this `<seg>`'s prompt cannot be built (a case with no user key);
+	 *  the other `<seg>`s still get theirs.
+	 */
+	problem: string | null,
 };
 
 /**

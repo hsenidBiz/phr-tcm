@@ -49,7 +49,7 @@ function mount(handlers: Record<string, (args: Record<string, unknown>) => unkno
     if (cmd === "get_app_settings") return { playwright_clone: "C:/repo" };
     if (cmd === "pw_handoff") {
       const ids = (args as { cases: number[] }).cases;
-      return [{ seg: "sl/admin/pm/wizard", case_ids: ids, stems: [], stem: null, prompt: `finish ${ids.join(" ")}` }];
+      return [{ seg: "sl/admin/pm/wizard", case_ids: ids, stems: [], stem: null, prompt: `finish ${ids.join(" ")}`, problem: null }];
     }
     return null;
   });

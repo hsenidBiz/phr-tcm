@@ -450,6 +450,17 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
     (pc, Some(ready))
 }
 
+/// The repo user key case `id`'s script account maps to in the active
+/// environment, by the export's own mapping (what `evaluate` uses), if any.
+/// Reads only local files.
+pub fn mapped_user_key(root: &Path, org: &str, project: &str, id: i32) -> Option<String> {
+    let env_id = crate::environments::active_id(root).ok()?;
+    let map = mapping::load(root, org, project).ok()?;
+    let script = store::load_script(root, id).ok()??;
+    let account = script.account.as_deref().map(str::trim).filter(|a| !a.is_empty())?;
+    map.accounts.get(&env_id).and_then(|m| m.get(account)).cloned()
+}
+
 /// `modules` is each case's Module (case id to value), as the Auto Run
 /// screen's rows have it.
 pub fn preview_with(
@@ -861,6 +872,7 @@ pub fn write_recorded(
                     exported_at: at.clone(),
                     files,
                     module: modules.get(id).cloned().unwrap_or_default(),
+                    user_key: result.user_keys.iter().find(|(i, _)| i == id).map(|(_, k)| k.clone()).unwrap_or_default(),
                 },
             ))
         })

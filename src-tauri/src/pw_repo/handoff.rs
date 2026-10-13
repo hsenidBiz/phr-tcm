@@ -20,7 +20,7 @@ use crate::pw_export::clone::ClonedRepo;
 use crate::pw_repo::presence::{self, INDEX_REL};
 use crate::pw_repo::sync::ExportRecord;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// What a typed spec stem must look like, said in the refusal.
@@ -44,7 +44,30 @@ pub struct HandoffCard {
     pub stems: Vec<String>,
     /// The spec the prompt names, or `None` for one spec per case.
     pub stem: Option<String>,
+    /// Empty when `problem` is set.
     pub prompt: String,
+    /// Why this `<seg>`'s prompt cannot be built (a case with no user key);
+    /// the other `<seg>`s still get theirs.
+    pub problem: Option<String>,
+}
+
+/// The sentence that sets the seed's user: raw specs run as the account
+/// `suites/_generated/seed.spec.ts` names, and gen-test's step 2, which
+/// writes it, is not run. `keys` is each case's user key, as `ids`.
+fn seed_line(ids: &[i32], keys: &[String]) -> String {
+    let first = keys.first().cloned().unwrap_or_default();
+    if keys.iter().all(|k| *k == first) {
+        let them = if ids.len() > 1 { "them" } else { "it" };
+        format!(
+            "Each raw spec runs as the seed's user: set `test.use({{ userKey: '{first}' }})` in `suites/_generated/seed.spec.ts` to {first} before running {them}."
+        )
+    } else {
+        let each: Vec<String> = ids.iter().zip(keys).map(|(id, k)| format!("{id} \u{2192} {k}")).collect();
+        format!(
+            "Each raw spec runs as the seed's user: before running each one, set `test.use({{ userKey: ... }})` in `suites/_generated/seed.spec.ts` to its key: {}.",
+            each.join(", ")
+        )
+    }
 }
 
 /// Whether `stem` is a spec name the prompt may carry: `^[a-z0-9][a-z0-9-]*$`.
@@ -77,8 +100,9 @@ fn ticks(paths: &[String]) -> String {
 
 /// The prompt for the cases `ids` of `seg`: `raw_specs` and `sections` are
 /// relative to the clone, forward slashes; `stem` is the spec to append to,
-/// or `None` for one spec per case. Pure: the values are checked by `cards`.
-pub fn prompt(seg: &str, ids: &[i32], raw_specs: &[String], sections: &[String], stem: Option<&str>) -> String {
+/// or `None` for one spec per case; `user_keys` is each case's repo user
+/// key, as `ids`. Pure: the values are checked by `cards`.
+pub fn prompt(seg: &str, ids: &[i32], raw_specs: &[String], sections: &[String], stem: Option<&str>, user_keys: &[String]) -> String {
     let id_list: Vec<String> = ids.iter().map(i32::to_string).collect();
     let several = ids.len() > 1;
     let cases = if several { "cases" } else { "case" };
@@ -99,7 +123,7 @@ pub fn prompt(seg: &str, ids: &[i32], raw_specs: &[String], sections: &[String],
     format!(
         "Run steps 4, 5, 6 and 7 of .claude/commands/gen-test.md for ADO {cases} {} in {seg}. \
          Steps 1-3 are already done: the Test Case Manager exported {whose} raw spec ({}) and its {section} ({}). \
-         {step4} \
+         {seed} {step4} \
          Do not fetch the tickets and do not run git. \
          {spec_line} \
          The tests are independent (no --chain). \
@@ -107,6 +131,7 @@ pub fn prompt(seg: &str, ids: &[i32], raw_specs: &[String], sections: &[String],
         and_list(&id_list),
         ticks(raw_specs),
         ticks(sections),
+        seed = seed_line(ids, user_keys),
     )
 }
 
@@ -150,8 +175,8 @@ struct Checked {
 /// Case `id` is one this app exported (`written` by an export this run, or
 /// on the Sync `record`) and the clone still has its raw spec (an
 /// `index.json` entry whose file is there) and one section; else why not.
-fn check(repo: &ClonedRepo, found: &presence::Presence, record: &ExportRecord, written: &BTreeSet<i32>, id: i32) -> Result<Checked, String> {
-    if !written.contains(&id) && !record.cases.contains_key(&id) {
+fn check(repo: &ClonedRepo, found: &presence::Presence, record: &ExportRecord, written: &BTreeMap<i32, String>, id: i32) -> Result<Checked, String> {
+    if !written.contains_key(&id) && !record.cases.contains_key(&id) {
         return Err(format!("Case {id} was not exported by this app, so there is nothing to finish for it here."));
     }
     let key = id.to_string();
@@ -191,13 +216,38 @@ fn check(repo: &ClonedRepo, found: &presence::Presence, record: &ExportRecord, w
     Ok(Checked { id, seg, raw, section })
 }
 
+/// The repo user key case `id`'s raw spec runs as, the one the export used:
+/// what an export wrote this run (`written`), else what the Sync `record`
+/// has, else what the export's mapping gives now (`mapped`). A key the
+/// prompt cannot carry as it is counts as none.
+fn user_key(record: &ExportRecord, written: &BTreeMap<i32, String>, mapped: &BTreeMap<i32, String>, id: i32) -> Option<String> {
+    [written.get(&id), record.cases.get(&id).map(|e| &e.user_key), mapped.get(&id)]
+        .into_iter()
+        .flatten()
+        .map(|k| k.trim())
+        .find(|k| !k.is_empty())
+        .filter(|k| carriable(k) && !k.contains('\''))
+        .map(str::to_string)
+}
+
+/// The sentence for a case with no user key.
+pub fn no_user_key(id: i32) -> String {
+    format!(
+        "Case {id} needs a user key mapped in the export first: map its account to a repo user under Accounts in Export to Playwright, then export it again."
+    )
+}
+
 /// The prompts for `case_ids` in the clone `repo` (already opened), one per
-/// `<seg>` in the order its first case was asked for. Refuses the whole
-/// lot, with a sentence, if any case or chosen stem does not check out.
+/// `<seg>` in the order its first case was asked for. `written` is each case
+/// an export wrote this run, with its user key; `mapped` each case's user
+/// key by the export's mapping now. Refuses the whole lot, with a sentence,
+/// if any case or chosen stem does not check out; a `<seg>` with a case
+/// that has no user key gets a card with only its `problem`.
 pub fn cards(
     repo: &ClonedRepo,
     record: &ExportRecord,
-    written: &BTreeSet<i32>,
+    written: &BTreeMap<i32, String>,
+    mapped: &BTreeMap<i32, String>,
     case_ids: &[i32],
     choices: &[HandoffChoice],
 ) -> Result<Vec<HandoffCard>, String> {
@@ -240,8 +290,15 @@ pub fn cards(
                 sections.push(c.section.clone());
             }
         }
-        let prompt = prompt(&seg, &ids, &raw, &sections, stem.as_deref());
-        out.push(HandoffCard { seg, case_ids: ids, stems, stem, prompt });
+        let keys: Vec<Option<String>> = ids.iter().map(|&id| user_key(record, written, mapped, id)).collect();
+        let (prompt, problem) = match ids.iter().zip(&keys).find(|(_, k)| k.is_none()) {
+            Some((&id, _)) => (String::new(), Some(no_user_key(id))),
+            None => {
+                let keys: Vec<String> = keys.into_iter().flatten().collect();
+                (prompt(&seg, &ids, &raw, &sections, stem.as_deref(), &keys), None)
+            }
+        };
+        out.push(HandoffCard { seg, case_ids: ids, stems, stem, prompt, problem });
     }
     Ok(out)
 }
@@ -250,9 +307,10 @@ pub fn cards(
 pub fn cards_at(
     root: &Path,
     record: &ExportRecord,
-    written: &BTreeSet<i32>,
+    written: &BTreeMap<i32, String>,
+    mapped: &BTreeMap<i32, String>,
     case_ids: &[i32],
     choices: &[HandoffChoice],
 ) -> Result<Vec<HandoffCard>, String> {
-    cards(&crate::pw_export::clone::open(root)?, record, written, case_ids, choices)
+    cards(&crate::pw_export::clone::open(root)?, record, written, mapped, case_ids, choices)
 }

@@ -95,18 +95,25 @@ function Card({
         )}
         {badName && <span className="text-xs text-danger">Use lower-case letters, digits and hyphens</span>}
       </div>
-      <Textarea
-        aria-label={`Prompt for ${card.seg}`}
-        readOnly
-        className="h-36 w-full font-mono text-xs"
-        value={card.prompt}
-      />
-      <div className="flex justify-end">
-        <Button size="sm" variant="outline" aria-label={`Copy the prompt for ${card.seg}`} onClick={() => void copy()}>
-          {copied ? <IconConfirm aria-hidden /> : <IconCopy aria-hidden />}
-          {copied ? "Copied" : "Copy"}
-        </Button>
-      </div>
+      {card.problem ? (
+        // A case with no user key: this folder has no prompt until it is mapped.
+        <p className="text-xs text-warning">{card.problem}</p>
+      ) : (
+        <>
+          <Textarea
+            aria-label={`Prompt for ${card.seg}`}
+            readOnly
+            className="h-36 w-full font-mono text-xs"
+            value={card.prompt}
+          />
+          <div className="flex justify-end">
+            <Button size="sm" variant="outline" aria-label={`Copy the prompt for ${card.seg}`} onClick={() => void copy()}>
+              {copied ? <IconConfirm aria-hidden /> : <IconCopy aria-hidden />}
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

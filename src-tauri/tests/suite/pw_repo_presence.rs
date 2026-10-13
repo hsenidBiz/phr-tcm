@@ -57,7 +57,7 @@ fn each_of_the_three_places_is_found_on_the_fixture() {
     let mut record = ExportRecord::default();
     record.cases.insert(
         135179,
-        Exported { title: "t".into(), fingerprint: Default::default(), exported_at: "x".into(), files: vec![], module: String::new() },
+        Exported { title: "t".into(), fingerprint: Default::default(), exported_at: "x".into(), files: vec![], module: String::new(), user_key: String::new() },
     );
     let p = p.with_record(&record);
     assert!(p.cases[&135179].from_app);

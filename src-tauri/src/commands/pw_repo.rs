@@ -220,11 +220,16 @@ pub async fn pw_handoff(
     choices: Vec<handoff::HandoffChoice>,
 ) -> Result<Vec<handoff::HandoffCard>, String> {
     let dir = super::pw_export::sync_dir(&app)?;
+    let autorun = super::autorun::root(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
     let written = super::pw_export::written(&configured);
     blocking(clone, false, move |root, _| {
         let record = sync::load(&sync::record_path(&dir, &configured, &org, &project))?;
-        handoff::cards_at(root, &record, &written, &cases, &choices)
+        let mapped: BTreeMap<i32, String> = cases
+            .iter()
+            .filter_map(|&id| export::mapped_user_key(&autorun, &org, &project, id).map(|k| (id, k)))
+            .collect();
+        handoff::cards_at(root, &record, &written, &mapped, &cases, &choices)
     })
     .await
 }

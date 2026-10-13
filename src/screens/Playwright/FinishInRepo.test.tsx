@@ -42,7 +42,8 @@ function cardsFor(cases: number[], choices: HandoffChoice[]): HandoffCard[] {
     .map(([seg, ids, stems]) => {
       const chosen = choices.find((c) => c.seg === seg);
       const stem = chosen ? chosen.stem : stems.length === 1 ? stems[0] : null;
-      return { seg, case_ids: ids, stems, stem, prompt: `prompt ${seg} ${ids.join(" ")} ${stem ?? "one-per-case"}` };
+      if (ids.includes(199)) return { seg, case_ids: ids, stems, stem, prompt: "", problem: "Case 199 needs a user key mapped in the export first." };
+      return { seg, case_ids: ids, stems, stem, prompt: `prompt ${seg} ${ids.join(" ")} ${stem ?? "one-per-case"}`, problem: null };
     });
 }
 
@@ -140,4 +141,12 @@ test("an export that wrote nothing has no card and asks nothing", () => {
   const calls = mount([]);
   expect(screen.queryByText("Finish in the repo")).toBeNull();
   expect(handoffs(calls)).toHaveLength(0);
+});
+
+test("a folder with a case that has no user key says so, and the others still get a prompt", async () => {
+  mount([199, 201]);
+  expect(await screen.findByText("Case 199 needs a user key mapped in the export first.")).toBeTruthy();
+  expect(screen.queryByLabelText(`Prompt for ${PC}`)).toBeNull();
+  expect(screen.queryByRole("button", { name: `Copy the prompt for ${PC}` })).toBeNull();
+  expect((screen.getByLabelText(`Prompt for ${RM}`) as HTMLTextAreaElement).value).toBe(`prompt ${RM} 201 one-per-case`);
 });
