@@ -830,13 +830,16 @@ impl Em<'_> {
                     poll_opts(*timeout_ms)
                 ),
             ),
+            // An absence must also hold still, and a table still changing
+            // when time runs out is judged on its last read: the helper runs
+            // the app's own loop with the step's timeout, once.
             Action::ExpectNoRow { table, cells, exact, timeout_ms } => self.line(
                 indent,
                 &format!(
-                    "await expect.poll(() => tables.noRow({}, {}, {exact}){}).toBeNull();",
+                    "expect(await tables.noRow({}, {}, {exact}, {})).toBeNull();",
                     one(table),
                     ts_cells(&cells.0),
-                    poll_opts(*timeout_ms)
+                    expect_timeout(*timeout_ms)
                 ),
             ),
             Action::ExpectSorted { table, column, order, sort_as, timeout_ms } => self.line(
@@ -852,20 +855,23 @@ impl Em<'_> {
             ),
             Action::ExpectRowCount { table, equals, at_least, at_most, timeout_ms } => {
                 let want = table::row_count(*equals, *at_least, *at_most).map_err(Untranslatable)?;
-                let settle = TableCheck::Count(want).needs_settling();
                 let matcher = match want {
                     RowCount::Equals(n) => format!("toBe({n})"),
                     RowCount::AtLeast(n) => format!("toBeGreaterThanOrEqual({n})"),
                     RowCount::AtMost(n) => format!("toBeLessThanOrEqual({n})"),
                 };
-                self.line(
-                    indent,
-                    &format!(
-                        "await expect.poll(() => tables.rows({}, {settle}){}).{matcher};",
-                        one(table),
-                        poll_opts(*timeout_ms)
-                    ),
-                )
+                let line = if TableCheck::Count(want).needs_settling() {
+                    // Passes on too few rows: the app's settling loop, as for
+                    // noRow. Only `equals` 0 and `at_most` settle.
+                    let most = match want {
+                        RowCount::AtMost(n) => n,
+                        _ => 0,
+                    };
+                    format!("expect(await tables.stillRows({}, {most}, {})).{matcher};", one(table), expect_timeout(*timeout_ms))
+                } else {
+                    format!("await expect.poll(() => tables.rows({}){}).{matcher};", one(table), poll_opts(*timeout_ms))
+                };
+                self.line(indent, &line)
             }
             // Refused by `check_action` above; written out so that a new
             // action has to be decided here.

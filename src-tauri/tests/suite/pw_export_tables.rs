@@ -13,6 +13,7 @@ use v2_lib::browser::table::{
     check_sorted, find_row, no_row_check, parse_number, row_check, SortAs, SortOrder, TableCheck, TableRead,
     READ_TABLE_JS, SETTLE_MS, SETTLE_POLL_MS,
 };
+use v2_lib::browser::expect::NOT_ON_PAGE;
 use v2_lib::browser::locator::Target;
 use v2_lib::pw_export::table_ts::{read_table_ts, table_logic_ts, tables_ts};
 use v2_lib::pw_export::translate::{check, raw_spec, RawSpecInput};
@@ -55,7 +56,12 @@ fn a_script_with_every_table_check_now_exports() {
     assert_eq!(check(&s, &origins()), Ok(()));
     let got = spec_with(&s, &[]).unwrap();
     assert!(!got.contains("has no table-row check") && !got.contains("cannot be exported"), "{got}");
-    assert_eq!(got.matches("await expect.poll(() => tables.").count(), 4, "{got}");
+    let checks = got
+        .lines()
+        .map(str::trim_start)
+        .filter(|l| l.starts_with("await expect.poll(() => tables.") || l.starts_with("expect(await tables."))
+        .count();
+    assert_eq!(checks, 4, "{got}");
 }
 
 #[test]
@@ -73,8 +79,9 @@ fn row_checks_poll_until_the_helper_says_null() {
         "{got}"
     );
     assert!(got.contains("tables.row(cur.locator('#t').first(), [['Joined', '']], true), { timeout: 900 }).toBeNull();"), "{got}");
-    assert!(got.contains("tables.noRow(cur.locator('#t').first(), [['Name', 'Ben']], false), { timeout: 1500 }).toBeNull();"), "{got}");
-    assert!(got.contains("tables.noRow(cur.locator('#t').first(), [['Name', 'Ben']], true), { timeout: 10000 }).toBeNull();"), "{got}");
+    // An absence is not a poll: the helper runs the app's settling loop once, with the step's timeout.
+    assert!(got.contains("    expect(await tables.noRow(cur.locator('#t').first(), [['Name', 'Ben']], false, 1500)).toBeNull();\n"), "{got}");
+    assert!(got.contains("    expect(await tables.noRow(cur.locator('#t').first(), [['Name', 'Ben']], true, 10000)).toBeNull();\n"), "{got}");
 }
 
 #[test]
@@ -104,11 +111,11 @@ fn row_counts_poll_the_count_and_settle_where_the_app_does() {
         { "kind": "expect_row_count", "table": "#t", "at_most": 5, "timeout_ms": 400 }
     ]))
     .unwrap();
-    assert!(got.contains("    await expect.poll(() => tables.rows(cur.locator('#t').first(), false), { timeout: 10000 }).toBe(3);\n"), "{got}");
+    assert!(got.contains("    await expect.poll(() => tables.rows(cur.locator('#t').first()), { timeout: 10000 }).toBe(3);\n"), "{got}");
     // A count that passes on too few rows waits for the table to hold still.
-    assert!(got.contains("tables.rows(cur.locator('#t').first(), true), { timeout: 2000 }).toBe(0);"), "{got}");
-    assert!(got.contains("tables.rows(cur.locator('#t').first(), false), { timeout: 10000 }).toBeGreaterThanOrEqual(1);"), "{got}");
-    assert!(got.contains("tables.rows(cur.locator('#t').first(), true), { timeout: 400 }).toBeLessThanOrEqual(5);"), "{got}");
+    assert!(got.contains("    expect(await tables.stillRows(cur.locator('#t').first(), 0, 2000)).toBe(0);\n"), "{got}");
+    assert!(got.contains("await expect.poll(() => tables.rows(cur.locator('#t').first()), { timeout: 10000 }).toBeGreaterThanOrEqual(1);"), "{got}");
+    assert!(got.contains("    expect(await tables.stillRows(cur.locator('#t').first(), 5, 400)).toBeLessThanOrEqual(5);\n"), "{got}");
     assert!(!got.contains("toHaveCount"), "the app's rows are not one locator: {got}");
 }
 
@@ -135,7 +142,7 @@ fn a_table_inside_a_frame_is_read_in_its_frame() {
         "{got}"
     );
     assert!(
-        got.contains("tables.rows(cur.locator('iframe#body').filter({ visible: true }).contentFrame().getByRole('grid').filter({ visible: true }).nth(1), false)"),
+        got.contains("tables.rows(cur.locator('iframe#body').filter({ visible: true }).contentFrame().getByRole('grid').filter({ visible: true }).nth(1)), { timeout: 10000 })"),
         "nth picks one already: {got}"
     );
 }
@@ -151,7 +158,7 @@ fn the_helper_is_written_once_and_only_when_a_table_check_is_used() {
     assert_eq!(got.matches("const readTable = ").count(), 1, "{got}");
     assert!(got.find("const tables = ").unwrap() < got.find("// 1.").unwrap(), "{got}");
     // Inside the when_visible too.
-    assert!(got.contains("      await expect.poll(() => tables.rows("), "{got}");
+    assert!(got.contains("      await expect.poll(() => tables.rows(cur.locator('#t').first())"), "{got}");
 
     let plain = spec(json!([{ "kind": "click", "selector": "#a" }])).unwrap();
     assert!(!plain.contains("tables") && !plain.contains("readTable"), "{plain}");
@@ -177,9 +184,10 @@ fn the_exported_table_reader_is_the_apps_own() {
     let indented: Vec<String> = read_table_ts().iter().map(|l| if l.is_empty() { String::new() } else { format!("      {l}") }).collect();
     assert!(helper.contains(&indented.join("\n")), "{helper}");
     // The helper waits as long as the app does before passing an absence.
-    assert!(helper.contains(&format!("< {SETTLE_MS})")) && helper.contains(&format!("setTimeout(r, {SETTLE_POLL_MS})")), "{helper}");
+    assert!(helper.contains(&format!(">= {SETTLE_MS})")) && helper.contains(&format!("Math.min({SETTLE_POLL_MS}, ")), "{helper}");
+    assert!(helper.contains(&format!("'{NOT_ON_PAGE}'")), "{helper}");
     assert!(helper.contains("chars(s).slice(0, 200)"), "{helper}");
-    assert!(!helper.contains("SETTLE_MS") && !helper.contains("MESSAGE_MAX"), "{helper}");
+    assert!(!helper.contains("SETTLE_MS") && !helper.contains("MESSAGE_MAX") && !helper.contains("NOT_ON_PAGE"), "{helper}");
     // Escapes, never the characters: a U+2028 in a regex literal ends the line.
     assert!(helper.is_ascii(), "{helper}");
 }
@@ -435,4 +443,121 @@ fn the_typescript_port_agrees_with_the_rust_on_the_same_inputs() {
         }
     }
     assert!(wrong.is_empty(), "{} of {} cases disagree:\n{}", wrong.len(), cases.len(), wrong.join("\n"));
+}
+
+// ---- The page-facing loop, run against a scripted locator -----------------------------
+
+/// Runs the whole helper as the spec declares it (`tables_ts`) in node, with
+/// `page` absent (only its type is named) and a fake locator whose `count`
+/// and `evaluate` answer scripted reads, and returns what `body` printed.
+fn run_helper(body: &str) -> Value {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("helper.ts");
+    let output = dir.path().join("out.json");
+    let source = format!(
+        "{}\n{}\n{}",
+        tables_ts(0).join("\n"),
+        r#"const fs = require('node:fs');
+// A locator whose table reads `read(i, ms)` on its i-th look, `ms` after it was made.
+const fake = (read: (i: number, ms: number) => unknown, present = true) => {
+  const t0 = Date.now();
+  const seen = { evals: 0, timeouts: [] as number[] };
+  const loc: any = {
+    count: async () => (present ? 1 : 0),
+    evaluate: async (_f: unknown, _a: unknown, o: { timeout?: number }) => {
+      seen.timeouts.push(o && o.timeout !== undefined ? o.timeout : -1);
+      return read(seen.evals++, Date.now() - t0);
+    },
+    toString: () => "locator('#t')",
+  };
+  return { loc, seen };
+};
+const people = (n: number) => ({ headers: ['Name'], rows: Array.from({ length: n }, (_, i) => ['P' + i]) });
+const timed = async (f: () => Promise<unknown>) => {
+  const t0 = Date.now();
+  const answer = await f();
+  return { answer, ms: Date.now() - t0 };
+};
+const main = async () => {
+  const out: Record<string, unknown> = {};
+"#,
+        body
+    );
+    let source = format!(
+        "{source}\n  fs.writeFileSync(process.argv[2], JSON.stringify(out));\n}};\nmain().catch((e) => {{ console.error(e); process.exit(1); }});\n"
+    );
+    std::fs::write(&script, source).unwrap();
+    let run = Command::new("node").arg("--no-warnings").arg(&script).arg(&output).output().expect("node is needed for this test");
+    assert!(run.status.success(), "node failed: {}", String::from_utf8_lossy(&run.stderr));
+    serde_json::from_str(&std::fs::read_to_string(&output).unwrap()).unwrap()
+}
+
+#[test]
+fn settled_checks_run_the_apps_loop_and_pass_or_fail_as_it_does() {
+    let got = run_helper(
+        r#"
+  // A still table, a 400 ms step: shorter than the settling time, so the
+  // check passes on its last read when time runs out.
+  { const f = fake(() => people(3)); out.stillShort = await timed(() => tables.stillRows(f.loc, 5, 400)); out.stillShortTimeouts = f.seen.timeouts; }
+  // A still table, a long step: passes once it has held still, not at the deadline.
+  { const f = fake(() => people(3)); out.stillLong = await timed(() => tables.stillRows(f.loc, 5, 5000)); }
+  // A table that changes on every look but always holds: passes at the deadline.
+  { const f = fake((i) => people(1 + (i % 2))); out.changing = await timed(() => tables.stillRows(f.loc, 5, 1200)); }
+  { const f = fake((i) => people(1 + (i % 3))); out.changingNoRow = await timed(() => tables.noRow(f.loc, [['Name', 'Ben']], false, 1200)); }
+  // A table that fails: the app's sentence, after the step's time.
+  { const f = fake(() => ({ headers: ['Name'], rows: [['Ann'], ['Ben']] })); out.failing = await timed(() => tables.noRow(f.loc, [['name', 'BEN']], false, 400)); }
+  // A count that fails answers its count, for Playwright's numeric matcher.
+  { const f = fake(() => people(3)); out.countFails = await timed(() => tables.stillRows(f.loc, 1, 400)); }
+  { const f = fake(() => people(2)); out.zeroFails = await timed(() => tables.stillRows(f.loc, 0, 400)); }
+  // A table that appears late: the earlier looks do not count.
+  { const f = fake((_, ms) => (ms < 300 ? null : people(0))); out.late = await timed(() => tables.stillRows(f.loc, 0, 3000)); }
+  // No table: said at once on each look, without evaluate waiting for one.
+  { const f = fake(() => people(1), false); out.missing = await timed(() => tables.noRow(f.loc, [['Name', 'Ben']], false, 400)); out.missingEvals = f.seen.evals; }
+  { const f = fake(() => people(1), false); out.missingCount = await timed(() => tables.stillRows(f.loc, 0, 400)); }
+  { const f = fake(() => people(1), false); out.missingPoll = await timed(() => tables.rows(f.loc)); out.missingRow = await tables.row(f.loc, [['Name', 'P0']], false); }
+  // Not a table.
+  { const f = fake(() => null); out.notTable = await tables.noRow(f.loc, [['Name', 'Ben']], false, 300); }
+  // The polled checks look once and answer.
+  { const f = fake(() => people(2)); out.row = await tables.row(f.loc, [['Name', 'p1']], false); out.rowNo = await tables.row(f.loc, [['Name', 'x']], false); out.rows = await tables.rows(f.loc); }
+"#,
+    );
+    let ms = |k: &str| got[k]["ms"].as_u64().unwrap();
+    let answer = |k: &str| got[k]["answer"].clone();
+
+    assert_eq!(answer("stillShort"), json!(3), "{got}");
+    assert!(ms("stillShort") < 700, "a 400 ms step ends near 400 ms: {got}");
+    for t in got["stillShortTimeouts"].as_array().unwrap() {
+        let t = t.as_i64().unwrap();
+        assert!((1..=400).contains(&t), "evaluate waits no longer than the step has left: {got}");
+    }
+    assert_eq!(answer("stillLong"), json!(3), "{got}");
+    assert!(ms("stillLong") >= SETTLE_MS && ms("stillLong") < 2500, "passes once still for {SETTLE_MS} ms: {got}");
+
+    assert!(matches!(answer("changing").as_u64(), Some(1 | 2)), "{got}");
+    assert!(ms("changing") >= 1150, "a changing table is judged at the deadline: {got}");
+    assert_eq!(answer("changingNoRow"), Value::Null, "{got}");
+
+    let two = table(&["Name"], &[&["Ann"], &["Ben"]]);
+    let want = no_row_check(&two, &cells(&[("name", "BEN")]), false).unwrap_err();
+    assert_eq!(want, "a row has name \"BEN\" (row 2)");
+    assert_eq!(answer("failing"), json!(want), "{got}");
+    assert!(ms("failing") >= 390, "{got}");
+    assert_eq!(answer("countFails"), json!(3), "{got}");
+    assert_eq!(answer("zeroFails"), json!(2), "{got}");
+    assert_eq!(answer("late"), json!(0), "{got}");
+    assert!(ms("late") >= 300 + SETTLE_MS - 50, "{got}");
+
+    let missing = format!("waited 400ms: locator('#t') {NOT_ON_PAGE}");
+    assert_eq!(answer("missing"), json!(missing), "{got}");
+    assert_eq!(got["missingEvals"], json!(0), "{got}");
+    assert!(ms("missing") < 700, "{got}");
+    assert_eq!(answer("missingCount"), json!(missing), "{got}");
+    assert_eq!(answer("missingPoll"), json!(format!("locator('#t') {NOT_ON_PAGE}")), "{got}");
+    assert!(ms("missingPoll") < 200, "{got}");
+    assert_eq!(got["missingRow"], json!(format!("locator('#t') {NOT_ON_PAGE}")), "{got}");
+    assert_eq!(got["notTable"], json!("locator('#t') is not a table or grid"), "{got}");
+
+    assert_eq!(got["row"], Value::Null, "{got}");
+    assert_eq!(got["rowNo"], json!("no row has Name \"x\" - the table has 2 rows"), "{got}");
+    assert_eq!(got["rows"], json!(2), "{got}");
 }

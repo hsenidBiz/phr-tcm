@@ -10,13 +10,36 @@
 //! sentences. A check that a row is absent - and a count of 0 or `at_most` -
 //! passes only once the table has held still for `SETTLE_MS`, as in the app.
 //!
-//! The four checks answer `null` when they hold and the app's own failure
-//! sentence when they do not, so a spec polls each until it is `null`; the
-//! count answers the number of rows, or the sentence when there is no table
-//! to count. None of them throws: `expect.poll` stops at a callback that
-//! throws, while the app looks again.
+//! Two shapes, as the app has two ways of waiting:
+//!
+//! - **A check that passes as soon as it holds** (`expect_row`,
+//!   `expect_sorted`, a count with `equals` above 0 or `at_least`) is an
+//!   `expect.poll` of `tables.row`, `tables.sorted` or `tables.rows`. The
+//!   first two answer `null` when the check holds, else the app's own
+//!   failure sentence; `rows` answers the number of rows, or the sentence
+//!   when there is no table to count. None of them throws: `expect.poll`
+//!   stops at a callback that throws, while the app looks again.
+//! - **A check that passes on too few rows** (`expect_no_row`, a count of
+//!   0, `at_most`) cannot be a poll: it must hold still for `SETTLE_MS`,
+//!   and when time runs out on a table still changing, the last read
+//!   decides. `tables.noRow` and `tables.stillRows` run the app's own loop
+//!   (`keep_looking`) with the step's timeout, once, and the spec expects
+//!   on the answer: `null` or the reason for `noRow`; the count, or the
+//!   reason when there was no table, for `stillRows`.
+//!
+//! A count is compared with Playwright's numeric matchers (`toBe`,
+//! `toBeGreaterThanOrEqual`, `toBeLessThanOrEqual`), so a count that is
+//! wrong fails with Playwright's own "Expected / Received" message rather
+//! than the app's "the table has N rows, not M" - on purpose: the number
+//! is the whole story. Only when there is no table to count does the
+//! answer, and so the message, become the app's sentence.
+//!
+//! The table is looked for with `count()` first, which does not wait, so a
+//! missing table is said at once ("is not on the page", as the app says
+//! it) instead of `evaluate` waiting for it until the step gives up.
 
 use crate::browser::dialogs::MESSAGE_MAX;
+use crate::browser::expect::NOT_ON_PAGE;
 use crate::browser::table::{READ_TABLE_JS, SETTLE_MS, SETTLE_POLL_MS};
 
 /// What the reader needs to type-check, each said once: `this`, and the
@@ -315,52 +338,89 @@ const sortedCheck = (read: TableRead, name: string, order: 'ascending' | 'descen
   return checkSorted(trim(name), read.rows.map((_: string[], r: number) => cell(read, r, i.v)), order, sortAs);
 };"#;
 
-/// The part that touches the page: reading the table, waiting for it to
-/// hold still, and the four checks the spec polls.
+/// The part that touches the page: reading the table, the app's waiting
+/// loop for the checks that must hold still, and the checks the spec calls.
 fn table_io_ts() -> String {
-    TABLE_IO_TS.replace("SETTLE_POLL_MS", &SETTLE_POLL_MS.to_string()).replace("SETTLE_MS", &SETTLE_MS.to_string())
+    TABLE_IO_TS
+        .replace("SETTLE_POLL_MS", &SETTLE_POLL_MS.to_string())
+        .replace("SETTLE_MS", &SETTLE_MS.to_string())
+        .replace("NOT_ON_PAGE", NOT_ON_PAGE)
 }
 
 const TABLE_IO_TS: &str = r#"type TableLoc = ReturnType<typeof page.locator>;
-const look = async (loc: TableLoc): Promise<Got<TableRead>> => {
+type Look = { read: TableRead | null; why: string; byLocator: boolean };
+// One look, never waiting past `end`: a table that is not there is said at once.
+const look = async (loc: TableLoc, end: number | null): Promise<Look> => {
   try {
-    const read = fromValue(await loc.evaluate(readTable));
-    return read === null ? { ok: false, why: `${loc} is not a table or grid` } : { ok: true, v: read };
+    if ((await loc.count()) === 0) return { read: null, why: 'NOT_ON_PAGE', byLocator: true };
+    const left = end === null ? undefined : Math.max(1, end - Date.now());
+    const read = fromValue(await loc.evaluate(readTable, undefined, { timeout: left }));
+    return read === null ? { read: null, why: `${loc} is not a table or grid`, byLocator: false } : { read, why: '', byLocator: false };
   } catch (e) {
-    return { ok: false, why: `${loc}: ${e instanceof Error ? e.message : String(e)}` };
+    return { read: null, why: e instanceof Error ? e.message : String(e), byLocator: true };
   }
 };
-// A check that passes on too few rows waits for the table to hold still.
-const readStill = async (loc: TableLoc, settle: boolean): Promise<Got<TableRead>> => {
-  let got = await look(loc);
-  let since = Date.now();
-  while (settle && got.ok && Date.now() - since < SETTLE_MS) {
-    await new Promise((r) => setTimeout(r, SETTLE_POLL_MS));
-    const next = await look(loc);
-    if (!next.ok) return next;
-    if (JSON.stringify(next.v) !== JSON.stringify(got.v)) since = Date.now();
-    got = next;
-  }
-  return got;
-};
+const said = (loc: TableLoc, l: Look): string => (l.byLocator ? `${loc} ${l.why}` : l.why);
 const why = (got: Got<string>): string | null => (got.ok ? null : got.why);
-const row = async (loc: TableLoc, cells: [string, string][], exact: boolean): Promise<string | null> => {
-  const read = await readStill(loc, false);
-  return read.ok ? why(rowCheck(read.v, cells, exact)) : read.why;
+// The app's loop for a check that passes on too few rows: look again until
+// it holds and the table has read the same for SETTLE_MS, or time runs out;
+// then a check still holding passes on its last read.
+const settle = async (loc: TableLoc, timeout: number, judge: (read: TableRead) => string | null): Promise<{ why: string | null; read: TableRead | null }> => {
+  const end = Date.now() + timeout;
+  let last = `waited ${timeout}ms: ${loc} NOT_ON_PAGE`;
+  let lastRead: TableRead | null = null;
+  let same: string | null = null;
+  let since = 0;
+  let holding = false;
+  for (;;) {
+    const l = await look(loc, end);
+    if (l.read !== null) {
+      const key = JSON.stringify(l.read);
+      if (key !== same) {
+        same = key;
+        since = Date.now();
+      }
+      lastRead = l.read;
+      const no = judge(l.read);
+      if (no === null) {
+        if (Date.now() - since >= SETTLE_MS) return { why: null, read: l.read };
+        holding = true;
+      } else {
+        holding = false;
+        last = no;
+      }
+    } else {
+      same = null;
+      lastRead = null;
+      holding = false;
+      last = l.byLocator ? `waited ${timeout}ms: ${loc} ${l.why}` : l.why;
+    }
+    if (Date.now() >= end) return holding ? { why: null, read: lastRead } : { why: last, read: lastRead };
+    await new Promise((r) => setTimeout(r, Math.min(SETTLE_POLL_MS, Math.max(0, end - Date.now()))));
+  }
 };
-const noRow = async (loc: TableLoc, cells: [string, string][], exact: boolean): Promise<string | null> => {
-  const read = await readStill(loc, true);
-  return read.ok ? why(noRowCheck(read.v, cells, exact)) : read.why;
+const row = async (loc: TableLoc, cells: [string, string][], exact: boolean): Promise<string | null> => {
+  const l = await look(loc, null);
+  return l.read !== null ? why(rowCheck(l.read, cells, exact)) : said(loc, l);
 };
 const sorted = async (loc: TableLoc, name: string, order: 'ascending' | 'descending', sortAs: SortAs): Promise<string | null> => {
-  const read = await readStill(loc, false);
-  return read.ok ? why(sortedCheck(read.v, name, order, sortAs)) : read.why;
+  const l = await look(loc, null);
+  return l.read !== null ? why(sortedCheck(l.read, name, order, sortAs)) : said(loc, l);
 };
-const rows = async (loc: TableLoc, settle: boolean): Promise<number | string> => {
-  const read = await readStill(loc, settle);
-  return read.ok ? read.v.rows.length : read.why;
+const rows = async (loc: TableLoc): Promise<number | string> => {
+  const l = await look(loc, null);
+  return l.read !== null ? l.read.rows.length : said(loc, l);
 };
-return { row, noRow, sorted, rows };"#;
+const noRow = async (loc: TableLoc, cells: [string, string][], exact: boolean, timeout: number): Promise<string | null> =>
+  (await settle(loc, timeout, (read: TableRead) => why(noRowCheck(read, cells, exact)))).why;
+// `equals` 0 or `at_most`: the count of the last read, or why there was none.
+const stillRows = async (loc: TableLoc, most: number, timeout: number): Promise<number | string> => {
+  const got = await settle(loc, timeout, (read: TableRead) =>
+    read.rows.length <= most ? null : `the table has ${read.rows.length} rows, not ${most === 0 ? '0' : `at most ${most}`}`,
+  );
+  return got.read !== null ? got.read.rows.length : (got.why as string);
+};
+return { row, noRow, sorted, rows, stillRows };"#;
 
 /// The whole helper, declared once as `tables`, one line per entry.
 pub fn tables_ts(indent: usize) -> Vec<String> {

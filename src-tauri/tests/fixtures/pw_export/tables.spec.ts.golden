@@ -302,45 +302,79 @@ test.describe('F', () => {
         return checkSorted(trim(name), read.rows.map((_: string[], r: number) => cell(read, r, i.v)), order, sortAs);
       };
       type TableLoc = ReturnType<typeof page.locator>;
-      const look = async (loc: TableLoc): Promise<Got<TableRead>> => {
+      type Look = { read: TableRead | null; why: string; byLocator: boolean };
+      // One look, never waiting past `end`: a table that is not there is said at once.
+      const look = async (loc: TableLoc, end: number | null): Promise<Look> => {
         try {
-          const read = fromValue(await loc.evaluate(readTable));
-          return read === null ? { ok: false, why: `${loc} is not a table or grid` } : { ok: true, v: read };
+          if ((await loc.count()) === 0) return { read: null, why: 'is not on the page', byLocator: true };
+          const left = end === null ? undefined : Math.max(1, end - Date.now());
+          const read = fromValue(await loc.evaluate(readTable, undefined, { timeout: left }));
+          return read === null ? { read: null, why: `${loc} is not a table or grid`, byLocator: false } : { read, why: '', byLocator: false };
         } catch (e) {
-          return { ok: false, why: `${loc}: ${e instanceof Error ? e.message : String(e)}` };
+          return { read: null, why: e instanceof Error ? e.message : String(e), byLocator: true };
         }
       };
-      // A check that passes on too few rows waits for the table to hold still.
-      const readStill = async (loc: TableLoc, settle: boolean): Promise<Got<TableRead>> => {
-        let got = await look(loc);
-        let since = Date.now();
-        while (settle && got.ok && Date.now() - since < 750) {
-          await new Promise((r) => setTimeout(r, 250));
-          const next = await look(loc);
-          if (!next.ok) return next;
-          if (JSON.stringify(next.v) !== JSON.stringify(got.v)) since = Date.now();
-          got = next;
-        }
-        return got;
-      };
+      const said = (loc: TableLoc, l: Look): string => (l.byLocator ? `${loc} ${l.why}` : l.why);
       const why = (got: Got<string>): string | null => (got.ok ? null : got.why);
-      const row = async (loc: TableLoc, cells: [string, string][], exact: boolean): Promise<string | null> => {
-        const read = await readStill(loc, false);
-        return read.ok ? why(rowCheck(read.v, cells, exact)) : read.why;
+      // The app's loop for a check that passes on too few rows: look again until
+      // it holds and the table has read the same for 750, or time runs out;
+      // then a check still holding passes on its last read.
+      const settle = async (loc: TableLoc, timeout: number, judge: (read: TableRead) => string | null): Promise<{ why: string | null; read: TableRead | null }> => {
+        const end = Date.now() + timeout;
+        let last = `waited ${timeout}ms: ${loc} is not on the page`;
+        let lastRead: TableRead | null = null;
+        let same: string | null = null;
+        let since = 0;
+        let holding = false;
+        for (;;) {
+          const l = await look(loc, end);
+          if (l.read !== null) {
+            const key = JSON.stringify(l.read);
+            if (key !== same) {
+              same = key;
+              since = Date.now();
+            }
+            lastRead = l.read;
+            const no = judge(l.read);
+            if (no === null) {
+              if (Date.now() - since >= 750) return { why: null, read: l.read };
+              holding = true;
+            } else {
+              holding = false;
+              last = no;
+            }
+          } else {
+            same = null;
+            lastRead = null;
+            holding = false;
+            last = l.byLocator ? `waited ${timeout}ms: ${loc} ${l.why}` : l.why;
+          }
+          if (Date.now() >= end) return holding ? { why: null, read: lastRead } : { why: last, read: lastRead };
+          await new Promise((r) => setTimeout(r, Math.min(250, Math.max(0, end - Date.now()))));
+        }
       };
-      const noRow = async (loc: TableLoc, cells: [string, string][], exact: boolean): Promise<string | null> => {
-        const read = await readStill(loc, true);
-        return read.ok ? why(noRowCheck(read.v, cells, exact)) : read.why;
+      const row = async (loc: TableLoc, cells: [string, string][], exact: boolean): Promise<string | null> => {
+        const l = await look(loc, null);
+        return l.read !== null ? why(rowCheck(l.read, cells, exact)) : said(loc, l);
       };
       const sorted = async (loc: TableLoc, name: string, order: 'ascending' | 'descending', sortAs: SortAs): Promise<string | null> => {
-        const read = await readStill(loc, false);
-        return read.ok ? why(sortedCheck(read.v, name, order, sortAs)) : read.why;
+        const l = await look(loc, null);
+        return l.read !== null ? why(sortedCheck(l.read, name, order, sortAs)) : said(loc, l);
       };
-      const rows = async (loc: TableLoc, settle: boolean): Promise<number | string> => {
-        const read = await readStill(loc, settle);
-        return read.ok ? read.v.rows.length : read.why;
+      const rows = async (loc: TableLoc): Promise<number | string> => {
+        const l = await look(loc, null);
+        return l.read !== null ? l.read.rows.length : said(loc, l);
       };
-      return { row, noRow, sorted, rows };
+      const noRow = async (loc: TableLoc, cells: [string, string][], exact: boolean, timeout: number): Promise<string | null> =>
+        (await settle(loc, timeout, (read: TableRead) => why(noRowCheck(read, cells, exact)))).why;
+      // `equals` 0 or `at_most`: the count of the last read, or why there was none.
+      const stillRows = async (loc: TableLoc, most: number, timeout: number): Promise<number | string> => {
+        const got = await settle(loc, timeout, (read: TableRead) =>
+          read.rows.length <= most ? null : `the table has ${read.rows.length} rows, not ${most === 0 ? '0' : `at most ${most}`}`,
+        );
+        return got.read !== null ? got.read.rows.length : (got.why as string);
+      };
+      return { row, noRow, sorted, rows, stillRows };
     })();
     await page.goto('/');
     await expect(page).toHaveURL(/\/hr\/home\/index/);
@@ -348,11 +382,11 @@ test.describe('F', () => {
 
     // 1.
     await expect.poll(() => tables.row(cur.getByRole('grid', { name: 'People' }).filter({ visible: true }).first(), [['Status', 'Active'], ['Name', 'Ann']], false), { timeout: 10000 }).toBeNull();
-    await expect.poll(() => tables.noRow(cur.locator('#t').first(), [['Name', 'Ben']], true), { timeout: 5000 }).toBeNull();
+    expect(await tables.noRow(cur.locator('#t').first(), [['Name', 'Ben']], true, 5000)).toBeNull();
     await expect.poll(() => tables.sorted(cur.locator('#t').first(), 'Joined', 'descending', 'date'), { timeout: 10000 }).toBeNull();
     await expect.poll(() => tables.sorted(cur.locator('#t').first(), 'Joined', 'ascending', { date: 'dd/MM/yyyy' }), { timeout: 10000 }).toBeNull();
-    await expect.poll(() => tables.rows(cur.locator('iframe#body').filter({ visible: true }).contentFrame().locator('table').filter({ visible: true }).first(), false), { timeout: 10000 }).toBeGreaterThanOrEqual(1);
-    await expect.poll(() => tables.rows(cur.locator('#t').first(), true), { timeout: 10000 }).toBe(0);
-    await expect.poll(() => tables.rows(cur.locator('#t').first(), true), { timeout: 10000 }).toBeLessThanOrEqual(9);
+    await expect.poll(() => tables.rows(cur.locator('iframe#body').filter({ visible: true }).contentFrame().locator('table').filter({ visible: true }).first()), { timeout: 10000 }).toBeGreaterThanOrEqual(1);
+    expect(await tables.stillRows(cur.locator('#t').first(), 0, 10000)).toBe(0);
+    expect(await tables.stillRows(cur.locator('#t').first(), 9, 10000)).toBeLessThanOrEqual(9);
   });
 });
