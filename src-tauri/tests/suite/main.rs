@@ -64,6 +64,7 @@ mod autorun_marks;
 mod autorun_one_browser;
 mod autorun_nav;
 mod autorun_network;
+mod autorun_network_pause;
 mod autorun_page_errors;
 mod autorun_patterns;
 mod autorun_plan;

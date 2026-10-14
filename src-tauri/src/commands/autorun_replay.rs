@@ -323,6 +323,7 @@ pub async fn auto_run_replay(
         // environment every case of it signs in to.
         environment: crate::environments::active(&root).ok().map(|e| e.name),
         resets: vec![],
+        network_pauses: vec![],
     };
 
     let sent: Vec<CaseToRun> = cases

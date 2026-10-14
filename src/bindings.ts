@@ -717,6 +717,11 @@ export const commands = {
 	 *  exactly as it always did.
 	 */
 	resets?: ResetRecord_Serialize[],
+	/**
+	 *  Each wait for the company network the run made, in run order, with
+	 *  how it ended. Written only when there are any.
+	 */
+	network_pauses?: NetworkPauseRecord[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_run", { runId })),
 	/**
 	 *  Writes one run's report and opens it in the default browser. `ran_at` is
@@ -3679,6 +3684,11 @@ export type LocalRun_Deserialize = {
 	 *  exactly as it always did.
 	 */
 	resets?: ResetRecord_Deserialize[],
+	/**
+	 *  Each wait for the company network the run made, in run order, with
+	 *  how it ended. Written only when there are any.
+	 */
+	network_pauses?: NetworkPauseRecord[],
 };
 
 export type LocalRun_Serialize = {
@@ -3706,6 +3716,11 @@ export type LocalRun_Serialize = {
 	 *  exactly as it always did.
 	 */
 	resets?: ResetRecord_Serialize[],
+	/**
+	 *  Each wait for the company network the run made, in run order, with
+	 *  how it ended. Written only when there are any.
+	 */
+	network_pauses?: NetworkPauseRecord[],
 };
 
 export type LocatorStep = LocatorStep_Serialize | LocatorStep_Deserialize;
@@ -3866,6 +3881,18 @@ export type NavView = {
 	save_words: string[],
 	/**  The built-in ones, shown beside them and never removable. */
 	built_in_save_words: string[],
+};
+
+/**
+ *  One wait for the company network: the run found it gone before
+ *  `before_case_id` (or after that case failed) and waited `waited_ms`.
+ *  `outcome` is "resumed", "stopped" or "gave_up". Never a host or port.
+ */
+export type NetworkPauseRecord = {
+	before_case_id: number,
+	/**  Milliseconds. A `u32` (specta refuses a 64-bit number across IPC). */
+	waited_ms?: number,
+	outcome?: string,
 };
 
 /**

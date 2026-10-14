@@ -334,6 +334,7 @@ fn new_run(id: &str) -> LocalRun {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     }
 }
 

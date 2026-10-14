@@ -259,7 +259,7 @@ fn browsers_shown(profiles: &std::path::Path, watched: bool) -> (OneBrowser<Fake
 }
 
 fn new_run(id: &str) -> LocalRun {
-    LocalRun { id: id.into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None, resets: vec![] }
+    LocalRun { id: id.into(), pbi_id: 42, started_at: "1700000000000".into(), cases: vec![], mode: "unattended".into(), published: None, environment: None, resets: vec![], network_pauses: vec![] }
 }
 
 /// A one-step script with a single `check_text`: passes on a page that

@@ -253,6 +253,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
 
     let scripts = vec![CaseScript {
@@ -311,6 +312,7 @@ fn describe_failures_names_the_run_when_no_case_failed() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     assert_eq!(describe_failures(&run, &[]), "no failed case in run run-1");
 }
@@ -340,6 +342,7 @@ fn describe_failures_shows_the_stop_line_only_when_stop_reason_is_some() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let out = describe_failures(&run, &[]);
     assert!(
@@ -370,6 +373,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let scripts = vec![CaseScript {
         case_id: 1,
@@ -415,6 +419,7 @@ fn describe_failures_omits_proposed_when_proposed_is_empty() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let out = describe_failures(&run, &[]);
     assert!(out.starts_with("## Case 1 \"A case\" (run run-1, verdict Failed)"));
@@ -451,6 +456,7 @@ fn describe_failures_prints_not_run_outcomes_in_a_mixed_step() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let out = describe_failures(&run, &[]);
     assert!(out.contains("step 1, action 1: script: not on this machine"));
@@ -484,6 +490,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let scripts = vec![CaseScript {
         case_id: 1,
@@ -521,6 +528,7 @@ fn latest_run_picks_by_case_id_and_falls_back_to_the_newest_run_overall() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let newer = LocalRun {
         id: "run-2000".to_string(),
@@ -531,6 +539,7 @@ fn latest_run_picks_by_case_id_and_falls_back_to_the_newest_run_overall() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     save_run(dir.path(), &older).unwrap();
     save_run(dir.path(), &newer).unwrap();
@@ -564,6 +573,7 @@ fn a_case_the_run_could_not_take_to_its_module_is_not_a_script_defect() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let out = describe_failures(&run, &[]);
     assert!(out.contains(&format!("module: {unreached}")), "{out}");
@@ -611,6 +621,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let mut script = CaseScript {
         case_id: 1,
@@ -687,6 +698,7 @@ fn describe_failures_names_each_steps_downloads_and_nothing_more() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let out = describe_failures(&run, &[]);
     assert!(out.contains("step 1 downloads: Template.xlsx"), "{out}");
@@ -806,6 +818,7 @@ fn a_failure_line_names_the_picture_by_a_path_that_exists() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let out = v2_lib::autorun::failures::describe_failures_in(
         Some(dir.path()),

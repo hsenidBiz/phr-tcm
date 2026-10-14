@@ -356,6 +356,7 @@ fn new_run() -> LocalRun {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     }
 }
 

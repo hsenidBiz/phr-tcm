@@ -542,6 +542,7 @@ fn a_repairs_source_carries_the_class_of_the_failure_that_led_to_it() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let s = source_for_repair(Some(&run), &script_for(7), 7, &[3, 2, 3]);
     assert_eq!(s, source(7, &[2, 3], Some("covered")));
@@ -676,6 +677,7 @@ fn a_named_case_must_have_failed_there() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let ok = source_from_run(Some(&run), Some(&script_for(7)), 7, &[3]).unwrap();
     assert_eq!(ok, source(7, &[3], Some("covered")));
@@ -700,6 +702,7 @@ fn a_saved_run_is_counted_by_its_id() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     v2_lib::autorun::store::save_run(dir.path(), &run).unwrap();
     assert!(count_saved_run(dir.path(), "Acme", "Web", "run-55", 5).unwrap());

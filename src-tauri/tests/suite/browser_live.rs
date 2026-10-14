@@ -1229,6 +1229,7 @@ fn new_run(pbi_id: i32) -> LocalRun {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     }
 }
 

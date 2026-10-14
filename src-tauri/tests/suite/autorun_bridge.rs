@@ -2055,6 +2055,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     }
 }
 
