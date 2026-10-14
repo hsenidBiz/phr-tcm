@@ -136,11 +136,16 @@ pub async fn pw_preview(
 }
 
 /// The clone's archived reports, newest first.
-#[tauri::command(async)]
+#[tauri::command]
 #[specta::specta]
-pub fn pw_reports(clone: String) -> Result<Vec<PwReport>, String> {
+pub async fn pw_reports(clone: String) -> Result<Vec<PwReport>, String> {
     let _t = crate::pw_repo::timed("pw_reports");
-    Ok(runner::reports(&chosen(&clone)?))
+    let clone = chosen(&clone)?;
+    // The first read parses every report: on a blocking thread.
+    tauri::async_runtime::spawn_blocking(move || runner::reports(&clone)).await.map_err(|e| {
+        crate::applog::warn(format!("pw-repo: the reports could not be read: {e}"));
+        runner::REPORTS_NOT_READ.to_string()
+    })
 }
 
 /// Opens one archived report's `index.html` in the default browser.

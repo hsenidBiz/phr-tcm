@@ -48,6 +48,7 @@ pub const LIST_STOPPED: &str = "Listing the tests was stopped before it finished
 pub const LIST_TIMED_OUT: &str = "Playwright did not finish listing the tests within 2 minutes, so it was stopped.";
 pub const LIST_UNREADABLE: &str = "Playwright's list of the tests could not be read. The output panel shows what it said.";
 pub const RUN_LIST_NOT_WRITTEN: &str = "The run list could not be written in the clone. Settings → Logs has the details.";
+pub const REPORTS_NOT_READ: &str = "The reports could not be read. Settings → Logs has the details.";
 pub const NO_SUCH_REPORT: &str = "That report is not in the clone's reports folder.";
 pub const REPORT_NOT_OPENED: &str = "The report could not be opened in your browser. Settings → Logs has the details.";
 
@@ -1188,12 +1189,13 @@ fn count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
     Ok(v.as_f64().unwrap_or(0.0).clamp(0.0, u32::MAX as f64) as u32)
 }
 
-/// The stats of the report `file`, kept for the session by its path and
-/// modified time: a report already read is not parsed again until it
+/// The stats of the report `file`, kept for the session by its path, size
+/// and modified time: a report already read is not parsed again until it
 /// changes.
 fn stats(file: &Path) -> Option<ReportStats> {
-    let at = std::fs::metadata(file).ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
-    let key = keys::pw_report_stats(&file.to_string_lossy());
+    let meta = std::fs::metadata(file).ok()?;
+    let at = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    let key = keys::pw_report_stats(&file.to_string_lossy(), meta.len());
     if let Some((was, kept)) = cache::session_fresh::<(u128, Option<ReportStats>)>(&key, keys::PW_REPORT_STATS_TTL) {
         if was == at {
             return kept;

@@ -242,14 +242,21 @@ fn a_reports_stats_are_read_once_until_it_changes() {
     let passed = |d: &Path| reports(d)[0].stats.as_ref().map(|s| s.passed);
     assert_eq!(passed(d.path()), Some(1));
 
-    // The same modified time: the kept stats, not the file read again.
+    // The same modified time and size: the kept stats, not the file read
+    // again.
     let changed = saved("report.json").replace("\"expected\": 1", "\"expected\": 7");
     assert_ne!(changed, saved("report.json"), "the fixture has \"expected\": 1");
     fs::write(&file, &changed).unwrap();
     fs::File::options().write(true).open(&file).unwrap().set_modified(at).unwrap();
     assert_eq!(passed(d.path()), Some(1));
 
+    // The same modified time, a new size: read again.
+    fs::write(&file, saved("report.json").replace("\"expected\": 1", "\"expected\": 12")).unwrap();
+    fs::File::options().write(true).open(&file).unwrap().set_modified(at).unwrap();
+    assert_eq!(passed(d.path()), Some(12));
+
     // A new modified time: read again.
+    fs::write(&file, &changed).unwrap();
     fs::File::options().write(true).open(&file).unwrap().set_modified(at + Duration::from_secs(5)).unwrap();
     assert_eq!(passed(d.path()), Some(7));
 

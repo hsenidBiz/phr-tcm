@@ -150,9 +150,10 @@ pub const PW_LIST_PREFIX: &str = "pw-list:";
 /// checked against the report file's modified time on every read.
 pub const PW_REPORT_STATS_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// One Playwright report's stats, by the path of its `<runId>.json`.
-pub fn pw_report_stats(file: &str) -> String {
-    format!("pw-report-stats:{file}")
+/// One Playwright report's stats, by the path of its `<runId>.json` and its
+/// size (a rewrite that keeps the modified time rarely keeps the size too).
+pub fn pw_report_stats(file: &str, size: u64) -> String {
+    format!("pw-report-stats:{file}|{size}")
 }
 
 /// The Playwright tab's last listing of the clone at `clone`.
