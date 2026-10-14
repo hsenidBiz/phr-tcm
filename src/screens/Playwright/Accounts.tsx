@@ -18,7 +18,7 @@
 // any change, or leaving the screen drops it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { commands, type AccountChange, type AccountField, type AccountRefs, type ChangeOutcome } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -124,7 +124,16 @@ function Field({ label, value, onChange, type = "text" }: { label: string; value
   );
 }
 
-export default function Accounts({ clone, onChanged }: { clone: string; onChanged?: () => void }) {
+export default function Accounts({
+  clone,
+  onChanged,
+  onBusy,
+}: {
+  clone: string;
+  onChanged?: () => void;
+  /** Whether a change or the counts' repo command is going. */
+  onBusy?: (busy: boolean) => void;
+}) {
   const qc = useQueryClient();
   const titleId = useId();
   const accounts = useQuery({
@@ -221,6 +230,11 @@ export default function Accounts({ clone, onChanged }: { clone: string; onChange
   };
 
   const active = busy || accounts.isFetching;
+  const commandGoing = busy || refs.isFetching;
+  useEffect(() => {
+    onBusy?.(commandGoing);
+  }, [onBusy, commandGoing]);
+  useEffect(() => () => onBusy?.(false), [onBusy]);
   const close = () => !busy && open(null);
   const th = "px-3 py-2 text-left text-xs font-medium text-muted";
   const iconButton = "px-2";

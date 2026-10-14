@@ -200,6 +200,8 @@ test("Refresh reads every Playwright query again; nothing is read again unasked"
   fireEvent.click(screen.getByRole("tab", { name: "Runner" }));
   for (const cmd of PW) expect(count(cmd)).toBe(before[cmd]);
 
+  // Refresh waits for the Accounts tab's counts (a repo command) to end.
+  await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   await waitFor(() => {
     for (const cmd of PW) expect(count(cmd)).toBeGreaterThan(before[cmd]);
@@ -258,4 +260,28 @@ test("after a failed listing, pointing at the Runner tab does not list again", a
   fireEvent.focus(screen.getByRole("tab", { name: "Runner" }));
   await new Promise((r) => setTimeout(r, 50));
   expect(listed()).toBe(1);
+});
+
+test("Refresh waits while an account change or a Runner command is going", async () => {
+  let release: () => void = () => {};
+  const calls = mount("C:/repo");
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (cmd === "get_app_settings") return { playwright_clone: "C:/repo" };
+    if (cmd === "pw_repo_structure") return HEALTHY;
+    if (cmd === "pw_list") return { tests: [], projects: [], last_report: null, load_errors: [] };
+    if (cmd === "pw_users_refs") return new Promise((r) => (release = () => r([])));
+    if (cmd === "pw_reports" || cmd === "pw_users_list" || cmd === "pw_sync_states") return [];
+    return null;
+  });
+  await screen.findByText("All good");
+  const refresh = () => screen.getByRole("button", { name: "Refresh" });
+  expect(refresh()).toBeEnabled();
+  // The Accounts tab's counts are a repo command: Refresh waits for it.
+  fireEvent.click(screen.getByRole("tab", { name: "Accounts 2" }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "pw_users_refs")).toBe(true));
+  await waitFor(() => expect(refresh()).toBeDisabled());
+  await act(async () => release());
+  await waitFor(() => expect(refresh()).toBeEnabled());
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
 });

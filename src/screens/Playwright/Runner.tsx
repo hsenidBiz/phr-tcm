@@ -72,7 +72,7 @@ function stats(s: { passed: number; failed: number; flaky: number; skipped: numb
     .join(", ");
 }
 
-export default function Runner({ clone }: { clone: string }) {
+export default function Runner({ clone, onBusy }: { clone: string; onBusy?: (busy: boolean) => void }) {
   const qc = useQueryClient();
   const tests = useQuery({
     queryKey: [TESTS_KEY, clone],
@@ -238,6 +238,11 @@ export default function Runner({ clone }: { clone: string }) {
   const known = useMemo(() => new Set(list.map((t) => t.id)), [list]);
   const picked = [...ticked].filter((id) => known.has(id));
   const active = busy || running !== null || waitingOn !== null;
+  // The screen around says so while a command of this Runner is going.
+  useEffect(() => {
+    onBusy?.(active);
+  }, [onBusy, active]);
+  useEffect(() => () => onBusy?.(false), [onBusy]);
 
   useEffect(() => {
     const output = events.pwOutput.listen((e) => {

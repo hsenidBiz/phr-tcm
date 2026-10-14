@@ -9,7 +9,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useState, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { commands, type HealthIssue, type RepoStructure } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { IconBrowse, IconRefresh } from "../../lib/actionIcons";
@@ -109,6 +109,12 @@ export default function Playwright({ org, project }: { org: string; project: str
   useClearExportRequestOnUnmount();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  /** A Runner or Accounts command (or an account change) is going: Refresh
+   * waits for it rather than read the clone in the middle of it. */
+  const [runnerBusy, setRunnerBusy] = useState(false);
+  const [accountsBusy, setAccountsBusy] = useState(false);
+  const onRunnerBusy = useCallback((b: boolean) => setRunnerBusy(b), []);
+  const onAccountsBusy = useCallback((b: boolean) => setAccountsBusy(b), []);
   const [tab, setTabState] = useState<Tab>(lastTab);
   const setTab = (t: Tab) => {
     lastTab = t;
@@ -147,6 +153,7 @@ export default function Playwright({ org, project }: { org: string; project: str
     void qc.invalidateQueries({ queryKey: ["app-settings"] });
     void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY] });
     void qc.invalidateQueries({ queryKey: [SYNC_KEY] });
+    void qc.invalidateQueries({ queryKey: [TESTS_KEY] });
   };
 
   const s = structure.data;
@@ -154,7 +161,12 @@ export default function Playwright({ org, project }: { org: string; project: str
   // Nothing can run without the clone's node_modules and Node: the health
   // badges say so, and the Runner and Accounts show why instead.
   const runnable = usable && !s.health.includes("NoNodeModules") && !s.health.includes("NoNode");
-  const changed = () => void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY, clone] });
+  /** The clone was written here (an account change, a Sync write): what it
+   * holds, and its tests, are read again. */
+  const changed = () => {
+    void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY, clone] });
+    void qc.invalidateQueries({ queryKey: [TESTS_KEY, clone] });
+  };
   /** Refresh: every Playwright query is read again, the shown ones now. */
   const refreshAll = () => {
     for (const k of [STRUCTURE_KEY, TESTS_KEY, REPORTS_KEY, ACCOUNTS_KEY, SYNC_KEY]) void qc.invalidateQueries({ queryKey: [k] });
@@ -183,9 +195,9 @@ export default function Playwright({ org, project }: { org: string; project: str
   ];
   const panels: Record<Tab, ReactNode> = {
     overview: s && <Overview s={s} />,
-    runner: runnable ? <Runner key={clone} clone={clone} /> : s && <Blocked area="Runner" issues={s.health} />,
+    runner: runnable ? <Runner key={clone} clone={clone} onBusy={onRunnerBusy} /> : s && <Blocked area="Runner" issues={s.health} />,
     accounts: runnable ? (
-      <Accounts key={clone} clone={clone} onChanged={changed} />
+      <Accounts key={clone} clone={clone} onChanged={changed} onBusy={onAccountsBusy} />
     ) : (
       s && <Blocked area="Accounts tab" issues={s.health} />
     ),
@@ -204,7 +216,8 @@ export default function Playwright({ org, project }: { org: string; project: str
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" disabled={busy || !clone || structure.isFetching} onClick={refreshAll}>
+            <Button size="sm" variant="outline" disabled={busy || !clone || structure.isFetching || runnerBusy || accountsBusy}
+              onClick={refreshAll}>
               <IconRefresh aria-hidden />
               Refresh
             </Button>
