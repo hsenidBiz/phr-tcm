@@ -59,7 +59,7 @@ const SHARED = listed("finds an employee by name", {
   file: "common-components/employee-search/specs/employee-search.spec.ts",
   title_path: ["finds an employee by name"],
 });
-const TREE: TestTree = { tests: [SHARED, CREATE, DELETE, SHELL], projects: ["SL"], last_report: null };
+const TREE: TestTree = { tests: [SHARED, CREATE, DELETE, SHELL], projects: ["SL"], last_report: null, load_errors: [] };
 
 const OLD: PwReport = {
   run_id: "2026-10-12T16-00-00",
@@ -76,6 +76,8 @@ type Mount = {
   running?: PwRunning | null;
   /** `pw_list` throws this instead. */
   listFails?: string;
+  /** What `pw_list` answers instead of TREE. */
+  tree?: TestTree;
   /** `pw_reports` throws on its first call. */
   reportsFailFirst?: boolean;
   /** A client with React Query's own defaults (retries on). */
@@ -93,7 +95,7 @@ function mount(opts: Mount = {}) {
       calls.push({ cmd, args });
       if (cmd === "pw_list") {
         if (opts.listFails) throw opts.listFails;
-        return TREE;
+        return opts.tree ?? TREE;
       }
       if (cmd === "pw_reports") {
         reportsCalls += 1;
@@ -133,6 +135,20 @@ function mount(opts: Mount = {}) {
 
 const button = (name: string | RegExp) => screen.getByRole("button", { name });
 const box = (name: string) => screen.getByRole("checkbox", { name });
+
+test("a listing Playwright could not load says why, not that there are no tests", async () => {
+  const duplicate =
+    'Error: duplicate test title "competencies: parse then emit is byte-identical", first declared in ..\\cli\\data\\roundtrip.test.mjs:25 (cli/data/roundtrip.test.mjs:30)';
+  mount({ tree: { tests: [], projects: [], last_report: null, load_errors: [duplicate] } });
+  expect(await screen.findByText("Playwright could not load the tests, so none are listed:")).toBeInTheDocument();
+  expect(screen.getByText(duplicate)).toBeInTheDocument();
+  expect(screen.queryByText("No tests under suites yet.")).not.toBeInTheDocument();
+});
+
+test("an empty listing with no errors still says there are no tests", async () => {
+  mount({ tree: { tests: [], projects: [], last_report: null, load_errors: [] } });
+  expect(await screen.findByText("No tests under suites yet.")).toBeInTheDocument();
+});
 
 test("the tree shows each test with its ADO id and last result, under its levels", async () => {
   mount();

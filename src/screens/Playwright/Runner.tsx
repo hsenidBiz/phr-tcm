@@ -189,6 +189,7 @@ export default function Runner({ clone }: { clone: string }) {
   };
 
   const list = tests.data?.tests ?? [];
+  const loadErrors = tests.data?.load_errors ?? [];
   const branches = useMemo(() => buildBranches(list), [list]);
   const known = useMemo(() => new Set(list.map((t) => t.id)), [list]);
   const picked = [...ticked].filter((id) => known.has(id));
@@ -406,7 +407,23 @@ export default function Runner({ clone }: { clone: string }) {
         >
           {tests.isLoading && <Hint className="p-2">Listing the tests…</Hint>}
           {tests.isError && <p className="whitespace-pre-wrap p-2 text-xs text-danger">{tests.error.message}</p>}
-          {tests.isSuccess && list.length === 0 && <Hint className="p-2">No tests under suites yet.</Hint>}
+          {tests.isSuccess && loadErrors.length > 0 && (
+            // Playwright lists no test at all when one file cannot load, so
+            // "no tests" would send the person looking in the wrong place.
+            <div role="alert" className="space-y-1 p-2 text-xs text-danger">
+              <p>Playwright could not load the tests, so none are listed:</p>
+              <ul className="list-disc space-y-0.5 pl-4">
+                {loadErrors.map((e) => (
+                  <li key={e} className="whitespace-pre-wrap break-words">
+                    {e}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {tests.isSuccess && list.length === 0 && loadErrors.length === 0 && (
+            <Hint className="p-2">No tests under suites yet.</Hint>
+          )}
           {branches.length > 0 && <RunnerTree branches={branches} ticked={ticked} onTick={tick} />}
         </Card>
 

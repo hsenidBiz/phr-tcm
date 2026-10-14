@@ -108,7 +108,7 @@ const TESTS: ListedTest[] = [
   test("the app shell loads", SMOKE, null, "Passed", 4),
 ];
 
-const TREE: TestTree = { tests: TESTS, projects: ["SL", "Shared"], last_report: "2026-10-13T09-14-00" };
+const TREE: TestTree = { tests: TESTS, projects: ["SL", "Shared"], last_report: "2026-10-13T09-14-00", load_errors: [] };
 
 let reports: PwReport[] = [
   { run_id: "2026-10-13T09-14-00", stats: { passed: 11, failed: 2, flaky: 1, skipped: 1, duration_ms: 184000 } },

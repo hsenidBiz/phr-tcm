@@ -131,6 +131,11 @@ pub struct TestTree {
     pub projects: Vec<String>,
     /// The report the results come from, if any.
     pub last_report: Option<String>,
+    /// What stopped Playwright loading the tests (two tests with one title,
+    /// a file that does not compile): the first line of each, with where it
+    /// is. Playwright lists no test at all when there is one, so an empty
+    /// tree with these is a failed listing, not a clone without tests.
+    pub load_errors: Vec<String>,
 }
 
 /// What to run.
@@ -409,7 +414,56 @@ pub fn build_tree(clone: &Path, json: &Value) -> TestTree {
     tests.sort_by(|a, b| key(a).cmp(&key(b)).then(a.line.cmp(&b.line)).then(a.title.cmp(&b.title)));
     let mut projects: Vec<String> = tests.iter().map(|t| t.project.clone()).collect::<HashSet<_>>().into_iter().collect();
     projects.sort();
-    TestTree { tests, projects, last_report }
+    TestTree { tests, projects, last_report, load_errors: load_errors(clone, json) }
+}
+
+/// The listing's `errors`, one line each: the message's first line without
+/// colour codes, then `(file:line)` - the file relative to the clone when it
+/// is inside it. At most 20.
+fn load_errors(clone: &Path, json: &Value) -> Vec<String> {
+    fn plain(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\u{1b}' {
+                // An ANSI colour code: ESC [ ... letter.
+                if chars.peek() == Some(&'[') {
+                    chars.next();
+                    for d in chars.by_ref() {
+                        if d.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+            out.push(c);
+        }
+        out
+    }
+    let root = clone.to_string_lossy().replace('\\', "/");
+    json.get("errors")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| {
+            let first = plain(&str_of(e, "message")).lines().map(str::trim).find(|l| !l.is_empty())?.to_string();
+            let at = e.get("location").and_then(|l| {
+                let file = str_of(l, "file").replace('\\', "/");
+                if file.is_empty() {
+                    return None;
+                }
+                let file = file.strip_prefix(&format!("{root}/")).map(str::to_string).unwrap_or(file);
+                let line = l.get("line").and_then(Value::as_u64).unwrap_or(0);
+                Some(if line > 0 { format!("{file}:{line}") } else { file })
+            });
+            Some(match at {
+                Some(at) => format!("{first} ({at})"),
+                None => first,
+            })
+        })
+        .take(20)
+        .collect()
 }
 
 /// The id in a `// ADO <id>` comment in the comment lines right above line
