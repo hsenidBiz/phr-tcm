@@ -1433,3 +1433,67 @@ fn not_approved_names_the_setups_a_run_would_block() {
     fixture_store::save(root, ORG, PROJECT, &changed).unwrap();
     assert_eq!(setup::not_approved(root, ORG, PROJECT, &[61, 62, 63, 64, 65]), vec![61, 62]);
 }
+
+/// Removing a template a setup runs undoes that setup's approval (its
+/// fingerprint now has no template there), and the person's Remove is
+/// told which cases, as every other change to what a setup runs is.
+#[test]
+fn removing_a_template_names_the_setups_it_needs_approved_again() {
+    use v2_lib::commands::api_templates::remove_template_at;
+    let _root = crate::serial::autorun();
+    let r = setup_rig(vec![]);
+    let root = r.root.path();
+    let steps = json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]);
+    let approved = script(71, Some("own"), steps.clone());
+    let never = script(72, Some("own"), steps);
+    for sc in [&approved, &never] {
+        store::save_script(root, sc).unwrap();
+    }
+    approve(root, &approved);
+
+    let said = remove_template_at(root, ORG, PROJECT, "make-cycle").unwrap();
+    assert_eq!(said, setup::Reapproval::of(vec![71]));
+    assert_eq!(said.note, Some(setup::needs_reapproval_line(&[71])));
+    assert_eq!(state(root, &approved), Approval::Changed);
+    // The same template saved again matches what was approved once more.
+    template_store::save(root, ORG, PROJECT, &make_cycle()).unwrap();
+    assert!(matches!(state(root, &approved), Approval::Approved { .. }));
+    // With no approval left to undo, a removal says nothing.
+    approvals::withdraw(root, 71).unwrap();
+    assert_eq!(remove_template_at(root, ORG, PROJECT, "make-cycle").unwrap(), setup::Reapproval::default());
+}
+
+/// An import that replaces a template a setup runs with a different body
+/// names the setups whose approval it undid; one that brings the same
+/// body back (unproven: the proof is not in the fingerprint) undoes none.
+#[test]
+fn an_import_that_changes_a_template_names_the_setups_it_needs_approved_again() {
+    use v2_lib::commands::api_templates::{export_at, import_at};
+    const SENDER: &str = "Sender";
+    let _root = crate::serial::autorun();
+    let r = setup_rig(vec![]);
+    let root = r.root.path();
+    let out = tempfile::tempdir().unwrap();
+    let approved = script(73, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
+    store::save_script(root, &approved).unwrap();
+    approve(root, &approved);
+
+    // The same body, from another project's export.
+    template_store::save(root, ORG, SENDER, &make_cycle()).unwrap();
+    let same = out.path().join("same.json");
+    export_at(true, root, ORG, SENDER, &same).unwrap();
+    let result = import_at(true, root, ORG, PROJECT, &same).unwrap();
+    assert_eq!(result.replaced, vec!["Make a cycle"]);
+    assert_eq!(result.reapproval, setup::Reapproval::default());
+    assert!(matches!(state(root, &approved), Approval::Approved { .. }));
+
+    // A changed body.
+    let mut changed = make_cycle();
+    changed.description = "makes a cycle, renamed handler".into();
+    template_store::save(root, ORG, SENDER, &changed).unwrap();
+    let different = out.path().join("different.json");
+    export_at(true, root, ORG, SENDER, &different).unwrap();
+    let result = import_at(true, root, ORG, PROJECT, &different).unwrap();
+    assert_eq!(result.reapproval, setup::Reapproval::of(vec![73]));
+    assert_eq!(state(root, &approved), Approval::Changed);
+}

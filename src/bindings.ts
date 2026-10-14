@@ -1450,7 +1450,7 @@ export const commands = {
 	 */
 	writingStyleReadFile: (path: string) => typedError<string, string>(__TAURI_INVOKE("writing_style_read_file", { path })),
 	apiTemplatesOverview: (organization: string, project: string) => typedError<TemplatesOverview_Serialize, string>(__TAURI_INVOKE("api_templates_overview", { organization, project })),
-	apiTemplatesRemove: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove", { organization, project, id })),
+	apiTemplatesRemove: (organization: string, project: string, id: string) => typedError<Reapproval, string>(__TAURI_INVOKE("api_templates_remove", { organization, project, id })),
 	apiTemplatesRemoveFlow: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove_flow", { organization, project, id })),
 	apiTemplatesOpenFlow: (organization: string, project: string, id: string, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("api_templates_open_flow", { organization, project, id, palette })),
 	apiTemplatesExport: (organization: string, project: string, path: string) => typedError<TemplatesExportResult, string>(__TAURI_INVOKE("api_templates_export", { organization, project, path })),
@@ -4674,6 +4674,15 @@ export type Quirk_Serialize = {
 	from: string,
 };
 
+/**
+ *  What a webview change to a template says about the setup approvals it
+ *  undid: the cases, and `needs_reapproval_line` when there are any.
+ */
+export type Reapproval = {
+	needs_reapproval: number[],
+	note: string | null,
+};
+
 export type RecipeStep = RecipeStep_Serialize | RecipeStep_Deserialize;
 
 export type RecipeStep_Deserialize = Action_Deserialize | WhenVisible_Deserialize;
@@ -5944,6 +5953,8 @@ export type TemplatesImportResult = {
 	replaced: string[],
 	skipped: TemplatesImportSkip[],
 	notes: TemplatesImportNote[],
+	/**  The setups whose approval a replaced template undid. */
+	reapproval: Reapproval,
 };
 
 /**  One entry of the file that was not imported, and why. */

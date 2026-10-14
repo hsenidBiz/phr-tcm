@@ -1785,7 +1785,7 @@ function applyPatches() {
     apiTemplatesOverview: () => ok({ origin: SITE, templates: apiTemplates, flows: apiFlows }),
     apiTemplatesRemove: (_o: string, _p: string, id: string) => {
       apiTemplates = apiTemplates.filter((t) => t.template.id !== id);
-      return ok(null);
+      return ok({ needs_reapproval: [], note: null });
     },
     apiTemplatesRemoveFlow: (_o: string, _p: string, id: string) => {
       apiFlows = apiFlows.filter((f) => f.id !== id);

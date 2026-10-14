@@ -39,8 +39,11 @@ export default function RemoveTemplate({
   const headingId = useId();
   const remove = useMutation({
     mutationFn: () => unwrapStr(commands.apiTemplatesRemove(org, project, template.id)),
-    onSuccess: () => {
+    onSuccess: (undone) => {
       toast.success(`Removed ${template.title}.`);
+      // A setup that ran it no longer matches what was approved: said, not
+      // left for a run to find.
+      if (undone?.note) toast.warning(undone.note);
       onRemoved();
       onClose();
     },

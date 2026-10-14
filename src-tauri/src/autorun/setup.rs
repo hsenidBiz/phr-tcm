@@ -380,6 +380,63 @@ pub fn needs_reapproval_line(cases: &[i32]) -> String {
     )
 }
 
+/// Every case whose saved script has a setup approved for what is saved
+/// now. Read before a change to a template or a fixture, so the change
+/// can say whose approval it undid (`no_longer_approved`).
+pub fn approved_now(root: &Path, org: &str, project: &str) -> Vec<i32> {
+    super::store::list_scripts(root)
+        .into_iter()
+        .filter(|s| setup_approved(root, org, project, s))
+        .map(|s| s.case_id)
+        .collect()
+}
+
+/// Runs `change` (anything that writes a template or a fixture, which the
+/// fingerprint takes) and gives back its result with the cases whose
+/// setup approval it undid. What was approved is read first; only a
+/// change that went through can have undone anything, and the caller
+/// says so in its answer (`Reapproval`, `add_reapproval`).
+pub fn reapproval_after<T, E>(
+    root: &Path,
+    org: &str,
+    project: &str,
+    change: impl FnOnce() -> Result<T, E>,
+) -> (Result<T, E>, Vec<i32>) {
+    let before = approved_now(root, org, project);
+    let done = change();
+    let undone =
+        if done.is_ok() && !before.is_empty() { no_longer_approved(root, org, project, &before) } else { Vec::new() };
+    if !undone.is_empty() {
+        crate::applog::info(format!("setup approvals undone for {undone:?}"));
+    }
+    (done, undone)
+}
+
+/// A JSON answer's `needs_reapproval: [ids]` and `note` (the
+/// `needs_reapproval_line`), added only when the change undid any.
+pub fn add_reapproval(answer: &mut serde_json::Value, undone: &[i32]) {
+    if undone.is_empty() || !answer.is_object() {
+        return;
+    }
+    answer["needs_reapproval"] = serde_json::json!(undone);
+    answer["note"] = serde_json::json!(needs_reapproval_line(undone));
+}
+
+/// What a webview change to a template says about the setup approvals it
+/// undid: the cases, and `needs_reapproval_line` when there are any.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct Reapproval {
+    pub needs_reapproval: Vec<i32>,
+    pub note: Option<String>,
+}
+
+impl Reapproval {
+    pub fn of(undone: Vec<i32>) -> Self {
+        let note = (!undone.is_empty()).then(|| needs_reapproval_line(&undone));
+        Reapproval { needs_reapproval: undone, note }
+    }
+}
+
 /// The lines a script save answers with when it undid setup approvals:
 /// `needs_reapproval: [ids]`, then `needs_reapproval_line`. A dry run says
 /// the same of what the save would undo.

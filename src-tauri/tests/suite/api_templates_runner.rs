@@ -1048,8 +1048,10 @@ mod through_the_bridge {
         assert_eq!(status, 200, "{out}");
         let prefix = format!("api template {ID} replaced: ");
         let log = v2_lib::applog::recent(400);
+        // The newest such line: another test's replace may be in the tail too.
         let line = log
             .iter()
+            .rev()
             .map(|l| l.message.clone())
             .find(|m| m.starts_with(&prefix))
             .unwrap_or_else(|| panic!("no replace line in {:?}", log.iter().map(|l| &l.message).collect::<Vec<_>>()));
@@ -1096,6 +1098,71 @@ mod through_the_bridge {
         assert!(detail.contains("cycleId 276 created") && detail.contains("Evaluation rules"), "{detail}");
         assert_eq!(runs[0].outputs, BTreeMap::from([("cycleId".to_string(), json!(276))]), "what it had created");
         assert_eq!(*changed.lock().unwrap(), vec![ID.to_string()]);
+    }
+
+    /// A setup running this template whose fixture the person approved:
+    /// case 81, approved as the fixture and `saved` stand now.
+    fn approved_setup(root: &std::path::Path) {
+        use v2_lib::api_templates::fixture::{Fixture, FixtureStep};
+        let f = Fixture {
+            id: "cycle-draft".into(),
+            name: "Cycle draft".into(),
+            account: "admin".into(),
+            steps: vec![FixtureStep {
+                template: ID.into(),
+                params: [("cycleName".to_string(), "{{prefix}} cycle".to_string())].into(),
+            }],
+            outputs: [("cycle_id".to_string(), "{{steps.1.cycleId}}".to_string())].into(),
+            creates: vec![],
+            skip_stages: vec![],
+        };
+        v2_lib::api_templates::fixture_store::save(root, ORG, PROJECT, &f).unwrap();
+        let sc: v2_lib::autorun::CaseScript = serde_json::from_value(json!({
+            "case_id": 81, "title": "case 81", "setup": { "fixture": "cycle-draft" },
+            "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "{{setup.cycle_id}}" }] }]
+        }))
+        .unwrap();
+        v2_lib::autorun::store::save_script(root, &sc).unwrap();
+        let fp = v2_lib::autorun::setup::current(root, ORG, PROJECT, sc.setup.as_ref().unwrap()).unwrap().fingerprint;
+        v2_lib::autorun::approvals::approve(root, 81, &fp).unwrap();
+    }
+
+    /// A prove that replaces a template's body undoes the approval of every
+    /// setup running it, and its answer names them as a fixture save does;
+    /// one that changes only the proof undoes nothing and says nothing.
+    #[tokio::test]
+    async fn a_prove_that_changes_a_template_names_the_setups_it_needs_approved_again() {
+        // Its replace lines must not reach another test reading the log.
+        let _log = crate::serial::log_tail();
+        let _root = crate::serial::autorun();
+        let _slot = crate::serial::api_template_run();
+        let _act = crate::serial::activity_log();
+        let _changed = changes();
+        let ok = || vec![answer(200, json!({ "success": true, "cycleId": 278 })), answer(200, json!({ "success": true }))];
+        let Rig { browsers, root, .. } = rig(ok(), None);
+        v2_lib::autorun::store::set_root(root.path().to_path_buf());
+        store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
+        approved_setup(root.path());
+
+        // The same body proven again: only the proof changes.
+        let why = json!({ "replace": true, "why": "proving it again" });
+        let (status, out) = api_template_prove(&ctx(), &body(why), |_| browsers, no_db, &quick()).await;
+        assert_eq!(status, 200, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("needs_reapproval").is_none(), "{v}");
+
+        // A changed body.
+        let Rig { browsers, .. } = rig(ok(), None);
+        let mut changed = template();
+        changed.description = "Cycle setup and evaluation rules, renamed handler.".into();
+        let mut b: Value = serde_json::from_str(&body(json!({ "replace": true, "why": "the handler was renamed" }))).unwrap();
+        b["template"] = serde_json::to_value(&changed).unwrap();
+        let (status, out) = api_template_prove(&ctx(), &b.to_string(), |_| browsers, no_db, &quick()).await;
+        assert_eq!(status, 200, "{out}");
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["needs_reapproval"], json!([81]));
+        assert_eq!(v["note"], json!(v2_lib::autorun::setup::needs_reapproval_line(&[81])));
+        assert_eq!(v2_lib::autorun::setup::not_approved(root.path(), ORG, PROJECT, &[81]), vec![81]);
     }
 }
 

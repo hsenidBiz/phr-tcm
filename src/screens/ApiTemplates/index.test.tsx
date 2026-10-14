@@ -1043,6 +1043,41 @@ test("Import warns first, then shows what was added, replaced and skipped, and r
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });
 
+const REAPPROVAL_NOTE =
+  "needs re-approval: #21 - this change undid the approval of each one's setup, so its runs and replays are Blocked until the person approves it again in the script editor (no tool can)";
+
+test("removing a template that a setup runs says which setups need approving again", async () => {
+  mockOverview(OVERVIEW, (cmd) =>
+    cmd === "api_templates_remove" ? { needs_reapproval: [21], note: REAPPROVAL_NOTE } : undefined,
+  );
+  renderScreen();
+  const row = await screen.findByRole("listitem", { name: "Create a draft performance cycle" });
+  fireEvent.click(within(row).getByRole("button", { name: "Remove Create a draft performance cycle" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(toast.warning).toHaveBeenCalledWith(REAPPROVAL_NOTE));
+});
+
+test("an import that replaced a template a setup runs lists the setups to approve again", async () => {
+  mockOverview(OVERVIEW, (cmd) => {
+    if (cmd === "plugin:dialog|open") return "C:\\Downloads\\shared.json";
+    if (cmd === "api_templates_import")
+      return {
+        added: [],
+        replaced: ["Create a draft performance cycle"],
+        skipped: [],
+        notes: [],
+        reapproval: { needs_reapproval: [21], note: REAPPROVAL_NOTE },
+      };
+    return undefined;
+  });
+  renderScreen();
+  await screen.findByText("Create a draft performance cycle");
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Import shared.json?" })).getByRole("button", { name: "Import" }));
+  const dialog = await screen.findByRole("dialog", { name: "Imported shared.json" });
+  expect(within(dialog).getByRole("region", { name: "Setups to approve again" })).toHaveTextContent(REAPPROVAL_NOTE);
+});
+
 test("an import the file refuses says why and closes", async () => {
   mockOverview(OVERVIEW, (cmd) => {
     if (cmd === "plugin:dialog|open") return "C:\\Downloads\\other.json";
