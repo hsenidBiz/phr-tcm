@@ -954,10 +954,14 @@ fn capture(args: &[String], show: &Sink, launch: Starter) -> Result<String, Stri
 /// The clone's tests: the kept listing unless `refresh`, else a new one.
 /// The listing is kept in memory and on disk (it survives a restart), and
 /// used only while the clone's `fingerprint` is the one it was listed at.
-/// The ADO ids and results are read again either way.
+/// Only what the tree reads is kept (`kept_listing`), with a hash of the
+/// fingerprint (`fingerprint_hash`); a listing of `PW_LIST_PERSIST_MAX`
+/// bytes or more is kept in memory only, and the disk keeps one clone's
+/// listing at a time (`cache::evict_pw_lists`). The ADO ids and results are
+/// read again either way.
 pub fn list(clone: &Path, refresh: bool, show: &Sink, launch: Starter) -> Result<TestTree, String> {
     let key = keys::pw_list(&clone.to_string_lossy());
-    let print = fingerprint(clone);
+    let print = fingerprint_hash(&fingerprint(clone));
     let ttl_ms = keys::PW_LIST_TTL.as_millis() as u64;
     let kept = |print: &str| -> Option<Arc<Value>> {
         if let Some((was, v)) = cache::session_fresh::<(String, Arc<Value>)>(&key, keys::PW_LIST_TTL) {
@@ -967,6 +971,8 @@ pub fn list(clone: &Path, refresh: bool, show: &Sink, launch: Starter) -> Result
         }
         let (was, v) = cache::fresh::<(String, Value)>(&key, ttl_ms)?;
         if was != print {
+            // The clone changed since: the kept listing is of no more use.
+            cache::forget(&key);
             return None;
         }
         // Read from disk once; this session reuses it from memory.
@@ -977,13 +983,41 @@ pub fn list(clone: &Path, refresh: bool, show: &Sink, launch: Starter) -> Result
     let raw = match if refresh { None } else { kept(&print) } {
         Some(v) => v,
         None => {
-            let v = Arc::new(parse_list_stdout(&capture(&list_args(), show, launch)?)?);
-            cache::put(&key, &(&print, v.as_ref()));
+            let v = Arc::new(kept_listing(&parse_list_stdout(&capture(&list_args(), show, launch)?)?));
+            match serde_json::to_string(&(&print, v.as_ref())) {
+                Ok(text) if text.len() < keys::PW_LIST_PERSIST_MAX => cache::put(&key, &(&print, v.as_ref())),
+                Ok(text) => {
+                    crate::applog::debug(format!(
+                        "pw-repo: the test listing is {} bytes, so it is kept for this session only",
+                        text.len()
+                    ));
+                    cache::forget(&key);
+                }
+                Err(_) => cache::forget(&key),
+            }
             cache::session_put(&key, (print, v.clone()));
             v
         }
     };
     Ok(build_tree(clone, &raw))
+}
+
+/// The part of a `--list` listing the tree reads: its `suites` and its
+/// `errors`. Playwright's config and metadata are left out.
+pub fn kept_listing(full: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    for k in ["suites", "errors"] {
+        if let Some(v) = full.get(k) {
+            out.insert(k.to_string(), v.clone());
+        }
+    }
+    Value::Object(out)
+}
+
+/// A clone's `fingerprint` as kept beside its listing: its SHA-256, hex.
+pub fn fingerprint_hash(print: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(print.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// What decides what `--list` returns, as the repo's `cli/inventory/cache.mjs`

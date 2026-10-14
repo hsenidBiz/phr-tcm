@@ -513,3 +513,18 @@ fn only_one_tag_refresh_runs_per_key() {
     drop(first);
     assert!(claim_tag_refresh(key).is_some(), "finished, so the next stale read may refresh");
 }
+
+/// A Playwright listing is kept for one clone at a time: putting one drops
+/// every other clone's, and touches nothing else.
+#[test]
+fn only_the_newest_playwright_listing_is_kept() {
+    let dir = temp_dir("pw-list-evict");
+    let store = Store::open(Some(&dir));
+    store.put("tags:o|p", &vec!["t".to_string()]);
+    store.put(&keys::pw_list("C:/one"), &1u32);
+    store.put(&keys::pw_list("C:/two"), &2u32);
+    assert!(store.get::<u32>(&keys::pw_list("C:/one")).is_none());
+    assert_eq!(store.get::<u32>(&keys::pw_list("C:/two")), Some(2));
+    assert!(store.get::<Vec<String>>("tags:o|p").is_some(), "other keys stay");
+    assert!(Store::open(Some(&dir)).get::<u32>(&keys::pw_list("C:/one")).is_none(), "the file agrees");
+}

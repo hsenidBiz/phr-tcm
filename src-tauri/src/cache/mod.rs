@@ -113,6 +113,14 @@ fn evict_wiki_pages(entries: &mut HashMap<String, Entry>, now: u64) {
     }
 }
 
+/// A Playwright listing is kept for one clone at a time: putting `just_put`
+/// drops every other listing. Other keys are never touched here.
+fn evict_pw_lists(entries: &mut HashMap<String, Entry>, just_put: &str) {
+    if just_put.starts_with(keys::PW_LIST_PREFIX) {
+        entries.retain(|k, _| !k.starts_with(keys::PW_LIST_PREFIX) || k == just_put);
+    }
+}
+
 impl Store {
     /// Open the cache in `dir`, or memory-only with `None`. A corrupt or
     /// absent file simply starts empty - never an error.
@@ -209,7 +217,8 @@ impl Store {
     }
 
     /// Store a freshly fetched value, replacing whatever was there. Also
-    /// where old wiki pages are evicted (`evict_wiki_pages`).
+    /// where old wiki pages are evicted (`evict_wiki_pages`), and other
+    /// clones' Playwright listings (`evict_pw_lists`).
     pub fn put<T: Serialize>(&self, key: &str, value: &T) {
         self.put_at(key, value, now_ms())
     }
@@ -224,6 +233,7 @@ impl Store {
             let now = now_ms();
             inner.disk.entries.insert(key.to_string(), Entry { value, at_ms });
             evict_wiki_pages(&mut inner.disk.entries, now);
+            evict_pw_lists(&mut inner.disk.entries, key);
             self.snapshot(&mut inner)
         };
         self.write(snap);

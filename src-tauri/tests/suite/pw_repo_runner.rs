@@ -871,49 +871,112 @@ fn a_clean_listing_has_no_load_errors() {
     assert!(tree_of(c.path()).load_errors.is_empty());
 }
 
+
 // ---- The kept listing -----------------------------------------------------------
+//
+// The durable cache keeps one listing (every clone's key shares a prefix),
+// so each test here holds the run slot's locks: no other test puts or
+// evicts a listing in the middle of it.
+
+fn kept_key(d: &Path) -> String {
+    v2_lib::cache::keys::pw_list(&d.to_string_lossy())
+}
+
+/// What a listing is kept as: the fingerprint's hash and its suites and
+/// errors.
+fn keep(d: &Path, json: &serde_json::Value) {
+    let print = runner::fingerprint_hash(&runner::fingerprint(d));
+    v2_lib::cache::put(&kept_key(d), &(print, runner::kept_listing(json)));
+}
 
 #[test]
 fn a_listing_kept_on_disk_is_used_while_the_clone_is_unchanged() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
     let json = parse_list_stdout(&saved("list.json")).unwrap();
     let (show, _rx) = collect();
 
     // As after a restart: only the durable entry is there.
     let d = clone();
-    let key = v2_lib::cache::keys::pw_list(&d.path().to_string_lossy());
-    v2_lib::cache::put(&key, &(runner::fingerprint(d.path()), &json));
+    keep(d.path(), &json);
     let never = |_: &[String]| -> Result<Launch, String> { panic!("nothing is listed while the kept listing holds") };
     assert_eq!(runner::list(d.path(), false, &show, &never).unwrap().tests.len(), 5);
     // Read once from disk, then from memory.
     assert_eq!(runner::list(d.path(), false, &show, &never).unwrap().tests.len(), 5);
 
-    // A spec changed since: the kept listing no longer counts.
+    // List again (refresh) never uses it.
+    let refused = |_: &[String]| -> Result<Launch, String> { Err("listed again".into()) };
     let d = clone();
-    let key = v2_lib::cache::keys::pw_list(&d.path().to_string_lossy());
-    v2_lib::cache::put(&key, &(runner::fingerprint(d.path()), &json));
+    keep(d.path(), &json);
+    assert_eq!(runner::list(d.path(), true, &show, &refused).unwrap_err(), "listed again");
+}
+
+#[test]
+fn a_kept_listing_of_a_changed_clone_is_forgotten() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let json = parse_list_stdout(&saved("list.json")).unwrap();
+    let (show, _rx) = collect();
+    let d = clone();
+    keep(d.path(), &json);
     fs::write(d.path().join("suites").join(RM), "// changed\n").unwrap();
     let refused = |_: &[String]| -> Result<Launch, String> { Err("listed again".into()) };
     assert_eq!(runner::list(d.path(), false, &show, &refused).unwrap_err(), "listed again");
-
-    // List again (refresh) never uses it.
-    let d = clone();
-    let key = v2_lib::cache::keys::pw_list(&d.path().to_string_lossy());
-    v2_lib::cache::put(&key, &(runner::fingerprint(d.path()), &json));
-    assert_eq!(runner::list(d.path(), true, &show, &refused).unwrap_err(), "listed again");
+    assert!(v2_lib::cache::get::<serde_json::Value>(&kept_key(d.path())).is_none(), "forgotten, not left on disk");
 }
 
 #[cfg(windows)]
 #[test]
-fn a_new_listing_is_kept_on_disk_with_its_fingerprint() {
+fn a_new_listing_is_kept_as_its_suites_and_errors_with_a_hashed_fingerprint() {
     let _held_browsers = crate::serial::held_browsers();
     let _slot = crate::serial::pw_repo();
     let d = clone();
     let fake = Fake::new("dry-two.json");
     let (show, _rx) = collect();
-    let tree = runner::list(d.path(), true, &show, &|a| fake.launch(a)).unwrap();
-    assert_eq!(tree.tests.len(), 5);
-    let key = v2_lib::cache::keys::pw_list(&d.path().to_string_lossy());
-    let (print, json) = v2_lib::cache::get::<(String, serde_json::Value)>(&key).expect("kept on disk");
-    assert_eq!(print, runner::fingerprint(d.path()));
-    assert_eq!(json, parse_list_stdout(&saved("list.json")).unwrap());
+    assert_eq!(runner::list(d.path(), true, &show, &|a| fake.launch(a)).unwrap().tests.len(), 5);
+    let (print, json) = v2_lib::cache::get::<(String, serde_json::Value)>(&kept_key(d.path())).expect("kept on disk");
+    assert_eq!(print, runner::fingerprint_hash(&runner::fingerprint(d.path())));
+    assert_eq!(print.len(), 64, "a SHA-256, not the fingerprint itself");
+    let mut keys: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort();
+    assert_eq!(keys, ["errors", "suites"]);
+    let full = parse_list_stdout(&saved("list.json")).unwrap();
+    assert!(full.get("config").is_some(), "the fixture has a config to leave out");
+    assert_eq!(json["suites"], full["suites"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_listing_over_the_cap_is_kept_in_memory_only() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let d = clone();
+    let fake = Fake::new("dry-two.json");
+    let mut big = parse_list_stdout(&saved("list.json")).unwrap();
+    // Many short lines: the output is read a line at a time.
+    let one = serde_json::json!({ "message": "x".repeat(60) });
+    let n = v2_lib::cache::keys::PW_LIST_PERSIST_MAX / 60 + 1;
+    big["errors"] = serde_json::Value::Array(vec![one; n]);
+    fs::write(fake.dir.path().join("list.json"), serde_json::to_string_pretty(&big).unwrap()).unwrap();
+    let (show, _rx) = collect();
+    runner::list(d.path(), true, &show, &|a| fake.launch(a)).unwrap();
+    assert!(v2_lib::cache::get::<serde_json::Value>(&kept_key(d.path())).is_none(), "not on disk");
+    // This session still has it: no second listing.
+    let never = |_: &[String]| -> Result<Launch, String> { panic!("listed again") };
+    runner::list(d.path(), false, &show, &never).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn the_disk_keeps_one_clones_listing() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let (one, two) = (clone(), clone());
+    let (show, _rx) = collect();
+    for d in [&one, &two] {
+        let fake = Fake::new("dry-two.json");
+        runner::list(d.path(), true, &show, &|a| fake.launch(a)).unwrap();
+    }
+    assert!(v2_lib::cache::get::<serde_json::Value>(&kept_key(one.path())).is_none());
+    assert!(v2_lib::cache::get::<serde_json::Value>(&kept_key(two.path())).is_some());
 }

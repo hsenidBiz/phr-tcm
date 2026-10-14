@@ -138,6 +138,14 @@ pub fn suite_refused(base_url: &str, org: &str, project: &str, area: &str) -> St
 /// fingerprint, List again, or a run's dry count catches a stale listing.
 pub const PW_LIST_TTL: Duration = Duration::from_secs(8 * 60 * 60);
 
+/// A kept listing this size (bytes, serialized) or larger stays in memory
+/// only: the durable file is written whole on every change.
+pub const PW_LIST_PERSIST_MAX: usize = 1024 * 1024;
+
+/// Every listing key starts with this; the durable tier keeps one
+/// (`cache::evict_pw_lists`).
+pub const PW_LIST_PREFIX: &str = "pw-list:";
+
 /// How long one Playwright report's stats are kept (session tier only),
 /// checked against the report file's modified time on every read.
 pub const PW_REPORT_STATS_TTL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -149,7 +157,7 @@ pub fn pw_report_stats(file: &str) -> String {
 
 /// The Playwright tab's last listing of the clone at `clone`.
 pub fn pw_list(clone: &str) -> String {
-    format!("pw-list:{clone}")
+    format!("{PW_LIST_PREFIX}{clone}")
 }
 
 /// How long the cases an export wrote this run are remembered for Finish in
