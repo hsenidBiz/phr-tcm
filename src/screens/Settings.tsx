@@ -56,6 +56,7 @@ import {
   IconUndo,
 } from "../lib/actionIcons";
 import RunnerGameModal from "../components/RunnerGameModal";
+import BreakerGameModal from "../components/BreakerGameModal";
 
 const ACCENT_SWATCH: Record<Accent, string> = {
   default: "var(--color-accent)", // live preview of the theme's own accent
@@ -126,6 +127,7 @@ export default function Settings({ org, project }: { org: string; project: strin
   const extrasUnlocked = useExtrasUnlocked();
   const [confirmReset, setConfirmReset] = useState(false);
   const [gameOpen, setGameOpen] = useState(false);
+  const [breakerOpen, setBreakerOpen] = useState(false);
   useEffect(() => {
     void hydrateExtras();
   }, []);
@@ -584,6 +586,10 @@ export default function Settings({ org, project }: { org: string; project: strin
               <IconPlayGame aria-hidden />
               Play the dino game
             </Button>
+            <Button size="sm" variant="outline" onClick={() => setBreakerOpen(true)}>
+              <IconPlayGame aria-hidden />
+              Play the brick game
+            </Button>
             <Button size="sm" variant="outline" onClick={() => setConfirmReset(true)}>
               <IconUndo aria-hidden />
               Reset to default
@@ -605,6 +611,7 @@ export default function Settings({ org, project }: { org: string; project: strin
         </Modal>
       )}
       {gameOpen && <RunnerGameModal onClose={() => setGameOpen(false)} />}
+      {breakerOpen && <BreakerGameModal onClose={() => setBreakerOpen(false)} />}
     </SettingsCard>
   );
 

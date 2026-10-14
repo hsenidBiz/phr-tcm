@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- The bundled brick game. Written for the app; no third-party code.
+     Scripts are separate files because the app's CSP allows no inline
+     script: logic.js holds the rules, game.js draws and takes input, and
+     escape.js relays Escape out of the sandboxed frame. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bricks</title>
+<link rel="stylesheet" href="game.css">
+</head>
+<body>
+<canvas id="board" aria-label="Brick game board"></canvas>
+<script src="logic.js"></script>
+<script src="game.js"></script>
+<script src="escape.js"></script>
+</body>
+</html>

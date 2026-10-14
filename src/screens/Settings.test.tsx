@@ -1209,6 +1209,7 @@ test("capture mode hides the Extras section on an unlocked machine; off, it show
   await onRender.findByRole("heading", { name: "Changelog" });
   expect(onRender.queryByRole("heading", { name: "Extras" })).not.toBeInTheDocument();
   expect(onRender.queryByRole("button", { name: "Play the dino game" })).not.toBeInTheDocument();
+  expect(onRender.queryByRole("button", { name: "Play the brick game" })).not.toBeInTheDocument();
   expect(onRender.queryByRole("button", { name: "Reset to default" })).not.toBeInTheDocument();
   onRender.unmount();
 
@@ -1217,6 +1218,7 @@ test("capture mode hides the Extras section on an unlocked machine; off, it show
   const offRender = renderSettings(qcOff);
   expect(await offRender.findByRole("heading", { name: "Extras" })).toBeInTheDocument();
   expect(offRender.getByRole("button", { name: "Play the dino game" })).toBeInTheDocument();
+  expect(offRender.getByRole("button", { name: "Play the brick game" })).toBeInTheDocument();
   expect(offRender.getByRole("button", { name: "Reset to default" })).toBeInTheDocument();
   offRender.unmount();
 });
