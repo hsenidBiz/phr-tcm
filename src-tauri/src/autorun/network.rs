@@ -81,7 +81,9 @@ fn target_of_rest(s: &str, port: Option<u16>) -> Option<(String, u16)> {
         None => host,
     };
     let plain = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_';
-    let v6 = host.contains(':');
+    // A colon only in a real IPv6 address: `dbhost:1433` (a port written with a
+    // colon) would knock on a host that can never answer.
+    let v6 = host.contains(':') && host.parse::<std::net::Ipv6Addr>().is_ok();
     if host.is_empty() || host == "." || !(v6 || host.chars().all(plain)) {
         return None;
     }

@@ -160,7 +160,9 @@ fn target_of_takes_only_plain_tcp_hosts() {
     assert_eq!(t("10.0.0.5,1434", None), Some(("10.0.0.5".into(), 1434)));
     assert_eq!(t("[::1],abc", None), None);
     assert_eq!(t("[nonsense]", None), None);
-    for bad in ["np:db1", "lpc:db1", r"NP:\\db1\pipe", ".", "(local)", "db 1", "db1;x", "a/b", "tcp:", "tcp:."] {
+    assert_eq!(t("fe80::1", None), Some(("fe80::1".into(), 1433)));
+    // A port written with a colon is not an IPv6 address: no check.
+    for bad in ["np:db1", "lpc:db1", r"NP:\\db1\pipe", ".", "(local)", "db 1", "db1;x", "a/b", "tcp:", "tcp:.", "dbhost:1433", "db:1:2"] {
         assert_eq!(t(bad, None), None, "{bad}");
     }
 }
