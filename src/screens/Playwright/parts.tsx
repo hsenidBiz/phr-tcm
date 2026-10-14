@@ -74,9 +74,10 @@ export function Hint({ children, className }: { children: ReactNode; className?:
 
 export type TabSpec<T extends string> = { id: T; label: string; count?: number | null };
 
-/** The tab list and the panels under it. Every panel stays mounted (a run's
- * output and an open form survive a look at another tab); only the chosen
- * one is shown. */
+/** The tab list and the panels under it. A panel is mounted the first time
+ * its tab is chosen, so a tab never opened reads nothing; from then on it
+ * stays mounted (a run's output and an open form survive a look at another
+ * tab), and only the chosen one is shown. */
 export function SubTabs<T extends string>({
   label,
   tabs,
@@ -92,6 +93,9 @@ export function SubTabs<T extends string>({
 }) {
   const ids = useId();
   const refs = useRef<Partial<Record<T, HTMLButtonElement | null>>>({});
+  /** The tabs chosen at least once: only their panels are mounted. */
+  const seen = useRef(new Set<T>());
+  seen.current.add(shown);
   const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     const last = tabs.length - 1;
@@ -157,7 +161,7 @@ export function SubTabs<T extends string>({
           hidden={shown !== id}
           className="min-w-0"
         >
-          {panels[id]}
+          {seen.current.has(id) && panels[id]}
         </div>
       ))}
     </div>

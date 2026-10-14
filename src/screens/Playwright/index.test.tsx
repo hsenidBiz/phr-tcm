@@ -203,3 +203,20 @@ test("Refresh reads every Playwright query again; nothing is read again unasked"
   });
   fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
 });
+
+test("a tab is read only once it is opened, and stays mounted after", async () => {
+  const calls = mount("C:/repo");
+  await screen.findByText("All good");
+  expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+  const read = (cmd: string) => calls.some((c) => c.cmd === cmd);
+  for (const cmd of ["pw_list", "pw_reports", "pw_users_list", "pw_sync_states"]) expect(read(cmd)).toBe(false);
+
+  fireEvent.click(screen.getByRole("tab", { name: "Runner" }));
+  await waitFor(() => expect(read("pw_list")).toBe(true));
+  expect(read("pw_users_list")).toBe(false);
+  expect(read("pw_sync_states")).toBe(false);
+
+  // Back to Overview: the Runner stays mounted, hidden.
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+  expect(screen.getByRole("region", { name: "Runner", hidden: true })).toBeInTheDocument();
+});
