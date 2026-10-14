@@ -13,7 +13,7 @@ fn clone_path() -> String {
 
 /// Which of `case_ids` can be exported, and why not for the rest, and which
 /// the repo already has (and whether this app exported them).
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn pw_export_preview(
     app: tauri::AppHandle,
@@ -31,7 +31,7 @@ pub fn pw_export_preview(
 
 /// Keeps the area placements and account choices. One bad placement refuses
 /// the whole map and nothing is saved.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn pw_export_save_map(
     app: tauri::AppHandle,

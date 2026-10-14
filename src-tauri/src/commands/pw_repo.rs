@@ -54,7 +54,7 @@ async fn blocking<T: Send + 'static>(
 }
 
 /// What the clone at `clone` holds, and the health line. Read only.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn pw_repo_structure(clone: String) -> Result<RepoStructure, String> {
     let _t = crate::pw_repo::timed("pw_repo_structure");
@@ -136,7 +136,7 @@ pub async fn pw_preview(
 }
 
 /// The clone's archived reports, newest first.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn pw_reports(clone: String) -> Result<Vec<PwReport>, String> {
     let _t = crate::pw_repo::timed("pw_reports");
@@ -144,7 +144,7 @@ pub fn pw_reports(clone: String) -> Result<Vec<PwReport>, String> {
 }
 
 /// Opens one archived report's `index.html` in the default browser.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn pw_open_report(clone: String, run_id: String) -> Result<(), String> {
     let _t = crate::pw_repo::timed("pw_open_report");
@@ -184,7 +184,7 @@ pub async fn pw_users_list(app: tauri::AppHandle, clone: String) -> Result<Vec<R
 
 /// Account `key`'s password, for Show and nothing else. Read from the
 /// clone's `src/users/users.json`, never logged.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn pw_users_password(clone: String, key: String) -> Result<String, String> {
     let _t = crate::pw_repo::timed("pw_users_password");
