@@ -1106,7 +1106,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
         }
         // The company network, before the case starts: a dropped VPN is
         // waited out here rather than failing the case.
-        if gate.network().await == Network::Unreachable {
+        if !cancel.load(Ordering::SeqCst) && gate.network().await == Network::Unreachable {
             let end = pause_for_network(gate, run, case.case_id, cancel).await;
             if let Some(why) = network_end_reason(end) {
                 if let Some(e) = leave_for_network(root, cases, i, why, run, total, &mut *progress) {

@@ -213,6 +213,9 @@ impl ResetGate for AppGate<'_> {
         let Some((host, port)) = self.network.clone() else {
             return WaitEnd::Resumed;
         };
+        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            return WaitEnd::Stopped;
+        }
         let give_up_after_s = u32::try_from(self.give_up.as_secs()).unwrap_or(u32::MAX);
         let event = |waiting: bool, ended: Option<&str>| AutorunNetworkWait {
             run_id: self.run_id.clone(),

@@ -525,6 +525,19 @@ mod app_gate {
     }
 
     #[tokio::test]
+    async fn a_stop_already_pressed_beats_the_wait() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (told, f) = recorder();
+        let port = closed_port().await;
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_secs(60));
+        let cancel = AtomicBool::new(true);
+        assert_eq!(g.wait_for_network(3, &cancel).await, WaitEnd::Stopped);
+        assert!(told.lock().unwrap().is_empty(), "no waiting event after a Stop");
+        assert!(network::waits().current().is_none());
+    }
+
+    #[tokio::test]
     async fn a_stopped_wait_ends_stopped_with_both_events_and_no_host_or_port() {
         let _g = serial::network_waits();
         let waits = ResetWaits::new();
