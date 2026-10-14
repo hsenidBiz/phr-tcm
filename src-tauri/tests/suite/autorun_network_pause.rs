@@ -427,3 +427,150 @@ async fn a_blocked_case_while_unreachable_is_rerun() {
     assert_eq!(run.cases.len(), 1);
     assert_eq!(run.cases[0].proposed, "Passed");
 }
+
+// ---- The app's own gate (`AppGate`) ----
+
+mod app_gate {
+    use crate::serial;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use v2_lib::autorun::network::{self, Network, WaitEnd};
+    use v2_lib::autorun::replay::ResetGate;
+    use v2_lib::autorun::reset_wait::{AppGate, ResetWaits};
+    use v2_lib::events::AutorunNetworkWait;
+
+    type Told = Arc<Mutex<Vec<AutorunNetworkWait>>>;
+
+    /// A local port nobody listens on: bound, then released.
+    async fn closed_port() -> u16 {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        l.local_addr().unwrap().port()
+    }
+
+    fn gate<'a>(
+        waits: &'a ResetWaits,
+        target: Option<(String, u16)>,
+        told: &'a (dyn Fn(&AutorunNetworkWait) + Send + Sync),
+        give_up: Duration,
+    ) -> AppGate<'a> {
+        AppGate {
+            waits,
+            run_id: "run-net".to_string(),
+            notify: &|_| {},
+            network: target,
+            notify_network: told,
+            recheck: Duration::from_millis(30),
+            give_up,
+        }
+    }
+
+    fn recorder() -> (Told, impl Fn(&AutorunNetworkWait) + Send + Sync) {
+        let told: Told = Arc::new(Mutex::new(Vec::new()));
+        let t = told.clone();
+        (told, move |e: &AutorunNetworkWait| t.lock().unwrap().push(e.clone()))
+    }
+
+    #[tokio::test]
+    async fn no_target_never_checks() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (told, f) = recorder();
+        let mut g = gate(&waits, None, &f, Duration::from_secs(5));
+        assert_eq!(g.network().await, Network::Unchecked);
+        let cancel = AtomicBool::new(false);
+        assert_eq!(g.wait_for_network(1, &cancel).await, WaitEnd::Resumed);
+        assert!(told.lock().unwrap().is_empty());
+        assert!(network::waits().current().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_closed_port_is_unreachable_and_a_live_one_reachable() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (_t, f) = recorder();
+        let port = closed_port().await;
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_secs(5));
+        assert_eq!(g.network().await, Network::Unreachable);
+
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let live = l.local_addr().unwrap().port();
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), live)), &f, Duration::from_secs(5));
+        assert_eq!(g.network().await, Network::Reachable);
+    }
+
+    #[tokio::test]
+    async fn a_stopped_wait_ends_stopped_with_both_events_and_no_host_or_port() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (told, f) = recorder();
+        let port = closed_port().await;
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_secs(60));
+        let cancel = AtomicBool::new(false);
+        let stopper = tokio::spawn(async {
+            for _ in 0..200 {
+                if network::waits().stop("run-net") {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            false
+        });
+        let end = g.wait_for_network(7, &cancel).await;
+        assert!(stopper.await.unwrap());
+        assert_eq!(end, WaitEnd::Stopped);
+        assert!(network::waits().current().is_none(), "no wait left in the registry");
+        let events = told.lock().unwrap().clone();
+        assert_eq!(events.len(), 2);
+        assert!(events[0].waiting && events[0].ended.is_none());
+        assert_eq!(events[0].before_case_id, 7);
+        assert_eq!(events[0].give_up_after_s, 60);
+        assert!(!events[1].waiting);
+        assert_eq!(events[1].ended.as_deref(), Some("stopped"));
+        let json = format!("{events:?}{}", serde_json::to_string(&events[0]).unwrap());
+        assert!(!json.contains("127.0.0.1") && !json.contains(&port.to_string()), "{json}");
+    }
+
+    #[tokio::test]
+    async fn a_wait_ends_resumed_when_the_server_answers() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (told, f) = recorder();
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_secs(60));
+        let cancel = AtomicBool::new(false);
+        assert_eq!(g.wait_for_network(1, &cancel).await, WaitEnd::Resumed);
+        let events = told.lock().unwrap().clone();
+        assert_eq!(events.last().unwrap().ended.as_deref(), Some("resumed"));
+        assert!(network::waits().current().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_wait_gives_up_after_its_limit_and_exit_stops_it() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (told, f) = recorder();
+        let port = closed_port().await;
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_millis(150));
+        let cancel = AtomicBool::new(false);
+        assert_eq!(g.wait_for_network(1, &cancel).await, WaitEnd::GaveUp);
+        assert_eq!(told.lock().unwrap().last().unwrap().ended.as_deref(), Some("gave_up"));
+
+        let (_t, f2) = recorder();
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f2, Duration::from_secs(60));
+        let exit = tokio::spawn(async {
+            for _ in 0..200 {
+                if network::waits().stop_for_exit() {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            false
+        });
+        assert_eq!(g.wait_for_network(1, &cancel).await, WaitEnd::Stopped);
+        assert!(exit.await.unwrap());
+        assert!(!cancel.load(Ordering::SeqCst));
+        assert!(network::waits().current().is_none());
+    }
+}

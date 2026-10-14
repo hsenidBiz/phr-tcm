@@ -218,7 +218,15 @@ fn app_gate<'a>(
     run_id: &str,
     notify: &'a (dyn Fn(&AutorunResetNeeded) + Send + Sync),
 ) -> AppGate<'a> {
-    AppGate { waits, run_id: run_id.to_string(), notify }
+    AppGate {
+        waits,
+        run_id: run_id.to_string(),
+        notify,
+        network: None,
+        notify_network: &|_| {},
+        recheck: std::time::Duration::from_millis(20),
+        give_up: std::time::Duration::from_secs(60),
+    }
 }
 
 /// Wait until a reset is waiting in `waits`; its run's id.

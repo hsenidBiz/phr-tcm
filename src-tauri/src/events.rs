@@ -211,6 +211,19 @@ pub struct AutorunResetNeeded {
     pub remaining: Vec<i32>,
 }
 
+/// An unattended run started waiting for the company network, or stopped
+/// waiting. `waiting: true` when it starts; `waiting: false` with `ended`
+/// ("resumed", "stopped" or "gave_up") when it is over. Never the database
+/// server's host or port.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct AutorunNetworkWait {
+    pub run_id: String,
+    pub before_case_id: i32,
+    pub waiting: bool,
+    pub give_up_after_s: u32,
+    pub ended: Option<String>,
+}
+
 /// Emitted while a module path or a sign-in is being recorded: one per
 /// captured click, one per text field typed into (a sign-in only), one
 /// when the signed-in check is picked (a sign-in only), one per click or

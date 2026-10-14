@@ -898,6 +898,11 @@ export const commands = {
 	remaining: number[],
 } | null>("auto_run_waiting_reset"),
 	/**
+	 *  The person's Stop on a run waiting for the company network. False when
+	 *  that run is not the one waiting.
+	 */
+	autoRunStopNetworkWait: (runId: string) => __TAURI_INVOKE<boolean>("auto_run_stop_network_wait", { runId }),
+	/**
 	 *  Open a visible browser, sign in as `account`, go home, and start
 	 *  listening. Each captured click arrives as a `RecordingEvent`.
 	 */
@@ -1492,6 +1497,7 @@ export const events = {
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
 	autorunCleanupProgress: makeEvent<AutorunCleanupProgress>("autorun-cleanup-progress"),
 	autorunDiscoveryChanged: makeEvent<AutorunDiscoveryChanged>("autorun-discovery-changed"),
+	autorunNetworkWait: makeEvent<AutorunNetworkWait>("autorun-network-wait"),
 	autorunReplayProgress: makeEvent<AutorunReplayProgress>("autorun-replay-progress"),
 	autorunResetNeeded: makeEvent<AutorunResetNeeded>("autorun-reset-needed"),
 	autorunScriptsChanged: makeEvent<AutorunScriptsChanged>("autorun-scripts-changed"),
@@ -2223,6 +2229,20 @@ export type AutorunCleanupProgress = {
  */
 export type AutorunDiscoveryChanged = {
 	active: boolean,
+};
+
+/**
+ *  An unattended run started waiting for the company network, or stopped
+ *  waiting. `waiting: true` when it starts; `waiting: false` with `ended`
+ *  ("resumed", "stopped" or "gave_up") when it is over. Never the database
+ *  server's host or port.
+ */
+export type AutorunNetworkWait = {
+	run_id: string,
+	before_case_id: number,
+	waiting: boolean,
+	give_up_after_s: number,
+	ended: string | null,
 };
 
 /**
