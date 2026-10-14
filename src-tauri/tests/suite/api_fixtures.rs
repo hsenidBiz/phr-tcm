@@ -150,9 +150,106 @@ fn an_output_must_come_from_a_step() {
     f.outputs.insert("late".into(), "{{steps.9.cycleId}}".into());
     f.outputs.insert("plain".into(), "just text".into());
     let p = problems(&f);
-    assert!(p.contains(&"output bad: {{steps.1.nothing}} does not come from a step".to_string()), "{p:?}");
-    assert!(p.contains(&"output late: {{steps.9.cycleId}} does not come from a step".to_string()), "{p:?}");
-    assert!(p.contains(&"output plain: just text does not come from a step".to_string()), "{p:?}");
+    use v2_lib::api_templates::fixture::output_not_from_a_step;
+    assert!(p.contains(&output_not_from_a_step("bad", "{{steps.1.nothing}}")), "{p:?}");
+    assert!(p.contains(&output_not_from_a_step("late", "{{steps.9.cycleId}}")), "{p:?}");
+    assert!(p.contains(&output_not_from_a_step("plain", "just text")), "{p:?}");
+    assert!(output_not_from_a_step("plain", "just text").starts_with("output plain: just text does not come from a step - "));
+}
+
+/// An output may be what a step sent: `{{steps.<n>.params.<param>}}`, or
+/// the exact text of one step's param as written. Anything else that is
+/// not a capture is refused, a param a step does not send included.
+#[test]
+fn an_output_may_be_what_a_step_sent() {
+    use v2_lib::api_templates::fixture::{output_not_from_a_step, sent_ref};
+    let mut f = fixture();
+    f.outputs.insert("cycle_name".into(), "{{steps.1.params.cycleName}}".into());
+    f.outputs.insert("same_name".into(), " {{prefix}} cycle {{now:yyyyMMdd}} ".into());
+    validate(&f, &lookup, &no_flow).unwrap();
+    assert_eq!(sent_ref(&f, "{{steps.1.params.cycleName}}", None), Some((1, "cycleName".to_string())));
+    assert_eq!(sent_ref(&f, "{{prefix}} cycle {{now:yyyyMMdd}}", None), Some((1, "cycleName".to_string())));
+    // Step 2 sends cycleName too, as the capture; the text form finds the
+    // first step that sends it, the placeholder form names its step.
+    assert_eq!(sent_ref(&f, "{{steps.2.params.cycleName}}", None), Some((2, "cycleName".to_string())));
+    assert_eq!(sent_ref(&f, "{{steps.2.params.cycleName}}", Some(1)), None);
+
+    let mut f = fixture();
+    f.outputs.insert("nope".into(), "{{steps.1.params.other}}".into());
+    f.outputs.insert("late".into(), "{{steps.3.params.cycleName}}".into());
+    f.outputs.insert("near".into(), "{{prefix}} cycle {{now:yyyyMMddHHmm}}".into());
+    let p = problems(&f);
+    for (name, v) in [
+        ("nope", "{{steps.1.params.other}}"),
+        ("late", "{{steps.3.params.cycleName}}"),
+        ("near", "{{prefix}} cycle {{now:yyyyMMddHHmm}}"),
+    ] {
+        assert!(p.contains(&output_not_from_a_step(name, v)), "{name}: {p:?}");
+    }
+    assert_eq!(p.len(), 3, "{p:?}");
+}
+
+/// A `creates` name may be the creating step's own param, as
+/// `{{steps.<n>.params.<param>}}` or its text: it must start with
+/// `{{prefix}}`, come from the step that captured the id, and not be the
+/// id's capture.
+#[test]
+fn a_creates_name_may_be_what_the_creating_step_sent() {
+    use v2_lib::api_templates::fixture::{
+        creates_name_not_from_a_step, naming_problems, sent_name_without_prefix,
+    };
+    for name in ["{{steps.1.params.cycleName}}", "{{prefix}} cycle {{now:yyyyMMdd}}"] {
+        let mut f = fixture();
+        f.creates[0].name = name.into();
+        validate(&f, &lookup, &no_flow).unwrap();
+        assert!(naming_problems(&f).is_empty(), "{name}: {:?}", naming_problems(&f));
+    }
+
+    // Not prefixed: refused at save.
+    let mut f = fixture();
+    f.steps[0].params.insert("cycleName".into(), "cycle {{prefix}}".into());
+    f.steps[1].params.insert("note".into(), "{{prefix}} note".into());
+    f.creates[0].name = "{{steps.1.params.cycleName}}".into();
+    assert_eq!(naming_problems(&f), vec![sent_name_without_prefix("cycle", 1, "cycleName")]);
+
+    // Another step's param: not the step that made it.
+    let mut f = fixture();
+    f.steps[1].params.insert("label".into(), "{{prefix}} label".into());
+    f.creates[0].name = "{{steps.2.params.label}}".into();
+    assert_eq!(problems(&f), vec![creates_name_not_from_a_step("cycle", "{{steps.2.params.label}}")]);
+
+    // Text no step sends.
+    let mut f = fixture();
+    f.creates[0].name = "{{prefix}} other".into();
+    assert_eq!(problems(&f), vec![creates_name_not_from_a_step("cycle", "{{prefix}} other")]);
+
+    // A param that sends an earlier step's capture never starts with the
+    // prefix: step 2 makes a suite, and sends the cycle's id as cycleId.
+    let mut f = fixture();
+    f.creates = vec![Creates { kind: "suite".into(), id: "{{steps.2.cycleId}}".into(), name: "{{steps.2.params.cycleId}}".into() }];
+    validate(&f, &lookup, &no_flow).unwrap();
+    assert_eq!(naming_problems(&f), vec![sent_name_without_prefix("suite", 2, "cycleId")]);
+}
+
+/// A fixture that does not read names where it went wrong: a `creates`
+/// entry with no id is `creates[0].id`, not the fixture's own id.
+#[test]
+fn a_shape_refusal_names_the_entry() {
+    use v2_lib::api_templates::fixture::shape_problem;
+    let raw = json!({
+        "id": "f", "name": "F", "account": "admin",
+        "steps": [{ "template": "make-cycle", "params": {} }],
+        "creates": [{ "kind": "cycle", "id": "{{steps.1.cycleId}}", "name": "n" }, { "kind": "cycle", "name": "n" }]
+    });
+    let e = serde_json::from_value::<Fixture>(raw.clone()).unwrap_err();
+    assert_eq!(shape_problem(&raw, &e), "creates[1].id is missing");
+    let raw = json!({ "id": "f", "name": "F", "account": "admin", "steps": [{ "params": {} }] });
+    let e = serde_json::from_value::<Fixture>(raw.clone()).unwrap_err();
+    assert_eq!(shape_problem(&raw, &e), "steps[0].template is missing");
+    // The fixture's own field: serde's sentence, as it was.
+    let raw = json!({ "name": "F", "account": "admin", "steps": [] });
+    let e = serde_json::from_value::<Fixture>(raw.clone()).unwrap_err();
+    assert_eq!(shape_problem(&raw, &e), e.to_string());
 }
 
 #[test]
@@ -162,7 +259,8 @@ fn a_creates_entry_must_come_from_a_step() {
     f.creates[0].name = "fixed name".into();
     let p = problems(&f);
     assert!(p.contains(&"creates: {{steps.1.nothing}} does not come from a step".to_string()), "{p:?}");
-    assert!(p.contains(&"creates: fixed name does not come from a step".to_string()), "{p:?}");
+    let named = v2_lib::api_templates::fixture::creates_name_not_from_a_step("cycle", "fixed name");
+    assert!(p.contains(&named), "{p:?}");
 }
 
 /// A template that only reads: one GET, effect `edit`, with the same
@@ -749,6 +847,32 @@ mod running {
         answer(200, json!({ "cycleId": 274, "cycleName": "AUTOTEST cycle 20261006" }))
     }
 
+    /// An output and a `creates` name that are what step 1 SENT resolve,
+    /// once per run, to the exact text it sent, so a script gets a unique
+    /// name even from a template that hands back only an id.
+    #[tokio::test]
+    async fn what_a_step_sent_is_an_output_and_names_what_it_made() {
+        let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
+        let mut f = fixture();
+        f.outputs.insert("cycle_name".into(), "{{steps.1.params.cycleName}}".into());
+        f.outputs.insert("cycle_text".into(), "{{prefix}} cycle {{now:yyyyMMdd}}".into());
+        f.creates[0].name = "{{prefix}} cycle {{now:yyyyMMdd}}".into();
+        let mut r = rig_with(
+            vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))],
+            &f,
+            &[make_cycle(), add_suite()],
+        );
+        let report = run(&mut r, &f).await;
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.outputs["cycle_name"], json!("AUTOTEST cycle 20261006"));
+        assert_eq!(report.outputs["cycle_text"], json!("AUTOTEST cycle 20261006"));
+        assert_eq!(r.fetched()[0][0]["body"]["fields"]["CycleName"], json!("AUTOTEST cycle 20261006"));
+        assert_eq!(report.made.len(), 1);
+        assert_eq!((report.made[0].id.as_str(), report.made[0].name.as_str()), ("274", "AUTOTEST cycle 20261006"));
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    }
+
     /// The rig's browsers, noting how many held browsers had been closed
     /// when the fixture opened its own.
     struct Watching {
@@ -1314,7 +1438,8 @@ mod running {
 
         let (status, out) = api_fixture_save(&on, &body);
         assert_eq!(status, 400);
-        assert_eq!(out, "step 2: template add-suite is not proven\noutput suite_id: {{steps.2.suiteId}} does not come from a step");
+        let refused = v2_lib::api_templates::fixture::output_not_from_a_step("suite_id", "{{steps.2.suiteId}}");
+        assert_eq!(out, format!("step 2: template add-suite is not proven\n{refused}"));
         assert_eq!(fixture_store::load(dir.path(), ORG, PROJECT, "draft-cycle").unwrap(), None);
 
         store::save(dir.path(), ORG, PROJECT, &add_suite()).unwrap();

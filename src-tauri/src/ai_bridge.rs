@@ -1335,9 +1335,12 @@ pub fn api_fixture_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let Some(raw) = json_arg(v.get("fixture")) else {
         return (400, format!("this call needs a \"fixture\". Expected {FIXTURE_SAVE_SHAPE}."));
     };
-    let fixture: Fixture = match serde_json::from_value(raw) {
+    let fixture: Fixture = match serde_json::from_value(raw.clone()) {
         Ok(f) => f,
-        Err(e) => return (400, format!("that is not a fixture: {e} - call get_api_template_guide for the format")),
+        Err(e) => {
+            let said = crate::api_templates::fixture::shape_problem(&raw, &e);
+            return (400, format!("that is not a fixture: {said} - call get_api_template_guide for the format"));
+        }
     };
     let existed = matches!(fixture_store::load(&root, &ctx.org, &ctx.project, &fixture.id), Ok(Some(_)));
     match fixture_store::save(&root, &ctx.org, &ctx.project, &fixture) {
