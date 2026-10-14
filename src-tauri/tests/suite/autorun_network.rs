@@ -140,3 +140,52 @@ fn the_registry_holds_one_wait() {
     assert!(w.current().is_none());
     assert!(!w.stop_for_exit());
 }
+
+#[test]
+fn target_of_never_guesses_a_port() {
+    assert_eq!(t("host,abc", None), None);
+    assert_eq!(t("host,99999", None), None);
+    assert_eq!(t("host,0", None), None);
+    assert_eq!(t("host", Some(0)), None);
+    assert_eq!(t(r"host\inst,1700", None), Some(("host".into(), 1700)));
+    assert_eq!(t(r"host\inst", Some(1701)), Some(("host".into(), 1701)));
+}
+
+#[test]
+fn target_of_takes_only_plain_tcp_hosts() {
+    assert_eq!(t("TCP:db1", None), Some(("db1".into(), 1433)));
+    assert_eq!(t("Tcp:db1,1500", None), Some(("db1".into(), 1500)));
+    assert_eq!(t("[::1]", None), Some(("::1".into(), 1433)));
+    assert_eq!(t("tcp:[fe80::1],1500", None), Some(("fe80::1".into(), 1500)));
+    assert_eq!(t("10.0.0.5,1434", None), Some(("10.0.0.5".into(), 1434)));
+    assert_eq!(t("[::1],abc", None), None);
+    assert_eq!(t("[nonsense]", None), None);
+    for bad in ["np:db1", "lpc:db1", r"NP:\\db1\pipe", ".", "(local)", "db 1", "db1;x", "a/b", "tcp:", "tcp:."] {
+        assert_eq!(t(bad, None), None, "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn a_stop_during_a_slow_check_is_seen_at_once() {
+    let stop = Arc::new(AtomicBool::new(false));
+    let cancel = AtomicBool::new(false);
+    let s = stop.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        s.store(true, Ordering::SeqCst);
+    });
+    let started = Instant::now();
+    let end = wait_until(
+        || async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            false
+        },
+        &stop,
+        &cancel,
+        MS,
+        Duration::from_secs(60),
+    )
+    .await;
+    assert_eq!(end, WaitEnd::Stopped);
+    assert!(started.elapsed() < Duration::from_millis(250));
+}
