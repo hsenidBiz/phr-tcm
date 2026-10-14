@@ -4,7 +4,7 @@ use crate::writing_style::{self, WritingStyle};
 
 /// The saved style. The starting one is created on the first read when
 /// this machine has none yet.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn writing_style_get() -> WritingStyle {
     match writing_style::dir() {
@@ -30,7 +30,7 @@ pub fn writing_style_save(style: WritingStyle) -> Result<(), String> {
 
 /// The text of a `.md` or `.markdown` file the person picked with Upload
 /// .md, for the editor. Nothing is saved until they press Save.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn writing_style_read_file(path: String) -> Result<String, String> {
     writing_style::read_markdown(std::path::Path::new(&path))

@@ -218,7 +218,7 @@ pub fn log_ui(message: String) {
 /// Nothing is posted here. The reporter sees the body first, which is the
 /// point - the log is theirs to check before it goes anywhere public - and
 /// it means the app needs no GitHub credential of any kind.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn prepare_bug_report(
     app: tauri::AppHandle,
@@ -369,7 +369,7 @@ pub async fn dev_probe_boards_suite(
 /// side that can read it) plus the disk stores under `app_data_dir` - into
 /// one JSON file the user can carry to another laptop. Credentials never
 /// travel: sign-in tokens are memory-only and outside the exported roots.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn export_app_backup(
     app: tauri::AppHandle,
@@ -393,7 +393,7 @@ pub fn export_app_backup(
 /// Read a backup file, restore its disk half, and hand the localStorage
 /// half back to the frontend to apply (only the webview can write it).
 /// The frontend reloads afterwards so every screen re-reads its state.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn import_app_backup(
     app: tauri::AppHandle,

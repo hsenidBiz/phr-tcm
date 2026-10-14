@@ -425,7 +425,7 @@ pub fn add_proposals_with(
 
 /// The environments and which is active. `current_db` is the database the
 /// Company database card has chosen now: on first use it becomes Default's.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn env_list(
     app: tauri::AppHandle,
