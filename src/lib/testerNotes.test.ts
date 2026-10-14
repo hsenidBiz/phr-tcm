@@ -23,6 +23,7 @@ const server = (id: number, c: TestCase, over: Partial<TestCaseFull> = {}): Test
   tags: c.tags,
   automation_status: c.automation_status,
   steps_xml: "",
+  priority: 2,
   steps: c.steps,
   step_ids: c.steps.map((_, i) => String(i + 2)),
   module_value: c.module_value,

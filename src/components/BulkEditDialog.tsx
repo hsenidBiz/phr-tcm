@@ -4,6 +4,7 @@ import { toast } from "../lib/toast";
 import { commands, type TestCase, type TestCaseFull } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import ModuleField from "./ModuleField";
+import PrioritySelect from "./PrioritySelect";
 import TagsField from "./TagsField";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -31,6 +32,7 @@ export default function BulkEditDialog({
 }) {
   const { prefs } = useFieldRefs(org, project);
   const [status, setStatus] = useState(""); // "" = unchanged
+  const [priority, setPriority] = useState<number | null>(null); // null = unchanged
   const [moduleValue, setModuleValue] = useState("");
   const [applyModule, setApplyModule] = useState(false);
   const [tagsMode, setTagsMode] = useState<"unchanged" | "add" | "replace">("unchanged");
@@ -40,7 +42,7 @@ export default function BulkEditDialog({
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   const nothingChosen =
-    !status && !applyModule && tagsMode === "unchanged" && !applyPreconditions;
+    !status && priority == null && !applyModule && tagsMode === "unchanged" && !applyPreconditions;
 
   const apply = useMutation({
     mutationFn: async () => {
@@ -69,6 +71,8 @@ export default function BulkEditDialog({
           module_value: applyModule ? moduleValue : c.module_value,
           preconditions: applyPreconditions ? preconditions : c.preconditions,
           update_id: c.id,
+          // Null leaves each work item's own priority alone.
+          priority,
         };
         const r = await commands.updateTestCase(
           org,
@@ -135,6 +139,16 @@ export default function BulkEditDialog({
             <option>Not Automated</option>
             <option>Planned</option>
           </Select>
+        </label>
+
+        <label className="block text-xs text-muted">
+          Priority
+          <PrioritySelect
+            className="mt-1 w-full"
+            value={priority}
+            onChange={setPriority}
+            keepLabel="Leave unchanged"
+          />
         </label>
 
         <div className="space-y-1">

@@ -27,10 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: "2.1.3-beta.23",
+    version: "2.1.3-beta.24",
     date: "2026-10-14",
     items: [
       "Auto Run closes a project's known pop-ups by itself. List them in the sign-in recipe under close_when_shown, and before each click, fill, drag or upload the runner closes any that is showing and notes it in the step. PeoplesHR's cookie banner is listed in the built-in recipe, so scripts no longer need a guard for it.",
+    ],
+  },
+  {
+    version: "2.1.3-beta.23",
+    date: "2026-10-14",
+    items: [
+      "Test cases now carry a Priority (1 to 4). New cases are created with Priority 2 unless you pick another; updating a case leaves its priority as it is unless you change it. Priority is in Manual Entry, the case editors, bulk edit, and the JSON import and export as \"priority\".",
     ],
   },
   {

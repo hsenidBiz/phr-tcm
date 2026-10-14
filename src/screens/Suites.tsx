@@ -235,6 +235,7 @@ export default function Suites({
         module_value: c.module_value,
         preconditions: c.preconditions,
         update_id: c.id,
+        priority: c.priority,
       }));
       await unwrapStr(commands.viewQueueHtml(queue, label, org, loadNotes(org), pagePalette()));
     },

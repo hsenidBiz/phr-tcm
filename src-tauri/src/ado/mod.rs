@@ -107,6 +107,9 @@ pub struct TestCaseFull {
     pub steps_xml: String,
     pub module_value: String,
     pub preconditions: String,
+    /// `Microsoft.VSTS.Common.Priority`, 1-4; `None` when the work item has
+    /// none (or one outside the picklist).
+    pub priority: Option<i32>,
 }
 
 /// A test case's own words and the project it is in: each step's action
