@@ -9,7 +9,6 @@
 //! `serial::pw_repo`: there is one run slot for the whole process. Every
 //! value is made up.
 
-use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
@@ -142,9 +141,30 @@ fn registry() -> String {
 }
 
 #[test]
-fn the_list_json_parses_without_its_passwords() {
-    let titles = HashMap::from([("FakeSL.performance.general".to_string(), "Analyst".to_string())]);
-    let accounts = parse_list(&format!("a stray line first\n{}", listing()), &titles).unwrap();
+fn the_list_json_parses_to_counts_without_its_passwords() {
+    let refs = parse_list(&format!("a stray line first\n{}", listing())).unwrap();
+    let counts: Vec<(&str, u32, u32)> = refs.iter().map(|r| (r.key.as_str(), r.specs, r.other_refs)).collect();
+    assert_eq!(counts, [("FakeSL.performance.general", 3, 1), ("FakeSL.performance.supervisor", 0, 2)]);
+
+    // Neither the value nor what the webview is sent holds a password.
+    let printed = format!("{refs:?}");
+    let sent = serde_json::to_string(&refs).unwrap();
+    for text in [&printed, &sent] {
+        assert!(!text.contains(PASS_A) && !text.contains(PASS_B), "{text}");
+        assert!(!text.to_lowercase().contains("password"), "{text}");
+        assert!(!text.contains("fake.general@example.test"), "only the key and the counts: {text}");
+    }
+
+    // An unreadable listing never quotes itself.
+    let broken = format!("[{{ \"key\": 1, \"password\": \"{PASS_A}\" }}]");
+    assert_eq!(parse_list(&broken).unwrap_err(), LIST_UNREADABLE);
+    assert_eq!(parse_list("nothing here").unwrap_err(), LIST_UNREADABLE);
+}
+
+#[test]
+fn the_accounts_are_read_from_the_registry_without_their_passwords() {
+    let d = clone();
+    let accounts = users::accounts(d.path()).unwrap();
     assert_eq!(accounts.len(), 2);
     let a = &accounts[0];
     assert_eq!(a.key, "FakeSL.performance.general");
@@ -152,11 +172,13 @@ fn the_list_json_parses_without_its_passwords() {
     assert_eq!(a.display_name, "Fake General");
     assert_eq!(a.title, "Analyst");
     assert_eq!(a.supervisor, "FakeSL.performance.supervisor");
-    assert_eq!((a.specs, a.other_refs), (3, 1));
+    assert_eq!(a.employee_no, "");
+    assert_eq!(accounts[1].key, "FakeSL.performance.supervisor");
     assert_eq!(accounts[1].employee_no, "E0001");
     assert_eq!(accounts[1].title, "");
 
-    // Neither the value nor what the webview is sent holds a password.
+    // Neither the value nor what the webview is sent holds a password, or
+    // a field for one.
     let printed = format!("{accounts:?}");
     let sent = serde_json::to_string(&accounts).unwrap();
     for text in [&printed, &sent] {
@@ -164,10 +186,20 @@ fn the_list_json_parses_without_its_passwords() {
         assert!(!text.to_lowercase().contains("password"), "{text}");
     }
 
-    // An unreadable listing never quotes itself.
-    let broken = format!("[{{ \"key\": 1, \"password\": \"{PASS_A}\" }}]");
-    assert_eq!(parse_list(&broken, &titles).unwrap_err(), LIST_UNREADABLE);
-    assert_eq!(parse_list("nothing here", &titles).unwrap_err(), LIST_UNREADABLE);
+    // A number for an employee number reads as its digits.
+    fs::write(
+        d.path().join("src/users/users.json"),
+        format!(r#"{{ "K": {{ "username": "u", "password": "{PASS_A}", "employeeNo": 42 }}, "_note": "not an account" }}"#),
+    )
+    .unwrap();
+    let accounts = users::accounts(d.path()).unwrap();
+    assert_eq!(accounts.iter().map(|a| (a.key.as_str(), a.employee_no.as_str())).collect::<Vec<_>>(), [("K", "42")]);
+
+    // Missing, or not JSON: said, never quoted.
+    fs::write(d.path().join("src/users/users.json"), format!("{{ \"K\": \"{PASS_A}\"")).unwrap();
+    assert_eq!(users::accounts(d.path()).unwrap_err(), REGISTRY_NOT_JSON);
+    let empty = tempfile::tempdir().unwrap();
+    assert_eq!(users::accounts(empty.path()).unwrap_err(), NO_REGISTRY);
 }
 
 #[test]
@@ -311,12 +343,11 @@ fn a_password_is_never_logged_or_sent_unasked() {
     let (show, rx) = collect();
     let launch = |a: &[String]| fake.launch(a);
 
-    // The list: no password in the accounts, and no line of its output
+    // The counts: no password in them, and no line of the listing's output
     // (the JSON with every password) reaches the sink.
-    let accounts = users::list(d.path(), &show, &launch).unwrap();
-    assert_eq!(accounts.len(), 2);
-    assert!(!holds_a_password(&serde_json::to_string(&accounts).unwrap()));
-    assert_eq!(accounts[0].title, "Analyst", "the title comes from the registry");
+    let refs = users::refs(d.path(), &show, &launch).unwrap();
+    assert_eq!(refs.len(), 2);
+    assert!(!holds_a_password(&serde_json::to_string(&refs).unwrap()));
     let events = drain(&rx);
     assert!(events.iter().all(|e| matches!(e, RunEvent::Done { code: Some(0), .. })), "{events:?}");
     assert_eq!(events.len(), 1);
@@ -374,15 +405,15 @@ fn a_change_without_apply_is_a_dry_run() {
     assert!(!asked[0].iter().any(|a| a == "--apply"));
     assert!(asked[0].iter().any(|a| a == "--cascade"));
 
-    // Applied: the change with --apply, then the list again.
+    // Applied: the change with --apply, then the accounts read again from
+    // the registry, with no second command.
     let applied = users::change(d.path(), &rename, true, &show, &launch).unwrap();
     assert!(applied.applied);
     assert_eq!(applied.accounts.as_ref().map(Vec::len), Some(2));
     assert_eq!(applied.list_error, None);
     let asked = fake.asked();
-    assert_eq!(asked.len(), 3);
+    assert_eq!(asked.len(), 2);
     assert_eq!(asked[1].last().map(String::as_str), Some("--apply"));
-    assert_eq!(asked[2], list_args());
 }
 
 #[cfg(windows)]
@@ -408,13 +439,13 @@ fn a_refusal_is_passed_through() {
     // A failed listing says what its stderr said, and nothing of stdout.
     let fake = Fake::new("exit /b 0");
     fs::remove_file(fake.dir.path().join("list.json")).unwrap();
-    let e = users::list(d.path(), &show, &|a: &[String]| fake.launch(a)).unwrap_err();
+    let e = users::refs(d.path(), &show, &|a: &[String]| fake.launch(a)).unwrap_err();
     assert!(!e.is_empty() && !holds_a_password(&e), "{e}");
 
     // A listing that exits 0 but is not the JSON is unreadable, unquoted.
     let fake = Fake::new("exit /b 0");
     fs::write(fake.dir.path().join("list.json"), format!("not json {PASS_A}")).unwrap();
-    let e = users::list(d.path(), &show, &|a: &[String]| fake.launch(a)).unwrap_err();
+    let e = users::refs(d.path(), &show, &|a: &[String]| fake.launch(a)).unwrap_err();
     assert_eq!(e, LIST_UNREADABLE);
 }
 
@@ -422,7 +453,6 @@ fn a_refusal_is_passed_through() {
 fn a_registry_that_is_missing_or_broken_hides_nothing_it_should_not() {
     let d = tempfile::tempdir().unwrap();
     assert!(users::registry_passwords(d.path()).is_empty());
-    assert!(users::registry_titles(d.path()).is_empty());
     let d = clone();
     let mut found = users::registry_passwords(d.path());
     found.sort();
@@ -483,8 +513,8 @@ fn two_listings_started_together_both_succeed() {
     let fake = Fake::new("exit /b 0");
     let (show, _rx) = collect();
     let (a, b) = std::thread::scope(|s| {
-        let one = s.spawn(|| users::list(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, process::SLOT_WAIT)));
-        let two = s.spawn(|| users::list(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, process::SLOT_WAIT)));
+        let one = s.spawn(|| users::refs(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, process::SLOT_WAIT)));
+        let two = s.spawn(|| users::refs(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, process::SLOT_WAIT)));
         (one.join().unwrap(), two.join().unwrap())
     });
     assert_eq!(a.unwrap().len(), 2);
@@ -504,13 +534,13 @@ fn a_start_that_does_not_wait_or_meets_a_real_run_is_refused_at_once() {
 
     // Behind a short listing, a start that did not ask to wait is refused.
     std::thread::scope(|s| {
-        let first = s.spawn(|| users::list(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, process::SLOT_WAIT)));
+        let first = s.spawn(|| users::refs(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, process::SLOT_WAIT)));
         let at = Instant::now();
         while process::running().is_none() && at.elapsed() < Duration::from_secs(5) {
             std::thread::sleep(Duration::from_millis(10));
         }
         let asked = Instant::now();
-        let e = users::list(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, Duration::ZERO)).unwrap_err();
+        let e = users::refs(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, Duration::ZERO)).unwrap_err();
         assert_eq!(e, process::busy_sentence("npm run users"));
         assert!(asked.elapsed() < Duration::from_millis(500));
         assert!(first.join().unwrap().is_ok());
@@ -521,7 +551,7 @@ fn a_start_that_does_not_wait_or_meets_a_real_run_is_refused_at_once() {
     let (sink, rx) = collect();
     let run = process::start(Launch::test_program(cmd(), ping, std::env::temp_dir(), "npx playwright test"), sink).unwrap();
     let asked = Instant::now();
-    let e = users::list(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, process::SLOT_WAIT)).unwrap_err();
+    let e = users::refs(d.path(), &show, &|a: &[String]| fake.slow_waiting(a, process::SLOT_WAIT)).unwrap_err();
     assert_eq!(e, process::busy_sentence("npx playwright test"));
     assert!(asked.elapsed() < Duration::from_secs(1));
     process::stop(run).unwrap();

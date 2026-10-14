@@ -1321,11 +1321,17 @@ export const commands = {
 	/**  Opens one archived report's `index.html` in the default browser. */
 	pwOpenReport: (clone: string, runId: string) => typedError<null, string>(__TAURI_INVOKE("pw_open_report", { clone, runId })),
 	/**
-	 *  The clone's test accounts, from `npm run users -- list --json`. No
-	 *  password: Show asks for one with `pw_users_password`. Only the command's
-	 *  end reaches the webview (`PwDone`), never a line of its output.
+	 *  The clone's test accounts, read from its `src/users/users.json`: no
+	 *  repo command, no wait for the run slot. No password: Show asks for one
+	 *  with `pw_users_password`.
 	 */
 	pwUsersList: (clone: string) => typedError<RepoAccount[], string>(__TAURI_INVOKE("pw_users_list", { clone })),
+	/**
+	 *  What uses each account, from `npm run users -- list --json`: asked for
+	 *  after the list, as a short repo command. Only the command's end reaches
+	 *  the webview (`PwDone`), never a line of its output.
+	 */
+	pwUsersRefs: (clone: string) => typedError<AccountRefs[], string>(__TAURI_INVOKE("pw_users_refs", { clone })),
 	/**
 	 *  Account `key`'s password, for Show and nothing else. Read from the
 	 *  clone's `src/users/users.json`, never logged.
@@ -1548,6 +1554,18 @@ export type AccountInput = {
 	label: string,
 	username: string,
 	password: string,
+};
+
+/**  What uses one account, from `npm run users -- list --json`. */
+export type AccountRefs = {
+	key: string,
+	/**  Specs that sign in as it (`test.use` or `actingAs`). */
+	specs: number,
+	/**
+	 *  Other references: test case `**User:**` lines and supervisor
+	 *  pointers. Any reference at all refuses a delete.
+	 */
+	other_refs: number,
 };
 
 export type Action = Action_Serialize | Action_Deserialize;
@@ -2846,11 +2864,11 @@ export type ChangeOutcome = {
 	applied: boolean,
 	/**  What the CLI printed, passwords hidden. */
 	output: string[],
-	/**  After an applied change, the accounts listed again. */
+	/**  After an applied change, the accounts read again (`accounts`). */
 	accounts: RepoAccount[] | null,
 	/**
-	 *  Why listing again after an applied change failed, if it did. The
-	 *  change itself was written.
+	 *  Why reading them again after an applied change failed, if it did.
+	 *  The change itself was written.
 	 */
 	list_error: string | null,
 };
@@ -4915,7 +4933,8 @@ export type ReplayedTab = {
 
 /**
  *  One account of the repo's registry. Holds no password: Show reads one
- *  on its own (`password`).
+ *  on its own (`password`). Its reference counts come separately
+ *  (`AccountRefs`).
  */
 export type RepoAccount = {
 	/**  `<environment>.<module>.<role>[.<discriminator>]`. */
@@ -4928,13 +4947,6 @@ export type RepoAccount = {
 	title: string,
 	/**  Another account's key, or empty. */
 	supervisor: string,
-	/**  Specs that sign in as it (`test.use` or `actingAs`). */
-	specs: number,
-	/**
-	 *  Other references: test case `**User:**` lines and supervisor
-	 *  pointers. Any reference at all refuses a delete.
-	 */
-	other_refs: number,
 };
 
 /**  One `suites/<country>/<side>/<module>/<feature>/` folder. */

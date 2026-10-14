@@ -9,7 +9,7 @@ use crate::pw_export::export::{self, ExportResult};
 use crate::pw_repo::handoff;
 use crate::pw_repo::structure::{self, RepoStructure};
 use crate::pw_repo::sync::{self, SyncRow};
-use crate::pw_repo::users::{self, AccountChange, ChangeOutcome, RepoAccount};
+use crate::pw_repo::users::{self, AccountChange, AccountRefs, ChangeOutcome, RepoAccount};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -171,15 +171,25 @@ async fn blocking_users<T: Send + 'static>(
     .map_err(|_| process::COULD_NOT_START.to_string())?
 }
 
-/// The clone's test accounts, from `npm run users -- list --json`. No
-/// password: Show asks for one with `pw_users_password`. Only the command's
-/// end reaches the webview (`PwDone`), never a line of its output.
+/// The clone's test accounts, read from its `src/users/users.json`: no
+/// repo command, no wait for the run slot. No password: Show asks for one
+/// with `pw_users_password`.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn pw_users_list(clone: String) -> Result<Vec<RepoAccount>, String> {
+    let _t = crate::pw_repo::timed("pw_users_list");
+    users::accounts(&chosen(&clone)?)
+}
+
+/// What uses each account, from `npm run users -- list --json`: asked for
+/// after the list, as a short repo command. Only the command's end reaches
+/// the webview (`PwDone`), never a line of its output.
 #[tauri::command]
 #[specta::specta]
-pub async fn pw_users_list(app: tauri::AppHandle, clone: String) -> Result<Vec<RepoAccount>, String> {
-    let _t = crate::pw_repo::timed("pw_users_list");
+pub async fn pw_users_refs(app: tauri::AppHandle, clone: String) -> Result<Vec<AccountRefs>, String> {
+    let _t = crate::pw_repo::timed("pw_users_refs");
     let show = emitter(app);
-    blocking_users(clone, move |clone, start| users::list(clone, &show, start)).await
+    blocking_users(clone, move |clone, start| users::refs(clone, &show, start)).await
 }
 
 /// Account `key`'s password, for Show and nothing else. Read from the

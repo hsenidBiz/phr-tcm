@@ -4,17 +4,20 @@
 //! cannot be deleted, a changed username or password clears that account's
 //! saved session).
 //!
-//! - **The list** is `npm run users -- list --json`: one row per account with
-//!   its key, username, employee number, display name, supervisor and its
-//!   reference counts (`specs`, `otherRefs`). The CLI puts each password in
-//!   that JSON too; it is parsed away (`RepoAccount` has no password field)
-//!   and the listing's output never reaches a sink, a log or an error. The
-//!   CLI does not list the title, so it is read from `src/users/users.json`.
+//! - **The list** (`accounts`) is read from `src/users/users.json`, read
+//!   only: no process, no run slot. Each password is left where it is
+//!   (`RepoAccount` has no password field).
+//! - **The reference counts** (`refs`) come after, from `npm run users --
+//!   list --json` (its `specs` and `otherRefs`), a short repo command. The
+//!   CLI puts each password in that JSON too; only the key and the counts
+//!   are parsed (`AccountRefs`), and the listing's output never reaches a
+//!   sink, a log or an error.
 //! - **Changes** are `add`, `set`, `rm` and `rename --cascade`, built by
 //!   `change_args`. Without `--apply` the CLI writes nothing and prints what
 //!   it would do; that preview is what a change without `apply` returns. With
-//!   `apply` the change is written and the accounts are listed again. A
-//!   refusal (exit code other than 0) comes back as the CLI said it.
+//!   `apply` the change is written and the accounts are read again from the
+//!   registry. A refusal (exit code other than 0) comes back as the CLI said
+//!   it.
 //! - **Show** (`password`) reads one password from `src/users/users.json`,
 //!   read only. The CLI has no command that reads one password: its `list
 //!   --json` carries every password at once, and as a repo command it would
@@ -52,7 +55,6 @@
 use super::process::{self, Launch, RunEvent, Sink};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -86,7 +88,8 @@ pub type Starter<'a> = &'a dyn Fn(&[String]) -> Result<Launch, String>;
 // ---- Types the webview sees ------------------------------------------------
 
 /// One account of the repo's registry. Holds no password: Show reads one
-/// on its own (`password`).
+/// on its own (`password`). Its reference counts come separately
+/// (`AccountRefs`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct RepoAccount {
     /// `<environment>.<module>.<role>[.<discriminator>]`.
@@ -99,6 +102,12 @@ pub struct RepoAccount {
     pub title: String,
     /// Another account's key, or empty.
     pub supervisor: String,
+}
+
+/// What uses one account, from `npm run users -- list --json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+pub struct AccountRefs {
+    pub key: String,
     /// Specs that sign in as it (`test.use` or `actingAs`).
     pub specs: u32,
     /// Other references: test case `**User:**` lines and supervisor
@@ -162,10 +171,10 @@ pub struct ChangeOutcome {
     pub applied: bool,
     /// What the CLI printed, passwords hidden.
     pub output: Vec<String>,
-    /// After an applied change, the accounts listed again.
+    /// After an applied change, the accounts read again (`accounts`).
     pub accounts: Option<Vec<RepoAccount>>,
-    /// Why listing again after an applied change failed, if it did. The
-    /// change itself was written.
+    /// Why reading them again after an applied change failed, if it did.
+    /// The change itself was written.
     pub list_error: Option<String>,
 }
 
@@ -175,7 +184,7 @@ fn npm(rest: Vec<String>) -> Vec<String> {
     ["run", "users", "--"].into_iter().map(String::from).chain(rest).collect()
 }
 
-/// `npm` arguments for listing the accounts.
+/// `npm` arguments for listing the accounts (for their reference counts).
 pub fn list_args() -> Vec<String> {
     npm(vec!["list".into(), "--json".into()])
 }
@@ -257,11 +266,27 @@ pub fn registry_passwords(clone: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Each account's `empTitle`, by key. Empty when the registry cannot be read.
-pub fn registry_titles(clone: &Path) -> HashMap<String, String> {
-    read_registry(clone)
-        .map(|m| m.iter().filter_map(|(k, e)| Some((k.clone(), e.get("empTitle")?.as_str()?.to_string()))).collect())
-        .unwrap_or_default()
+/// The clone's accounts, in the registry's order, read from
+/// `src/users/users.json` and nothing else: no process starts. Each
+/// account's password stays in the file.
+pub fn accounts(clone: &Path) -> Result<Vec<RepoAccount>, String> {
+    let text = |e: &Value, k: &str| match e.get(k) {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Number(n)) => n.to_string(),
+        _ => String::new(),
+    };
+    Ok(read_registry(clone)?
+        .iter()
+        .filter(|(_, e)| e.is_object())
+        .map(|(key, e)| RepoAccount {
+            key: key.clone(),
+            username: text(e, "username"),
+            employee_no: text(e, "employeeNo"),
+            display_name: text(e, "displayName"),
+            title: text(e, "empTitle"),
+            supervisor: text(e, "supervisor"),
+        })
+        .collect())
 }
 
 /// Account `key`'s password, for Show only. Read from the registry; never
@@ -283,45 +308,25 @@ fn hidden_registry_passwords(clone: &Path) -> Vec<String> {
 
 // ---- Parsing and cleaning output -------------------------------------------------
 
-/// One row of `list --json`. The `password` the CLI includes is not a
-/// field, so it is never kept.
+/// One row of `list --json`: the key and the counts only. The `password`
+/// the CLI includes is not a field, so it is never kept.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ListRow {
     key: String,
-    #[serde(default)]
-    username: String,
-    #[serde(default)]
-    employee_no: String,
-    #[serde(default)]
-    display_name: String,
-    #[serde(default)]
-    supervisor: String,
     #[serde(default)]
     specs: u32,
     #[serde(default)]
     other_refs: u32,
 }
 
-/// The accounts in `list --json`'s stdout, with each one's title from
-/// `titles`. Anything ahead of the JSON array is passed over. An error
-/// never quotes the text: it holds passwords.
-pub fn parse_list(stdout: &str, titles: &HashMap<String, String>) -> Result<Vec<RepoAccount>, String> {
+/// Each account's reference counts in `list --json`'s stdout. Anything
+/// ahead of the JSON array is passed over. An error never quotes the text:
+/// it holds passwords.
+pub fn parse_list(stdout: &str) -> Result<Vec<AccountRefs>, String> {
     let start = stdout.find('[').ok_or_else(|| LIST_UNREADABLE.to_string())?;
     let rows: Vec<ListRow> = serde_json::from_str(&stdout[start..]).map_err(|_| LIST_UNREADABLE.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|r| RepoAccount {
-            title: titles.get(&r.key).cloned().unwrap_or_default(),
-            key: r.key,
-            username: r.username,
-            employee_no: r.employee_no,
-            display_name: r.display_name,
-            supervisor: r.supervisor,
-            specs: r.specs,
-            other_refs: r.other_refs,
-        })
-        .collect())
+    Ok(rows.into_iter().map(|r| AccountRefs { key: r.key, specs: r.specs, other_refs: r.other_refs }).collect())
 }
 
 /// One output line made safe to keep and show: a JSON parse error (Node
@@ -417,8 +422,9 @@ fn refusal(lines: &[String], code: i32) -> String {
     }
 }
 
-/// The clone's accounts, from `npm run users -- list --json`.
-pub fn list(clone: &Path, show: &Sink, launch: Starter) -> Result<Vec<RepoAccount>, String> {
+/// What uses each of the clone's accounts, from `npm run users -- list
+/// --json`.
+pub fn refs(clone: &Path, show: &Sink, launch: Starter) -> Result<Vec<AccountRefs>, String> {
     let secrets = hidden_registry_passwords(clone);
     let c = capture(&list_args(), &secrets, show, launch)?;
     if c.code != 0 {
@@ -426,11 +432,12 @@ pub fn list(clone: &Path, show: &Sink, launch: Starter) -> Result<Vec<RepoAccoun
         let errors: Vec<String> = c.lines.into_iter().filter(|(e, _)| *e).map(|(_, l)| l).collect();
         return Err(refusal(&errors, c.code));
     }
-    parse_list(&c.raw_stdout, &registry_titles(clone))
+    parse_list(&c.raw_stdout)
 }
 
 /// Runs `change`: a preview without `apply`, else the change written and
-/// the accounts listed again. A refusal is the CLI's own words.
+/// the accounts read again from the registry (no second command). A
+/// refusal is the CLI's own words.
 pub fn change(clone: &Path, change: &AccountChange, apply: bool, show: &Sink, launch: Starter) -> Result<ChangeOutcome, String> {
     let args = change_args(change, apply)?;
     let mut secrets = change_secrets(change);
@@ -443,7 +450,7 @@ pub fn change(clone: &Path, change: &AccountChange, apply: bool, show: &Sink, la
     if !apply {
         return Ok(ChangeOutcome { applied: false, output, accounts: None, list_error: None });
     }
-    let (accounts, list_error) = match list(clone, show, launch) {
+    let (accounts, list_error) = match accounts(clone) {
         Ok(a) => (Some(a), None),
         Err(e) => (None, Some(e)),
     };

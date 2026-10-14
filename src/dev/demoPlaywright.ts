@@ -11,6 +11,7 @@
 import {
   events,
   type AccountChange,
+  type AccountRefs,
   type AppSettings,
   type ExportMap,
   type ExportResult,
@@ -116,7 +117,9 @@ let reports: PwReport[] = [
   { run_id: "2026-10-10T11-30-05", stats: { passed: 4, failed: 1, flaky: 0, skipped: 0, duration_ms: 41000 } },
 ];
 
-let accounts: RepoAccount[] = [
+/** A demo account with what uses it (the CLI counts these; users.json has none). */
+type DemoAccount = RepoAccount & Omit<AccountRefs, "key">;
+let accounts: DemoAccount[] = [
   { key: "DemoSL.admin.hr", username: "hr.admin@demo.example", employee_no: "E1001", display_name: "Dana Admin", title: "HR Manager", supervisor: "", specs: 5, other_refs: 2 },
   { key: "DemoSL.performance.general", username: "perf.general@demo.example", employee_no: "E1042", display_name: "Pat General", title: "Analyst", supervisor: "DemoSL.performance.supervisor", specs: 3, other_refs: 0 },
   { key: "DemoSL.performance.supervisor", username: "perf.super@demo.example", employee_no: "E1007", display_name: "Sam Supervisor", title: "Team Lead", supervisor: "", specs: 1, other_refs: 1 },
@@ -253,6 +256,9 @@ function streamRun(run: number, count: number) {
   }, 250 * (lines.length + 2));
 }
 
+/** The accounts as users.json gives them: no counts. */
+const listed = (): RepoAccount[] => accounts.map(({ specs: _s, other_refs: _o, ...a }) => a);
+
 function accountChange(change: AccountChange, apply: boolean) {
   const what =
     change.kind === "Add"
@@ -275,7 +281,7 @@ function accountChange(change: AccountChange, apply: boolean) {
   } else if (change.kind === "Remove") {
     accounts = accounts.filter((a) => a.key !== change.key);
   }
-  return ok({ applied: true, output: [what, "  Wrote src/users/users.json"], accounts, list_error: null });
+  return ok({ applied: true, output: [what, "  Wrote src/users/users.json"], accounts: listed(), list_error: null });
 }
 
 /** The Playwright tab's commands, answered from the sample clone. `real`
@@ -315,7 +321,8 @@ export function playwrightPatches(real: { getAppSettings: () => Promise<AppSetti
       }),
     pwReports: (_clone: string) => ok(reports),
     pwOpenReport: (_clone: string, _runId: string) => ok(null),
-    pwUsersList: (_clone: string) => ok(accounts),
+    pwUsersList: (_clone: string) => ok(listed()),
+    pwUsersRefs: (_clone: string) => ok(accounts.map(({ key, specs, other_refs }): AccountRefs => ({ key, specs, other_refs }))),
     pwUsersPassword: (_clone: string, _key: string) => ok("Demo-Only-Pass-2741"),
     pwUsersChange: (_clone: string, change: AccountChange, apply: boolean) => accountChange(change, apply),
     pwSyncStates: (_clone: string, _org: string, _project: string) => ok(SYNC),

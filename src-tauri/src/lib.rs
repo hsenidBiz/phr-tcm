@@ -343,6 +343,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             pw_repo::pw_reports,
             pw_repo::pw_open_report,
             pw_repo::pw_users_list,
+            pw_repo::pw_users_refs,
             pw_repo::pw_users_password,
             pw_repo::pw_users_change,
             pw_repo::pw_sync_states,
