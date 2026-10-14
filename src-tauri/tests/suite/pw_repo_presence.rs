@@ -188,3 +188,45 @@ fn an_excluded_case_is_never_exported_even_when_chosen_to_replace() {
     }
     assert_eq!(snapshot(fx.clone.path()), before);
 }
+
+/// Sync reads the sections from the presence scan, not from a second walk
+/// (`structure::read`): the two must name the same cases, on the fixture
+/// and on a copy with sections where the feature walk does not look.
+#[test]
+fn the_scans_sections_are_the_ones_the_feature_walk_counts() {
+    use std::collections::BTreeSet;
+    use v2_lib::pw_repo::structure::{self, feature_test_cases};
+
+    let walked = |root: &Path| -> BTreeSet<i32> {
+        structure::read(root, true).unwrap().features.iter().flat_map(|f| f.case_ids.iter().copied()).collect()
+    };
+    let scanned = |root: &Path| -> BTreeSet<i32> {
+        let p = scan(root).unwrap();
+        p.cases.keys().copied().filter(|&id| p.has_feature_section(id)).collect()
+    };
+    assert!(!walked(&fixture()).is_empty());
+    assert_eq!(scanned(&fixture()), walked(&fixture()));
+
+    // Sections the feature walk does not read: a common-components file, a
+    // `_` folder, a level too deep. And an Excluded heading is no section.
+    let d = tempfile::tempdir().unwrap();
+    crate::pw_repo_structure::copy_dir(&fixture(), d.path());
+    for (rel, text) in [
+        ("suites/common-components/employee-search/test-cases/search.md", "## 991001 Search\n"),
+        ("suites/_drafts/a/b/c/test-cases/draft.md", "## 991002 Draft\n"),
+        ("suites/sl/admin/performance/rating-methods/extra/test-cases/deep.md", "## 991003 Deep\n"),
+        ("suites/sl/admin/performance/rating-methods/test-cases/left-out.md", "## Excluded 991004 Left out\n"),
+    ] {
+        let path = d.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    assert_eq!(scanned(d.path()), walked(d.path()));
+    for id in [991001, 991002, 991003, 991004] {
+        assert!(!scanned(d.path()).contains(&id), "{id}");
+    }
+
+    assert!(feature_test_cases("suites/sl/admin/performance/rating-methods/test-cases/rating-methods.md"));
+    assert!(!feature_test_cases("suites/common-components/x/y/z/test-cases/a.md"));
+    assert!(!feature_test_cases("suites/sl/admin/performance/rating-methods/test-cases/a.txt"));
+}

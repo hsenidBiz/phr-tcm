@@ -118,7 +118,9 @@ pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
 /// Export the queue in the v1 AI round-trip JSON format
 /// (export_formats.export_records_to_json) - re-importable via parse_file.
 pub fn export_queue_to_json(queue: &[TestCase], path: &str) -> Result<(), String> {
-    std::fs::write(path, queue_to_json_string(queue)?).map_err(|e| e.to_string())
+    // Through a temp file and a rename: a watcher of the file never reads
+    // half of it.
+    crate::ai_tools::atomic_write(std::path::Path::new(path), &queue_to_json_string(queue)?)
 }
 
 /// Write `cases` back into the draft `old_text` by PATCHING it, not by

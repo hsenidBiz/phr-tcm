@@ -16,7 +16,7 @@
 use crate::autorun::{recipe, store, CaseScript};
 use crate::pw_export::clone;
 use crate::pw_export::export::Fingerprinter;
-use crate::pw_repo::{presence, structure};
+use crate::pw_repo::presence;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -275,10 +275,10 @@ fn same(a: &Option<String>, b: &str) -> bool {
 /// `root` is Auto Run's store, `dir` the records' folder. Read only, but
 /// for a record that cannot be parsed (`load`).
 pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &str) -> Result<Vec<SyncRow>, String> {
+    // One open of the clone and one walk of its suites: the sections come
+    // from the same scan as everything else the repo has.
     let clone = Path::new(clone_path.trim());
     let repo = clone::open(clone)?;
-    let sections: BTreeSet<i32> =
-        structure::read(clone, true)?.features.iter().flat_map(|f| f.case_ids.iter().copied()).collect();
     let raw: BTreeSet<i32> = repo
         .index
         .iter()
@@ -311,7 +311,7 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
             _ if found.excluded(id) => SyncState::ExcludedInRepo,
             (None, _) if found.has(id) => SyncState::InRepoNotFromApp,
             (None, _) => SyncState::NeverExported,
-            (Some(_), _) if !(sections.contains(&id) && raw.contains(&id)) => SyncState::NotInRepo,
+            (Some(_), _) if !(found.has_feature_section(id) && raw.contains(&id)) => SyncState::NotInRepo,
             (Some(_), None) => SyncState::OutOfDate { why: "its script is no longer in Auto Run".into() },
             (Some(r), Some(_)) => match fingerprints.of(root, org, project, id, &r.module)? {
                 Some(now) if now.hash == r.fingerprint.hash => SyncState::Current,

@@ -25,7 +25,7 @@ pub struct CopiedIn {
 /// different file already under that name is replaced - the pick is the
 /// user's statement of intent - and the copy it displaces moves to
 /// `.test-cases/.history`, never deleted.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn copy_into_cases(root: String, source: String) -> Result<CopiedIn, String> {
     crate::workspace::copy_into_cases(Path::new(&root), Path::new(&source)).map(|(p, d)| CopiedIn {

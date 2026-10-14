@@ -35,6 +35,24 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** The query key of the states; the clone, org and project are part of it. */
 export const SYNC_KEY = "pw-sync";
 
+/** How many Sync screens are open, and whether a script changed while none
+ * was: the states are kept (`staleTime: Infinity`), so the next Sync to open
+ * reads them again. Watched from the first Sync on, which is when there is
+ * first anything kept. */
+let syncMounted = 0;
+let staleWhileAway = false;
+let awayWatch: Promise<unknown> | null = null;
+function watchWhileAway() {
+  if (awayWatch) return;
+  awayWatch = events.autorunScriptsChanged
+    .listen(() => {
+      if (syncMounted === 0) staleWhileAway = true;
+    })
+    .catch(() => {
+      awayWatch = null;
+    });
+}
+
 /** A UTC stamp as a local date and time; anything unreadable as it is. */
 function localTime(iso: string): string {
   const d = new Date(iso);
@@ -97,6 +115,9 @@ export default function Sync({
     queryKey: key,
     queryFn: () => unwrapStr(commands.pwSyncStates(clone, org, project)),
     enabled: Boolean(clone && org && project),
+    // Kept until something says it changed: a write here, a script changed
+    // (even while Sync was not open, `syncMounted`), Read again or Refresh.
+    staleTime: Infinity,
   });
   const [ticked, setTicked] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -111,11 +132,19 @@ export default function Sync({
   }, [result]);
 
   // A script saved, repaired or removed anywhere: its state may have changed.
+  // One changed while no Sync was open makes the kept states stale too.
   useEffect(() => {
+    syncMounted += 1;
+    watchWhileAway();
+    if (staleWhileAway) {
+      staleWhileAway = false;
+      void qc.invalidateQueries({ queryKey: [SYNC_KEY] });
+    }
     const un = events.autorunScriptsChanged.listen(() => {
       void qc.invalidateQueries({ queryKey: [SYNC_KEY] });
     });
     return () => {
+      syncMounted -= 1;
       un.then((f) => f()).catch(() => {});
     };
   }, [qc]);

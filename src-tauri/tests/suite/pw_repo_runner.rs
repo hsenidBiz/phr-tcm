@@ -230,6 +230,48 @@ fn last_results_come_from_the_newest_report() {
 }
 
 #[test]
+fn a_reports_stats_are_read_once_until_it_changes() {
+    let d = clone();
+    let reports_dir = d.path().join("reports");
+    let run = "2026-10-13T09-14-00";
+    fs::create_dir_all(reports_dir.join(run)).unwrap();
+    fs::write(reports_dir.join(run).join("index.html"), "<html></html>").unwrap();
+    let file = reports_dir.join(format!("{run}.json"));
+    fs::write(&file, saved("report.json")).unwrap();
+    let at = fs::metadata(&file).unwrap().modified().unwrap();
+    let passed = |d: &Path| reports(d)[0].stats.as_ref().map(|s| s.passed);
+    assert_eq!(passed(d.path()), Some(1));
+
+    // The same modified time and size: the kept stats, not the file read
+    // again.
+    let changed = saved("report.json").replace("\"expected\": 1", "\"expected\": 7");
+    assert_ne!(changed, saved("report.json"), "the fixture has \"expected\": 1");
+    fs::write(&file, &changed).unwrap();
+    fs::File::options().write(true).open(&file).unwrap().set_modified(at).unwrap();
+    assert_eq!(passed(d.path()), Some(1));
+
+    // The same modified time, a new size: read again.
+    fs::write(&file, saved("report.json").replace("\"expected\": 1", "\"expected\": 12")).unwrap();
+    fs::File::options().write(true).open(&file).unwrap().set_modified(at).unwrap();
+    assert_eq!(passed(d.path()), Some(12));
+
+    // A new modified time: read again.
+    fs::write(&file, &changed).unwrap();
+    fs::File::options().write(true).open(&file).unwrap().set_modified(at + Duration::from_secs(5)).unwrap();
+    assert_eq!(passed(d.path()), Some(7));
+
+    // Only the stats are read: a report with no stats has none, and a count
+    // that is not a number is 0.
+    fs::write(&file, r#"{ "suites": [{ "title": "x" }], "config": { "a": [1, 2, 3] } }"#).unwrap();
+    fs::File::options().write(true).open(&file).unwrap().set_modified(at + Duration::from_secs(10)).unwrap();
+    assert_eq!(reports(d.path())[0].stats, None);
+    fs::write(&file, r#"{ "stats": { "expected": 2.9, "unexpected": "many", "duration": 12.5 }, "errors": [] }"#).unwrap();
+    fs::File::options().write(true).open(&file).unwrap().set_modified(at + Duration::from_secs(15)).unwrap();
+    let s = reports(d.path())[0].stats.clone().unwrap();
+    assert_eq!((s.passed, s.failed, s.flaky, s.skipped, s.duration_ms), (2, 0, 0, 0, 12));
+}
+
+#[test]
 fn a_report_opens_only_by_a_listed_plain_name() {
     let d = clone();
     fs::create_dir_all(d.path().join("reports/2026-10-13T09-14-00")).unwrap();
@@ -834,4 +876,114 @@ fn errors_from_loading_the_tests_are_carried_on_the_tree() {
 fn a_clean_listing_has_no_load_errors() {
     let c = clone();
     assert!(tree_of(c.path()).load_errors.is_empty());
+}
+
+
+// ---- The kept listing -----------------------------------------------------------
+//
+// The durable cache keeps one listing (every clone's key shares a prefix),
+// so each test here holds the run slot's locks: no other test puts or
+// evicts a listing in the middle of it.
+
+fn kept_key(d: &Path) -> String {
+    v2_lib::cache::keys::pw_list(&d.to_string_lossy())
+}
+
+/// What a listing is kept as: the fingerprint's hash and its suites and
+/// errors.
+fn keep(d: &Path, json: &serde_json::Value) {
+    let print = runner::fingerprint_hash(&runner::fingerprint(d));
+    v2_lib::cache::put(&kept_key(d), &(print, runner::kept_listing(json)));
+}
+
+#[test]
+fn a_listing_kept_on_disk_is_used_while_the_clone_is_unchanged() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let json = parse_list_stdout(&saved("list.json")).unwrap();
+    let (show, _rx) = collect();
+
+    // As after a restart: only the durable entry is there.
+    let d = clone();
+    keep(d.path(), &json);
+    let never = |_: &[String]| -> Result<Launch, String> { panic!("nothing is listed while the kept listing holds") };
+    assert_eq!(runner::list(d.path(), false, &show, &never).unwrap().tests.len(), 5);
+    // Read once from disk, then from memory.
+    assert_eq!(runner::list(d.path(), false, &show, &never).unwrap().tests.len(), 5);
+
+    // List again (refresh) never uses it.
+    let refused = |_: &[String]| -> Result<Launch, String> { Err("listed again".into()) };
+    let d = clone();
+    keep(d.path(), &json);
+    assert_eq!(runner::list(d.path(), true, &show, &refused).unwrap_err(), "listed again");
+}
+
+#[test]
+fn a_kept_listing_of_a_changed_clone_is_forgotten() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let json = parse_list_stdout(&saved("list.json")).unwrap();
+    let (show, _rx) = collect();
+    let d = clone();
+    keep(d.path(), &json);
+    fs::write(d.path().join("suites").join(RM), "// changed\n").unwrap();
+    let refused = |_: &[String]| -> Result<Launch, String> { Err("listed again".into()) };
+    assert_eq!(runner::list(d.path(), false, &show, &refused).unwrap_err(), "listed again");
+    assert!(v2_lib::cache::get::<serde_json::Value>(&kept_key(d.path())).is_none(), "forgotten, not left on disk");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_new_listing_is_kept_as_its_suites_and_errors_with_a_hashed_fingerprint() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let d = clone();
+    let fake = Fake::new("dry-two.json");
+    let (show, _rx) = collect();
+    assert_eq!(runner::list(d.path(), true, &show, &|a| fake.launch(a)).unwrap().tests.len(), 5);
+    let (print, json) = v2_lib::cache::get::<(String, serde_json::Value)>(&kept_key(d.path())).expect("kept on disk");
+    assert_eq!(print, runner::fingerprint_hash(&runner::fingerprint(d.path())));
+    assert_eq!(print.len(), 64, "a SHA-256, not the fingerprint itself");
+    let mut keys: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort();
+    assert_eq!(keys, ["errors", "suites"]);
+    let full = parse_list_stdout(&saved("list.json")).unwrap();
+    assert!(full.get("config").is_some(), "the fixture has a config to leave out");
+    assert_eq!(json["suites"], full["suites"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_listing_over_the_cap_is_kept_in_memory_only() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let d = clone();
+    let fake = Fake::new("dry-two.json");
+    let mut big = parse_list_stdout(&saved("list.json")).unwrap();
+    // Many short lines: the output is read a line at a time.
+    let one = serde_json::json!({ "message": "x".repeat(60) });
+    let n = v2_lib::cache::keys::PW_LIST_PERSIST_MAX / 60 + 1;
+    big["errors"] = serde_json::Value::Array(vec![one; n]);
+    fs::write(fake.dir.path().join("list.json"), serde_json::to_string_pretty(&big).unwrap()).unwrap();
+    let (show, _rx) = collect();
+    runner::list(d.path(), true, &show, &|a| fake.launch(a)).unwrap();
+    assert!(v2_lib::cache::get::<serde_json::Value>(&kept_key(d.path())).is_none(), "not on disk");
+    // This session still has it: no second listing.
+    let never = |_: &[String]| -> Result<Launch, String> { panic!("listed again") };
+    runner::list(d.path(), false, &show, &never).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn the_disk_keeps_one_clones_listing() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let (one, two) = (clone(), clone());
+    let (show, _rx) = collect();
+    for d in [&one, &two] {
+        let fake = Fake::new("dry-two.json");
+        runner::list(d.path(), true, &show, &|a| fake.launch(a)).unwrap();
+    }
+    assert!(v2_lib::cache::get::<serde_json::Value>(&kept_key(one.path())).is_none());
+    assert!(v2_lib::cache::get::<serde_json::Value>(&kept_key(two.path())).is_some());
 }

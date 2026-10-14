@@ -8,9 +8,22 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode } from "react";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import type { ListedTest, PwReport, PwRunning, RunStart, TestTree } from "../../bindings";
 import Runner from "./Runner";
+
+/** How many times a tick box has rendered: the tree's own renders. */
+const boxes = vi.hoisted(() => ({ renders: 0 }));
+vi.mock("../../components/ui/checkbox", async (real) => {
+  const m = await real<typeof import("../../components/ui/checkbox")>();
+  return {
+    ...m,
+    Checkbox: (props: Parameters<typeof m.Checkbox>[0]) => {
+      boxes.renders += 1;
+      return m.Checkbox(props);
+    },
+  };
+});
 
 afterEach(() => {
   clearMocks();
@@ -469,4 +482,25 @@ test("each branch counts its ticked tests, and the output panel waits for a run"
   // SL holds three tests, one of them ticked.
   expect(within(box("Tick SL").parentElement!).getByText("1/3")).toBeInTheDocument();
   expect(within(box("Tick Common Components").parentElement!).getByText("1")).toBeInTheDocument();
+});
+
+test("a run's output does not render the tree again, line by line", async () => {
+  mount();
+  await screen.findByText("User can create a new rating method");
+  fireEvent.click(box("Tick Rating Methods"));
+  fireEvent.click(button("Run picked (2)"));
+  const log = await screen.findByRole("log", { name: "Run output" });
+  await waitFor(() => expect(log).toHaveTextContent("2 selected · 2 matched"));
+  await waitFor(() => expect(button("Stop")).toBeEnabled());
+
+  const before = boxes.renders;
+  await act(async () => {
+    for (let i = 1; i <= 40; i++) await emit("pw-output", { run: 7, line: `line ${i}` });
+  });
+  await waitFor(() => expect(log).toHaveTextContent("line 40"));
+  expect(log.textContent!.indexOf("line 1\n")).toBeLessThan(log.textContent!.indexOf("line 40"));
+  expect(boxes.renders).toBe(before);
+  await act(async () => {
+    await emit("pw-done", { run: 7, code: 0 });
+  });
 });

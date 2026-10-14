@@ -9,7 +9,7 @@ use crate::pw_export::export::{self, ExportResult};
 use crate::pw_repo::handoff;
 use crate::pw_repo::structure::{self, RepoStructure};
 use crate::pw_repo::sync::{self, SyncRow};
-use crate::pw_repo::users::{self, AccountChange, ChangeOutcome, RepoAccount};
+use crate::pw_repo::users::{self, AccountChange, AccountRefs, ChangeOutcome, RepoAccount};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -54,9 +54,10 @@ async fn blocking<T: Send + 'static>(
 }
 
 /// What the clone at `clone` holds, and the health line. Read only.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn pw_repo_structure(clone: String) -> Result<RepoStructure, String> {
+    let _t = crate::pw_repo::timed("pw_repo_structure");
     let clone = chosen(&clone)?;
     structure::structure_for(true, &clone.to_string_lossy(), structure::node_found())
 }
@@ -75,6 +76,7 @@ pub struct PwRunning {
 #[tauri::command]
 #[specta::specta]
 pub fn pw_repo_stop(run: u32) -> Result<(), String> {
+    let _t = crate::pw_repo::timed("pw_repo_stop");
     crate::pw_repo::ensure_offered(crate::ai_tools::autorun_offered())?;
     process::stop(run)
 }
@@ -83,6 +85,7 @@ pub fn pw_repo_stop(run: u32) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub fn pw_repo_running() -> Result<Option<PwRunning>, String> {
+    let _t = crate::pw_repo::timed("pw_repo_running");
     crate::pw_repo::ensure_offered(crate::ai_tools::autorun_offered())?;
     Ok(process::running_now().map(|(run, label, brief)| PwRunning { run, label, brief }))
 }
@@ -93,6 +96,7 @@ pub fn pw_repo_running() -> Result<Option<PwRunning>, String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn pw_list(app: tauri::AppHandle, clone: String, refresh: bool) -> Result<TestTree, String> {
+    let _t = crate::pw_repo::timed("pw_list");
     let show = emitter(app);
     blocking(clone, true, move |clone, start| runner::list(clone, refresh, &show, start)).await
 }
@@ -111,6 +115,7 @@ pub async fn pw_run(
     mode: BrowserMode,
     confirm: bool,
 ) -> Result<RunStart, String> {
+    let _t = crate::pw_repo::timed("pw_run");
     let show = emitter(app);
     blocking(clone, false, move |clone, start| runner::run(clone, &picked, action, mode, confirm, &show, start)).await
 }
@@ -125,6 +130,7 @@ pub async fn pw_preview(
     action: RunAction,
     mode: BrowserMode,
 ) -> Result<RunPreview, String> {
+    let _t = crate::pw_repo::timed("pw_preview");
     let show = emitter(app);
     blocking(clone, false, move |clone, start| runner::preview(clone, &picked, action, mode, &show, start)).await
 }
@@ -132,14 +138,21 @@ pub async fn pw_preview(
 /// The clone's archived reports, newest first.
 #[tauri::command]
 #[specta::specta]
-pub fn pw_reports(clone: String) -> Result<Vec<PwReport>, String> {
-    Ok(runner::reports(&chosen(&clone)?))
+pub async fn pw_reports(clone: String) -> Result<Vec<PwReport>, String> {
+    let _t = crate::pw_repo::timed("pw_reports");
+    let clone = chosen(&clone)?;
+    // The first read parses every report: on a blocking thread.
+    tauri::async_runtime::spawn_blocking(move || runner::reports(&clone)).await.map_err(|e| {
+        crate::applog::warn(format!("pw-repo: the reports could not be read: {e}"));
+        runner::REPORTS_NOT_READ.to_string()
+    })
 }
 
 /// Opens one archived report's `index.html` in the default browser.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn pw_open_report(clone: String, run_id: String) -> Result<(), String> {
+    let _t = crate::pw_repo::timed("pw_open_report");
     let index = runner::report_index(&chosen(&clone)?, &run_id)?;
     tauri_plugin_opener::open_path(&index, None::<&str>).map_err(|e| {
         crate::applog::warn(format!("pw-repo: a report could not be opened: {e}"));
@@ -163,21 +176,33 @@ async fn blocking_users<T: Send + 'static>(
     .map_err(|_| process::COULD_NOT_START.to_string())?
 }
 
-/// The clone's test accounts, from `npm run users -- list --json`. No
-/// password: Show asks for one with `pw_users_password`. Only the command's
-/// end reaches the webview (`PwDone`), never a line of its output.
+/// The clone's test accounts, read from its `src/users/users.json`: no
+/// repo command, no wait for the run slot. No password: Show asks for one
+/// with `pw_users_password`.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn pw_users_list(clone: String) -> Result<Vec<RepoAccount>, String> {
+    let _t = crate::pw_repo::timed("pw_users_list");
+    users::accounts(&chosen(&clone)?)
+}
+
+/// What uses each account, from `npm run users -- list --json`: asked for
+/// after the list, as a short repo command. Only the command's end reaches
+/// the webview (`PwDone`), never a line of its output.
 #[tauri::command]
 #[specta::specta]
-pub async fn pw_users_list(app: tauri::AppHandle, clone: String) -> Result<Vec<RepoAccount>, String> {
+pub async fn pw_users_refs(app: tauri::AppHandle, clone: String) -> Result<Vec<AccountRefs>, String> {
+    let _t = crate::pw_repo::timed("pw_users_refs");
     let show = emitter(app);
-    blocking_users(clone, move |clone, start| users::list(clone, &show, start)).await
+    blocking_users(clone, move |clone, start| users::refs(clone, &show, start)).await
 }
 
 /// Account `key`'s password, for Show and nothing else. Read from the
 /// clone's `src/users/users.json`, never logged.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn pw_users_password(clone: String, key: String) -> Result<String, String> {
+    let _t = crate::pw_repo::timed("pw_users_password");
     users::password(&chosen(&clone)?, &key)
 }
 
@@ -188,6 +213,7 @@ pub fn pw_users_password(clone: String, key: String) -> Result<String, String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn pw_users_change(app: tauri::AppHandle, clone: String, change: AccountChange, apply: bool) -> Result<ChangeOutcome, String> {
+    let _t = crate::pw_repo::timed("pw_users_change");
     let show = emitter(app);
     blocking_users(clone, move |clone, start| users::change(clone, &change, apply, &show, start)).await
 }
@@ -198,6 +224,7 @@ pub async fn pw_users_change(app: tauri::AppHandle, clone: String, change: Accou
 #[tauri::command]
 #[specta::specta]
 pub async fn pw_sync_states(app: tauri::AppHandle, clone: String, org: String, project: String) -> Result<Vec<SyncRow>, String> {
+    let _t = crate::pw_repo::timed("pw_sync_states");
     let root = super::autorun::root(&app)?;
     let dir = super::pw_export::sync_dir(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
@@ -218,6 +245,7 @@ pub async fn pw_handoff(
     project: String,
     cases: Vec<i32>,
 ) -> Result<Vec<handoff::HandoffCard>, String> {
+    let _t = crate::pw_repo::timed("pw_handoff");
     let dir = super::pw_export::sync_dir(&app)?;
     let autorun = super::autorun::root(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
@@ -257,6 +285,7 @@ pub async fn pw_sync_update(
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
 ) -> Result<ExportResult, String> {
+    let _t = crate::pw_repo::timed("pw_sync_update");
     update(app, clone, org, project, cases, replace, module_ref, preconditions_ref).await
 }
 
@@ -276,6 +305,7 @@ pub async fn pw_sync_add_new(
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
 ) -> Result<ExportResult, String> {
+    let _t = crate::pw_repo::timed("pw_sync_add_new");
     let root = super::autorun::root(&app)?;
     let dir = super::pw_export::sync_dir(&app)?;
     let configured = crate::app_settings::current().playwright_clone;

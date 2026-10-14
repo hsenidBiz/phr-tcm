@@ -36,7 +36,7 @@ pub struct TemplatesOverview {
     pub flows: Vec<Flow>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn api_templates_overview(
     app: tauri::AppHandle,
@@ -84,7 +84,7 @@ pub fn remove_template_at(root: &std::path::Path, organization: &str, project: &
 
 /// Every saved fixture of the project, with its run history, for the
 /// Fixtures tab.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn api_fixtures_list(app: tauri::AppHandle, organization: String, project: String) -> Result<Vec<SavedFixture>, String> {
     refuse_unless_offered()?;
@@ -149,7 +149,7 @@ pub fn api_templates_remove_flow(
     remove_flow_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, &id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn api_templates_open_flow(
     app: tauri::AppHandle,
@@ -199,7 +199,7 @@ pub fn remove_flow_at(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn api_templates_export(
     app: tauri::AppHandle,
@@ -211,7 +211,7 @@ pub fn api_templates_export(
     export_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, std::path::Path::new(&path))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn api_templates_import(
     app: tauri::AppHandle,
@@ -419,7 +419,7 @@ static CLEANUP_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// each with whether a proven delete template can delete it. Remembered,
 /// so a cleanup must state the same query. Only the webview calls this:
 /// there is no bridge route and no MCP tool for it.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_cleanup_preview(
     app: tauri::AppHandle,

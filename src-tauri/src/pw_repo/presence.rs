@@ -32,6 +32,9 @@ pub struct Found {
     pub from_app: bool,
     /// The test-case files that have it under `## Excluded <id>`.
     pub excluded_in: Vec<String>,
+    /// The test-case files that have it under a `## <id>` heading (its
+    /// sections), Excluded ones not among them.
+    pub sections: Vec<String>,
 }
 
 impl Found {
@@ -67,6 +70,12 @@ impl Presence {
 
     pub fn excluded(&self, id: i32) -> bool {
         self.cases.get(&id).is_some_and(Found::excluded)
+    }
+
+    /// Whether `id` has a section in a feature's test-case file, the files
+    /// the Overview counts (`structure::feature_test_cases`).
+    pub fn has_feature_section(&self, id: i32) -> bool {
+        self.cases.get(&id).is_some_and(|f| f.sections.iter().any(|p| structure::feature_test_cases(p)))
     }
 
     /// "Excluded in the repo (in pc-cycle-setup.md)" for a case the team
@@ -140,6 +149,12 @@ pub fn scan_repo(repo: &ClonedRepo) -> Presence {
         let found = out.cases.entry(id).or_default();
         if !found.excluded_in.contains(&place) {
             found.excluded_in.push(place);
+        }
+    }
+    for (id, place) in md {
+        let found = out.cases.entry(id).or_default();
+        if !found.sections.contains(&place) {
+            found.sections.push(place);
         }
     }
     out

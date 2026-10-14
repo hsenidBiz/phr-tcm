@@ -39,7 +39,7 @@ pub struct SubmitItemResult {
 /// and the progress bar sweeps while a call is in flight.
 const BATCH_SIZE: usize = crate::ado::wit_batch::MAX_PER_BATCH;
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn parse_import_file(path: String) -> Result<ImportResult, String> {
     let parsed = import_parser::parse_file(&path)?;
@@ -83,13 +83,13 @@ pub fn unwatch_all_files(state: tauri::State<'_, crate::filewatch::FileWatchStat
     crate::filewatch::stop_all(&state);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn export_queue_json(path: String, queue: Vec<model::TestCase>) -> Result<(), String> {
     import_parser::export_queue_to_json(&queue, &path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn export_queue_html(path: String, queue: Vec<model::TestCase>, subtitle: String) -> Result<(), String> {
     // A saved-to-disk export is shared/archived - no autosaving note boxes,
@@ -399,7 +399,7 @@ fn write_general_comment(
 
 /// The whole-set comment held in a JSON file, for prefilling the panel.
 /// A file that has none - or can't be read - simply has no comment.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn read_general_comment(path: String) -> String {
     import_parser::read_json_text(std::path::Path::new(&path))

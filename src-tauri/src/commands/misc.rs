@@ -218,7 +218,7 @@ pub fn log_ui(message: String) {
 /// Nothing is posted here. The reporter sees the body first, which is the
 /// point - the log is theirs to check before it goes anywhere public - and
 /// it means the app needs no GitHub credential of any kind.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn prepare_bug_report(
     app: tauri::AppHandle,
@@ -371,23 +371,28 @@ pub async fn dev_probe_boards_suite(
 /// travel: sign-in tokens are memory-only and outside the exported roots.
 #[tauri::command]
 #[specta::specta]
-pub fn export_app_backup(
+pub async fn export_app_backup(
     app: tauri::AppHandle,
     local_storage: std::collections::BTreeMap<String, String>,
     path: String,
 ) -> Result<crate::backup::ExportSummary, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let (files, skipped) = crate::backup::collect_files(&data_dir);
-    let exported_at = crate::applog::stamp();
     let version = app.package_info().version.to_string();
-    let keys = local_storage.len() as u32;
-    let n_files = files.len() as u32;
-    let doc = crate::backup::build_doc(&version, &exported_at, local_storage, files);
-    crate::backup::write_doc(&doc, std::path::Path::new(&path))?;
-    crate::applog::info(format!(
-        "Exported a backup to {path} ({keys} setting(s), {n_files} file(s))"
-    ));
-    Ok(crate::backup::ExportSummary { path, keys, files: n_files, skipped })
+    // Reading every file and writing one big one: on a blocking thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let (files, skipped) = crate::backup::collect_files(&data_dir);
+        let exported_at = crate::applog::stamp();
+        let keys = local_storage.len() as u32;
+        let n_files = files.len() as u32;
+        let doc = crate::backup::build_doc(&version, &exported_at, local_storage, files);
+        crate::backup::write_doc(&doc, std::path::Path::new(&path))?;
+        crate::applog::info(format!(
+            "Exported a backup to {path} ({keys} setting(s), {n_files} file(s))"
+        ));
+        Ok(crate::backup::ExportSummary { path, keys, files: n_files, skipped })
+    })
+    .await
+    .map_err(|e| format!("the backup could not be made: {e}"))?
 }
 
 /// Read a backup file, restore its disk half, and hand the localStorage
@@ -395,22 +400,27 @@ pub fn export_app_backup(
 /// The frontend reloads afterwards so every screen re-reads its state.
 #[tauri::command]
 #[specta::specta]
-pub fn import_app_backup(
+pub async fn import_app_backup(
     app: tauri::AppHandle,
     path: String,
 ) -> Result<crate::backup::BackupImportResult, String> {
-    let doc = crate::backup::read_doc(std::path::Path::new(&path))?;
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let files_restored = crate::backup::restore_files(&data_dir, &doc.files)?;
-    crate::applog::info(format!(
-        "Imported a backup from {path} (made {} by version {}; {} setting(s), {files_restored} file(s))",
-        doc.exported_at, doc.app_version, doc.local_storage.len()
-    ));
-    Ok(crate::backup::BackupImportResult {
-        local_storage: doc.local_storage,
-        files_restored,
-        exported_at: doc.exported_at,
-        app_version: doc.app_version,
+    // Reading one big file and writing every file back: on a blocking thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let doc = crate::backup::read_doc(std::path::Path::new(&path))?;
+        std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+        let files_restored = crate::backup::restore_files(&data_dir, &doc.files)?;
+        crate::applog::info(format!(
+            "Imported a backup from {path} (made {} by version {}; {} setting(s), {files_restored} file(s))",
+            doc.exported_at, doc.app_version, doc.local_storage.len()
+        ));
+        Ok(crate::backup::BackupImportResult {
+            local_storage: doc.local_storage,
+            files_restored,
+            exported_at: doc.exported_at,
+            app_version: doc.app_version,
+        })
     })
+    .await
+    .map_err(|e| format!("the backup could not be restored: {e}"))?
 }

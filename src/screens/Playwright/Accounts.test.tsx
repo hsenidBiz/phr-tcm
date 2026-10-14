@@ -8,7 +8,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import type { ChangeOutcome, RepoAccount } from "../../bindings";
+import type { AccountRefs, ChangeOutcome, RepoAccount } from "../../bindings";
 import Accounts from "./Accounts";
 
 afterEach(() => clearMocks());
@@ -20,8 +20,6 @@ const GENERAL: RepoAccount = {
   display_name: "Fake General",
   title: "Analyst",
   supervisor: "FakeSL.performance.supervisor",
-  specs: 3,
-  other_refs: 0,
 };
 const SUPERVISOR: RepoAccount = {
   key: "FakeSL.performance.supervisor",
@@ -30,15 +28,19 @@ const SUPERVISOR: RepoAccount = {
   display_name: "",
   title: "",
   supervisor: "",
-  specs: 0,
-  other_refs: 1,
 };
+const REFS: AccountRefs[] = [
+  { key: GENERAL.key, specs: 3, other_refs: 0 },
+  { key: SUPERVISOR.key, specs: 0, other_refs: 1 },
+];
 const PASSWORD = "Made-Up-Pass-4417";
 const CLONE = "C:\\clone";
 
 type Call = { cmd: string; args: Record<string, unknown> };
 
-function mount(opts: { change?: (args: Record<string, unknown>) => ChangeOutcome } = {}) {
+function mount(
+  opts: { change?: (args: Record<string, unknown>) => ChangeOutcome; refs?: () => AccountRefs[] | Promise<AccountRefs[]> } = {},
+) {
   const calls: Call[] = [];
   let listed = [GENERAL, SUPERVISOR];
   mockIPC((cmd, raw) => {
@@ -46,6 +48,7 @@ function mount(opts: { change?: (args: Record<string, unknown>) => ChangeOutcome
     calls.push({ cmd, args });
     if (cmd === "pw_users_list") return listed;
     if (cmd === "pw_users_password") return PASSWORD;
+    if (cmd === "pw_users_refs") return opts.refs ? opts.refs() : REFS;
     if (cmd === "pw_users_change") {
       const r = opts.change?.(args) ?? {
         applied: args.apply as boolean,
@@ -74,7 +77,7 @@ test("the list shows each account without a password", async () => {
   mount();
   expect(await screen.findByText(GENERAL.key)).toBeTruthy();
   expect(screen.getByText(SUPERVISOR.key)).toBeTruthy();
-  expect(screen.getByText("3 specs")).toBeTruthy();
+  expect(await screen.findByText("3 specs")).toBeTruthy();
   expect(screen.getByText("1 other reference")).toBeTruthy();
   const row = screen.getByRole("row", { name: (name) => name.startsWith(`${GENERAL.key} `) });
   for (const text of [GENERAL.username, GENERAL.display_name, GENERAL.title, `reports to ${SUPERVISOR.key}`]) {
@@ -85,6 +88,36 @@ test("the list shows each account without a password", async () => {
     expect(within(row).getByRole("button", { name })).toHaveAttribute("title");
   }
   expect(document.body.textContent).not.toContain(PASSWORD);
+});
+
+test("the counts come after the list: the list is shown at once, and Used by fills in", async () => {
+  let release: (r: AccountRefs[]) => void = () => {};
+  const { calls } = mount({ refs: () => new Promise((resolve) => (release = resolve)) });
+  expect(await screen.findByText(GENERAL.key)).toBeTruthy();
+  // Asked for only after the list.
+  await waitFor(() => expect(calls.some((c) => c.cmd === "pw_users_refs")).toBe(true));
+  expect(calls.findIndex((c) => c.cmd === "pw_users_list")).toBeLessThan(calls.findIndex((c) => c.cmd === "pw_users_refs"));
+  expect(screen.getByLabelText(`Counting what uses ${GENERAL.key}`).textContent).toBe("…");
+  expect(screen.queryByText("3 specs")).toBeNull();
+
+  release(REFS);
+  expect(await screen.findByText("3 specs")).toBeTruthy();
+  expect(screen.getByText("1 other reference")).toBeTruthy();
+  expect(screen.queryByLabelText(`Counting what uses ${GENERAL.key}`)).toBeNull();
+});
+
+test("counts that cannot be read leave Used by blank, with a note", async () => {
+  mount({
+    refs: () => {
+      throw "npm run users ended with exit code 1 and said nothing.";
+    },
+  });
+  expect(await screen.findByText(GENERAL.key)).toBeTruthy();
+  const note = await screen.findByText(/^Used by could not be read: /);
+  expect(note).toHaveClass("text-muted");
+  expect(screen.queryByLabelText(`Counting what uses ${GENERAL.key}`)).toBeNull();
+  expect(screen.queryByText("Not used")).toBeNull();
+  expect(screen.queryByText("3 specs")).toBeNull();
 });
 
 test("a form opens in a dialog, says which step it is on, and Cancel closes it", async () => {

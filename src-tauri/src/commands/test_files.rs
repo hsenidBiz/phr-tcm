@@ -63,7 +63,7 @@ pub fn ensure_folder_at(offered: bool, root: &Path, organization: &str, project:
     Ok(dir)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn test_files_list(app: tauri::AppHandle, organization: String, project: String) -> Result<Vec<TestFile>, String> {
     let root = crate::commands::autorun::root(&app)?;

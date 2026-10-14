@@ -49,7 +49,7 @@ const HEALTHY: RepoStructure = {
 
 type Call = { cmd: string; args: Record<string, unknown> };
 
-function mount(clone: string, structure: RepoStructure | (() => RepoStructure) = HEALTHY) {
+function mount(clone: string, structure: RepoStructure | (() => RepoStructure) = HEALTHY, opts: { listFails?: boolean } = {}) {
   const calls: Call[] = [];
   let saved = clone;
   mockIPC((cmd, args) => {
@@ -61,6 +61,11 @@ function mount(clone: string, structure: RepoStructure | (() => RepoStructure) =
     }
     if (cmd === "pw_repo_structure") return typeof structure === "function" ? structure() : structure;
     if (cmd === "pw_export_preview") throw "no preview in this test";
+    if (cmd === "pw_list") {
+      if (opts.listFails) throw "Playwright did not finish listing the tests.";
+      return { tests: [], projects: [], last_report: null, load_errors: [] };
+    }
+    if (cmd === "pw_reports" || cmd === "pw_users_list" || cmd === "pw_sync_states") return [];
     return null;
   });
   const view = render(
@@ -179,4 +184,104 @@ test("a request left pending is cleared when the tab unmounts, so it cannot reop
   mount("C:/repo");
   await screen.findByText("All good");
   expect(screen.queryByRole("heading", { name: "Export to Playwright" })).not.toBeInTheDocument();
+});
+
+test("Refresh reads every Playwright query again; nothing is read again unasked", async () => {
+  const calls = mount("C:/repo");
+  await screen.findByText("All good");
+  for (const name of ["Runner", "Accounts 2", "Sync"]) fireEvent.click(screen.getByRole("tab", { name }));
+  const PW = ["pw_repo_structure", "pw_list", "pw_reports", "pw_users_list", "pw_sync_states"];
+  await waitFor(() => expect(PW.every((cmd) => calls.some((c) => c.cmd === cmd))).toBe(true));
+  const count = (cmd: string) => calls.filter((c) => c.cmd === cmd).length;
+  const before = Object.fromEntries(PW.map((cmd) => [cmd, count(cmd)]));
+
+  // Going back and forth between the tabs reads nothing again.
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Runner" }));
+  for (const cmd of PW) expect(count(cmd)).toBe(before[cmd]);
+
+  // Refresh waits for the Accounts tab's counts (a repo command) to end.
+  await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => {
+    for (const cmd of PW) expect(count(cmd)).toBeGreaterThan(before[cmd]);
+  });
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+});
+
+test("a tab is read only once it is opened, and stays mounted after", async () => {
+  const calls = mount("C:/repo");
+  await screen.findByText("All good");
+  expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+  const read = (cmd: string) => calls.some((c) => c.cmd === cmd);
+  for (const cmd of ["pw_list", "pw_reports", "pw_users_list", "pw_sync_states"]) expect(read(cmd)).toBe(false);
+
+  fireEvent.click(screen.getByRole("tab", { name: "Runner" }));
+  await waitFor(() => expect(read("pw_list")).toBe(true));
+  expect(read("pw_users_list")).toBe(false);
+  expect(read("pw_sync_states")).toBe(false);
+
+  // Back to Overview: the Runner stays mounted, hidden.
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+  expect(screen.getByRole("region", { name: "Runner", hidden: true })).toBeInTheDocument();
+});
+
+test("pointing at the Runner tab starts its listing; a clone that cannot run is not listed", async () => {
+  const calls = mount("C:/repo");
+  await screen.findByText("All good");
+  const listed = () => calls.filter((c) => c.cmd === "pw_list").length;
+  fireEvent.pointerEnter(screen.getByRole("tab", { name: "Accounts 2" }));
+  fireEvent.focus(screen.getByRole("tab", { name: "Sync" }));
+  expect(listed()).toBe(0);
+  fireEvent.pointerEnter(screen.getByRole("tab", { name: "Runner" }));
+  await waitFor(() => expect(listed()).toBe(1));
+  expect(calls.find((c) => c.cmd === "pw_list")?.args).toEqual({ clone: "C:/repo", refresh: false });
+  // Pointing again asks for nothing more.
+  fireEvent.pointerEnter(screen.getByRole("tab", { name: "Runner" }));
+  expect(listed()).toBe(1);
+  calls.unmount();
+
+  const blocked = mount("C:/repo", { ...HEALTHY, health: ["NoNodeModules"] });
+  await screen.findByRole("status", { name: "Repo health" });
+  fireEvent.pointerEnter(screen.getByRole("tab", { name: "Runner" }));
+  fireEvent.focus(screen.getByRole("tab", { name: "Runner" }));
+  expect(blocked.some((c) => c.cmd === "pw_list")).toBe(false);
+});
+
+test("after a failed listing, pointing at the Runner tab does not list again", async () => {
+  const calls = mount("C:/repo", HEALTHY, { listFails: true });
+  await screen.findByText("All good");
+  const listed = () => calls.filter((c) => c.cmd === "pw_list").length;
+  fireEvent.click(screen.getByRole("tab", { name: "Runner" }));
+  expect(await screen.findByText("Playwright did not finish listing the tests.")).toBeInTheDocument();
+  expect(listed()).toBe(1);
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+  fireEvent.pointerEnter(screen.getByRole("tab", { name: "Runner" }));
+  fireEvent.focus(screen.getByRole("tab", { name: "Runner" }));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(listed()).toBe(1);
+});
+
+test("Refresh waits while an account change or a Runner command is going", async () => {
+  let release: () => void = () => {};
+  const calls = mount("C:/repo");
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+    if (cmd === "get_app_settings") return { playwright_clone: "C:/repo" };
+    if (cmd === "pw_repo_structure") return HEALTHY;
+    if (cmd === "pw_list") return { tests: [], projects: [], last_report: null, load_errors: [] };
+    if (cmd === "pw_users_refs") return new Promise((r) => (release = () => r([])));
+    if (cmd === "pw_reports" || cmd === "pw_users_list" || cmd === "pw_sync_states") return [];
+    return null;
+  });
+  await screen.findByText("All good");
+  const refresh = () => screen.getByRole("button", { name: "Refresh" });
+  expect(refresh()).toBeEnabled();
+  // The Accounts tab's counts are a repo command: Refresh waits for it.
+  fireEvent.click(screen.getByRole("tab", { name: "Accounts 2" }));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "pw_users_refs")).toBe(true));
+  await waitFor(() => expect(refresh()).toBeDisabled());
+  await act(async () => release());
+  await waitFor(() => expect(refresh()).toBeEnabled());
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
 });

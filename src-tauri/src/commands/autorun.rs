@@ -512,7 +512,7 @@ fn sentence_case(s: &str) -> String {
 }
 
 /// What discovery has mapped of this project, for the Discovery card.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_load_map(app: tauri::AppHandle, organization: String, project: String) -> Result<MapView, String> {
     map_view(&root(&app)?, &organization, &project, crate::autorun::sessions::now_ms())
@@ -1724,7 +1724,7 @@ pub async fn keep_answering<S, T: crate::browser::cdp::Transport>(
 /// One failure screenshot as a data URL the webview can show. The name is
 /// checked in `store::load_shot`; nothing outside the shots folder can be
 /// read through here.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_shot(app: tauri::AppHandle, name: String) -> Result<String, String> {
     let bytes = store::load_shot(&root(&app)?, &name)?;
@@ -1913,7 +1913,7 @@ pub struct PlanView {
 /// `preview_order` stands in for the saved order for this one call (the
 /// Execution order dialog asks about a list the person has moved but not
 /// saved); nothing is written.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_plan(
     app: tauri::AppHandle,
@@ -2392,7 +2392,7 @@ pub fn auto_run_open_download(app: tauri::AppHandle, run_id: String, name: Strin
 /// The files in a run's download folder with their sizes, read from disk
 /// now: a name the run recorded that is missing here is a file that is no
 /// longer on this machine.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_download_sizes(
     app: tauri::AppHandle,
@@ -2467,7 +2467,7 @@ pub fn auto_run_load_quirks(
 
 /// What a supervised run just saved says about the project's quirks: the
 /// run pane calls this once, after its save; the review screen never does.
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn auto_run_count_evidence(
     app: tauri::AppHandle,

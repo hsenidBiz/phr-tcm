@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { memo, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { commands, type TestCaseFull } from "../../bindings";
@@ -31,6 +31,76 @@ import { IconBulkEdit, IconClear, IconCollapseAll, IconExport, IconRemove, IconR
 /** The Edit tab: click selects a card, ctrl+click toggles, shift+click
  * ranges; the chevron (or double-click) expands the editor. Selection
  * unlocks the bulk toolbar. Grouping by module is the v1 smart grouping. */
+/** One case of the list. Memo: its handlers are made once by the list and
+ * reach the list's current state themselves, so a click on one case draws
+ * only the rows whose selection or open state changed. */
+const ExistingRow = memo(function ExistingRow({
+  c,
+  selected,
+  open,
+  org,
+  project,
+  moduleRef,
+  preconditionsRef,
+  onCardClick,
+  onToggleOpen,
+  onSaved,
+}: {
+  c: TestCaseFull;
+  selected: boolean;
+  open: boolean;
+  org: string;
+  project: string;
+  moduleRef: string | null;
+  preconditionsRef: string | null;
+  onCardClick: (c: TestCaseFull, e: MouseEvent) => void;
+  onToggleOpen: (id: number) => void;
+  onSaved: () => void;
+}) {
+  return (
+    <li
+      className={cn(
+        // The open editor hosts a non-portaled Combobox dropdown that must
+        // paint past the row's box - content-visibility's paint containment
+        // would clip it, so drop cv-row while this row is open.
+        !open && "cv-row",
+        "cursor-pointer select-none rounded-md border transition-colors",
+        selected ? "border-accent bg-accent-soft" : "border-border hover:border-border-strong",
+      )}
+      onClick={(e) => onCardClick(c, e)}
+      onDoubleClick={() => onToggleOpen(c.id)}
+    >
+      <div className="flex items-center gap-2 px-3 py-2 text-sm">
+        <button
+          aria-label={`Expand #${c.id}`}
+          className="text-muted hover:text-accent"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleOpen(c.id);
+          }}
+        >
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
+        <span className="id-mono text-faint">#{c.id}</span>
+        <span className="text-text">{c.title}</span>
+        <span className="ml-auto text-xs text-faint">
+          {c.steps.length} steps · {c.automation_status}
+        </span>
+      </div>
+      <Collapse open={open}>
+        <CaseEditor
+          original={c}
+          org={org}
+          project={project}
+          moduleRef={moduleRef}
+          preconditionsRef={preconditionsRef}
+          onSaved={onSaved}
+        />
+      </Collapse>
+    </li>
+  );
+});
+
 export default function ExistingCases({
   org,
   project,
@@ -138,7 +208,7 @@ export default function ExistingCases({
   const openGroupNames = ordered.map((g) => g.group).filter((g) => g && !collapsedGroups.has(g));
   const collapsible = (openId != null ? 1 : 0) + openGroupNames.length;
 
-  const handleCardClick = (c: TestCaseFull, e: React.MouseEvent) => {
+  const handleCardClick = (c: TestCaseFull, e: MouseEvent) => {
     const idx = flat.findIndex((x) => x.id === c.id);
     if (e.shiftKey && anchor != null) {
       const a = flat.findIndex((x) => x.id === anchor);
@@ -234,6 +304,20 @@ export default function ExistingCases({
     qc.invalidateQueries({ queryKey });
     qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, pbiId] });
   };
+
+  /** The rows' handlers, made once: each reaches this render's
+   * `handleCardClick` and `refresh` through `rowLatest`, so a row (memo) is
+   * not drawn again for new handlers and never acts on an old selection. */
+  const rowLatest = useRef({ handleCardClick, refresh });
+  rowLatest.current = { handleCardClick, refresh };
+  const rowActions = useMemo(
+    () => ({
+      onCardClick: (c: TestCaseFull, e: MouseEvent) => rowLatest.current.handleCardClick(c, e),
+      onToggleOpen: (id: number) => setOpenId((o) => (o === id ? null : id)),
+      onSaved: () => rowLatest.current.refresh(),
+    }),
+    [],
+  );
 
   return (
     <section data-tour="case-list" className="space-y-2">
@@ -409,49 +493,17 @@ export default function ExistingCases({
             <Collapse open={shown.length > 0} animateIn={settled && !regroup.regrouping}>
             <ul className="space-y-1">
               {shown.map((c) => (
-                <li
+                <ExistingRow
                   key={c.id}
-                  className={cn(
-                    // The open editor hosts a non-portaled Combobox dropdown that must
-                    // paint past the row's box - content-visibility's paint containment
-                    // would clip it, so drop cv-row while this row is open.
-                    openId !== c.id && "cv-row",
-                    "cursor-pointer select-none rounded-md border transition-colors",
-                    selected.has(c.id)
-                      ? "border-accent bg-accent-soft"
-                      : "border-border hover:border-border-strong",
-                  )}
-                  onClick={(e) => handleCardClick(c, e)}
-                  onDoubleClick={() => setOpenId((o) => (o === c.id ? null : c.id))}
-                >
-                  <div className="flex items-center gap-2 px-3 py-2 text-sm">
-                    <button
-                      aria-label={`Expand #${c.id}`}
-                      className="text-muted hover:text-accent"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setOpenId((o) => (o === c.id ? null : c.id));
-                      }}
-                    >
-                      {openId === c.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    </button>
-                    <span className="id-mono text-faint">#{c.id}</span>
-                    <span className="text-text">{c.title}</span>
-                    <span className="ml-auto text-xs text-faint">
-                      {c.steps.length} steps · {c.automation_status}
-                    </span>
-                  </div>
-                  <Collapse open={openId === c.id}>
-                    <CaseEditor
-                      original={c}
-                      org={org}
-                      project={project}
-                      moduleRef={prefs.moduleRef}
-                      preconditionsRef={prefs.preconditionsRef}
-                      onSaved={refresh}
-                    />
-                  </Collapse>
-                </li>
+                  c={c}
+                  selected={selected.has(c.id)}
+                  open={openId === c.id}
+                  org={org}
+                  project={project}
+                  moduleRef={prefs.moduleRef}
+                  preconditionsRef={prefs.preconditionsRef}
+                  {...rowActions}
+                />
               ))}
             </ul>
             </Collapse>

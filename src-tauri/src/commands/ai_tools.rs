@@ -79,7 +79,7 @@ fn root_of(working_dir: Option<&str>) -> Option<&str> {
     working_dir.map(str::trim).filter(|s| !s.is_empty())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn detect_ai_tools(working_dir: Option<String>) -> Vec<DetectedTool> {
     detect_in(&home_dir(), &appdata_dir(), &is_on_path, root_of(working_dir.as_deref()))

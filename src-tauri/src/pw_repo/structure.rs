@@ -175,6 +175,19 @@ fn features(suites: &Path) -> Vec<RepoFeature> {
     out
 }
 
+/// Whether `rel` (relative to the clone, forward slashes) is a test-case
+/// file the feature walk reads: `suites/<country>/<side>/<module>/<feature>/
+/// test-cases/<name>.md`, no level being `_…`, `.…` or `common-components`
+/// (`folders`).
+pub fn feature_test_cases(rel: &str) -> bool {
+    let parts: Vec<&str> = rel.split('/').collect();
+    parts.len() == 7
+        && parts[0] == "suites"
+        && parts[1..5].iter().all(|p| !p.starts_with('_') && !p.starts_with('.') && *p != "common-components")
+        && parts[5] == "test-cases"
+        && parts[6].ends_with(".md")
+}
+
 /// The ids of a test-case file's `## <id>` headings, in order: a level-two
 /// heading whose first word is all digits. `## Amendment`, `## Steps` and
 /// deeper headings are not test cases, and nor is `## Excluded <id>`

@@ -1,7 +1,12 @@
-// The Playwright tab's Accounts: the repo's test accounts, listed and changed
-// through its own `npm run users` CLI (pw_repo::users), so the repo's checks
-// apply: a rename rewrites every reference, a referenced account cannot be
-// deleted, a changed username or password clears its saved session.
+// The Playwright tab's Accounts: the repo's test accounts, read from its
+// src/users/users.json at once (no repo command), and changed through its own
+// `npm run users` CLI (pw_repo::users), so the repo's checks apply: a rename
+// rewrites every reference, a referenced account cannot be deleted, a changed
+// username or password clears its saved session.
+//
+// What uses each account (Used by) comes after the list, from the CLI as a
+// short repo command; the column says so until it arrives, and stays blank,
+// with a note, if it cannot be read.
 //
 // The accounts are a table with each row's actions as icon buttons. Add,
 // Edit, Rename and Delete open a form in a dialog. Every change is previewed
@@ -13,8 +18,8 @@
 // any change, or leaving the screen drops it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useRef, useState, type ReactNode } from "react";
-import { commands, type AccountChange, type AccountField, type ChangeOutcome, type RepoAccount } from "../../bindings";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { commands, type AccountChange, type AccountField, type AccountRefs, type ChangeOutcome } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
@@ -89,7 +94,7 @@ function heading(form: Form): string {
   }
 }
 
-function references(a: RepoAccount): string[] {
+function references(a: AccountRefs): string[] {
   if (a.specs === 0 && a.other_refs === 0) return ["Not used"];
   return [a.specs ? plural(a.specs, "spec") : "", a.other_refs ? plural(a.other_refs, "other reference") : ""].filter(Boolean);
 }
@@ -119,15 +124,35 @@ function Field({ label, value, onChange, type = "text" }: { label: string; value
   );
 }
 
-export default function Accounts({ clone, onChanged }: { clone: string; onChanged?: () => void }) {
+export default function Accounts({
+  clone,
+  onChanged,
+  onBusy,
+}: {
+  clone: string;
+  onChanged?: () => void;
+  /** Whether a change or the counts' repo command is going. */
+  onBusy?: (busy: boolean) => void;
+}) {
   const qc = useQueryClient();
   const titleId = useId();
   const accounts = useQuery({
     queryKey: [ACCOUNTS_KEY, clone],
     queryFn: () => unwrapStr(commands.pwUsersList(clone)),
-    // A failed listing is a repo command that failed: List again retries.
+    // A failed read is a file that could not be read: List again retries.
     retry: false,
+    // A change here sets the new list; List again and Refresh read it again.
+    staleTime: Infinity,
   });
+  /** What uses each account: a repo command, asked for once the list is in. */
+  const refs = useQuery({
+    queryKey: [ACCOUNTS_KEY, clone, "refs"],
+    queryFn: () => unwrapStr(commands.pwUsersRefs(clone)),
+    enabled: accounts.isSuccess,
+    retry: false,
+    staleTime: Infinity,
+  });
+  const refsByKey = new Map((refs.data ?? []).map((r) => [r.key, r]));
   const [form, setForm] = useState<Form | null>(null);
   /** The form as it is now, for a preview that answers after an edit. */
   const latest = useRef<Form | null>(null);
@@ -185,6 +210,8 @@ export default function Accounts({ clone, onChanged }: { clone: string; onChange
     setDone(r.output);
     if (r.list_error) setError(r.list_error);
     if (r.accounts) qc.setQueryData([ACCOUNTS_KEY, clone], r.accounts);
+    // A change can move what uses an account: counted again, after.
+    void qc.invalidateQueries({ queryKey: [ACCOUNTS_KEY, clone, "refs"] });
     onChanged?.();
   };
 
@@ -203,6 +230,11 @@ export default function Accounts({ clone, onChanged }: { clone: string; onChange
   };
 
   const active = busy || accounts.isFetching;
+  const commandGoing = busy || refs.isFetching;
+  useEffect(() => {
+    onBusy?.(commandGoing);
+  }, [onBusy, commandGoing]);
+  useEffect(() => () => onBusy?.(false), [onBusy]);
   const close = () => !busy && open(null);
   const th = "px-3 py-2 text-left text-xs font-medium text-muted";
   const iconButton = "px-2";
@@ -214,7 +246,7 @@ export default function Accounts({ clone, onChanged }: { clone: string; onChange
           <IconAdd aria-hidden />
           Add account
         </Button>
-        <Button size="sm" variant="outline" disabled={active} onClick={() => void accounts.refetch()}>
+        <Button size="sm" variant="outline" disabled={active} onClick={() => void qc.invalidateQueries({ queryKey: [ACCOUNTS_KEY, clone] })}>
           <IconRefresh aria-hidden />
           List again
         </Button>
@@ -235,6 +267,7 @@ export default function Accounts({ clone, onChanged }: { clone: string; onChange
 
       {accounts.isLoading && <Hint>Listing the accounts…</Hint>}
       {accounts.isError && <p className="whitespace-pre-wrap text-xs text-danger">{accounts.error.message}</p>}
+      {refs.isError && <Hint className="whitespace-pre-wrap">{`Used by could not be read: ${refs.error.message}`}</Hint>}
       {accounts.isSuccess && list.length === 0 && <Hint>No accounts in the repo yet.</Hint>}
       {list.length > 0 && (
         <div className="overflow-x-auto rounded-lg border border-border bg-surface">
@@ -255,6 +288,7 @@ export default function Accounts({ clone, onChanged }: { clone: string; onChange
             <tbody>
               {list.map((a) => {
                 const showing = a.key in shown;
+                const used = refsByKey.get(a.key);
                 return (
                   <tr key={a.key} className="border-b border-border align-top last:border-b-0 hover:bg-surface-2/60">
                     <td className="px-3 py-2">
@@ -278,11 +312,18 @@ export default function Accounts({ clone, onChanged }: { clone: string; onChange
                     </td>
                     <td className="px-3 py-2 text-muted">{a.title || <span className="text-faint">-</span>}</td>
                     <td className="px-3 py-2 text-xs">
-                      {references(a).map((r) => (
-                        <div key={r} className={r === "Not used" ? "text-faint" : "text-muted"}>
-                          {r}
-                        </div>
-                      ))}
+                      {refs.isPending && accounts.isSuccess && !refs.isError ? (
+                        <span className="text-faint" aria-label={`Counting what uses ${a.key}`}>
+                          …
+                        </span>
+                      ) : (
+                        used &&
+                        references(used).map((r) => (
+                          <div key={r} className={r === "Not used" ? "text-faint" : "text-muted"}>
+                            {r}
+                          </div>
+                        ))
+                      )}
                     </td>
                     <td className="w-px px-2 py-1.5 whitespace-nowrap">
                       <div className="flex items-center justify-end gap-0.5">

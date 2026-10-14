@@ -102,7 +102,7 @@ pub async fn capture_screens() -> Result<Vec<capture::ScreenShot>, String> {
 }
 
 /// Read any file for attaching to a result (name + base64 bytes).
-#[tauri::command]
+#[tauri::command(async)]
 #[specta::specta]
 pub fn read_file_b64(path: String) -> Result<RunAttachmentOut, String> {
     use base64::Engine;

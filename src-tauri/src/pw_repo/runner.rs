@@ -48,6 +48,7 @@ pub const LIST_STOPPED: &str = "Listing the tests was stopped before it finished
 pub const LIST_TIMED_OUT: &str = "Playwright did not finish listing the tests within 2 minutes, so it was stopped.";
 pub const LIST_UNREADABLE: &str = "Playwright's list of the tests could not be read. The output panel shows what it said.";
 pub const RUN_LIST_NOT_WRITTEN: &str = "The run list could not be written in the clone. Settings → Logs has the details.";
+pub const REPORTS_NOT_READ: &str = "The reports could not be read. Settings → Logs has the details.";
 pub const NO_SUCH_REPORT: &str = "That report is not in the clone's reports folder.";
 pub const REPORT_NOT_OPENED: &str = "The report could not be opened in your browser. Settings → Logs has the details.";
 
@@ -556,8 +557,9 @@ pub fn test_titles(source: &str) -> Vec<String> {
 /// The newest report's result for each test it ran, keyed by test id, and
 /// that report's run id.
 fn last_results(clone: &Path) -> (Option<String>, HashMap<String, LastResult>) {
-    let Some(newest) = reports(clone).into_iter().next() else { return (None, HashMap::new()) };
-    let json = std::fs::read_to_string(clone.join("reports").join(format!("{}.json", newest.run_id)))
+    // Only the newest report is read: no other report's stats.
+    let Some(newest) = report_ids(&clone.join("reports")).into_iter().next() else { return (None, HashMap::new()) };
+    let json = std::fs::read_to_string(clone.join("reports").join(format!("{newest}.json")))
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok());
     let mut out = HashMap::new();
@@ -572,7 +574,7 @@ fn last_results(clone: &Path) -> (Option<String>, HashMap<String, LastResult>) {
         };
         out.insert(test_id(&spec.file, &spec.title_path), result);
     }
-    (Some(newest.run_id), out)
+    (Some(newest), out)
 }
 
 // ---- Options (cli/state/options-file.mjs, run-options.mjs) ------------------
@@ -950,21 +952,73 @@ fn capture(args: &[String], show: &Sink, launch: Starter) -> Result<String, Stri
     }
 }
 
-/// The clone's tests: the session's listing unless `refresh`, else a new
-/// one. The ADO ids and results are read again either way.
+/// The clone's tests: the kept listing unless `refresh`, else a new one.
+/// The listing is kept in memory and on disk (it survives a restart), and
+/// used only while the clone's `fingerprint` is the one it was listed at.
+/// Only what the tree reads is kept (`kept_listing`), with a hash of the
+/// fingerprint (`fingerprint_hash`); a listing of `PW_LIST_PERSIST_MAX`
+/// bytes or more is kept in memory only, and the disk keeps one clone's
+/// listing at a time (`cache::evict_pw_lists`). The ADO ids and results are
+/// read again either way.
 pub fn list(clone: &Path, refresh: bool, show: &Sink, launch: Starter) -> Result<TestTree, String> {
     let key = keys::pw_list(&clone.to_string_lossy());
-    let print = fingerprint(clone);
-    let cached = if refresh { None } else { cache::session_fresh::<(String, Arc<Value>)>(&key, keys::PW_LIST_TTL) };
-    let raw = match cached {
-        Some((was, v)) if was == print => v,
-        _ => {
-            let v = Arc::new(parse_list_stdout(&capture(&list_args(), show, launch)?)?);
+    let print = fingerprint_hash(&fingerprint(clone));
+    let ttl_ms = keys::PW_LIST_TTL.as_millis() as u64;
+    let kept = |print: &str| -> Option<Arc<Value>> {
+        if let Some((was, v)) = cache::session_fresh::<(String, Arc<Value>)>(&key, keys::PW_LIST_TTL) {
+            if was == print {
+                return Some(v);
+            }
+        }
+        let (was, v) = cache::fresh::<(String, Value)>(&key, ttl_ms)?;
+        if was != print {
+            // The clone changed since: the kept listing is of no more use.
+            cache::forget(&key);
+            return None;
+        }
+        // Read from disk once; this session reuses it from memory.
+        let v = Arc::new(v);
+        cache::session_put(&key, (was, v.clone()));
+        Some(v)
+    };
+    let raw = match if refresh { None } else { kept(&print) } {
+        Some(v) => v,
+        None => {
+            let v = Arc::new(kept_listing(&parse_list_stdout(&capture(&list_args(), show, launch)?)?));
+            match serde_json::to_string(&(&print, v.as_ref())) {
+                Ok(text) if text.len() < keys::PW_LIST_PERSIST_MAX => cache::put(&key, &(&print, v.as_ref())),
+                Ok(text) => {
+                    crate::applog::debug(format!(
+                        "pw-repo: the test listing is {} bytes, so it is kept for this session only",
+                        text.len()
+                    ));
+                    cache::forget(&key);
+                }
+                Err(_) => cache::forget(&key),
+            }
             cache::session_put(&key, (print, v.clone()));
             v
         }
     };
     Ok(build_tree(clone, &raw))
+}
+
+/// The part of a `--list` listing the tree reads: its `suites` and its
+/// `errors`. Playwright's config and metadata are left out.
+pub fn kept_listing(full: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    for k in ["suites", "errors"] {
+        if let Some(v) = full.get(k) {
+            out.insert(k.to_string(), v.clone());
+        }
+    }
+    Value::Object(out)
+}
+
+/// A clone's `fingerprint` as kept beside its listing: its SHA-256, hex.
+pub fn fingerprint_hash(print: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(print.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// What decides what `--list` returns, as the repo's `cli/inventory/cache.mjs`
@@ -1082,28 +1136,76 @@ pub fn run(
 
 // ---- Reports -------------------------------------------------------------------
 
-/// Every `reports/<runId>/` with an `index.html`, newest first (run ids are
-/// local timestamps, so their names sort by date).
-pub fn reports(clone: &Path) -> Vec<PwReport> {
-    let root = clone.join("reports");
-    let mut out: Vec<PwReport> = std::fs::read_dir(&root)
+/// The run id of every `reports/<runId>/` under `root` with an
+/// `index.html`, newest first (run ids are local timestamps, so their names
+/// sort by date).
+fn report_ids(root: &Path) -> Vec<String> {
+    let mut ids: Vec<String> = std::fs::read_dir(root)
         .map(|rd| {
             rd.flatten()
                 .filter(|e| e.path().is_dir() && e.path().join("index.html").is_file())
                 .map(|e| e.file_name().to_string_lossy().to_string())
-                .map(|run_id| PwReport { stats: stats(&root.join(format!("{run_id}.json"))), run_id })
                 .collect()
         })
         .unwrap_or_default();
-    out.sort_by(|a, b| b.run_id.cmp(&a.run_id));
-    out
+    ids.sort_by(|a, b| b.cmp(a));
+    ids
 }
 
+/// Every `reports/<runId>/` with an `index.html`, newest first, each with
+/// its stats.
+pub fn reports(clone: &Path) -> Vec<PwReport> {
+    let root = clone.join("reports");
+    report_ids(&root)
+        .into_iter()
+        .map(|run_id| PwReport { stats: stats(&root.join(format!("{run_id}.json"))), run_id })
+        .collect()
+}
+
+/// A report's top level, read for its `stats` only: serde passes over every
+/// other key (`IgnoredAny`) without building it.
+#[derive(Deserialize)]
+struct ReportTop {
+    stats: Option<RawStats>,
+}
+
+#[derive(Deserialize)]
+struct RawStats {
+    #[serde(default, deserialize_with = "count")]
+    expected: u32,
+    #[serde(default, deserialize_with = "count")]
+    unexpected: u32,
+    #[serde(default, deserialize_with = "count")]
+    flaky: u32,
+    #[serde(default, deserialize_with = "count")]
+    skipped: u32,
+    #[serde(default, deserialize_with = "count")]
+    duration: u32,
+}
+
+/// A count as a whole number: a fraction is cut, anything not a number is 0.
+fn count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    let v = Value::deserialize(d)?;
+    Ok(v.as_f64().unwrap_or(0.0).clamp(0.0, u32::MAX as f64) as u32)
+}
+
+/// The stats of the report `file`, kept for the session by its path, size
+/// and modified time: a report already read is not parsed again until it
+/// changes.
 fn stats(file: &Path) -> Option<ReportStats> {
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
-    let s = v.get("stats")?;
-    let n = |k: &str| s.get(k).and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, u32::MAX as f64) as u32;
-    Some(ReportStats { passed: n("expected"), failed: n("unexpected"), flaky: n("flaky"), skipped: n("skipped"), duration_ms: n("duration") })
+    let meta = std::fs::metadata(file).ok()?;
+    let at = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    let key = keys::pw_report_stats(&file.to_string_lossy(), meta.len());
+    if let Some((was, kept)) = cache::session_fresh::<(u128, Option<ReportStats>)>(&key, keys::PW_REPORT_STATS_TTL) {
+        if was == at {
+            return kept;
+        }
+    }
+    let read = std::fs::read_to_string(file).ok().and_then(|t| serde_json::from_str::<ReportTop>(&t).ok()).and_then(|top| top.stats).map(|s| {
+        ReportStats { passed: s.expected, failed: s.unexpected, flaky: s.flaky, skipped: s.skipped, duration_ms: s.duration }
+    });
+    cache::session_put(&key, (at, read.clone()));
+    read
 }
 
 /// A listed report's `index.html`. Only a plain folder name under

@@ -45,3 +45,28 @@ pub fn ensure_offered(offered: bool) -> Result<(), String> {
         Err(NOT_OFFERED.to_string())
     }
 }
+
+/// How long a Playwright command took, logged at debug level when it is
+/// dropped (`timed`): its name and the milliseconds, and nothing else (no
+/// path, argument or secret ever reaches the line).
+pub struct Timed {
+    name: &'static str,
+    start: std::time::Instant,
+}
+
+/// Starts timing command `name`; the line is logged when the guard drops,
+/// so an early `?` return is timed too.
+pub fn timed(name: &'static str) -> Timed {
+    Timed { name, start: std::time::Instant::now() }
+}
+
+/// The line `Timed` logs for command `name` after `elapsed`.
+pub fn timing_line(name: &str, elapsed: std::time::Duration) -> String {
+    format!("pw-timing: {name} took {} ms", elapsed.as_millis())
+}
+
+impl Drop for Timed {
+    fn drop(&mut self) {
+        crate::applog::debug(timing_line(self.name, self.start.elapsed()));
+    }
+}
