@@ -1121,6 +1121,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
         let index = i as u32;
         let (case_id, title) = (case.case_id, case.title.as_str());
         // Its script is not deleted while the case runs.
+        // (It is held through a network wait too: the case is run again after it.)
         let _replaying = store::replaying(case_id);
         // The script's own step count, not what the case actually ran -
         // it must read the same on every phase of a case, including
@@ -1129,114 +1130,117 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
         let mut count = 0u32;
         let mut network_reruns = 0u32;
         let record = loop {
-        let record = match store::load_script(root, case_id) {
-            Err(why) => unrun(case_id, title, "", format!("the script could not be read: {why}")),
-            Ok(None) => unrun(case_id, title, "", "this case has no script on this machine".into()),
-            Ok(Some(script)) => {
-                count = script.steps.len() as u32;
-                let account = run_account.or(script.account.as_deref());
-                // Where the case starts, then the records it relies on -
-                // both before its browser opens, so a case that cannot
-                // start never signs in.
-                let mut notice = None;
-                let ready = match nav::route_for(&nav_file, script.area.as_deref(), case.module.as_deref(), account) {
-                    Err(why) => Err(why),
-                    Ok(path) => {
-                        let checked =
-                            preconditions::check_case(precondition_db, root, organization, project, &script.preconditions)
-                                .await;
-                        notice = checked.notice;
-                        match checked.blocked {
-                            Some(why) => Err(why),
-                            // Then its fixtures: the setup's approval, the
-                            // shared drafts' values and the setup's own run,
-                            // in a browser of its own that is closed, and its
-                            // lease let go, before the case's browser opens.
-                            None => setup::prepare_case(browsers, root, organization, project, &script, timing, cancel)
-                                .await
-                                .map(|prepared| (path, prepared.script)),
+            let record = match store::load_script(root, case_id) {
+                Err(why) => unrun(case_id, title, "", format!("the script could not be read: {why}")),
+                Ok(None) => unrun(case_id, title, "", "this case has no script on this machine".into()),
+                Ok(Some(script)) => {
+                    count = script.steps.len() as u32;
+                    let account = run_account.or(script.account.as_deref());
+                    // Where the case starts, then the records it relies on -
+                    // both before its browser opens, so a case that cannot
+                    // start never signs in.
+                    let mut notice = None;
+                    let ready = match nav::route_for(&nav_file, script.area.as_deref(), case.module.as_deref(), account) {
+                        Err(why) => Err(why),
+                        Ok(path) => {
+                            let checked =
+                                preconditions::check_case(precondition_db, root, organization, project, &script.preconditions)
+                                    .await;
+                            notice = checked.notice;
+                            match checked.blocked {
+                                Some(why) => Err(why),
+                                // Then its fixtures: the setup's approval, the
+                                // shared drafts' values and the setup's own run,
+                                // in a browser of its own that is closed, and its
+                                // lease let go, before the case's browser opens.
+                                None => setup::prepare_case(browsers, root, organization, project, &script, timing, cancel)
+                                    .await
+                                    .map(|prepared| (path, prepared.script)),
+                            }
                         }
-                    }
-                };
-                let mut record = match ready {
-                    Err(why) => blocked_before_start(&script, account, why),
-                    // The case runs from the copy with its fixture values in;
-                    // the saved script is never changed.
-                    Ok((path, ready)) => {
-                        // A path but no recipe: the sign-in fails first and
-                        // says what to add, so no route is needed.
-                        let route = path.zip(sign_in_recipe.as_ref()).map(|(p, r)| Route::new(r, p.clone()));
-                        let at = Place { run_id: &run_id, index, total, case_id, title, count };
-                        let go = Go { root, organization, project, script: &ready, account, route: route.as_ref(), timing, cancel };
-                        let first = one_go(browsers, &go, &at, progress)
-                            .await
-                            .unwrap_or_else(|why| unrun(case_id, title, "Blocked", format!("the browser did not open: {why}")));
-                        // One more go, from sign-in in a fresh browser, for a
-                        // failure that looked transient - once, never again,
-                        // and never after a stop. It gets a fresh draft: the
-                        // setup runs again first (the first go may have
-                        // changed its draft), and a setup that cannot run
-                        // keeps the first go's record.
-                        let looked_transient = if retry_transient { {
-                            let components = super::components::load_components(root, organization, project).unwrap_or_default();
-                            transient::is_transient_with(&first, Some(&ready), &components)
-                        } } else { None };
-                        match looked_transient {
-                            Some(why) if !cancel.load(Ordering::SeqCst) => {
-                                match setup::prepare_case(browsers, root, organization, project, &script, timing, cancel).await {
-                                    Err(not) => transient::retry_not_started(first, &not),
-                                    Ok(again) => {
-                                        let go = Go { script: &again.script, ..go };
-                                        match one_go(browsers, &go, &at, progress).await {
-                                            Ok(second) => transient::after_retry(why, first.duration_ms, second),
-                                            // No second go to keep: the first go's
-                                            // steps and evidence stay the record.
-                                            Err(open) => transient::retry_not_started(
-                                                first,
-                                                &format!("the browser did not open: {open}"),
-                                            ),
+                    };
+                    let mut record = match ready {
+                        Err(why) => blocked_before_start(&script, account, why),
+                        // The case runs from the copy with its fixture values in;
+                        // the saved script is never changed.
+                        Ok((path, ready)) => {
+                            // A path but no recipe: the sign-in fails first and
+                            // says what to add, so no route is needed.
+                            let route = path.zip(sign_in_recipe.as_ref()).map(|(p, r)| Route::new(r, p.clone()));
+                            let at = Place { run_id: &run_id, index, total, case_id, title, count };
+                            let go = Go { root, organization, project, script: &ready, account, route: route.as_ref(), timing, cancel };
+                            let first = one_go(browsers, &go, &at, progress)
+                                .await
+                                .unwrap_or_else(|why| unrun(case_id, title, "Blocked", format!("the browser did not open: {why}")));
+                            // One more go, from sign-in in a fresh browser, for a
+                            // failure that looked transient - once, never again,
+                            // and never after a stop. It gets a fresh draft: the
+                            // setup runs again first (the first go may have
+                            // changed its draft), and a setup that cannot run
+                            // keeps the first go's record.
+                            let looked_transient = if retry_transient { {
+                                let components = super::components::load_components(root, organization, project).unwrap_or_default();
+                                transient::is_transient_with(&first, Some(&ready), &components)
+                            } } else { None };
+                            match looked_transient {
+                                Some(why) if !cancel.load(Ordering::SeqCst) => {
+                                    match setup::prepare_case(browsers, root, organization, project, &script, timing, cancel).await {
+                                        Err(not) => transient::retry_not_started(first, &not),
+                                        Ok(again) => {
+                                            let go = Go { script: &again.script, ..go };
+                                            match one_go(browsers, &go, &at, progress).await {
+                                                Ok(second) => transient::after_retry(why, first.duration_ms, second),
+                                                // No second go to keep: the first go's
+                                                // steps and evidence stay the record.
+                                                Err(open) => transient::retry_not_started(
+                                                    first,
+                                                    &format!("the browser did not open: {open}"),
+                                                ),
+                                            }
                                         }
                                     }
                                 }
+                                _ => first,
                             }
-                            _ => first,
                         }
+                    };
+                    // Said on the record whichever way the case went, so the
+                    // review and the report show the checks were skipped.
+                    record.notice = notice;
+                    record
+                }
+            };
+            let mut record = record;
+            // A failure while the database server is silent is the network, not
+            // the case: wait, then run the case again - a few times at most.
+            // With the server answering (or nothing to check) the record stays
+            // exactly as it was.
+            if !cancel.load(Ordering::SeqCst)
+                && matches!(record.proposed.as_str(), "Failed" | "Blocked")
+                && gate.network().await == Network::Unreachable
+            {
+                if network_reruns < MAX_NETWORK_RERUNS {
+                    network_reruns += 1;
+                    let end = pause_for_network(gate, run, case_id, cancel).await;
+                    if let Some(why) = network_end_reason(end) {
+                        if let Some(e) = leave_for_network(root, cases, i, why, run, total, &mut *progress) {
+                            save_error.get_or_insert(e);
+                        }
+                        break 'cases;
                     }
-                };
-                // Said on the record whichever way the case went, so the
-                // review and the report show the checks were skipped.
-                record.notice = notice;
-                record
-            }
-        };
-        let mut record = record;
-        // A marked step that passed this time: the mark goes, and the
-        // case's own record says so. Bookkeeping - it never fails the run.
-        if let Some(step_number) = super::defects::clear_if_passed(root, &record) {
-            record.reason = super::defects::append_cleared(&record.reason, step_number);
-        }
-        // A failure while the database server is silent is the network, not
-        // the case: wait, then run the case again - a few times at most.
-        // With the server answering (or nothing to check) the record stays
-        // exactly as it was.
-        if matches!(record.proposed.as_str(), "Failed" | "Blocked") && gate.network().await == Network::Unreachable {
-            if network_reruns < MAX_NETWORK_RERUNS {
-                network_reruns += 1;
-                let end = pause_for_network(gate, run, case_id, cancel).await;
-                if let Some(why) = network_end_reason(end) {
-                    if let Some(e) = leave_for_network(root, cases, i, why, run, total, &mut *progress) {
+                    if let Err(e) = store::save_run(root, run) {
                         save_error.get_or_insert(e);
                     }
-                    break 'cases;
+                    continue;
                 }
-                if let Err(e) = store::save_run(root, run) {
-                    save_error.get_or_insert(e);
-                }
-                continue;
+                record.reason.push_str(NETWORK_EVERY_TIME);
             }
-            record.reason.push_str(NETWORK_EVERY_TIME);
-        }
-        break record;
+            // A marked step that passed this time: the mark goes, and the
+            // case's own record says so. Bookkeeping - it never fails the run.
+            if let Some(step_number) = super::defects::clear_if_passed(root, &record) {
+                record.reason = super::defects::append_cleared(&record.reason, step_number);
+            }
+            break record;
         };
         let proposed = record.proposed.clone();
         run.cases.push(record);

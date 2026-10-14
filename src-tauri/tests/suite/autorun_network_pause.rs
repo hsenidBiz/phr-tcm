@@ -16,7 +16,9 @@ use v2_lib::autorun::preconditions::{NoDb, PreconditionDb, NEED_DB};
 use v2_lib::autorun::replay::{
     run_cases_planned, Browsers, CaseToRun, NeverPauses, ResetGate, NETWORK_EVERY_TIME, NETWORK_GAVE_UP, NETWORK_STOPPED,
 };
-use v2_lib::autorun::{store, CaseScript, LocalRun};
+use v2_lib::autorun::defects::cleared_sentence;
+use v2_lib::autorun::{store, CaseScript, LocalRun, SuspectedDefect};
+use v2_lib::browser::cdp::CdpError;
 use v2_lib::browser::timing::Timing;
 use v2_lib::events::ReplayProgress;
 
@@ -25,12 +27,22 @@ use v2_lib::events::ReplayProgress;
 struct FakeBrowsers {
     opened: usize,
     fail_opens: Vec<usize>,
+    /// Drivers handed out first, in order (`None` = the browser will not open).
+    drivers: VecDeque<Option<common::ScriptedDriver>>,
+    /// Set when a browser opens: a Stop arriving while a case runs.
+    stop_on_open: Option<&'static AtomicBool>,
 }
 
 impl Browsers for FakeBrowsers {
     type D = common::ScriptedDriver;
     async fn open(&mut self) -> Result<Self::D, String> {
         self.opened += 1;
+        if let Some(stop) = self.stop_on_open {
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        if let Some(next) = self.drivers.pop_front() {
+            return next.ok_or_else(|| "Edge is not installed".to_string());
+        }
         let body_has_text = !self.fail_opens.contains(&self.opened);
         Ok(common::FakePage { body_has_text, ..common::FakePage::default() }.driver())
     }
@@ -38,7 +50,7 @@ impl Browsers for FakeBrowsers {
 }
 
 fn browsers(fail_opens: &[usize]) -> FakeBrowsers {
-    FakeBrowsers { opened: 0, fail_opens: fail_opens.to_vec() }
+    FakeBrowsers { opened: 0, fail_opens: fail_opens.to_vec(), drivers: VecDeque::new(), stop_on_open: None }
 }
 
 /// A gate that answers the network from a queue (`fallback` once it runs
@@ -123,7 +135,20 @@ async fn run_with<G: ResetGate>(
     g: &mut G,
     events: &mut Vec<ReplayProgress>,
 ) {
-    let cancel = AtomicBool::new(false);
+    run_full(root, b, run, ids, g, events, false, &AtomicBool::new(false)).await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_full<G: ResetGate>(
+    root: &std::path::Path,
+    b: &mut FakeBrowsers,
+    run: &mut LocalRun,
+    ids: &[i32],
+    g: &mut G,
+    events: &mut Vec<ReplayProgress>,
+    retry_transient: bool,
+    cancel: &AtomicBool,
+) {
     run_cases_planned(
         b,
         root,
@@ -132,9 +157,9 @@ async fn run_with<G: ResetGate>(
         run,
         &to_run(ids),
         None,
-        false,
+        retry_transient,
         &quick(),
-        &cancel,
+        cancel,
         &no_db(),
         &[],
         g,
@@ -284,4 +309,121 @@ async fn stopped_during_a_rerun_wait_records_the_case_too() {
     assert_eq!(b.opened, 1);
     assert_eq!(run.cases.len(), 2);
     assert!(run.cases.iter().all(|c| c.reason == NETWORK_STOPPED && c.proposed.is_empty()));
+}
+
+/// A page where a `check_text` passes only for the value "yes".
+fn yes_only_driver() -> common::ScriptedDriver {
+    common::ScriptedDriver::new(|method, params| match method {
+        "Runtime.evaluate" if params["expression"] == "document" => {
+            Ok(serde_json::json!({ "result": { "objectId": "doc" } }))
+        }
+        "Runtime.callFunctionOn" => {
+            let arg = params["arguments"][0]["value"].as_str().unwrap_or("");
+            Ok(serde_json::json!({ "result": { "value": arg == "yes" } }))
+        }
+        "Page.captureScreenshot" => Ok(serde_json::json!({ "data": "/9j/4AAQ" })),
+        _ => Ok(serde_json::json!({})),
+    })
+}
+
+/// A driver whose very first call goes silent - a harness failure, which the
+/// transient retry treats as worth one more go.
+fn harness_driver() -> common::ScriptedDriver {
+    common::ScriptedDriver::new(|method, _| match method {
+        "Runtime.evaluate" => Err(CdpError::Closed),
+        _ => Ok(serde_json::json!({})),
+    })
+}
+
+#[tokio::test]
+async fn a_mark_is_cleared_by_the_go_that_is_kept_not_by_one_thrown_away() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // Step 1 (marked) passes on the first page, step 2 does not; the network
+    // is gone after the first go, which is thrown away.
+    let sc: CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 1,
+        "title": "case 1",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "check_text", "value": "yes" }] },
+            { "step_number": 2, "actions": [{ "kind": "check_text", "value": "later" }] }
+        ]
+    }))
+    .unwrap();
+    store::save_script(root, &sc).unwrap();
+    let mark = SuspectedDefect { step_number: 1, note: "looked wrong".into(), marked_at: "1".into() };
+    store::set_suspected_defect(root, 1, Some(mark)).unwrap();
+
+    let mut g = gate(&[Network::Reachable, Network::Unreachable], Network::Reachable, &[WaitEnd::Resumed]);
+    let mut b = browsers(&[]);
+    // The second go finds every check true.
+    b.drivers = VecDeque::from([Some(yes_only_driver()), Some(common::FakePage::default().driver())]);
+    let mut run = new_run("mark");
+    run_with(root, &mut b, &mut run, &[1], &mut g, &mut vec![]).await;
+
+    assert_eq!(run.network_pauses.len(), 1);
+    assert_eq!(run.cases.len(), 1);
+    assert_eq!(run.cases[0].proposed, "Passed");
+    let sentence = cleared_sentence(1);
+    assert_eq!(run.cases[0].reason.matches(&sentence).count(), 1, "{}", run.cases[0].reason);
+    assert_eq!(store::load_script(root, 1).unwrap().unwrap().suspected_defect, None);
+}
+
+#[tokio::test]
+async fn a_stopped_case_keeps_its_own_record_and_is_not_rerun() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_cases(dir.path(), &[1, 2]);
+    let stop: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
+    let mut b = browsers(&[1]);
+    b.stop_on_open = Some(stop);
+    // Answering before the case; "gone" afterwards, but a Stop came first.
+    let mut g = gate(&[Network::Reachable], Network::Unreachable, &[]);
+    let mut run = new_run("stopped");
+    run_full(dir.path(), &mut b, &mut run, &[1, 2], &mut g, &mut vec![], false, stop).await;
+
+    assert!(g.waited_before.is_empty(), "a Stop never waits for the network");
+    assert!(run.network_pauses.is_empty());
+    assert_eq!(b.opened, 1);
+    assert_eq!(run.cases.len(), 1, "the stopped case is recorded as it ended");
+    assert!(!run.cases[0].reason.contains("company network"), "{}", run.cases[0].reason);
+}
+
+#[tokio::test]
+async fn the_transient_retry_still_runs_first_while_reachable() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_cases(dir.path(), &[1]);
+    let drivers = || VecDeque::from([Some(harness_driver()), Some(common::FakePage::default().driver())]);
+    let mut plain = new_run("plain");
+    let mut b = browsers(&[]);
+    b.drivers = drivers();
+    run_full(dir.path(), &mut b, &mut plain, &[1], &mut NeverPauses, &mut vec![], true, &AtomicBool::new(false)).await;
+    assert!(plain.cases[0].retried.is_some(), "the fixture must exercise the retry");
+
+    let mut g = gate(&[], Network::Reachable, &[]);
+    let mut checked = new_run("checked");
+    let mut b = browsers(&[]);
+    b.drivers = drivers();
+    run_full(dir.path(), &mut b, &mut checked, &[1], &mut g, &mut vec![], true, &AtomicBool::new(false)).await;
+
+    assert_eq!(b.opened, 2);
+    assert_eq!(shape(&checked), shape(&plain));
+    assert_eq!(checked.cases[0].retried, plain.cases[0].retried);
+    assert!(checked.network_pauses.is_empty());
+}
+
+#[tokio::test]
+async fn a_blocked_case_while_unreachable_is_rerun() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_cases(dir.path(), &[1]);
+    let mut g = gate(&[Network::Reachable, Network::Unreachable], Network::Reachable, &[WaitEnd::Resumed]);
+    let mut b = browsers(&[]);
+    // The first browser will not open (Blocked); the second is fine.
+    b.drivers = VecDeque::from([None, Some(common::FakePage::default().driver())]);
+    let mut run = new_run("blocked");
+    run_with(dir.path(), &mut b, &mut run, &[1], &mut g, &mut vec![]).await;
+
+    assert_eq!(b.opened, 2);
+    assert_eq!(run.network_pauses.len(), 1);
+    assert_eq!(run.cases.len(), 1);
+    assert_eq!(run.cases[0].proposed, "Passed");
 }
