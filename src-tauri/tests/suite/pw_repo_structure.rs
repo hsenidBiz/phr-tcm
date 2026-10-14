@@ -11,7 +11,7 @@ fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw_repo")
 }
 
-fn copy_dir(from: &Path, to: &Path) {
+pub fn copy_dir(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
     for e in fs::read_dir(from).unwrap().flatten() {
         let dest = to.join(e.file_name());
