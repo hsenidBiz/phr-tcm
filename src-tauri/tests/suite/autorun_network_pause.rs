@@ -462,6 +462,7 @@ mod app_gate {
             notify_network: told,
             recheck: Duration::from_millis(30),
             give_up,
+            armed: false,
         }
     }
 
@@ -491,12 +492,36 @@ mod app_gate {
         let (_t, f) = recorder();
         let port = closed_port().await;
         let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_secs(5));
-        assert_eq!(g.network().await, Network::Unreachable);
+        assert_eq!(g.network().await, Network::Unchecked, "never answered yet: not armed");
 
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let live = l.local_addr().unwrap().port();
         let mut g = gate(&waits, Some(("127.0.0.1".into(), live)), &f, Duration::from_secs(5));
         assert_eq!(g.network().await, Network::Reachable);
+    }
+
+    #[tokio::test]
+    async fn unarmed_unreachable_is_unchecked_and_reachable_arms_it() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (told, f) = recorder();
+        let port = closed_port().await;
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_secs(5));
+        // Never reachable: behaves as with no target, however often asked.
+        for _ in 0..3 {
+            assert_eq!(g.network().await, Network::Unchecked);
+        }
+        assert!(told.lock().unwrap().is_empty());
+        assert!(network::waits().current().is_none());
+
+        // Unreachable, then reachable, then unreachable: pauses on the last.
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let live = l.local_addr().unwrap().port();
+        g.network = Some(("127.0.0.1".into(), live));
+        assert_eq!(g.network().await, Network::Reachable);
+        drop(l);
+        g.network = Some(("127.0.0.1".into(), port));
+        assert_eq!(g.network().await, Network::Unreachable);
     }
 
     #[tokio::test]

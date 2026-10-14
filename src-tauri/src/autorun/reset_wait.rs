@@ -170,6 +170,10 @@ pub struct AppGate<'a> {
     /// (`network::RECHECK` and `network::GIVE_UP` in the app).
     pub recheck: Duration,
     pub give_up: Duration,
+    /// Set once the database has answered in this run; until then an
+    /// unreachable server counts as not checked (a database this machine
+    /// never reaches is not a dropped network).
+    pub armed: bool,
 }
 
 impl ResetGate for AppGate<'_> {
@@ -194,9 +198,12 @@ impl ResetGate for AppGate<'_> {
             None => Network::Unchecked,
             Some((host, port)) => {
                 if network::answers(host, *port, network::CONNECT_TIMEOUT).await {
+                    self.armed = true;
                     Network::Reachable
-                } else {
+                } else if self.armed {
                     Network::Unreachable
+                } else {
+                    Network::Unchecked
                 }
             }
         }

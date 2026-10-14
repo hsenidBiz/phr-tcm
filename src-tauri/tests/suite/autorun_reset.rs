@@ -226,6 +226,7 @@ fn app_gate<'a>(
         notify_network: &|_| {},
         recheck: std::time::Duration::from_millis(20),
         give_up: std::time::Duration::from_secs(60),
+        armed: false,
     }
 }
 

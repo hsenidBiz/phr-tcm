@@ -372,6 +372,7 @@ pub async fn auto_run_replay(
         notify_network: &notify_network,
         recheck: crate::autorun::network::RECHECK,
         give_up: crate::autorun::network::GIVE_UP,
+        armed: false,
     };
     let outcome = replay::run_cases_planned(
         &mut browsers,
