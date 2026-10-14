@@ -131,6 +131,46 @@ function caseCard(caseId: number) {
   return screen.getByRole("listitem", { name: new RegExp(`#${caseId}`) });
 }
 
+test("the review lists each wait for the network", async () => {
+  renderReview({
+    ...RUN,
+    network_pauses: [
+      { before_case_id: 202, waited_ms: 180000, outcome: "resumed" },
+      { before_case_id: 203, waited_ms: 600000, outcome: "stopped" },
+      { before_case_id: 204, waited_ms: 1800000, outcome: "gave_up" },
+    ],
+  });
+  const list = await screen.findByRole("list", { name: "Waits for the network" });
+  expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+    "Waited 3 min for the network before #202",
+    "Waited 10 min for the network before #203 (stopped)",
+    "Waited 30 min for the network before #204 (gave up)",
+  ]);
+});
+
+test("a wait under a minute shows seconds, a longer one minutes", async () => {
+  renderReview({
+    ...RUN,
+    network_pauses: [
+      { before_case_id: 202, waited_ms: 42900, outcome: "resumed" },
+      { before_case_id: 203, waited_ms: 59999, outcome: "resumed" },
+      { before_case_id: 204, waited_ms: 60000, outcome: "resumed" },
+    ],
+  });
+  const list = await screen.findByRole("list", { name: "Waits for the network" });
+  expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+    "Waited 42 s for the network before #202",
+    "Waited 59 s for the network before #203",
+    "Waited 1 min for the network before #204",
+  ]);
+});
+
+test("a run with no waits lists none", async () => {
+  renderReview(RUN);
+  await screen.findByText(/proposed: failed - step 2/i);
+  expect(screen.queryByRole("list", { name: "Waits for the network" })).not.toBeInTheDocument();
+});
+
 test("a proposal is shown and nothing is preselected", async () => {
   renderReview(RUN);
 

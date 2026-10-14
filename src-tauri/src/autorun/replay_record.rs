@@ -168,6 +168,7 @@ pub fn as_run(r: &ReplayRecord) -> LocalRun {
         published: None,
         environment: None,
         resets: Vec::new(),
+        network_pauses: Vec::new(),
     }
 }
 

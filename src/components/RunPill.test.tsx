@@ -41,6 +41,7 @@ function runIn(over: Partial<BackgroundRun>): BackgroundRun {
     position: null,
     records: {},
     resetNeeded: null,
+    networkWait: null,
     answering: false,
     stopping: false,
     resultId: null,
@@ -70,6 +71,15 @@ test("running: how far it has got; paused: amber Paused before Batch N; finished
     tone: "success",
   });
   expect(runPillView(runIn({ phase: "failed", error: "no browser" }))?.text).toBe("Run stopped with an error");
+});
+
+test("waiting for the network: amber Waiting for the network", () => {
+  const wait = { run_id: "run-9", before_case_id: 4, waiting: true, give_up_after_s: 1800, ended: null };
+  expect(runPillView(runIn({ position: { index: 2, total: 8 }, networkWait: wait }))).toEqual({
+    text: "Waiting for the network",
+    action: "Open the run window to see the wait or stop the run",
+    tone: "warning",
+  });
 });
 
 test("no run, or one still on its setup, shows no pill", () => {

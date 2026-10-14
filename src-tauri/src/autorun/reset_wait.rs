@@ -11,7 +11,8 @@
 
 use super::plan::Pause;
 use super::replay::ResetGate;
-use crate::events::AutorunResetNeeded;
+use super::network::{self, Network, WaitEnd};
+use crate::events::{AutorunNetworkWait, AutorunResetNeeded};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -160,6 +161,19 @@ pub struct AppGate<'a> {
     pub waits: &'a ResetWaits,
     pub run_id: String,
     pub notify: &'a (dyn Fn(&AutorunResetNeeded) + Send + Sync),
+    /// The environment's database server, resolved once for the run; `None`
+    /// when there is nothing to check. Never leaves this struct: the event
+    /// below carries neither host nor port.
+    pub network: Option<(String, u16)>,
+    pub notify_network: &'a (dyn Fn(&AutorunNetworkWait) + Send + Sync),
+    /// How often a wait knocks again, and how long it lasts
+    /// (`network::RECHECK` and `network::GIVE_UP` in the app).
+    pub recheck: Duration,
+    pub give_up: Duration,
+    /// Set once the database has answered in this run; until then an
+    /// unreachable server counts as not checked (a database this machine
+    /// never reaches is not a dropped network).
+    pub armed: bool,
 }
 
 impl ResetGate for AppGate<'_> {
@@ -177,5 +191,51 @@ impl ResetGate for AppGate<'_> {
         let waiting = self.waits.begin(&self.run_id, needed.clone());
         (self.notify)(&needed);
         waiting.answered(cancel).await
+    }
+
+    async fn network(&mut self) -> Network {
+        match &self.network {
+            None => Network::Unchecked,
+            Some((host, port)) => {
+                if network::answers(host, *port, network::CONNECT_TIMEOUT).await {
+                    self.armed = true;
+                    Network::Reachable
+                } else if self.armed {
+                    Network::Unreachable
+                } else {
+                    Network::Unchecked
+                }
+            }
+        }
+    }
+
+    async fn wait_for_network(&mut self, before_case_id: i32, cancel: &AtomicBool) -> WaitEnd {
+        let Some((host, port)) = self.network.clone() else {
+            return WaitEnd::Resumed;
+        };
+        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            return WaitEnd::Stopped;
+        }
+        let give_up_after_s = u32::try_from(self.give_up.as_secs()).unwrap_or(u32::MAX);
+        let event = |waiting: bool, ended: Option<&str>| AutorunNetworkWait {
+            run_id: self.run_id.clone(),
+            before_case_id,
+            waiting,
+            give_up_after_s,
+            ended: ended.map(str::to_string),
+        };
+        let stop = network::waits().begin(&self.run_id, before_case_id, self.give_up);
+        (self.notify_network)(&event(true, None));
+        let end = network::wait_until(
+            || network::answers(&host, port, network::CONNECT_TIMEOUT),
+            &stop,
+            cancel,
+            self.recheck,
+            self.give_up,
+        )
+        .await;
+        network::waits().end(&self.run_id);
+        (self.notify_network)(&event(false, Some(end.outcome())));
+        end
     }
 }

@@ -2055,6 +2055,7 @@ fn failed_run(id: &str, case_id: i32) -> LocalRun {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     }
 }
 
@@ -2366,6 +2367,7 @@ fn the_guard_still_holds_for_every_new_route() {
         "/autorun-guide",
         "/autorun-script",
         "/autorun-page",
+        "/autorun-network-wait",
         "/autorun-probe",
         "/autorun-try",
         "/autorun-discover-start",
@@ -3523,4 +3525,35 @@ async fn a_tried_component_answers_each_of_its_actions() {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "ok: all 3 of its actions passed", "{text}");
     assert!(lines[1..].iter().all(|l| l.contains(". ok: ")), "{text}");
+}
+
+/// `/autorun-network-wait` answers both shapes from the wait registry, and
+/// the answer names no host, port or address: the view has none to give.
+#[tokio::test]
+async fn the_network_wait_route_answers_both_shapes_without_a_host() {
+    let _wait = crate::serial::network_waits();
+    let waits = v2_lib::autorun::network::waits();
+
+    let (status, out) = route(&ctx(), None, "GET", "/autorun-network-wait", "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&out).unwrap(), serde_json::json!({ "waiting": false }));
+
+    waits.begin("run-7", 4242, std::time::Duration::from_secs(1800));
+    let (status, out) = route(&ctx(), None, "GET", "/autorun-network-wait", "", "1.0.0").await;
+    waits.end("run-7");
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["waiting"], true);
+    assert_eq!(v["run_id"], "run-7");
+    assert_eq!(v["before_case_id"], 4242);
+    assert!(v["waited_s"].is_u64() && v["give_up_in_s"].is_u64(), "{out}");
+    let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+    keys.sort();
+    assert_eq!(keys, ["before_case_id", "give_up_in_s", "run_id", "waited_s", "waiting"]);
+    for smell in ["host", "port", "server", "1433", "password"] {
+        assert!(!out.to_lowercase().contains(smell), "{smell} in {out}");
+    }
+
+    // Read only: asking leaves the wait as it was, and nothing here ends it.
+    assert!(waits.current().is_none());
 }

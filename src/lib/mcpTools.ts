@@ -112,6 +112,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Remove a component no saved script uses.",
   },
   {
+    name: "get_autorun_network_wait",
+    label: "Network wait",
+    summary: "Whether an unattended run is paused because the company network is unreachable, and when it gives up.",
+  },
+  {
     name: "get_autorun_failures",
     label: "Auto Run failures",
     summary: "What failed in a run on this machine, and when the script must be left alone.",
@@ -266,6 +271,7 @@ export const DEV_ONLY_TOOLS = [
   "propose_accounts",
   "get_accounts",
   "list_test_files",
+  "get_autorun_network_wait",
   "get_api_template_guide",
   "list_api_templates",
   "prove_api_template",
@@ -360,6 +366,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "propose_accounts",
     "get_accounts",
     "list_test_files",
+    "get_autorun_network_wait",
   ],
   // Building an API template is one job too: read the format, see what
   // is saved, prove a draft, run it. A list with no way to run what it

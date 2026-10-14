@@ -22,6 +22,7 @@ pub mod lease;
 pub mod mapping_summary;
 pub mod marks;
 pub mod nav;
+pub mod network;
 pub mod one_browser;
 pub mod page_errors;
 pub mod patterns;
@@ -424,6 +425,23 @@ pub struct LocalRun {
     /// exactly as it always did.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resets: Vec<ResetRecord>,
+    /// Each wait for the company network the run made, in run order, with
+    /// how it ended. Written only when there are any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network_pauses: Vec<NetworkPauseRecord>,
+}
+
+/// One wait for the company network: the run found it gone before
+/// `before_case_id` (or after that case failed) and waited `waited_ms`.
+/// `outcome` is "resumed", "stopped" or "gave_up". Never a host or port.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct NetworkPauseRecord {
+    pub before_case_id: i32,
+    /// Milliseconds. A `u32` (specta refuses a 64-bit number across IPC).
+    #[serde(default)]
+    pub waited_ms: u32,
+    #[serde(default)]
+    pub outcome: String,
 }
 
 /// One pause a run made: before `before_case_id` ran, which opens batch

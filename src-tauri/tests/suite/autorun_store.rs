@@ -137,6 +137,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     save_run(dir.path(), &run).unwrap();
 
@@ -161,6 +162,7 @@ fn runs_come_back_newest_first() {
                 published: None,
                 environment: None,
                 resets: vec![],
+                network_pauses: vec![],
             },
         )
         .unwrap();
@@ -185,6 +187,7 @@ fn a_corrupt_run_file_is_skipped_rather_than_fatal() {
             published: None,
             environment: None,
             resets: vec![],
+            network_pauses: vec![],
         },
     )
     .unwrap();
@@ -468,6 +471,7 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
         }],
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     save_run(root, &run).unwrap();
 
@@ -691,6 +695,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
         }],
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     save_run(root, &unpublished).unwrap();
     let published = LocalRun {
@@ -706,6 +711,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
         cases: vec![],
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     save_run(root, &published).unwrap();
 
@@ -734,6 +740,7 @@ fn clear_runs_also_removes_the_report_files_and_nothing_outside_reports() {
         cases: vec![],
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     save_run(root, &run).unwrap();
     std::fs::create_dir_all(root.join("reports").join("kept-folder")).unwrap();
@@ -904,6 +911,7 @@ fn clear_runs_finishes_every_pass_and_then_reports_a_file_it_could_not_remove() 
             cases: vec![],
             environment: None,
             resets: vec![],
+            network_pauses: vec![],
         },
     )
     .unwrap();
@@ -977,6 +985,7 @@ fn saved_run(root: &std::path::Path, id: &str) {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     save_run(root, &run).unwrap();
 }
@@ -1213,6 +1222,7 @@ fn a_review_save_does_not_prune() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     save_run_at(root, run.clone()).unwrap();
     assert_eq!(count(), 1000, "the run's first save prunes");

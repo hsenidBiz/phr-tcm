@@ -16,10 +16,15 @@ import RunPill from "../../components/RunPill";
 import { useBackgroundRunHost } from "../../hooks/useBackgroundRunHost";
 import { backgroundRunSnapshot, openRunSetup, resetBackgroundRun, startRun } from "../../lib/backgroundRun";
 import { setDiscoveryActive } from "../../lib/discoveryActive";
+import { announce } from "../../lib/assignedAlerts";
 import { toast } from "../../lib/toast";
 import AutoRun from "./index";
 import ReplayPane from "./ReplayPane";
 
+vi.mock("../../lib/assignedAlerts", async (orig) => ({
+  ...(await orig<typeof import("../../lib/assignedAlerts")>()),
+  announce: vi.fn(),
+}));
 vi.mock("../../lib/toast", () => ({
   toast: { success: vi.fn(() => "t1"), error: vi.fn(() => "t2"), warning: vi.fn(), info: vi.fn(), dismiss: vi.fn() },
 }));
@@ -295,6 +300,74 @@ test("a pause at a reset point while in the background turns the pill amber and 
   expect(screen.getAllByRole("region", { name: "Before Batch 2" })).toHaveLength(1);
   fireEvent.click(within(panel).getByRole("button", { name: "Continue the run" }));
   await waitFor(() => expect(answers).toEqual([{ runId: "run-9", continueRun: true }]));
+});
+
+async function emitWait(w: Partial<Record<string, unknown>>) {
+  const { emit } = await import("@tauri-apps/api/event");
+  await act(async () => {
+    await emit("autorun-network-wait", {
+      run_id: "run-9",
+      before_case_id: 2,
+      waiting: true,
+      give_up_after_s: 1800,
+      ended: null,
+      ...w,
+    });
+  });
+}
+
+test("a network wait shows on the pill and in the window, is announced once, survives progress, and Stop sends the run id", async () => {
+  const stops: unknown[] = [];
+  mockScreen((cmd, args) => {
+    if (cmd === "auto_run_stop_network_wait") {
+      stops.push(args);
+      return true;
+    }
+    return null;
+  });
+  renderShell();
+  await startUnattended();
+  fireEvent.click(screen.getByRole("button", { name: "Run in background" }));
+  await waitFor(() => expect(heading()).not.toBeInTheDocument());
+
+  await emitWait({});
+  await emitWait({}); // a repeat of the same wait is not a second notice
+  expect(announce).toHaveBeenCalledTimes(1);
+  expect(announce).toHaveBeenCalledWith(
+    "Auto Run paused",
+    "The company network is unreachable. Reconnect the VPN - the run carries on by itself.",
+  );
+  expect(backgroundRunSnapshot().run?.networkWait?.before_case_id).toBe(2);
+
+  // A progress event is not the end of the wait.
+  await emitProgress({ phase: "step", step_number: 1 });
+  expect(backgroundRunSnapshot().run?.networkWait).not.toBeNull();
+
+  const pill = screen.getByRole("button", { name: /^Waiting for the network\./ });
+  expect(pill.className).toMatch(/text-warning/);
+  fireEvent.click(pill);
+  const panel = await screen.findByRole("region", { name: "Paused - the company network is unreachable" });
+  expect(within(panel).getByText(/Gives up in 30 min\./)).toBeInTheDocument();
+  fireEvent.click(within(panel).getByRole("button", { name: /^Stop/ }));
+  await waitFor(() => expect(stops).toEqual([{ runId: "run-9" }]));
+});
+
+test("the end of a network wait clears it; only giving up is announced again", async () => {
+  mockScreen();
+  renderShell();
+  await startUnattended();
+
+  await emitWait({});
+  await emitWait({ waiting: false, ended: "resumed" });
+  expect(backgroundRunSnapshot().run?.networkWait).toBeNull();
+  await emitWait({ before_case_id: 3 });
+  await emitWait({ before_case_id: 3, waiting: false, ended: "stopped" });
+  expect(announce).toHaveBeenCalledTimes(2); // the two waits began; resume and stop said nothing
+
+  await emitWait({ before_case_id: 4 });
+  await emitWait({ before_case_id: 4, waiting: false, ended: "gave_up" });
+  expect(announce).toHaveBeenCalledTimes(4);
+  expect(announce).toHaveBeenLastCalledWith("Auto Run stopped", "The company network was unreachable for 30 minutes.");
 });
 
 test("a run that fails in the background says so, and the pill reopens the window on the error", async () => {

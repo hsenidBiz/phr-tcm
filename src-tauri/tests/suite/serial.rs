@@ -151,3 +151,11 @@ pub fn pw_repo() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// The one-slot registry of the unattended run's wait for the company
+/// network (`autorun::network::waits`): a wait one test begins would be
+/// another test's `current()`.
+pub fn network_waits() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}

@@ -75,6 +75,7 @@ fn run_failing_step_1(started_at: u64) -> LocalRun {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     }
 }
 

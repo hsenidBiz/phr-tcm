@@ -851,6 +851,7 @@ fn a_new_run_records_the_active_environment() {
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
 
     save_run_at(root, run("run-new")).unwrap();

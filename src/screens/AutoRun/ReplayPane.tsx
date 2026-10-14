@@ -37,6 +37,7 @@ import {
   closeRunWindow,
   sendRunToBackground,
   startRun,
+  stopNetworkWait,
   stopRun,
   useBackgroundRun,
   type BackgroundRun,
@@ -48,6 +49,7 @@ import { dbReadAccessOn } from "../../lib/mcpTools";
 import { useMediaQuery } from "../../lib/useMediaQuery";
 import { batchLabel, pauseLines, planBatches } from "./plan";
 import ResetNeededPanel from "./ResetNeededPanel";
+import NetworkWaitPanel from "./NetworkWaitPanel";
 import BatchList from "./BatchList";
 
 export { statusOf, type WrittenStep } from "../../lib/backgroundRun";
@@ -121,7 +123,7 @@ export default function ReplayPane() {
 
 function RunWindow({ run }: { run: BackgroundRun }) {
   const { org, project, cases, plan, phase } = run;
-  const { rows, phases, latest, position, records, resetNeeded } = run;
+  const { rows, phases, latest, position, records, resetNeeded, networkWait } = run;
   /** A discovery that began after this setup opened holds the browser:
    * Start waits for it, as the store does. */
   const discovering = useDiscoveryActiveNow();
@@ -424,6 +426,13 @@ function RunWindow({ run }: { run: BackgroundRun }) {
               busy={run.answering}
               onContinue={() => void answerRunReset(true)}
               onStop={() => void answerRunReset(false)}
+            />
+          )}
+          {networkWait && (
+            <NetworkWaitPanel
+              giveUpAfterS={networkWait.give_up_after_s}
+              since={networkWait.since}
+              onStop={() => stopNetworkWait(networkWait.run_id)}
             />
           )}
           {/* Only the person's own input pauses following - a bare `scroll`

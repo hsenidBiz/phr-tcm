@@ -623,6 +623,7 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "propose_accounts",
             "get_accounts",
             "list_test_files",
+            "get_autorun_network_wait",
             "get_api_template_guide",
             "list_api_templates",
             "prove_api_template",

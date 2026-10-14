@@ -1,0 +1,627 @@
+//! An unattended run and the company network: it asks its gate before each
+//! case and after a Failed or Blocked one, waits when the network is gone,
+//! re-runs the case the drop interrupted (at most three times), and ends
+//! cleanly - everything left recorded as not run - when the wait is stopped
+//! or gives up. Each wait is kept in the run's `network_pauses`.
+//!
+//! Browsers are fakes (`common::FakePage`); the gate answers from a script.
+
+use crate::common;
+
+use std::collections::VecDeque;
+use std::sync::atomic::AtomicBool;
+use v2_lib::autorun::network::{Network, WaitEnd};
+use v2_lib::autorun::plan::Pause;
+use v2_lib::autorun::preconditions::{NoDb, PreconditionDb, NEED_DB};
+use v2_lib::autorun::replay::{
+    run_cases_planned, Browsers, CaseToRun, NeverPauses, ResetGate, NETWORK_EVERY_TIME, NETWORK_GAVE_UP, NETWORK_STOPPED,
+};
+use v2_lib::autorun::defects::cleared_sentence;
+use v2_lib::autorun::{store, CaseScript, LocalRun, SuspectedDefect};
+use v2_lib::browser::cdp::CdpError;
+use v2_lib::browser::timing::Timing;
+use v2_lib::events::ReplayProgress;
+
+/// Fake browsers: the `n`th open (1-based, across the whole run) shows a page
+/// without the text a case checks for when `n` is in `fail_opens`.
+struct FakeBrowsers {
+    opened: usize,
+    fail_opens: Vec<usize>,
+    /// Drivers handed out first, in order (`None` = the browser will not open).
+    drivers: VecDeque<Option<common::ScriptedDriver>>,
+    /// Set when a browser opens: a Stop arriving while a case runs.
+    stop_on_open: Option<&'static AtomicBool>,
+}
+
+impl Browsers for FakeBrowsers {
+    type D = common::ScriptedDriver;
+    async fn open(&mut self) -> Result<Self::D, String> {
+        self.opened += 1;
+        if let Some(stop) = self.stop_on_open {
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        if let Some(next) = self.drivers.pop_front() {
+            return next.ok_or_else(|| "Edge is not installed".to_string());
+        }
+        let body_has_text = !self.fail_opens.contains(&self.opened);
+        Ok(common::FakePage { body_has_text, ..common::FakePage::default() }.driver())
+    }
+    async fn close(&mut self, _d: Self::D) {}
+}
+
+fn browsers(fail_opens: &[usize]) -> FakeBrowsers {
+    FakeBrowsers { opened: 0, fail_opens: fail_opens.to_vec(), drivers: VecDeque::new(), stop_on_open: None }
+}
+
+/// A gate that answers the network from a queue (`fallback` once it runs
+/// out), ends each wait from another queue (`Resumed` once it runs out) and
+/// remembers what it was asked.
+struct ScriptedGate {
+    networks: VecDeque<Network>,
+    fallback: Network,
+    waits: VecDeque<WaitEnd>,
+    waited_before: Vec<i32>,
+}
+
+fn gate(networks: &[Network], fallback: Network, waits: &[WaitEnd]) -> ScriptedGate {
+    ScriptedGate {
+        networks: networks.iter().copied().collect(),
+        fallback,
+        waits: waits.iter().copied().collect(),
+        waited_before: vec![],
+    }
+}
+
+impl ResetGate for ScriptedGate {
+    async fn wait(&mut self, _reset: &Pause, _remaining: &[i32], _cancel: &AtomicBool) -> bool {
+        true
+    }
+    async fn network(&mut self) -> Network {
+        self.networks.pop_front().unwrap_or(self.fallback)
+    }
+    async fn wait_for_network(&mut self, before_case_id: i32, _cancel: &AtomicBool) -> WaitEnd {
+        self.waited_before.push(before_case_id);
+        self.waits.pop_front().unwrap_or(WaitEnd::Resumed)
+    }
+}
+
+fn quick() -> Timing {
+    Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 20, highlight_ms: 0, lease_wait_ms: 300 }
+}
+
+fn new_run(id: &str) -> LocalRun {
+    LocalRun {
+        id: id.into(),
+        pbi_id: 42,
+        started_at: "1700000000000".into(),
+        cases: vec![],
+        mode: "unattended".into(),
+        published: None,
+        environment: None,
+        resets: vec![],
+        network_pauses: vec![],
+    }
+}
+
+/// A one-step script with one check for the text "ok".
+fn script(case_id: i32) -> CaseScript {
+    serde_json::from_value(serde_json::json!({
+        "case_id": case_id,
+        "title": format!("case {case_id}"),
+        "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }],
+    }))
+    .unwrap()
+}
+
+fn to_run(ids: &[i32]) -> Vec<CaseToRun> {
+    ids.iter().map(|&id| CaseToRun { case_id: id, title: format!("case {id}"), module: None }).collect()
+}
+
+fn no_db() -> PreconditionDb<NoDb> {
+    PreconditionDb::Missing(NEED_DB.to_string())
+}
+
+fn saved_cases(root: &std::path::Path, ids: &[i32]) {
+    for &id in ids {
+        store::save_script(root, &script(id)).unwrap();
+    }
+}
+
+async fn run_with<G: ResetGate>(
+    root: &std::path::Path,
+    b: &mut FakeBrowsers,
+    run: &mut LocalRun,
+    ids: &[i32],
+    g: &mut G,
+    events: &mut Vec<ReplayProgress>,
+) {
+    run_full(root, b, run, ids, g, events, false, &AtomicBool::new(false)).await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_full<G: ResetGate>(
+    root: &std::path::Path,
+    b: &mut FakeBrowsers,
+    run: &mut LocalRun,
+    ids: &[i32],
+    g: &mut G,
+    events: &mut Vec<ReplayProgress>,
+    retry_transient: bool,
+    cancel: &AtomicBool,
+) {
+    run_cases_planned(
+        b,
+        root,
+        "Acme",
+        "Web",
+        run,
+        &to_run(ids),
+        None,
+        retry_transient,
+        &quick(),
+        cancel,
+        &no_db(),
+        &[],
+        g,
+        &mut |p: ReplayProgress| events.push(p),
+    )
+    .await
+    .unwrap();
+}
+
+/// What a record says, without its timings.
+fn shape(run: &LocalRun) -> Vec<(i32, String, String)> {
+    run.cases.iter().map(|c| (c.case_id, c.proposed.clone(), c.reason.clone())).collect()
+}
+
+#[tokio::test]
+async fn unchecked_runs_exactly_as_before() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_cases(dir.path(), &[1, 2]);
+    // The second case fails, so the failure path is covered too.
+    let mut plain = new_run("plain");
+    run_with(dir.path(), &mut browsers(&[2]), &mut plain, &[1, 2], &mut NeverPauses, &mut vec![]).await;
+
+    let mut g = gate(&[], Network::Unchecked, &[]);
+    let mut checked = new_run("checked");
+    run_with(dir.path(), &mut browsers(&[2]), &mut checked, &[1, 2], &mut g, &mut vec![]).await;
+
+    assert_eq!(shape(&checked), shape(&plain));
+    assert_eq!(shape(&checked)[1].1, "Failed");
+    assert!(checked.network_pauses.is_empty());
+    assert!(g.waited_before.is_empty());
+}
+
+#[tokio::test]
+async fn unreachable_before_a_case_waits_then_runs_it() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_cases(dir.path(), &[1]);
+    let mut g = gate(&[Network::Unreachable], Network::Reachable, &[WaitEnd::Resumed]);
+    let mut b = browsers(&[]);
+    let mut run = new_run("before");
+    run_with(dir.path(), &mut b, &mut run, &[1], &mut g, &mut vec![]).await;
+
+    assert_eq!(run.network_pauses.len(), 1);
+    assert_eq!(run.network_pauses[0].before_case_id, 1);
+    assert_eq!(run.network_pauses[0].outcome, "resumed");
+    assert_eq!(g.waited_before, vec![1]);
+    assert_eq!(run.cases.len(), 1);
+    assert_eq!(run.cases[0].proposed, "Passed");
+    assert_eq!(b.opened, 1);
+}
+
+#[tokio::test]
+async fn a_failure_while_unreachable_is_rerun_not_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_cases(dir.path(), &[1]);
+    // Before: answering. The first go fails and the network is gone; the
+    // second go passes.
+    let mut g = gate(&[Network::Reachable, Network::Unreachable], Network::Reachable, &[WaitEnd::Resumed]);
+    let mut b = browsers(&[1]);
+    let mut run = new_run("rerun");
+    run_with(dir.path(), &mut b, &mut run, &[1], &mut g, &mut vec![]).await;
+
+    assert_eq!(b.opened, 2);
+    assert_eq!(run.cases.len(), 1, "the interrupted go is not recorded");
+    assert_eq!(run.cases[0].proposed, "Passed");
+    assert_eq!(run.network_pauses.len(), 1);
+    assert_eq!(run.network_pauses[0].before_case_id, 1);
+    assert_eq!(run.network_pauses[0].outcome, "resumed");
+    let saved = store::load_run(dir.path(), "rerun").unwrap().unwrap();
+    assert_eq!(saved, run);
+}
+
+#[tokio::test]
+async fn a_failure_while_reachable_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_cases(dir.path(), &[1]);
+    let mut g = gate(&[], Network::Reachable, &[]);
+    let mut b = browsers(&[1]);
+    let mut run = new_run("kept");
+    run_with(dir.path(), &mut b, &mut run, &[1], &mut g, &mut vec![]).await;
+
+    assert_eq!(b.opened, 1);
+    assert_eq!(run.cases.len(), 1);
+    assert_eq!(run.cases[0].proposed, "Failed");
+    assert!(!run.cases[0].reason.ends_with(NETWORK_EVERY_TIME));
+    assert!(run.network_pauses.is_empty());
+}
+
+#[tokio::test]
+async fn reruns_stop_after_three() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_cases(dir.path(), &[1]);
+    // Answering before the case, then gone after each of its four goes.
+    let mut g = gate(&[Network::Reachable], Network::Unreachable, &[]);
+    let mut b = browsers(&[1, 2, 3, 4]);
+    let mut run = new_run("cap");
+    run_with(dir.path(), &mut b, &mut run, &[1], &mut g, &mut vec![]).await;
+
+    assert_eq!(b.opened, 4, "the first go and three re-runs");
+    assert_eq!(run.network_pauses.len(), 3);
+    assert!(run.network_pauses.iter().all(|p| p.outcome == "resumed"));
+    assert_eq!(run.cases.len(), 1);
+    assert_eq!(run.cases[0].proposed, "Failed");
+    assert!(run.cases[0].reason.ends_with(NETWORK_EVERY_TIME), "{}", run.cases[0].reason);
+}
+
+#[tokio::test]
+async fn stop_and_give_up_end_the_run() {
+    for (end, reason, outcome) in [(WaitEnd::Stopped, NETWORK_STOPPED, "stopped"), (WaitEnd::GaveUp, NETWORK_GAVE_UP, "gave_up")] {
+        let dir = tempfile::tempdir().unwrap();
+        saved_cases(dir.path(), &[1, 2, 3]);
+        // Case 1 runs; the network is gone before case 2.
+        let mut g = gate(&[Network::Reachable, Network::Unreachable], Network::Reachable, &[end]);
+        let mut b = browsers(&[]);
+        let mut run = new_run("ended");
+        let mut events = vec![];
+        run_with(dir.path(), &mut b, &mut run, &[1, 2, 3], &mut g, &mut events).await;
+
+        assert_eq!(b.opened, 1, "no browser opens after the wait ended the run");
+        assert_eq!(run.cases.len(), 3);
+        assert_eq!(run.cases[0].proposed, "Passed");
+        for c in &run.cases[1..] {
+            assert_eq!(c.reason, reason);
+            assert_eq!(c.proposed, "");
+            assert!(!c.steps.is_empty());
+            assert!(c.steps.iter().flat_map(|s| &s.outcomes).all(|o| !o.ok && o.detail.starts_with("not run:")));
+        }
+        assert_eq!(run.network_pauses.len(), 1);
+        assert_eq!(run.network_pauses[0].before_case_id, 2);
+        assert_eq!(run.network_pauses[0].outcome, outcome);
+        let saved = store::load_run(dir.path(), "ended").unwrap().unwrap();
+        assert_eq!(saved, run);
+        let done: Vec<i32> = events.iter().filter(|e| e.phase == "done").map(|e| e.case_id).collect();
+        assert_eq!(done, vec![1, 2, 3]);
+    }
+}
+
+#[tokio::test]
+async fn stopped_during_a_rerun_wait_records_the_case_too() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_cases(dir.path(), &[1, 2]);
+    let mut g = gate(&[Network::Reachable, Network::Unreachable], Network::Reachable, &[WaitEnd::Stopped]);
+    let mut b = browsers(&[1]);
+    let mut run = new_run("mid");
+    run_with(dir.path(), &mut b, &mut run, &[1, 2], &mut g, &mut vec![]).await;
+
+    // The interrupted go is dropped and the case is recorded as not run.
+    assert_eq!(b.opened, 1);
+    assert_eq!(run.cases.len(), 2);
+    assert!(run.cases.iter().all(|c| c.reason == NETWORK_STOPPED && c.proposed.is_empty()));
+}
+
+/// A page where a `check_text` passes only for the value "yes".
+fn yes_only_driver() -> common::ScriptedDriver {
+    common::ScriptedDriver::new(|method, params| match method {
+        "Runtime.evaluate" if params["expression"] == "document" => {
+            Ok(serde_json::json!({ "result": { "objectId": "doc" } }))
+        }
+        "Runtime.callFunctionOn" => {
+            let arg = params["arguments"][0]["value"].as_str().unwrap_or("");
+            Ok(serde_json::json!({ "result": { "value": arg == "yes" } }))
+        }
+        "Page.captureScreenshot" => Ok(serde_json::json!({ "data": "/9j/4AAQ" })),
+        _ => Ok(serde_json::json!({})),
+    })
+}
+
+/// A driver whose very first call goes silent - a harness failure, which the
+/// transient retry treats as worth one more go.
+fn harness_driver() -> common::ScriptedDriver {
+    common::ScriptedDriver::new(|method, _| match method {
+        "Runtime.evaluate" => Err(CdpError::Closed),
+        _ => Ok(serde_json::json!({})),
+    })
+}
+
+#[tokio::test]
+async fn a_mark_is_cleared_by_the_go_that_is_kept_not_by_one_thrown_away() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // Step 1 (marked) passes on the first page, step 2 does not; the network
+    // is gone after the first go, which is thrown away.
+    let sc: CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 1,
+        "title": "case 1",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "check_text", "value": "yes" }] },
+            { "step_number": 2, "actions": [{ "kind": "check_text", "value": "later" }] }
+        ]
+    }))
+    .unwrap();
+    store::save_script(root, &sc).unwrap();
+    let mark = SuspectedDefect { step_number: 1, note: "looked wrong".into(), marked_at: "1".into() };
+    store::set_suspected_defect(root, 1, Some(mark)).unwrap();
+
+    let mut g = gate(&[Network::Reachable, Network::Unreachable], Network::Reachable, &[WaitEnd::Resumed]);
+    let mut b = browsers(&[]);
+    // The second go finds every check true.
+    b.drivers = VecDeque::from([Some(yes_only_driver()), Some(common::FakePage::default().driver())]);
+    let mut run = new_run("mark");
+    run_with(root, &mut b, &mut run, &[1], &mut g, &mut vec![]).await;
+
+    assert_eq!(run.network_pauses.len(), 1);
+    assert_eq!(run.cases.len(), 1);
+    assert_eq!(run.cases[0].proposed, "Passed");
+    let sentence = cleared_sentence(1);
+    assert_eq!(run.cases[0].reason.matches(&sentence).count(), 1, "{}", run.cases[0].reason);
+    assert_eq!(store::load_script(root, 1).unwrap().unwrap().suspected_defect, None);
+}
+
+#[tokio::test]
+async fn a_stopped_case_keeps_its_own_record_and_is_not_rerun() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_cases(dir.path(), &[1, 2]);
+    let stop: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
+    let mut b = browsers(&[1]);
+    b.stop_on_open = Some(stop);
+    // Answering before the case; "gone" afterwards, but a Stop came first.
+    let mut g = gate(&[Network::Reachable], Network::Unreachable, &[]);
+    let mut run = new_run("stopped");
+    run_full(dir.path(), &mut b, &mut run, &[1, 2], &mut g, &mut vec![], false, stop).await;
+
+    assert!(g.waited_before.is_empty(), "a Stop never waits for the network");
+    assert!(run.network_pauses.is_empty());
+    assert_eq!(b.opened, 1);
+    assert_eq!(run.cases.len(), 1, "the stopped case is recorded as it ended");
+    assert!(!run.cases[0].reason.contains("company network"), "{}", run.cases[0].reason);
+}
+
+#[tokio::test]
+async fn the_transient_retry_still_runs_first_while_reachable() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_cases(dir.path(), &[1]);
+    let drivers = || VecDeque::from([Some(harness_driver()), Some(common::FakePage::default().driver())]);
+    let mut plain = new_run("plain");
+    let mut b = browsers(&[]);
+    b.drivers = drivers();
+    run_full(dir.path(), &mut b, &mut plain, &[1], &mut NeverPauses, &mut vec![], true, &AtomicBool::new(false)).await;
+    assert!(plain.cases[0].retried.is_some(), "the fixture must exercise the retry");
+
+    let mut g = gate(&[], Network::Reachable, &[]);
+    let mut checked = new_run("checked");
+    let mut b = browsers(&[]);
+    b.drivers = drivers();
+    run_full(dir.path(), &mut b, &mut checked, &[1], &mut g, &mut vec![], true, &AtomicBool::new(false)).await;
+
+    assert_eq!(b.opened, 2);
+    assert_eq!(shape(&checked), shape(&plain));
+    assert_eq!(checked.cases[0].retried, plain.cases[0].retried);
+    assert!(checked.network_pauses.is_empty());
+}
+
+#[tokio::test]
+async fn a_blocked_case_while_unreachable_is_rerun() {
+    let dir = tempfile::tempdir().unwrap();
+    saved_cases(dir.path(), &[1]);
+    let mut g = gate(&[Network::Reachable, Network::Unreachable], Network::Reachable, &[WaitEnd::Resumed]);
+    let mut b = browsers(&[]);
+    // The first browser will not open (Blocked); the second is fine.
+    b.drivers = VecDeque::from([None, Some(common::FakePage::default().driver())]);
+    let mut run = new_run("blocked");
+    run_with(dir.path(), &mut b, &mut run, &[1], &mut g, &mut vec![]).await;
+
+    assert_eq!(b.opened, 2);
+    assert_eq!(run.network_pauses.len(), 1);
+    assert_eq!(run.cases.len(), 1);
+    assert_eq!(run.cases[0].proposed, "Passed");
+}
+
+// ---- The app's own gate (`AppGate`) ----
+
+mod app_gate {
+    use crate::serial;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use v2_lib::autorun::network::{self, Network, WaitEnd};
+    use v2_lib::autorun::replay::ResetGate;
+    use v2_lib::autorun::reset_wait::{AppGate, ResetWaits};
+    use v2_lib::events::AutorunNetworkWait;
+
+    type Told = Arc<Mutex<Vec<AutorunNetworkWait>>>;
+
+    /// A local port nobody listens on: bound, then released.
+    async fn closed_port() -> u16 {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        l.local_addr().unwrap().port()
+    }
+
+    fn gate<'a>(
+        waits: &'a ResetWaits,
+        target: Option<(String, u16)>,
+        told: &'a (dyn Fn(&AutorunNetworkWait) + Send + Sync),
+        give_up: Duration,
+    ) -> AppGate<'a> {
+        AppGate {
+            waits,
+            run_id: "run-net".to_string(),
+            notify: &|_| {},
+            network: target,
+            notify_network: told,
+            recheck: Duration::from_millis(30),
+            give_up,
+            armed: false,
+        }
+    }
+
+    fn recorder() -> (Told, impl Fn(&AutorunNetworkWait) + Send + Sync) {
+        let told: Told = Arc::new(Mutex::new(Vec::new()));
+        let t = told.clone();
+        (told, move |e: &AutorunNetworkWait| t.lock().unwrap().push(e.clone()))
+    }
+
+    #[test]
+    fn the_waiting_command_answers_with_the_wait_in_progress() {
+        let _g = serial::network_waits();
+        assert!(v2_lib::commands::autorun_replay::auto_run_waiting_network().is_none());
+        let _stop = network::waits().begin("run-view", 9, Duration::from_secs(1800));
+        let view = v2_lib::commands::autorun_replay::auto_run_waiting_network().expect("a wait is in progress");
+        assert_eq!(view.run_id, "run-view");
+        assert_eq!(view.before_case_id, 9);
+        assert!(view.give_up_in_s > 1790 && view.give_up_in_s <= 1800);
+        network::waits().end("run-view");
+        assert!(v2_lib::commands::autorun_replay::auto_run_waiting_network().is_none());
+    }
+
+    #[tokio::test]
+    async fn no_target_never_checks() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (told, f) = recorder();
+        let mut g = gate(&waits, None, &f, Duration::from_secs(5));
+        assert_eq!(g.network().await, Network::Unchecked);
+        let cancel = AtomicBool::new(false);
+        assert_eq!(g.wait_for_network(1, &cancel).await, WaitEnd::Resumed);
+        assert!(told.lock().unwrap().is_empty());
+        assert!(network::waits().current().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_closed_port_is_unreachable_and_a_live_one_reachable() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (_t, f) = recorder();
+        let port = closed_port().await;
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_secs(5));
+        assert_eq!(g.network().await, Network::Unchecked, "never answered yet: not armed");
+
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let live = l.local_addr().unwrap().port();
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), live)), &f, Duration::from_secs(5));
+        assert_eq!(g.network().await, Network::Reachable);
+    }
+
+    #[tokio::test]
+    async fn unarmed_unreachable_is_unchecked_and_reachable_arms_it() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (told, f) = recorder();
+        let port = closed_port().await;
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_secs(5));
+        // Never reachable: behaves as with no target, however often asked.
+        for _ in 0..3 {
+            assert_eq!(g.network().await, Network::Unchecked);
+        }
+        assert!(told.lock().unwrap().is_empty());
+        assert!(network::waits().current().is_none());
+
+        // Unreachable, then reachable, then unreachable: pauses on the last.
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let live = l.local_addr().unwrap().port();
+        g.network = Some(("127.0.0.1".into(), live));
+        assert_eq!(g.network().await, Network::Reachable);
+        drop(l);
+        g.network = Some(("127.0.0.1".into(), port));
+        assert_eq!(g.network().await, Network::Unreachable);
+    }
+
+    #[tokio::test]
+    async fn a_stop_already_pressed_beats_the_wait() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (told, f) = recorder();
+        let port = closed_port().await;
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_secs(60));
+        let cancel = AtomicBool::new(true);
+        assert_eq!(g.wait_for_network(3, &cancel).await, WaitEnd::Stopped);
+        assert!(told.lock().unwrap().is_empty(), "no waiting event after a Stop");
+        assert!(network::waits().current().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_stopped_wait_ends_stopped_with_both_events_and_no_host_or_port() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (told, f) = recorder();
+        let port = closed_port().await;
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_secs(60));
+        let cancel = AtomicBool::new(false);
+        let stopper = tokio::spawn(async {
+            for _ in 0..200 {
+                if network::waits().stop("run-net") {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            false
+        });
+        let end = g.wait_for_network(7, &cancel).await;
+        assert!(stopper.await.unwrap());
+        assert_eq!(end, WaitEnd::Stopped);
+        assert!(network::waits().current().is_none(), "no wait left in the registry");
+        let events = told.lock().unwrap().clone();
+        assert_eq!(events.len(), 2);
+        assert!(events[0].waiting && events[0].ended.is_none());
+        assert_eq!(events[0].before_case_id, 7);
+        assert_eq!(events[0].give_up_after_s, 60);
+        assert!(!events[1].waiting);
+        assert_eq!(events[1].ended.as_deref(), Some("stopped"));
+        let json = format!("{events:?}{}", serde_json::to_string(&events[0]).unwrap());
+        assert!(!json.contains("127.0.0.1") && !json.contains(&port.to_string()), "{json}");
+    }
+
+    #[tokio::test]
+    async fn a_wait_ends_resumed_when_the_server_answers() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (told, f) = recorder();
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_secs(60));
+        let cancel = AtomicBool::new(false);
+        assert_eq!(g.wait_for_network(1, &cancel).await, WaitEnd::Resumed);
+        let events = told.lock().unwrap().clone();
+        assert_eq!(events.last().unwrap().ended.as_deref(), Some("resumed"));
+        assert!(network::waits().current().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_wait_gives_up_after_its_limit_and_exit_stops_it() {
+        let _g = serial::network_waits();
+        let waits = ResetWaits::new();
+        let (told, f) = recorder();
+        let port = closed_port().await;
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f, Duration::from_millis(150));
+        let cancel = AtomicBool::new(false);
+        assert_eq!(g.wait_for_network(1, &cancel).await, WaitEnd::GaveUp);
+        assert_eq!(told.lock().unwrap().last().unwrap().ended.as_deref(), Some("gave_up"));
+
+        let (_t, f2) = recorder();
+        let mut g = gate(&waits, Some(("127.0.0.1".into(), port)), &f2, Duration::from_secs(60));
+        let exit = tokio::spawn(async {
+            for _ in 0..200 {
+                if network::waits().stop_for_exit() {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            false
+        });
+        assert_eq!(g.wait_for_network(1, &cancel).await, WaitEnd::Stopped);
+        assert!(exit.await.unwrap());
+        assert!(!cancel.load(Ordering::SeqCst));
+        assert!(network::waits().current().is_none());
+    }
+}

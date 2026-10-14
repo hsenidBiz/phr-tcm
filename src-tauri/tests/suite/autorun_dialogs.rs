@@ -418,6 +418,7 @@ async fn run_case(root: &Path, script: &CaseScript, d: ScriptedDriver) -> LocalR
         published: None,
         environment: None,
         resets: vec![],
+        network_pauses: vec![],
     };
     let cancel = AtomicBool::new(false);
     run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(script.case_id, script.title.clone())], &quick(), &cancel, &mut |_| {})

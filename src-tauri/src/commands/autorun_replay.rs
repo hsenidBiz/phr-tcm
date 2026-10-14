@@ -323,6 +323,7 @@ pub async fn auto_run_replay(
         // environment every case of it signs in to.
         environment: crate::environments::active(&root).ok().map(|e| e.name),
         resets: vec![],
+        network_pauses: vec![],
     };
 
     let sent: Vec<CaseToRun> = cases
@@ -348,7 +349,31 @@ pub async fn auto_run_replay(
     let notify = |n: &crate::events::AutorunResetNeeded| {
         let _ = n.clone().emit(&app);
     };
-    let mut gate = AppGate { waits: reset_wait::waits(), run_id: run.id.clone(), notify: &notify };
+    let notify_network = |n: &crate::events::AutorunNetworkWait| {
+        let _ = n.clone().emit(&app);
+    };
+    // The database server, found once for the whole run: only where Auto
+    // Run is offered, and only when the active environment's database has a
+    // knowable host and port. Otherwise nothing is ever checked.
+    let network_target = if crate::ai_tools::autorun_offered() {
+        use tauri::Manager;
+        let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
+        crate::environments::active(&root)
+            .ok()
+            .and_then(|env| crate::autorun::network::db_target(secrets.as_ref(), &env.db_id))
+    } else {
+        None
+    };
+    let mut gate = AppGate {
+        waits: reset_wait::waits(),
+        run_id: run.id.clone(),
+        notify: &notify,
+        network: network_target,
+        notify_network: &notify_network,
+        recheck: crate::autorun::network::RECHECK,
+        give_up: crate::autorun::network::GIVE_UP,
+        armed: false,
+    };
     let outcome = replay::run_cases_planned(
         &mut browsers,
         &root,
@@ -429,6 +454,22 @@ pub fn auto_run_waiting_reset() -> Option<crate::events::AutorunResetNeeded> {
     reset_wait::waits().waiting()
 }
 
+/// The wait for the company network in progress, if any, as the panel shows
+/// it. A screen opened after the pause began asks this to show it again.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_waiting_network() -> Option<crate::autorun::network::WaitView> {
+    crate::autorun::network::waits().current()
+}
+
+/// The person's Stop on a run waiting for the company network. False when
+/// that run is not the one waiting.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_stop_network_wait(run_id: String) -> bool {
+    crate::autorun::network::waits().stop(&run_id)
+}
+
 /// How long the app's exit waits for a run stopped at a reset point to
 /// save itself.
 const EXIT_SAVE_WAIT: Duration = Duration::from_secs(3);
@@ -437,10 +478,16 @@ const EXIT_SAVE_WAIT: Duration = Duration::from_secs(3);
 /// the exit waits (bounded) for it to record the rest as not run and save
 /// itself, so its file is never left mid-run.
 pub fn stop_paused_run_on_exit() {
-    if !reset_wait::waits().stop_for_exit() {
+    let at_reset = reset_wait::waits().stop_for_exit();
+    let at_network = crate::autorun::network::waits().stop_for_exit();
+    if !at_reset && !at_network {
         return;
     }
-    crate::applog::info("Auto-run unattended: the app closed at a reset point - the run was stopped");
+    crate::applog::info(if at_reset {
+        "Auto-run unattended: the app closed at a reset point - the run was stopped"
+    } else {
+        "Auto-run unattended: the app closed while the company network was unreachable - the run was stopped"
+    });
     let until = std::time::Instant::now() + EXIT_SAVE_WAIT;
     while replay_is_running() && std::time::Instant::now() < until {
         std::thread::sleep(Duration::from_millis(25));
