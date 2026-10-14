@@ -1343,11 +1343,21 @@ pub fn api_fixture_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
         }
     };
     let existed = matches!(fixture_store::load(&root, &ctx.org, &ctx.project, &fixture.id), Ok(Some(_)));
+    // The setups approved for the fixture as it was: a change undoes those
+    // approvals, and the answer names each one (never silently).
+    let approved = crate::autorun::setup::approved_setups(&root, &ctx.org, &ctx.project, &fixture.id);
     match fixture_store::save(&root, &ctx.org, &ctx.project, &fixture) {
         Ok(()) => {
             crate::applog::info(format!("api fixture {}: {}", fixture.id, if existed { "replaced" } else { "saved" }));
             templates_changed(&fixture.id);
-            (200, serde_json::json!({ "saved": fixture.id, "replaced": existed }).to_string())
+            let undone = crate::autorun::setup::no_longer_approved(&root, &ctx.org, &ctx.project, &approved);
+            let mut answer = serde_json::json!({ "saved": fixture.id, "replaced": existed });
+            if !undone.is_empty() {
+                crate::applog::info(format!("api fixture {}: setup approvals undone for {undone:?}", fixture.id));
+                answer["needs_reapproval"] = serde_json::json!(undone);
+                answer["note"] = serde_json::json!(crate::autorun::setup::needs_reapproval_line(&undone));
+            }
+            (200, answer.to_string())
         }
         Err(problems) => (400, problems.join("\n")),
     }
@@ -5117,6 +5127,10 @@ async fn run_assistant_replay(
     // Where it started, said first: carried on, from the beginning, or
     // already there (then nothing ran, and that is all there is to say).
     let said = match (&end, from) {
+        // Approving a setup is the person's alone: say who, and where.
+        (ReplayEnd::Blocked(why), _) if why == crate::autorun::setup::NOT_APPROVED => {
+            crate::autorun::setup::not_approved_for_replay(case_id)
+        }
         (ReplayEnd::Refused(_) | ReplayEnd::Blocked(_), _) => end.sentence(),
         (_, ReplayFrom::AlreadyThere) => from.said(case_id, step),
         _ => format!("{} {}", from.said(case_id, step), capitalised(&end.sentence())),
