@@ -231,6 +231,11 @@ export default function PastRuns({
                   </span>
                 ))}
               </div>
+              {(run.network_pauses ?? []).length > 0 && (
+                <p className="text-xs text-warning">
+                  {(run.network_pauses ?? []).length} network pause{(run.network_pauses ?? []).length === 1 ? "" : "s"}
+                </p>
+              )}
               <ul className="space-y-1">
                 {run.cases.filter((c) => matchesFilter(c, filter)).map((c, i, shown) => {
                   const replayTo = onReplay && !otherPbi ? replayStep(c) : null;

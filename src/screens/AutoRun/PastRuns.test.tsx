@@ -489,3 +489,23 @@ test("while discovery holds the browser, Replay to step is off and says why", as
   fireEvent.click(replay);
   expect(onReplay).not.toHaveBeenCalled();
 });
+
+test("a run that paused for the network says so on its row", async () => {
+  renderPastRuns(
+    [
+      runOf({ id: "a", network_pauses: [{ before_case_id: 201, waited_ms: 5000, outcome: "resumed" }] }),
+      runOf({
+        id: "b",
+        network_pauses: [
+          { before_case_id: 201, waited_ms: 5000, outcome: "resumed" },
+          { before_case_id: 202, waited_ms: 9000, outcome: "resumed" },
+        ],
+      }),
+      runOf({ id: "c" }),
+    ],
+    7,
+  );
+  expect(await screen.findByText("1 network pause")).toBeInTheDocument();
+  expect(screen.getByText("2 network pauses")).toBeInTheDocument();
+  expect(screen.getAllByText(/network pause/)).toHaveLength(2);
+});
