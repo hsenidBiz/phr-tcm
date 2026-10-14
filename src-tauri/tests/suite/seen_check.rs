@@ -1156,7 +1156,9 @@ fn an_unseen_locator_is_still_refused() {
         (serde_json::json!({ "text": "report.pdf" }), "text \"report.pdf\""),
     ] {
         let s = one_step("Cycles", serde_json::json!([click(selector)]));
-        assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(refusal(1, what)), "{what}");
+        // A name that is only a placeholder is refused saying so.
+        let want = if what.contains(" \"{{") { only_placeholder(1, what) } else { refusal(1, what) };
+        assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(want), "{what}");
     }
 }
 
@@ -1262,9 +1264,22 @@ fn a_placeholder_the_run_would_not_fill_is_literal_text() {
         assert!(!has_data_placeholders(&s.steps), "{what}");
         assert_eq!(check_seen(&map, &none(), &s, &[], None), Err(refusal(1, what)), "{what}");
     }
-    // As the run writes it, it is a wildcard as before.
-    assert_eq!(check_seen(&map, &none(), &with(serde_json::json!({ "role": "button", "name": "{{setup.x}}" })), &[], None), Ok(()));
-    assert_eq!(check_seen(&map, &none(), &with(serde_json::json!({ "text": "{{fixture.a.b}}" })), &[], None), Ok(()));
+    // As the run writes it, it is a wildcard - but only beside words as
+    // seen: a name or a text that is nothing but a placeholder would fit
+    // anything, and is refused, saying why.
+    assert_eq!(check_seen(&map, &none(), &with(serde_json::json!({ "role": "button", "name": "{{setup.x}}" })), &[], None), Err(only_placeholder(1, "button \"{{setup.x}}\"")));
+    assert_eq!(check_seen(&map, &none(), &with(serde_json::json!({ "text": "{{fixture.a.b}}" })), &[], None), Err(only_placeholder(1, "text \"{{fixture.a.b}}\"")));
+    let map = map_with("Cycles", "/cycles", &[role("button", "Save Cycle 9"), text("Saved 9")]);
+    assert_eq!(check_seen(&map, &none(), &with(serde_json::json!({ "role": "button", "name": "Save {{setup.x}}" })), &[], None), Ok(()));
+    assert_eq!(check_seen(&map, &none(), &with(serde_json::json!({ "text": "Saved {{fixture.a.b}}" })), &[], None), Ok(()));
+}
+
+/// The refusal of a locator named only by a placeholder.
+fn only_placeholder(step: i32, describe: &str) -> String {
+    format!(
+        "Step {step}: {describe} {} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
+        v2_lib::autorun::seen_check::ONLY_A_PLACEHOLDER
+    )
 }
 
 /// A date picker is known by what was seen of it, never by a word a
@@ -1280,7 +1295,11 @@ fn a_placeholder_never_names_a_date_picker() {
         let s = one_step("Leave", serde_json::json!([click(serde_json::json!([picker, { "role": "button", "name": "15/01/2027" }]))]));
         assert_eq!(
             check_seen(&map, &none(), &s, &[], None),
-            Err(refusal(1, &format!("button \"15/01/2027\" in {describe}"))),
+            Err(if describe.starts_with("dialog") {
+                only_placeholder(1, &format!("button \"15/01/2027\" in {describe}"))
+            } else {
+                refusal(1, &format!("button \"15/01/2027\" in {describe}"))
+            }),
             "{describe}"
         );
     }
@@ -2444,4 +2463,43 @@ fn one_pass_names_every_refusal_class() {
     assert_eq!(steps, vec![1, 2, 3], "{found:?}");
     assert_eq!(found[1].1.as_deref(), Some(NEVER_COUNTED), "{found:?}");
     assert_eq!(found[2].1.as_deref(), Some(NEVER_COUNTED_NTH), "{found:?}");
+}
+
+/// What the save took as a whole, the run takes too: the chain and the nth
+/// locator probed with a real id pass at save AND, filled in with another
+/// id of the same shape, at run time - their scope links were never
+/// counted on their own. A value of another shape is Blocked, and a probe
+/// of a name that is only a placeholder never counts.
+#[test]
+fn a_placeholder_whole_passes_at_save_and_at_run_time() {
+    use v2_lib::autorun::seen_check::check_resolved_inputs;
+    let card = |id: &str| serde_json::json!({ "css": format!("div[data-cycle-id=\"{id}\"]") });
+    let chain = |id: &str| serde_json::json!([card(id), { "role": "button", "name": "Edit" }]);
+    let nth = |id: &str| serde_json::json!({ "css": format!("div[data-cycle-id=\"{id}\"] span"), "nth": 1 });
+    let map = seen_whole(
+        "Cycles",
+        &[css("div[data-cycle-id=\"274\"]"), role("button", "Edit"), css("div[data-cycle-id=\"274\"] span")],
+        &[(chain("274"), 1), (nth("274"), 1)],
+    );
+    let selectors: [&dyn Fn(&str) -> serde_json::Value; 2] = [&chain, &nth];
+    for selector in selectors {
+        let saved = one_step("Cycles", serde_json::json!([click(selector("{{setup.cycle_id}}"))]));
+        assert_eq!(check_seen(&map, &none(), &saved, &[], None), Ok(()), "save: {}", selector("x"));
+        let filled = one_step("Cycles", serde_json::json!([click(selector("10066"))]));
+        assert_eq!(
+            check_resolved_inputs(&map, &none(), &["Cycles"], &saved.steps, &filled.steps),
+            Ok(()),
+            "run: {}",
+            selector("10066")
+        );
+        // Another shape than the probed id (all digits) is Blocked.
+        let odd = one_step("Cycles", serde_json::json!([click(selector("draft-a"))]));
+        let blocked = check_resolved_inputs(&map, &none(), &["Cycles"], &saved.steps, &odd.steps).unwrap_err();
+        assert!(blocked.contains("as filled in, does not fit what was seen"), "{blocked}");
+    }
+
+    // A whole of a name that is only a placeholder never counts.
+    let named = seen_whole("Cycles", &[role("button", "Cycle 274")], &[(serde_json::json!({ "role": "button", "name": "Cycle 274", "exact": true }), 1)]);
+    let saved = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": "{{setup.label}}", "exact": true }))]));
+    assert_eq!(check_seen(&named, &none(), &saved, &[], None), Err(only_placeholder(1, "button \"{{setup.label}}\"")));
 }
