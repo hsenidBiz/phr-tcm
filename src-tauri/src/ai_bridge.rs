@@ -316,15 +316,15 @@ pub async fn route(
         // the live application, one action at a time.
         ("POST", "/autorun-discover-start") => {
             let answer = autorun_discover_start(ctx, body).await;
-            with_no_save_note(answer, discovery_no_save().await)
+            with_no_save_note(answer, discovery_no_save())
         }
         ("POST", "/autorun-discover-action") => {
             let answer = without_page(autorun_discover_action(ctx, body).await, body);
-            with_no_save_note(answer, discovery_no_save().await)
+            with_no_save_note(answer, discovery_no_save())
         }
         ("POST", "/autorun-discover-actions") => {
             let answer = without_page(autorun_discover_actions(ctx, body).await, body);
-            with_no_save_note(answer, discovery_no_save().await)
+            with_no_save_note(answer, discovery_no_save())
         }
         // A replay going has already ended any discovery, and holds the
         // browser: said at once rather than waited for.
@@ -612,10 +612,14 @@ pub fn with_no_save_note(answer: (u16, String), on: bool) -> (u16, String) {
     }
 }
 
-/// Whether the discovery holding the Auto Run browser must not save.
-async fn discovery_no_save() -> bool {
-    let slot = crate::commands::autorun::supervised().lock().await;
-    slot.as_ref().and_then(|s| s.discovery.as_ref()).is_some_and(|d| d.no_save)
+/// Whether the discovery holding the Auto Run browser must not save. Only
+/// looks: a browser someone else holds right now (a run, a replay) is
+/// never waited for, and then there is no discovery to speak of.
+fn discovery_no_save() -> bool {
+    match crate::commands::autorun::supervised().try_lock() {
+        Ok(slot) => slot.as_ref().and_then(|s| s.discovery.as_ref()).is_some_and(|d| d.no_save),
+        Err(_) => false,
+    }
 }
 
 /// What a template or fixture run refused its account says when the
