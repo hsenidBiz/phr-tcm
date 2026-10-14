@@ -3777,6 +3777,15 @@ async fn text_lines_resolve_and_the_probe_says_the_reads_name() {
         assert!(texts.contains(&want), "no text line {want:?}:\n{text}");
     }
     assert!(!texts.contains(&"Save card"), "a button's own words printed as text:\n{text}");
+    // A field's value is never a text line, and a password is never shown,
+    // whether the page set it or someone typed it.
+    must(run(&mut live, json!({ "kind": "fill", "selector": { "css": "#pin" }, "value": "typed s3cret" })).await);
+    let (after, after_lines) = snapshot_with_lines(&mut live.cdp, 2000).await.expect("the page read failed");
+    let after_texts: Vec<&str> = after_lines.iter().filter(|l| l.role == "text").map(|l| l.name.as_str()).collect();
+    for value in ["typed value 77", "typed words here", "hunter2x", "s3cret"] {
+        assert!(!after_texts.iter().any(|t| t.contains(value)), "{value:?} printed as text:\n{after}");
+    }
+    assert!(!after.contains("hunter2x") && !after.contains("s3cret"), "a password leaked into the read:\n{after}");
     assert!(
         lines.iter().any(|l| l.role == "button" && l.name == "Edit AUTOTEST Preview 2027"),
         "the icon button's line:\n{text}"

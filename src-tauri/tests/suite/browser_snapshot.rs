@@ -23,6 +23,7 @@ fn node(id: &str, role: &str, name: &str, children: &[&str]) -> AxNode {
         disabled: false,
         backend: None,
         required: false,
+        protected: false,
     }
 }
 
@@ -998,4 +999,29 @@ fn a_probe_line_with_the_page_read_name_still_counts_as_visible() {
     assert_eq!(visible_matches(hidden), None);
     let two = "matches: 2\nbutton \"Save\" visible at 1,2 3x4\nbutton \"\" visible at 5,6 7x8 - page read: button \"Save draft\"";
     assert_eq!(visible_matches(two), Some(2));
+}
+
+/// Text inside a field is its value, never a text line: a textbox's typed
+/// words, a combobox's pick, and above all a password's, protected or not.
+#[test]
+fn text_inside_a_field_never_prints_as_a_text_line() {
+    let nodes = vec![
+        node("1", "RootWebArea", "", &["2", "4", "6", "8", "10"]),
+        AxNode { value: Some("typed words".into()), ..node("2", "textbox", "Notes", &["3"]) },
+        node("3", "StaticText", "typed words", &[]),
+        AxNode { protected: true, ..node("4", "textbox", "Secret", &["5"]) },
+        node("5", "StaticText", "s3cret", &[]),
+        node("6", "combobox", "Colour", &["7"]),
+        node("7", "StaticText", "Teal", &[]),
+        node("8", "spinbutton", "Count", &["9"]),
+        node("9", "generic", "", &["90"]),
+        node("90", "StaticText", "42", &[]),
+        node("10", "StaticText", "Outside", &[]),
+    ];
+    let read = render_frames_read(&nodes, &[], DEFAULT_LIMIT);
+    let texts: Vec<&str> = read.lines.iter().filter(|l| l.role == "text").map(|l| l.name.as_str()).collect();
+    assert_eq!(texts, vec!["Outside"]);
+    for never in ["typed words\" ->", "s3cret", "Teal\" ->", "\"42\""] {
+        assert!(!read.text.contains(&format!("text \"{never}")) && !read.text.contains("s3cret"), "{never}: {}", read.text);
+    }
 }

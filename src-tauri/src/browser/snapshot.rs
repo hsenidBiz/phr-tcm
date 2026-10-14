@@ -59,6 +59,12 @@ pub const TEXT_ROLE: &str = "text";
 /// be the whole paragraph.
 const MAX_TEXT_LINE: usize = 200;
 
+/// Roles whose own value Chrome lays out as text inside them: a typed
+/// value, a password's dots, a picked option. Nothing under one of these
+/// ever prints as a text line (`text_line`): it is the field's value, which
+/// the line of the field itself shows or, for a password, never shows.
+const FIELD_ROLES: [&str; 6] = ["textbox", "searchbox", "combobox", "spinbutton", "listbox", "slider"];
+
 /// Roles whose current value is worth showing on the line.
 const VALUE_ROLES: [&str; 3] = ["textbox", "combobox", "searchbox"];
 
@@ -80,6 +86,9 @@ pub struct AxNode {
     pub backend: Option<i64>,
     /// The AX `required` property: a field the page will not accept empty.
     pub required: bool,
+    /// A password-like field (`parse_nodes`): what it holds is never shown,
+    /// neither as its value nor as text inside it.
+    pub protected: bool,
 }
 
 /// One printed line as data: what a caller needs to pick a control without
@@ -165,6 +174,7 @@ pub fn parse_nodes(v: &Value) -> Vec<AxNode> {
                 disabled: property_bool(raw, "disabled"),
                 backend: raw["backendDOMNodeId"].as_i64(),
                 required: property_bool(raw, "required"),
+                protected,
             }
         })
         .collect()
@@ -323,6 +333,7 @@ fn walk(
     in_list: bool,
     within: Option<i64>,
     parent: &str,
+    in_field: bool,
 ) {
     if !seen.insert(id.to_string()) {
         return;
@@ -333,7 +344,7 @@ fn walk(
     if let Some(backend) = within {
         if node.backend != Some(backend) {
             for child in &node.children {
-                walk(child, depth, tree, out, seen, missed, in_list, within, parent);
+                walk(child, depth, tree, out, seen, missed, in_list, within, parent, in_field);
             }
             if let Some(frame) = tree.frames.get(id) {
                 walk_frame(frame, depth, &tree.path, out, missed, within);
@@ -348,20 +359,22 @@ fn walk(
         // a line above already says it. Its InlineTextBox children only
         // repeat it.
         if node.role == "StaticText" && !node.ignored {
-            if !in_list {
+            if !in_list && !in_field {
                 out.extend(text_line(node, depth, &tree.path, parent));
             }
             return;
         }
         for child in &node.children {
-            walk(child, depth, tree, out, seen, missed, in_list, None, parent);
+            walk(child, depth, tree, out, seen, missed, in_list, None, parent, in_field);
         }
         return;
     }
     let reachable = !in_list && !NO_LOCATOR_ROLES.contains(&node.role.as_str());
     out.push((format_line(node, depth, &tree.path, reachable), reachable.then(|| snap_line(node, &tree.path))));
     for child in &node.children {
-        walk(child, depth + 1, tree, out, seen, missed, in_list, None, &node.name);
+        // Inside a field (or a protected one), text is its value.
+        let field = in_field || FIELD_ROLES.contains(&node.role.as_str()) || VALUE_ROLES.contains(&node.role.as_str()) || node.protected;
+        walk(child, depth + 1, tree, out, seen, missed, in_list, None, &node.name, field);
     }
     if let Some(frame) = tree.frames.get(id) {
         walk_frame(frame, depth + 1, &tree.path, out, missed, None);
@@ -402,7 +415,7 @@ fn walk_frame(frame: &FrameTree, depth: usize, path: &[Value], out: &mut Vec<Pri
         frames: frame.frames.iter().map(|f| (f.iframe_id.as_str(), f)).collect(),
         path: inner,
     };
-    walk(&root.id, depth, &tree, out, &mut std::collections::HashSet::new(), missed, false, within, "");
+    walk(&root.id, depth, &tree, out, &mut std::collections::HashSet::new(), missed, false, within, "", false);
 }
 
 /// Pure rendering: every rule (folding, password redaction, the locator
@@ -473,7 +486,7 @@ fn printed_lines(nodes: &[AxNode], frames: &[FrameTree], within: Option<i64>) ->
     let mut lines = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut missed = false;
-    walk(&root.id, 0, &tree, &mut lines, &mut seen, &mut missed, false, within, "");
+    walk(&root.id, 0, &tree, &mut lines, &mut seen, &mut missed, false, within, "", false);
     (lines, missed)
 }
 

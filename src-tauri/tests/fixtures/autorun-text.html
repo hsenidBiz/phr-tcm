@@ -6,7 +6,8 @@
   Chrome folds into no role a locator can name; an icon button named only
   by its aria-label; and a button whose own words are its name. The page
   read prints the values as text lines, never the button's words twice,
-  and the probe says the name the read gives the icon button.
+  and the probe says the name the read gives the icon button. A typed
+  value, a textarea's words and a password are values, never text lines.
 -->
 <style>
   .card { border: 1px solid; margin: 8px; padding: 8px; width: 320px; }
@@ -20,5 +21,8 @@
     <div>Status <b>Draft</b></div>
     <button class="edit" aria-label="Edit AUTOTEST Preview 2027"><svg width="16" height="16" aria-hidden="true"><rect width="16" height="16"></rect></svg></button>
     <button id="save">Save card</button>
+    <input id="notes" aria-label="Notes" value="typed value 77">
+    <textarea id="comments" aria-label="Comments">typed words here</textarea>
+    <input id="pin" type="password" aria-label="Pin" value="hunter2x">
   </div>
 </main>
