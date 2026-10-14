@@ -3,6 +3,10 @@
 // a run whose count disagrees (pw_repo::runner); this screen picks, shows the
 // output as it streams, stops, and lists the reports.
 //
+// A toolbar of run actions and the browser mode; then the tree and, beside
+// it on a wide window, the output console (its own Stop, following new lines
+// while it is scrolled to the bottom) and the reports.
+//
 // The ticks are remembered per clone (lib/cache, `cacheKeys.pwTicks`).
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -23,9 +27,9 @@ import {
 } from "../../lib/actionIcons";
 import { CACHE, cacheKeys, cacheRead, cacheWrite } from "../../lib/cache";
 import { unwrapStr } from "../../lib/ipc";
+import { Card, Hint } from "./parts";
 import RunnerTree, { buildBranches } from "./RunnerTree";
 
-const sectionTitle = "text-xs font-semibold uppercase tracking-wide text-muted";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** The query keys of the clone's tests and reports; the folder is part of each. */
@@ -85,6 +89,14 @@ export default function Runner({ clone }: { clone: string }) {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [preview, setPreview] = useState<RunPreview | null>(null);
   const [ask, setAsk] = useState<Ask | null>(null);
+  /** The output panel, and whether it follows new lines (it does until the
+   * person scrolls up from the bottom). */
+  const logRef = useRef<HTMLPreElement>(null);
+  const follow = useRef(true);
+  useEffect(() => {
+    const el = logRef.current;
+    if (el && follow.current) el.scrollTop = el.scrollHeight;
+  }, [output]);
 
   // What the event listeners read: the latest values, not the first render's.
   // `ended` holds the end of a run whose start has not come back yet: a run
@@ -301,11 +313,19 @@ export default function Runner({ clone }: { clone: string }) {
     }
   };
 
+  const working = running !== null || waitingOn !== null || busy;
+  const status = running !== null ? "Running…" : working ? "Working…" : note;
+  const statusTone = working
+    ? "text-accent"
+    : running === null && note === "The run passed."
+      ? "text-success"
+      : note.startsWith("The run ended with failures")
+        ? "text-danger"
+        : "text-muted";
+
   return (
     <section className="space-y-3" aria-label="Runner">
-      <h3 className={sectionTitle}>Runner</h3>
-
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface p-2">
         <Button size="sm" disabled={active || picked.length === 0} onClick={() => void run("Picked")}>
           <IconRun aria-hidden />
           {`Run picked (${picked.length})`}
@@ -322,8 +342,11 @@ export default function Runner({ clone }: { clone: string }) {
           <IconReview aria-hidden />
           Preview
         </Button>
+        <span className="mx-1 h-6 w-px bg-border" aria-hidden />
         <Select
           aria-label="Browser"
+          className="w-40"
+          triggerClassName="py-1.5 text-xs"
           value={mode}
           disabled={active || ask !== null}
           onChange={(e) => setMode(e.target.value as BrowserMode)}
@@ -332,15 +355,11 @@ export default function Runner({ clone }: { clone: string }) {
           <option value="Shown">Browser shown</option>
           <option value="Debug">Debug</option>
         </Select>
-        <Button size="sm" variant="outline" disabled={!active} onClick={() => void stop()}>
-          <IconStop aria-hidden />
-          Stop
-        </Button>
       </div>
 
       {ask && (
-        <div className="flex flex-wrap items-center gap-2 rounded border border-border bg-surface p-2" role="alert">
-          <span className="text-sm text-text">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2" role="alert">
+          <span className="min-w-0 flex-1 text-sm text-text">
             {`Debug pauses at the start of every test, and this runs ${ask.count}. Run them all in debug mode?`}
           </span>
           <Button size="sm" onClick={() => void run(ask.action, true, ask.mode)}>
@@ -353,68 +372,105 @@ export default function Runner({ clone }: { clone: string }) {
           </Button>
         </div>
       )}
-      {error && <p className="text-xs text-danger">{error}</p>}
-      {note && <p className="text-xs text-muted">{note}</p>}
+      {error && <p className="whitespace-pre-wrap text-xs text-danger">{error}</p>}
       {warnings.map((w) => (
         <p key={w} className="text-xs text-warning">
           {w}
         </p>
       ))}
 
-      {preview && (
-        <div className="space-y-1" aria-label="Preview">
-          <p className="text-xs text-muted">{`Would run ${preview.expected}:`}</p>
-          <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-xs text-text">
-            {`${preview.run_list ?? ""}${preview.run_list ? "\n" : ""}${preview.command}`}
-          </pre>
-        </div>
-      )}
-
-      {(output.length > 0 || active) && (
-        <pre
-          role="log"
-          aria-label="Run output"
-          className="max-h-80 overflow-auto rounded border border-border bg-surface p-2 text-xs text-text"
-        >
-          {output.join("\n")}
-        </pre>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="outline" disabled={list.length === 0} onClick={() => tick(list.map((t) => t.id), true)}>
-          <IconSetDefault aria-hidden />
-          Tick all
-        </Button>
-        <Button size="sm" variant="outline" disabled={picked.length === 0} onClick={() => tick([...ticked], false)}>
-          <IconClear aria-hidden />
-          Clear
-        </Button>
-        <Button size="sm" variant="outline" disabled={active || tests.isFetching} onClick={() => void refresh()}>
-          <IconRefresh aria-hidden />
-          List again
-        </Button>
-      </div>
-      {tests.isLoading && <p className="text-xs text-muted">Listing the tests…</p>}
-      {tests.isError && <p className="text-xs text-danger">{tests.error.message}</p>}
-      {tests.isSuccess && list.length === 0 && <p className="text-xs text-muted">No tests under suites yet.</p>}
-      {branches.length > 0 && <RunnerTree branches={branches} ticked={ticked} onTick={tick} />}
-
-      <div className="space-y-1" aria-label="Reports">
-        <h4 className={sectionTitle}>Reports</h4>
-        {reports.isError && <p className="text-xs text-danger">{reports.error.message}</p>}
-        {reports.data && reports.data.length === 0 && <p className="text-xs text-muted">No report yet. Run something first.</p>}
-        <ul className="space-y-1">
-          {(reports.data ?? []).map((r) => (
-            <li key={r.run_id} className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-text">{r.run_id.replace("T", " ").replace(/-(\d\d)-(\d\d)$/, ":$1:$2")}</span>
-              <span className="text-xs text-muted">{stats(r.stats)}</span>
-              <Button size="sm" variant="outline" aria-label={`Open the report of ${r.run_id}`} onClick={() => void open(r.run_id)}>
-                <IconOpenInBrowser aria-hidden />
-                Open
+      <div className="grid gap-3 min-[1400px]:grid-cols-2 min-[1400px]:items-start">
+        <Card
+          title={
+            <>
+              Tests <span className="text-xs font-normal text-faint">{list.length}</span>
+            </>
+          }
+          actions={
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="ghost" disabled={list.length === 0} onClick={() => tick(list.map((t) => t.id), true)}>
+                <IconSetDefault aria-hidden />
+                Tick all
               </Button>
-            </li>
-          ))}
-        </ul>
+              <Button size="sm" variant="ghost" disabled={picked.length === 0} onClick={() => tick([...ticked], false)}>
+                <IconClear aria-hidden />
+                Clear
+              </Button>
+              <Button size="sm" variant="ghost" disabled={active || tests.isFetching} onClick={() => void refresh()}>
+                <IconRefresh aria-hidden />
+                List again
+              </Button>
+            </div>
+          }
+          bodyClassName="max-h-[34rem] overflow-auto p-2"
+        >
+          {tests.isLoading && <Hint className="p-2">Listing the tests…</Hint>}
+          {tests.isError && <p className="whitespace-pre-wrap p-2 text-xs text-danger">{tests.error.message}</p>}
+          {tests.isSuccess && list.length === 0 && <Hint className="p-2">No tests under suites yet.</Hint>}
+          {branches.length > 0 && <RunnerTree branches={branches} ticked={ticked} onTick={tick} />}
+        </Card>
+
+        <div className="min-w-0 space-y-3">
+          {preview && (
+            <Card title="Preview" aria-label="Preview" bodyClassName="space-y-1 p-3">
+              <Hint>{`Would run ${preview.expected}:`}</Hint>
+              <pre className="overflow-x-auto rounded-md bg-surface-2 p-2 font-mono text-xs text-text">
+                {`${preview.run_list ?? ""}${preview.run_list ? "\n" : ""}${preview.command}`}
+              </pre>
+            </Card>
+          )}
+
+          <Card
+            title="Output"
+            actions={
+              <>
+                {status && <span className={`text-xs ${statusTone}`}>{status}</span>}
+                <Button size="sm" variant="outline" disabled={!active} onClick={() => void stop()}>
+                  <IconStop aria-hidden />
+                  Stop
+                </Button>
+              </>
+            }
+          >
+            <pre
+              ref={logRef}
+              role="log"
+              aria-label="Run output"
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+              }}
+              className="h-72 overflow-auto bg-bg p-3 font-mono text-xs leading-relaxed text-text"
+            >
+              {output.length > 0 ? (
+                output.join("\n")
+              ) : (
+                <span className="text-faint">{active ? "Starting…" : "No run yet. Output appears here as a run goes."}</span>
+              )}
+            </pre>
+          </Card>
+
+          <Card title="Reports" aria-label="Reports" bodyClassName="max-h-64 overflow-auto">
+            {reports.isError && <p className="p-3 text-xs text-danger">{reports.error.message}</p>}
+            {reports.data && reports.data.length === 0 && <Hint className="p-3">No report yet. Run something first.</Hint>}
+            <ul className="divide-y divide-border">
+              {(reports.data ?? []).map((r) => (
+                <li key={r.run_id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5">
+                  <span className="font-mono text-xs text-text">{r.run_id.replace("T", " ").replace(/-(\d\d)-(\d\d)$/, ":$1:$2")}</span>
+                  <span
+                    className={`min-w-0 flex-1 text-xs ${r.stats?.failed ? "text-danger" : r.stats ? "text-success" : "text-muted"}`}
+                  >
+                    {stats(r.stats)}
+                  </span>
+                  <Button size="sm" variant="ghost" aria-label={`Open the report of ${r.run_id}`} onClick={() => void open(r.run_id)}>
+                    <IconOpenInBrowser aria-hidden />
+                    Open
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
       </div>
     </section>
   );

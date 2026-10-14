@@ -1,12 +1,15 @@
 // The Runner's folding tree: country, side, module, feature, spec, test, as
 // the repo's own `npm run qa` shows it. The shared tree (common-components)
 // has no side or module. Every branch and test has a tick box; a branch's
-// box ticks or clears everything under it.
+// box ticks or clears everything under it, and says how many of its tests
+// are ticked. Each level hangs from a guide line, and a test's last result
+// is a coloured dot beside its word.
 
 import { useState } from "react";
 import type { LastResult, ListedTest } from "../../bindings";
 import { Checkbox } from "../../components/ui/checkbox";
 import { IconHideDetails, IconShowDetails } from "../../lib/actionIcons";
+import { cn } from "../../lib/cn";
 
 export type Branch = {
   id: string;
@@ -65,11 +68,11 @@ export function buildBranches(tests: ListedTest[]): Branch[] {
   return root.children;
 }
 
-const RESULT: Record<LastResult, { text: string; cls: string }> = {
-  Passed: { text: "passed", cls: "text-success" },
-  Failed: { text: "failed", cls: "text-danger" },
-  Flaky: { text: "flaky", cls: "text-warning" },
-  Skipped: { text: "skipped", cls: "text-muted" },
+const RESULT: Record<LastResult, { text: string; cls: string; dot: string }> = {
+  Passed: { text: "passed", cls: "text-success", dot: "bg-success" },
+  Failed: { text: "failed", cls: "text-danger", dot: "bg-danger" },
+  Flaky: { text: "flaky", cls: "text-warning", dot: "bg-warning" },
+  Skipped: { text: "skipped", cls: "text-muted", dot: "bg-faint" },
 };
 
 type Props = {
@@ -77,6 +80,9 @@ type Props = {
   ticked: Set<string>;
   onTick: (ids: string[], on: boolean) => void;
 };
+
+/** The list under a branch: indented, hanging from a guide line. */
+const NESTED = "ml-[0.875rem] border-l border-border pl-2";
 
 export default function RunnerTree({ branches, ticked, onTick }: Props) {
   const [folded, setFolded] = useState<Set<string>>(() => new Set());
@@ -88,15 +94,15 @@ export default function RunnerTree({ branches, ticked, onTick }: Props) {
       return next;
     });
 
-  const row = (b: Branch, depth: number) => {
+  const row = (b: Branch, spec: boolean) => {
     const on = b.ids.filter((id) => ticked.has(id)).length;
     const shut = folded.has(b.id);
     return (
       <li key={b.id}>
-        <div className="flex items-center gap-2 py-0.5" style={{ paddingLeft: `${depth * 1}rem` }}>
+        <div className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-surface-2">
           <button
             type="button"
-            className="text-muted transition-colors hover:text-accent"
+            className="flex size-5 items-center justify-center text-muted transition-colors hover:text-accent [&_svg]:size-3.5"
             aria-label={`${shut ? "Unfold" : "Fold"} ${b.label}`}
             title={shut ? "Unfold" : "Fold"}
             onClick={() => toggle(b.id)}
@@ -109,27 +115,42 @@ export default function RunnerTree({ branches, ticked, onTick }: Props) {
             indeterminate={on > 0 && on < b.ids.length}
             onCheckedChange={(v) => onTick(b.ids, v)}
           />
-          <span className="text-sm text-text">{b.label}</span>
-          <span className="text-xs text-muted">{b.ids.length}</span>
+          <span className={cn("min-w-0 truncate text-sm", spec ? "font-mono text-xs text-text" : "font-medium text-text")}>
+            {b.label}
+          </span>
+          <span className={cn("ml-auto shrink-0 text-xs tabular-nums", on ? "text-accent" : "text-faint")}>
+            {on ? `${on}/${b.ids.length}` : b.ids.length}
+          </span>
         </div>
         {!shut && (
-          <ul>
-            {b.children.map((c) => row(c, depth + 1))}
-            {b.tests.map((t) => (
-              <li key={t.id} className="flex items-center gap-2 py-0.5" style={{ paddingLeft: `${(depth + 1) * 1 + 1.5}rem` }}>
-                <Checkbox ariaLabel={`Tick ${t.title}`} checked={ticked.has(t.id)} onCheckedChange={(v) => onTick([t.id], v)} />
-                <span className="min-w-0 flex-1 text-sm text-text">{t.title}</span>
-                {t.ado_id !== null && <span className="text-xs text-muted">{`ADO ${t.ado_id}`}</span>}
-                {t.last_result && (
-                  <span className={`text-xs ${RESULT[t.last_result].cls}`}>{RESULT[t.last_result].text}</span>
-                )}
-              </li>
-            ))}
+          <ul className={NESTED}>
+            {b.children.map((c) => row(c, c.tests.length > 0))}
+            {b.tests.map((t) => {
+              const r = t.last_result ? RESULT[t.last_result] : null;
+              return (
+                <li key={t.id} className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-surface-2">
+                  <span className="w-5 shrink-0" aria-hidden />
+                  <Checkbox ariaLabel={`Tick ${t.title}`} checked={ticked.has(t.id)} onCheckedChange={(v) => onTick([t.id], v)} />
+                  <span className="min-w-0 flex-1 truncate text-sm text-text" title={t.title}>
+                    {t.title}
+                  </span>
+                  {t.ado_id !== null && <span className="shrink-0 font-mono text-xs text-faint">{`ADO ${t.ado_id}`}</span>}
+                  <span className="flex w-16 shrink-0 items-center justify-end gap-1.5">
+                    {r && (
+                      <>
+                        <span aria-hidden className={cn("size-2 rounded-full", r.dot)} />
+                        <span className={`text-xs ${r.cls}`}>{r.text}</span>
+                      </>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </li>
     );
   };
 
-  return <ul aria-label="Tests">{branches.map((b) => row(b, 0))}</ul>;
+  return <ul aria-label="Tests">{branches.map((b) => row(b, b.tests.length > 0))}</ul>;
 }

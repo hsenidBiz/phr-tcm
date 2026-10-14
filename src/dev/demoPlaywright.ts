@@ -247,8 +247,9 @@ function streamRun(run: number, count: number) {
   ];
   lines.forEach((line, i) => setTimeout(() => void events.pwOutput.emit({ run, line }), 250 * (i + 1)));
   setTimeout(() => {
-    void events.pwDone.emit({ run, code: 1 });
+    // The report first, so the run's end finds it and opens it.
     reports = [{ run_id: new Date().toISOString().slice(0, 19).replace(/:/g, "-"), stats: { passed: 3, failed: 1, flaky: 0, skipped: 0, duration_ms: 31600 } }, ...reports];
+    void events.pwDone.emit({ run, code: 1 });
   }, 250 * (lines.length + 2));
 }
 
