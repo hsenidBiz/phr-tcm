@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.26",
+    date: "2026-10-14",
+    items: [
+      "An unattended run now waits out a dropped network or VPN instead of failing every case: it pauses, tells you, counts down, and re-runs the case it interrupted once the connection is back. You can stop it at any time.",
+      "The Playwright tab is reorganised into Overview, Runner, Accounts and Sync, with a cleaner header, status badges, tables and an output console.",
+      "Export to Playwright no longer lists cases without a script, groups the rest by module, and sums up what will be exported.",
+    ],
+  },
+  {
     version: "2.1.3-beta.25",
     date: "2026-10-14",
     items: [
