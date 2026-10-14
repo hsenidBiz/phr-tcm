@@ -1100,9 +1100,8 @@ mod through_the_bridge {
         assert_eq!(*changed.lock().unwrap(), vec![ID.to_string()]);
     }
 
-    /// A setup running this template whose fixture the person approved:
-    /// case 81, approved as the fixture and `saved` stand now.
-    fn approved_setup(root: &std::path::Path) {
+    /// A setup running this template: case 81, never approved.
+    fn setup_running_it(root: &std::path::Path) {
         use v2_lib::api_templates::fixture::{Fixture, FixtureStep};
         let f = Fixture {
             id: "cycle-draft".into(),
@@ -1123,15 +1122,13 @@ mod through_the_bridge {
         }))
         .unwrap();
         v2_lib::autorun::store::save_script(root, &sc).unwrap();
-        let fp = v2_lib::autorun::setup::current(root, ORG, PROJECT, sc.setup.as_ref().unwrap()).unwrap().fingerprint;
-        v2_lib::autorun::approvals::approve(root, 81, &fp).unwrap();
     }
 
-    /// A prove that replaces a template's body undoes the approval of every
-    /// setup running it, and its answer names them as a fixture save does;
-    /// one that changes only the proof undoes nothing and says nothing.
+    /// A prove that replaces the body of a template a setup runs answers
+    /// with its report alone: nothing about approvals, as a prove that
+    /// changes only the proof.
     #[tokio::test]
-    async fn a_prove_that_changes_a_template_names_the_setups_it_needs_approved_again() {
+    async fn a_prove_that_changes_a_template_a_setup_runs_says_nothing_about_approvals() {
         // Its replace lines must not reach another test reading the log.
         let _log = crate::serial::log_tail();
         let _root = crate::serial::autorun();
@@ -1142,7 +1139,7 @@ mod through_the_bridge {
         let Rig { browsers, root, .. } = rig(ok(), None);
         v2_lib::autorun::store::set_root(root.path().to_path_buf());
         store::save(root.path(), ORG, PROJECT, &proven_copy()).unwrap();
-        approved_setup(root.path());
+        setup_running_it(root.path());
 
         // The same body proven again: only the proof changes.
         let why = json!({ "replace": true, "why": "proving it again" });
@@ -1160,9 +1157,7 @@ mod through_the_bridge {
         let (status, out) = api_template_prove(&ctx(), &b.to_string(), |_| browsers, no_db, &quick()).await;
         assert_eq!(status, 200, "{out}");
         let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["needs_reapproval"], json!([81]));
-        assert_eq!(v["note"], json!(v2_lib::autorun::setup::needs_reapproval_line(&[81])));
-        assert_eq!(v2_lib::autorun::setup::not_approved(root.path(), ORG, PROJECT, &[81]), vec![81]);
+        assert!(v.get("needs_reapproval").is_none() && v.get("note").is_none(), "{v}");
     }
 }
 

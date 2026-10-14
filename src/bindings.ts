@@ -455,15 +455,14 @@ export const commands = {
 	 *  off). Neither: the case goes on. The active environment's database is
 	 *  looked up only when the case's script has preconditions. Once they are
 	 *  met, the case's fixtures are prepared as an unattended case's are
-	 *  (`autorun::setup::check_supervised`): a setup not approved, a shared
-	 *  fixture never built or a failed setup run is `blocked` with its
+	 *  (`autorun::setup::check_supervised`): a setup fixture that is not
+	 *  saved, a shared fixture never built or a failed setup run is `blocked` with its
 	 *  sentence, and what the setup gave is kept for the case's steps.
 	 */
 	autoRunCheckPreconditions: (organization: string, project: string, caseId: number, dbReadAccess: boolean) => typedError<PreconditionCheck, string>(__TAURI_INVOKE("auto_run_check_preconditions", { organization, project, caseId, dbReadAccess })),
 	/**
 	 *  The editor's view of case `case_id`'s setup: its fixture, account,
-	 *  steps and what it makes, and where its approval stands. `None` when the
-	 *  saved script has no setup.
+	 *  steps and what it makes. `None` when the saved script has no setup.
 	 */
 	autoRunSetupView: (organization: string, project: string, caseId: number) => typedError<{
 	fixture_name: string,
@@ -473,35 +472,7 @@ export const commands = {
 	steps: string[],
 	/**  What it makes, each as `<kind> <name>`. */
 	creates: string[],
-	/**  `approved`, `changed` (approved once, changed since) or `none`. */
-	approval: string,
-	/**  When it was approved, while `approval` is `approved`. */
-	approved_at: string | null,
-	/**
-	 *  What Approve setup signs: it approves only while the setup still
-	 *  has this fingerprint (`approval_target`).
-	 */
-	fingerprint: string,
 } | null, string>(__TAURI_INVOKE("auto_run_setup_view", { organization, project, caseId })),
-	/**
-	 *  The person's Approve setup: approves case `case_id`'s setup exactly as
-	 *  the person was shown it - `expected_fingerprint` is the
-	 *  `SetupView::fingerprint` they saw. A setup that changed since is
-	 *  refused (`setup::CHANGED_WHILE_LOOKING`) and nothing is approved. Any
-	 *  later change to the setup, its fixture or a template it runs clears it.
-	 */
-	autoRunApproveSetup: (organization: string, project: string, caseId: number, expectedFingerprint: string) => typedError<SetupView, string>(__TAURI_INVOKE("auto_run_approve_setup", { organization, project, caseId, expectedFingerprint })),
-	/**
-	 *  The person's Withdraw approval: case `case_id`'s setup is no longer
-	 *  approved, and the case is Blocked until it is approved again.
-	 */
-	autoRunWithdrawSetup: (organization: string, project: string, caseId: number) => typedError<SetupView, string>(__TAURI_INVOKE("auto_run_withdraw_setup", { organization, project, caseId })),
-	/**
-	 *  Of `case_ids`, the cases whose setup is not approved for what is saved
-	 *  now: a run Blocks each of them, so the Auto Run screen names them
-	 *  before it starts one. Reads only; approving stays in the script editor.
-	 */
-	autoRunUnapprovedSetups: (organization: string, project: string, caseIds: number[]) => typedError<number[], string>(__TAURI_INVOKE("auto_run_unapproved_setups", { organization, project, caseIds })),
 	autoRunLoadScript: (caseId: number) => typedError<{
 	case_id: number,
 	title: string,
@@ -560,8 +531,7 @@ export const commands = {
 	preconditions?: Precondition_Serialize[],
 	/**
 	 *  The draft this case makes for itself before it signs in: a fixture
-	 *  the run performs on every run of the case, once a person has
-	 *  approved it in the script editor (`approvals`). Its outputs reach
+	 *  the run performs on every run of the case. Its outputs reach
 	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
 	 *  add, change or remove it. Written only when there is one, so a
 	 *  script without one reads exactly as it always did.
@@ -1450,7 +1420,7 @@ export const commands = {
 	 */
 	writingStyleReadFile: (path: string) => typedError<string, string>(__TAURI_INVOKE("writing_style_read_file", { path })),
 	apiTemplatesOverview: (organization: string, project: string) => typedError<TemplatesOverview_Serialize, string>(__TAURI_INVOKE("api_templates_overview", { organization, project })),
-	apiTemplatesRemove: (organization: string, project: string, id: string) => typedError<Reapproval, string>(__TAURI_INVOKE("api_templates_remove", { organization, project, id })),
+	apiTemplatesRemove: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove", { organization, project, id })),
 	apiTemplatesRemoveFlow: (organization: string, project: string, id: string) => typedError<null, string>(__TAURI_INVOKE("api_templates_remove_flow", { organization, project, id })),
 	apiTemplatesOpenFlow: (organization: string, project: string, id: string, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("api_templates_open_flow", { organization, project, id, palette })),
 	apiTemplatesExport: (organization: string, project: string, path: string) => typedError<TemplatesExportResult, string>(__TAURI_INVOKE("api_templates_export", { organization, project, path })),
@@ -2658,8 +2628,7 @@ export type CaseScript_Deserialize = {
 	preconditions?: Precondition_Deserialize[],
 	/**
 	 *  The draft this case makes for itself before it signs in: a fixture
-	 *  the run performs on every run of the case, once a person has
-	 *  approved it in the script editor (`approvals`). Its outputs reach
+	 *  the run performs on every run of the case. Its outputs reach
 	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
 	 *  add, change or remove it. Written only when there is one, so a
 	 *  script without one reads exactly as it always did.
@@ -2790,8 +2759,7 @@ export type CaseScript_Serialize = {
 	preconditions?: Precondition_Serialize[],
 	/**
 	 *  The draft this case makes for itself before it signs in: a fixture
-	 *  the run performs on every run of the case, once a person has
-	 *  approved it in the script editor (`approvals`). Its outputs reach
+	 *  the run performs on every run of the case. Its outputs reach
 	 *  the steps as `{{setup.<output>}}` (`setup`). A repair can never
 	 *  add, change or remove it. Written only when there is one, so a
 	 *  script without one reads exactly as it always did.
@@ -4674,15 +4642,6 @@ export type Quirk_Serialize = {
 	from: string,
 };
 
-/**
- *  What a webview change to a template says about the setup approvals it
- *  undid: the cases, and `needs_reapproval_line` when there are any.
- */
-export type Reapproval = {
-	needs_reapproval: number[],
-	note: string | null,
-};
-
 export type RecipeStep = RecipeStep_Serialize | RecipeStep_Deserialize;
 
 export type RecipeStep_Deserialize = Action_Deserialize | WhenVisible_Deserialize;
@@ -5356,10 +5315,7 @@ export type Setup = {
 	fixture: string,
 };
 
-/**
- *  A case's setup as the script editor shows it, with where its approval
- *  stands.
- */
+/**  A case's setup as the script editor shows it. */
 export type SetupView = {
 	fixture_name: string,
 	/**  The Auto Run account the fixture runs as (a key, never a login). */
@@ -5368,15 +5324,6 @@ export type SetupView = {
 	steps: string[],
 	/**  What it makes, each as `<kind> <name>`. */
 	creates: string[],
-	/**  `approved`, `changed` (approved once, changed since) or `none`. */
-	approval: string,
-	/**  When it was approved, while `approval` is `approved`. */
-	approved_at: string | null,
-	/**
-	 *  What Approve setup signs: it approves only while the setup still
-	 *  has this fingerprint (`approval_target`).
-	 */
-	fingerprint: string,
 };
 
 export type SharedQueue = SharedQueue_Serialize | SharedQueue_Deserialize;
@@ -5953,8 +5900,6 @@ export type TemplatesImportResult = {
 	replaced: string[],
 	skipped: TemplatesImportSkip[],
 	notes: TemplatesImportNote[],
-	/**  The setups whose approval a replaced template undid. */
-	reapproval: Reapproval,
 };
 
 /**  One entry of the file that was not imported, and why. */

@@ -13,7 +13,7 @@
 //! cases asked for only. Add new is the export of every case with a script
 //! the repo has in none of its places (`pw_repo::presence`, `add_new`).
 
-use crate::autorun::{approvals, recipe, store, CaseScript};
+use crate::autorun::{recipe, store, CaseScript};
 use crate::pw_export::clone;
 use crate::pw_export::export::Fingerprinter;
 use crate::pw_repo::{presence, structure};
@@ -63,8 +63,27 @@ pub struct FingerprintInput {
     pub user_key: Option<String>,
 }
 
+/// `v` with every object's keys in sorted order, all the way down: the
+/// crate keeps JSON keys in insertion order, and a hash must not depend on
+/// the order a file happened to list them in.
+fn canonical(v: &Value) -> Value {
+    match v {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for k in keys {
+                out.insert(k.clone(), canonical(&map[k]));
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
+        other => other.clone(),
+    }
+}
+
 fn sha(v: &Value) -> String {
-    let text = serde_json::to_string(&approvals::canonical(v)).unwrap_or_default();
+    let text = serde_json::to_string(&canonical(v)).unwrap_or_default();
     Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 

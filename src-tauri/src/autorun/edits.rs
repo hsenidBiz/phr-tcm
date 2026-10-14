@@ -152,8 +152,8 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
     }
 
     // Rule 13: a setup writes data in the application on every run of its
-    // case, once a person has approved it. A repair may not add one,
-    // change it or remove it: only the editor or an import can.
+    // case. A repair may not add one, change it or remove it: only the
+    // editor or an import can.
     if old.setup != new.setup {
         return Err(SETUP_KEPT.to_string());
     }

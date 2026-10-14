@@ -368,15 +368,12 @@ test("Run unattended starts from the planned order and shows no plan for a singl
   expect(replays[0].cases.map((c) => c.case_id)).toEqual([2, 1]);
 });
 
-// ---- Setups not approved: named before a run starts ----
+// ---- Setups: no approval is asked before a run ----
 
-test("a selection with unapproved setups names them first, and Run the rest runs the others", async () => {
-  const asked: number[][] = [];
-  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check"), caseRow(3, "Gamma check")], [1, 2, 3], [], (cmd, args) => {
-    if (cmd === "auto_run_unapproved_setups") {
-      asked.push((args as { caseIds: number[] }).caseIds);
-      return [2];
-    }
+test("a selection with setups starts at once: no approval is asked first", async () => {
+  const asked: string[] = [];
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check"), caseRow(3, "Gamma check")], [1, 2, 3], [], (cmd) => {
+    asked.push(cmd);
     return null;
   });
   renderScreen();
@@ -384,50 +381,10 @@ test("a selection with unapproved setups names them first, and Run the rest runs
   for (const id of [1, 2, 3]) fireEvent.click(screen.getByRole("checkbox", { name: `Select #${id}` }));
   fireEvent.click(await screen.findByRole("button", { name: "Run 3 selected" }));
 
-  const dialog = await screen.findByRole("dialog", { name: "Setups not approved" });
-  expect(within(dialog).getByText(/setups are not approved and will be Blocked/)).toBeInTheDocument();
-  const listed = within(dialog).getByRole("list", { name: "Cases whose setup is not approved" });
-  expect(within(listed).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["#2 Beta check"]);
-  expect(asked).toEqual([[1, 2, 3]]);
-  // No run has started while the person decides.
-  expect(screen.queryByText(/case 1 of/)).not.toBeInTheDocument();
-
-  fireEvent.click(within(dialog).getByRole("button", { name: "Run the rest (2)" }));
-  const progress = await screen.findByText("case 1 of 2");
+  const progress = await screen.findByText("case 1 of 3");
   expect(progress.closest("h2")).toHaveTextContent("#1 Alpha check");
-  expect(screen.queryByRole("dialog", { name: "Setups not approved" })).not.toBeInTheDocument();
-  // The rest is not asked about again.
-  expect(asked).toHaveLength(1);
-});
-
-test("Cancel on the unapproved setups confirm starts nothing and keeps the selection", async () => {
-  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1, 2], [], (cmd) =>
-    cmd === "auto_run_unapproved_setups" ? [1] : null,
-  );
-  renderScreen();
-  await screen.findByText("Alpha check");
-  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "Select #2" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Run 2 unattended" }));
-
-  const dialog = await screen.findByRole("dialog", { name: "Setups not approved" });
-  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Setups not approved" })).not.toBeInTheDocument());
-  expect(screen.queryByRole("heading", { name: "Unattended run" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Run 2 selected" })).toBeInTheDocument();
-});
-
-test("when every selected setup is unapproved, the confirm offers only Cancel", async () => {
-  mockList([caseRow(1, "Alpha check")], [1], [], (cmd) => (cmd === "auto_run_unapproved_setups" ? [1] : null));
-  renderScreen();
-  await screen.findByText("Alpha check");
-  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Run 1 unattended" }));
-
-  const dialog = await screen.findByRole("dialog", { name: "Setups not approved" });
-  expect(within(dialog).queryByRole("button", { name: /Run the rest/ })).not.toBeInTheDocument();
-  expect(within(dialog).getByText(/None of the selected cases can run/)).toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: "Unattended run" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: /approv/i })).not.toBeInTheDocument();
+  expect(asked.some((cmd) => cmd.includes("approv"))).toBe(false);
 });
 
 test("a double click on a run button asks once and starts one run", async () => {

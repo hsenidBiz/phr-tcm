@@ -981,14 +981,9 @@ from a fresh draft of its own. Its outputs reach the steps as
 `{{setup.<output>}}`. A setup that fails Blocks the case with
 `setup failed: ` and the fixture's own sentence.
 
-A setup stays Blocked until a person approves it in the app, in the script
-editor. You cannot approve it, and no tool can. The approval covers the
-setup, its fixture and every template the fixture uses: changing any of
-them needs a new approval before the case runs again.
-
 Use a setup only when the case needs its own fresh draft, for example
 because it changes or uses up the draft. Otherwise use a shared
-`{{fixture...}}`: it costs no run per case and needs no approval.
+`{{fixture...}}`: it costs no run per case.
 
 ## Shared state a case changes
 

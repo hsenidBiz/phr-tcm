@@ -16,7 +16,7 @@ import SharedStepLabel from "../../components/SharedStepLabel";
 import { IconAdd, IconBug, IconEdit, IconHideDetails, IconRun, IconShowDetails } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import RunDownloads from "./RunDownloads";
-import { approvalWords, loadSetupView, setupViewKey } from "./setupApproval";
+import { loadSetupView, setupViewKey } from "./setupView";
 import { ClearConfirm, SuspectedDefectBadge } from "./SuspectedDefectMark";
 import { bucketTone, type ResultBucket } from "./verdicts";
 
@@ -94,7 +94,7 @@ export default function CaseCard({
 }: {
   c: { id: number; title: string; steps: { action: string; expected: string; shared?: number | null }[] };
   org: string;
-  /** The project the setup's approval is read for. */
+  /** The project the setup is read for. */
   project: string;
   /** The saved script, or null/undefined for a case with none. */
   script: CaseScript | null | undefined;
@@ -122,8 +122,8 @@ export default function CaseCard({
   const hasRunDownloads = (lastRun?.steps ?? []).some((s) => (s.downloads ?? []).length > 0);
   const showFiles = files.uploads.length > 0 || files.downloads.length > 0 || hasRunDownloads;
   const facts = script ? scriptFacts(script) : [];
-  // Where the setup's approval stands is read only when a card with a setup
-  // opens: a list of many cases reads none until one is looked at.
+  // The setup's fixture is read only when a card with a setup opens: a list
+  // of many cases reads none until one is looked at.
   const setup = useQuery({
     queryKey: setupViewKey(org, project, c.id),
     queryFn: () => loadSetupView(org, project, c.id),
@@ -206,7 +206,7 @@ export default function CaseCard({
                 {script.setup && setup.data && (
                   <p className="text-xs text-text">
                     <span className="text-muted">Setup: </span>
-                    {setup.data.fixture_name} <span className="text-muted">{approvalWords(setup.data.approval)}</span>
+                    {setup.data.fixture_name}
                   </p>
                 )}
                 {defect && (

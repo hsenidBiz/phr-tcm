@@ -255,21 +255,18 @@ test("the search matches the id with or without #, and the title, ignoring case"
 });
 
 /** A setup view as the editor's command answers it. */
-const view = (approval: string) => ({
+const view = () => ({
   fixture_name: "Draft cycle",
   account: "hr.admin",
   steps: ["Create cycle: name=A"],
   creates: ["cycle A"],
-  approval,
-  approved_at: approval === "approved" ? "2026-10-06 09:00:00" : null,
-  fingerprint: "f1",
 });
 
-test("a collapsed card with a setup does not read its approval", async () => {
+test("a collapsed card with a setup does not read it", async () => {
   const calls: string[] = [];
   mockIPC((cmd) => {
     calls.push(cmd);
-    return cmd === "auto_run_setup_view" ? view("changed") : null;
+    return cmd === "auto_run_setup_view" ? view() : null;
   });
   const withSetup = { ...BARE, setup: { fixture: "Draft cycle" } } as CaseScript;
   renderCard({ open: false, script: withSetup });
@@ -277,18 +274,11 @@ test("a collapsed card with a setup does not read its approval", async () => {
   expect(calls).not.toContain("auto_run_setup_view");
 });
 
-test("the setup line follows the approval: approved, not approved, changed since approved", async () => {
+test("the setup line names the fixture and nothing about approval", async () => {
   const withSetup = { ...BARE, setup: { fixture: "Draft cycle" } } as CaseScript;
-  for (const [approval, words] of [
-    ["approved", "approved"],
-    ["none", "not approved"],
-    ["changed", "changed since approved"],
-  ] as const) {
-    mockIPC((cmd) => (cmd === "auto_run_setup_view" ? view(approval) : null));
-    const { unmount } = renderCard({ open: true, script: withSetup });
-    await waitFor(() => expect(screen.getByText("Setup:", { exact: false }).closest("p")).toHaveTextContent(`Setup: Draft cycle ${words}`));
-    unmount();
-  }
+  mockIPC((cmd) => (cmd === "auto_run_setup_view" ? view() : null));
+  renderCard({ open: true, script: withSetup });
+  await waitFor(() => expect(screen.getByText("Setup:", { exact: false }).closest("p")).toHaveTextContent(/^Setup: Draft cycle$/));
 });
 
 test("a script with no setup shows no setup line and does not ask", async () => {

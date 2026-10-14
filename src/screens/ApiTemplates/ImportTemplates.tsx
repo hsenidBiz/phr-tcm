@@ -43,11 +43,6 @@ function Result({ result }: { result: TemplatesImportResult }) {
       <ResultList title="Added" lines={result.added} />
       <ResultList title="Replaced" lines={result.replaced} />
       <ResultList
-        title="Setups to approve again"
-        tone="text-xs font-semibold text-warning"
-        lines={result.reapproval?.note ? [result.reapproval.note] : []}
-      />
-      <ResultList
         title="Cannot run yet"
         tone="text-xs font-semibold text-warning"
         lines={result.notes.map((n) => `${n.title}: ${n.note}`)}

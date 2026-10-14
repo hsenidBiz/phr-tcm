@@ -317,8 +317,8 @@ fn closed(o: &ActionOutcome) -> bool {
 /// case's guard), with the default timing, no earlier guard to carry, no
 /// database to ask and no browser for a setup: a case with preconditions
 /// is refused with `preconditions::NEED_DB` while Database Read Access is
-/// on, and carries the notice while it is off; an approved setup fails to
-/// open its browser (`setup::NoBrowsers`).
+/// on, and carries the notice while it is off; a setup fails to open its
+/// browser (`setup::NoBrowsers`).
 #[allow(clippy::too_many_arguments)]
 pub async fn replay_to<D: Driver>(
     d: &mut D,
@@ -459,9 +459,9 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
         return ReplayEnd::Blocked(why);
     }
 
-    // The case's fixtures, as an unattended case's: the setup needs its
-    // approval, and its run makes the case's own draft in a browser of its
-    // own, closed before this one signs in. The steps below run from the
+    // The case's fixtures, as an unattended case's: the setup's run makes
+    // the case's own draft in a browser of its own, closed before this one
+    // signs in. The steps below run from the
     // copy with the values in; the saved script is never changed.
     if stopped() {
         return ReplayEnd::Stopped { step: 1 };

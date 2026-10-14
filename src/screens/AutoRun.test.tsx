@@ -660,7 +660,6 @@ test("no path through this screen - load, selection, a supervised run or an unat
     "auto_run_close_browser",
     "auto_run_list_runs", // read-only: PastRuns' own listing, rendered alongside this screen
     "auto_run_plan", // read-only: the order and reset points, worked out from local scripts
-    "auto_run_unapproved_setups", // read-only, local: which selected setups are not approved, asked before a run starts
     "auto_run_waiting_reset", // read-only, local: whether an unattended run is paused at a reset point, to show its panel again
     "auto_run_waiting_network", // read-only, local: whether an unattended run is waiting for the company network, to show its panel again
     "auto_run_replay", // local: drives the browser itself, writes nothing to ADO

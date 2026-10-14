@@ -8,8 +8,8 @@
 // RunPane.tsx, ReplayPane.tsx, PastRuns.tsx, RunReview.tsx,
 // SiteAddressDialog.tsx, AccountsDialog.tsx, ReadinessStrip.tsx and
 // SuspectedDefectMark.tsx. The sample data (src/dev/demo.ts) gives the
-// first Product Backlog Item's cases scripts: #5001 has a setup that changed
-// since it was approved, #5002 carries a suspected defect, #5003 a
+// first Product Backlog Item's cases scripts: #5001 has a setup, #5002
+// carries a suspected defect, #5003 a
 // precondition, #5004 is marked Must not save, and #5005 has no script. One unattended run holds a case of each result, one of them
 // retried. No route sends anything: every shot stops before Save, Start or
 // Send.
@@ -33,7 +33,7 @@ const NAV: Step = { nav: "Auto Run" };
 
 /** Said under both ways of running: a setup that cannot start blocks the case. */
 const BLOCKED_BY_SETUP =
-  "A case whose script has a setup is **Blocked** before it signs in when the setup is not approved, or when the fixture it needs has never been built. Approve it in the script editor, or build the fixture on the API Templates tab, under **Fixtures**.";
+  "A case whose script has a setup runs that setup first, every time, before it signs in. The case is **Blocked** when the setup fails, or when a fixture it needs has never been built: build it on the API Templates tab, under **Fixtures**.";
 const READY: Step = { waitFor: { role: "checkbox", name: "Select #5001" } };
 /** Opens #5003's script, which opens on the script in sentences. */
 const TO_SCRIPT: Step[] = [
@@ -97,10 +97,10 @@ export const autoRun: Screen = {
         READY,
         ...OPEN_CARD(5001),
         { click: { role: "button", name: "Edit script for #5001" } },
-        { waitFor: { role: "button", name: "Approve setup" } },
-        { scrollTo: { role: "button", name: "Approve setup" } },
+        { waitFor: { role: "list", name: "Setup steps" } },
+        { scrollTo: { role: "list", name: "Setup steps" } },
       ],
-      alt: "The script of a case with a setup: the fixture it builds its data from, changed since it was approved",
+      alt: "The script of a case with a setup: the fixture it builds its data from",
     },
     {
       id: WATCH,
@@ -277,7 +277,7 @@ export const autoRun: Screen = {
       name: "Show details",
       does:
         "Opens the case, as a click on its title does. Closed, a case shows only its id, its title and its last result. " +
-        "Open, it shows what its script does: how many steps, the account it signs in as, its area, its rules, its setup and whether it is approved, and its last repair, then its steps, the files it uploads and checks, and the last run's downloads, each with **Open**. " +
+        "Open, it shows what its script does: how many steps, the account it signs in as, its area, its rules, its setup, and its last repair, then its steps, the files it uploads and checks, and the last run's downloads, each with **Open**. " +
         "The case's buttons are at the bottom. The cases you open stay open while you stay on Auto Run.",
     },
     {
@@ -481,25 +481,7 @@ export const autoRun: Screen = {
       name: "Setup",
       does:
         "The fixture the case builds its data from before it signs in: its name, the account it runs as, its steps and what it creates. " +
-        "Your assistant writes the setup into the script; you read it here and approve it. Saving the script keeps the setup as the assistant wrote it.",
-    },
-    {
-      id: "setup-changed",
-      shot: SCRIPT_SETUP,
-      group: "scripts",
-      locate: { text: "Changed since you approved it" },
-      name: "Changed since you approved it",
-      does: "The setup was approved once and has changed since, so it needs approving again before the case can run.",
-    },
-    {
-      id: "approve-setup",
-      shot: SCRIPT_SETUP,
-      group: "scripts",
-      locate: { role: "button", name: "Approve setup" },
-      name: "Approve setup",
-      does:
-        "Approves exactly the setup on screen; if it changed while you were looking, it asks you to review it again. Once approved, the line reads **Approved** and the date, " +
-        "with **Withdraw approval** beside it to take the approval back. Only you can approve a setup: your assistant cannot.",
+        "Your assistant writes the setup into the script and you read it here. The setup runs every time the case runs. Saving the script keeps the setup as the assistant wrote it.",
     },
     {
       id: "save-script",
@@ -947,7 +929,7 @@ export const autoRun: Screen = {
         "On **Test cases**, open a case and press **Add script**, write its actions, check that **Checks** covers every step, and press **Save script**.",
         "Or let an assistant write the scripts for the whole Product Backlog Item. It explores the site with discovery and saves each script itself.",
         "To bring in a file of scripts, press **More**, **Import scripts** and pick it. The scripts are checked against the live app and their test cases the same way, so sign in first.",
-        "A script whose case needs a draft of its own has a setup. Open the script, read its **Setup** and press **Approve setup**.",
+        "A script whose case needs a draft of its own has a setup, which runs every time the case runs. Open the script to read its **Setup**.",
       ],
     },
     {

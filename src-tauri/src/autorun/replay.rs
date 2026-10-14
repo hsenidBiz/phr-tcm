@@ -977,8 +977,8 @@ pub async fn run_cases<B: Browsers>(
 /// While Database Read Access is off (`PreconditionDb::ReadingOff`) none
 /// is checked, and such a case runs carrying the `notice` that says so.
 /// After the preconditions and before its browser opens, a case that uses
-/// fixtures is prepared (`setup::prepare_case`): a setup not approved, a
-/// shared fixture never built or a setup run that failed Blocks it with
+/// fixtures is prepared (`setup::prepare_case`): a setup fixture that is
+/// not saved, a shared fixture never built or a setup run that failed Blocks it with
 /// that sentence, and its setup's browser comes from `browsers` too.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_cases_checked<B: Browsers, P: StageDb>(
@@ -1149,8 +1149,8 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                             notice = checked.notice;
                             match checked.blocked {
                                 Some(why) => Err(why),
-                                // Then its fixtures: the setup's approval, the
-                                // shared drafts' values and the setup's own run,
+                                // Then its fixtures: the shared drafts' values
+                                // and the setup's own run,
                                 // in a browser of its own that is closed, and its
                                 // lease let go, before the case's browser opens.
                                 None => setup::prepare_case(browsers, root, organization, project, &script, timing, cancel)

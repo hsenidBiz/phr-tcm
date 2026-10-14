@@ -1534,13 +1534,13 @@ mod running {
 }
 
 /// Review Focus 5: no bridge route and no MCP tool writes the record of
-/// test-made drafts or an approval itself. Only the fixture runner adds to
-/// the record and only Clean up changes a status; approvals are a person's.
+/// test-made drafts itself. Only the fixture runner adds to the record and
+/// only Clean up changes a status.
 /// A source-scan tripwire, in the style of the other tripwires here: it
 /// lists every route and tool so a new one is in view, then checks that
 /// neither file reaches a writer.
 #[test]
-fn no_bridge_route_or_mcp_tool_writes_the_test_made_record_or_an_approval() {
+fn no_bridge_route_or_mcp_tool_writes_the_test_made_record() {
     let read = |p: &str| {
         std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(p)).unwrap().replace("\r\n", "\n")
     };
@@ -1577,14 +1577,7 @@ fn no_bridge_route_or_mcp_tool_writes_the_test_made_record_or_an_approval() {
             "test_made::set_status",
             "test_made::{",
             "test-made.json",
-            "approvals/",
-            "\"approvals\"",
-            "approvals::approve",
-            "approvals::withdraw",
-            "approvals::{",
             "auto_run_setup_view",
-            "auto_run_approve_setup",
-            "auto_run_withdraw_setup",
             "cleanup::run_cleanup",
             "auto_run_cleanup_preview",
             "auto_run_cleanup_run",
