@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.23",
+    date: "2026-10-14",
+    items: [
+      "Test cases now carry a Priority (1 to 4). New cases are created with Priority 2 unless you pick another; updating a case leaves its priority as it is unless you change it. Priority is in Manual Entry, the case editors, bulk edit, and the JSON import and export as \"priority\".",
+    ],
+  },
+  {
     version: "2.1.3-beta.22",
     date: "2026-10-13",
     items: [
