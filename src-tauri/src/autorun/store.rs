@@ -1240,6 +1240,19 @@ pub fn merge_order(existing: &[i32], ordered: &[i32]) -> Vec<i32> {
     out
 }
 
+/// `given` first, then every id of `existing` that `given` does not list,
+/// in `existing`'s order: what `set_autorun_order` with `mode: "append"`
+/// saves. Each id once.
+pub fn append_order(existing: &[i32], given: &[i32]) -> Vec<i32> {
+    let mut out: Vec<i32> = Vec::with_capacity(existing.len() + given.len());
+    for id in given.iter().chain(existing) {
+        if !out.contains(id) {
+            out.push(*id);
+        }
+    }
+    out
+}
+
 /// Save the order the person set in the Execution order dialog, which may
 /// be only the cases ticked now: merged into the PBI's saved order
 /// (`merge_order`) so the rest of it is kept. With no saved order, it is

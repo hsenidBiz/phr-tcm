@@ -2420,3 +2420,28 @@ fn a_placeholder_locator_counts_from_a_probe_with_a_real_value() {
     let refused = check_seen(&several, &none(), &s, &[], None).unwrap_err();
     assert!(refused.contains(NEVER_COUNTED_FILLED), "{refused}");
 }
+
+/// One pass names every refusal class at once, step by step: a locator
+/// never seen, one seen but never counted as one, and an nth one never
+/// counted with its nth - so a dry run of a repair lists them all before
+/// the first is fixed.
+#[test]
+fn one_pass_names_every_refusal_class() {
+    use v2_lib::autorun::seen_check::{NEVER_COUNTED, NEVER_COUNTED_NTH};
+    let map = seen_whole("Cycles", &[role("button", "Edit"), text("%")], &[]);
+    let s = one_step("Cycles", serde_json::json!([]));
+    let s = CaseScript {
+        steps: serde_json::from_value(serde_json::json!([
+            { "step_number": 1, "actions": [click(serde_json::json!({ "role": "button", "name": "Nope" }))] },
+            { "step_number": 2, "actions": [click(serde_json::json!({ "role": "button", "name": "Edit" }))] },
+            { "step_number": 3, "actions": [{ "kind": "expect_text", "selector": { "text": "%", "nth": 0 }, "equals": "30%" }] }
+        ]))
+        .unwrap(),
+        ..s
+    };
+    let found = check_seen_all_hinted(&map, &none(), &s, &[], None, &[]);
+    let steps: Vec<i32> = found.iter().map(|(u, _)| u.step).collect();
+    assert_eq!(steps, vec![1, 2, 3], "{found:?}");
+    assert_eq!(found[1].1.as_deref(), Some(NEVER_COUNTED), "{found:?}");
+    assert_eq!(found[2].1.as_deref(), Some(NEVER_COUNTED_NTH), "{found:?}");
+}

@@ -1739,6 +1739,19 @@ showed you - that bare shape is only for a case with no script yet:
   ]
 }
 
+A repair need not send the whole script again: a script entry may carry
+`patch_steps` in place of `steps`, `{ "case_id": 142696, "patch_steps":
+[{ "step": 7, "actions": [...] }] }`. Each listed step's actions replace
+that step of the saved script, every other step is kept as saved, and any
+other key of the entry (`title`, `area`) replaces the saved one. It is
+checked exactly as the whole script would be, so `edits` must still
+declare every patched step. A step the saved script does not have is
+refused: send the whole script to add one.
+
+When a save is refused, every case's refusals of the same kind come back
+in one answer: every undeclared change, every expected result nothing
+checks, and every locator never seen or never counted as one.
+
 `edits` is a TOP-LEVEL list beside `scripts`, as above - never inside
 a script - with one entry per case you are changing: the `case_id`, every
 step number whose actions were added, removed or changed, and one

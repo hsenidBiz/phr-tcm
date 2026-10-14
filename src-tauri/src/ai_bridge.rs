@@ -314,9 +314,18 @@ pub async fn route(
         // Discovery: the assistant opens the Auto Run browser itself, signs
         // in as a saved account (the app types the password) and explores
         // the live application, one action at a time.
-        ("POST", "/autorun-discover-start") => autorun_discover_start(ctx, body).await,
-        ("POST", "/autorun-discover-action") => without_page(autorun_discover_action(ctx, body).await, body),
-        ("POST", "/autorun-discover-actions") => without_page(autorun_discover_actions(ctx, body).await, body),
+        ("POST", "/autorun-discover-start") => {
+            let answer = autorun_discover_start(ctx, body).await;
+            with_no_save_note(answer, discovery_no_save().await)
+        }
+        ("POST", "/autorun-discover-action") => {
+            let answer = without_page(autorun_discover_action(ctx, body).await, body);
+            with_no_save_note(answer, discovery_no_save().await)
+        }
+        ("POST", "/autorun-discover-actions") => {
+            let answer = without_page(autorun_discover_actions(ctx, body).await, body);
+            with_no_save_note(answer, discovery_no_save().await)
+        }
         // A replay going has already ended any discovery, and holds the
         // browser: said at once rather than waited for.
         ("POST", "/autorun-discover-end") => match replay_is_holding_the_browser() {
@@ -364,14 +373,15 @@ pub async fn route(
             .await
         }
         ("POST", "/api-template-run") => {
-            api_template_run(
+            let answer = api_template_run(
                 ctx,
                 body,
                 real_template_browsers,
                 real_stage_db,
                 &crate::commands::autorun_replay::replay_timing(false),
             )
-            .await
+            .await;
+            with_discovery_hint(answer, crate::commands::autorun::auto_run_discovery_active(), false)
         }
         // Flows: saving one writes a local file and reads the database, and
         // progress only reads - neither writes to the application, so
@@ -386,8 +396,10 @@ pub async fn route(
         ("GET", "/api-template-fixtures") => api_fixture_list(ctx, target),
         ("POST", "/api-template-fixture-save") => api_fixture_save(ctx, body),
         ("POST", "/api-template-fixture-run") => {
-            api_fixture_run(ctx, body, real_template_browsers, &crate::commands::autorun_replay::replay_timing(false))
-                .await
+            let answer =
+                api_fixture_run(ctx, body, real_template_browsers, &crate::commands::autorun_replay::replay_timing(false))
+                    .await;
+            with_discovery_hint(answer, crate::commands::autorun::auto_run_discovery_active(), true)
         }
         // The database routes. Not Auto Run and not dev-only: they are
         // switchable like any ordinary tool, and what they may do is
@@ -577,6 +589,68 @@ fn autorun_test_files(ctx: &BridgeContext) -> (u16, String) {
         .map(|f| serde_json::json!({ "name": f.name, "size": crate::test_files::human_size(u64::from(f.size)) }))
         .collect();
     (200, serde_json::json!({ "test_files": rows }).to_string())
+}
+
+/// Said on every answer of a discovery that must not save
+/// (`with_no_save_note`): the flag, once set, holds until the discovery
+/// ends.
+pub const NO_SAVE_ON: &str = "(must not save: on for this discovery)";
+
+/// `answer` saying `NO_SAVE_ON` when `on`: a JSON object gets it as
+/// `must_not_save`, any other answer after its text.
+pub fn with_no_save_note(answer: (u16, String), on: bool) -> (u16, String) {
+    if !on {
+        return answer;
+    }
+    let (status, text) = answer;
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(serde_json::Value::Object(mut map)) => {
+            map.insert("must_not_save".to_string(), serde_json::json!(NO_SAVE_ON));
+            (status, serde_json::Value::Object(map).to_string())
+        }
+        _ => (status, format!("{text} {NO_SAVE_ON}")),
+    }
+}
+
+/// Whether the discovery holding the Auto Run browser must not save.
+async fn discovery_no_save() -> bool {
+    let slot = crate::commands::autorun::supervised().lock().await;
+    slot.as_ref().and_then(|s| s.discovery.as_ref()).is_some_and(|d| d.no_save)
+}
+
+/// What a template or fixture run refused its account says when the
+/// assistant's own discovery is what holds it: end the discovery first,
+/// or, for a template, run as another account. A fixture always signs in
+/// as its own account.
+pub fn discovery_holds_hint(fixture: bool) -> String {
+    let other = if fixture {
+        "a fixture always signs in as its own account"
+    } else {
+        "or run the template as another account no browser holds"
+    };
+    format!(
+        "Your discovery holds this account in the Auto Run browser: end it with end_autorun_discovery first (what it mapped is kept) and run again; {other}."
+    )
+}
+
+/// `answer` with `discovery_holds_hint` added when a discovery is going
+/// (`discovering`) and the run was refused its account because the Auto
+/// Run browser holds it: as `discovery` on a JSON object, else on a line
+/// after the text.
+pub fn with_discovery_hint(answer: (u16, String), discovering: bool, fixture: bool) -> (u16, String) {
+    let held = format!(" was in use by {}", crate::autorun::lease::BROWSER_WORDS);
+    if !discovering || answer.0 < 400 || !answer.1.contains(&held) {
+        return answer;
+    }
+    let (status, text) = answer;
+    let hint = discovery_holds_hint(fixture);
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(serde_json::Value::Object(mut map)) => {
+            map.insert("discovery".to_string(), serde_json::json!(hint));
+            (status, serde_json::Value::Object(map).to_string())
+        }
+        _ => (status, format!("{text}\n{hint}")),
+    }
 }
 
 /// Said in place of the page dump an answer leaves out (`without_page`).
@@ -5663,7 +5737,12 @@ fn autorun_defect(body: &str) -> (u16, String) {
     (200, serde_json::to_string(&mark).unwrap_or_default())
 }
 
-/// `POST /autorun-order`, body `{ pbi_id, case_ids }`: Auto Run's own
+/// What `set_autorun_order` says after the order it saved: with
+/// `mode: "replace"` (the default) the call replaced the PBI's whole saved
+/// order, and the PBI's other cases run after the listed ones.
+pub const ORDER_REPLACED: &str = "This replaced the PBI's whole Auto Run order: its other cases run after these, in list order. To add cases ahead of the saved order and keep the rest of it, send mode: \"append\".";
+
+/// `POST /autorun-order`, body `{ pbi_id, case_ids, mode? }`: Auto Run's own
 /// execution order for the PBI on this machine (`store::save_order`). Run
 /// Tests' order is not touched. Every id must be one of the PBI's test
 /// cases, read from Azure DevOps the way the Auto Run tab lists them; a
@@ -5674,11 +5753,18 @@ async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ado::AdoClien
     struct OrderBody {
         pbi_id: i32,
         case_ids: Vec<i32>,
+        #[serde(default)]
+        mode: Option<String>,
     }
-    let shape = "{ \"pbi_id\": 100, \"case_ids\": [503, 501, 502] }";
+    let shape = "{ \"pbi_id\": 100, \"case_ids\": [503, 501, 502], \"mode\": \"replace\" | \"append\" (optional) }";
     let o: OrderBody = match serde_json::from_str(body) {
         Ok(o) => o,
         Err(e) => return (400, format!("that is not an order: {e}. Expected {shape}.")),
+    };
+    let append = match o.mode.as_deref().map(str::trim) {
+        None | Some("replace") => false,
+        Some("append") => true,
+        Some(other) => return (400, format!("mode \"{other}\" is not one: send \"replace\" (the default) or \"append\". Expected {shape}.")),
     };
     if o.case_ids.is_empty() {
         return (400, "case_ids is empty - list the PBI's cases in the order Auto Run should run them".to_string());
@@ -5711,15 +5797,29 @@ async fn autorun_order(ctx: &BridgeContext, client: Option<&crate::ado::AdoClien
     if !not_on_pbi.is_empty() {
         return (400, not_on_pbi.join("; "));
     }
-    if let Err(e) = crate::autorun::store::save_order(&root, o.pbi_id, &o.case_ids) {
+    // Appending keeps the saved order's other cases after the given ones.
+    let kept: Vec<i32> = match (append, crate::autorun::store::load_order(&root, o.pbi_id)) {
+        (true, Some(existing)) => {
+            crate::autorun::store::append_order(&existing, &o.case_ids).into_iter().filter(|id| !o.case_ids.contains(id)).collect()
+        }
+        _ => Vec::new(),
+    };
+    let saved: Vec<i32> = o.case_ids.iter().chain(&kept).copied().collect();
+    if let Err(e) = crate::autorun::store::save_order(&root, o.pbi_id, &saved) {
         return (500, format!("could not save the order: {e}"));
     }
-    crate::applog::info(format!("AI set Auto Run's order for PBI {}: {} case(s)", o.pbi_id, o.case_ids.len()));
-    let mut lines = vec![format!(
-        "saved Auto Run's order for PBI {}: {}",
-        o.pbi_id,
-        o.case_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")
-    )];
+    let how = if append { "appended" } else { "replaced" };
+    crate::applog::info(format!("AI set Auto Run's order for PBI {} ({how}): {} case(s)", o.pbi_id, saved.len()));
+    let ids = |list: &[i32]| list.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ");
+    let mut lines = vec![format!("saved Auto Run's order for PBI {}: {}", o.pbi_id, ids(&o.case_ids))];
+    if append {
+        lines.push(match kept.is_empty() {
+            true => "Appended: the saved order had no other cases.".to_string(),
+            false => format!("Appended: the saved order's other cases run after these, as they were: {}", ids(&kept)),
+        });
+    } else {
+        lines.push(ORDER_REPLACED.to_string());
+    }
     for id in &o.case_ids {
         if !matches!(crate::autorun::store::load_script(&root, *id), Ok(Some(_))) {
             lines.push(format!("case {id} has no saved script"));
@@ -6186,7 +6286,10 @@ fn bad_edits(e: serde_json::Error) -> String {
 /// word and the repair was refused as undeclared - the shape behind the
 /// owner's "save_autorun_script drops the edits list". `"edits": null` is
 /// no declaration, the same as leaving it out.
-fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
+fn parse_save_request(
+    body: &str,
+    load: &dyn Fn(i32) -> Result<Option<crate::autorun::CaseScript>, String>,
+) -> Result<SaveRequest, String> {
     let v: serde_json::Value = serde_json::from_str(body).map_err(bad_scripts)?;
     let mut dry_run = false;
     let (mut scripts_value, edits_value) = match v {
@@ -6242,6 +6345,11 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
             return Err(DRY_RUN_IN_A_SCRIPT.to_string());
         }
     }
+    // A repair that sends only the steps it changes: merged into the saved
+    // script here, so every gate below reads the whole script.
+    if let serde_json::Value::Array(items) = &mut scripts_value {
+        apply_patch_steps(items, load)?;
+    }
     if let serde_json::Value::Array(items) = &mut scripts_value {
         for script in items.iter_mut().filter_map(|s| s.as_object_mut()) {
             let Some(nested) = script.remove("edits") else { continue };
@@ -6278,6 +6386,77 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
         edits.push(edit);
     }
     Ok(SaveRequest { scripts, edits, dry_run })
+}
+
+/// A script entry that carries `patch_steps` in place of `steps`: a repair
+/// that sends only the steps it changes, each `{ step, actions }` (any
+/// other field of a step, such as `unchecked`, may come with it). Each
+/// replaces those fields of that step of the case's SAVED script, every
+/// other step is kept as saved, and any other key of the entry (`title`,
+/// `area`, ...) replaces the saved one. The result is the whole script, as
+/// if it had been sent whole, so the repair's `edits` must still declare
+/// every patched step. Refused: an entry with both `steps` and
+/// `patch_steps`, one with no `case_id`, a case with no saved script, a
+/// step the saved script does not have (send the whole script to add one),
+/// and a step patched twice.
+pub fn apply_patch_steps(
+    items: &mut [serde_json::Value],
+    load: &dyn Fn(i32) -> Result<Option<crate::autorun::CaseScript>, String>,
+) -> Result<(), String> {
+    for item in items.iter_mut() {
+        let Some(map) = item.as_object_mut() else { continue };
+        let Some(patches) = map.remove("patch_steps").filter(|p| !p.is_null()) else { continue };
+        let case_id = map
+            .get("case_id")
+            .and_then(serde_json::Value::as_i64)
+            .and_then(|n| i32::try_from(n).ok())
+            .ok_or_else(|| "a script with \"patch_steps\" needs its \"case_id\"".to_string())?;
+        if map.contains_key("steps") {
+            return Err(format!("case {case_id}: send \"steps\" (the whole script) or \"patch_steps\" (only the changed steps), not both"));
+        }
+        let stored = load(case_id)?.ok_or_else(|| {
+            format!("case {case_id} has no saved script to patch - send its whole script with \"steps\"")
+        })?;
+        let mut whole = serde_json::to_value(&stored).map_err(|e| e.to_string())?;
+        let patches = match patches {
+            serde_json::Value::Array(list) => list,
+            one @ serde_json::Value::Object(_) => vec![one],
+            _ => return Err(format!("case {case_id}: \"patch_steps\" is a list of {{ step, actions }}")),
+        };
+        let Some(steps) = whole.get_mut("steps").and_then(serde_json::Value::as_array_mut) else {
+            return Err(format!("case {case_id}: its saved script has no steps to patch"));
+        };
+        let mut patched: Vec<i64> = Vec::new();
+        for patch in patches {
+            let Some(fields) = patch.as_object() else {
+                return Err(format!("case {case_id}: each of \"patch_steps\" is {{ step, actions }}"));
+            };
+            let Some(n) = fields.get("step").or_else(|| fields.get("step_number")).and_then(serde_json::Value::as_i64) else {
+                return Err(format!("case {case_id}: each of \"patch_steps\" names its \"step\" by number"));
+            };
+            if !fields.contains_key("actions") {
+                return Err(format!("case {case_id}: patch_steps step {n} has no \"actions\""));
+            }
+            if patched.contains(&n) {
+                return Err(format!("case {case_id}: patch_steps names step {n} twice"));
+            }
+            patched.push(n);
+            let Some(step) = steps.iter_mut().find(|s| s.get("step_number").and_then(serde_json::Value::as_i64) == Some(n)) else {
+                return Err(format!(
+                    "case {case_id}: patch_steps step {n} is not in its saved script - send the whole script with \"steps\" to add a step"
+                ));
+            };
+            for (k, v) in fields.iter().filter(|(k, _)| !matches!(k.as_str(), "step" | "step_number")) {
+                step[k.as_str()] = v.clone();
+            }
+        }
+        // The entry's own keys win over the saved ones.
+        for (k, v) in map.iter() {
+            whole[k.as_str()] = v.clone();
+        }
+        *item = whole;
+    }
+    Ok(())
 }
 
 /// The case and steps a repair's quirk is about, with the class of the
@@ -6360,7 +6539,11 @@ async fn save_autorun_scripts(
     client: Option<&crate::ado::AdoClient>,
     body: &str,
 ) -> (u16, String) {
-    let SaveRequest { scripts, edits, dry_run } = match parse_save_request(body) {
+    let load = |id: i32| match autorun_root() {
+        Ok(root) => crate::autorun::store::load_script(&root, id),
+        Err((_, why)) => Err(why),
+    };
+    let SaveRequest { scripts, edits, dry_run } = match parse_save_request(body, &load) {
         Ok(r) => r,
         Err(e) => return (400, e),
     };
@@ -6431,6 +6614,9 @@ async fn save_autorun_scripts(
     let mut seen_scope: Vec<(i32, Option<Vec<i32>>)> = Vec::new();
     // Whether scripts saved before they were stamped count here, read once.
     let legacy = crate::autorun::seen_check::legacy_scripts_count(&root, &ctx.org, &ctx.project);
+    // Every case's refusal from this gate, said together: a bundle with two
+    // bad repairs is told about both in one answer.
+    let mut refused: Vec<String> = Vec::new();
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
@@ -6457,7 +6643,8 @@ async fn save_autorun_scripts(
             Some(old) if unchanged_script(&old, sent) => {
                 if declared.is_some() {
                     if let Err(why) = crate::autorun::edits::check_edits(&old, sent, declared) {
-                        return (400, why);
+                        refused.push(why);
+                        continue;
                     }
                 }
                 script.repairs = old.repairs;
@@ -6479,15 +6666,14 @@ async fn save_autorun_scripts(
                     // which `check_edits`' own "case N: ... not declared"
                     // sentence already says accurately.
                     if edits.is_empty() && why.contains("\"edits\"") {
-                        return (
-                            400,
-                            format!(
-                                "case {} already has a script, so this save is a repair, and \"edits\" is missing. {why}",
-                                sent.case_id
-                            ),
-                        );
+                        refused.push(format!(
+                            "case {} already has a script, so this save is a repair, and \"edits\" is missing. {why}",
+                            sent.case_id
+                        ));
+                        continue;
                     }
-                    return (400, why);
+                    refused.push(why);
+                    continue;
                 }
                 script.repairs = old.repairs.saturating_add(1);
                 // `check_edits` above only returns Ok when a real change
@@ -6517,13 +6703,11 @@ async fn save_autorun_scripts(
             }
             None => {
                 if declared.is_some() {
-                    return (
-                        400,
-                        format!(
-                            "case {} has no script yet - \"edits\" is for changing one that exists",
-                            sent.case_id
-                        ),
-                    );
+                    refused.push(format!(
+                        "case {} has no script yet - \"edits\" is for changing one that exists",
+                        sent.case_id
+                    ));
+                    continue;
                 }
                 script.repairs = 0;
                 script.last_repair = None;
@@ -6532,6 +6716,9 @@ async fn save_autorun_scripts(
             }
         }
         prepared.push(script);
+    }
+    if !refused.is_empty() {
+        return (400, refused.join("\n"));
     }
 
     // Gate 2: the expected-result floor. This is the one place the save
@@ -6572,18 +6759,21 @@ async fn save_autorun_scripts(
         }
         Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
     };
+    // Every case's shortfalls, said together.
+    let mut short: Vec<String> = Vec::new();
     for script in &prepared {
         let Some(case) = cases.iter().find(|c| c.id == script.case_id) else {
-            return (
-                400,
-                format!("case {} is not a test case in this organization", script.case_id),
-            );
+            short.push(format!("case {} is not a test case in this organization", script.case_id));
+            continue;
         };
         let shortfalls =
             crate::autorun::floor::check_floor(script, &crate::autorun::floor::expected_of(&case.steps));
         if !shortfalls.is_empty() {
-            return (400, format!("case {}: {}", script.case_id, shortfalls.join("; ")));
+            short.push(format!("case {}: {}", script.case_id, shortfalls.join("; ")));
         }
+    }
+    if !short.is_empty() {
+        return (400, short.join("\n"));
     }
 
     // Gate 3: every locator a new or changed step names was seen on the

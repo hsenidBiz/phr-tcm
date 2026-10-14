@@ -335,7 +335,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "scripts": {
                     "type": "array",
-                    "description": "One entry per test case: { case_id, title, account?, area, steps, changes?, needs_unchanged?, needs_state? }. needs_state maps each setting the case needs to its value, e.g. { \"Approval workflow\": \"ON\" }; see get_autorun_guide.",
+                    "description": "One entry per test case: { case_id, title, account?, area, steps, changes?, needs_unchanged?, needs_state? }. needs_state maps each setting the case needs to its value, e.g. { \"Approval workflow\": \"ON\" }; see get_autorun_guide. A repair may send { case_id, patch_steps: [{ step, actions }] } in place of the whole script: each listed step's actions replace that step of the saved script, every other step is kept, and `edits` must still declare each patched step.",
                     "items": { "type": "object" },
                 },
                 "edits": {
@@ -525,7 +525,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "record_autorun_quirk",
-            "description": "Record one line about how this application behaves, so the next script or API template - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; one list per project, read by both the Auto Run guide and the API template guide. A line already on the list is not written twice, and one you retired comes back rather than being copied (one a person wrote or retired is refused - ask them). Name the cases and steps it explains in `cases` - each step must have failed in its case's newest run - so later runs can count whether it helped; or put it on the edit of every case you repair for it. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire and the oldest of the others.",
+            "description": "Record one line (at most 300 characters) about how this application behaves, so the next script or API template - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; one list per project, read by both the Auto Run guide and the API template guide. A line already on the list is not written twice, and one you retired comes back rather than being copied (one a person wrote or retired is refused - ask them). Name the cases and steps it explains in `cases` - each step must have failed in its case's newest run - so later runs can count whether it helped; or put it on the edit of every case you repair for it. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire and the oldest of the others.",
             "inputSchema": schema(serde_json::json!({
                 "text": { "type": "string", "description": "One line, at most 300 characters, e.g. \"the results grid paginates at 25 rows\"." },
                 "cases": quirk_cases(),
@@ -552,7 +552,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "set_autorun_order",
-            "description": "Set the order Auto Run runs a PBI's test cases in on this machine, for Run selected and Run unattended. Put each case that needs shared state unchanged before the cases that change it, and keep cases that need the same settings together, so a run needs as few pauses as possible; the scripts' changes, needs_unchanged and needs_state marks say which those are. It does not change Run Tests' order. Every id must be one of the PBI's test cases: one that is not is refused with `case <id> is not in PBI <pbi>`, and nothing is saved. Cases you leave out run after the listed ones, in list order. A listed case with no saved script is saved in the order and named back: `case <id> has no saved script`.",
+            "description": "Set the order Auto Run runs a PBI's test cases in on this machine, for Run selected and Run unattended. Put each case that needs shared state unchanged before the cases that change it, and keep cases that need the same settings together, so a run needs as few pauses as possible; the scripts' changes, needs_unchanged and needs_state marks say which those are. It does not change Run Tests' order. Every id must be one of the PBI's test cases: one that is not is refused with `case <id> is not in PBI <pbi>`, and nothing is saved. Each call REPLACES the PBI's whole saved order (`mode: \"replace\"`, the default): cases you leave out run after the listed ones, in list order. `mode: \"append\"` keeps the saved order's other cases, in their order, after the ones you list. The answer says which it did. A listed case with no saved script is saved in the order and named back: `case <id> has no saved script`.",
             "inputSchema": schema(serde_json::json!({
                 "pbi_id": { "type": "number", "description": "The PBI whose cases these are." },
                 "case_ids": {
@@ -560,6 +560,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "items": { "type": "number" },
                     "description": "The PBI's test case ids, in the order Auto Run should run them, each once.",
                 },
+                "mode": { "type": "string", "enum": ["replace", "append"], "description": "Optional: \"replace\" (the default) saves exactly this order; \"append\" keeps the saved order's other cases after these." },
             }), &["pbi_id", "case_ids"]),
         },
         {
@@ -630,7 +631,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "run_api_template",
-            "description": "Run a saved API template and return its outputs - or, when a step fails, which step failed, the start of the response, and what had already been created (nothing is rolled back). Every run is added to the template's history on the API Templates tab. Refused while the API templates switch on the AI Bridge tab is off.",
+            "description": "Run a saved API template and return its outputs - or, when a step fails, which step failed, the start of the response, and what had already been created (nothing is rolled back). Every run is added to the template's history on the API Templates tab. Refused while the API templates switch on the AI Bridge tab is off. While your discovery holds the account in the Auto Run browser the run is refused, and the answer says so: end the discovery first, or run as another account.",
             "inputSchema": schema(serde_json::json!({
                 "id": { "type": "string", "description": "The template's id, from list_api_templates." },
                 "account": { "type": "string", "description": "The KEY of the account to sign in as - one the guide lists, never a username or password." },
@@ -665,7 +666,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "run_api_fixture",
-            "description": "Run a saved fixture - its templates in order, in one browser signed in once as the fixture's account - and return its sentence, its outputs, what it made and any warnings. The run stops at the first failed step, with that step's own sentence. Whatever it made, even when a later step failed, is recorded as test-made. A successful run's outputs become the fixture's current outputs; a failed one keeps the ones before. Use it to Rebuild a damaged shared draft, never a hand fix. Refused while the API templates switch on the AI Bridge tab is off.",
+            "description": "Run a saved fixture - its templates in order, in one browser signed in once as the fixture's account - and return its sentence, its outputs, what it made and any warnings. The run stops at the first failed step, with that step's own sentence. Whatever it made, even when a later step failed, is recorded as test-made. A successful run's outputs become the fixture's current outputs; a failed one keeps the ones before. Use it to Rebuild a damaged shared draft, never a hand fix. Refused while the API templates switch on the AI Bridge tab is off. While your discovery holds the fixture's account in the Auto Run browser the run is refused, and the answer says so: end the discovery first.",
             "inputSchema": schema(serde_json::json!({
                 "id": { "type": "string", "description": "The fixture's id, from list_api_fixtures." },
                 "browser": { "type": "string", "description": "\"edge\" (the default) or \"chrome\"." },
@@ -681,7 +682,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "record_app_quirk",
-            "description": "Record one line about how this application behaves that you learned building API templates (a handler that needs a header the screen sends, an id the response returns as text), so the next template or script does not rediscover it. The project's one list, shared with whoever writes its Auto Run scripts, and shown as (assistant, API). A line already on the list is not written twice; one a person wrote or retired is refused - ask them. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire and the oldest of the others.",
+            "description": "Record one line (at most 300 characters) about how this application behaves that you learned building API templates (a handler that needs a header the screen sends, an id the response returns as text), so the next template or script does not rediscover it. The project's one list, shared with whoever writes its Auto Run scripts, and shown as (assistant, API). A line already on the list is not written twice; one a person wrote or retired is refused - ask them. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire and the oldest of the others.",
             "inputSchema": schema(serde_json::json!({
                 "text": { "type": "string", "description": "One line, at most 300 characters." },
                 "cases": quirk_cases(),
