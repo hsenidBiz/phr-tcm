@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.23",
+    date: "2026-10-14",
+    items: [
+      "Auto Run closes a project's known pop-ups by itself. List them in the sign-in recipe under close_when_shown, and before each click, fill, drag or upload the runner closes any that is showing and notes it in the step. PeoplesHR's cookie banner is listed in the built-in recipe, so scripts no longer need a guard for it.",
+    ],
+  },
+  {
     version: "2.1.3-beta.22",
     date: "2026-10-13",
     items: [
