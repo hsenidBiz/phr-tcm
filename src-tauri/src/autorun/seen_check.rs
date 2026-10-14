@@ -139,7 +139,12 @@
 //! plain one-link locator (`discovery_map::plain_link`) is compared by its
 //! key, as always; a chain or a narrowed locator (`nth`, `exact`,
 //! `visible`) that matched one counts as one only as that whole locator,
-//! written the same way (`Sightings::whole`). A css selector seen with a
+//! written the same way (`Sightings::whole`). A data placeholder in such a
+//! locator stands for the value the seen one holds in that place, fitted
+//! per name, text or selector, anchored, with the rest written exactly as
+//! seen (`same_link_filled`): a placeholder locator cannot be probed as
+//! written, so probing it with a real value counts for it, and the probed
+//! one must still have matched exactly one. A css selector seen with a
 //! state pseudo-class (`:checked`) does not stand for the selector without
 //! it here.
 //!
@@ -245,11 +250,16 @@ pub const SEEN_ONLY_IN_CHECKS: &str = "was used only in saved checks that may ma
 /// `nth` included, is counted when it is probed.
 pub const NEVER_COUNTED_NTH: &str = "was seen on the live app, but never counted as matching exactly one element: probe it with its nth as written, then save again.";
 
+/// [`NEVER_COUNTED`] for a locator holding a data placeholder, which cannot
+/// be probed as written: the same locator probed with a real value in each
+/// placeholder's place counts for it (`same_link_filled`).
+pub const NEVER_COUNTED_FILLED: &str = "was seen on the live app, but never counted as matching exactly one element: probe the same locator with a real value in place of each {{...}} placeholder (and its nth, if it has one), then save again.";
+
 /// Is `hint` one of the sentences said after the locator in place of "was
 /// never seen on the live app" (`never_seen`), rather than a clause after
 /// it?
 pub fn is_own_sentence(hint: &str) -> bool {
-    [SEEN_ONLY_MANY, SEEN_ONLY_IN_CHECKS, NEVER_COUNTED, NEVER_COUNTED_NTH].contains(&hint)
+    [SEEN_ONLY_MANY, SEEN_ONLY_IN_CHECKS, NEVER_COUNTED, NEVER_COUNTED_NTH, NEVER_COUNTED_FILLED].contains(&hint)
 }
 
 /// What a use of a locator needs, in one clause, for a refusal of one never
@@ -411,6 +421,47 @@ fn same_link(a: &LocatorStep, b: &LocatorStep) -> bool {
         && (!a.exact || (a.name == b.name && a.text == b.text))
 }
 
+/// `same_link` for `written`, a link of a script, against `seen`, a link
+/// seen as part of a whole: a data placeholder in `written`'s name, text or
+/// css stands for the value `seen` holds there, each one fitted on its own
+/// and anchored at both ends (`fit`, the text around it as written), and
+/// what is left must then be the same link exactly. So a chain probed with
+/// a real id (`div[data-cycle-id="274"]`, then button "Edit") counts as
+/// seen matching one for the same chain written with
+/// `{{setup.cycle_id}}`. A placeholder in a role never fits.
+fn same_link_filled(seen: &LocatorStep, written: &LocatorStep) -> bool {
+    if !link_holds_placeholder(written) {
+        return same_link(seen, written);
+    }
+    if written.role.as_deref().is_some_and(holds_data_placeholder) {
+        return false;
+    }
+    let mut filled = written.clone();
+    let named = |w: &Option<String>, s: &Option<String>, css: bool| -> Option<Option<String>> {
+        match (w.as_deref(), s.as_deref()) {
+            (Some(w), Some(s)) if holds_data_placeholder(w) => {
+                let fits = if css {
+                    wild_fits(&css_pieces(w.trim()), s.trim())
+                } else {
+                    wild_fits(&name_pattern(w), &norm_name(s))
+                };
+                fits.then(|| Some(s.to_string()))
+            }
+            (Some(w), None) if holds_data_placeholder(w) => None,
+            _ => Some(w.clone()),
+        }
+    };
+    let (Some(name), Some(text), Some(css)) =
+        (named(&written.name, &seen.name, false), named(&written.text, &seen.text, false), named(&written.css, &seen.css, true))
+    else {
+        return false;
+    };
+    filled.name = name;
+    filled.text = text;
+    filled.css = css;
+    same_link(seen, &filled)
+}
+
 /// What the map has seen, read both ways: everything, for a use that may
 /// match several (`takes_many`), and only what matched one, for any other.
 /// `vouched` is everything but what only saved checks vouch for, to say
@@ -454,7 +505,8 @@ impl SeenBoth {
     /// narrowed locator seen matching one, written the same way? Only a
     /// use that needs one asks; any other reads every link anyway.
     fn whole(&self, chain: &[LocatorStep], many: bool) -> bool {
-        !many && self.one.whole.iter().any(|w| w.len() == chain.len() && w.iter().zip(chain).all(|(a, b)| same_link(a, b)))
+        !many
+            && self.one.whole.iter().any(|w| w.len() == chain.len() && w.iter().zip(chain).all(|(a, b)| same_link_filled(a, b)))
     }
 
     /// The sightings a locator used this way is checked against: `many`
@@ -494,6 +546,9 @@ impl SeenBoth {
             let several = if legacy { &self.many_legacy } else { &self.many };
             if link.seen_key().is_some_and(|k| several.contains(&k)) {
                 return Some(SEEN_ONLY_MANY.to_string());
+            }
+            if links.iter().any(link_holds_placeholder) {
+                return Some(NEVER_COUNTED_FILLED.to_string());
             }
             if links.iter().any(|l| l.nth.is_some()) {
                 return Some(NEVER_COUNTED_NTH.to_string());

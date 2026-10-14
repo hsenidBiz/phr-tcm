@@ -2336,3 +2336,87 @@ fn a_components_when_visible_banner_seen_in_another_area_saves() {
     .unwrap();
     assert_eq!(check_component_seen(&map, Some("Cycles"), &actions), Ok(()));
 }
+
+/// A map where each of `links` was seen but never counted (as a link of a
+/// chain), and each of `wholes` was probed as a whole, matching `matched`.
+fn seen_whole(area: &str, links: &[LocatorStep], wholes: &[(serde_json::Value, u32)]) -> DiscoveryMap {
+    use v2_lib::autorun::discovery_map::{Sighting, WholeSighting, NOT_ONE};
+    DiscoveryMap {
+        areas: vec![AreaMap {
+            area: area.to_string(),
+            sightings: links
+                .iter()
+                .map(|l| Sighting {
+                    key: l.seen_key().unwrap(),
+                    link: l.clone(),
+                    page: "/cycles".to_string(),
+                    last_seen: 1,
+                    matched: NOT_ONE,
+                    all: None,
+                })
+                .collect(),
+            wholes: wholes
+                .iter()
+                .map(|(t, matched)| WholeSighting {
+                    locator: serde_json::from_value(t.clone()).unwrap(),
+                    page: "/cycles".to_string(),
+                    last_seen: 1,
+                    matched: *matched,
+                })
+                .collect(),
+            ..AreaMap::default()
+        }],
+    }
+}
+
+/// A locator holding `{{setup.x}}` cannot be probed as written. Probing the
+/// same locator with a real value counts for it: per link, the placeholder
+/// stands for the value the probed one held there, anchored, and the rest
+/// must be written exactly as probed. The probed one must have matched
+/// exactly one. Covers a chain (css then a role), a css then a text, and a
+/// css with an nth.
+#[test]
+fn a_placeholder_locator_counts_from_a_probe_with_a_real_value() {
+    use v2_lib::autorun::seen_check::NEVER_COUNTED_FILLED;
+    let card = |id: &str| serde_json::json!({ "css": format!("div[data-cycle-id=\"{id}\"]") });
+    let probed = [
+        (serde_json::json!([card("274"), { "role": "button", "name": "Edit" }]), 1),
+        (serde_json::json!([card("274"), { "text": "Draft", "exact": true }]), 1),
+        (serde_json::json!({ "css": "div[data-cycle-id=\"274\"] span", "nth": 1 }), 1),
+    ];
+    let links = [
+        css("div[data-cycle-id=\"274\"]"),
+        role("button", "Edit"),
+        text("Draft"),
+        css("div[data-cycle-id=\"274\"] span"),
+    ];
+    let map = seen_whole("Cycles", &links, &probed);
+    let placeholder = [
+        serde_json::json!([card("{{setup.cycle_id}}"), { "role": "button", "name": "Edit" }]),
+        serde_json::json!([card("{{setup.cycle_id}}"), { "text": "Draft", "exact": true }]),
+        serde_json::json!({ "css": "div[data-cycle-id=\"{{setup.cycle_id}}\"] span", "nth": 1 }),
+    ];
+    for selector in &placeholder {
+        let s = one_step("Cycles", serde_json::json!([click(selector.clone())]));
+        assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()), "{selector}");
+    }
+
+    // The rest must be as probed: another name, another exact text,
+    // another nth, the text around the placeholder changed.
+    for selector in [
+        serde_json::json!([card("{{setup.cycle_id}}"), { "role": "button", "name": "Delete" }]),
+        serde_json::json!([card("{{setup.cycle_id}}"), { "text": "Draft" }]),
+        serde_json::json!({ "css": "div[data-cycle-id=\"{{setup.cycle_id}}\"] span", "nth": 2 }),
+        serde_json::json!([card("c-{{setup.cycle_id}}"), { "role": "button", "name": "Edit" }]),
+    ] {
+        let s = one_step("Cycles", serde_json::json!([click(selector.clone())]));
+        assert!(check_seen(&map, &none(), &s, &[], None).is_err(), "{selector}");
+    }
+
+    // A probe that matched several does not count, and the refusal says
+    // how to probe a placeholder locator.
+    let several = seen_whole("Cycles", &links, &[(probed[0].0.clone(), 3)]);
+    let s = one_step("Cycles", serde_json::json!([click(placeholder[0].clone())]));
+    let refused = check_seen(&several, &none(), &s, &[], None).unwrap_err();
+    assert!(refused.contains(NEVER_COUNTED_FILLED), "{refused}");
+}
