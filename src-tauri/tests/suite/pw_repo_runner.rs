@@ -230,6 +230,41 @@ fn last_results_come_from_the_newest_report() {
 }
 
 #[test]
+fn a_reports_stats_are_read_once_until_it_changes() {
+    let d = clone();
+    let reports_dir = d.path().join("reports");
+    let run = "2026-10-13T09-14-00";
+    fs::create_dir_all(reports_dir.join(run)).unwrap();
+    fs::write(reports_dir.join(run).join("index.html"), "<html></html>").unwrap();
+    let file = reports_dir.join(format!("{run}.json"));
+    fs::write(&file, saved("report.json")).unwrap();
+    let at = fs::metadata(&file).unwrap().modified().unwrap();
+    let passed = |d: &Path| reports(d)[0].stats.as_ref().map(|s| s.passed);
+    assert_eq!(passed(d.path()), Some(1));
+
+    // The same modified time: the kept stats, not the file read again.
+    let changed = saved("report.json").replace("\"expected\": 1", "\"expected\": 7");
+    assert_ne!(changed, saved("report.json"), "the fixture has \"expected\": 1");
+    fs::write(&file, &changed).unwrap();
+    fs::File::options().write(true).open(&file).unwrap().set_modified(at).unwrap();
+    assert_eq!(passed(d.path()), Some(1));
+
+    // A new modified time: read again.
+    fs::File::options().write(true).open(&file).unwrap().set_modified(at + Duration::from_secs(5)).unwrap();
+    assert_eq!(passed(d.path()), Some(7));
+
+    // Only the stats are read: a report with no stats has none, and a count
+    // that is not a number is 0.
+    fs::write(&file, r#"{ "suites": [{ "title": "x" }], "config": { "a": [1, 2, 3] } }"#).unwrap();
+    fs::File::options().write(true).open(&file).unwrap().set_modified(at + Duration::from_secs(10)).unwrap();
+    assert_eq!(reports(d.path())[0].stats, None);
+    fs::write(&file, r#"{ "stats": { "expected": 2.9, "unexpected": "many", "duration": 12.5 }, "errors": [] }"#).unwrap();
+    fs::File::options().write(true).open(&file).unwrap().set_modified(at + Duration::from_secs(15)).unwrap();
+    let s = reports(d.path())[0].stats.clone().unwrap();
+    assert_eq!((s.passed, s.failed, s.flaky, s.skipped, s.duration_ms), (2, 0, 0, 0, 12));
+}
+
+#[test]
 fn a_report_opens_only_by_a_listed_plain_name() {
     let d = clone();
     fs::create_dir_all(d.path().join("reports/2026-10-13T09-14-00")).unwrap();

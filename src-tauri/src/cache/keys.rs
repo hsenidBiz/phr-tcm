@@ -138,6 +138,15 @@ pub fn suite_refused(base_url: &str, org: &str, project: &str, area: &str) -> St
 /// fingerprint, List again, or a run's dry count catches a stale listing.
 pub const PW_LIST_TTL: Duration = Duration::from_secs(8 * 60 * 60);
 
+/// How long one Playwright report's stats are kept (session tier only),
+/// checked against the report file's modified time on every read.
+pub const PW_REPORT_STATS_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// One Playwright report's stats, by the path of its `<runId>.json`.
+pub fn pw_report_stats(file: &str) -> String {
+    format!("pw-report-stats:{file}")
+}
+
 /// The Playwright tab's last listing of the clone at `clone`.
 pub fn pw_list(clone: &str) -> String {
     format!("pw-list:{clone}")

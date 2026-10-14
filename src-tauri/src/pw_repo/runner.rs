@@ -556,8 +556,9 @@ pub fn test_titles(source: &str) -> Vec<String> {
 /// The newest report's result for each test it ran, keyed by test id, and
 /// that report's run id.
 fn last_results(clone: &Path) -> (Option<String>, HashMap<String, LastResult>) {
-    let Some(newest) = reports(clone).into_iter().next() else { return (None, HashMap::new()) };
-    let json = std::fs::read_to_string(clone.join("reports").join(format!("{}.json", newest.run_id)))
+    // Only the newest report is read: no other report's stats.
+    let Some(newest) = report_ids(&clone.join("reports")).into_iter().next() else { return (None, HashMap::new()) };
+    let json = std::fs::read_to_string(clone.join("reports").join(format!("{newest}.json")))
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok());
     let mut out = HashMap::new();
@@ -572,7 +573,7 @@ fn last_results(clone: &Path) -> (Option<String>, HashMap<String, LastResult>) {
         };
         out.insert(test_id(&spec.file, &spec.title_path), result);
     }
-    (Some(newest.run_id), out)
+    (Some(newest), out)
 }
 
 // ---- Options (cli/state/options-file.mjs, run-options.mjs) ------------------
@@ -1100,28 +1101,75 @@ pub fn run(
 
 // ---- Reports -------------------------------------------------------------------
 
-/// Every `reports/<runId>/` with an `index.html`, newest first (run ids are
-/// local timestamps, so their names sort by date).
-pub fn reports(clone: &Path) -> Vec<PwReport> {
-    let root = clone.join("reports");
-    let mut out: Vec<PwReport> = std::fs::read_dir(&root)
+/// The run id of every `reports/<runId>/` under `root` with an
+/// `index.html`, newest first (run ids are local timestamps, so their names
+/// sort by date).
+fn report_ids(root: &Path) -> Vec<String> {
+    let mut ids: Vec<String> = std::fs::read_dir(root)
         .map(|rd| {
             rd.flatten()
                 .filter(|e| e.path().is_dir() && e.path().join("index.html").is_file())
                 .map(|e| e.file_name().to_string_lossy().to_string())
-                .map(|run_id| PwReport { stats: stats(&root.join(format!("{run_id}.json"))), run_id })
                 .collect()
         })
         .unwrap_or_default();
-    out.sort_by(|a, b| b.run_id.cmp(&a.run_id));
-    out
+    ids.sort_by(|a, b| b.cmp(a));
+    ids
 }
 
+/// Every `reports/<runId>/` with an `index.html`, newest first, each with
+/// its stats.
+pub fn reports(clone: &Path) -> Vec<PwReport> {
+    let root = clone.join("reports");
+    report_ids(&root)
+        .into_iter()
+        .map(|run_id| PwReport { stats: stats(&root.join(format!("{run_id}.json"))), run_id })
+        .collect()
+}
+
+/// A report's top level, read for its `stats` only: serde passes over every
+/// other key (`IgnoredAny`) without building it.
+#[derive(Deserialize)]
+struct ReportTop {
+    stats: Option<RawStats>,
+}
+
+#[derive(Deserialize)]
+struct RawStats {
+    #[serde(default, deserialize_with = "count")]
+    expected: u32,
+    #[serde(default, deserialize_with = "count")]
+    unexpected: u32,
+    #[serde(default, deserialize_with = "count")]
+    flaky: u32,
+    #[serde(default, deserialize_with = "count")]
+    skipped: u32,
+    #[serde(default, deserialize_with = "count")]
+    duration: u32,
+}
+
+/// A count as a whole number: a fraction is cut, anything not a number is 0.
+fn count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    let v = Value::deserialize(d)?;
+    Ok(v.as_f64().unwrap_or(0.0).clamp(0.0, u32::MAX as f64) as u32)
+}
+
+/// The stats of the report `file`, kept for the session by its path and
+/// modified time: a report already read is not parsed again until it
+/// changes.
 fn stats(file: &Path) -> Option<ReportStats> {
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
-    let s = v.get("stats")?;
-    let n = |k: &str| s.get(k).and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, u32::MAX as f64) as u32;
-    Some(ReportStats { passed: n("expected"), failed: n("unexpected"), flaky: n("flaky"), skipped: n("skipped"), duration_ms: n("duration") })
+    let at = std::fs::metadata(file).ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    let key = keys::pw_report_stats(&file.to_string_lossy());
+    if let Some((was, kept)) = cache::session_fresh::<(u128, Option<ReportStats>)>(&key, keys::PW_REPORT_STATS_TTL) {
+        if was == at {
+            return kept;
+        }
+    }
+    let read = std::fs::read_to_string(file).ok().and_then(|t| serde_json::from_str::<ReportTop>(&t).ok()).and_then(|top| top.stats).map(|s| {
+        ReportStats { passed: s.expected, failed: s.unexpected, flaky: s.flaky, skipped: s.skipped, duration_ms: s.duration }
+    });
+    cache::session_put(&key, (at, read.clone()));
+    read
 }
 
 /// A listed report's `index.html`. Only a plain folder name under
