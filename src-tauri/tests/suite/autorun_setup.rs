@@ -1325,3 +1325,111 @@ fn skip_stages_is_in_the_fingerprint_only_when_it_names_any() {
     let other = Fixture { skip_stages: vec!["Evaluators".into()], ..fixture("own") };
     assert_ne!(approvals::fingerprint(&s, &skipping, &[Some(t.clone())]), approvals::fingerprint(&s, &other, &[Some(t)]));
 }
+
+/// What the fingerprint covers (Round F): the setup, its fixture and the
+/// templates it runs, never the case's own steps. A script save that
+/// changes only the steps undoes nothing; one whose setup changes undoes
+/// the approval, and `undone_by_save` names it.
+#[test]
+fn only_a_setup_change_undoes_an_approval_on_a_script_save() {
+    let _root = crate::serial::autorun();
+    let r = setup_rig(vec![]);
+    let root = r.root.path();
+    let steps = json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]);
+    let approved = script(41, Some("own"), steps.clone());
+    let never = script(42, Some("own"), steps.clone());
+    let plain = script(43, None, steps);
+    for sc in [&approved, &never, &plain] {
+        store::save_script(root, sc).unwrap();
+    }
+    approve(root, &approved);
+    let before = setup::approved_among(root, ORG, PROJECT, &[&approved, &never, &plain]);
+    assert_eq!(before, vec![41]);
+
+    let new_steps = script(41, Some("own"), json!([{ "step_number": 1, "actions": [check("Cycle {{setup.cycle_id}}")] }]));
+    assert!(setup::undone_by_save(root, ORG, PROJECT, &before, &[new_steps.clone()]).is_empty());
+    store::save_script(root, &new_steps).unwrap();
+    assert!(matches!(state(root, &new_steps), Approval::Approved { .. }), "a steps-only change kept the approval");
+
+    let other_fixture = script(41, Some("shared"), json!([{ "step_number": 1, "actions": [check("ok")] }]));
+    assert_eq!(setup::undone_by_save(root, ORG, PROJECT, &before, &[other_fixture]), vec![41]);
+    let no_setup = script(41, None, json!([{ "step_number": 1, "actions": [check("ok")] }]));
+    assert_eq!(setup::undone_by_save(root, ORG, PROJECT, &before, &[no_setup]), vec![41]);
+    // A case the save does not carry is not named.
+    assert!(setup::undone_by_save(root, ORG, PROJECT, &before, &[]).is_empty());
+
+    let lines = setup::needs_reapproval_lines(&[41, 44], false);
+    assert_eq!(lines[0], "needs_reapproval: [41, 44]");
+    assert_eq!(lines[1], setup::needs_reapproval_line(&[41, 44]));
+    let dry = setup::needs_reapproval_lines(&[41], true);
+    assert_eq!(dry[1], format!("if saved, {}", setup::needs_reapproval_line(&[41])));
+}
+
+/// Through the assistant's save: a declared repair of an approved setup
+/// script's steps lands, keeps the approval and says nothing about one.
+#[tokio::test]
+async fn an_assistant_repair_of_a_setup_scripts_steps_keeps_its_approval() {
+    use v2_lib::ai_bridge::{route, BridgeContext};
+    use v2_lib::steps_xml::{build_steps_xml, Step};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let _root = crate::serial::autorun();
+    let r = setup_rig(vec![]);
+    let root = r.root.path();
+    store::set_root(root.to_path_buf());
+    let sc = script(51, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
+    store::save_script(root, &sc).unwrap();
+    approve(root, &sc);
+
+    let server = MockServer::start().await;
+    let xml = build_steps_xml(&[Step { action: "Step 1".into(), expected: String::new(), shared: None }]);
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/wit/workitems")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [{
+            "id": 51, "fields": { "System.Title": "case 51", "Microsoft.VSTS.TCM.Steps": xml }
+        }] })))
+        .mount(&server)
+        .await;
+    let client = v2_lib::ado::AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let ctx = BridgeContext { org: ORG.into(), project: PROJECT.into(), ..BridgeContext::default() };
+
+    let repaired = json!({
+        "scripts": [{ "case_id": 51, "title": "case 51", "setup": { "fixture": "own" },
+                      "steps": [{ "step_number": 1, "actions": [check("Cycle {{setup.cycle_id}}")] }] }],
+        "edits": [{ "case_id": 51, "steps": [1], "why": "the page shows the word Cycle first" }],
+    })
+    .to_string();
+    common::see_scripts(root, ORG, PROJECT, &repaired);
+    let (status, out) = route(&ctx, Some(&client), "POST", "/autorun-script", &repaired, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 51 (repaired)");
+    assert!(!out.contains("needs_reapproval") && !out.contains("re-approval"), "{out}");
+    let saved = store::load_script(root, 51).unwrap().unwrap();
+    assert!(matches!(state(root, &saved), Approval::Approved { .. }));
+}
+
+/// The Auto Run screen asks which of a selection's setups would Block: a
+/// setup never approved, or changed since; not one that is approved, a
+/// case with no setup or no script, or a setup whose fixture is gone
+/// (that case fails its setup instead).
+#[test]
+fn not_approved_names_the_setups_a_run_would_block() {
+    let _root = crate::serial::autorun();
+    let r = setup_rig(vec![]);
+    let root = r.root.path();
+    let steps = json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]);
+    let approved = script(61, Some("own"), steps.clone());
+    let never = script(62, Some("own"), steps.clone());
+    let plain = script(63, None, steps.clone());
+    let gone = script(64, Some("no-such-fixture"), steps);
+    for sc in [&approved, &never, &plain, &gone] {
+        store::save_script(root, sc).unwrap();
+    }
+    approve(root, &approved);
+    assert_eq!(setup::not_approved(root, ORG, PROJECT, &[61, 62, 63, 64, 65]), vec![62]);
+
+    let mut changed = fixture("own");
+    changed.account = "someone-else".into();
+    fixture_store::save(root, ORG, PROJECT, &changed).unwrap();
+    assert_eq!(setup::not_approved(root, ORG, PROJECT, &[61, 62, 63, 64, 65]), vec![61, 62]);
+}

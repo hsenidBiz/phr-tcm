@@ -496,6 +496,12 @@ export const commands = {
 	 *  approved, and the case is Blocked until it is approved again.
 	 */
 	autoRunWithdrawSetup: (organization: string, project: string, caseId: number) => typedError<SetupView, string>(__TAURI_INVOKE("auto_run_withdraw_setup", { organization, project, caseId })),
+	/**
+	 *  Of `case_ids`, the cases whose setup is not approved for what is saved
+	 *  now: a run Blocks each of them, so the Auto Run screen names them
+	 *  before it starts one. Reads only; approving stays in the script editor.
+	 */
+	autoRunUnapprovedSetups: (organization: string, project: string, caseIds: number[]) => typedError<number[], string>(__TAURI_INVOKE("auto_run_unapproved_setups", { organization, project, caseIds })),
 	autoRunLoadScript: (caseId: number) => typedError<{
 	case_id: number,
 	title: string,

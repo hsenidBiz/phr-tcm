@@ -52,13 +52,14 @@ import ExecutionOrderDialog from "./ExecutionOrderDialog";
 import { requestPlaywrightExport } from "../../lib/playwrightExport";
 import ResetNeededPanel from "./ResetNeededPanel";
 import NetworkWaitPanel from "./NetworkWaitPanel";
-import { fetchPlan, pauseHeading } from "./plan";
+import { caseLabel, fetchPlan, pauseHeading } from "./plan";
 import PastRuns from "./PastRuns";
 import ReadinessStrip from "./ReadinessStrip";
 import RunPane from "./RunPane";
 import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
 import SetupPanel, { useAutoRunSetup } from "./SetupPanel";
+import { unapprovedSetups } from "./setupApproval";
 import SetupColumn from "./SetupColumn";
 import { ResultToggleRow } from "./ResultFilterRow";
 import {
@@ -579,18 +580,37 @@ export default function AutoRun({
   const planningRef = useRef(false);
   const pbiIdNow = useRef<number | undefined>(undefined);
   pbiIdNow.current = pbi?.id;
-  const startPlanned = async (kind: "supervised" | "unattended") => {
+  /** A selection holding cases whose setup is not approved, asked about
+   * before it runs: those cases would only come back Blocked. */
+  const [unapproved, setUnapproved] = useState<{
+    kind: "supervised" | "unattended";
+    ids: number[];
+    blocked: number[];
+  } | null>(null);
+  const startPlanned = async (
+    kind: "supervised" | "unattended",
+    ids: number[] = selectedInOrder,
+    setupsChecked = false,
+  ) => {
     // One at a time: a second click while the plan is on its way would
     // start a second run.
-    if (!pbi || planningRef.current) return;
+    if (!pbi || planningRef.current || ids.length === 0) return;
     planningRef.current = true;
     setPlanning(true);
     const asked = pbi.id;
     try {
-      const plan = await fetchPlan(org, project, asked, selectedInOrder);
+      if (!setupsChecked) {
+        const blocked = await unapprovedSetups(org, project, ids);
+        if (pbiIdNow.current !== asked) return;
+        if (blocked.length > 0) {
+          setUnapproved({ kind, ids, blocked });
+          return;
+        }
+      }
+      const plan = await fetchPlan(org, project, asked, ids);
       // The person moved to another PBI while the plan was on its way.
       if (pbiIdNow.current !== asked) return;
-      const order = plan?.order ?? selectedInOrder;
+      const order = plan?.order ?? ids;
       if (kind === "supervised") {
         setRunPlan(plan);
         setRunning(order);
@@ -1011,6 +1031,53 @@ export default function AutoRun({
           onClose={() => setOrderingOpen(false)}
         />
       )}
+
+      {unapproved && (() => {
+        const blocked = new Set(unapproved.blocked);
+        const rest = unapproved.ids.filter((id) => !blocked.has(id));
+        const titleOf = (id: number) => rows.find((c) => c.id === id)?.title;
+        return (
+          <Modal
+            onClose={() => setUnapproved(null)}
+            label="Setups not approved"
+            className="flex w-full max-w-md flex-col gap-4 p-5"
+          >
+            <h2 className="text-sm font-semibold text-text">Setups not approved</h2>
+            <p className="text-xs text-muted">
+              These cases&apos; setups are not approved and will be Blocked:
+            </p>
+            <ul aria-label="Cases whose setup is not approved" className="space-y-1 text-xs text-text">
+              {unapproved.blocked.map((id) => (
+                <li key={id}>{caseLabel(id, titleOf)}</li>
+              ))}
+            </ul>
+            <p className="text-xs text-muted">
+              {rest.length > 0
+                ? "Approve a setup in its case's script editor, or run the rest without them."
+                : "None of the selected cases can run until their setups are approved, in each case's script editor."}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setUnapproved(null)}>
+                <IconCancel aria-hidden />
+                Cancel
+              </Button>
+              {rest.length > 0 && (
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const { kind } = unapproved;
+                    setUnapproved(null);
+                    void startPlanned(kind, rest, true);
+                  }}
+                >
+                  <IconRun aria-hidden />
+                  Run the rest ({rest.length})
+                </Button>
+              )}
+            </div>
+          </Modal>
+        );
+      })()}
 
       {clearScriptsOpen && (
         <Modal

@@ -1820,6 +1820,8 @@ function applyPatches() {
       setupView = { ...setupView, approval: "none", approved_at: null };
       return ok(setupView);
     },
+    autoRunUnapprovedSetups: (_o: string, _p: string, caseIds: number[]) =>
+      ok(setupView.approval === "approved" ? [] : caseIds.filter((id) => id === 5001)),
 
     buildLog: () =>
       ok(

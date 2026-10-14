@@ -5619,7 +5619,23 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
     // expands. A file that does not read leaves those actions named by
     // their component only.
     let components = crate::autorun::components::load_components(&root, &ctx.org, &ctx.project).unwrap_or_default();
-    (200, crate::autorun::failures::describe_failures_in(Some(&root), &run, &scripts, &components))
+    let said = crate::autorun::failures::describe_failures_in(Some(&root), &run, &scripts, &components);
+    if case_id.is_some() || q(target, "run_id").is_some() {
+        return (200, said);
+    }
+    // Asked of no case and no run: say which run that was, and name the
+    // other recent runs here with failed or blocked cases, so failures a
+    // run or two back are not missed.
+    let all_scripts = crate::autorun::store::list_scripts(&root);
+    let runs = crate::autorun::store::list_runs(&root);
+    let now = crate::autorun::sessions::now_ms();
+    let (head, others) = crate::autorun::failures::newest_run_context(&run, &all_scripts, &runs, now);
+    let mut out = format!("{head}\n\n{said}");
+    if let Some(others) = others {
+        out.push_str("\n\n");
+        out.push_str(&others);
+    }
+    (200, out)
 }
 
 /// Record something learned about the application, attributed, so the
@@ -6621,11 +6637,18 @@ async fn save_autorun_scripts(
     // Every case's refusal from this gate, said together: a bundle with two
     // bad repairs is told about both in one answer.
     let mut refused: Vec<String> = Vec::new();
+    // The cases whose setup is approved for the script on disk now.
+    let mut approved_before: Vec<i32> = Vec::new();
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
             Err(e) => return (500, e),
         };
+        // Whether its setup is approved now, before anything is written:
+        // the answer names every approval this save undoes.
+        if let Some(old) = existing.as_ref().filter(|o| o.setup.is_some()) {
+            approved_before.extend(crate::autorun::setup::approved_among(&root, &ctx.org, &ctx.project, &[old]));
+        }
         let declared = edits.iter().find(|e| e.case_id == sent.case_id);
         let mut script = sent.clone();
         // A new script is checked whole; an unchanged one and a repair keep
@@ -6898,12 +6921,26 @@ async fn save_autorun_scripts(
     if let Err(refused) = checked {
         return answer(refused.said());
     }
+    // The approvals this save undoes (or a dry run would), each named:
+    // only the person approves a setup again, in the script editor.
+    let undone = crate::autorun::setup::undone_by_save(&root, &ctx.org, &ctx.project, &approved_before, &prepared);
     if dry_run {
-        return (200, dry_run_answer(prepared.len(), &lines));
+        let mut said = dry_run_answer(prepared.len(), &lines);
+        if !undone.is_empty() {
+            for line in crate::autorun::setup::needs_reapproval_lines(&undone, true) {
+                said.push('\n');
+                said.push_str(&line);
+            }
+        }
+        return (200, said);
     }
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
 
     let mut report = vec![format!("saved {} script(s): {}", prepared.len(), lines.join(", "))];
+    if !undone.is_empty() {
+        crate::applog::info(format!("auto-run script save: setup approvals undone for {undone:?}"));
+        report.extend(crate::autorun::setup::needs_reapproval_lines(&undone, false));
+    }
     for (case_id, step) in &repaired_marks {
         match crate::autorun::store::clear_suspected_defect_at(&root, *case_id, *step) {
             Ok(true) => {
