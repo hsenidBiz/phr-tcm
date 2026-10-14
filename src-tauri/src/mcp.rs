@@ -591,6 +591,11 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
+            "name": "get_autorun_network_wait",
+            "description": "Whether an unattended Auto Run is paused because the company network is unreachable (the environment's database server has stopped answering), which case it will run next, how many seconds it has waited and how many seconds remain before it gives up. Answers { waiting: false } when no run is paused. Read only: only the network returning, the person pressing Stop or the time limit ends the wait, and nothing you call can.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
             "name": "get_api_template_guide",
             "description": "How to build an API template - a saved, proven sequence of the application's own requests that writes test data (creates a cycle, moves a record to a state) far faster than clicking through the screens. Returns the format and its rules, the placeholder and capture syntax, and the workflow: read the module's code for each request, find real values with db_query, then prove. Also names this project's account keys and the sign-in recipe's origin, so you never guess an account or a host. Read it before your first prove_api_template.",
             "inputSchema": schema(serde_json::json!({}), &[]),
@@ -1086,6 +1091,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             call("GET", &format!("/autorun-script?case_id={}", percent_encode(&id)), "")
         }
         "delete_autorun_script" => call("POST", "/autorun-script-delete", &args.to_string()),
+        "get_autorun_network_wait" => call("GET", "/autorun-network-wait", ""),
         "get_autorun_page" => {
             let mut params: Vec<String> = Vec::new();
             if let Some(n) = args["limit"].as_u64() {

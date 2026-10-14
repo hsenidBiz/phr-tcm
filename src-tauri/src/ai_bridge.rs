@@ -300,6 +300,9 @@ pub async fn route(
         ("GET", "/autorun-script") => autorun_script_read(target),
         ("POST", "/autorun-script-delete") => autorun_script_delete(body),
         ("GET", "/autorun-page") => autorun_page(ctx, target).await,
+        // Read only: whether an unattended run is paused for the network.
+        // Nothing here stops or answers the wait.
+        ("GET", "/autorun-network-wait") => (200, autorun_network_wait_answer()),
         ("POST", "/autorun-probe") => autorun_probe(ctx, body).await,
         ("POST", "/autorun-try") => autorun_try(ctx, body).await,
         // Discovery: the assistant opens the Auto Run browser itself, signs
@@ -1739,6 +1742,22 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool) -> String {
         }
     }
     out
+}
+
+/// What `/autorun-network-wait` answers. The registry's view carries no
+/// host or port, and nothing is added here.
+fn autorun_network_wait_answer() -> String {
+    match crate::autorun::network::waits().current() {
+        None => serde_json::json!({ "waiting": false }).to_string(),
+        Some(w) => serde_json::json!({
+            "waiting": true,
+            "run_id": w.run_id,
+            "before_case_id": w.before_case_id,
+            "waited_s": w.waited_s,
+            "give_up_in_s": w.give_up_in_s,
+        })
+        .to_string(),
+    }
 }
 
 /// The page in the browser the person opened, as text: Chrome's own
