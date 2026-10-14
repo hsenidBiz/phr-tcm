@@ -322,10 +322,11 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_guide",
-            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. Locators come from what you saw on the live app, through discovery; every assertion comes from the test case's own expected result, never from what the code happens to do. The full guide is long: with `quick` true it answers only the Quick rules and this project's live sections, for work you have done before; with `section` it answers the Quick rules and that one section.",
+            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. Locators come from what you saw on the live app, through discovery; every assertion comes from the test case's own expected result, never from what the code happens to do. The full guide is too long for one answer: with no arguments this answers the Quick rules, this project's live sections and the title of every section; with `section` it answers the Quick rules and that one section; with `quick` true only the Quick rules and the live sections; the whole guide only with `full` true.",
             "inputSchema": schema(serde_json::json!({
-                "quick": { "type": "boolean", "description": "true: answer only the Quick rules (the short form of the guide's rules) and the live sections: the active environment and whether get_accounts gives passwords, and this project's areas, areas to explore, components and quirks. Read the full guide, without quick, when something comes up that the quick rules do not cover." },
+                "quick": { "type": "boolean", "description": "true: answer only the Quick rules (the short form of the guide's rules) and the live sections: the active environment and whether get_accounts gives passwords, and this project's areas, areas to explore, components and quirks. Ask for a section, or the full guide, when something comes up that the quick rules do not cover." },
                 "section": { "type": "string", "description": "The title of one section of the guide, such as \"Selectors\" or \"Saving it\" (case ignored): answers the Quick rules and that section, down to the next one. An unknown title answers the list of section titles." },
+                "full": { "type": "boolean", "description": "true: the whole guide, every section. It is long (over 100,000 characters); prefer `section`." },
             }), &[]),
         },
         {
@@ -402,6 +403,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The case whose saved script is replayed." },
                 "step": { "type": "number", "description": "The step to stop before: the failing step. Steps 1 to step - 1 run." },
+                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer; get_autorun_page reads it. True when left out." },
             }), &["case_id", "step"]),
         },
         {
@@ -432,6 +434,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "type": "object",
                     "description": "Optional, with a use_component action only: the component to try in place of the saved one of that name, exactly as you will send it to save_autorun_component: { name, description, inputs, actions }.",
                 },
+                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). True when left out." },
             }), &["action"]),
         },
         {
@@ -444,6 +447,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "items": { "type": "object" },
                 },
                 "stop_on_failure": { "type": "boolean", "description": "Optional: false carries on past a failed action. True when left out." },
+                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). True when left out." },
                 "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
                 "case_id": { "type": "number", "description": "Optional: the case this discovery explores for. When its saved script is marked no_save, every save the page tries is BLOCKED (not only reported) from then until the discovery ends, and each answer names the blocked request in `blocked_writes`." },
                 "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries from then until the discovery ends, as for a case marked no_save. Pass it, or the case_id, whenever the case you explore for must not save." },
@@ -606,8 +610,8 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "module": { "type": "string", "description": "Only templates whose module contains this text (case does not matter)." },
                 "search": { "type": "string", "description": "Only templates whose id, title, or a param or output name contains this text (case does not matter)." },
-                "flow": { "type": "string", "description": "A flow id: only that flow, and the templates on its stages." },
-                "id": { "type": "string", "description": "One template's id: that template in full, with the flow it is on. The other arguments are ignored with it." },
+                "flow": { "type": ["string", "boolean"], "description": "A flow id: only that flow, and the templates on its stages. Or false: leave the flows (every stage) and the Test files out of an answer in full, such as one template by `id`." },
+                "id": { "type": "string", "description": "One template's id: that template in full, with the flow it is on (send flow: false to leave the flow and the Test files out). The other arguments are ignored with it." },
                 "offset": { "type": "number", "description": "How many matching templates to skip: the `next_offset` of the previous answer. 0 by default." },
                 "limit": { "type": "number", "description": "How many templates one answer carries: 25 by default, 100 at most." },
             }), &[]),
@@ -1022,7 +1026,10 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "get_autorun_guide" => match args["section"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
             Some(section) => call("GET", &format!("/autorun-guide?section={}", percent_encode(section)), ""),
             None if args["quick"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide?quick=true", ""),
-            None => call("GET", "/autorun-guide", ""),
+            None if args["full"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide", ""),
+            // The whole guide is too long for one answer: the Quick rules,
+            // the live sections and the section titles.
+            None => call("GET", "/autorun-guide?overview=true", ""),
         },
         "save_autorun_script" => {
             // The bridge takes the bare array, so a caller that wrapped it
@@ -1153,6 +1160,11 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             // number) is forwarded as written, so the route refuses it by
             // name rather than this dispatch quietly dropping it.
             let mut params: Vec<String> = vec![];
+            // `flow: false` is not a flow id: it leaves the flows and the
+            // Test files out of an answer in full.
+            if args["flow"] == serde_json::json!(false) {
+                params.push("with_flow=false".to_string());
+            }
             for key in ["module", "search", "flow", "id", "offset", "limit"] {
                 let paging = matches!(key, "offset" | "limit");
                 let value = match &args[key] {

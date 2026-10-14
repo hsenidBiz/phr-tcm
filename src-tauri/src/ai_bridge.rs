@@ -289,6 +289,12 @@ pub async fn route(
                 Ok(text) => (200, text),
                 Err(titles) => (404, titles),
             },
+            // Without arguments the MCP tool asks for the overview: the
+            // Quick rules, the live sections and the section titles.
+            None if matches!(q(target, "overview").as_deref(), Some("true") | Some("1")) => {
+                let full = autorun_guide_with_quirks(ctx, false);
+                (200, crate::autorun::guide::guide_overview(&autorun_guide_with_quirks(ctx, true), &full))
+            }
             None => {
                 let quick = matches!(q(target, "quick").as_deref(), Some("true") | Some("1"));
                 (200, autorun_guide_with_quirks(ctx, quick))
@@ -309,8 +315,8 @@ pub async fn route(
         // in as a saved account (the app types the password) and explores
         // the live application, one action at a time.
         ("POST", "/autorun-discover-start") => autorun_discover_start(ctx, body).await,
-        ("POST", "/autorun-discover-action") => autorun_discover_action(ctx, body).await,
-        ("POST", "/autorun-discover-actions") => autorun_discover_actions(ctx, body).await,
+        ("POST", "/autorun-discover-action") => without_page(autorun_discover_action(ctx, body).await, body),
+        ("POST", "/autorun-discover-actions") => without_page(autorun_discover_actions(ctx, body).await, body),
         // A replay going has already ended any discovery, and holds the
         // browser: said at once rather than waited for.
         ("POST", "/autorun-discover-end") => match replay_is_holding_the_browser() {
@@ -322,7 +328,7 @@ pub async fn route(
         // is gone. Never a process outside the app's own jobs.
         ("POST", "/autorun-release") => crate::commands::autorun::release_for_assistant().await,
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body).await,
-        ("POST", "/autorun-replay") => autorun_replay(ctx, body).await,
+        ("POST", "/autorun-replay") => without_page(autorun_replay(ctx, body).await, body),
         ("GET", "/autorun-failures") => autorun_failures(ctx, target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
@@ -573,6 +579,32 @@ fn autorun_test_files(ctx: &BridgeContext) -> (u16, String) {
     (200, serde_json::json!({ "test_files": rows }).to_string())
 }
 
+/// Said in place of the page dump an answer leaves out (`without_page`).
+pub const PAGE_LEFT_OUT: &str = "left out (page: false) - get_autorun_page reads it";
+
+/// `answer` with its `page` dump left out when the call's body sent
+/// `"page": false`: discover_autorun_action(s) and replay_autorun_to_step
+/// answer the whole page after every call, which a caller that only wants
+/// the outcome can do without. The page is still read, so what it shows is
+/// still recorded as seen; `page_left_out` says where to read it. Any other
+/// body, an answer that is not a JSON object, or one with no page, is
+/// unchanged.
+pub fn without_page(answer: (u16, String), body: &str) -> (u16, String) {
+    let asked = serde_json::from_str::<serde_json::Value>(body).ok().and_then(|v| v.get("page").and_then(|p| p.as_bool()));
+    if asked != Some(false) {
+        return answer;
+    }
+    let (status, text) = answer;
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(serde_json::Value::Object(mut map)) if map.contains_key("page") => {
+            map.remove("page");
+            map.insert("page_left_out".to_string(), serde_json::json!(PAGE_LEFT_OUT));
+            (status, serde_json::Value::Object(map).to_string())
+        }
+        _ => (status, text),
+    }
+}
+
 /// How many templates one answer of the list carries when no `limit` is
 /// given, and the most it ever carries.
 pub const TEMPLATE_PAGE: usize = 25;
@@ -585,6 +617,9 @@ pub const TEMPLATE_PAGE_MAX: usize = 100;
 /// title, or a param or output name), `flow` (that flow's templates, and
 /// that flow alone), `offset` and `limit` (25 by default, 100 at most),
 /// and `id` (that one template in full, with the flow it is on).
+/// `with_flow=false` leaves the flows and the Test files out of an answer
+/// in full: asked for one template by `id`, the flow's every stage and the
+/// file list were most of the answer, and the same each time.
 ///
 /// A filtered result of at most `limit` templates comes back in full:
 /// what each one takes and gives back, the flow stage it performs,
@@ -757,7 +792,13 @@ fn api_template_list(ctx: &BridgeContext, target: &str) -> (u16, String) {
         paging["next_offset"] = serde_json::json!(offset + rows.len());
     }
     let mut answer = serde_json::json!({ "templates": rows, "flows": flow_rows, "paging": paging });
-    if full {
+    let with_flow = !matches!(arg("with_flow").as_deref(), Some("false") | Some("0"));
+    if full && !with_flow {
+        if let Some(map) = answer.as_object_mut() {
+            map.remove("flows");
+        }
+        answer["left_out"] = serde_json::json!("the flows and the Test files (flow: false)");
+    } else if full {
         // Names and sizes only: what a template's `files` may name.
         let test_files: Vec<serde_json::Value> = project_test_files(&root, ctx)
             .into_iter()

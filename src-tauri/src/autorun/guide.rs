@@ -100,6 +100,20 @@ pub fn guide_section(guide: &str, title: &str) -> Result<String, String> {
     Ok(format!("{}\n\n{}\n", quick.trim_end(), section.trim_end()))
 }
 
+/// What `get_autorun_guide` answers with no arguments: `quick` (the Quick
+/// rules and the project's live sections, as `quick: true` answers them),
+/// then every `##` section title of `full` (the live guide) and how to ask
+/// for one. The whole guide is too long for one answer, so it is sent only
+/// when asked for with `full: true`.
+pub fn guide_overview(quick: &str, full: &str) -> String {
+    let titles: Vec<String> = section_titles(full).iter().map(|t| format!("- {t}")).collect();
+    format!(
+        "{}\n\n## Sections of the full guide\n\nThis answer is the Quick rules and this project's live sections. Ask for one section of the guide with `section` (its title, case ignored), or for the whole guide with `full` true (it is long):\n\n{}\n",
+        quick.trim_end(),
+        titles.join("\n")
+    )
+}
+
 /// The Quick rules section alone: what `get_autorun_guide` with
 /// `quick: true` answers before the project's live sections. Every rule
 /// here is also in the full guide, in the section it belongs to;
@@ -111,7 +125,7 @@ pub fn quick_rules() -> String {
 const QUICK_RULES: &str = r##"## Quick rules
 
 Short form: for anything these rules do not cover, call `get_autorun_guide`
-without `quick` and read the full guide.
+with the `section` that covers it, or with `full` true for the whole guide.
 
 - Discover the live app; never read the application's code to write scripts.
   A save refuses any locator the app has not seen. During a discovery with

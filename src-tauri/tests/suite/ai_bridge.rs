@@ -3661,6 +3661,13 @@ mod api_template_routes {
         assert_eq!(v["flows"].as_array().unwrap().len(), 1, "the flow it is on: {v}");
         assert_eq!(v["flows"][0]["id"], FLOW);
 
+        // `flow: false` leaves the flow and the Test files out.
+        let (status, v, out) = list("/api-templates?with_flow=false&id=pms-set-eval-rules").await;
+        assert_eq!(status, 200, "{out}");
+        assert_eq!(v["templates"][0]["id"], "pms-set-eval-rules", "{out}");
+        assert!(v.get("flows").is_none() && v.get("test_files").is_none(), "{v}");
+        assert_eq!(v["left_out"], "the flows and the Test files (flow: false)");
+
         let (status, _, out) = list("/api-templates?id=tpl-999").await;
         assert_eq!(status, 404, "{out}");
         assert_eq!(out, "no template called \"tpl-999\" is saved for this project - list_api_templates shows the ones that are");
@@ -3955,4 +3962,24 @@ async fn the_starting_style_switched_on_carries_the_old_trial_rules() {
         assert!(flat.contains(needle), "missing {needle:?} in:\n{g}");
     }
     assert!(!style::DEFAULT_RISK_TIERED.contains('\u{2014}') && !style::DEFAULT_RISK_TIERED.contains('\u{2013}'));
+}
+
+/// `page: false` leaves the page dump out of a discovery action's or a
+/// replay's answer, saying where to read it; any other body, and an answer
+/// with no page, is unchanged.
+#[test]
+fn page_false_leaves_the_page_out() {
+    use v2_lib::ai_bridge::{without_page, PAGE_LEFT_OUT};
+    let answer = (200, serde_json::json!({ "ok": true, "detail": "clicked", "page": "button \"Save\"\n" }).to_string());
+    let (status, out) = without_page(answer.clone(), r#"{"action":{"kind":"reload"},"page":false}"#);
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v.get("page").is_none(), "{v}");
+    assert_eq!(v["page_left_out"], PAGE_LEFT_OUT);
+    assert_eq!(v["detail"], "clicked");
+    for body in [r#"{"action":{"kind":"reload"}}"#, r#"{"page":true}"#, "not json"] {
+        assert_eq!(without_page(answer.clone(), body), answer, "{body}");
+    }
+    let refused = (409, "case 7 cannot be replayed".to_string());
+    assert_eq!(without_page(refused.clone(), r#"{"page":false}"#), refused);
 }

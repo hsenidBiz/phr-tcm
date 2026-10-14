@@ -1838,7 +1838,7 @@ fn the_commands_point_at_the_quick_guide() {
         let flat = c.body.join("\n").split_whitespace().collect::<Vec<_>>().join(" ");
         for said in [
             "Call `get_autorun_guide` with `quick` true first and follow it.",
-            "Call it again without `quick` for the full guide when something the quick rules do not cover comes up",
+            "Call it again with `section` (or `full` true for the full guide) when something the quick rules do not cover comes up",
         ] {
             assert!(flat.contains(said), "/tcm:{stem} never says {said:?}: {flat}");
         }
