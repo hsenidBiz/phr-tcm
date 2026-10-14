@@ -439,6 +439,7 @@ fn a_draft_becomes_a_recipe_with_placeholders_fixed_text_and_the_default_setting
                 click(css("#go")),
             ],
             after_sign_in: vec![],
+            close_when_shown: vec![],
             signed_in: css("#marker"),
             allowed_origins: vec![],
             session_minutes: 480,

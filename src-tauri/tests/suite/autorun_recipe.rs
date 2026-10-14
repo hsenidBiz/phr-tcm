@@ -389,6 +389,9 @@ fn approved_builtin() -> serde_json::Value {
         { "kind": "when_visible", "selector": { "css": "#sidebar-toggle-menu:not(.active)" }, "within_ms": 5000,
           "then": [ { "kind": "click", "selector": { "css": "#sidebar-toggle-menu" } } ] }
       ],
+      "close_when_shown": [
+        { "name": "cookie banner", "shown": { "css": "#cookieBanner.show" }, "close": { "css": "#btnCookieClose" } }
+      ],
       "signed_in": { "css": "#sidebar-toggle-menu" },
       "allowed_origins": [],
       "session_minutes": 480

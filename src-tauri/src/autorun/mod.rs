@@ -26,6 +26,7 @@ pub mod one_browser;
 pub mod page_errors;
 pub mod patterns;
 pub mod plan;
+pub mod popups;
 pub mod preconditions;
 pub mod publish;
 pub mod quirks;

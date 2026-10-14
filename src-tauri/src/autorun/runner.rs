@@ -9,6 +9,7 @@
 use super::lease::Held;
 use super::nav::{self, Route};
 use super::api_checks;
+use super::popups;
 use super::recipe::{self, SignInRecipe};
 use super::run_files::RunFiles;
 use super::signin::{self, SignInOutcome};
@@ -696,8 +697,16 @@ async fn run_expanded<D: Driver>(
     run.tab = None;
     run.dialog = None;
     let mut ran_in: Option<String> = None;
-    let here =
-        Here { root, organization, project, policy: &policy, direct_urls: nav_file.direct_urls, step: step.step_number };
+    let popups = recipe.as_ref().map(|r| r.close_when_shown.as_slice()).unwrap_or(&[]);
+    let here = Here {
+        root,
+        organization,
+        project,
+        policy: &policy,
+        direct_urls: nav_file.direct_urls,
+        step: step.step_number,
+        popups,
+    };
     let mut out = Vec::with_capacity(step.actions.len());
     let mut blocked: Option<&'static str> = None;
     // Whether an action of this step that changes the page has begun.
@@ -1002,6 +1011,9 @@ struct Here<'a> {
     policy: &'a Policy,
     direct_urls: bool,
     step: i32,
+    /// The recipe's `close_when_shown`: closed before an action that
+    /// touches the page (`popups::close_shown`).
+    popups: &'a [super::recipe::ClosePopup],
 }
 
 /// Said by the actions after one the application refused the session for.
@@ -1054,24 +1066,29 @@ async fn after_session_refused<D: Driver>(
 }
 
 /// A plain action - one a `when_visible` may guard - carried out, and why
-/// the rest of the step must not run, when it must not.
+/// the rest of the step must not run, when it must not. The one place every
+/// run, try and replay carries out a plain action, so the project's known
+/// pop-ups are closed here, first, when one is up (`popups::close_shown`).
 async fn plain<D: Driver>(
     d: &mut D,
     here: &Here<'_>,
     action: &Action,
     timing: &Timing,
 ) -> (ActionOutcome, Option<&'static str>) {
-    match action {
-        // A script saved before the switch was turned off. The runner's
-        // own trip home never comes through here.
-        Action::Navigate { .. } | Action::OpenTab { .. } if !here.direct_urls => {
-            (ActionOutcome::failed(nav::no_address(here.step)), Some(AFTER_REFUSED_ADDRESS))
-        }
-        Action::Upload { selector, file } => {
-            (upload(d, here.root, here.organization, here.project, action, selector, file, timing).await, None)
-        }
-        other => (execute_in(d, other, timing, here.policy).await, None),
+    // A script saved before the switch was turned off. The runner's own
+    // trip home never comes through here.
+    if matches!(action, Action::Navigate { .. } | Action::OpenTab { .. }) && !here.direct_urls {
+        return (ActionOutcome::failed(nav::no_address(here.step)), Some(AFTER_REFUSED_ADDRESS));
     }
+    let notes = popups::close_shown(d, here.popups, action, timing, here.policy).await;
+    let mut out = match action {
+        Action::Upload { selector, file } => {
+            upload(d, here.root, here.organization, here.project, action, selector, file, timing).await
+        }
+        other => execute_in(d, other, timing, here.policy).await,
+    };
+    popups::add_notes(&mut out, &notes);
+    (out, None)
 }
 
 /// A `when_visible`: one look for its target, then its `then` actions in

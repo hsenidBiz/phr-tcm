@@ -771,6 +771,14 @@ export const commands = {
 	 *  page". No login is filled in here: a placeholder is refused.
 	 */
 	after_sign_in?: RecipeStep_Serialize[],
+	/**
+	 *  Pop-ups the runner closes by itself: before every action that
+	 *  touches the page (a click, a fill, a drag, an upload) it looks
+	 *  once, without waiting, for each, and clicks the close control of one
+	 *  that is up - so no script has to guard against them. Nothing that is
+	 *  not listed here is ever closed.
+	 */
+	close_when_shown?: ClosePopup_Serialize[],
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Serialize,
 	/**
@@ -2895,6 +2903,53 @@ export type CleanupResult = {
 	ok: boolean,
 	/**  `deleted`, or the sentence the delete failed with. */
 	outcome: string,
+};
+
+/**
+ *  A pop-up the runner closes by itself (`SignInRecipe::close_when_shown`):
+ *  while `shown` is showing, `close` is clicked, right before an action
+ *  that touches the page. Written for PeoplesHR's consent banner
+ *  (2026-10-14), which comes back after every reload and sits over the
+ *  controls along the bottom of each page.
+ */
+export type ClosePopup = ClosePopup_Serialize | ClosePopup_Deserialize;
+
+/**
+ *  A pop-up the runner closes by itself (`SignInRecipe::close_when_shown`):
+ *  while `shown` is showing, `close` is clicked, right before an action
+ *  that touches the page. Written for PeoplesHR's consent banner
+ *  (2026-10-14), which comes back after every reload and sits over the
+ *  controls along the bottom of each page.
+ */
+export type ClosePopup_Deserialize = {
+	/**  What a step that closed it says: "closed the <name> first". */
+	name: string,
+	/**  The pop-up itself, as it looks while it is up. */
+	shown: Target_Deserialize,
+	/**
+	 *  What closes it - never what accepts something on the person's
+	 *  behalf (a consent banner's x, not its Accept All).
+	 */
+	close: Target_Deserialize,
+};
+
+/**
+ *  A pop-up the runner closes by itself (`SignInRecipe::close_when_shown`):
+ *  while `shown` is showing, `close` is clicked, right before an action
+ *  that touches the page. Written for PeoplesHR's consent banner
+ *  (2026-10-14), which comes back after every reload and sits over the
+ *  controls along the bottom of each page.
+ */
+export type ClosePopup_Serialize = {
+	/**  What a step that closed it says: "closed the <name> first". */
+	name: string,
+	/**  The pop-up itself, as it looks while it is up. */
+	shown: Target_Serialize,
+	/**
+	 *  What closes it - never what accepts something on the person's
+	 *  behalf (a consent banner's x, not its Accept All).
+	 */
+	close: Target_Serialize,
 };
 
 export type ComponentInput = {
@@ -5317,6 +5372,14 @@ export type SignInRecipe_Deserialize = {
 	 *  page". No login is filled in here: a placeholder is refused.
 	 */
 	after_sign_in?: RecipeStep_Deserialize[],
+	/**
+	 *  Pop-ups the runner closes by itself: before every action that
+	 *  touches the page (a click, a fill, a drag, an upload) it looks
+	 *  once, without waiting, for each, and clicks the close control of one
+	 *  that is up - so no script has to guard against them. Nothing that is
+	 *  not listed here is ever closed.
+	 */
+	close_when_shown?: ClosePopup_Deserialize[],
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Deserialize,
 	/**
@@ -5343,6 +5406,14 @@ export type SignInRecipe_Serialize = {
 	 *  page". No login is filled in here: a placeholder is refused.
 	 */
 	after_sign_in?: RecipeStep_Serialize[],
+	/**
+	 *  Pop-ups the runner closes by itself: before every action that
+	 *  touches the page (a click, a fill, a drag, an upload) it looks
+	 *  once, without waiting, for each, and clicks the close control of one
+	 *  that is up - so no script has to guard against them. Nothing that is
+	 *  not listed here is ever closed.
+	 */
+	close_when_shown?: ClosePopup_Serialize[],
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Serialize,
 	/**

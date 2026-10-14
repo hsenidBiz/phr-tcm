@@ -583,6 +583,18 @@ fn the_guide_teaches_when_visible_with_its_two_examples() {
     assert!(seen >= 2, "the section has {seen} when_visible examples, wants the cookie banner and the session prompt");
 }
 
+/// The runner closes the recipe's listed pop-ups itself, so the guide must
+/// not teach a guard for them - and must say an old one is harmless.
+#[test]
+fn the_guide_says_listed_popups_need_no_guard() {
+    let g = autorun_guide();
+    let section = g.split_once("## Dismissing what may not show up").unwrap().1;
+    let section = section.split("\n## ").next().unwrap();
+    for term in ["close_when_shown", "without waiting", "NO guard", "harmless", "cookie banner first","never Accept All"] {
+        assert!(section.contains(term), "the when_visible section never says {term:?}");
+    }
+}
+
 /// Spec 9: "anywhere on the page" now includes same-origin frames, and the
 /// guide says which frames are not read.
 #[test]

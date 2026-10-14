@@ -11,6 +11,13 @@ happened that motivates it.
    session" prompt and the "Performance Method Changed" alert appear
    unpredictably, so a script either fails on them or cannot mention them.
 
+   **Partly done.** Scripts have had `when_visible` for a while. Since
+   2026-10-14 the cookie banner needs no script at all: the recipe's
+   `close_when_shown` list names pop-ups the runner closes by itself before
+   every click, fill, drag or upload, and the built-in recipe lists the
+   banner (see `cookie-banner-recipe.md`). The other prompts are still
+   guarded per script.
+
 2. **A read-only guard for scripts on shared drafts.** Most Competencies and
    Participants scripts use shared drafts that must never be saved. A script
    flag that fails the case the moment the page posts a save handler would stop

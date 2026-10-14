@@ -2,6 +2,29 @@
 
 Written 2026-10-05 for the PeoplesHR project (`peopleshr__hrm-b9614466`).
 
+## Now handled by the runner (2026-10-14)
+
+The banner comes back after reloads mid-case, which no `after_sign_in` step
+sees. The sign-in recipe now has a `close_when_shown` list: right before
+every click, fill, drag or upload, the runner looks once - no waiting - for
+each listed pop-up and, if it is up, clicks its close control. The step's
+outcome says "closed the cookie banner first"; if the close fails it says
+that too, and the action fails the normal way ("is covered by
+div#cookieBanner..."). This runs the same in unattended runs, tries,
+discoveries and replays, so scripts need no `when_visible` guard for the
+banner (an old one is harmless).
+
+The built-in recipe carries the entry. A project with its own saved recipe
+adds it in Auto Run, Setup, sign-in recipe row, Edit (the JSON editor):
+
+```json
+"close_when_shown": [
+  { "name": "cookie banner", "shown": { "css": "#cookieBanner.show" }, "close": { "css": "#btnCookieClose" } }
+]
+```
+
+Still the ×, never Accept All. What follows is the original write-up.
+
 ## The problem
 
 PeoplesHR shows a "Cookie Consent" bar fixed to the bottom of every page until it
