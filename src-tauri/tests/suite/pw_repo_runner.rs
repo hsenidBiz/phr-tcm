@@ -800,3 +800,38 @@ fn a_short_command_that_takes_the_slot_after_the_dry_count_is_waited_for() {
     assert!(v2_lib::pw_repo::process::SLOT_WAIT >= runner::LIST_TIMEOUT + Duration::from_secs(10));
     while !matches!(rx.recv_timeout(Duration::from_secs(20)).unwrap(), RunEvent::Done { run: r, .. } if r == run) {}
 }
+
+/// A listing Playwright could not load (two tests with one title, a syntax
+/// error) has no tests and says why in `errors`: the tree carries the first
+/// line of each, with where it is, so the screen can show them instead of
+/// "no tests".
+#[test]
+fn errors_from_loading_the_tests_are_carried_on_the_tree() {
+    let c = clone();
+    let at = c.path().join("cli").join("data").join("roundtrip.test.mjs");
+    let json = serde_json::json!({
+        "suites": [],
+        "errors": [
+            {
+                "message": "Error: duplicate test title \"competencies: parse then emit is byte-identical\", first declared in ../cli/data/roundtrip.test.mjs:25\n\n    at somewhere (x.js:1:1)",
+                "location": { "file": at.to_string_lossy(), "line": 30, "column": 3 }
+            },
+            { "message": "\u{1b}[31mSyntaxError: Unexpected token\u{1b}[39m\nmore" },
+        ]
+    });
+    let tree = build_tree(c.path(), &json);
+    assert!(tree.tests.is_empty());
+    assert_eq!(
+        tree.load_errors,
+        vec![
+            "Error: duplicate test title \"competencies: parse then emit is byte-identical\", first declared in ../cli/data/roundtrip.test.mjs:25 (cli/data/roundtrip.test.mjs:30)".to_string(),
+            "SyntaxError: Unexpected token".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn a_clean_listing_has_no_load_errors() {
+    let c = clone();
+    assert!(tree_of(c.path()).load_errors.is_empty());
+}

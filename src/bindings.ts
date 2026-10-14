@@ -6305,6 +6305,13 @@ export type TestTree = {
 	projects: string[],
 	/**  The report the results come from, if any. */
 	last_report: string | null,
+	/**
+	 *  What stopped Playwright loading the tests (two tests with one title,
+	 *  a file that does not compile): the first line of each, with where it
+	 *  is. Playwright lists no test at all when there is one, so an empty
+	 *  tree with these is a failed listing, not a clone without tests.
+	 */
+	load_errors: string[],
 };
 
 /**
