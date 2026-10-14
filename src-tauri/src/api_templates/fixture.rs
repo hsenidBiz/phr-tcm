@@ -15,7 +15,7 @@
 //! once per run, to the text that step sent for that param, so a script can
 //! open its own draft by a unique name when no template hands the name back.
 
-use super::flow::{creating_stage, required_before, Flow};
+use super::flow::{creating_stage, required_before, Flow, Stage};
 use super::{exec, ApiTemplate, Effect};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -51,6 +51,12 @@ pub struct Fixture {
     pub outputs: BTreeMap<String, String>,
     #[serde(default)]
     pub creates: Vec<Creates>,
+    /// Stages of a flow that the record this fixture makes does not
+    /// include (a cycle with Competencies off), by stage title or id: the
+    /// flow gate (`flow_problems`) does not ask an earlier step to perform
+    /// them. Never the creating stage, and never one a step performs.
+    #[serde(default)]
+    pub skip_stages: Vec<String>,
 }
 
 /// One running of a fixture, as its history keeps it.
@@ -204,12 +210,12 @@ fn flow_problems(
     let mut problems = Vec::new();
     let missing: Vec<&str> = required_before(&flow, &stage.id)
         .into_iter()
-        .filter(|s| !performed.iter().any(|p| p == &s.id))
+        .filter(|s| !performed.iter().any(|p| p == &s.id) && !skips(f, s))
         .map(|s| s.title.as_str())
         .collect();
     if !missing.is_empty() {
         problems.push(format!(
-            "step {n}: template {} performs {} of flow {}, so the steps before it must perform {}",
+            "step {n}: template {} performs {} of flow {}, so the steps before it must perform {} - or, for a stage this record does not include, name it in the fixture's skip_stages",
             t.id,
             stage.title,
             flow.title,
@@ -232,6 +238,94 @@ fn flow_problems(
         ));
     }
     problems
+}
+
+/// Does `f`'s `skip_stages` name `stage`, by its title or its id (case and
+/// the space around it ignored)?
+fn skips(f: &Fixture, stage: &Stage) -> bool {
+    f.skip_stages.iter().any(|s| {
+        let s = s.trim();
+        s.eq_ignore_ascii_case(stage.title.trim()) || s.eq_ignore_ascii_case(&stage.id)
+    })
+}
+
+/// The flows the steps of `f` perform stages of, each once, in step order.
+fn flows_of(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>, flows: &dyn Fn(&str) -> Option<Flow>) -> Vec<Flow> {
+    let mut out: Vec<Flow> = Vec::new();
+    for step in &f.steps {
+        let Some(r) = templates(&step.template).and_then(|t| t.stage) else { continue };
+        if out.iter().any(|fl| fl.id == r.flow) {
+            continue;
+        }
+        if let Some(fl) = flows(&r.flow) {
+            out.push(fl);
+        }
+    }
+    out
+}
+
+/// What is wrong with `f`'s `skip_stages`: an entry naming no stage of a
+/// flow its steps are on, the creating stage (a fixture always makes its
+/// record), or a stage one of its steps performs.
+fn skip_problems(
+    f: &Fixture,
+    templates: &dyn Fn(&str) -> Option<ApiTemplate>,
+    flows: &dyn Fn(&str) -> Option<Flow>,
+) -> Vec<String> {
+    if f.skip_stages.is_empty() {
+        return vec![];
+    }
+    let on = flows_of(f, templates, flows);
+    let mut problems = Vec::new();
+    for name in &f.skip_stages {
+        let named = |s: &Stage| {
+            let n = name.trim();
+            n.eq_ignore_ascii_case(s.title.trim()) || n.eq_ignore_ascii_case(&s.id)
+        };
+        let hits: Vec<(&Flow, &Stage)> = on.iter().flat_map(|fl| fl.stages.iter().filter(|s| named(s)).map(move |s| (fl, s))).collect();
+        if hits.is_empty() {
+            let titles: Vec<String> = on.iter().map(|fl| fl.title.clone()).collect();
+            let where_ = if titles.is_empty() { "no flow: no step performs a flow's stage".to_string() } else { titles.join(", ") };
+            problems.push(format!("skip_stages: {} is not a stage of {where_}", name.trim()));
+            continue;
+        }
+        for (fl, s) in hits {
+            if s.creates {
+                problems.push(format!("skip_stages: {} makes the record in flow {}, so it cannot be skipped", s.title, fl.title));
+            }
+            let performing = f.steps.iter().enumerate().find(|(_, st)| {
+                templates(&st.template).and_then(|t| t.stage).is_some_and(|r| r.flow == fl.id && r.id == s.id)
+            });
+            if let Some((i, _)) = performing {
+                problems.push(format!(
+                    "skip_stages: step {} performs {}, so it is part of this record - take it out of skip_stages",
+                    i + 1,
+                    s.title
+                ));
+            }
+        }
+    }
+    problems
+}
+
+/// The stages `f` skips, as the answer to a save echoes them: `<stage
+/// title> (flow <flow title>)`, each once, for every `skip_stages` entry
+/// that names a stage of a flow its steps are on.
+pub fn skipped_stages(
+    f: &Fixture,
+    templates: &dyn Fn(&str) -> Option<ApiTemplate>,
+    flows: &dyn Fn(&str) -> Option<Flow>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for fl in flows_of(f, templates, flows) {
+        for s in fl.stages.iter().filter(|s| skips(f, s)) {
+            let line = format!("{} (flow {})", s.title, fl.title);
+            if !out.contains(&line) {
+                out.push(line);
+            }
+        }
+    }
+    out
 }
 
 /// Said when a `creates` entry is not wholly the work of one step whose
@@ -401,6 +495,8 @@ pub fn validate(
     if !f.creates.is_empty() && !uses_prefix {
         problems.push(NEEDS_PREFIX.to_string());
     }
+
+    problems.extend(skip_problems(f, templates, flows));
 
     // The same bad placeholder in several params is one problem, said once.
     let mut seen = std::collections::HashSet::new();

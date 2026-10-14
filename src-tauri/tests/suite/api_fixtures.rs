@@ -77,6 +77,7 @@ fn fixture() -> Fixture {
             id: "{{steps.1.cycleId}}".into(),
             name: "{{steps.1.cycleName}}".into(),
         }],
+        skip_stages: vec![],
     }
 }
 
@@ -614,7 +615,7 @@ fn a_later_stage_alone_is_refused() {
     assert_eq!(
         flow_problems(&f),
         vec![
-            "step 1: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Cycle setup, Evaluation rules",
+            "step 1: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Cycle setup, Evaluation rules - or, for a stage this record does not include, name it in the fixture's skip_stages",
             "step 1: template flow-publish performs Publish of flow Performance cycle wizard, so its cycleId must be one {{steps.<m>.<output>}} of an earlier step on that flow",
         ]
     );
@@ -709,8 +710,59 @@ fn a_missing_middle_stage_is_refused() {
     ]);
     assert_eq!(
         flow_problems(&f),
-        vec!["step 2: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Evaluation rules"]
+        vec!["step 2: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Evaluation rules - or, for a stage this record does not include, name it in the fixture's skip_stages"]
     );
+}
+
+/// A stage the record does not include (a cycle with Competencies off) is
+/// named in `skip_stages`, by title or id: the gate no longer asks for it,
+/// and the save echoes it with its flow. A name that is no stage, the
+/// creating stage, or a stage a step performs is refused.
+#[test]
+fn a_stage_the_record_does_not_include_can_be_skipped() {
+    use v2_lib::api_templates::fixture::skipped_stages;
+    let two = || {
+        flow_fixture(vec![
+            step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+            step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+        ])
+    };
+    for name in ["Evaluation rules", " evaluation RULES ", "rules"] {
+        let f = Fixture { skip_stages: vec![name.into()], ..two() };
+        validate(&f, &flow_lookup, &flows).unwrap();
+        assert_eq!(skipped_stages(&f, &flow_lookup, &flows), vec!["Evaluation rules (flow Performance cycle wizard)"]);
+    }
+    assert!(skipped_stages(&two(), &flow_lookup, &flows).is_empty());
+
+    let f = Fixture { skip_stages: vec!["Competencies".into()], ..two() };
+    let p = flow_problems(&f);
+    assert!(p.contains(&"skip_stages: Competencies is not a stage of Performance cycle wizard".to_string()), "{p:?}");
+    assert_eq!(p.len(), 2, "the gate still asks for rules: {p:?}");
+
+    let f = Fixture { skip_stages: vec!["setup".into()], ..two() };
+    let p = flow_problems(&f);
+    assert!(p.contains(&"skip_stages: Cycle setup makes the record in flow Performance cycle wizard, so it cannot be skipped".to_string()), "{p:?}");
+    assert!(p.contains(&"skip_stages: step 1 performs Cycle setup, so it is part of this record - take it out of skip_stages".to_string()), "{p:?}");
+
+    let all = flow_fixture(vec![
+        step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+        step("flow-rules", &[("cycleId", "{{steps.1.cycleId}}")]),
+        step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+    ]);
+    let f = Fixture { skip_stages: vec!["Evaluation rules".into()], ..all };
+    assert_eq!(
+        flow_problems(&f),
+        vec!["skip_stages: step 2 performs Evaluation rules, so it is part of this record - take it out of skip_stages"]
+    );
+
+    // A fixture on no flow: nothing to skip.
+    let f = Fixture { skip_stages: vec!["rules".into()], ..fixture() };
+    assert_eq!(flow_problems(&f), vec!["skip_stages: rules is not a stage of no flow: no step performs a flow's stage"]);
+
+    // A fixture saved before it reads as skipping nothing.
+    let mut v = serde_json::to_value(fixture()).unwrap();
+    v.as_object_mut().unwrap().remove("skip_stages");
+    assert_eq!(serde_json::from_value::<Fixture>(v).unwrap(), fixture());
 }
 
 #[test]
@@ -811,6 +863,7 @@ mod running {
                 id: "{{steps.1.cycleId}}".into(),
                 name: "{{steps.1.cycleName}}".into(),
             }],
+            skip_stages: vec![],
         }
     }
 

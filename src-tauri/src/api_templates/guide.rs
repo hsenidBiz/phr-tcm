@@ -356,6 +356,12 @@ stage before it, and takes the flow's subject as
 creating stage - so every stage acts on the one record that step made. A
 step whose flow, or whose stage, is no longer saved is refused.
 
+A stage the record does not include (a cycle with Competencies off) is not
+asked for: name it in the fixture's `skip_stages`, by its title or id, such
+as `"skip_stages": ["Competencies"]`. The save answers `skipped_stages`,
+each with its flow. Never the creating stage, and never a stage one of the
+fixture's own steps performs.
+
 Name what it makes with `{{prefix}}`: a fixture with `creates` must use it
 in a step's params. Everything a run makes is recorded as test-made - even
 when a later step fails - and Clean up only finds a name that starts with

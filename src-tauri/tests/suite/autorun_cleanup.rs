@@ -927,6 +927,7 @@ async fn a_fixture_step_on_a_delete_template_is_refused() {
         steps: vec![FixtureStep { template: "remove-cycle".into(), params: [("id".to_string(), "1".to_string())].into() }],
         outputs: BTreeMap::new(),
         creates: vec![],
+        skip_stages: vec![],
     };
     let clock = Clock { year: 2026, month: 10, day: 6, hour: 12, minute: 0, second: 0 };
     let report =

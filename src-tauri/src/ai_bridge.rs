@@ -1352,6 +1352,14 @@ pub fn api_fixture_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
             templates_changed(&fixture.id);
             let undone = crate::autorun::setup::no_longer_approved(&root, &ctx.org, &ctx.project, &approved);
             let mut answer = serde_json::json!({ "saved": fixture.id, "replaced": existed });
+            // The stages it says this record does not include, echoed so a
+            // wrong name is seen at once.
+            let templates = |id: &str| crate::api_templates::store::load(&root, &ctx.org, &ctx.project, id).ok().flatten();
+            let flows = |id: &str| crate::api_templates::flow_store::load(&root, &ctx.org, &ctx.project, id).ok().flatten();
+            let skipped = crate::api_templates::fixture::skipped_stages(&fixture, &templates, &flows);
+            if !skipped.is_empty() {
+                answer["skipped_stages"] = serde_json::json!(skipped);
+            }
             if !undone.is_empty() {
                 crate::applog::info(format!("api fixture {}: setup approvals undone for {undone:?}", fixture.id));
                 answer["needs_reapproval"] = serde_json::json!(undone);

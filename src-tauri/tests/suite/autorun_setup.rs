@@ -74,6 +74,7 @@ fn fixture(id: &str) -> Fixture {
         }],
         outputs: [("cycle_id".to_string(), "{{steps.1.cycleId}}".to_string())].into(),
         creates: vec![Creates { kind: "cycle".into(), id: "{{steps.1.cycleId}}".into(), name: "{{steps.1.cycleName}}".into() }],
+        skip_stages: vec![],
     }
 }
 
