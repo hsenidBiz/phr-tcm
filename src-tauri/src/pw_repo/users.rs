@@ -266,18 +266,20 @@ pub fn registry_passwords(clone: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The clone's accounts, in the registry's order, read from
-/// `src/users/users.json` and nothing else: no process starts. Each
-/// account's password stays in the file.
+/// The clone's accounts, read from `src/users/users.json` and nothing
+/// else: no process starts. Each account's password stays in the file.
+///
+/// The same rows the CLI's `list` gives (`cli/users/users.mjs`,
+/// `commandList`): every top-level key is an account, whatever its value or
+/// its first letter (the CLI skips none, not even a `_` one), sorted by key.
 pub fn accounts(clone: &Path) -> Result<Vec<RepoAccount>, String> {
     let text = |e: &Value, k: &str| match e.get(k) {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Number(n)) => n.to_string(),
         _ => String::new(),
     };
-    Ok(read_registry(clone)?
+    let mut out: Vec<RepoAccount> = read_registry(clone)?
         .iter()
-        .filter(|(_, e)| e.is_object())
         .map(|(key, e)| RepoAccount {
             key: key.clone(),
             username: text(e, "username"),
@@ -286,7 +288,9 @@ pub fn accounts(clone: &Path) -> Result<Vec<RepoAccount>, String> {
             title: text(e, "empTitle"),
             supervisor: text(e, "supervisor"),
         })
-        .collect())
+        .collect();
+    out.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(out)
 }
 
 /// Account `key`'s password, for Show only. Read from the registry; never

@@ -186,14 +186,19 @@ fn the_accounts_are_read_from_the_registry_without_their_passwords() {
         assert!(!text.to_lowercase().contains("password"), "{text}");
     }
 
-    // A number for an employee number reads as its digits.
+    // As the CLI lists them: every top-level key, sorted by key, `_` ones
+    // too (its `list` skips none). A number for an employee number reads as
+    // its digits; a value that is not an entry has empty fields.
     fs::write(
         d.path().join("src/users/users.json"),
-        format!(r#"{{ "K": {{ "username": "u", "password": "{PASS_A}", "employeeNo": 42 }}, "_note": "not an account" }}"#),
+        format!(r#"{{ "_note": "not an entry", "K": {{ "username": "u", "password": "{PASS_A}", "employeeNo": 42 }}, "A": {{ "username": "a" }} }}"#),
     )
     .unwrap();
     let accounts = users::accounts(d.path()).unwrap();
-    assert_eq!(accounts.iter().map(|a| (a.key.as_str(), a.employee_no.as_str())).collect::<Vec<_>>(), [("K", "42")]);
+    assert_eq!(
+        accounts.iter().map(|a| (a.key.as_str(), a.username.as_str(), a.employee_no.as_str())).collect::<Vec<_>>(),
+        [("A", "a", ""), ("K", "u", "42"), ("_note", "", "")]
+    );
 
     // Missing, or not JSON: said, never quoted.
     fs::write(d.path().join("src/users/users.json"), format!("{{ \"K\": \"{PASS_A}\"")).unwrap();
