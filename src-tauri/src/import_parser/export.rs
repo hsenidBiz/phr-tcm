@@ -22,7 +22,7 @@ to null to CREATE a new test case. 'title' is required (max 255 chars). \
 'expected' may be an empty string - except a Shared Steps reference, written \
 {\"shared\": N}, which has neither: keep it exactly as exported and never \
 invent one. 'automation_status' must be exactly \
-'Not Automated' or 'Planned'. 'tags' is a single semicolon-separated \
+'Not Automated' or 'Planned'. 'priority' is optional: a number 1, 2, 3 or 4; a new case without one is created with 2, and an update without one leaves the work item's priority as it is. 'tags' is a single semicolon-separated \
 string - commas are not allowed in tags. 'module' and 'preconditions' \
 are free text and may be empty strings. Two optional fields never reach \
 Azure DevOps and exist only in this file: 'comment', a short in-app note, \
@@ -69,6 +69,10 @@ fn case_record(tc: &TestCase) -> Value {
     // the two notes below; it was only ever applied to them.
     if let Some(id) = tc.update_id {
         rec["id"] = serde_json::json!(id);
+    }
+    // Priority only when the case sets one - same shape rule as the id.
+    if let Some(p) = tc.priority {
+        rec["priority"] = serde_json::json!(p);
     }
     // In-app note: round-trips through this file, never sent to ADO - and
     // only present when non-empty, so a tool that round-trips a caller's
@@ -193,6 +197,16 @@ fn patch_case(obj: &mut Map<String, Value>, old: &TestCase, new: &TestCase) {
         match new.update_id {
             Some(id) => set_value(obj, &ID_KEYS, serde_json::json!(id)),
             None => remove_all(obj, &ID_KEYS),
+        }
+    }
+    if new.priority != old.priority {
+        match new.priority {
+            Some(p) => {
+                obj.insert("priority".into(), serde_json::json!(p));
+            }
+            None => {
+                obj.remove("priority");
+            }
         }
     }
     if new.tags != old.tags {

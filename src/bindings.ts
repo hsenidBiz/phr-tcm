@@ -5875,6 +5875,11 @@ export type TestCaseFull_Deserialize = {
 	steps_xml: string,
 	module_value: string,
 	preconditions: string,
+	/**
+	 *  `Microsoft.VSTS.Common.Priority`, 1-4; `None` when the work item has
+	 *  none (or one outside the picklist).
+	 */
+	priority: number | null,
 };
 
 /**
@@ -5905,6 +5910,11 @@ export type TestCaseFull_Serialize = {
 	steps_xml: string,
 	module_value: string,
 	preconditions: string,
+	/**
+	 *  `Microsoft.VSTS.Common.Priority`, 1-4; `None` when the work item has
+	 *  none (or one outside the picklist).
+	 */
+	priority: number | null,
 };
 
 export type TestCaseSummary = {
@@ -5925,6 +5935,13 @@ export type TestCase_Deserialize = {
 	preconditions: string,
 	/**  When set, update this existing work item instead of creating a new one. */
 	update_id: number | null,
+	/**
+	 *  `Microsoft.VSTS.Common.Priority`, 1-4. A create writes
+	 *  `DEFAULT_PRIORITY` when this is `None`; an update writes it only when
+	 *  it is set, so `None` leaves Azure DevOps' value alone. Absent from the
+	 *  JSON when `None`, so existing round-trips keep their shape.
+	 */
+	priority?: number | null,
 	/**
 	 *  In-app note that round-trips through the JSON export/import but is
 	 *  NEVER sent to Azure DevOps (no ADO field mapping reads it).
@@ -5998,6 +6015,13 @@ export type TestCase_Serialize = {
 	preconditions: string,
 	/**  When set, update this existing work item instead of creating a new one. */
 	update_id: number | null,
+	/**
+	 *  `Microsoft.VSTS.Common.Priority`, 1-4. A create writes
+	 *  `DEFAULT_PRIORITY` when this is `None`; an update writes it only when
+	 *  it is set, so `None` leaves Azure DevOps' value alone. Absent from the
+	 *  JSON when `None`, so existing round-trips keep their shape.
+	 */
+	priority?: number | null,
 	/**
 	 *  In-app note that round-trips through the JSON export/import but is
 	 *  NEVER sent to Azure DevOps (no ADO field mapping reads it).

@@ -7,6 +7,7 @@ import { useState } from "react";
 import type { TestCase } from "../bindings";
 import { validateCase } from "../lib/validate";
 import ModuleField from "./ModuleField";
+import PrioritySelect from "./PrioritySelect";
 import StepsEditor from "./StepsEditor";
 import TagsField from "./TagsField";
 import { Button } from "./ui/button";
@@ -53,6 +54,14 @@ export default function QueueCaseEditor({
           <option>Not Automated</option>
           <option>Planned</option>
         </Select>
+        <PrioritySelect
+          value={tc.priority}
+          onChange={(p) => setTc((t) => ({ ...t, priority: p }))}
+          // An update with no priority leaves Azure DevOps' value alone, so
+          // it gets its own option instead of showing (and implying) 2. A
+          // new case without one is created with 2, which is what it shows.
+          keepLabel={original.update_id != null && original.priority == null ? "Keep current" : undefined}
+        />
       </div>
       <div className="flex gap-2">
         <TagsField

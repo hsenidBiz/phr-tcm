@@ -281,6 +281,7 @@ fn sample_tc() -> v2_lib::model::TestCase {
         module_value: "Auth".into(),
         preconditions: "Logged out".into(),
         update_id: None,
+        priority: None,
         comment: String::new(),
         reviewer_notes: String::new(),
         area: String::new(),
@@ -645,7 +646,7 @@ fn app_only_fields_never_reach_a_request_body() {
 
     // Every TestCase field the request builders may read. Adding an entry
     // is a deliberate decision to send something to Azure DevOps.
-    const MAPPABLE: [&str; 7] = [
+    const MAPPABLE: [&str; 8] = [
         "title",
         "steps",
         "tags",
@@ -653,6 +654,8 @@ fn app_only_fields_never_reach_a_request_body() {
         "module_value",
         "preconditions",
         "update_id",
+        // Microsoft.VSTS.Common.Priority - a real Azure DevOps field.
+        "priority",
     ];
 
     let bytes = src.as_bytes();
@@ -1405,6 +1408,7 @@ async fn the_create_document_folds_the_pbi_link_in_when_asked() {
         module_value: String::new(),
         preconditions: String::new(),
         update_id: None,
+        priority: None,
         comment: String::new(),
         reviewer_notes: String::new(),
         area: String::new(),

@@ -111,6 +111,7 @@ mod browser_snapshot;
 mod browser_tabs;
 mod bugreport;
 mod cache;
+mod case_priority;
 mod comment_images;
 mod components;
 mod db_batch;

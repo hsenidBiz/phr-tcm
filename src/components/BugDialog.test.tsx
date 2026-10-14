@@ -8,6 +8,7 @@ afterEach(() => clearMocks());
 
 const testCase = {
   steps_xml: "",
+  priority: 2,
   id: 201,
   title: "Valid login",
   tags: "",

@@ -12,6 +12,8 @@ export function validateCase(tc: TestCase): string | null {
   if (bad >= 0) return `Step ${bad + 1} action is empty.`;
   if (!["Not Automated", "Planned"].includes(tc.automation_status))
     return `Invalid automation status: '${tc.automation_status}'`;
+  if (tc.priority != null && ![1, 2, 3, 4].includes(tc.priority))
+    return `Priority must be 1, 2, 3 or 4, not '${tc.priority}'.`;
   if (tc.tags.includes(","))
     return "Tags must be separated with semicolons - commas are not allowed.";
   return null;

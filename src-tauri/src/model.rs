@@ -8,6 +8,17 @@ pub const MAX_TITLE_LEN: usize = 255;
 
 pub const VALID_STATUSES: [&str; 2] = ["Not Automated", "Planned"];
 
+/// Azure DevOps' Priority picklist (`Microsoft.VSTS.Common.Priority`).
+pub const VALID_PRIORITIES: [i32; 4] = [1, 2, 3, 4];
+
+/// What a create writes when the case sets no priority.
+pub const DEFAULT_PRIORITY: i32 = 2;
+
+/// The sentence for a priority outside 1-4, shared by import and validation.
+pub fn priority_error(shown: &str) -> String {
+    format!("Priority must be 1, 2, 3 or 4, not '{shown}'.")
+}
+
 pub const FINDING_KINDS: [&str; 3] = ["test_case", "spec", "code"];
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
@@ -49,6 +60,12 @@ pub struct TestCase {
     pub preconditions: String,
     /// When set, update this existing work item instead of creating a new one.
     pub update_id: Option<i32>,
+    /// `Microsoft.VSTS.Common.Priority`, 1-4. A create writes
+    /// `DEFAULT_PRIORITY` when this is `None`; an update writes it only when
+    /// it is set, so `None` leaves Azure DevOps' value alone. Absent from the
+    /// JSON when `None`, so existing round-trips keep their shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i32>,
     /// In-app note that round-trips through the JSON export/import but is
     /// NEVER sent to Azure DevOps (no ADO field mapping reads it).
     /// Absent from serialized output when empty, so tools that round-trip
@@ -162,6 +179,11 @@ impl TestCase {
                 "Invalid automation status: '{}'",
                 self.automation_status
             ));
+        }
+        if let Some(p) = self.priority {
+            if !VALID_PRIORITIES.contains(&p) {
+                return Err(priority_error(&p.to_string()));
+            }
         }
         if self.tags.contains(',') {
             return Err(

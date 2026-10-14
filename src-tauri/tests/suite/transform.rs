@@ -196,8 +196,9 @@ fn unknown_operation_keys_and_dropped_case_fields_are_echoed() {
     let (_, ignored) = parse_ops_full(&serde_json::json!([
         // `find` is not read by set_tags - the §15 class in miniature.
         { "op": "set_tags", "value": "smoke", "find": "oops" },
-        // The exact §15 evidence payload: author/priority/notes/step_number
-        // are silently deleted by the rebuild - now they are named.
+        // The §15 evidence payload: author/notes/step_number were silently
+        // deleted by the rebuild - now they are named. `priority` was in
+        // that payload too; it is a real case field now, so it is kept.
         { "op": "insert_cases", "cases": [{
             "title": "Probe One", "author": "avin", "priority": 2,
             "steps": [{ "action": "Step A.", "expected": "A happens.",
@@ -211,9 +212,10 @@ fn unknown_operation_keys_and_dropped_case_fields_are_echoed() {
         "{ignored:?}"
     );
     let dropped = ignored.iter().find(|l| l.contains("cases[0]")).expect("dropped-fields line");
-    for k in ["author", "priority", "steps.notes", "steps.step_number"] {
+    for k in ["author", "steps.notes", "steps.step_number"] {
         assert!(dropped.contains(k), "'{k}' missing from: {dropped}");
     }
+    assert!(!dropped.contains("priority"), "priority is kept, not discarded: {dropped}");
 }
 
 /// `area` is one of the keys `insert_cases` actually reads (via

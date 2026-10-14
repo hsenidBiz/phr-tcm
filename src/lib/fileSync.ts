@@ -67,6 +67,11 @@ export function changedFields(before: TestCase, after: TestCase): FieldChange[] 
   push("Title", before.title, after.title);
   push("Tags", before.tags, after.tags);
   push("Automation status", before.automation_status, after.automation_status);
+  push(
+    "Priority",
+    before.priority == null ? "" : String(before.priority),
+    after.priority == null ? "" : String(after.priority),
+  );
   push("Module", before.module_value, after.module_value);
   push("Preconditions", before.preconditions, after.preconditions);
   // Both app-only notes round-trip through the JSON, so an assistant can
