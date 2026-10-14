@@ -160,10 +160,13 @@ export default function Playwright({ org, project }: { org: string; project: str
     for (const k of [STRUCTURE_KEY, TESTS_KEY, REPORTS_KEY, ACCOUNTS_KEY, SYNC_KEY]) void qc.invalidateQueries({ queryKey: [k] });
   };
 
-  /** About to open the Runner: its listing starts now (once; a listing
-   * already there is not asked for again here). */
+  /** About to open the Runner: its listing starts now. Only when there is
+   * none yet: a listing already there, or one that failed (a repo command
+   * that failed, which List again retries), is not asked for here. */
   const intent = (t: Tab) => {
     if (t !== "runner" || !runnable) return;
+    const now = qc.getQueryState([TESTS_KEY, clone]);
+    if (now && (now.data !== undefined || now.error !== null || now.fetchStatus === "fetching")) return;
     void qc.prefetchQuery({
       queryKey: [TESTS_KEY, clone],
       queryFn: () => unwrapStr(commands.pwList(clone, false)),

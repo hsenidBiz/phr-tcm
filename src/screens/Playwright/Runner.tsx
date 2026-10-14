@@ -80,6 +80,9 @@ export default function Runner({ clone }: { clone: string }) {
     // A failed listing is a repo command that failed: running it again
     // unasked would only take the run slot again. List again is the retry.
     retry: false,
+    // Kept until something says it changed: a run's end, List again,
+    // Refresh, an export or a Sync write.
+    staleTime: Infinity,
   });
   const reports = useQuery({
     queryKey: [REPORTS_KEY, clone],

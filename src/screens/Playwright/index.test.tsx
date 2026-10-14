@@ -49,7 +49,7 @@ const HEALTHY: RepoStructure = {
 
 type Call = { cmd: string; args: Record<string, unknown> };
 
-function mount(clone: string, structure: RepoStructure | (() => RepoStructure) = HEALTHY) {
+function mount(clone: string, structure: RepoStructure | (() => RepoStructure) = HEALTHY, opts: { listFails?: boolean } = {}) {
   const calls: Call[] = [];
   let saved = clone;
   mockIPC((cmd, args) => {
@@ -61,7 +61,10 @@ function mount(clone: string, structure: RepoStructure | (() => RepoStructure) =
     }
     if (cmd === "pw_repo_structure") return typeof structure === "function" ? structure() : structure;
     if (cmd === "pw_export_preview") throw "no preview in this test";
-    if (cmd === "pw_list") return { tests: [], projects: [], last_report: null, load_errors: [] };
+    if (cmd === "pw_list") {
+      if (opts.listFails) throw "Playwright did not finish listing the tests.";
+      return { tests: [], projects: [], last_report: null, load_errors: [] };
+    }
     if (cmd === "pw_reports" || cmd === "pw_users_list" || cmd === "pw_sync_states") return [];
     return null;
   });
@@ -241,4 +244,18 @@ test("pointing at the Runner tab starts its listing; a clone that cannot run is 
   fireEvent.pointerEnter(screen.getByRole("tab", { name: "Runner" }));
   fireEvent.focus(screen.getByRole("tab", { name: "Runner" }));
   expect(blocked.some((c) => c.cmd === "pw_list")).toBe(false);
+});
+
+test("after a failed listing, pointing at the Runner tab does not list again", async () => {
+  const calls = mount("C:/repo", HEALTHY, { listFails: true });
+  await screen.findByText("All good");
+  const listed = () => calls.filter((c) => c.cmd === "pw_list").length;
+  fireEvent.click(screen.getByRole("tab", { name: "Runner" }));
+  expect(await screen.findByText("Playwright did not finish listing the tests.")).toBeInTheDocument();
+  expect(listed()).toBe(1);
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+  fireEvent.pointerEnter(screen.getByRole("tab", { name: "Runner" }));
+  fireEvent.focus(screen.getByRole("tab", { name: "Runner" }));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(listed()).toBe(1);
 });
