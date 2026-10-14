@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.27",
+    date: "2026-10-14",
+    items: [
+      "API fixtures can now record the exact name a step gave a draft, so scripts can open their own draft by name, and a fixture can skip a stage its cycle does not include (such as Competencies).",
+      "Saving a fixture lists the scripts whose setup needs approving again.",
+      "Your assistant gets smaller answers when it asks (the guide by section, page reads and template flows left out on request), page reads now include visible text, and a repair can send only the steps it changes.",
+    ],
+  },
+  {
     version: "2.1.3-beta.26",
     date: "2026-10-14",
     items: [
