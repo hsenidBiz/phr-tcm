@@ -30,7 +30,9 @@ pub const PAGE_LINES_MAX: usize = DEFAULT_LIMIT * 10;
 /// Roles Chrome uses purely for structure or for text already folded into
 /// a parent's name. Printing them would double up on what the parent line
 /// already says, so they are skipped - their children print at the
-/// skipped node's own depth, as if it were never there.
+/// skipped node's own depth, as if it were never there. A `StaticText` no
+/// printed line's name says (a span's or a paragraph's words) prints as a
+/// text line instead (`text_line`).
 const FOLDED_ROLES: [&str; 5] = ["generic", "none", "presentation", "InlineTextBox", "StaticText"];
 
 /// Roles whose line names something no locator can act on, so it prints
@@ -46,6 +48,16 @@ const FOLDED_ROLES: [&str; 5] = ["generic", "none", "presentation", "InlineTextB
 /// `browser_live::states_every_line_the_page_read_prints_resolves` holds
 /// against a real page.
 pub const NO_LOCATOR_ROLES: [&str; 3] = ["RootWebArea", "ListMarker", "MenuListPopup"];
+
+/// The role a text line is printed and filed under: visible text that no
+/// printed line's name already says (`text_line`), reached by a text
+/// locator.
+pub const TEXT_ROLE: &str = "text";
+
+/// A text longer than this (in characters) is not printed as a text line:
+/// a paragraph of prose is no value a script checks, and its locator would
+/// be the whole paragraph.
+const MAX_TEXT_LINE: usize = 200;
 
 /// Roles whose current value is worth showing on the line.
 const VALUE_ROLES: [&str; 3] = ["textbox", "combobox", "searchbox"];
@@ -211,6 +223,42 @@ fn snap_line(node: &AxNode, frames: &[Value]) -> SnapLine {
 /// A printed line and, when it carries a locator, its data.
 type Printed = (String, Option<SnapLine>);
 
+/// Is this printed line a text line (`text_line`)? The line cap drops these
+/// before any line of a control.
+fn is_text(p: &Printed) -> bool {
+    p.1.as_ref().is_some_and(|l| l.role == TEXT_ROLE)
+}
+
+/// Whitespace collapsed and case folded, for telling whether a parent's
+/// name already says a text.
+fn folded_text(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// The line for a `StaticText` node no printed line names: the visible text
+/// of a span, a paragraph or a div, which Chrome folds into nothing a role
+/// locator can reach. `None` for blank text, text longer than
+/// `MAX_TEXT_LINE`, and text the nearest printed ancestor's name (`parent`)
+/// already holds (a button's own words). Its locator is a text locator,
+/// which finds the deepest element whose visible text holds it.
+fn text_line(node: &AxNode, depth: usize, frames: &[Value], parent: &str) -> Option<Printed> {
+    let text = sanitize(&node.name).split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.is_empty() || text.chars().count() > MAX_TEXT_LINE || folded_text(parent).contains(&folded_text(&text)) {
+        return None;
+    }
+    let obj = json!({ "text": text });
+    let value = if frames.is_empty() {
+        obj
+    } else {
+        let mut chain = frames.to_vec();
+        chain.push(obj);
+        Value::Array(chain)
+    };
+    let locator = serde_json::from_value::<Target>(value.clone()).ok()?;
+    let line = format!("{}{TEXT_ROLE} \"{}\" -> {value}", " ".repeat(depth.min(12)), truncate_name(&text));
+    Some((line, Some(SnapLine { role: TEXT_ROLE.to_string(), name: text, locator, required: false })))
+}
+
 /// `format_line`, for a line with a locator (`reachable`) or one without
 /// (`NO_LOCATOR_ROLES`, and what a closed native list holds).
 fn format_line(node: &AxNode, depth: usize, frames: &[Value], reachable: bool) -> String {
@@ -262,6 +310,8 @@ struct Tree<'a> {
 /// another site, or one nested past `MAX_FRAME_DEPTH`): a read with such a
 /// frame does not show the whole page. `in_list` is set inside a closed
 /// native list (`MenuListPopup`): its lines print without a locator.
+/// `parent` is the name of the nearest line printed above this node: a
+/// text it already says is not printed again (`text_line`).
 #[allow(clippy::too_many_arguments)]
 fn walk(
     id: &str,
@@ -272,6 +322,7 @@ fn walk(
     missed: &mut bool,
     in_list: bool,
     within: Option<i64>,
+    parent: &str,
 ) {
     if !seen.insert(id.to_string()) {
         return;
@@ -282,7 +333,7 @@ fn walk(
     if let Some(backend) = within {
         if node.backend != Some(backend) {
             for child in &node.children {
-                walk(child, depth, tree, out, seen, missed, in_list, within);
+                walk(child, depth, tree, out, seen, missed, in_list, within, parent);
             }
             if let Some(frame) = tree.frames.get(id) {
                 walk_frame(frame, depth, &tree.path, out, missed, within);
@@ -293,15 +344,24 @@ fn walk(
     let folded = node.ignored || FOLDED_ROLES.contains(&node.role.as_str());
     let in_list = in_list || node.role == "MenuListPopup";
     if folded {
+        // Visible text Chrome folded away: printed as a text line, unless
+        // a line above already says it. Its InlineTextBox children only
+        // repeat it.
+        if node.role == "StaticText" && !node.ignored {
+            if !in_list {
+                out.extend(text_line(node, depth, &tree.path, parent));
+            }
+            return;
+        }
         for child in &node.children {
-            walk(child, depth, tree, out, seen, missed, in_list, None);
+            walk(child, depth, tree, out, seen, missed, in_list, None, parent);
         }
         return;
     }
     let reachable = !in_list && !NO_LOCATOR_ROLES.contains(&node.role.as_str());
     out.push((format_line(node, depth, &tree.path, reachable), reachable.then(|| snap_line(node, &tree.path))));
     for child in &node.children {
-        walk(child, depth + 1, tree, out, seen, missed, in_list, None);
+        walk(child, depth + 1, tree, out, seen, missed, in_list, None, &node.name);
     }
     if let Some(frame) = tree.frames.get(id) {
         walk_frame(frame, depth + 1, &tree.path, out, missed, None);
@@ -342,7 +402,7 @@ fn walk_frame(frame: &FrameTree, depth: usize, path: &[Value], out: &mut Vec<Pri
         frames: frame.frames.iter().map(|f| (f.iframe_id.as_str(), f)).collect(),
         path: inner,
     };
-    walk(&root.id, depth, &tree, out, &mut std::collections::HashSet::new(), missed, false, within);
+    walk(&root.id, depth, &tree, out, &mut std::collections::HashSet::new(), missed, false, within, "");
 }
 
 /// Pure rendering: every rule (folding, password redaction, the locator
@@ -413,7 +473,7 @@ fn printed_lines(nodes: &[AxNode], frames: &[FrameTree], within: Option<i64>) ->
     let mut lines = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut missed = false;
-    walk(&root.id, 0, &tree, &mut lines, &mut seen, &mut missed, false, within);
+    walk(&root.id, 0, &tree, &mut lines, &mut seen, &mut missed, false, within, "");
     (lines, missed)
 }
 
@@ -431,6 +491,33 @@ pub fn render_frames_read_within(nodes: &[AxNode], frames: &[FrameTree], limit: 
     render_read(nodes, frames, limit, Some(backend))
 }
 
+/// The lines a read of at most `limit` lines prints, in page order: every
+/// other line before any text line (`is_text`). With more lines than
+/// `limit` that are not text, the first `limit` of them and no text; else
+/// all of them, and the first text lines that still fit.
+fn within_cap(lines: Vec<Printed>, limit: usize) -> Vec<Printed> {
+    if lines.len() <= limit {
+        return lines;
+    }
+    let controls = lines.iter().filter(|p| !is_text(p)).count();
+    let mut texts_left = limit.saturating_sub(controls);
+    let mut controls_left = limit;
+    lines
+        .into_iter()
+        .filter(|p| {
+            if is_text(p) {
+                let keep = texts_left > 0;
+                texts_left = texts_left.saturating_sub(1);
+                keep
+            } else {
+                let keep = controls_left > 0;
+                controls_left = controls_left.saturating_sub(1);
+                keep
+            }
+        })
+        .collect()
+}
+
 fn render_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize, within: Option<i64>) -> PageRead {
     let (page, missed) = printed_lines(nodes, frames, None);
     let page_lines: Vec<SnapLine> = page.iter().filter_map(|(_, d)| d.clone()).collect();
@@ -444,8 +531,9 @@ fn render_read(nodes: &[AxNode], frames: &[FrameTree], limit: usize, within: Opt
         return PageRead { text: text.to_string(), lines: vec![], cut: within.is_some(), page_lines };
     }
     let total = lines.len();
-    let mut out = lines.iter().take(limit).map(|(t, _)| t.clone()).collect::<Vec<_>>().join("\n");
-    let data: Vec<SnapLine> = lines.into_iter().take(limit).filter_map(|(_, d)| d).collect();
+    let lines = within_cap(lines, limit);
+    let mut out = lines.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>().join("\n");
+    let data: Vec<SnapLine> = lines.into_iter().filter_map(|(_, d)| d).collect();
     if total > limit {
         if !out.is_empty() {
             out.push('\n');
@@ -679,6 +767,30 @@ pub const PROBE_SUMMARY_JS: &str = r#"function() {
   return { tag: this.tagName.toLowerCase(), text, rect: [r.x, r.y, r.width, r.height] };
 }"#;
 
+/// What comes between a probe line's place on the page and the role and
+/// name the page read gives the element (`read_name`). Whoever reads a
+/// probe's lines back cuts it off first (`ai_bridge`'s `read_probe_answer`).
+pub const PAGE_READ_NAME: &str = " - page read: ";
+
+/// The role and accessible name Chrome gives the element behind `handle`,
+/// as the page read prints them (`format_line`): `None` when Chrome folds
+/// it (`FOLDED_ROLES`, or ignored), it has no name, or the tree cannot be
+/// read. Asked again once after `Accessibility.enable`, as a read is.
+async fn read_name<D: Driver>(d: &mut D, handle: &page::Handle) -> Option<(String, String)> {
+    let params = json!({ "objectId": handle, "fetchRelatives": false });
+    let tree = match d.call("Accessibility.getPartialAXTree", params.clone()).await {
+        Ok(v) => v,
+        Err(CdpError::Protocol { message, .. }) if message.to_lowercase().contains("enable") => {
+            d.call("Accessibility.enable", json!({})).await.ok()?;
+            d.call("Accessibility.getPartialAXTree", params).await.ok()?
+        }
+        Err(_) => return None,
+    };
+    let node = parse_nodes(&tree).into_iter().next()?;
+    let shown = !node.ignored && !FOLDED_ROLES.contains(&node.role.as_str()) && !node.name.trim().is_empty();
+    shown.then_some((node.role, node.name))
+}
+
 fn trim_chars(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
@@ -702,14 +814,21 @@ pub async fn probe<D: Driver>(d: &mut D, target: &Target) -> Result<String, CdpE
         let tag = summary["tag"].as_str().unwrap_or("");
         let text = trim_chars(&sanitize(summary["text"].as_str().unwrap_or("")), 60);
         let rect = |i: usize| summary["rect"][i].as_f64().unwrap_or(0.0).round() as i64;
-        lines.push(format!(
+        let mut line = format!(
             "{tag} \"{text}\" {} at {},{} {}x{}",
             if visible { "visible" } else { "hidden" },
             rect(0),
             rect(1),
             rect(2),
             rect(3),
-        ));
+        );
+        // The element's own text is not always its name: an icon button's
+        // is its aria-label. Said as the page read says it, so the two can
+        // be matched up.
+        if let Some((role, name)) = read_name(d, handle).await {
+            line.push_str(&format!("{PAGE_READ_NAME}{role} \"{}\"", truncate_name(&sanitize(&name))));
+        }
+        lines.push(line);
     }
     if handles.len() > 1 {
         lines.push("narrow the locator (add \"name\", \"exact\": true, a scope, or \"nth\")".to_string());

@@ -265,10 +265,16 @@ pub fn a_read_can_print_target(target: &Target) -> bool {
 /// How many listed lines in the same frame as `line` its locator would
 /// match: the same role, and a name holding its name, as a role locator
 /// matches (`locator::name_matches`, not exact). A line whose locator is
-/// not a role and a name counts as one.
+/// not a role and a name counts as one, except a text line
+/// (`snapshot::TEXT_ROLE`): a text locator finds every element whose
+/// visible text holds it, a control's own words included, which no read's
+/// lines can count, so it is `NOT_ONE` and only a probe counts it.
 fn read_count(line: &SnapLine, lines: &[SnapLine]) -> u32 {
     let links = line.locator.links();
     let Some((own, frames)) = links.split_last() else { return 1 };
+    if own.text.is_some() {
+        return NOT_ONE;
+    }
     let Some(role) = own.role.as_deref() else { return 1 };
     let want = own.name.as_deref().unwrap_or("");
     let n = lines

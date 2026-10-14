@@ -1194,13 +1194,22 @@ browser (see "Discovering the app"):
   element and what is inside it is listed; a `within` that matches none
   or several is refused with the count; a css string counts every
   visible match. A replay's page, and the page `discover_autorun_action`
-  and `discover_autorun_actions` answer, stop at 120 lines too.
+  and `discover_autorun_actions` answer, stop at 120 lines too; send
+  `page: false` to those three to leave the page out of the answer.
+- Visible text that no line's name already says (a span, a div, a
+  paragraph: "Self 20%", a status badge) prints as a `text "..."` line
+  with a text locator on its end. A read never counts a text line as
+  matching exactly one element: probe it before an action or a
+  one-element check uses it. Past the line limit, text lines are left out
+  before any control's line.
 - A line with no locator on its end names nothing a script can act on:
   the page itself, a list bullet, and the options of a native list
   (a customizable one included), which a script picks with `fill` on the
   list, by the option's label.
 - `probe_autorun_locator` says how many elements a locator matches right
-  now, before it goes into a script.
+  now, before it goes into a script, and for each the role and name the
+  page read gives it (`page read: button "Edit ..."`) when its own text
+  is not that name.
 - `try_autorun_action` runs one action in that same browser and says what
   happened - a rehearsal, not a run; nothing is recorded. Every try names
   the case it is for, `case_id` beside the `action`, and is refused

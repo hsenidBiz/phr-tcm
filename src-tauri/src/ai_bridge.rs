@@ -2358,8 +2358,15 @@ fn read_probe_answer(text: &str) -> ProbeAnswer {
         .map(|rest| rest.chars().take_while(char::is_ascii_digit).collect::<String>())
         .and_then(|n| n.parse().ok())
         .unwrap_or(0);
-    // After the text's closing quote, which the text itself cannot follow.
-    let shown = |line: &str| line.rfind('"').map(|i| &line[i + 1..]).is_some_and(|rest| rest.starts_with(" visible "));
+    // After the text's closing quote, which the text itself cannot follow;
+    // the name the page read gives the element, after it, is cut off first.
+    let shown = |line: &str| {
+        let line = match line.rfind(crate::browser::snapshot::PAGE_READ_NAME) {
+            Some(i) if line.ends_with('"') => &line[..i],
+            _ => line,
+        };
+        line.rfind('"').map(|i| &line[i + 1..]).is_some_and(|rest| rest.starts_with(" visible "))
+    };
     let listed = matches.min(10);
     let visible = text.lines().skip(1).take(listed).filter(|l| shown(l)).count();
     ProbeAnswer { matches, listed, visible }
@@ -2371,7 +2378,7 @@ fn read_probe_answer(text: &str) -> ProbeAnswer {
 /// visible ones. When the probe matched more than it lists and one listed
 /// is visible, the ones it left out may be visible too, so that is at
 /// least two, never one.
-fn visible_matches(text: &str) -> Option<usize> {
+pub fn visible_matches(text: &str) -> Option<usize> {
     let answer = read_probe_answer(text);
     if answer.visible == 0 {
         return None;

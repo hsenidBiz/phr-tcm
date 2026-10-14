@@ -1592,6 +1592,7 @@ fn probed_page_at(href: &'static str, found: usize) -> crate::common::ScriptedDr
             "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS => {
                 Ok(serde_json::json!({ "result": { "value": true } }))
             }
+            "Accessibility.getPartialAXTree" => Ok(serde_json::json!({ "nodes": [] })),
             "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(serde_json::json!({
                 "result": { "value": { "tag": "button", "text": "Archive", "rect": [10.0, 20.0, 80.0, 24.0] } }
             })),
@@ -1733,6 +1734,7 @@ fn probed_page_showing(found: usize, shown: &'static [usize]) -> crate::common::
                 let visible = shown.iter().any(|i| id == format!("el-{i}"));
                 Ok(serde_json::json!({ "result": { "value": visible } }))
             }
+            "Accessibility.getPartialAXTree" => Ok(serde_json::json!({ "nodes": [] })),
             "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(serde_json::json!({
                 "result": { "value": { "tag": "button", "text": "Archive", "rect": [10.0, 20.0, 80.0, 24.0] } }
             })),
