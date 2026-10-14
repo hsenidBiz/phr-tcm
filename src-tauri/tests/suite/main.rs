@@ -155,6 +155,7 @@ mod pw_repo_process;
 mod pw_repo_runner;
 mod pw_repo_structure;
 mod pw_repo_sync;
+mod pw_repo_timing;
 mod pw_repo_users;
 mod relink;
 mod report;

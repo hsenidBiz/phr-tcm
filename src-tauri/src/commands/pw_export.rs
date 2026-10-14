@@ -22,6 +22,7 @@ pub fn pw_export_preview(
     case_ids: Vec<i32>,
     modules: Vec<(i32, String)>,
 ) -> Result<Preview, String> {
+    let _t = crate::pw_repo::timed("pw_export_preview");
     let root = super::autorun::root(&app)?;
     let dir = sync_dir(&app)?;
     let modules: BTreeMap<i32, String> = modules.into_iter().collect();
@@ -38,6 +39,7 @@ pub fn pw_export_save_map(
     project: String,
     map: ExportMap,
 ) -> Result<(), String> {
+    let _t = crate::pw_repo::timed("pw_export_save_map");
     for (area, placement) in &map.areas {
         placement.validate().map_err(|e| format!("Area \"{area}\": {e}"))?;
     }
@@ -121,6 +123,7 @@ pub async fn pw_export_write(
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
 ) -> Result<ExportResult, String> {
+    let _t = crate::pw_repo::timed("pw_export_write");
     if case_ids.is_empty() {
         return Ok(nothing_written());
     }

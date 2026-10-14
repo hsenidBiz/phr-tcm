@@ -57,6 +57,7 @@ async fn blocking<T: Send + 'static>(
 #[tauri::command]
 #[specta::specta]
 pub fn pw_repo_structure(clone: String) -> Result<RepoStructure, String> {
+    let _t = crate::pw_repo::timed("pw_repo_structure");
     let clone = chosen(&clone)?;
     structure::structure_for(true, &clone.to_string_lossy(), structure::node_found())
 }
@@ -75,6 +76,7 @@ pub struct PwRunning {
 #[tauri::command]
 #[specta::specta]
 pub fn pw_repo_stop(run: u32) -> Result<(), String> {
+    let _t = crate::pw_repo::timed("pw_repo_stop");
     crate::pw_repo::ensure_offered(crate::ai_tools::autorun_offered())?;
     process::stop(run)
 }
@@ -83,6 +85,7 @@ pub fn pw_repo_stop(run: u32) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub fn pw_repo_running() -> Result<Option<PwRunning>, String> {
+    let _t = crate::pw_repo::timed("pw_repo_running");
     crate::pw_repo::ensure_offered(crate::ai_tools::autorun_offered())?;
     Ok(process::running_now().map(|(run, label, brief)| PwRunning { run, label, brief }))
 }
@@ -93,6 +96,7 @@ pub fn pw_repo_running() -> Result<Option<PwRunning>, String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn pw_list(app: tauri::AppHandle, clone: String, refresh: bool) -> Result<TestTree, String> {
+    let _t = crate::pw_repo::timed("pw_list");
     let show = emitter(app);
     blocking(clone, true, move |clone, start| runner::list(clone, refresh, &show, start)).await
 }
@@ -111,6 +115,7 @@ pub async fn pw_run(
     mode: BrowserMode,
     confirm: bool,
 ) -> Result<RunStart, String> {
+    let _t = crate::pw_repo::timed("pw_run");
     let show = emitter(app);
     blocking(clone, false, move |clone, start| runner::run(clone, &picked, action, mode, confirm, &show, start)).await
 }
@@ -125,6 +130,7 @@ pub async fn pw_preview(
     action: RunAction,
     mode: BrowserMode,
 ) -> Result<RunPreview, String> {
+    let _t = crate::pw_repo::timed("pw_preview");
     let show = emitter(app);
     blocking(clone, false, move |clone, start| runner::preview(clone, &picked, action, mode, &show, start)).await
 }
@@ -133,6 +139,7 @@ pub async fn pw_preview(
 #[tauri::command]
 #[specta::specta]
 pub fn pw_reports(clone: String) -> Result<Vec<PwReport>, String> {
+    let _t = crate::pw_repo::timed("pw_reports");
     Ok(runner::reports(&chosen(&clone)?))
 }
 
@@ -140,6 +147,7 @@ pub fn pw_reports(clone: String) -> Result<Vec<PwReport>, String> {
 #[tauri::command]
 #[specta::specta]
 pub fn pw_open_report(clone: String, run_id: String) -> Result<(), String> {
+    let _t = crate::pw_repo::timed("pw_open_report");
     let index = runner::report_index(&chosen(&clone)?, &run_id)?;
     tauri_plugin_opener::open_path(&index, None::<&str>).map_err(|e| {
         crate::applog::warn(format!("pw-repo: a report could not be opened: {e}"));
@@ -169,6 +177,7 @@ async fn blocking_users<T: Send + 'static>(
 #[tauri::command]
 #[specta::specta]
 pub async fn pw_users_list(app: tauri::AppHandle, clone: String) -> Result<Vec<RepoAccount>, String> {
+    let _t = crate::pw_repo::timed("pw_users_list");
     let show = emitter(app);
     blocking_users(clone, move |clone, start| users::list(clone, &show, start)).await
 }
@@ -178,6 +187,7 @@ pub async fn pw_users_list(app: tauri::AppHandle, clone: String) -> Result<Vec<R
 #[tauri::command]
 #[specta::specta]
 pub fn pw_users_password(clone: String, key: String) -> Result<String, String> {
+    let _t = crate::pw_repo::timed("pw_users_password");
     users::password(&chosen(&clone)?, &key)
 }
 
@@ -188,6 +198,7 @@ pub fn pw_users_password(clone: String, key: String) -> Result<String, String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn pw_users_change(app: tauri::AppHandle, clone: String, change: AccountChange, apply: bool) -> Result<ChangeOutcome, String> {
+    let _t = crate::pw_repo::timed("pw_users_change");
     let show = emitter(app);
     blocking_users(clone, move |clone, start| users::change(clone, &change, apply, &show, start)).await
 }
@@ -198,6 +209,7 @@ pub async fn pw_users_change(app: tauri::AppHandle, clone: String, change: Accou
 #[tauri::command]
 #[specta::specta]
 pub async fn pw_sync_states(app: tauri::AppHandle, clone: String, org: String, project: String) -> Result<Vec<SyncRow>, String> {
+    let _t = crate::pw_repo::timed("pw_sync_states");
     let root = super::autorun::root(&app)?;
     let dir = super::pw_export::sync_dir(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
@@ -218,6 +230,7 @@ pub async fn pw_handoff(
     project: String,
     cases: Vec<i32>,
 ) -> Result<Vec<handoff::HandoffCard>, String> {
+    let _t = crate::pw_repo::timed("pw_handoff");
     let dir = super::pw_export::sync_dir(&app)?;
     let autorun = super::autorun::root(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
@@ -257,6 +270,7 @@ pub async fn pw_sync_update(
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
 ) -> Result<ExportResult, String> {
+    let _t = crate::pw_repo::timed("pw_sync_update");
     update(app, clone, org, project, cases, replace, module_ref, preconditions_ref).await
 }
 
@@ -276,6 +290,7 @@ pub async fn pw_sync_add_new(
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
 ) -> Result<ExportResult, String> {
+    let _t = crate::pw_repo::timed("pw_sync_add_new");
     let root = super::autorun::root(&app)?;
     let dir = super::pw_export::sync_dir(&app)?;
     let configured = crate::app_settings::current().playwright_clone;
