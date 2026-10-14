@@ -835,3 +835,50 @@ fn a_clean_listing_has_no_load_errors() {
     let c = clone();
     assert!(tree_of(c.path()).load_errors.is_empty());
 }
+
+// ---- The kept listing -----------------------------------------------------------
+
+#[test]
+fn a_listing_kept_on_disk_is_used_while_the_clone_is_unchanged() {
+    let json = parse_list_stdout(&saved("list.json")).unwrap();
+    let (show, _rx) = collect();
+
+    // As after a restart: only the durable entry is there.
+    let d = clone();
+    let key = v2_lib::cache::keys::pw_list(&d.path().to_string_lossy());
+    v2_lib::cache::put(&key, &(runner::fingerprint(d.path()), &json));
+    let never = |_: &[String]| -> Result<Launch, String> { panic!("nothing is listed while the kept listing holds") };
+    assert_eq!(runner::list(d.path(), false, &show, &never).unwrap().tests.len(), 5);
+    // Read once from disk, then from memory.
+    assert_eq!(runner::list(d.path(), false, &show, &never).unwrap().tests.len(), 5);
+
+    // A spec changed since: the kept listing no longer counts.
+    let d = clone();
+    let key = v2_lib::cache::keys::pw_list(&d.path().to_string_lossy());
+    v2_lib::cache::put(&key, &(runner::fingerprint(d.path()), &json));
+    fs::write(d.path().join("suites").join(RM), "// changed\n").unwrap();
+    let refused = |_: &[String]| -> Result<Launch, String> { Err("listed again".into()) };
+    assert_eq!(runner::list(d.path(), false, &show, &refused).unwrap_err(), "listed again");
+
+    // List again (refresh) never uses it.
+    let d = clone();
+    let key = v2_lib::cache::keys::pw_list(&d.path().to_string_lossy());
+    v2_lib::cache::put(&key, &(runner::fingerprint(d.path()), &json));
+    assert_eq!(runner::list(d.path(), true, &show, &refused).unwrap_err(), "listed again");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_new_listing_is_kept_on_disk_with_its_fingerprint() {
+    let _held_browsers = crate::serial::held_browsers();
+    let _slot = crate::serial::pw_repo();
+    let d = clone();
+    let fake = Fake::new("dry-two.json");
+    let (show, _rx) = collect();
+    let tree = runner::list(d.path(), true, &show, &|a| fake.launch(a)).unwrap();
+    assert_eq!(tree.tests.len(), 5);
+    let key = v2_lib::cache::keys::pw_list(&d.path().to_string_lossy());
+    let (print, json) = v2_lib::cache::get::<(String, serde_json::Value)>(&key).expect("kept on disk");
+    assert_eq!(print, runner::fingerprint(d.path()));
+    assert_eq!(json, parse_list_stdout(&saved("list.json")).unwrap());
+}

@@ -132,9 +132,10 @@ pub fn suite_refused(base_url: &str, org: &str, project: &str, area: &str) -> St
 }
 
 /// How long the Playwright tab reuses a clone's `playwright test --list`
-/// output (session tier only). Listing compiles every spec, so the tree is
-/// not listed again for each run; Refresh lists it now, and a run's dry
-/// count catches a listing that has gone stale.
+/// output, kept with the clone's fingerprint (durable tier, and the session
+/// tier so the disk copy is read once). Listing compiles every spec, so the
+/// tree is not listed again for each run or after a restart; a changed
+/// fingerprint, List again, or a run's dry count catches a stale listing.
 pub const PW_LIST_TTL: Duration = Duration::from_secs(8 * 60 * 60);
 
 /// The Playwright tab's last listing of the clone at `clone`.
