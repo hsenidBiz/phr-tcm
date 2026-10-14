@@ -51,6 +51,7 @@ import CaseSearch, { matchesSearch } from "./CaseSearch";
 import ExecutionOrderDialog from "./ExecutionOrderDialog";
 import { requestPlaywrightExport } from "../../lib/playwrightExport";
 import ResetNeededPanel from "./ResetNeededPanel";
+import NetworkWaitPanel from "./NetworkWaitPanel";
 import { fetchPlan, pauseHeading } from "./plan";
 import PastRuns from "./PastRuns";
 import ReadinessStrip from "./ReadinessStrip";
@@ -302,6 +303,29 @@ export default function AutoRun({
       .catch(() => {});
     const un = events.autorunResetNeeded.listen((e) => {
       if (live) setWaitingReset(e.payload);
+    });
+    return () => {
+      live = false;
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [runGoing]);
+  /** An unattended run waiting for the company network that the store does
+   * not hold (see above): its panel is shown here, from the event alone. */
+  const [orphanNetworkWait, setOrphanNetworkWait] = useState<{ runId: string; giveUpAfterS: number; since: number } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (runGoing) {
+      setOrphanNetworkWait(null);
+      return;
+    }
+    let live = true;
+    const un = events.autorunNetworkWait.listen((e) => {
+      if (!live) return;
+      const w = e.payload;
+      setOrphanNetworkWait(
+        w.waiting ? { runId: w.run_id, giveUpAfterS: w.give_up_after_s, since: Date.now() } : null,
+      );
     });
     return () => {
       live = false;
@@ -1065,6 +1089,23 @@ export default function AutoRun({
             busy={answeringReset}
             onContinue={() => void answerWaitingReset(true)}
             onStop={() => void answerWaitingReset(false)}
+          />
+        </Modal>
+      )}
+
+      {orphanNetworkWait && !runGoing && (
+        // Only the network coming back, Stop or the time limit ends the wait.
+        <Modal
+          onClose={() => {}}
+          label="Paused - the company network is unreachable"
+          className="w-full max-w-2xl p-4"
+        >
+          <NetworkWaitPanel
+            giveUpAfterS={orphanNetworkWait.giveUpAfterS}
+            since={orphanNetworkWait.since}
+            onStop={async () => {
+              await commands.autoRunStopNetworkWait(orphanNetworkWait.runId).catch(() => false);
+            }}
           />
         </Modal>
       )}

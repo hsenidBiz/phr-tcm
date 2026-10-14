@@ -22,12 +22,14 @@ import { useSyncExternalStore } from "react";
 import {
   commands,
   events,
+  type AutorunNetworkWait,
   type AutorunResetNeeded,
   type PbiHit,
   type PlanView,
   type ReplayProgress,
   type StepRecord,
 } from "../bindings";
+import { announce } from "./assignedAlerts";
 import { DISCOVERY_BUSY, discoveryIsActive, useDiscoveryActiveNow } from "./discoveryActive";
 
 /** A case's written step, as the script editor shows it. */
@@ -69,6 +71,11 @@ export type BackgroundRun = {
   records: Record<number, StepRecord[]>;
   /** The reset point the run is paused at, while it waits for an answer. */
   resetNeeded: AutorunResetNeeded | null;
+  /** The wait for the company network, while the run is paused on it: set by
+   * `waiting: true`, cleared only by its own `waiting: false` (a progress
+   * event does not end it) and when the run ends. `since` is when this
+   * window first heard of it, for the time waited. */
+  networkWait: NetworkWaitView | null;
   /** An answer to the pause is on its way. */
   answering: boolean;
   /** Stop was pressed: the run ends after its current step. */
@@ -78,6 +85,9 @@ export type BackgroundRun = {
   /** Why the run failed, in the words the call gave. */
   error: string;
 };
+
+/** The network wait as the store holds it. */
+export type NetworkWaitView = AutorunNetworkWait & { since?: number };
 
 /** A finished run whose review the Auto Run screen should open. */
 export type ReviewRequest = {
@@ -225,6 +235,7 @@ export function openRunSetup(s: {
       position: null,
       records: {},
       resetNeeded: null,
+      networkWait: null,
       answering: false,
       stopping: false,
       resultId: null,
@@ -277,6 +288,27 @@ function onResetNeeded(gen: number, reset: AutorunResetNeeded) {
   patchRun({ resetNeeded: reset, answering: false });
 }
 
+function onNetworkWait(gen: number, w: AutorunNetworkWait) {
+  const r = state.run;
+  if (gen !== generation || !r || r.phase !== "running") return;
+  if (r.runId !== null && w.run_id !== r.runId) return;
+  if (w.waiting) {
+    // One notice per pause: a repeat of the event for a wait already shown
+    // changes nothing.
+    if (r.networkWait?.run_id === w.run_id && r.networkWait.before_case_id === w.before_case_id) return;
+    patchRun({ networkWait: { ...w, since: Date.now() } });
+    announce(
+      "Auto Run paused",
+      "The company network is unreachable. Reconnect the VPN - the run carries on by itself.",
+    );
+    return;
+  }
+  patchRun({ networkWait: null });
+  if (w.ended === "gave_up") {
+    announce("Auto Run stopped", "The company network was unreachable for 30 minutes.");
+  }
+}
+
 /** Starts the run set up in the window. The store keeps the call's promise,
  * so its end is caught whether or not anything is on screen. */
 export async function startRun(opts: RunOptions): Promise<void> {
@@ -296,6 +328,7 @@ export async function startRun(opts: RunOptions): Promise<void> {
     position: null,
     records: {},
     resetNeeded: null,
+    networkWait: null,
     answering: false,
     stopping: false,
     resultId: null,
@@ -304,6 +337,7 @@ export async function startRun(opts: RunOptions): Promise<void> {
   unlisteners = [
     events.replayProgress.listen((e) => onProgress(gen, e.payload)),
     events.autorunResetNeeded.listen((e) => onResetNeeded(gen, e.payload)),
+    events.autorunNetworkWait.listen((e) => onNetworkWait(gen, e.payload)),
   ];
   // Listening before the call starts, so the first event is never missed.
   await Promise.allSettled(unlisteners);
@@ -313,7 +347,7 @@ export async function startRun(opts: RunOptions): Promise<void> {
     if (gen !== generation || !state.run) return;
     stopListening();
     const inBackground = !state.run.open;
-    patchRun({ phase: "failed", error, resetNeeded: null, answering: false, stopping: false });
+    patchRun({ phase: "failed", error, resetNeeded: null, networkWait: null, answering: false, stopping: false });
     announceEnd({ ok: false, inBackground, runId: state.run?.runId ?? null, error });
   };
   try {
@@ -344,7 +378,7 @@ export async function startRun(opts: RunOptions): Promise<void> {
       });
       announceEnd({ ok: true, inBackground: false, runId: id, error: "" });
     } else {
-      patchRun({ phase: "finished", resultId: id, resetNeeded: null, answering: false, stopping: false });
+      patchRun({ phase: "finished", resultId: id, resetNeeded: null, networkWait: null, answering: false, stopping: false });
       announceEnd({ ok: true, inBackground: true, runId: id, error: "" });
     }
   } catch (e) {
@@ -388,6 +422,16 @@ export async function stopRun(): Promise<void> {
   // current step, and there is nothing else to tell until it does.
   patchRun({ stopping: true });
   await commands.autoRunReplayCancel().catch(() => {});
+}
+
+/** Stop, while the run waits for the network: the run ends there, every
+ * remaining case recorded as not run. A refused stop (the wait just ended)
+ * leaves the run to carry on. */
+export async function stopNetworkWait(runId?: string): Promise<void> {
+  const id = runId ?? state.run?.networkWait?.run_id;
+  if (!id) return;
+  const stopped = await commands.autoRunStopNetworkWait(id).catch(() => false);
+  if (stopped) patchRun({ stopping: true });
 }
 
 /** The answer at the reset point: Continue runs the next phase, Stop ends

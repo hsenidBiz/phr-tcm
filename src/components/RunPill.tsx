@@ -27,6 +27,13 @@ export function runPillView(
     const before = run.resetNeeded.batch > 0 ? ` before Batch ${run.resetNeeded.batch}` : "";
     return { text: `Paused${before}`, action: "Open the run window to continue or stop the run", tone: "warning" };
   }
+  if (run.networkWait) {
+    return {
+      text: "Waiting for the network",
+      action: "Open the run window to see the wait or stop the run",
+      tone: "warning",
+    };
+  }
   const at = run.position ? run.position.index + 1 : 1;
   const of = run.position ? run.position.total : run.cases.length;
   return { text: `Auto Run ${at} of ${of}`, action: "Open the run window", tone: "accent" };
