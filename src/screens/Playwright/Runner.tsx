@@ -10,7 +10,7 @@
 // The ticks are remembered per clone (lib/cache, `cacheKeys.pwTicks`).
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { commands, events, type BrowserMode, type RunAction, type RunPreview } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
@@ -43,6 +43,20 @@ export const ENDED_CAP = 20;
  * for the run it prepared. */
 const ADOPT_RETRY_MS = 250;
 const ADOPT_TRIES = 8;
+
+/** Runs `f` at the next frame (a timer where there are no frames); the
+ * answer cancels it. */
+function nextFrame(f: () => void): () => void {
+  if (typeof requestAnimationFrame === "function") {
+    const id = requestAnimationFrame(f);
+    return () => cancelAnimationFrame(id);
+  }
+  const id = setTimeout(f, 16);
+  return () => clearTimeout(id);
+}
+
+/** `lines` with only the newest OUTPUT_CAP kept. */
+const capped = (lines: string[]) => (lines.length > OUTPUT_CAP ? lines.slice(lines.length - OUTPUT_CAP) : lines);
 
 /** The debug question: the run it is about, in the mode it was asked in. */
 type Ask = { action: RunAction; count: number; mode: BrowserMode };
@@ -86,6 +100,26 @@ export default function Runner({ clone }: { clone: string }) {
    * to adopt, but it is busy until that ends. */
   const [waitingOn, setWaitingOn] = useState<number | null>(null);
   const [output, setOutput] = useState<string[]>([]);
+  /** Lines come in bursts: they wait here and reach the panel once per
+   * frame, so a busy run is one render a frame, not one a line. */
+  const pending = useRef<string[]>([]);
+  const cancelFlush = useRef<(() => void) | null>(null);
+  const addLine = (line: string) => {
+    pending.current = capped([...pending.current, line]);
+    cancelFlush.current ??= nextFrame(() => {
+      cancelFlush.current = null;
+      const lines = pending.current;
+      pending.current = [];
+      setOutput((o) => capped([...o, ...lines]));
+    });
+  };
+  /** Empties the panel, and drops any line still waiting for its frame. */
+  const clearOutput = () => {
+    cancelFlush.current?.();
+    cancelFlush.current = null;
+    pending.current = [];
+    setOutput([]);
+  };
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -178,19 +212,24 @@ export default function Runner({ clone }: { clone: string }) {
     })();
   };
 
-  const tick = (ids: string[], on: boolean) => {
-    setTicked((t) => {
-      const next = new Set(t);
-      for (const id of ids) {
-        if (on) next.add(id);
-        else next.delete(id);
-      }
-      cacheWrite(cacheKeys.pwTicks(clone), [...next]);
-      return next;
-    });
-  };
+  // Stable, so the tree (memo) renders again only when the ticks or the
+  // tests change, never for a line of output.
+  const tick = useCallback(
+    (ids: string[], on: boolean) => {
+      setTicked((t) => {
+        const next = new Set(t);
+        for (const id of ids) {
+          if (on) next.add(id);
+          else next.delete(id);
+        }
+        cacheWrite(cacheKeys.pwTicks(clone), [...next]);
+        return next;
+      });
+    },
+    [clone],
+  );
 
-  const list = tests.data?.tests ?? [];
+  const list = useMemo(() => tests.data?.tests ?? [], [tests.data]);
   const loadErrors = tests.data?.load_errors ?? [];
   const branches = useMemo(() => buildBranches(list), [list]);
   const known = useMemo(() => new Set(list.map((t) => t.id)), [list]);
@@ -205,10 +244,7 @@ export default function Runner({ clone }: { clone: string }) {
       const { busy, running, waitingOn } = live.current;
       const ours = running !== null ? e.payload.run === running : e.payload.run === waitingOn || busy;
       if (!ours) return;
-      setOutput((o) => {
-        const next = [...o, e.payload.line];
-        return next.length > OUTPUT_CAP ? next.slice(next.length - OUTPUT_CAP) : next;
-      });
+      addLine(e.payload.line);
     });
     let gone = false;
     const done = events.pwDone.listen((e) => {
@@ -231,6 +267,8 @@ export default function Runner({ clone }: { clone: string }) {
     void adopt.current(0);
     return () => {
       gone = true;
+      cancelFlush.current?.();
+      cancelFlush.current = null;
       for (const un of [output, done]) un.then((f) => f()).catch(() => {});
     };
     // Mount only: `live` and `finish` carry the current values.
@@ -248,7 +286,7 @@ export default function Runner({ clone }: { clone: string }) {
 
   const refresh = async () => {
     begin();
-    setOutput([]);
+    clearOutput();
     try {
       qc.setQueryData([TESTS_KEY, clone], await unwrapStr(commands.pwList(clone, true)));
     } catch (e) {
@@ -260,7 +298,7 @@ export default function Runner({ clone }: { clone: string }) {
 
   const run = async (action: RunAction, confirm = false, as: BrowserMode = mode) => {
     begin();
-    setOutput([]);
+    clearOutput();
     try {
       // What was listed before the run, so its end opens only its own report.
       const before = reports.data ?? (await fetchReports());

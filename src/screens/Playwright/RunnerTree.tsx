@@ -5,7 +5,7 @@
 // are ticked. Each level hangs from a guide line, and a test's last result
 // is a coloured dot beside its word.
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { LastResult, ListedTest } from "../../bindings";
 import { Checkbox } from "../../components/ui/checkbox";
 import { IconHideDetails, IconShowDetails } from "../../lib/actionIcons";
@@ -84,7 +84,11 @@ type Props = {
 /** The list under a branch: indented, hanging from a guide line. */
 const NESTED = "ml-[0.875rem] border-l border-border pl-2";
 
-export default function RunnerTree({ branches, ticked, onTick }: Props) {
+/** Memo: the Runner renders for every frame of output, the tree only when
+ * its branches, ticks or `onTick` change. */
+export default memo(RunnerTree);
+
+function RunnerTree({ branches, ticked, onTick }: Props) {
   const [folded, setFolded] = useState<Set<string>>(() => new Set());
   const toggle = (id: string) =>
     setFolded((f) => {
