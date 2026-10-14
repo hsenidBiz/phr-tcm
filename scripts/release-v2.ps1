@@ -100,6 +100,12 @@ $me.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
 $env:CARGO_BUILD_JOBS = $jobs
 Write-Host "Building on $jobs of $total cores at below-normal priority."
 
+# --- Build cache -------------------------------------------------------------
+# Cargo never deletes what it built, and src-tauri\target once reached 600 GB.
+# Trim it before the gates build anything (see trim-cargo-cache.ps1). It only
+# ever removes cache, and does nothing while another cargo is running.
+& (Join-Path $PSScriptRoot "trim-cargo-cache.ps1")
+
 # --- Gates -----------------------------------------------------------------
 if (-not $SkipChecks) {
     Push-Location (Join-Path $v2 "src-tauri")

@@ -183,3 +183,8 @@ v1 and went with it. The suites above are the gate.
   don't re-read whole files repeatedly.
 - **The machine is shared with the user.** Run one build or test command at
   a time and wait for it; never run two suites at once.
+- **One build cache: `src-tauri/target`.** Never set `CARGO_TARGET_DIR` or
+  `--target-dir` (older plans used `target/gate`; that second cache reached
+  170 GB). Cargo never deletes what it built, and `target` once reached
+  600 GB: `scripts/trim-cargo-cache.ps1` trims it (the release script runs it
+  first), and running it by hand after a long stretch of test runs is fine.
