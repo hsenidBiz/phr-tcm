@@ -204,3 +204,22 @@ test("Play the dino game opens the bundled game, and Close shuts it", async () =
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
+
+test("the brick game button shows only once unlocked", async () => {
+  ipc(false);
+  renderSettings();
+  await settle();
+  expect(screen.queryByRole("button", { name: "Play the brick game" })).not.toBeInTheDocument();
+  press(SEQUENCE);
+  expect(await screen.findByRole("button", { name: "Play the brick game" })).toBeInTheDocument();
+});
+
+test("Play the brick game opens the bundled game, and Close shuts it", async () => {
+  ipc(true);
+  renderSettings();
+  fireEvent.click(await screen.findByRole("button", { name: "Play the brick game" }));
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  expect(screen.getByTitle("Brick game").getAttribute("src")).toBe("/vendor/breaker/index.html");
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
