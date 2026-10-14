@@ -472,6 +472,19 @@ mod app_gate {
         (told, move |e: &AutorunNetworkWait| t.lock().unwrap().push(e.clone()))
     }
 
+    #[test]
+    fn the_waiting_command_answers_with_the_wait_in_progress() {
+        let _g = serial::network_waits();
+        assert!(v2_lib::commands::autorun_replay::auto_run_waiting_network().is_none());
+        let _stop = network::waits().begin("run-view", 9, Duration::from_secs(1800));
+        let view = v2_lib::commands::autorun_replay::auto_run_waiting_network().expect("a wait is in progress");
+        assert_eq!(view.run_id, "run-view");
+        assert_eq!(view.before_case_id, 9);
+        assert!(view.give_up_in_s > 1790 && view.give_up_in_s <= 1800);
+        network::waits().end("run-view");
+        assert!(v2_lib::commands::autorun_replay::auto_run_waiting_network().is_none());
+    }
+
     #[tokio::test]
     async fn no_target_never_checks() {
         let _g = serial::network_waits();

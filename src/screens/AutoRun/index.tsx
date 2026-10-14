@@ -320,8 +320,23 @@ export default function AutoRun({
       return;
     }
     let live = true;
+    let told = false;
+    // A wait that began while this screen was away: read it back once.
+    commands
+      .autoRunWaitingNetwork()
+      .then((w) => {
+        if (live && !told && w) {
+          setOrphanNetworkWait({
+            runId: w.run_id,
+            giveUpAfterS: w.waited_s + w.give_up_in_s,
+            since: Date.now() - w.waited_s * 1000,
+          });
+        }
+      })
+      .catch(() => {});
     const un = events.autorunNetworkWait.listen((e) => {
       if (!live) return;
+      told = true;
       const w = e.payload;
       setOrphanNetworkWait(
         w.waiting ? { runId: w.run_id, giveUpAfterS: w.give_up_after_s, since: Date.now() } : null,

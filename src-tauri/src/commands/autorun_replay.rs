@@ -454,6 +454,14 @@ pub fn auto_run_waiting_reset() -> Option<crate::events::AutorunResetNeeded> {
     reset_wait::waits().waiting()
 }
 
+/// The wait for the company network in progress, if any, as the panel shows
+/// it. A screen opened after the pause began asks this to show it again.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_waiting_network() -> Option<crate::autorun::network::WaitView> {
+    crate::autorun::network::waits().current()
+}
+
 /// The person's Stop on a run waiting for the company network. False when
 /// that run is not the one waiting.
 #[tauri::command]

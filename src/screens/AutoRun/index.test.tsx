@@ -1727,6 +1727,24 @@ test("a pause that comes while the run's own dialog is closed shows the panel", 
   expect(await screen.findByRole("region", { name: "Before Batch 2" })).toBeInTheDocument();
 });
 
+test("coming back to Auto Run finds a run waiting for the network and shows its panel", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "list_test_case_fields") return [];
+      if (cmd === "pbi_test_cases_full") return [caseRow(1, "Publish the cycle")];
+      if (cmd === "auto_run_list_runs") return [];
+      if (cmd === "auto_run_list_accounts") return [];
+      if (cmd === "auto_run_waiting_network") return { run_id: "run-7", before_case_id: 2, waited_s: 125, give_up_in_s: 1675 };
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  renderScreen();
+  const panel = await screen.findByRole("region", { name: "Paused - the company network is unreachable" });
+  // The counter carries on from the wait already under way, not from zero.
+  expect(within(panel).getByText(/Waited 2:0[0-9]/)).toBeInTheDocument();
+});
+
 // ---- Discovery holds the Auto Run browser ----
 
 test("run_buttons_are_disabled_while_discovery_is_active", async () => {

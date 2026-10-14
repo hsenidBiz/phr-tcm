@@ -903,6 +903,16 @@ export const commands = {
 	 */
 	autoRunStopNetworkWait: (runId: string) => __TAURI_INVOKE<boolean>("auto_run_stop_network_wait", { runId }),
 	/**
+	 *  The wait for the company network in progress, if any, as the panel shows
+	 *  it. A screen opened after the pause began asks this to show it again.
+	 */
+	autoRunWaitingNetwork: () => __TAURI_INVOKE<{
+	run_id: string,
+	before_case_id: number,
+	waited_s: number,
+	give_up_in_s: number,
+} | null>("auto_run_waiting_network"),
+	/**
 	 *  Open a visible browser, sign in as `account`, go home, and start
 	 *  listening. Each captured click arrives as a `RecordingEvent`.
 	 */
@@ -6377,6 +6387,14 @@ export type UpdatedArea = {
 	 *  clicks arrive on changed.
 	 */
 	new_path: string,
+};
+
+/**  What the app shows of a run waiting for the network. */
+export type WaitView = {
+	run_id: string,
+	before_case_id: number,
+	waited_s: number,
+	give_up_in_s: number,
 };
 
 /**
