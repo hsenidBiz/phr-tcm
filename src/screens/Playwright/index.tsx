@@ -160,6 +160,18 @@ export default function Playwright({ org, project }: { org: string; project: str
     for (const k of [STRUCTURE_KEY, TESTS_KEY, REPORTS_KEY, ACCOUNTS_KEY, SYNC_KEY]) void qc.invalidateQueries({ queryKey: [k] });
   };
 
+  /** About to open the Runner: its listing starts now (once; a listing
+   * already there is not asked for again here). */
+  const intent = (t: Tab) => {
+    if (t !== "runner" || !runnable) return;
+    void qc.prefetchQuery({
+      queryKey: [TESTS_KEY, clone],
+      queryFn: () => unwrapStr(commands.pwList(clone, false)),
+      retry: false,
+      staleTime: Infinity,
+    });
+  };
+
   const tabs: TabSpec<Tab>[] = [
     { id: "overview", label: "Overview" },
     { id: "runner", label: "Runner" },
@@ -215,7 +227,7 @@ export default function Playwright({ org, project }: { org: string; project: str
         </div>
       )}
 
-      {usable && <SubTabs label="Playwright sections" tabs={tabs} shown={tab} onShow={setTab} panels={panels} />}
+      {usable && <SubTabs label="Playwright sections" tabs={tabs} shown={tab} onShow={setTab} panels={panels} onIntent={intent} />}
 
       {exportRequest && (
         <PlaywrightExportDialog

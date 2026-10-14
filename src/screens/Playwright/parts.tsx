@@ -84,12 +84,15 @@ export function SubTabs<T extends string>({
   shown,
   onShow,
   panels,
+  onIntent,
 }: {
   label: string;
   tabs: TabSpec<T>[];
   shown: T;
   onShow: (id: T) => void;
   panels: Record<T, ReactNode>;
+  /** A tab is about to be chosen: pointed at or focused. */
+  onIntent?: (id: T) => void;
 }) {
   const ids = useId();
   const refs = useRef<Partial<Record<T, HTMLButtonElement | null>>>({});
@@ -138,6 +141,8 @@ export function SubTabs<T extends string>({
               )}
               onClick={() => onShow(id)}
               onKeyDown={(e) => onKey(e, i)}
+              onPointerEnter={() => onIntent?.(id)}
+              onFocus={() => onIntent?.(id)}
             >
               <span className="label-trim">
                 {name}

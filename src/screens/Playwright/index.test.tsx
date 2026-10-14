@@ -220,3 +220,25 @@ test("a tab is read only once it is opened, and stays mounted after", async () =
   fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
   expect(screen.getByRole("region", { name: "Runner", hidden: true })).toBeInTheDocument();
 });
+
+test("pointing at the Runner tab starts its listing; a clone that cannot run is not listed", async () => {
+  const calls = mount("C:/repo");
+  await screen.findByText("All good");
+  const listed = () => calls.filter((c) => c.cmd === "pw_list").length;
+  fireEvent.pointerEnter(screen.getByRole("tab", { name: "Accounts 2" }));
+  fireEvent.focus(screen.getByRole("tab", { name: "Sync" }));
+  expect(listed()).toBe(0);
+  fireEvent.pointerEnter(screen.getByRole("tab", { name: "Runner" }));
+  await waitFor(() => expect(listed()).toBe(1));
+  expect(calls.find((c) => c.cmd === "pw_list")?.args).toEqual({ clone: "C:/repo", refresh: false });
+  // Pointing again asks for nothing more.
+  fireEvent.pointerEnter(screen.getByRole("tab", { name: "Runner" }));
+  expect(listed()).toBe(1);
+  calls.unmount();
+
+  const blocked = mount("C:/repo", { ...HEALTHY, health: ["NoNodeModules"] });
+  await screen.findByRole("status", { name: "Repo health" });
+  fireEvent.pointerEnter(screen.getByRole("tab", { name: "Runner" }));
+  fireEvent.focus(screen.getByRole("tab", { name: "Runner" }));
+  expect(blocked.some((c) => c.cmd === "pw_list")).toBe(false);
+});
