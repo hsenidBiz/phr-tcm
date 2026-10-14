@@ -69,3 +69,18 @@ pub fn auto_run_withdraw_setup(
     crate::applog::info(format!("Auto Run: the person withdrew the approval of case {case_id}'s setup"));
     setup::view(&root, &organization, &project, &script)?.ok_or_else(|| format!("case {case_id}'s script has no setup"))
 }
+
+/// Of `case_ids`, the cases whose setup is not approved for what is saved
+/// now: a run Blocks each of them, so the Auto Run screen names them
+/// before it starts one. Reads only; approving stays in the script editor.
+#[tauri::command(async)]
+#[specta::specta]
+pub fn auto_run_unapproved_setups(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    case_ids: Vec<i32>,
+) -> Result<Vec<i32>, String> {
+    let root = super::autorun::root(&app)?;
+    Ok(setup::not_approved(&root, &organization, &project, &case_ids))
+}

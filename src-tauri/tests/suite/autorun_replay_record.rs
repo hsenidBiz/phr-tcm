@@ -217,3 +217,30 @@ fn a_kept_replay_goes_with_clear_runs_and_its_cleared_script() {
     store::clear_runs(dir.path()).unwrap();
     assert!(load(dir.path(), 78).is_none(), "Clear runs kept a replay");
 }
+
+/// Asked of no case and no run (Round F): the answer names the run it read
+/// and lists the other recent runs here that failed, with their run_id.
+/// Asked of a case, it says only what it always did.
+#[tokio::test]
+async fn with_no_case_named_the_answer_names_the_run_and_lists_recent_failing_ones() {
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    setup(dir.path());
+    let now = v2_lib::autorun::sessions::now_ms();
+    let earlier = run_failing_step_1(now - 60_000);
+    let mut newest = run_failing_step_1(now - 1_000);
+    newest.cases[0].verdict = "Passed".into();
+    newest.cases[0].steps.clear();
+    save_run(dir.path(), &earlier).unwrap();
+    save_run(dir.path(), &newest).unwrap();
+
+    let (status, out) = route(&ctx(), None, "GET", "/autorun-failures", "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.starts_with(&format!("Read run {} (started ", newest.id)), "{out}");
+    assert!(out.contains(&format!("no failed case in run {}", newest.id)), "{out}");
+    assert!(out.contains("Other recent runs on this machine with failed or blocked cases"), "{out}");
+    assert!(out.contains(&format!("1 failed, 0 blocked - run_id={}", earlier.id)), "{out}");
+
+    let (_, out) = route(&ctx(), None, "GET", &format!("/autorun-failures?case_id={ID}"), "", "1.0.0").await;
+    assert!(!out.contains("Other recent runs") && !out.starts_with("Read run"), "{out}");
+}

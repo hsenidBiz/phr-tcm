@@ -1250,6 +1250,10 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
 
     let mut changed = false;
     let mut not_saved = None;
+    // The setups whose approval this prove undid by changing the template's
+    // body (its `proven` block is not in the fingerprint): named in the
+    // answer, never silently.
+    let mut undone: Vec<i32> = Vec::new();
     if let (true, Mode::Prove { replace, why }, None) = (report.ok, &req.mode, &incomplete) {
         let proven = Proven {
             at: crate::applog::stamp(),
@@ -1261,7 +1265,10 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
             environment: crate::environments::active(root).ok().map(|e| e.name),
         };
         let t = ApiTemplate { proven: Some(proven), ..req.template.clone() };
-        match store::save(root, org, project, &t) {
+        let (saved, undid) =
+            crate::autorun::setup::reapproval_after(root, org, project, || store::save(root, org, project, &t));
+        undone = undid;
+        match saved {
             Ok(()) => {
                 changed = true;
                 if existing.is_some() && *replace {
@@ -1310,6 +1317,12 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
         return (500, sentence);
     }
     let mut text = serde_json::to_string(&report).unwrap_or_default();
+    if !undone.is_empty() {
+        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) {
+            crate::autorun::setup::add_reapproval(&mut v, &undone);
+            text = v.to_string();
+        }
+    }
     if !report.ok && held_by_the_auto_run_browser(&text, &req.account) {
         let holds = crate::commands::autorun::assistant_browser_holds(&req.account).await;
         text = template_report_hint(text, &req.account, holds);
@@ -1462,14 +1475,15 @@ pub fn api_fixture_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
         }
     };
     let existed = matches!(fixture_store::load(&root, &ctx.org, &ctx.project, &fixture.id), Ok(Some(_)));
-    // The setups approved for the fixture as it was: a change undoes those
-    // approvals, and the answer names each one (never silently).
-    let approved = crate::autorun::setup::approved_setups(&root, &ctx.org, &ctx.project, &fixture.id);
-    match fixture_store::save(&root, &ctx.org, &ctx.project, &fixture) {
+    // A change undoes the approval of every setup that runs this fixture,
+    // and the answer names each one (never silently).
+    let (saved, undone) = crate::autorun::setup::reapproval_after(&root, &ctx.org, &ctx.project, || {
+        fixture_store::save(&root, &ctx.org, &ctx.project, &fixture)
+    });
+    match saved {
         Ok(()) => {
             crate::applog::info(format!("api fixture {}: {}", fixture.id, if existed { "replaced" } else { "saved" }));
             templates_changed(&fixture.id);
-            let undone = crate::autorun::setup::no_longer_approved(&root, &ctx.org, &ctx.project, &approved);
             let mut answer = serde_json::json!({ "saved": fixture.id, "replaced": existed });
             // The stages it says this record does not include, echoed so a
             // wrong name is seen at once.
@@ -1479,11 +1493,7 @@ pub fn api_fixture_save(ctx: &BridgeContext, body: &str) -> (u16, String) {
             if !skipped.is_empty() {
                 answer["skipped_stages"] = serde_json::json!(skipped);
             }
-            if !undone.is_empty() {
-                crate::applog::info(format!("api fixture {}: setup approvals undone for {undone:?}", fixture.id));
-                answer["needs_reapproval"] = serde_json::json!(undone);
-                answer["note"] = serde_json::json!(crate::autorun::setup::needs_reapproval_line(&undone));
-            }
+            crate::autorun::setup::add_reapproval(&mut answer, &undone);
             (200, answer.to_string())
         }
         Err(problems) => (400, problems.join("\n")),
@@ -5619,7 +5629,23 @@ fn autorun_failures(ctx: &BridgeContext, target: &str) -> (u16, String) {
     // expands. A file that does not read leaves those actions named by
     // their component only.
     let components = crate::autorun::components::load_components(&root, &ctx.org, &ctx.project).unwrap_or_default();
-    (200, crate::autorun::failures::describe_failures_in(Some(&root), &run, &scripts, &components))
+    let said = crate::autorun::failures::describe_failures_in(Some(&root), &run, &scripts, &components);
+    if case_id.is_some() || q(target, "run_id").is_some() {
+        return (200, said);
+    }
+    // Asked of no case and no run: say which run that was, and name the
+    // other recent runs here with failed or blocked cases, so failures a
+    // run or two back are not missed.
+    let all_scripts = crate::autorun::store::list_scripts(&root);
+    let runs = crate::autorun::store::list_runs(&root);
+    let now = crate::autorun::sessions::now_ms();
+    let (head, others) = crate::autorun::failures::newest_run_context(&run, &all_scripts, &runs, now);
+    let mut out = format!("{head}\n\n{said}");
+    if let Some(others) = others {
+        out.push_str("\n\n");
+        out.push_str(&others);
+    }
+    (200, out)
 }
 
 /// Record something learned about the application, attributed, so the
@@ -6621,11 +6647,18 @@ async fn save_autorun_scripts(
     // Every case's refusal from this gate, said together: a bundle with two
     // bad repairs is told about both in one answer.
     let mut refused: Vec<String> = Vec::new();
+    // The cases whose setup is approved for the script on disk now.
+    let mut approved_before: Vec<i32> = Vec::new();
     for sent in &scripts {
         let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
             Ok(v) => v,
             Err(e) => return (500, e),
         };
+        // Whether its setup is approved now, before anything is written:
+        // the answer names every approval this save undoes.
+        if let Some(old) = existing.as_ref().filter(|o| o.setup.is_some()) {
+            approved_before.extend(crate::autorun::setup::approved_among(&root, &ctx.org, &ctx.project, &[old]));
+        }
         let declared = edits.iter().find(|e| e.case_id == sent.case_id);
         let mut script = sent.clone();
         // A new script is checked whole; an unchanged one and a repair keep
@@ -6898,12 +6931,26 @@ async fn save_autorun_scripts(
     if let Err(refused) = checked {
         return answer(refused.said());
     }
+    // The approvals this save undoes (or a dry run would), each named:
+    // only the person approves a setup again, in the script editor.
+    let undone = crate::autorun::setup::undone_by_save(&root, &ctx.org, &ctx.project, &approved_before, &prepared);
     if dry_run {
-        return (200, dry_run_answer(prepared.len(), &lines));
+        let mut said = dry_run_answer(prepared.len(), &lines);
+        if !undone.is_empty() {
+            for line in crate::autorun::setup::needs_reapproval_lines(&undone, true) {
+                said.push('\n');
+                said.push_str(&line);
+            }
+        }
+        return (200, said);
     }
     crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
 
     let mut report = vec![format!("saved {} script(s): {}", prepared.len(), lines.join(", "))];
+    if !undone.is_empty() {
+        crate::applog::info(format!("auto-run script save: setup approvals undone for {undone:?}"));
+        report.extend(crate::autorun::setup::needs_reapproval_lines(&undone, false));
+    }
     for (case_id, step) in &repaired_marks {
         match crate::autorun::store::clear_suspected_defect_at(&root, *case_id, *step) {
             Ok(true) => {

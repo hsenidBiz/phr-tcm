@@ -833,3 +833,85 @@ fn a_failure_line_names_the_picture_by_a_path_that_exists() {
     assert_eq!(path.file_name().unwrap().to_str().unwrap(), name);
     assert_eq!(run.cases[0].steps[0].outcomes[0].screenshot.as_deref(), Some(name.as_str()));
 }
+
+const HOUR: u64 = 60 * 60 * 1000;
+/// "Now" for the recent-runs tests: 1970-01-05T04:00:00Z.
+const NOW: u64 = 100 * HOUR;
+
+/// Run `id` started `ago` before `NOW`, its cases as (id, verdict,
+/// proposed).
+fn run_ago(id: &str, ago: u64, cases: &[(i32, &str, &str)]) -> LocalRun {
+    LocalRun {
+        id: id.to_string(),
+        pbi_id: 5,
+        started_at: (NOW - ago).to_string(),
+        cases: cases
+            .iter()
+            .map(|(case_id, verdict, proposed)| CaseRecord {
+                verdict: verdict.to_string(),
+                proposed: proposed.to_string(),
+                ..minimal_case(*case_id)
+            })
+            .collect(),
+        mode: String::new(),
+        published: None,
+        environment: None,
+        resets: vec![],
+        network_pauses: vec![],
+    }
+}
+
+/// The other recent runs with failed or blocked cases: of the 5 newest
+/// that are not the one read, those from the last 24 hours. A person's
+/// verdict outranks the machine's proposal.
+#[test]
+fn recent_failing_takes_the_smaller_of_five_runs_and_a_day() {
+    use v2_lib::autorun::failures::{failed_and_blocked, recent_failing};
+    let runs = vec![
+        run_ago("run-read", 0, &[(1, "", "Failed")]),
+        run_ago("run-a", HOUR, &[(1, "Failed", ""), (2, "Passed", "")]),
+        run_ago("run-b", 2 * HOUR, &[(1, "Passed", "Failed")]),
+        run_ago("run-c", 3 * HOUR, &[(1, "", "Blocked")]),
+        run_ago("run-d", 25 * HOUR, &[(1, "Failed", "")]),
+    ];
+    let ids: Vec<&str> = recent_failing(&runs, "run-read", NOW).iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, vec!["run-a", "run-c"]);
+    assert_eq!(failed_and_blocked(&runs[1]), (1, 0));
+    assert_eq!(failed_and_blocked(&runs[2]), (0, 0));
+    assert_eq!(failed_and_blocked(&runs[3]), (0, 1));
+
+    let mut many = vec![run_ago("run-read", 0, &[])];
+    for n in 1..=7u64 {
+        many.push(run_ago(&format!("run-{n}"), n * HOUR, &[(1, "Failed", "")]));
+    }
+    let ids: Vec<&str> = recent_failing(&many, "run-read", NOW).iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, vec!["run-1", "run-2", "run-3", "run-4", "run-5"]);
+}
+
+/// Asked of no case and no run, the answer names the run it read and ends
+/// with the other recent runs that failed or blocked, each readable by id.
+#[test]
+fn newest_run_context_names_the_run_read_and_the_others() {
+    use v2_lib::autorun::failures::newest_run_context;
+    let leave: CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 1, "title": "t", "area": "Leave", "steps": []
+    }))
+    .unwrap();
+    let runs = vec![
+        run_ago("run-read", 0, &[(1, "Passed", ""), (2, "Passed", "")]),
+        run_ago("run-a", HOUR, &[(1, "Failed", ""), (3, "Blocked", "")]),
+    ];
+    let (head, others) = newest_run_context(&runs[0], std::slice::from_ref(&leave), &runs, NOW);
+    assert_eq!(
+        head,
+        "Read run run-read (started 1970-01-05T04:00:00Z, PBI #5, 2 cases, area Leave): the newest on this machine. Ask with run_id to read another."
+    );
+    assert_eq!(
+        others.as_deref(),
+        Some(
+            "Other recent runs on this machine with failed or blocked cases (read one with run_id):\n- run run-a (started 1970-01-05T03:00:00Z, PBI #5, 2 cases, area Leave): 1 failed, 1 blocked - run_id=run-a"
+        )
+    );
+    let (_, none) = newest_run_context(&runs[1], &[], &runs[1..], NOW);
+    assert_eq!(none, None);
+}

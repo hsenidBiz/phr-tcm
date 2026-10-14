@@ -331,3 +331,101 @@ pub fn latest_run(root: &Path, case_id: Option<i32>) -> Option<LocalRun> {
         None => runs.into_iter().next(),
     }
 }
+
+/// How many of the newest other runs `recent_failing` looks at, and how
+/// far back: the smaller of the two windows.
+pub const RECENT_RUNS: usize = 5;
+pub const RECENT_MS: u64 = 24 * 60 * 60 * 1000;
+
+/// A case's word on itself: the person's verdict, else the machine's
+/// proposal.
+fn outcome_of(case: &CaseRecord) -> &str {
+    if case.verdict.is_empty() {
+        &case.proposed
+    } else {
+        &case.verdict
+    }
+}
+
+/// How many of `run`'s cases failed, and how many were Blocked.
+pub fn failed_and_blocked(run: &LocalRun) -> (usize, usize) {
+    let failed = run.cases.iter().filter(|c| outcome_of(c) == "Failed").count();
+    let blocked = run.cases.iter().filter(|c| outcome_of(c) == "Blocked").count();
+    (failed, blocked)
+}
+
+/// When `run` started, as ISO 8601 UTC; `None` for a start that does not
+/// read.
+fn started(run: &LocalRun) -> Option<String> {
+    let ms = run.started_at.trim().parse::<u64>().ok()?;
+    Some(crate::applog::iso_of(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)))
+}
+
+/// `N case(s)`.
+fn cases_word(n: usize) -> String {
+    format!("{n} {}", if n == 1 { "case" } else { "cases" })
+}
+
+/// One run named for an assistant: its id, when it started, its PBI, how
+/// many cases it held, and the areas its cases start in when their scripts
+/// name any (`run run-1 (started 2026-10-14T09:12:00Z, PBI #5, 4 cases,
+/// area Leave)`). A replay read as a run is named by its own words.
+pub fn run_label(run: &LocalRun, scripts: &[CaseScript]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(at) = started(run) {
+        parts.push(format!("started {at}"));
+    }
+    if run.pbi_id > 0 {
+        parts.push(format!("PBI #{}", run.pbi_id));
+    }
+    parts.push(cases_word(run.cases.len()));
+    let mut areas: Vec<&str> = Vec::new();
+    for c in &run.cases {
+        if let Some(a) = scripts.iter().find(|s| s.case_id == c.case_id).and_then(CaseScript::area_name) {
+            if !areas.contains(&a) {
+                areas.push(a);
+            }
+        }
+    }
+    if !areas.is_empty() {
+        parts.push(format!("{} {}", if areas.len() == 1 { "area" } else { "areas" }, areas.join(", ")));
+    }
+    let name = if run_mode_is_replay(&run.id) { run.id.clone() } else { format!("run {}", run.id) };
+    format!("{name} ({})", parts.join(", "))
+}
+
+/// Of `runs` (newest first, as `store::list_runs` gives them), the other
+/// recent ones with a failed or Blocked case: of the `RECENT_RUNS` newest
+/// that are not `read_id`, those that started within `RECENT_MS` of
+/// `now_ms`, whichever leaves fewer.
+pub fn recent_failing<'a>(runs: &'a [LocalRun], read_id: &str, now_ms: u64) -> Vec<&'a LocalRun> {
+    runs.iter()
+        .filter(|r| r.id != read_id)
+        .take(RECENT_RUNS)
+        .filter(|r| r.started_at.trim().parse::<u64>().is_ok_and(|at| now_ms.saturating_sub(at) <= RECENT_MS))
+        .filter(|r| failed_and_blocked(r) != (0, 0))
+        .collect()
+}
+
+/// What `get_autorun_failures` asked with neither a case nor a run says
+/// around the failures it read: first which run that was, then the other
+/// recent runs here with failed or Blocked cases (`recent_failing`), each
+/// with its counts and how to read it. `None` for the second when there
+/// are none. `scripts` are this machine's, for the areas each run's cases
+/// start in.
+pub fn newest_run_context(read: &LocalRun, scripts: &[CaseScript], runs: &[LocalRun], now_ms: u64) -> (String, Option<String>) {
+    let head = format!(
+        "Read {}: the newest on this machine. Ask with run_id to read another.",
+        run_label(read, scripts)
+    );
+    let others = recent_failing(runs, &read.id, now_ms);
+    if others.is_empty() {
+        return (head, None);
+    }
+    let mut lines = vec!["Other recent runs on this machine with failed or blocked cases (read one with run_id):".to_string()];
+    for r in others {
+        let (failed, blocked) = failed_and_blocked(r);
+        lines.push(format!("- {}: {failed} failed, {blocked} blocked - run_id={}", run_label(r, scripts), r.id));
+    }
+    (head, Some(lines.join("\n")))
+}

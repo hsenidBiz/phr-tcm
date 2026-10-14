@@ -10,6 +10,12 @@
 //! sends). When any of these changes, the fingerprint no longer matches
 //! and the approval no longer counts.
 //!
+//! The case's own steps, area, account and preconditions are not in it:
+//! the approval vouches for what the setup does to the environment, so a
+//! repair of the case's steps leaves it standing (and a repair may not
+//! touch the setup at all, `edits` rule 13). Components are not in it
+//! either, as no setup runs one.
+//!
 //! Approvals live in the Auto Run store at `approvals/<case id>.json`,
 //! never in the script file, so no script save can carry one. Only the
 //! webview's three setup commands (`commands::autorun_setup`) approve or

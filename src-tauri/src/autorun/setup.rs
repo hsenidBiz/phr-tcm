@@ -323,6 +323,46 @@ pub fn no_longer_approved(root: &Path, org: &str, project: &str, cases: &[i32]) 
         .collect()
 }
 
+/// Of `scripts`, the cases whose setup is approved for what is saved now.
+/// A script save reads it of the scripts on disk before it writes, so it
+/// can say whose approval the save undid (`undone_by_save`).
+pub fn approved_among(root: &Path, org: &str, project: &str, scripts: &[&CaseScript]) -> Vec<i32> {
+    scripts.iter().filter(|s| setup_approved(root, org, project, s)).map(|s| s.case_id).collect()
+}
+
+/// Of `before` (cases approved before a script save, `approved_among`),
+/// the ones whose setup is no longer approved as `after` has it. The
+/// fingerprint takes only the setup, its fixture and the templates it
+/// runs, so a save that changes only a case's own steps undoes nothing;
+/// one that changes the setup does.
+pub fn undone_by_save(root: &Path, org: &str, project: &str, before: &[i32], after: &[CaseScript]) -> Vec<i32> {
+    before
+        .iter()
+        .copied()
+        .filter(|id| after.iter().find(|s| s.case_id == *id).is_some_and(|s| !setup_approved(root, org, project, s)))
+        .collect()
+}
+
+/// Of `case_ids`, the ones whose saved script has a setup that is not
+/// approved for what is saved now (never approved, withdrawn, or changed
+/// since): each of them is Blocked when a run reaches it. A setup whose
+/// fixture is not saved is not named: that case fails its setup instead.
+pub fn not_approved(root: &Path, org: &str, project: &str, case_ids: &[i32]) -> Vec<i32> {
+    case_ids
+        .iter()
+        .copied()
+        .filter(|id| match super::store::load_script(root, *id) {
+            Ok(Some(script)) => match &script.setup {
+                None => false,
+                Some(s) => current(root, org, project, s).is_ok_and(|now| {
+                    !matches!(approvals::state(root, *id, &now.fingerprint), Approval::Approved { .. })
+                }),
+            },
+            _ => false,
+        })
+        .collect()
+}
+
 /// Is `script`'s setup approved for what is saved now?
 fn setup_approved(root: &Path, org: &str, project: &str, script: &CaseScript) -> bool {
     let Some(setup) = &script.setup else { return false };
@@ -338,6 +378,75 @@ pub fn needs_reapproval_line(cases: &[i32]) -> String {
         "needs re-approval: {} - this change undid the approval of each one's setup, so its runs and replays are Blocked until the person approves it again in the script editor (no tool can)",
         ids.join(", ")
     )
+}
+
+/// Every case whose saved script has a setup approved for what is saved
+/// now. Read before a change to a template or a fixture, so the change
+/// can say whose approval it undid (`no_longer_approved`).
+pub fn approved_now(root: &Path, org: &str, project: &str) -> Vec<i32> {
+    super::store::list_scripts(root)
+        .into_iter()
+        .filter(|s| setup_approved(root, org, project, s))
+        .map(|s| s.case_id)
+        .collect()
+}
+
+/// Runs `change` (anything that writes a template or a fixture, which the
+/// fingerprint takes) and gives back its result with the cases whose
+/// setup approval it undid. What was approved is read first; only a
+/// change that went through can have undone anything, and the caller
+/// says so in its answer (`Reapproval`, `add_reapproval`).
+pub fn reapproval_after<T, E>(
+    root: &Path,
+    org: &str,
+    project: &str,
+    change: impl FnOnce() -> Result<T, E>,
+) -> (Result<T, E>, Vec<i32>) {
+    let before = approved_now(root, org, project);
+    let done = change();
+    let undone =
+        if done.is_ok() && !before.is_empty() { no_longer_approved(root, org, project, &before) } else { Vec::new() };
+    if !undone.is_empty() {
+        crate::applog::info(format!("setup approvals undone for {undone:?}"));
+    }
+    (done, undone)
+}
+
+/// A JSON answer's `needs_reapproval: [ids]` and `note` (the
+/// `needs_reapproval_line`), added only when the change undid any.
+pub fn add_reapproval(answer: &mut serde_json::Value, undone: &[i32]) {
+    if undone.is_empty() || !answer.is_object() {
+        return;
+    }
+    answer["needs_reapproval"] = serde_json::json!(undone);
+    answer["note"] = serde_json::json!(needs_reapproval_line(undone));
+}
+
+/// What a webview change to a template says about the setup approvals it
+/// undid: the cases, and `needs_reapproval_line` when there are any.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct Reapproval {
+    pub needs_reapproval: Vec<i32>,
+    pub note: Option<String>,
+}
+
+impl Reapproval {
+    pub fn of(undone: Vec<i32>) -> Self {
+        let note = (!undone.is_empty()).then(|| needs_reapproval_line(&undone));
+        Reapproval { needs_reapproval: undone, note }
+    }
+}
+
+/// The lines a script save answers with when it undid setup approvals:
+/// `needs_reapproval: [ids]`, then `needs_reapproval_line`. A dry run says
+/// the same of what the save would undo.
+pub fn needs_reapproval_lines(cases: &[i32], dry_run: bool) -> Vec<String> {
+    let ids: Vec<String> = cases.iter().map(i32::to_string).collect();
+    let line = needs_reapproval_line(cases);
+    vec![
+        format!("needs_reapproval: [{}]", ids.join(", ")),
+        if dry_run { format!("if saved, {line}") } else { line },
+    ]
 }
 
 /// A setup's fixture as it is saved now, with its fingerprint.
