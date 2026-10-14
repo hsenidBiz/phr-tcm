@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.1.3-beta.28",
+    date: "2026-10-14",
+    items: [
+      "Every change that undoes a setup's approval now says which cases need approving again: saving a fixture or script, re-proving, removing or importing an API template.",
+      "Before a run, Auto Run lists the selected cases whose setup is not approved and offers to run the rest.",
+      "When your assistant asks for failures without naming a run, it is told which run it read and which other recent runs had failures.",
+    ],
+  },
+  {
     version: "2.1.3-beta.27",
     date: "2026-10-14",
     items: [
