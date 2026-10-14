@@ -1,11 +1,11 @@
 //! Finding the environment's database server, knocking on it, and the
 //! unattended run's wait for it to answer again.
 
-
-
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use v2_lib::autorun::network::{
-    answers, db_target, target_of, CONNECT_TIMEOUT,
+    answers, db_target, target_of, wait_until, waits, WaitEnd, CONNECT_TIMEOUT,
 };
 use v2_lib::db::credentials::{add_custom, WithList};
 use v2_lib::db::{DbCredentialsForm, MemoryStore};
@@ -56,4 +56,87 @@ async fn answers_is_true_for_a_listener_and_false_once_it_is_gone() {
     let started = Instant::now();
     assert!(!answers("127.0.0.1", port, CONNECT_TIMEOUT).await);
     assert!(started.elapsed() < CONNECT_TIMEOUT + Duration::from_secs(1));
+}
+
+const MS: Duration = Duration::from_millis(10);
+
+#[tokio::test]
+async fn wait_resumes_when_the_check_turns_true() {
+    let stop = AtomicBool::new(false);
+    let cancel = AtomicBool::new(false);
+    let calls = std::sync::atomic::AtomicU32::new(0);
+    let end = wait_until(
+        || {
+            let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            async move { n >= 3 }
+        },
+        &stop,
+        &cancel,
+        MS,
+        Duration::from_secs(5),
+    )
+    .await;
+    assert_eq!(end, WaitEnd::Resumed);
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert_eq!(end.outcome(), "resumed");
+}
+
+#[tokio::test]
+async fn wait_stops_on_stop_or_cancel_quickly() {
+    for use_cancel in [false, true] {
+        let stop = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = if use_cancel { cancel.clone() } else { stop.clone() };
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            flag.store(true, Ordering::SeqCst);
+        });
+        let started = Instant::now();
+        let end = wait_until(
+            || async { false },
+            &stop,
+            &cancel,
+            Duration::from_secs(60),
+            Duration::from_secs(600),
+        )
+        .await;
+        assert_eq!(end, WaitEnd::Stopped);
+        assert_eq!(end.outcome(), "stopped");
+        assert!(started.elapsed() < Duration::from_millis(200));
+    }
+}
+
+#[tokio::test]
+async fn wait_gives_up_after_the_limit() {
+    let stop = AtomicBool::new(false);
+    let cancel = AtomicBool::new(false);
+    let end = wait_until(|| async { false }, &stop, &cancel, MS, Duration::from_millis(80)).await;
+    assert_eq!(end, WaitEnd::GaveUp);
+    assert_eq!(end.outcome(), "gave_up");
+}
+
+#[test]
+fn the_registry_holds_one_wait() {
+    let _g = crate::serial::network_waits();
+    let w = waits();
+    assert!(!w.stop_for_exit());
+    assert!(w.current().is_none());
+    let flag = w.begin("run-a", 42, Duration::from_secs(1800));
+    let view = w.current().unwrap();
+    assert_eq!(view.run_id, "run-a");
+    assert_eq!(view.before_case_id, 42);
+    assert!(view.give_up_in_s <= 1800);
+    assert!(!w.stop("run-b"));
+    assert!(!flag.load(Ordering::SeqCst));
+    assert!(w.stop("run-a"));
+    assert!(flag.load(Ordering::SeqCst));
+    w.end("run-a");
+    assert!(w.current().is_none());
+
+    let flag = w.begin("run-c", 7, Duration::from_secs(60));
+    assert!(w.stop_for_exit());
+    assert!(flag.load(Ordering::SeqCst));
+    w.end("run-c");
+    assert!(w.current().is_none());
+    assert!(!w.stop_for_exit());
 }
