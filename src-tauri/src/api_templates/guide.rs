@@ -360,7 +360,10 @@ A stage the record does not include (a cycle with Competencies off) is not
 asked for: name it in the fixture's `skip_stages`, by its title or id, such
 as `"skip_stages": ["Competencies"]`. The save answers `skipped_stages`,
 each with its flow. Never the creating stage, and never a stage one of the
-fixture's own steps performs.
+fixture's own steps performs. Each entry names one stage of the flow that
+owns it: a title two of the fixture's flows share is refused - name it by
+its stage id, or as `<flow id>/<stage id>`. The person's approval of a
+setup covers its fixture's `skip_stages`: changing them asks for it again.
 
 Name what it makes with `{{prefix}}`: a fixture with `creates` must use it
 in a step's params. Everything a run makes is recorded as test-made - even

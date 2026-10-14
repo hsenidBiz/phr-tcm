@@ -5,7 +5,7 @@
 //! case, so it runs only once a person has approved it in the script
 //! editor. What they approved is a fingerprint: SHA-256 over the setup
 //! together with its fixture's `steps`, `outputs`, `creates` and
-//! `account`, and each step's template body (without its `proven` block,
+//! `account` (and its `skip_stages`, when it names any), and each step's template body (without its `proven` block,
 //! which a re-prove changes and which says nothing about what the template
 //! sends). When any of these changes, the fingerprint no longer matches
 //! and the approval no longer counts.
@@ -89,15 +89,24 @@ fn body(t: Option<&ApiTemplate>) -> Value {
 /// creates, account }, templates: [each step's template body without its
 /// proven block, in step order] }`. `templates` holds one entry per
 /// fixture step, `None` for a template that is not saved.
+///
+/// A fixture's `skip_stages` (the stages it says its record does not
+/// include) is in it too, so the person's approval covers that claim; only
+/// when it names any, so an approval of a fixture that skips nothing - every
+/// one made before skip_stages - still counts.
 pub fn fingerprint(setup: &Setup, fixture: &Fixture, templates: &[Option<ApiTemplate>]) -> String {
+    let mut fixture_part = json!({
+        "steps": fixture.steps,
+        "outputs": fixture.outputs,
+        "creates": fixture.creates,
+        "account": fixture.account,
+    });
+    if !fixture.skip_stages.is_empty() {
+        fixture_part["skip_stages"] = json!(fixture.skip_stages);
+    }
     let doc = json!({
         "setup": setup,
-        "fixture": {
-            "steps": fixture.steps,
-            "outputs": fixture.outputs,
-            "creates": fixture.creates,
-            "account": fixture.account,
-        },
+        "fixture": fixture_part,
         "templates": templates.iter().map(Option::as_ref).map(body).collect::<Vec<_>>(),
     });
     let text = serde_json::to_string(&canonical(&doc)).unwrap_or_default();

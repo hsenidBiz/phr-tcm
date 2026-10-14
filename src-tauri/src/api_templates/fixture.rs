@@ -207,10 +207,12 @@ fn flow_problems(
         earlier.stage.filter(|s| s.flow == flow.id).map(|s| s.id)
     };
     let performed: Vec<String> = (1..n).filter_map(on_flow).collect();
+    // The stages this record does not include, each in the flow it is of.
+    let skipped = skipped_ids(f, templates, flows);
     let mut problems = Vec::new();
     let missing: Vec<&str> = required_before(&flow, &stage.id)
         .into_iter()
-        .filter(|s| !performed.iter().any(|p| p == &s.id) && !skips(f, s))
+        .filter(|s| !performed.iter().any(|p| p == &s.id) && !skipped.iter().any(|(fl, st)| fl == &flow.id && st == &s.id))
         .map(|s| s.title.as_str())
         .collect();
     if !missing.is_empty() {
@@ -240,13 +242,65 @@ fn flow_problems(
     problems
 }
 
-/// Does `f`'s `skip_stages` name `stage`, by its title or its id (case and
-/// the space around it ignored)?
-fn skips(f: &Fixture, stage: &Stage) -> bool {
-    f.skip_stages.iter().any(|s| {
-        let s = s.trim();
-        s.eq_ignore_ascii_case(stage.title.trim()) || s.eq_ignore_ascii_case(&stage.id)
-    })
+/// Each `skip_stages` entry resolved to the one stage it names, in the flow
+/// that owns it: `(entry, Some((flow id, stage id)))`, or `None` with the
+/// sentence that refuses it. An entry is a stage's title or id (case and
+/// the space around it ignored), or `<flow id>/<stage id>`; it is read
+/// against the flows `f`'s steps are on, and must name exactly one stage
+/// of them - a title or an id two of them share is refused, asking for the
+/// stage id or the flow-qualified form.
+fn resolve_skips(f: &Fixture, on: &[Flow]) -> Vec<(String, Result<(String, String), String>)> {
+    f.skip_stages
+        .iter()
+        .map(|entry| {
+            let n = entry.trim();
+            let hits: Vec<(&Flow, &Stage)> = match n.split_once('/') {
+                Some((flow, stage)) => on
+                    .iter()
+                    .filter(|fl| fl.id.eq_ignore_ascii_case(flow.trim()))
+                    .flat_map(|fl| fl.stages.iter().filter(|s| s.id.eq_ignore_ascii_case(stage.trim())).map(move |s| (fl, s)))
+                    .collect(),
+                None => {
+                    let by = |m: &dyn Fn(&Stage) -> bool| -> Vec<(&Flow, &Stage)> {
+                        on.iter().flat_map(|fl| fl.stages.iter().filter(|s| m(s)).map(move |s| (fl, s))).collect()
+                    };
+                    let by_id = by(&|s: &Stage| s.id.eq_ignore_ascii_case(n));
+                    if by_id.len() == 1 {
+                        by_id
+                    } else {
+                        let by_title = by(&|s: &Stage| s.title.trim().eq_ignore_ascii_case(n));
+                        if by_id.is_empty() { by_title } else { by_id }
+                    }
+                }
+            };
+            let said = match hits.as_slice() {
+                [(fl, s)] => Ok((fl.id.clone(), s.id.clone())),
+                [] => {
+                    let titles: Vec<String> = on.iter().map(|fl| fl.title.clone()).collect();
+                    let where_ = if titles.is_empty() { "no flow: no step performs a flow's stage".to_string() } else { titles.join(", ") };
+                    Err(format!("skip_stages: {n} is not a stage of {where_}"))
+                }
+                many => {
+                    let named: Vec<String> = many.iter().map(|(fl, s)| format!("{}/{}", fl.id, s.id)).collect();
+                    Err(format!(
+                        "skip_stages: {n} names more than one stage ({}) - name the one you mean by its stage id, or as <flow id>/<stage id>",
+                        named.join(", ")
+                    ))
+                }
+            };
+            (entry.clone(), said)
+        })
+        .collect()
+}
+
+/// The stages `f` skips, as `(flow id, stage id)`, each the one its entry
+/// names (`resolve_skips`); an entry that names none or several skips
+/// nothing.
+fn skipped_ids(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>, flows: &dyn Fn(&str) -> Option<Flow>) -> Vec<(String, String)> {
+    if f.skip_stages.is_empty() {
+        return vec![];
+    }
+    resolve_skips(f, &flows_of(f, templates, flows)).into_iter().filter_map(|(_, r)| r.ok()).collect()
 }
 
 /// The flows the steps of `f` perform stages of, each once, in step order.
@@ -265,8 +319,9 @@ fn flows_of(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>, flows:
 }
 
 /// What is wrong with `f`'s `skip_stages`: an entry naming no stage of a
-/// flow its steps are on, the creating stage (a fixture always makes its
-/// record), or a stage one of its steps performs.
+/// flow its steps are on, or more than one (`resolve_skips`), the creating
+/// stage (a fixture always makes its record), or a stage one of its steps
+/// performs.
 fn skip_problems(
     f: &Fixture,
     templates: &dyn Fn(&str) -> Option<ApiTemplate>,
@@ -277,52 +332,48 @@ fn skip_problems(
     }
     let on = flows_of(f, templates, flows);
     let mut problems = Vec::new();
-    for name in &f.skip_stages {
-        let named = |s: &Stage| {
-            let n = name.trim();
-            n.eq_ignore_ascii_case(s.title.trim()) || n.eq_ignore_ascii_case(&s.id)
+    for (_, resolved) in resolve_skips(f, &on) {
+        let (flow, stage) = match resolved {
+            Ok(ids) => ids,
+            Err(why) => {
+                problems.push(why);
+                continue;
+            }
         };
-        let hits: Vec<(&Flow, &Stage)> = on.iter().flat_map(|fl| fl.stages.iter().filter(|s| named(s)).map(move |s| (fl, s))).collect();
-        if hits.is_empty() {
-            let titles: Vec<String> = on.iter().map(|fl| fl.title.clone()).collect();
-            let where_ = if titles.is_empty() { "no flow: no step performs a flow's stage".to_string() } else { titles.join(", ") };
-            problems.push(format!("skip_stages: {} is not a stage of {where_}", name.trim()));
-            continue;
+        let Some(fl) = on.iter().find(|fl| fl.id == flow) else { continue };
+        let Some(s) = fl.stages.iter().find(|s| s.id == stage) else { continue };
+        if s.creates {
+            problems.push(format!("skip_stages: {} makes the record in flow {}, so it cannot be skipped", s.title, fl.title));
         }
-        for (fl, s) in hits {
-            if s.creates {
-                problems.push(format!("skip_stages: {} makes the record in flow {}, so it cannot be skipped", s.title, fl.title));
-            }
-            let performing = f.steps.iter().enumerate().find(|(_, st)| {
-                templates(&st.template).and_then(|t| t.stage).is_some_and(|r| r.flow == fl.id && r.id == s.id)
-            });
-            if let Some((i, _)) = performing {
-                problems.push(format!(
-                    "skip_stages: step {} performs {}, so it is part of this record - take it out of skip_stages",
-                    i + 1,
-                    s.title
-                ));
-            }
+        let performing = f.steps.iter().enumerate().find(|(_, st)| {
+            templates(&st.template).and_then(|t| t.stage).is_some_and(|r| r.flow == fl.id && r.id == s.id)
+        });
+        if let Some((i, _)) = performing {
+            problems.push(format!(
+                "skip_stages: step {} performs {}, so it is part of this record - take it out of skip_stages",
+                i + 1,
+                s.title
+            ));
         }
     }
     problems
 }
 
 /// The stages `f` skips, as the answer to a save echoes them: `<stage
-/// title> (flow <flow title>)`, each once, for every `skip_stages` entry
-/// that names a stage of a flow its steps are on.
+/// title> (flow <flow title>)`, each once.
 pub fn skipped_stages(
     f: &Fixture,
     templates: &dyn Fn(&str) -> Option<ApiTemplate>,
     flows: &dyn Fn(&str) -> Option<Flow>,
 ) -> Vec<String> {
+    let on = flows_of(f, templates, flows);
     let mut out = Vec::new();
-    for fl in flows_of(f, templates, flows) {
-        for s in fl.stages.iter().filter(|s| skips(f, s)) {
-            let line = format!("{} (flow {})", s.title, fl.title);
-            if !out.contains(&line) {
-                out.push(line);
-            }
+    for (flow, stage) in skipped_ids(f, templates, flows) {
+        let Some(fl) = on.iter().find(|fl| fl.id == flow) else { continue };
+        let Some(s) = fl.stages.iter().find(|s| s.id == stage) else { continue };
+        let line = format!("{} (flow {})", s.title, fl.title);
+        if !out.contains(&line) {
+            out.push(line);
         }
     }
     out

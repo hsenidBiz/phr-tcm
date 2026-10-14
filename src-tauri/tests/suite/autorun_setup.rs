@@ -1282,3 +1282,46 @@ fn a_fixture_change_names_the_setups_it_needs_approved_again() {
     assert!(said.contains("case 21") && said.contains("The person approves it in the script editor"), "{said}");
     assert!(said.contains("no tool can approve a setup"), "{said}");
 }
+
+/// `skip_stages` is in the fingerprint once a fixture names any, so the
+/// person's approval covers that claim; a fixture that skips nothing
+/// (every one made before skip_stages) keeps the fingerprint it had, so no
+/// approval given before is undone.
+#[test]
+fn skip_stages_is_in_the_fingerprint_only_when_it_names_any() {
+    use sha2::{Digest, Sha256};
+    fn sorted(v: &Value) -> Value {
+        match v {
+            Value::Object(m) => {
+                let mut keys: Vec<&String> = m.keys().collect();
+                keys.sort();
+                let mut out = serde_json::Map::new();
+                for k in keys {
+                    out.insert(k.clone(), sorted(&m[k]));
+                }
+                Value::Object(out)
+            }
+            Value::Array(a) => Value::Array(a.iter().map(sorted).collect()),
+            other => other.clone(),
+        }
+    }
+    let f = fixture("own");
+    let s = Setup { fixture: "own".into() };
+    let t = make_cycle();
+    // The fingerprint as it was before skip_stages.
+    let mut body = serde_json::to_value(&t).unwrap();
+    body.as_object_mut().unwrap().remove("proven");
+    let before = json!({
+        "setup": s,
+        "fixture": { "steps": f.steps, "outputs": f.outputs, "creates": f.creates, "account": f.account },
+        "templates": [body],
+    });
+    let text = serde_json::to_string(&sorted(&before)).unwrap();
+    let want: String = Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(approvals::fingerprint(&s, &f, &[Some(t.clone())]), want);
+
+    let skipping = Fixture { skip_stages: vec!["Competencies".into()], ..fixture("own") };
+    assert_ne!(approvals::fingerprint(&s, &skipping, &[Some(t.clone())]), want);
+    let other = Fixture { skip_stages: vec!["Evaluators".into()], ..fixture("own") };
+    assert_ne!(approvals::fingerprint(&s, &skipping, &[Some(t.clone())]), approvals::fingerprint(&s, &other, &[Some(t)]));
+}

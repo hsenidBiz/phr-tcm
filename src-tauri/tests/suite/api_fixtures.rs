@@ -1621,3 +1621,60 @@ fn the_guide_explains_delete_templates() {
     assert!(one_line.contains("both come from one step whose template creates"), "{one_line}");
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
 }
+
+/// A second flow that also has an "Evaluation rules" stage (id `checks`),
+/// whose creating stage `other-setup` performs.
+fn two_flows(id: &str) -> Option<v2_lib::api_templates::flow::Flow> {
+    match id {
+        "other-flow" => serde_json::from_value(json!({
+            "id": "other-flow", "title": "Suite wizard", "module": "PMS",
+            "subject": { "name": "suiteId", "type": "number" },
+            "stages": [
+                { "id": "start", "title": "Suite setup", "creates": true, "check": "SELECT 1 FROM s WHERE id = {{suiteId}}" },
+                { "id": "checks", "title": "Evaluation rules", "requires": ["start"], "check": "SELECT 1 FROM c WHERE id = {{suiteId}}" }
+            ]
+        }))
+        .ok(),
+        other => flows(other),
+    }
+}
+
+fn two_flow_lookup(id: &str) -> Option<ApiTemplate> {
+    match id {
+        "other-setup" => {
+            let mut t = template(id, "create", true);
+            t.stage = Some(v2_lib::api_templates::flow::StageRef { flow: "other-flow".into(), id: "start".into() });
+            Some(t)
+        }
+        _ => flow_lookup(id),
+    }
+}
+
+/// A skip names the stage in the flow that owns it: a title two of the
+/// fixture's flows share is refused, asking for the stage id or
+/// `<flow id>/<stage id>`; either of those skips only that flow's stage.
+#[test]
+fn a_skip_names_one_stage_in_the_flow_that_owns_it() {
+    use v2_lib::api_templates::fixture::skipped_stages;
+    let with = |skip: &str| Fixture {
+        skip_stages: vec![skip.into()],
+        ..flow_fixture(vec![
+            step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+            step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+            step("other-setup", &[("cycleName", "{{prefix}} suite")]),
+        ])
+    };
+    let refused = validate(&with("Evaluation rules"), &two_flow_lookup, &two_flows).unwrap_err();
+    assert!(
+        refused.contains(&"skip_stages: Evaluation rules names more than one stage (cycle-flow/rules, other-flow/checks) - name the one you mean by its stage id, or as <flow id>/<stage id>".to_string()),
+        "{refused:?}"
+    );
+    for skip in ["rules", "cycle-flow/rules", "CYCLE-FLOW / rules"] {
+        let f = with(skip);
+        validate(&f, &two_flow_lookup, &two_flows).unwrap_or_else(|p| panic!("{skip}: {p:?}"));
+        assert_eq!(skipped_stages(&f, &two_flow_lookup, &two_flows), vec!["Evaluation rules (flow Performance cycle wizard)"]);
+    }
+    // The other flow's stage does not stand in for this one.
+    let p = validate(&with("other-flow/checks"), &two_flow_lookup, &two_flows).unwrap_err();
+    assert!(p.iter().any(|l| l.contains("must perform Evaluation rules")), "{p:?}");
+}
