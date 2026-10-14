@@ -342,7 +342,7 @@ export default function RunPane({
   // sign-in) - an explicit guard instead of a lucky race.
   const scriptAccount = script.isSuccess ? (script.data?.account ?? "") : null;
   // A setup is prepared by the same check, after the preconditions and
-  // before the sign-in: it needs its approval, and makes the case's draft.
+  // before the sign-in: it makes the case's draft.
   const checksFirst = (script.data?.preconditions?.length ?? 0) > 0 || script.data?.setup != null;
   useEffect(() => {
     if (!opened || launches === 0 || scriptAccount === null || busy) return;

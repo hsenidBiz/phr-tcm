@@ -8,7 +8,6 @@
 
 pub mod accounts;
 pub mod api_checks;
-pub mod approvals;
 pub mod cleanup;
 pub mod defects;
 pub mod components;
@@ -122,8 +121,7 @@ pub struct CaseScript {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub preconditions: Vec<Precondition>,
     /// The draft this case makes for itself before it signs in: a fixture
-    /// the run performs on every run of the case, once a person has
-    /// approved it in the script editor (`approvals`). Its outputs reach
+    /// the run performs on every run of the case. Its outputs reach
     /// the steps as `{{setup.<output>}}` (`setup`). A repair can never
     /// add, change or remove it. Written only when there is one, so a
     /// script without one reads exactly as it always did.

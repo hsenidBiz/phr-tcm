@@ -1,5 +1,6 @@
-//! Scripts that use fixtures (`autorun::setup`) and the person's approval
-//! of a setup (`autorun::approvals`): the design doc's section 2.
+//! Scripts that use fixtures (`autorun::setup`): the design doc's section
+//! 2. A setup runs whenever its script runs - a run, a retry, a replay to a
+//! step, a supervised start - and nothing has to approve it first.
 //!
 //! The setup's browser is the template runner's fake page
 //! (`api_templates_runner::rig`); the case's own browser is a scripted one,
@@ -18,7 +19,6 @@ use v2_lib::api_templates::fixture_run::Clock;
 use v2_lib::api_templates::runner::RUN_LIMIT;
 use v2_lib::api_templates::{fixture_store, store as template_store, ApiTemplate, Proven};
 use v2_lib::autorun::accounts::{save_accounts, Account};
-use v2_lib::autorun::approvals::{self, Approval};
 use v2_lib::autorun::edits::{check_edits, SETUP_KEPT};
 use v2_lib::autorun::lease::{self, Held};
 use v2_lib::autorun::nav::{check_project_rules, save_nav, ModulePath, NavFile};
@@ -26,7 +26,7 @@ use v2_lib::autorun::preconditions::{NoDb, PreconditionDb};
 use v2_lib::autorun::replay::{run_cases, Browsers, CaseToRun};
 use v2_lib::autorun::replay_to::{replay_to_checked, ReplayEnd, ReplayRequest};
 use v2_lib::autorun::setup::{
-    self, check_saved, not_built, prepare_case, prepare_case_within, resolve, FixtureValues, NOT_APPROVED,
+    self, check_saved, not_built, prepare_case, prepare_case_within, resolve, FixtureValues,
 };
 use v2_lib::autorun::{store, test_made, CaseScript, LocalRun, Setup};
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
@@ -129,16 +129,17 @@ fn check(value: &str) -> Value {
     json!({ "kind": "check_text", "value": value })
 }
 
-/// Approves case `case_id`'s setup as it is saved now.
-fn approve(root: &std::path::Path, sc: &CaseScript) -> String {
-    let fp = setup::current(root, ORG, PROJECT, sc.setup.as_ref().unwrap()).unwrap().fingerprint;
-    approvals::approve(root, sc.case_id, &fp).unwrap();
-    fp
-}
-
-fn state(root: &std::path::Path, sc: &CaseScript) -> Approval {
-    let fp = setup::current(root, ORG, PROJECT, sc.setup.as_ref().unwrap()).unwrap().fingerprint;
-    approvals::state(root, sc.case_id, &fp)
+/// What an older version of the app kept when a person approved case
+/// `case_id`'s setup, for a fingerprint that matches nothing now. The app
+/// no longer reads these files and never removes one: it is the person's
+/// data. Gives back its path and text.
+fn old_approval_file(root: &std::path::Path, case_id: i32) -> (std::path::PathBuf, String) {
+    let dir = root.join("approvals");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{case_id}.json"));
+    let text = json!({ "fingerprint": "0".repeat(64), "at": "2026-10-01 09:00:00" }).to_string();
+    std::fs::write(&path, &text).unwrap();
+    (path, text)
 }
 
 // ---- save-time refusals ---------------------------------------------------
@@ -404,7 +405,6 @@ async fn a_setup_runs_before_the_case_signs_in_and_its_outputs_reach_the_steps()
     );
     store::save_script(r.root.path(), &sc).unwrap();
     let saved_before = std::fs::read_to_string(r.root.path().join("scripts").join("case-1.json")).unwrap();
-    approve(r.root.path(), &sc);
 
     let mut browsers = ordered(&mut r, case_page(&["cycle 274", "100"]));
     let run = run_one(&r, &mut browsers, 1).await;
@@ -427,24 +427,31 @@ async fn a_setup_runs_before_the_case_signs_in_and_its_outputs_reach_the_steps()
     assert_eq!(store::load_script(r.root.path(), 1).unwrap().unwrap(), sc);
 }
 
-/// Without an approval nothing runs and nothing signs in.
+/// Review Focus 2: no approval is asked for. A setup never approved, with
+/// an old approval file on disk for a fingerprint that matches nothing,
+/// runs on an unattended run and its case passes; the old file is left
+/// exactly as it was.
 #[tokio::test]
-async fn a_setup_not_approved_blocks_the_case_with_nothing_opened() {
+async fn a_setup_runs_unattended_without_any_approval() {
     let _slot = crate::serial::api_template_run();
+    let _act = crate::serial::activity_log();
     let mut r = setup_rig(vec![the_cycle()]);
     let sc = script(2, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
     store::save_script(r.root.path(), &sc).unwrap();
+    let (old, text) = old_approval_file(r.root.path(), 2);
 
     let mut browsers = ordered(&mut r, case_page(&["274"]));
     let run = run_one(&r, &mut browsers, 2).await;
     let case = &run.cases[0];
-    assert_eq!(case.proposed, "Blocked");
-    assert_eq!(case.reason, NOT_APPROVED);
-    assert_eq!(NOT_APPROVED, "setup not approved - approve it in the script editor");
-    assert!(browsers.events.lock().unwrap().is_empty(), "{:?}", browsers.events);
-    assert_eq!(r.sign_ins(), 0);
-    assert!(r.fetched().is_empty());
-    assert!(test_made::list(r.root.path()).is_empty());
+    assert_eq!(case.proposed, "Passed", "{case:?}");
+    assert!(!case.reason.contains("approv"), "{}", case.reason);
+    assert_eq!(
+        *browsers.events.lock().unwrap(),
+        vec!["setup opened", "setup closed", "case opened, setup account leased: false", "case closed"]
+    );
+    assert_eq!(r.sign_ins(), 1);
+    assert_eq!(test_made::list(r.root.path())[0].case_id, Some(2));
+    assert_eq!(std::fs::read_to_string(&old).unwrap(), text, "an old approval file is left alone");
 }
 
 /// A transient failure runs the case again from a fresh draft: the setup
@@ -456,7 +463,6 @@ async fn a_retry_makes_a_fresh_draft_and_uses_it() {
     let mut r = setup_rig(vec![the_cycle(), answer(200, json!({ "cycleId": 275, "cycleName": "AUTOTEST cycle" }))]);
     let sc = script(14, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
     store::save_script(r.root.path(), &sc).unwrap();
-    approve(r.root.path(), &sc);
 
     // The first go's browser stops answering: a transient failure.
     let silent = ScriptedDriver::new(|method, _| match method {
@@ -502,7 +508,6 @@ async fn a_retry_whose_setup_fails_says_the_setup_failed() {
     let mut r = setup_rig(vec![the_cycle(), answer(500, json!({ "error": "no" }))]);
     let sc = script(15, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
     store::save_script(r.root.path(), &sc).unwrap();
-    approve(r.root.path(), &sc);
 
     let silent = ScriptedDriver::new(|method, _| match method {
         "Runtime.evaluate" => Err(CdpError::Closed),
@@ -530,7 +535,6 @@ async fn a_failed_setup_blocks_with_the_fixtures_sentence() {
     let _act = crate::serial::activity_log();
     let mut r = setup_rig(vec![answer(500, json!({ "error": "no" }))]);
     let sc = script(3, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
-    approve(r.root.path(), &sc);
     let got = prepare_case_within(
         &mut r.browsers,
         r.root.path(),
@@ -572,7 +576,6 @@ async fn a_setup_value_filled_into_a_locator_must_fit_what_was_seen() {
         sc.area = Some("Leave".into());
         store::save_script(&root, &sc).unwrap();
         seen_on_leave(&root, "div[data-cycle-id=\"10066\"]");
-        approve(&root, &sc);
         let got = prepare_case_within(
             &mut r.browsers,
             &root,
@@ -629,7 +632,6 @@ async fn a_setup_value_typed_then_looked_for_runs_unblocked() {
     let map = v2_lib::autorun::discovery_map::load_map(&root, ORG, PROJECT).unwrap();
     let components = v2_lib::autorun::components::load_components(&root, ORG, PROJECT).unwrap();
     assert_eq!(v2_lib::autorun::seen_check::check_seen(&map, &components, &sc, &[], None), Ok(()));
-    approve(&root, &sc);
 
     let prepared = prepare_case_within(
         &mut r.browsers,
@@ -657,150 +659,32 @@ async fn a_setup_value_typed_then_looked_for_runs_unblocked() {
     setup::forget(41);
 }
 
-// ---- approvals ----------------------------------------------------------------
+// ---- no approval ------------------------------------------------------------
 
-/// Review Focus 2: an approval counts only for what was approved. A change
-/// to the setup, to a fixture step or to a template body clears it; a
-/// template being proven again does not.
+/// A change to the setup's fixture or to a template it runs never stops the
+/// setup: the next start runs what is saved now.
 #[tokio::test]
-async fn any_change_to_what_was_approved_clears_the_approval() {
+async fn a_setup_runs_what_is_saved_now_after_any_change() {
     let _slot = crate::serial::api_template_run();
-    let mut r = setup_rig(vec![]);
+    let _act = crate::serial::activity_log();
+    let mut r = setup_rig(vec![the_cycle()]);
     let root = r.root.path().to_path_buf();
     let sc = script(4, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
-    approve(&root, &sc);
-    assert!(matches!(state(&root, &sc), Approval::Approved { .. }));
-
-    // A template proven again: still approved.
-    let mut t = make_cycle();
-    t.proven.as_mut().unwrap().at = "2026-10-06 08:00:00".into();
-    template_store::save(&root, ORG, PROJECT, &t).unwrap();
-    assert!(matches!(state(&root, &sc), Approval::Approved { .. }), "proven is not part of the fingerprint");
-
-    async fn blocked(r: &mut Rig, sc: &CaseScript) {
-        let got = prepare_case(&mut r.browsers, r.root.path(), ORG, PROJECT, sc, &quick(), &NO_STOP).await;
-        assert_eq!(got.map(|p| p.script), Err(NOT_APPROVED.to_string()));
-        assert_eq!(r.browsers.opened, 0);
-    }
-
-    // The setup itself: another fixture.
-    let other = CaseScript { setup: Some(Setup { fixture: "shared".into() }), ..sc.clone() };
-    assert_eq!(state(&root, &other), Approval::Changed);
-    blocked(&mut r, &other).await;
-
-    // A fixture step.
+    store::save_script(&root, &sc).unwrap();
     let mut f = fixture("own");
     f.steps[0].params.insert("cycleName".into(), "{{prefix}} another cycle".into());
     fixture_store::save(&root, ORG, PROJECT, &f).unwrap();
-    assert_eq!(state(&root, &sc), Approval::Changed);
-    blocked(&mut r, &sc).await;
-
-    // Approved again, then a template body.
-    approve(&root, &sc);
-    assert!(matches!(state(&root, &sc), Approval::Approved { .. }));
     let mut t = make_cycle();
-    t.steps[0].path = "/hr/pmsv10/othercycle".into();
+    t.description = "makes a cycle, described again".into();
     template_store::save(&root, ORG, PROJECT, &t).unwrap();
-    assert_eq!(state(&root, &sc), Approval::Changed);
-    blocked(&mut r, &sc).await;
 
-}
-
-/// Review Focus 2, one part at a time: each of the fixture's params,
-/// account, outputs and creates is in the fingerprint on its own.
-#[test]
-fn each_part_of_the_fixture_is_in_the_fingerprint() {
-    let r = setup_rig(vec![]);
-    let root = r.root.path();
-    let sc = script(15, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
-    let changes: [(&str, fn(&mut Fixture)); 4] = [
-        ("params", |f| {
-            f.steps[0].params.insert("cycleName".into(), "{{prefix}} another cycle".into());
-        }),
-        ("account", |f| f.account = "admin".into()),
-        ("outputs", |f| {
-            f.outputs.insert("cycle_name".into(), "{{steps.1.cycleName}}".into());
-        }),
-        ("creates", |f| f.creates[0].kind = "draft cycle".into()),
-    ];
-    for (what, change) in changes {
-        fixture_store::save(root, ORG, PROJECT, &fixture("own")).unwrap();
-        approve(root, &sc);
-        assert!(matches!(state(root, &sc), Approval::Approved { .. }), "{what}");
-        let mut f = fixture("own");
-        change(&mut f);
-        fixture_store::save(root, ORG, PROJECT, &f).unwrap();
-        assert_eq!(state(root, &sc), Approval::Changed, "{what}");
-    }
-}
-
-/// Approve setup signs what the person was shown: a setup that changed
-/// after they looked is refused, and nothing is approved.
-#[tokio::test]
-async fn an_approval_of_a_setup_that_changed_since_it_was_shown_is_refused() {
-    let _slot = crate::serial::api_template_run();
-    let mut r = setup_rig(vec![]);
-    let root = r.root.path().to_path_buf();
-    let sc = script(16, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
-    let shown = setup::view(&root, ORG, PROJECT, &sc).unwrap().unwrap();
-    assert_eq!(setup::approval_target(&root, ORG, PROJECT, &sc, &shown.fingerprint), Ok(shown.fingerprint.clone()));
-
-    let mut f = fixture("own");
-    f.steps[0].params.insert("cycleName".into(), "{{prefix}} another cycle".into());
-    fixture_store::save(&root, ORG, PROJECT, &f).unwrap();
-    assert_eq!(
-        setup::approval_target(&root, ORG, PROJECT, &sc, &shown.fingerprint),
-        Err("the setup changed while you were looking at it - review it again before approving".to_string())
-    );
-    assert_eq!(setup::CHANGED_WHILE_LOOKING, "the setup changed while you were looking at it - review it again before approving");
-    assert_eq!(state(&root, &sc), Approval::None);
-    let got = prepare_case(&mut r.browsers, &root, ORG, PROJECT, &sc, &quick(), &NO_STOP).await;
-    assert_eq!(got.map(|p| p.script), Err(NOT_APPROVED.to_string()));
-    assert_eq!(r.browsers.opened, 0);
-}
-
-#[tokio::test]
-async fn a_withdrawn_approval_blocks_the_case_again() {
-    let _slot = crate::serial::api_template_run();
-    let mut r = setup_rig(vec![]);
-    let root = r.root.path().to_path_buf();
-    let sc = script(6, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
-    assert_eq!(state(&root, &sc), Approval::None);
-    approve(&root, &sc);
-    assert!(root.join("approvals").join("6.json").is_file(), "kept in the Auto Run store by case id");
-    approvals::withdraw(&root, 6).unwrap();
-    assert_eq!(state(&root, &sc), Approval::None);
-    approvals::withdraw(&root, 6).unwrap();
-    let got = prepare_case(&mut r.browsers, &root, ORG, PROJECT, &sc, &quick(), &NO_STOP).await;
-    assert_eq!(got.map(|p| p.script), Err(NOT_APPROVED.to_string()));
-    assert_eq!(r.browsers.opened, 0);
+    let got = prepare_case(&mut r.browsers, &root, ORG, PROJECT, &sc, &quick(), &NO_STOP).await.unwrap();
+    assert_eq!(serde_json::to_value(&got.script.steps).unwrap()[0]["actions"][0]["value"], json!("274"));
+    assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1));
 }
 
 #[test]
-fn the_fingerprint_is_sha256_hex_and_ignores_key_order() {
-    let f = fixture("own");
-    let s = Setup { fixture: "own".into() };
-    let fp = approvals::fingerprint(&s, &f, &[Some(make_cycle())]);
-    assert_eq!(fp.len(), 64);
-    assert!(fp.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()), "{fp}");
-    // The same template with its request's keys written in another order.
-    let with_form = |form: Value| {
-        let mut v = serde_json::to_value(make_cycle()).unwrap();
-        v["steps"][0]["form"] = form;
-        serde_json::from_value::<ApiTemplate>(v).unwrap()
-    };
-    let ab = with_form(json!({ "A": "1", "B": "{{cycleName}}" }));
-    let ba = with_form(json!({ "B": "{{cycleName}}", "A": "1" }));
-    assert_eq!(
-        approvals::fingerprint(&s, &f, &[Some(ab.clone())]),
-        approvals::fingerprint(&s, &f, &[Some(ba)])
-    );
-    assert_ne!(approvals::fingerprint(&s, &f, &[Some(ab)]), fp);
-    assert_ne!(approvals::fingerprint(&s, &f, &[None]), fp, "a template no longer saved changes it");
-}
-
-#[test]
-fn the_editor_view_says_what_the_setup_does_and_where_its_approval_stands() {
+fn the_editor_view_says_what_the_setup_does() {
     let r = setup_rig(vec![]);
     let root = r.root.path();
     let sc = script(8, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
@@ -809,11 +693,10 @@ fn the_editor_view_says_what_the_setup_does_and_where_its_approval_stands() {
     assert_eq!(v.account, ACCOUNT);
     assert_eq!(v.steps, vec!["Make a cycle: cycleName = {{prefix}} cycle"]);
     assert_eq!(v.creates, vec!["cycle {{steps.1.cycleName}}"]);
-    assert_eq!((v.approval.as_str(), v.approved_at.clone()), ("none", None));
-    approve(root, &sc);
-    let v = setup::view(root, ORG, PROJECT, &sc).unwrap().unwrap();
-    assert_eq!(v.approval, "approved");
-    assert!(v.approved_at.is_some());
+    let shown = serde_json::to_value(&v).unwrap();
+    let mut keys: Vec<&str> = shown.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort();
+    assert_eq!(keys, vec!["account", "creates", "fixture_name", "steps"], "no approval state in what the editor is shown");
     assert_eq!(setup::view(root, ORG, PROJECT, &script(8, None, json!([]))).unwrap(), None);
 }
 
@@ -830,8 +713,9 @@ fn leave_area() -> ModulePath {
     .unwrap()
 }
 
-/// Part 4's replay to step N runs the setup too, before anything signs in,
-/// and keeps what it gave for the steps the person runs next.
+/// Part 4's replay to step N runs the setup too, with no approval, before
+/// anything signs in, and keeps what it gave for the steps the person runs
+/// next.
 #[tokio::test]
 async fn a_replay_to_a_step_runs_the_setup_first() {
     let _slot = crate::serial::api_template_run();
@@ -857,38 +741,12 @@ async fn a_replay_to_a_step_runs_the_setup_first() {
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
     let mut held = Held::supervised();
 
-    // What an earlier start gave, which a Blocked replay must not leave.
+    // What an earlier start gave, which the replay replaces.
     setup::remember(9, [("cycle_id".to_string(), json!(1))].into());
-
-    // Not approved: Blocked, nothing opened, the case's browser untouched.
-    let end = replay_to_checked(
-        &mut d,
-        &mut r.browsers,
-        &root,
-        ORG,
-        PROJECT,
-        &req,
-        &mut account,
-        &mut held,
-        &mut guarded,
-        true,
-        &quick(),
-        &cancel,
-        || -> PreconditionDb<NoDb> { PreconditionDb::ReadingOff },
-        |_, _| {},
-    )
-    .await;
-    assert_eq!(end, ReplayEnd::Blocked(NOT_APPROVED.into()));
-    assert_eq!(r.browsers.opened, 0);
-    assert!(d.calls.is_empty(), "{:?}", d.methods());
+    // Never approved, with an old approval file that matches nothing.
+    let (old, text) = old_approval_file(&root, 9);
     let step2 = store::load_script(&root, 9).unwrap().unwrap().steps[1].clone();
-    assert_eq!(
-        setup::resolve_step(&root, ORG, PROJECT, 9, &step2),
-        Err("setup gave no cycle_id - start the case again".to_string()),
-        "a Blocked start leaves nothing stale"
-    );
 
-    approve(&root, &sc);
     let end = replay_to_checked(
         &mut d,
         &mut r.browsers,
@@ -910,6 +768,7 @@ async fn a_replay_to_a_step_runs_the_setup_first() {
     assert_eq!((r.browsers.opened, r.browsers.closed), (1, 1));
     assert!(app.log.lock().unwrap().contains(&"click #c274".to_string()), "{:?}", app.log.lock().unwrap());
     assert_eq!(test_made::list(&root)[0].case_id, Some(9));
+    assert_eq!(std::fs::read_to_string(&old).unwrap(), text, "an old approval file is left alone");
 
     // Step 2, run by the person next, gets what the setup gave.
     let filled = setup::resolve_step(&root, ORG, PROJECT, 9, &step2).unwrap();
@@ -944,7 +803,6 @@ async fn a_setup_as_the_supervised_browsers_account_runs_and_the_case_signs_in_a
     sc.area = Some("Leave".into());
     store::save_script(&root, &sc).unwrap();
     seen_on_leave(&root, "#c100");
-    approve(&root, &sc);
 
     // The supervised browser holds admin.
     let mut held = Held::supervised();
@@ -1047,12 +905,14 @@ fn a_repair_cannot_touch_the_setup() {
     assert_eq!(check_edits(&own, &own, None), Ok(()));
 }
 
-/// Only the webview's three setup commands write an approval: nothing
-/// else in the crate calls `approvals::approve` or `approvals::withdraw`.
+/// The approval mechanism is gone from the crate: nothing approves a
+/// setup, reads an approval, asks for one again or Blocks a case for want
+/// of one. A lexical tripwire, not proof.
 #[test]
-fn only_the_setup_commands_approve_or_withdraw() {
+fn nothing_in_the_crate_approves_or_reads_a_setup_approval() {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut callers = Vec::new();
+    assert!(!src.join("autorun").join("approvals.rs").exists());
+    let mut found = Vec::new();
     let mut stack = vec![src.clone()];
     while let Some(dir) = stack.pop() {
         for e in std::fs::read_dir(dir).unwrap().flatten() {
@@ -1060,18 +920,25 @@ fn only_the_setup_commands_approve_or_withdraw() {
             if p.is_dir() {
                 stack.push(p);
             } else if p.extension().is_some_and(|x| x == "rs") {
-                let text = std::fs::read_to_string(&p).unwrap().replace("\r\n", "\n");
-                if text.contains("approvals::approve(") || text.contains("approvals::withdraw(") {
-                    callers.push(p.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/"));
+                let text = std::fs::read_to_string(&p).unwrap();
+                for needle in [
+                    "approvals::",
+                    "mod approvals",
+                    "auto_run_approve_setup",
+                    "auto_run_withdraw_setup",
+                    "auto_run_unapproved_setups",
+                    "needs_reapproval",
+                    "NOT_APPROVED",
+                    "setup not approved",
+                ] {
+                    if text.contains(needle) {
+                        found.push(format!("{}: {needle}", p.strip_prefix(&src).unwrap().to_string_lossy()));
+                    }
                 }
             }
         }
     }
-    assert_eq!(callers, vec!["commands/autorun_setup.rs"]);
-    let commands = std::fs::read_to_string(src.join("commands/autorun_setup.rs")).unwrap().replace("\r\n", "\n");
-    for name in ["fn auto_run_setup_view(", "fn auto_run_approve_setup(", "fn auto_run_withdraw_setup("] {
-        assert!(commands.contains(name), "{name}");
-    }
+    assert!(found.is_empty(), "{found:?}");
 }
 
 /// A case whose setup runs as `admin`, the account the supervised browser
@@ -1135,7 +1002,6 @@ async fn an_unbuilt_shared_fixture_blocks_with_the_supervised_browser_still_sign
             { "step_number": 2, "actions": [check("{{setup.cycle_id}}")] }
         ]),
     );
-    approve(r.root.path(), &sc);
     let (end, account, held, d) = replay_signed_in(&mut r, &sc).await;
     assert_eq!(end, ReplayEnd::Blocked(not_built("Fixture shared")));
     assert_eq!((account.as_deref(), held.account()), (Some("admin"), Some("admin")));
@@ -1143,38 +1009,12 @@ async fn an_unbuilt_shared_fixture_blocks_with_the_supervised_browser_still_sign
     assert_eq!(r.browsers.opened, 0);
 }
 
-/// A setup that is not approved leaves the supervised browser signed in,
-/// its lease held.
-#[tokio::test]
-async fn a_setup_not_approved_leaves_the_supervised_browser_signed_in() {
-    let _slot = crate::serial::api_template_run();
-    let _act = crate::serial::activity_log();
-    let _leases = crate::serial::account_leases();
-    let mut r = setup_rig(vec![the_cycle()]);
-    let sc = admin_case(
-        r.root.path(),
-        21,
-        json!([
-            { "step_number": 1, "actions": [check("{{setup.cycle_id}}")] },
-            { "step_number": 2, "actions": [check("{{setup.cycle_id}}")] }
-        ]),
-    );
-    let (end, account, held, d) = replay_signed_in(&mut r, &sc).await;
-    assert_eq!(end, ReplayEnd::Blocked(NOT_APPROVED.into()));
-    assert_eq!((account.as_deref(), held.account()), (Some("admin"), Some("admin")));
-    let env = v2_lib::environments::active_id(r.root.path()).unwrap();
-    assert!(lease::is_held(&env, "admin"));
-    assert!(d.calls.is_empty(), "{:?}", d.methods());
-    assert_eq!(r.browsers.opened, 0);
-}
-
-/// A supervised start whose setup's step hangs: case 22, approved.
+/// A supervised start whose setup's step hangs: case 22.
 fn hanging_setup() -> Rig {
     let r = setup_rig(vec![]);
     r.script.lock().unwrap().hang_after = Some(0);
     let sc = script(22, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
     store::save_script(r.root.path(), &sc).unwrap();
-    approve(r.root.path(), &sc);
     r
 }
 
@@ -1238,137 +1078,31 @@ async fn the_supervised_browser_question_is_answered_during_a_setup() {
     assert!(why.starts_with("setup failed: step 1: "), "{why}");
 }
 
-/// Changing a fixture undoes the approval of every setup that runs it, and
-/// the save's answer names each of those cases; a setup that was not
-/// approved, or runs another fixture, is not named. Approving stays the
-/// person's: the replay refusal says so, by the case.
+/// Changing a fixture a setup runs answers with what was saved and nothing
+/// about approvals.
 #[test]
-fn a_fixture_change_names_the_setups_it_needs_approved_again() {
+fn a_fixture_change_says_nothing_about_approvals() {
     use v2_lib::ai_bridge::{api_fixture_save, BridgeContext};
     let _root = crate::serial::autorun();
     let r = setup_rig(vec![]);
     let root = r.root.path();
     store::set_root(root.to_path_buf());
-    let steps = json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]);
-    let approved = script(21, Some("own"), steps.clone());
-    let never = script(22, Some("own"), steps.clone());
-    let other = script(23, Some("shared"), steps);
-    for sc in [&approved, &never, &other] {
-        store::save_script(root, sc).unwrap();
-    }
-    approve(root, &approved);
-    approve(root, &other);
-    assert_eq!(setup::approved_setups(root, ORG, PROJECT, "own"), vec![21]);
+    let sc = script(21, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
+    store::save_script(root, &sc).unwrap();
 
     let ctx = BridgeContext { org: ORG.into(), project: PROJECT.into(), api_writes: true, ..BridgeContext::default() };
-    // Saved unchanged: nothing is undone, and the answer says nothing more.
-    let (status, out) = api_fixture_save(&ctx, &json!({ "fixture": fixture("own") }).to_string());
-    assert_eq!(status, 200, "{out}");
-    let v: Value = serde_json::from_str(&out).unwrap();
-    assert!(v.get("needs_reapproval").is_none(), "{v}");
-
     let mut changed = fixture("own");
     changed.steps[0].params.insert("cycleName".into(), "{{prefix}} cycle {{now:yyyyMMdd}}".into());
     let (status, out) = api_fixture_save(&ctx, &json!({ "fixture": changed }).to_string());
     assert_eq!(status, 200, "{out}");
     let v: Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["needs_reapproval"], json!([21]));
-    assert_eq!(v["note"], json!(setup::needs_reapproval_line(&[21])));
-    assert!(setup::needs_reapproval_line(&[21, 30]).starts_with("needs re-approval: #21, #30 - "));
-    assert_eq!(state(root, &approved), Approval::Changed);
-    assert!(matches!(state(root, &other), Approval::Approved { .. }));
-
-    let said = setup::not_approved_for_replay(21);
-    assert!(said.contains("case 21") && said.contains("The person approves it in the script editor"), "{said}");
-    assert!(said.contains("no tool can approve a setup"), "{said}");
+    assert_eq!(v, json!({ "saved": "own", "replaced": true }));
 }
 
-/// `skip_stages` is in the fingerprint once a fixture names any, so the
-/// person's approval covers that claim; a fixture that skips nothing
-/// (every one made before skip_stages) keeps the fingerprint it had, so no
-/// approval given before is undone.
-#[test]
-fn skip_stages_is_in_the_fingerprint_only_when_it_names_any() {
-    use sha2::{Digest, Sha256};
-    fn sorted(v: &Value) -> Value {
-        match v {
-            Value::Object(m) => {
-                let mut keys: Vec<&String> = m.keys().collect();
-                keys.sort();
-                let mut out = serde_json::Map::new();
-                for k in keys {
-                    out.insert(k.clone(), sorted(&m[k]));
-                }
-                Value::Object(out)
-            }
-            Value::Array(a) => Value::Array(a.iter().map(sorted).collect()),
-            other => other.clone(),
-        }
-    }
-    let f = fixture("own");
-    let s = Setup { fixture: "own".into() };
-    let t = make_cycle();
-    // The fingerprint as it was before skip_stages.
-    let mut body = serde_json::to_value(&t).unwrap();
-    body.as_object_mut().unwrap().remove("proven");
-    let before = json!({
-        "setup": s,
-        "fixture": { "steps": f.steps, "outputs": f.outputs, "creates": f.creates, "account": f.account },
-        "templates": [body],
-    });
-    let text = serde_json::to_string(&sorted(&before)).unwrap();
-    let want: String = Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-    assert_eq!(approvals::fingerprint(&s, &f, &[Some(t.clone())]), want);
-
-    let skipping = Fixture { skip_stages: vec!["Competencies".into()], ..fixture("own") };
-    assert_ne!(approvals::fingerprint(&s, &skipping, &[Some(t.clone())]), want);
-    let other = Fixture { skip_stages: vec!["Evaluators".into()], ..fixture("own") };
-    assert_ne!(approvals::fingerprint(&s, &skipping, &[Some(t.clone())]), approvals::fingerprint(&s, &other, &[Some(t)]));
-}
-
-/// What the fingerprint covers (Round F): the setup, its fixture and the
-/// templates it runs, never the case's own steps. A script save that
-/// changes only the steps undoes nothing; one whose setup changes undoes
-/// the approval, and `undone_by_save` names it.
-#[test]
-fn only_a_setup_change_undoes_an_approval_on_a_script_save() {
-    let _root = crate::serial::autorun();
-    let r = setup_rig(vec![]);
-    let root = r.root.path();
-    let steps = json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]);
-    let approved = script(41, Some("own"), steps.clone());
-    let never = script(42, Some("own"), steps.clone());
-    let plain = script(43, None, steps);
-    for sc in [&approved, &never, &plain] {
-        store::save_script(root, sc).unwrap();
-    }
-    approve(root, &approved);
-    let before = setup::approved_among(root, ORG, PROJECT, &[&approved, &never, &plain]);
-    assert_eq!(before, vec![41]);
-
-    let new_steps = script(41, Some("own"), json!([{ "step_number": 1, "actions": [check("Cycle {{setup.cycle_id}}")] }]));
-    assert!(setup::undone_by_save(root, ORG, PROJECT, &before, &[new_steps.clone()]).is_empty());
-    store::save_script(root, &new_steps).unwrap();
-    assert!(matches!(state(root, &new_steps), Approval::Approved { .. }), "a steps-only change kept the approval");
-
-    let other_fixture = script(41, Some("shared"), json!([{ "step_number": 1, "actions": [check("ok")] }]));
-    assert_eq!(setup::undone_by_save(root, ORG, PROJECT, &before, &[other_fixture]), vec![41]);
-    let no_setup = script(41, None, json!([{ "step_number": 1, "actions": [check("ok")] }]));
-    assert_eq!(setup::undone_by_save(root, ORG, PROJECT, &before, &[no_setup]), vec![41]);
-    // A case the save does not carry is not named.
-    assert!(setup::undone_by_save(root, ORG, PROJECT, &before, &[]).is_empty());
-
-    let lines = setup::needs_reapproval_lines(&[41, 44], false);
-    assert_eq!(lines[0], "needs_reapproval: [41, 44]");
-    assert_eq!(lines[1], setup::needs_reapproval_line(&[41, 44]));
-    let dry = setup::needs_reapproval_lines(&[41], true);
-    assert_eq!(dry[1], format!("if saved, {}", setup::needs_reapproval_line(&[41])));
-}
-
-/// Through the assistant's save: a declared repair of an approved setup
-/// script's steps lands, keeps the approval and says nothing about one.
+/// Through the assistant's save: a declared repair of a setup script's
+/// steps lands and says nothing about an approval.
 #[tokio::test]
-async fn an_assistant_repair_of_a_setup_scripts_steps_keeps_its_approval() {
+async fn an_assistant_repair_of_a_setup_scripts_steps_lands() {
     use v2_lib::ai_bridge::{route, BridgeContext};
     use v2_lib::steps_xml::{build_steps_xml, Step};
     use wiremock::matchers::{method, path};
@@ -1379,7 +1113,6 @@ async fn an_assistant_repair_of_a_setup_scripts_steps_keeps_its_approval() {
     store::set_root(root.to_path_buf());
     let sc = script(51, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
     store::save_script(root, &sc).unwrap();
-    approve(root, &sc);
 
     let server = MockServer::start().await;
     let xml = build_steps_xml(&[Step { action: "Step 1".into(), expected: String::new(), shared: None }]);
@@ -1405,95 +1138,43 @@ async fn an_assistant_repair_of_a_setup_scripts_steps_keeps_its_approval() {
     assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 51 (repaired)");
     assert!(!out.contains("needs_reapproval") && !out.contains("re-approval"), "{out}");
     let saved = store::load_script(root, 51).unwrap().unwrap();
-    assert!(matches!(state(root, &saved), Approval::Approved { .. }));
+    assert_eq!(saved.setup, Some(Setup { fixture: "own".into() }));
 }
 
-/// The Auto Run screen asks which of a selection's setups would Block: a
-/// setup never approved, or changed since; not one that is approved, a
-/// case with no setup or no script, or a setup whose fixture is gone
-/// (that case fails its setup instead).
+/// Removing a template a setup runs is a plain removal: nothing is said
+/// about approvals.
 #[test]
-fn not_approved_names_the_setups_a_run_would_block() {
-    let _root = crate::serial::autorun();
-    let r = setup_rig(vec![]);
-    let root = r.root.path();
-    let steps = json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]);
-    let approved = script(61, Some("own"), steps.clone());
-    let never = script(62, Some("own"), steps.clone());
-    let plain = script(63, None, steps.clone());
-    let gone = script(64, Some("no-such-fixture"), steps);
-    for sc in [&approved, &never, &plain, &gone] {
-        store::save_script(root, sc).unwrap();
-    }
-    approve(root, &approved);
-    assert_eq!(setup::not_approved(root, ORG, PROJECT, &[61, 62, 63, 64, 65]), vec![62]);
-
-    let mut changed = fixture("own");
-    changed.account = "someone-else".into();
-    fixture_store::save(root, ORG, PROJECT, &changed).unwrap();
-    assert_eq!(setup::not_approved(root, ORG, PROJECT, &[61, 62, 63, 64, 65]), vec![61, 62]);
-}
-
-/// Removing a template a setup runs undoes that setup's approval (its
-/// fingerprint now has no template there), and the person's Remove is
-/// told which cases, as every other change to what a setup runs is.
-#[test]
-fn removing_a_template_names_the_setups_it_needs_approved_again() {
+fn removing_a_template_a_setup_runs_says_nothing_about_approvals() {
     use v2_lib::commands::api_templates::remove_template_at;
     let _root = crate::serial::autorun();
     let r = setup_rig(vec![]);
     let root = r.root.path();
-    let steps = json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]);
-    let approved = script(71, Some("own"), steps.clone());
-    let never = script(72, Some("own"), steps);
-    for sc in [&approved, &never] {
-        store::save_script(root, sc).unwrap();
-    }
-    approve(root, &approved);
-
-    let said = remove_template_at(root, ORG, PROJECT, "make-cycle").unwrap();
-    assert_eq!(said, setup::Reapproval::of(vec![71]));
-    assert_eq!(said.note, Some(setup::needs_reapproval_line(&[71])));
-    assert_eq!(state(root, &approved), Approval::Changed);
-    // The same template saved again matches what was approved once more.
-    template_store::save(root, ORG, PROJECT, &make_cycle()).unwrap();
-    assert!(matches!(state(root, &approved), Approval::Approved { .. }));
-    // With no approval left to undo, a removal says nothing.
-    approvals::withdraw(root, 71).unwrap();
-    assert_eq!(remove_template_at(root, ORG, PROJECT, "make-cycle").unwrap(), setup::Reapproval::default());
+    let sc = script(71, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
+    store::save_script(root, &sc).unwrap();
+    assert_eq!(remove_template_at(root, ORG, PROJECT, "make-cycle"), Ok(()));
+    assert_eq!(template_store::load(root, ORG, PROJECT, "make-cycle").unwrap(), None);
 }
 
 /// An import that replaces a template a setup runs with a different body
-/// names the setups whose approval it undid; one that brings the same
-/// body back (unproven: the proof is not in the fingerprint) undoes none.
+/// says what it replaced, and nothing about approvals.
 #[test]
-fn an_import_that_changes_a_template_names_the_setups_it_needs_approved_again() {
+fn an_import_that_changes_a_template_says_nothing_about_approvals() {
     use v2_lib::commands::api_templates::{export_at, import_at};
     const SENDER: &str = "Sender";
     let _root = crate::serial::autorun();
     let r = setup_rig(vec![]);
     let root = r.root.path();
     let out = tempfile::tempdir().unwrap();
-    let approved = script(73, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
-    store::save_script(root, &approved).unwrap();
-    approve(root, &approved);
+    let sc = script(73, Some("own"), json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]));
+    store::save_script(root, &sc).unwrap();
 
-    // The same body, from another project's export.
-    template_store::save(root, ORG, SENDER, &make_cycle()).unwrap();
-    let same = out.path().join("same.json");
-    export_at(true, root, ORG, SENDER, &same).unwrap();
-    let result = import_at(true, root, ORG, PROJECT, &same).unwrap();
-    assert_eq!(result.replaced, vec!["Make a cycle"]);
-    assert_eq!(result.reapproval, setup::Reapproval::default());
-    assert!(matches!(state(root, &approved), Approval::Approved { .. }));
-
-    // A changed body.
     let mut changed = make_cycle();
     changed.description = "makes a cycle, renamed handler".into();
     template_store::save(root, ORG, SENDER, &changed).unwrap();
     let different = out.path().join("different.json");
     export_at(true, root, ORG, SENDER, &different).unwrap();
     let result = import_at(true, root, ORG, PROJECT, &different).unwrap();
-    assert_eq!(result.reapproval, setup::Reapproval::of(vec![73]));
-    assert_eq!(state(root, &approved), Approval::Changed);
+    assert_eq!(result.replaced, vec!["Make a cycle"]);
+    let shown = serde_json::to_value(&result).unwrap();
+    assert!(shown.get("reapproval").is_none(), "{shown}");
 }

@@ -750,8 +750,7 @@ fn the_guide_teaches_marking_shared_state() {
 }
 
 /// The guide teaches a script's setup and shared fixtures: the two
-/// placeholders, the approval only a person gives and what clears it, and
-/// when to choose which.
+/// placeholders and when to choose which. No approval is asked of anyone.
 #[test]
 fn the_guide_teaches_setups_and_shared_fixtures() {
     let g = autorun_guide();
@@ -762,14 +761,12 @@ fn the_guide_teaches_setups_and_shared_fixtures() {
         "`\"setup\": { \"fixture\": \"<id>\" }`",
         "`{{setup.<output>}}`",
         "`{{fixture.<id>.<output>}}`",
-        "A setup stays Blocked until a person approves it in the app",
-        "You cannot approve it, and no tool can.",
-        "changing any of them needs a new approval",
         "Use a setup only when the case needs its own fresh draft",
         "Otherwise use a shared `{{fixture...}}`",
     ] {
         assert!(flat.contains(needle), "{needle} not in: {flat}");
     }
+    assert!(!flat.to_lowercase().contains("approv"), "a setup needs no approval: {flat}");
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
 }
 

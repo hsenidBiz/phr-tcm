@@ -263,7 +263,7 @@ struct Start {
 /// The checks before the lease and the browser. A template may have been
 /// replaced, re-proven as a delete, or removed since the fixture was
 /// saved; with `fixed`, the templates are the ones given (a setup's, as
-/// they were fingerprinted), never read from disk again. Step 1's values
+/// they were read with its fixture), never read from disk again. Step 1's values
 /// can only use the prefix and the clock, so it is checked here too, and
 /// nothing is opened for a run that cannot start. `Err` is the step (if
 /// one) and the sentence.
@@ -481,7 +481,7 @@ pub async fn run_fixture_within<B: Browsers>(
 /// what the run makes is recorded as test-made with that case's id. With
 /// `fixed`, the steps run these templates (one per step, `None` for one
 /// not saved) rather than reading them from disk again, so a setup runs
-/// exactly what was fingerprinted for its approval. `cancel` stops the run
+/// exactly what was read when its case started. `cancel` stops the run
 /// between template steps with `RUN_STOPPED`; what it made by then is
 /// still recorded.
 #[allow(clippy::too_many_arguments)]

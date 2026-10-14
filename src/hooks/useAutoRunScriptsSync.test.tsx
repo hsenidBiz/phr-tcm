@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { commands } from "../bindings";
-import { setupViewKey } from "../screens/AutoRun/setupApproval";
+import { setupViewKey } from "../screens/AutoRun/setupView";
 import { scriptQueryKey, useAutoRunScriptsSync } from "./useAutoRunScriptsSync";
 
 afterEach(() => {
@@ -117,7 +117,7 @@ function Setup({ caseId }: { caseId: number }) {
       return r.status === "ok" ? r.data : null;
     },
   });
-  return <p>{q.data ? `setup ${caseId} ${q.data.approval}` : `setup ${caseId} none`}</p>;
+  return <p>{q.data ? `setup ${caseId} ${q.data.fixture_name}` : `setup ${caseId} none`}</p>;
 }
 
 function SetupHost() {
@@ -131,14 +131,14 @@ function SetupHost() {
 }
 
 test("the case card's setup view is read again with the script, for the cases named", async () => {
-  const approval: Record<number, string> = { 1: "pending", 2: "pending" };
+  const fixture: Record<number, string> = { 1: "old", 2: "old" };
   const reads: number[] = [];
   mockIPC(
     (cmd, args) => {
       if (cmd === "auto_run_setup_view") {
         const id = (args as { caseId: number }).caseId;
         reads.push(id);
-        return { approval: approval[id] };
+        return { fixture_name: fixture[id] };
       }
       return null;
     },
@@ -150,21 +150,21 @@ test("the case card's setup view is read again with the script, for the cases na
       <SetupHost />
     </QueryClientProvider>,
   );
-  await screen.findByText("setup 1 pending");
-  await screen.findByText("setup 2 pending");
-  approval[1] = "approved";
-  approval[2] = "approved";
+  await screen.findByText("setup 1 old");
+  await screen.findByText("setup 2 old");
+  fixture[1] = "new";
+  fixture[2] = "new";
   reads.length = 0;
   await act(async () => {
     await emit("autorun-scripts-changed", { case_ids: [1] });
   });
-  await screen.findByText("setup 1 approved");
+  await screen.findByText("setup 1 new");
   expect(reads).toEqual([1]);
-  expect(screen.getByText("setup 2 pending")).toBeInTheDocument();
+  expect(screen.getByText("setup 2 old")).toBeInTheDocument();
 
   // No case named: every setup view is read again.
   await act(async () => {
     await emit("autorun-scripts-changed", { case_ids: [] });
   });
-  await screen.findByText("setup 2 approved");
+  await screen.findByText("setup 2 new");
 });

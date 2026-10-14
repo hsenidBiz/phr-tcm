@@ -792,9 +792,8 @@ const testMade: CleanupLine_Serialize[] = [
   },
 ];
 
-/** Case 5001's setup as the script editor shows it: approved once, and
- * changed since, so it waits for a fresh approval. */
-let setupView: SetupView = {
+/** Case 5001's setup as the script editor shows it. */
+const setupView: SetupView = {
   fixture_name: "Locked user",
   account: "portal.admin",
   steps: [
@@ -802,9 +801,6 @@ let setupView: SetupView = {
     "Lock a user account: user_id = {{create.user_id}}",
   ],
   creates: ["user AUTOTEST locked user"],
-  approval: "changed",
-  approved_at: null,
-  fingerprint: "sample-setup-2",
 };
 
 /** A run of a selection, as an unattended run would save it: the machine
@@ -1785,7 +1781,7 @@ function applyPatches() {
     apiTemplatesOverview: () => ok({ origin: SITE, templates: apiTemplates, flows: apiFlows }),
     apiTemplatesRemove: (_o: string, _p: string, id: string) => {
       apiTemplates = apiTemplates.filter((t) => t.template.id !== id);
-      return ok({ needs_reapproval: [], note: null });
+      return ok(null);
     },
     apiTemplatesRemoveFlow: (_o: string, _p: string, id: string) => {
       apiFlows = apiFlows.filter((f) => f.id !== id);
@@ -1812,16 +1808,6 @@ function applyPatches() {
     autoRunCleanupRun: () => err("Demo mode: cleaning up is off in sample data"),
     autoRunCleanupStop: () => ok(null),
     autoRunSetupView: (_o: string, _p: string, caseId: number) => ok(caseId === 5001 ? setupView : null),
-    autoRunApproveSetup: () => {
-      setupView = { ...setupView, approval: "approved", approved_at: "2026-10-06 09:30:00" };
-      return ok(setupView);
-    },
-    autoRunWithdrawSetup: () => {
-      setupView = { ...setupView, approval: "none", approved_at: null };
-      return ok(setupView);
-    },
-    autoRunUnapprovedSetups: (_o: string, _p: string, caseIds: number[]) =>
-      ok(setupView.approval === "approved" ? [] : caseIds.filter((id) => id === 5001)),
 
     buildLog: () =>
       ok(

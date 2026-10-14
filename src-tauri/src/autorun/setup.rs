@@ -10,17 +10,16 @@
 //! Every save path checks the names (`check_saved`, by way of
 //! `nav::check_project_rules`). When a case starts - unattended,
 //! supervised, or replayed to a step - `prepare_case` runs after its
-//! preconditions and before its browser signs in: the setup's approval,
-//! the shared fixtures' outputs, the setup's fixture run (in a browser of
-//! its own, closed and its lease released before it returns), then the
-//! values put into a COPY of the script. The saved script is never
+//! preconditions and before its browser signs in: the shared fixtures'
+//! outputs, the setup's fixture run (in a browser of its own, closed and
+//! its lease released before it returns), then the values put into a COPY
+//! of the script. The saved script is never
 //! changed. A case that cannot start is Blocked with one sentence, and
 //! nothing of it signs in.
 //!
 //! No sentence here carries a host, a query string or a secret: only
 //! fixture ids and names, output names and the runner's own sentences.
 
-use super::approvals::{self, Approval};
 use super::replay::Browsers;
 use super::{CaseScript, Setup, StepScript};
 use crate::api_templates::fixture::Fixture;
@@ -33,10 +32,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-
-/// The Blocked sentence for a setup that is not approved, or whose
-/// fingerprint no longer matches.
-pub const NOT_APPROVED: &str = "setup not approved - approve it in the script editor";
 
 /// The Blocked sentence for a shared fixture with no successful run.
 pub fn not_built(name: &str) -> String {
@@ -61,11 +56,6 @@ pub fn setup_gave_none(output: &str) -> String {
 pub fn start_again(output: &str) -> String {
     format!("setup gave no {output} - start the case again")
 }
-
-/// Said when the setup changed between the person seeing it and pressing
-/// Approve setup: nothing is approved.
-pub const CHANGED_WHILE_LOOKING: &str =
-    "the setup changed while you were looking at it - review it again before approving";
 
 /// Save-time: a setup naming a fixture the project does not have.
 pub fn no_fixture(id: &str) -> String {
@@ -288,178 +278,15 @@ pub fn resolve(
     Ok(CaseScript { steps, ..script.clone() })
 }
 
-/// The sentence for an assistant's replay of case `case_id` refused because
-/// its setup is not approved (`NOT_APPROVED`): approving is the person's
-/// alone, in the script editor; no tool approves a setup.
-pub fn not_approved_for_replay(case_id: i32) -> String {
-    format!(
-        "case {case_id} cannot be replayed: its setup is not approved, or it changed since it was approved. The person approves it in the script editor (Auto Run, case {case_id}'s script, Approve setup); no tool can approve a setup. Ask them, then replay again."
-    )
-}
-
-/// The cases whose saved script has a setup running fixture `fixture_id`
-/// that is approved for what is saved now. Read before that fixture is
-/// changed, so the change can say whose approval it undid
-/// (`no_longer_approved`).
-pub fn approved_setups(root: &Path, org: &str, project: &str, fixture_id: &str) -> Vec<i32> {
-    super::store::list_scripts(root)
-        .into_iter()
-        .filter(|s| s.setup.as_ref().is_some_and(|x| x.fixture == fixture_id))
-        .filter(|s| setup_approved(root, org, project, s))
-        .map(|s| s.case_id)
-        .collect()
-}
-
-/// Of `cases`, the ones whose setup's approval no longer counts: the
-/// setup, its fixture or a template it runs changed since.
-pub fn no_longer_approved(root: &Path, org: &str, project: &str, cases: &[i32]) -> Vec<i32> {
-    cases
-        .iter()
-        .copied()
-        .filter(|id| match super::store::load_script(root, *id) {
-            Ok(Some(script)) => !setup_approved(root, org, project, &script),
-            _ => false,
-        })
-        .collect()
-}
-
-/// Of `scripts`, the cases whose setup is approved for what is saved now.
-/// A script save reads it of the scripts on disk before it writes, so it
-/// can say whose approval the save undid (`undone_by_save`).
-pub fn approved_among(root: &Path, org: &str, project: &str, scripts: &[&CaseScript]) -> Vec<i32> {
-    scripts.iter().filter(|s| setup_approved(root, org, project, s)).map(|s| s.case_id).collect()
-}
-
-/// Of `before` (cases approved before a script save, `approved_among`),
-/// the ones whose setup is no longer approved as `after` has it. The
-/// fingerprint takes only the setup, its fixture and the templates it
-/// runs, so a save that changes only a case's own steps undoes nothing;
-/// one that changes the setup does.
-pub fn undone_by_save(root: &Path, org: &str, project: &str, before: &[i32], after: &[CaseScript]) -> Vec<i32> {
-    before
-        .iter()
-        .copied()
-        .filter(|id| after.iter().find(|s| s.case_id == *id).is_some_and(|s| !setup_approved(root, org, project, s)))
-        .collect()
-}
-
-/// Of `case_ids`, the ones whose saved script has a setup that is not
-/// approved for what is saved now (never approved, withdrawn, or changed
-/// since): each of them is Blocked when a run reaches it. A setup whose
-/// fixture is not saved is not named: that case fails its setup instead.
-pub fn not_approved(root: &Path, org: &str, project: &str, case_ids: &[i32]) -> Vec<i32> {
-    case_ids
-        .iter()
-        .copied()
-        .filter(|id| match super::store::load_script(root, *id) {
-            Ok(Some(script)) => match &script.setup {
-                None => false,
-                Some(s) => current(root, org, project, s).is_ok_and(|now| {
-                    !matches!(approvals::state(root, *id, &now.fingerprint), Approval::Approved { .. })
-                }),
-            },
-            _ => false,
-        })
-        .collect()
-}
-
-/// Is `script`'s setup approved for what is saved now?
-fn setup_approved(root: &Path, org: &str, project: &str, script: &CaseScript) -> bool {
-    let Some(setup) = &script.setup else { return false };
-    current(root, org, project, setup)
-        .is_ok_and(|now| matches!(approvals::state(root, script.case_id, &now.fingerprint), Approval::Approved { .. }))
-}
-
-/// The line a change answers with when it undid setup approvals: each case
-/// by its id, and who approves them again.
-pub fn needs_reapproval_line(cases: &[i32]) -> String {
-    let ids: Vec<String> = cases.iter().map(|c| format!("#{c}")).collect();
-    format!(
-        "needs re-approval: {} - this change undid the approval of each one's setup, so its runs and replays are Blocked until the person approves it again in the script editor (no tool can)",
-        ids.join(", ")
-    )
-}
-
-/// Every case whose saved script has a setup approved for what is saved
-/// now. Read before a change to a template or a fixture, so the change
-/// can say whose approval it undid (`no_longer_approved`).
-pub fn approved_now(root: &Path, org: &str, project: &str) -> Vec<i32> {
-    super::store::list_scripts(root)
-        .into_iter()
-        .filter(|s| setup_approved(root, org, project, s))
-        .map(|s| s.case_id)
-        .collect()
-}
-
-/// Runs `change` (anything that writes a template or a fixture, which the
-/// fingerprint takes) and gives back its result with the cases whose
-/// setup approval it undid. What was approved is read first; only a
-/// change that went through can have undone anything, and the caller
-/// says so in its answer (`Reapproval`, `add_reapproval`).
-pub fn reapproval_after<T, E>(
-    root: &Path,
-    org: &str,
-    project: &str,
-    change: impl FnOnce() -> Result<T, E>,
-) -> (Result<T, E>, Vec<i32>) {
-    let before = approved_now(root, org, project);
-    let done = change();
-    let undone =
-        if done.is_ok() && !before.is_empty() { no_longer_approved(root, org, project, &before) } else { Vec::new() };
-    if !undone.is_empty() {
-        crate::applog::info(format!("setup approvals undone for {undone:?}"));
-    }
-    (done, undone)
-}
-
-/// A JSON answer's `needs_reapproval: [ids]` and `note` (the
-/// `needs_reapproval_line`), added only when the change undid any.
-pub fn add_reapproval(answer: &mut serde_json::Value, undone: &[i32]) {
-    if undone.is_empty() || !answer.is_object() {
-        return;
-    }
-    answer["needs_reapproval"] = serde_json::json!(undone);
-    answer["note"] = serde_json::json!(needs_reapproval_line(undone));
-}
-
-/// What a webview change to a template says about the setup approvals it
-/// undid: the cases, and `needs_reapproval_line` when there are any.
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
-pub struct Reapproval {
-    pub needs_reapproval: Vec<i32>,
-    pub note: Option<String>,
-}
-
-impl Reapproval {
-    pub fn of(undone: Vec<i32>) -> Self {
-        let note = (!undone.is_empty()).then(|| needs_reapproval_line(&undone));
-        Reapproval { needs_reapproval: undone, note }
-    }
-}
-
-/// The lines a script save answers with when it undid setup approvals:
-/// `needs_reapproval: [ids]`, then `needs_reapproval_line`. A dry run says
-/// the same of what the save would undo.
-pub fn needs_reapproval_lines(cases: &[i32], dry_run: bool) -> Vec<String> {
-    let ids: Vec<String> = cases.iter().map(i32::to_string).collect();
-    let line = needs_reapproval_line(cases);
-    vec![
-        format!("needs_reapproval: [{}]", ids.join(", ")),
-        if dry_run { format!("if saved, {line}") } else { line },
-    ]
-}
-
-/// A setup's fixture as it is saved now, with its fingerprint.
+/// A setup's fixture as it is saved now.
 pub struct Current {
     pub fixture: Fixture,
     /// One per fixture step, `None` for a template that is not saved.
     pub templates: Vec<Option<ApiTemplate>>,
-    pub fingerprint: String,
 }
 
-/// The setup's fixture and its step templates as saved now, and their
-/// fingerprint. `Err` is the sentence for a fixture that is not saved or
-/// does not read.
+/// The setup's fixture and its step templates as saved now. `Err` is the
+/// sentence for a fixture that is not saved or does not read.
 pub fn current(root: &Path, org: &str, project: &str, setup: &Setup) -> Result<Current, String> {
     let fixture = fixture_store::load(root, org, project, &setup.fixture)?.ok_or_else(|| no_such_fixture(&setup.fixture))?;
     let templates: Vec<Option<ApiTemplate>> = fixture
@@ -467,8 +294,7 @@ pub fn current(root: &Path, org: &str, project: &str, setup: &Setup) -> Result<C
         .iter()
         .map(|s| template_store::load(root, org, project, &s.template).ok().flatten())
         .collect();
-    let fingerprint = approvals::fingerprint(setup, &fixture, &templates);
-    Ok(Current { fixture, templates, fingerprint })
+    Ok(Current { fixture, templates })
 }
 
 /// What a case start hands on: its script with every fixture value filled
@@ -527,8 +353,8 @@ where
 
 /// Everything a case needs from fixtures before it signs in, in order:
 ///
-/// 1. its setup's approval: not approved, or approved for a fingerprint
-///    that no longer matches, is `NOT_APPROVED`, and nothing opens;
+/// 1. its setup's fixture as saved now: one that is not saved is
+///    `setup_failed`, and nothing opens;
 /// 2. its shared fixtures' current outputs: one never built is
 ///    `not_built`, and nothing opens;
 /// 3. its setup's fixture run, in a browser from `browsers` holding the
@@ -540,7 +366,7 @@ where
 /// 4. the values into a copy of the script (`resolve`).
 ///
 /// `before_run` is called with the fixture's account once every check that
-/// can still Block has passed (the approval, the shared fixtures, the
+/// can still Block has passed (the setup's fixture, the shared fixtures, the
 /// one-at-a-time slot and the run's own checks before it signs in), just
 /// before the setup's browser opens: where a supervised browser makes way
 /// (`make_way`). It is never called for a case that will not run its setup.
@@ -571,16 +397,7 @@ where
 
     let setup = match &script.setup {
         None => None,
-        Some(s) => {
-            let now = current(root, org, project, s).map_err(|why| setup_failed(&why))?;
-            match approvals::state(root, id, &now.fingerprint) {
-                Approval::Approved { .. } => Some(now),
-                other => {
-                    crate::applog::info(format!("case {id}: setup is {}, so the case is Blocked", other.word()));
-                    return Err(NOT_APPROVED.to_string());
-                }
-            }
-        }
+        Some(s) => Some(current(root, org, project, s).map_err(|why| setup_failed(&why))?),
     };
 
     let fixtures = fixture_values(root, org, project, &script.steps);
@@ -594,8 +411,8 @@ where
         let Some(_claim) = claim() else {
             return Err(setup_failed(API_TEMPLATE_BUSY));
         };
-        // The templates that were fingerprinted, never read again: what
-        // runs is exactly what the person approved.
+        // The templates read with the fixture, never read again: what runs
+        // is exactly what was checked.
         let f = &now.fixture;
         fixture_run::ready_to_run(root, org, project, f, Some(&now.templates)).map_err(|why| setup_failed(&why))?;
         if cancel.load(Ordering::SeqCst) {
@@ -741,7 +558,7 @@ fn fill_supervised(
 pub const NO_SETUP_BROWSER: &str = "no browser is given for a setup here";
 
 /// Browsers for a caller with none to give a setup: every open is refused
-/// (`NO_SETUP_BROWSER`), so an approved setup fails there and its case is
+/// (`NO_SETUP_BROWSER`), so a setup fails there and its case is
 /// Blocked rather than run without its draft.
 pub struct NoBrowsers<D>(std::marker::PhantomData<D>);
 
@@ -761,8 +578,7 @@ impl<D: crate::browser::cdp::Driver> Browsers for NoBrowsers<D> {
     async fn close(&mut self, _d: D) {}
 }
 
-/// A case's setup as the script editor shows it, with where its approval
-/// stands.
+/// A case's setup as the script editor shows it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 pub struct SetupView {
     pub fixture_name: String,
@@ -772,13 +588,6 @@ pub struct SetupView {
     pub steps: Vec<String>,
     /// What it makes, each as `<kind> <name>`.
     pub creates: Vec<String>,
-    /// `approved`, `changed` (approved once, changed since) or `none`.
-    pub approval: String,
-    /// When it was approved, while `approval` is `approved`.
-    pub approved_at: Option<String>,
-    /// What Approve setup signs: it approves only while the setup still
-    /// has this fingerprint (`approval_target`).
-    pub fingerprint: String,
 }
 
 /// One fixture step as the editor shows it: its template's title (or its
@@ -798,33 +607,13 @@ fn step_line(step: &crate::api_templates::fixture::FixtureStep, t: Option<&ApiTe
 pub fn view(root: &Path, org: &str, project: &str, script: &CaseScript) -> Result<Option<SetupView>, String> {
     let Some(s) = &script.setup else { return Ok(None) };
     let now = current(root, org, project, s)?;
-    let approval = approvals::state(root, script.case_id, &now.fingerprint);
     let f = &now.fixture;
     Ok(Some(SetupView {
         fixture_name: f.name.clone(),
         account: f.account.clone(),
         steps: f.steps.iter().zip(&now.templates).map(|(step, t)| step_line(step, t.as_ref())).collect(),
         creates: f.creates.iter().map(|c| format!("{} {}", c.kind, c.name)).collect(),
-        approval: approval.word().to_string(),
-        approved_at: match approval {
-            Approval::Approved { at } => Some(at),
-            _ => None,
-        },
-        fingerprint: now.fingerprint.clone(),
     }))
-}
-
-/// The fingerprint Approve setup may record for `script`: the setup's as
-/// saved now, and only when it is the one the person was shown
-/// (`expected`, from `SetupView::fingerprint`). Otherwise
-/// `CHANGED_WHILE_LOOKING`, and nothing may be approved.
-pub fn approval_target(root: &Path, org: &str, project: &str, script: &CaseScript, expected: &str) -> Result<String, String> {
-    let Some(s) = &script.setup else { return Err(format!("case {}'s script has no setup", script.case_id)) };
-    let now = current(root, org, project, s)?;
-    if now.fingerprint != expected {
-        return Err(CHANGED_WHILE_LOOKING.to_string());
-    }
-    Ok(now.fingerprint)
 }
 
 /// Before a supervised setup signs in as `key`: when the supervised browser

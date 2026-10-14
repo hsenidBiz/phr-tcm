@@ -1503,8 +1503,8 @@ pub fn auto_run_stop_replay() {
 /// off). Neither: the case goes on. The active environment's database is
 /// looked up only when the case's script has preconditions. Once they are
 /// met, the case's fixtures are prepared as an unattended case's are
-/// (`autorun::setup::check_supervised`): a setup not approved, a shared
-/// fixture never built or a failed setup run is `blocked` with its
+/// (`autorun::setup::check_supervised`): a setup fixture that is not
+/// saved, a shared fixture never built or a failed setup run is `blocked` with its
 /// sentence, and what the setup gave is kept for the case's steps.
 #[tauri::command]
 #[specta::specta]
@@ -1845,8 +1845,7 @@ pub fn save_script_from_editor(
         project: _,
         checked: _,
         // The stored script's. Only the assistant writes a setup, so the
-        // webview can never change a fixture or write an old one back over
-        // an approval.
+        // webview can never change a fixture or write an old one back.
         setup,
         fail_on_unexpected_dialog,
         page_errors,

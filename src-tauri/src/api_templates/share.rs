@@ -97,8 +97,6 @@ pub struct TemplatesImportResult {
     pub replaced: Vec<String>,
     pub skipped: Vec<TemplatesImportSkip>,
     pub notes: Vec<TemplatesImportNote>,
-    /// The setups whose approval a replaced template undid.
-    pub reapproval: crate::autorun::setup::Reapproval,
 }
 
 /// The file for these templates and flows, proof stripped from each.

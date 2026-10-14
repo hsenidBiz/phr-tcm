@@ -69,27 +69,17 @@ pub fn api_templates_remove(
     organization: String,
     project: String,
     id: String,
-) -> Result<crate::autorun::setup::Reapproval, String> {
+) -> Result<(), String> {
     refuse_unless_offered()?;
     let root = crate::commands::autorun::root(&app)?;
     remove_template_at(&root, &organization, &project, &id)
 }
 
-/// `api_templates_remove` for a given data root. A setup that runs the
-/// template no longer matches what its person approved, so the answer
-/// names each one (`Reapproval`).
-pub fn remove_template_at(
-    root: &std::path::Path,
-    organization: &str,
-    project: &str,
-    id: &str,
-) -> Result<crate::autorun::setup::Reapproval, String> {
-    let (removed, undone) = crate::autorun::setup::reapproval_after(root, organization, project, || {
-        store::remove(root, organization, project, id)
-    });
-    removed?;
+/// `api_templates_remove` for a given data root.
+pub fn remove_template_at(root: &std::path::Path, organization: &str, project: &str, id: &str) -> Result<(), String> {
+    store::remove(root, organization, project, id)?;
     crate::applog::info(format!("api template removed: {id}"));
-    Ok(crate::autorun::setup::Reapproval::of(undone))
+    Ok(())
 }
 
 /// Every saved fixture of the project, with its run history, for the
@@ -358,9 +348,6 @@ pub fn import_at(
             Err(e) => result.skipped.push(could_not_save("flow", &f.id, e)),
         }
     }
-    // The setups approved before any template here is replaced: a body
-    // that changed undoes theirs, and the result names each one.
-    let approved = crate::autorun::setup::approved_now(root, organization, project);
     for t in &plan.templates {
         let existed = !matches!(store::load(root, organization, project, &t.id), Ok(None));
         match store::save(root, organization, project, t) {
@@ -421,11 +408,6 @@ pub fn import_at(
         result.skipped.len(),
         result.notes.len()
     ));
-    let undone = crate::autorun::setup::no_longer_approved(root, organization, project, &approved);
-    if !undone.is_empty() {
-        crate::applog::info(format!("api templates import: setup approvals undone for {undone:?}"));
-    }
-    result.reapproval = crate::autorun::setup::Reapproval::of(undone);
     Ok(result)
 }
 
