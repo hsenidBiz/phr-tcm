@@ -127,6 +127,8 @@ export default function Accounts({ clone, onChanged }: { clone: string; onChange
     queryFn: () => unwrapStr(commands.pwUsersList(clone)),
     // A failed listing is a repo command that failed: List again retries.
     retry: false,
+    // A change here sets the new list; List again and Refresh read it again.
+    staleTime: Infinity,
   });
   const [form, setForm] = useState<Form | null>(null);
   /** The form as it is now, for a preview that answers after an edit. */

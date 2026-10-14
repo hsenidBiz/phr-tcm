@@ -71,6 +71,8 @@ export default function Runner({ clone }: { clone: string }) {
     queryKey: [REPORTS_KEY, clone],
     queryFn: () => unwrapStr(commands.pwReports(clone)),
     retry: false,
+    // A run's end reads them again (`fetchReports`); Refresh does too.
+    staleTime: Infinity,
   });
   const fetchReports = () => qc.fetchQuery({ queryKey: [REPORTS_KEY, clone], queryFn: () => unwrapStr(commands.pwReports(clone)), retry: false });
 

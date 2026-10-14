@@ -19,11 +19,11 @@ import {
   useClearExportRequestOnUnmount,
   usePlaywrightExportRequest,
 } from "../../lib/playwrightExport";
-import Accounts from "./Accounts";
+import Accounts, { ACCOUNTS_KEY } from "./Accounts";
 import HealthLine, { HEALTH_TEXT, WARNING_ONLY } from "./HealthLine";
 import { Hint, Stat, SubTabs, type TabSpec } from "./parts";
 import PlaywrightExportDialog from "./PlaywrightExportDialog";
-import Runner from "./Runner";
+import Runner, { REPORTS_KEY, TESTS_KEY } from "./Runner";
 import Sync, { SYNC_KEY } from "./Sync";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -121,6 +121,9 @@ export default function Playwright({ org, project }: { org: string; project: str
     queryKey: [STRUCTURE_KEY, clone],
     queryFn: () => unwrapStr(commands.pwRepoStructure(clone)),
     enabled: settings.isSuccess && clone !== "",
+    // Kept until something says it changed: Refresh, a change made here
+    // (`changed`), or an export (`closeExport`).
+    staleTime: Infinity,
   });
 
   const choose = async () => {
@@ -152,6 +155,10 @@ export default function Playwright({ org, project }: { org: string; project: str
   // badges say so, and the Runner and Accounts show why instead.
   const runnable = usable && !s.health.includes("NoNodeModules") && !s.health.includes("NoNode");
   const changed = () => void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY, clone] });
+  /** Refresh: every Playwright query is read again, the shown ones now. */
+  const refreshAll = () => {
+    for (const k of [STRUCTURE_KEY, TESTS_KEY, REPORTS_KEY, ACCOUNTS_KEY, SYNC_KEY]) void qc.invalidateQueries({ queryKey: [k] });
+  };
 
   const tabs: TabSpec<Tab>[] = [
     { id: "overview", label: "Overview" },
@@ -182,7 +189,7 @@ export default function Playwright({ org, project }: { org: string; project: str
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" disabled={busy || !clone || structure.isFetching} onClick={() => void structure.refetch()}>
+            <Button size="sm" variant="outline" disabled={busy || !clone || structure.isFetching} onClick={refreshAll}>
               <IconRefresh aria-hidden />
               Refresh
             </Button>

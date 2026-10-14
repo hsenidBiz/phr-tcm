@@ -61,6 +61,8 @@ function mount(clone: string, structure: RepoStructure | (() => RepoStructure) =
     }
     if (cmd === "pw_repo_structure") return typeof structure === "function" ? structure() : structure;
     if (cmd === "pw_export_preview") throw "no preview in this test";
+    if (cmd === "pw_list") return { tests: [], projects: [], last_report: null, load_errors: [] };
+    if (cmd === "pw_reports" || cmd === "pw_users_list" || cmd === "pw_sync_states") return [];
     return null;
   });
   const view = render(
@@ -179,4 +181,25 @@ test("a request left pending is cleared when the tab unmounts, so it cannot reop
   mount("C:/repo");
   await screen.findByText("All good");
   expect(screen.queryByRole("heading", { name: "Export to Playwright" })).not.toBeInTheDocument();
+});
+
+test("Refresh reads every Playwright query again; nothing is read again unasked", async () => {
+  const calls = mount("C:/repo");
+  await screen.findByText("All good");
+  for (const name of ["Runner", "Accounts 2", "Sync"]) fireEvent.click(screen.getByRole("tab", { name }));
+  const PW = ["pw_repo_structure", "pw_list", "pw_reports", "pw_users_list", "pw_sync_states"];
+  await waitFor(() => expect(PW.every((cmd) => calls.some((c) => c.cmd === cmd))).toBe(true));
+  const count = (cmd: string) => calls.filter((c) => c.cmd === cmd).length;
+  const before = Object.fromEntries(PW.map((cmd) => [cmd, count(cmd)]));
+
+  // Going back and forth between the tabs reads nothing again.
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Runner" }));
+  for (const cmd of PW) expect(count(cmd)).toBe(before[cmd]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => {
+    for (const cmd of PW) expect(count(cmd)).toBeGreaterThan(before[cmd]);
+  });
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
 });
