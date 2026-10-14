@@ -148,6 +148,23 @@ test("the review lists each wait for the network", async () => {
   ]);
 });
 
+test("a wait under a minute shows seconds, a longer one minutes", async () => {
+  renderReview({
+    ...RUN,
+    network_pauses: [
+      { before_case_id: 202, waited_ms: 42900, outcome: "resumed" },
+      { before_case_id: 203, waited_ms: 59999, outcome: "resumed" },
+      { before_case_id: 204, waited_ms: 60000, outcome: "resumed" },
+    ],
+  });
+  const list = await screen.findByRole("list", { name: "Waits for the network" });
+  expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+    "Waited 42 s for the network before #202",
+    "Waited 59 s for the network before #203",
+    "Waited 1 min for the network before #204",
+  ]);
+});
+
 test("a run with no waits lists none", async () => {
   renderReview(RUN);
   await screen.findByText(/proposed: failed - step 2/i);

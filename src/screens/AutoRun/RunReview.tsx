@@ -36,9 +36,11 @@ type SentResult = Extract<PublishResult, { status: "sent" }>;
 
 /** One wait for the network, as the review lists it. */
 export function networkPauseLine(p: { before_case_id: number; waited_ms?: number; outcome?: string }): string {
-  const n = Math.max(1, Math.round((p.waited_ms ?? 0) / 60000));
+  const ms = p.waited_ms ?? 0;
   const end = p.outcome === "stopped" ? " (stopped)" : p.outcome === "gave_up" ? " (gave up)" : "";
-  return `Waited ${n} min for the network before #${p.before_case_id}${end}`;
+  // Under a minute the panel's own whole-second counter (floored) is shown as seconds.
+  const waited = ms < 60000 ? `${Math.max(0, Math.floor(ms / 1000))} s` : `${Math.round(ms / 60000)} min`;
+  return `Waited ${waited} for the network before #${p.before_case_id}${end}`;
 }
 
 /** Epoch milliseconds as a string; the Rust side sends it that way because
