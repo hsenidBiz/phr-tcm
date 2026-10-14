@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, ChevronDown, ChevronRight, GitPullRequest, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../lib/toast";
 import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } from "../bindings";
@@ -59,7 +59,10 @@ function staleDays(changed: string): number {
   return Math.floor((Date.now() - t) / 86_400_000);
 }
 
-function Card({
+/** One board card. Memo: its handlers are the board's state setters,
+ * called with the card's own item, so a drag or a hover elsewhere on the
+ * board draws no card again. */
+const Card = memo(function Card({
   item,
   prLinks = [],
   onDragStart,
@@ -67,16 +70,16 @@ function Card({
 }: {
   item: BoardItem;
   prLinks?: PrLink[];
-  onDragStart: () => void;
-  onOpen: () => void;
+  onDragStart: (item: BoardItem) => void;
+  onOpen: (id: number) => void;
 }) {
   const stale = staleDays(item.changed_date);
   const isStale = stale >= STALE_DAYS && item.column !== "Done";
   return (
     <div
       draggable
-      onDragStart={onDragStart}
-      onClick={onOpen}
+      onDragStart={() => onDragStart(item)}
+      onClick={() => onOpen(item.id)}
       title={isStale ? `No changes in ${stale} days` : undefined}
       className={cn(
         "cv-row cursor-pointer space-y-1 rounded-md border border-border bg-surface p-2 text-sm hover:border-accent",
@@ -142,7 +145,7 @@ function Card({
       </div>
     </div>
   );
-}
+});
 
 export default function WorkBoard({
   org,
@@ -656,8 +659,8 @@ export default function WorkBoard({
                 key={item.id}
                 item={item}
                 prLinks={prByItem.get(item.id)}
-                onDragStart={() => setDragging(item)}
-                onOpen={() => setOpenItem(item.id)}
+                onDragStart={setDragging}
+                onOpen={setOpenItem}
               />
             ))}
             </div>

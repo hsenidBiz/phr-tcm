@@ -8,7 +8,7 @@
 // that has none.
 
 import { useQuery } from "@tanstack/react-query";
-import { useId } from "react";
+import { memo, useId, type CSSProperties } from "react";
 import type { Action, CaseScript } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -74,7 +74,12 @@ function SectionLabel({ children }: { children: string }) {
   return <p className="text-xs font-medium text-muted">{children}</p>;
 }
 
-export default function CaseCard({
+/** One case of the list. Memo: its handlers take the case's id and are the
+ * same functions on every render of the list, and its other props are the
+ * list's own values, so ticking or opening one card draws only that card. */
+export default memo(CaseCard);
+
+function CaseCard({
   c,
   org,
   project,
@@ -100,17 +105,17 @@ export default function CaseCard({
   script: CaseScript | null | undefined;
   result: ResultBucket;
   selected: boolean;
-  onSelect: () => void;
+  onSelect: (id: number) => void;
   open: boolean;
-  onToggleOpen: () => void;
-  onEdit: () => void;
-  onRun: () => void;
+  onToggleOpen: (id: number) => void;
+  onEdit: (id: number) => void;
+  onRun: (id: number) => void;
   /** Why Run waits, when it does: an unattended run is going, or a
    * discovery holds the Auto Run browser. */
   runBlocked?: string;
   /** The suspected-defect Clear is waiting on Keep or Clear. */
   confirmingClear: boolean;
-  onAskClear: () => void;
+  onAskClear: (id: number) => void;
   onClearDone: () => void;
   /** The run the last result came from, with this case's steps in it. */
   lastRun?: { runId: string; steps?: ReadonlyArray<{ downloads?: string[] }> };
@@ -132,7 +137,15 @@ export default function CaseCard({
   });
 
   return (
-    <li className="rounded-md border border-border bg-surface text-sm">
+    <li
+      className={cn(
+        // A long list skips painting the cards off screen. An open card
+        // drops it: its confirm and its files must paint past its box.
+        !open && "cv-row",
+        "rounded-md border border-border bg-surface text-sm",
+      )}
+      style={{ "--cv-size": "42px" } as CSSProperties}
+    >
       <div className="flex items-center gap-2 px-3 py-2">
         <Button
           variant="ghost"
@@ -141,7 +154,7 @@ export default function CaseCard({
           aria-label={`${open ? "Hide" : "Show"} details for #${c.id}`}
           aria-expanded={open}
           aria-controls={open ? bodyId : undefined}
-          onClick={onToggleOpen}
+          onClick={() => onToggleOpen(c.id)}
         >
           {open ? <IconHideDetails aria-hidden /> : <IconShowDetails aria-hidden />}
         </Button>
@@ -152,7 +165,7 @@ export default function CaseCard({
           checked={selected}
           ariaLabel={`Select #${c.id}`}
           className={ready ? undefined : "invisible"}
-          onCheckedChange={() => ready && onSelect()}
+          onCheckedChange={() => ready && onSelect(c.id)}
         />
         <span className="id-mono shrink-0 text-faint">#{c.id}</span>
         {/* The title gets the room and wraps: a truncated title is exactly
@@ -163,7 +176,7 @@ export default function CaseCard({
           aria-expanded={open}
           aria-controls={open ? bodyId : undefined}
           className="min-w-0 flex-1 break-words text-left text-text transition-colors hover:text-accent"
-          onClick={onToggleOpen}
+          onClick={() => onToggleOpen(c.id)}
         >
           {c.title}
         </button>
@@ -211,7 +224,7 @@ export default function CaseCard({
                 )}
                 {defect && (
                   <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <SuspectedDefectBadge caseId={c.id} defect={defect} onClear={onAskClear} />
+                    <SuspectedDefectBadge caseId={c.id} defect={defect} onClear={() => onAskClear(c.id)} />
                     <span className="min-w-0 flex-1 break-words text-xs text-text">
                       Step {defect.step_number}: {defect.note}
                     </span>
@@ -277,7 +290,7 @@ export default function CaseCard({
               size="sm"
               variant="outline"
               aria-label={`${ready ? "Edit" : "Add"} script for #${c.id}`}
-              onClick={onEdit}
+              onClick={() => onEdit(c.id)}
             >
               {ready ? <IconEdit aria-hidden /> : <IconAdd aria-hidden />}
               {ready ? "Script" : "Add script"}
@@ -292,7 +305,7 @@ export default function CaseCard({
                 // discovery holds the browser, this waits, and its title says why.
                 disabled={Boolean(runBlocked)}
                 title={runBlocked}
-                onClick={onRun}
+                onClick={() => onRun(c.id)}
               >
                 <IconRun aria-hidden />
                 Run

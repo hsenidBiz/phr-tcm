@@ -8,7 +8,7 @@
 
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
 import { commands, events, type AutorunResetNeeded, type PbiHit, type PlanView } from "../../bindings";
@@ -612,11 +612,37 @@ export default function AutoRun({
   };
 
 
+  /** What a card's buttons do, by case id. The functions are made once and
+   * always reach this render's state through `cardLatest`, so the cards
+   * (memo) are not drawn again for new handlers and never act on an old
+   * render's state. */
+  const cardLatest = useRef({ toggleOne, toggleCard, runIsGoing });
+  cardLatest.current = { toggleOne, toggleCard, runIsGoing };
+  const cardActions = useMemo(
+    () => ({
+      onSelect: (id: number) => cardLatest.current.toggleOne(id),
+      onToggleOpen: (id: number) => cardLatest.current.toggleCard(id),
+      onEdit: (id: number) => setEditing(id),
+      onRun: (id: number) => {
+        if (!cardLatest.current.runIsGoing()) setRunning([id]);
+      },
+      onAskClear: (id: number) => setConfirmingClear(id),
+      onClearDone: () => setConfirmingClear(null),
+    }),
+    [],
+  );
+  /** Each case's last run, one object per run record, so a card's prop is
+   * the same object until the runs change. */
+  const lastRunOf = useMemo(() => {
+    const out = new Map<number, NonNullable<ComponentProps<typeof CaseCard>["lastRun"]>>();
+    for (const [id, rec] of lastRec) out.set(id, { runId: rec.run.id, steps: rec.record.steps });
+    return out;
+  }, [lastRec]);
+
   /** One case card, by its index in `rows` - grouped and flat both render
    * the same thing, and `scripts[i]` is indexed the same way. */
   const card = (i: number) => {
     const c = rows[i];
-    const rec = lastRec.get(c.id);
     return (
       <CaseCard
         key={c.id}
@@ -626,18 +652,11 @@ export default function AutoRun({
         script={scripts[i]}
         result={lastOf(i)}
         selected={selected.has(c.id)}
-        onSelect={() => toggleOne(c.id)}
         open={openHere.has(c.id)}
-        onToggleOpen={() => toggleCard(c.id)}
-        onEdit={() => setEditing(c.id)}
-        onRun={() => {
-          if (!runIsGoing()) setRunning([c.id]);
-        }}
         runBlocked={runBlocked}
         confirmingClear={confirmingClear === c.id}
-        onAskClear={() => setConfirmingClear(c.id)}
-        onClearDone={() => setConfirmingClear(null)}
-        lastRun={rec ? { runId: rec.run.id, steps: rec.record.steps } : undefined}
+        lastRun={lastRunOf.get(c.id)}
+        {...cardActions}
       />
     );
   };

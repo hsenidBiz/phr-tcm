@@ -7,6 +7,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import type { ComponentProps } from "react";
 import type { CaseScript } from "../../bindings";
 import CaseCard, { scriptFacts, scriptFiles } from "./CaseCard";
 import { matchesSearch } from "./CaseSearch";
@@ -58,7 +59,7 @@ const BARE: CaseScript = {
   steps: [{ step_number: 1, actions: [] }],
 } as CaseScript;
 
-function renderCard(props: Partial<Parameters<typeof CaseCard>[0]> = {}) {
+function renderCard(props: Partial<ComponentProps<typeof CaseCard>> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const handlers = {
     onSelect: vi.fn(),
@@ -113,6 +114,7 @@ test("the chevron and the title both open the card, and the chevron names its ca
   fireEvent.click(chevron);
   fireEvent.click(screen.getByRole("button", { name: "Apply for leave" }));
   expect(onToggleOpen).toHaveBeenCalledTimes(2);
+  expect(onToggleOpen).toHaveBeenCalledWith(7);
 });
 
 test("an open card shows the Script, Steps and Files sections, then Script and Run", () => {
@@ -145,6 +147,8 @@ test("an open card shows the Script, Steps and Files sections, then Script and R
   fireEvent.click(screen.getByRole("button", { name: "Run #7" }));
   expect(onEdit).toHaveBeenCalledTimes(1);
   expect(onRun).toHaveBeenCalledTimes(1);
+  expect(onEdit).toHaveBeenCalledWith(7);
+  expect(onRun).toHaveBeenCalledWith(7);
 });
 
 test("an open card says how the script treats page errors", () => {
@@ -209,6 +213,7 @@ test("a suspected defect shows on the open card, with its step and note", () => 
   expect(screen.getByText("Step 1: No lockout message")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Clear suspected defect for #7" }));
   expect(onAskClear).toHaveBeenCalledTimes(1);
+  expect(onAskClear).toHaveBeenCalledWith(7);
 });
 
 test("a collapsed card with a suspected defect shows an icon marker, and still no extra button", () => {

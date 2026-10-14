@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "../../lib/toast";
 import { commands, type PbiHit, type TestCaseFull } from "../../bindings";
@@ -42,6 +42,77 @@ import {
  * (chevron/double-click expands a read-only detail), Group by Title,
  * click/ctrl/shift selection - and View in browser renders the selection
  * (or everything the filter shows when nothing is selected). */
+/** One case of the list. Memo: its handlers are made once by the list and
+ * reach the list's current state themselves, so a click on one case draws
+ * only the rows whose selection, open state or comment changed. */
+const ViewRow = memo(function ViewRow({
+  c,
+  selected,
+  open,
+  note,
+  onCardClick,
+  onToggleOpen,
+  onComment,
+  onSaveNote,
+}: {
+  c: TestCaseFull;
+  selected: boolean;
+  open: boolean;
+  note: string;
+  onCardClick: (c: TestCaseFull, e: MouseEvent) => void;
+  onToggleOpen: (id: number) => void;
+  onComment: (c: TestCaseFull) => void;
+  onSaveNote: (id: number, text: string) => void;
+}) {
+  return (
+    <li
+      className={cn(
+        "cv-row cursor-pointer select-none rounded-md border transition-colors",
+        selected ? "border-accent bg-accent-soft" : "border-border hover:border-border-strong",
+      )}
+      onClick={(e) => onCardClick(c, e)}
+      onDoubleClick={() => onToggleOpen(c.id)}
+    >
+      <div className="flex items-center gap-2 px-3 py-2 text-sm">
+        <button
+          aria-label={`Expand #${c.id}`}
+          className="text-muted hover:text-accent"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleOpen(c.id);
+          }}
+        >
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
+        <span className="id-mono text-faint">#{c.id}</span>
+        <span className="text-text">{c.title}</span>
+        {note && (
+          <button
+            aria-label="Has a local comment"
+            title={note}
+            className="flex shrink-0 items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent-soft/80"
+            onClick={(e) => {
+              // A focused dialog for the comment - no need to
+              // expand the whole case.
+              e.stopPropagation();
+              onComment(c);
+            }}
+          >
+            <MessageSquare size={11} />
+            <span className="label-trim">Comment</span>
+          </button>
+        )}
+        <span className="ml-auto text-xs text-faint">
+          {c.steps.length} steps · {c.automation_status}
+        </span>
+      </div>
+      <Collapse open={open}>
+        <CaseDetail c={c} note={note} onSaveNote={(text) => onSaveNote(c.id, text)} />
+      </Collapse>
+    </li>
+  );
+});
+
 export default function ViewCases({
   org,
   project,
@@ -142,7 +213,7 @@ export default function ViewCases({
     .filter((g) => g && !collapsedGroups.has(g));
   const collapsible = openIds.size + openGroupNames.length;
 
-  const handleCardClick = (c: TestCaseFull, e: React.MouseEvent) => {
+  const handleCardClick = (c: TestCaseFull, e: MouseEvent) => {
     const idx = flat.findIndex((x) => x.id === c.id);
     if (e.shiftKey && anchor != null) {
       const a = flat.findIndex((x) => x.id === anchor);
@@ -166,6 +237,21 @@ export default function ViewCases({
     }
     setAnchor(c.id);
   };
+
+  /** The rows' handlers, made once: each reaches this render's state
+   * through `rowLatest`, so a row (memo) is not drawn again for new
+   * handlers and never acts on an old selection. */
+  const rowLatest = useRef({ handleCardClick, toggleOpen, org });
+  rowLatest.current = { handleCardClick, toggleOpen, org };
+  const rowActions = useMemo(
+    () => ({
+      onCardClick: (c: TestCaseFull, e: MouseEvent) => rowLatest.current.handleCardClick(c, e),
+      onToggleOpen: (id: number) => rowLatest.current.toggleOpen(id),
+      onComment: (c: TestCaseFull) => setCommentCase(c),
+      onSaveNote: (id: number, text: string) => setNotes(saveNote(rowLatest.current.org, id, text)),
+    }),
+    [],
+  );
 
   /** Header click: select every case in the group (click again to clear). */
   const toggleGroup = (items: TestCaseFull[]) => {
@@ -430,58 +516,14 @@ export default function ViewCases({
               <Collapse open={shown.length > 0} animateIn={settled && !regroup.regrouping}>
               <ul className="space-y-1">
                 {shown.map((c) => (
-                  <li
+                  <ViewRow
                     key={c.id}
-                    className={cn(
-                      "cv-row cursor-pointer select-none rounded-md border transition-colors",
-                      selected.has(c.id)
-                        ? "border-accent bg-accent-soft"
-                        : "border-border hover:border-border-strong",
-                    )}
-                    onClick={(e) => handleCardClick(c, e)}
-                    onDoubleClick={() => toggleOpen(c.id)}
-                  >
-                    <div className="flex items-center gap-2 px-3 py-2 text-sm">
-                      <button
-                        aria-label={`Expand #${c.id}`}
-                        className="text-muted hover:text-accent"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleOpen(c.id);
-                        }}
-                      >
-                        {openIds.has(c.id) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                      </button>
-                      <span className="id-mono text-faint">#{c.id}</span>
-                      <span className="text-text">{c.title}</span>
-                      {notes[String(c.id)] && (
-                        <button
-                          aria-label="Has a local comment"
-                          title={notes[String(c.id)]}
-                          className="flex shrink-0 items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent-soft/80"
-                          onClick={(e) => {
-                            // A focused dialog for the comment - no need to
-                            // expand the whole case.
-                            e.stopPropagation();
-                            setCommentCase(c);
-                          }}
-                        >
-                          <MessageSquare size={11} />
-                          <span className="label-trim">Comment</span>
-                        </button>
-                      )}
-                      <span className="ml-auto text-xs text-faint">
-                        {c.steps.length} steps · {c.automation_status}
-                      </span>
-                    </div>
-                    <Collapse open={openIds.has(c.id)}>
-                      <CaseDetail
-                        c={c}
-                        note={notes[String(c.id)] ?? ""}
-                        onSaveNote={(text) => setNotes(saveNote(org, c.id, text))}
-                      />
-                    </Collapse>
-                  </li>
+                    c={c}
+                    selected={selected.has(c.id)}
+                    open={openIds.has(c.id)}
+                    note={notes[String(c.id)] ?? ""}
+                    {...rowActions}
+                  />
                 ))}
               </ul>
               </Collapse>

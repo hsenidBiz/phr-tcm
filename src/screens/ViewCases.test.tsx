@@ -1,8 +1,23 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { createElement } from "react";
+import { afterEach, expect, test, vi } from "vitest";
 import ViewCases from "./ViewCases";
+
+/** Every closed row draws one ChevronRight: counting them counts the rows
+ * drawn. */
+const chevrons = vi.hoisted(() => ({ renders: 0 }));
+vi.mock("lucide-react", async (real) => {
+  const m = await real<typeof import("lucide-react")>();
+  return {
+    ...m,
+    ChevronRight: (props: Record<string, unknown>) => {
+      chevrons.renders += 1;
+      return createElement(m.ChevronRight, props);
+    },
+  };
+});
 
 afterEach(() => {
   clearMocks();
@@ -317,3 +332,17 @@ test("Export JSON writes the chosen cases through the save dialog", async () => 
   expect(exported[1].firstId).toBe(202);
 });
 
+
+test("a click on one case draws only that row again", async () => {
+  mockCases();
+  renderView();
+  await screen.findByText("Checkout");
+  const before = chevrons.renders;
+  fireEvent.click(screen.getByText("Checkout"));
+  expect(screen.getByText("1 selected")).toBeInTheDocument();
+  expect(chevrons.renders - before).toBe(1);
+  // The next click still sees the selection it made: a stale handler would
+  // select it again instead of clearing it.
+  fireEvent.click(screen.getByText("Checkout"));
+  expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
+});
