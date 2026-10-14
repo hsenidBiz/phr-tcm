@@ -269,10 +269,11 @@ fn kebab_name(title: &str, id: i32) -> String {
 /// component's actions, the way the runner expands it before a run - the
 /// raw spec is the script as it runs. `Err` is the reason the case cannot
 /// be exported.
-fn load_expanded(root: &Path, org: &str, project: &str, id: i32) -> Result<Option<CaseScript>, String> {
-    let Some(mut script) = store::load_script(root, id)? else {
+fn load_expanded(root: &Path, org: &str, project: &str, id: i32, runs: &[LocalRun]) -> Result<Option<CaseScript>, String> {
+    let Some(script) = store::load_script(root, id)? else {
         return Ok(None);
     };
+    let mut script = with_run_account(script, runs);
     for step in &mut script.steps {
         let (expanded, _) = components::expand_step(root, org, project, &step.actions)
             .map_err(|(_, why)| format!("step {}: {why}", step.step_number))?;
@@ -281,12 +282,35 @@ fn load_expanded(root: &Path, org: &str, project: &str, id: i32) -> Result<Optio
     Ok(Some(script))
 }
 
+/// The account case `id` ran as on its newest run, when that run's verdict
+/// is Passed - the account the case was proven with. A script with no Runs
+/// as has only ever run under the account chosen when its run started, so
+/// this is the only record of who it runs as.
+pub fn run_account(runs: &[LocalRun], id: i32) -> Option<String> {
+    let record = runs.iter().find_map(|r| r.cases.iter().find(|c| c.case_id == id))?;
+    if record.verdict.trim() != "Passed" {
+        return None;
+    }
+    record.account.as_deref().map(str::trim).filter(|a| !a.is_empty()).map(str::to_string)
+}
+
+/// `script` with a missing Runs as filled from its newest passing run
+/// (`run_account`); a script's own Runs as always wins.
+fn with_run_account(mut script: CaseScript, runs: &[LocalRun]) -> CaseScript {
+    if script.account.as_deref().map_or(true, |a| a.trim().is_empty()) {
+        script.account = run_account(runs, script.case_id);
+    }
+    script
+}
+
 /// What an export reads of a case, fingerprinted (`sync::fingerprint`):
 /// loaded once for a project, then asked about each case.
 pub struct Fingerprinter {
     map: ExportMap,
     nav: NavFile,
     env_id: String,
+    /// Read once: a script with no Runs as takes its newest passing run's.
+    runs: Vec<LocalRun>,
 }
 
 impl Fingerprinter {
@@ -295,6 +319,7 @@ impl Fingerprinter {
             map: mapping::load(root, org, project)?,
             nav: nav::load_nav(root, org, project)?,
             env_id: crate::environments::active_id(root)?,
+            runs: store::list_runs(root),
         })
     }
 
@@ -310,7 +335,8 @@ impl Fingerprinter {
         let Some(saved) = store::load_script(root, id)? else {
             return Ok(None);
         };
-        let (steps, title) = match load_expanded(root, org, project, id) {
+        let saved = with_run_account(saved, &self.runs);
+        let (steps, title) = match load_expanded(root, org, project, id, &self.runs) {
             Ok(Some(s)) => (serde_json::to_value(&s.steps).unwrap_or_default(), s.title),
             Ok(None) => return Ok(None),
             Err(why) => (serde_json::Value::String(format!("not expandable: {why}")), saved.title.clone()),
@@ -461,11 +487,12 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
 
 /// The repo user key case `id`'s script account maps to in the active
 /// environment, by the export's own mapping (what `evaluate` uses), if any.
-/// Reads only local files.
-pub fn mapped_user_key(root: &Path, org: &str, project: &str, id: i32) -> Option<String> {
+/// Reads only local files. `runs` is `store::list_runs`, read once by the
+/// caller: a script with no Runs as takes its newest passing run's account.
+pub fn mapped_user_key(root: &Path, org: &str, project: &str, id: i32, runs: &[LocalRun]) -> Option<String> {
     let env_id = crate::environments::active_id(root).ok()?;
     let map = mapping::load(root, org, project).ok()?;
-    let script = store::load_script(root, id).ok()??;
+    let script = with_run_account(store::load_script(root, id).ok()??, runs);
     let account = script.account.as_deref().map(str::trim).filter(|a| !a.is_empty())?;
     map.accounts.get(&env_id).and_then(|m| m.get(account)).cloned()
 }
@@ -488,7 +515,7 @@ pub fn preview_with(
     // not placed yet - not for every area the project has recorded.
     let mut suggested: BTreeMap<String, Placement> = BTreeMap::new();
     for &id in case_ids {
-        let script = load_expanded(root, org, project, id);
+        let script = load_expanded(root, org, project, id, &ctx.runs);
         if let Some(Ok((name, _, _))) = script.as_ref().ok().and_then(Option::as_ref).map(|s| route(&ctx, id, s)) {
             if placed(&ctx.map, &name).is_none() && !suggested.keys().any(|k| k.eq_ignore_ascii_case(&name)) {
                 let p = Placement::suggest(&name);
@@ -583,7 +610,7 @@ pub fn split_exportable(
             skipped.push((id, format!("already in the repo ({note})")));
             continue;
         }
-        match evaluate(&ctx, id, load_expanded(root, org, project, id)) {
+        match evaluate(&ctx, id, load_expanded(root, org, project, id, &ctx.runs)) {
             (_, Some(_)) => ok.push(id),
             (pc, None) => skipped.push((id, pc.reason.unwrap_or_default())),
         }
@@ -659,7 +686,7 @@ fn eligible(ctx: &Ctx, root: &Path, org: &str, project: &str, case_ids: &[i32]) 
         if ready.iter().any(|(i, _)| *i == id) {
             continue;
         }
-        let script = load_expanded(root, org, project, id);
+        let script = load_expanded(root, org, project, id, &ctx.runs);
         match evaluate(ctx, id, script) {
             (_, Some(r)) => ready.push((id, r)),
             (pc, None) => {
