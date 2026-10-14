@@ -74,11 +74,21 @@ const addNews = (calls: Call[]) => calls.filter((c) => c.cmd === "pw_sync_add_ne
 
 test("each case shows its state", async () => {
   mount();
-  expect(await screen.findByText("#10 Ten")).toBeTruthy();
+  expect(await screen.findByText("Ten")).toBeTruthy();
   expect(screen.getByText(/every other section and file stay as they are/)).toBeTruthy();
   expect(document.body.textContent).not.toMatch(/nothing else in the repo/i);
   expect(screen.getByText("Current")).toBeTruthy();
-  expect(screen.getByText("Out of date: changed since the export: steps")).toBeTruthy();
+  expect(screen.getAllByText("Out of date")).toHaveLength(2);
+  expect(screen.getByText("changed since the export: steps")).toBeTruthy();
+  expect(screen.getByText("its script is no longer in Auto Run")).toBeTruthy();
+  // Each state is a badge in its tone.
+  const tone = (text: string) => screen.getByText(text).closest("[class*='bg-']")?.className ?? "";
+  expect(tone("Current")).toContain("text-success");
+  expect(tone("Never exported")).toContain("border-border");
+  expect(tone("Not in the repo")).toContain("text-info");
+  expect(tone("In the repo (not from this app)")).toContain("text-info");
+  expect(tone("Excluded in the repo")).toContain("text-muted");
+  expect(screen.getByText("#10")).toBeTruthy();
   expect(screen.getByText("Not in the repo")).toBeTruthy();
   expect(screen.getByText("Never exported")).toBeTruthy();
   expect(screen.getByText("In the repo (not from this app)")).toBeTruthy();
@@ -140,7 +150,7 @@ test("a refused update shows why and changes nothing", async () => {
 
 test("a script change anywhere reads the states again", async () => {
   const m = mount();
-  await screen.findByText("#10 Ten");
+  await screen.findByText("Ten");
   const before = m.calls.filter((c) => c.cmd === "pw_sync_states").length;
   await emit("autorun-scripts-changed", { case_ids: [10] });
   await waitFor(() => expect(m.calls.filter((c) => c.cmd === "pw_sync_states").length).toBeGreaterThan(before));
@@ -159,7 +169,7 @@ test("Add new counts the cases the repo does not have and leaves the rest to Rus
 
 test("Sync explains Add new in plain words", async () => {
   mount();
-  await screen.findByText("#10 Ten");
+  await screen.findByText("Ten");
   expect(document.body.textContent).toContain("Add new exports every case the repo does not have yet.");
   expect(document.body.textContent).not.toMatch(/[–—]/);
 });

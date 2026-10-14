@@ -20,7 +20,6 @@ import { copyText } from "../../lib/clipboard";
 import { unwrapStr } from "../../lib/ipc";
 import { toast } from "../../lib/toast";
 
-const sectionTitle = "text-xs font-semibold uppercase tracking-wide text-muted";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** The one line under the heading. */
@@ -52,7 +51,8 @@ function Card({ card }: { card: HandoffCard }) {
 
   if (card.problem) {
     return (
-      <div className="space-y-1.5" aria-label={`Finish ${label}`}>
+      <div className="space-y-1.5 rounded-lg border border-warning/40 bg-warning/10 p-3" aria-label={`Finish ${label}`}>
+        <p className="font-mono text-xs text-muted">{label}</p>
         <p className="text-xs text-warning">{card.problem}</p>
         {already}
       </div>
@@ -60,13 +60,24 @@ function Card({ card }: { card: HandoffCard }) {
   }
 
   return (
-    <div className="space-y-1.5" aria-label={`Finish ${label}`}>
+    <div className="space-y-2 rounded-lg border border-border bg-surface p-3" aria-label={`Finish ${label}`}>
       {card.prompt && (
         <>
           <p className="text-xs text-text">{`${card.seg}: ${card.case_ids.map((id) => `#${id}`).join(", ")} into specs/${card.stem}.spec.ts`}</p>
-          <Textarea aria-label={`Prompt for ${label}`} readOnly className="h-36 w-full font-mono text-xs" value={card.prompt} />
-          <div className="flex justify-end">
-            <Button size="sm" variant="outline" aria-label={`Copy the prompt for ${label}`} onClick={() => void copy()}>
+          <div className="relative">
+            <Textarea
+              aria-label={`Prompt for ${label}`}
+              readOnly
+              className="h-36 w-full resize-y bg-bg pr-24 font-mono text-xs"
+              value={card.prompt}
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="absolute top-2 right-4 bg-surface"
+              aria-label={`Copy the prompt for ${label}`}
+              onClick={() => void copy()}
+            >
               {copied ? <IconConfirm aria-hidden /> : <IconCopy aria-hidden />}
               {copied ? "Copied" : "Copy"}
             </Button>
@@ -126,7 +137,7 @@ export default function FinishInRepo({
 
   return (
     <section className="space-y-2 border-t border-border pt-3" aria-label="Finish in the repo">
-      <h3 className={sectionTitle}>Finish in the repo</h3>
+      <h3 className="text-sm font-semibold text-text">Finish in the repo</h3>
       <p className="text-xs text-muted">{HANDOFF_NOTE}</p>
       {error && <p className="whitespace-pre-wrap text-xs text-danger">{error}</p>}
       {cards.map((card) => (

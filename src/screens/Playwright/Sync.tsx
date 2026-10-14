@@ -20,7 +20,7 @@
 // updated case says, and Finish in the repo gives the prompt for it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands, events, type ExportResult, type SyncRow, type SyncState } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -28,8 +28,8 @@ import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { IconAdd, IconExport, IconRefresh } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
 import FinishInRepo from "./FinishInRepo";
+import { Card, Hint, StatusBadge, type Tone } from "./parts";
 
-const sectionTitle = "text-xs font-semibold uppercase tracking-wide text-muted";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** The query key of the states; the clone, org and project are part of it. */
@@ -50,7 +50,7 @@ function stateText(s: SyncState): string {
     case "Current":
       return "Current";
     case "OutOfDate":
-      return `Out of date: ${s.why}`;
+      return "Out of date";
     case "NotInRepo":
       return "Not in the repo";
     case "NeverExported":
@@ -62,17 +62,19 @@ function stateText(s: SyncState): string {
   }
 }
 
-function stateTone(s: SyncState): string {
+function stateTone(s: SyncState): Tone {
   switch (s.kind) {
     case "Current":
-      return "text-success";
+      return "success";
     case "OutOfDate":
+      return "warning";
     case "NotInRepo":
-      return "text-warning";
-    case "NeverExported":
     case "InRepoNotFromApp":
+      return "info";
     case "ExcludedInRepo":
-      return "text-muted";
+      return "muted";
+    case "NeverExported":
+      return "neutral";
   }
 }
 
@@ -102,6 +104,11 @@ export default function Sync({
   const [result, setResult] = useState<ExportResult | null>(null);
   /** The last write was Add new: an empty one says there was nothing new. */
   const [wasAddNew, setWasAddNew] = useState(false);
+  /** What a write did shows under the list: brought into view when it comes. */
+  const resultRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (result) resultRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [result]);
 
   // A script saved, repaired or removed anywhere: its state may have changed.
   useEffect(() => {
@@ -161,19 +168,11 @@ export default function Sync({
       return next;
     });
 
+  const th = "px-3 py-2 text-left text-xs font-medium text-muted";
+
   return (
-    <section className="space-y-2" aria-label="Sync">
-      <h3 className={sectionTitle}>Sync</h3>
-      <p className="text-xs text-muted">
-        Whether the repo's copy of each exported script is current. Update exports the cases again: each raw spec is
-        replaced and each case's section is rewritten from Azure DevOps; the repo's Added by engineer, Also and
-        Assertion floor blocks and every other section and file stay as they are.
-      </p>
-      <p className="text-xs text-muted">
-        Add new exports every case the repo does not have yet. A case the repo has that this app did not export is
-        left alone unless you tick it and use Update ticked.
-      </p>
-      <div className="flex flex-wrap items-center gap-2">
+    <section className="space-y-3" aria-label="Sync">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface p-2">
         <Button size="sm" disabled={busy || outOfDate.length === 0} onClick={() => void updateOutOfDate()}>
           <IconExport aria-hidden />
           {`Update out of date (${outOfDate.length})`}
@@ -186,62 +185,102 @@ export default function Sync({
           <IconExport aria-hidden />
           {`Update ticked (${picked.length})`}
         </Button>
-        <Button size="sm" variant="outline" disabled={busy || states.isFetching} onClick={() => void states.refetch()}>
+        <span className="flex-1" />
+        {busy && <span className="text-xs text-accent">Updating…</span>}
+        <Button size="sm" variant="ghost" disabled={busy || states.isFetching} onClick={() => void states.refetch()}>
           <IconRefresh aria-hidden />
           Refresh
         </Button>
       </div>
-      {busy && <p className="text-xs text-muted">Updating…</p>}
+      <div className="space-y-0.5">
+        <Hint>
+          Update exports a case again: its raw spec is replaced and its section rewritten from Azure DevOps; the repo's
+          Added by engineer, Also and Assertion floor blocks and every other section and file stay as they are.
+        </Hint>
+        <Hint>
+          Add new exports every case the repo does not have yet. A case the repo has that this app did not export is
+          replaced only when you tick it and use Update ticked.
+        </Hint>
+      </div>
       {error && <p className="whitespace-pre-wrap text-xs text-danger">{error}</p>}
 
-      {nothingNew && <p className="text-xs text-muted">Nothing new to add</p>}
-      {result && !nothingNew && (
-        <div className="space-y-1" aria-label="Updated">
-          {result.cases.length > 0 && <p className="text-xs text-text">Updated:</p>}
-          <ul className="space-y-0.5 text-xs text-text">
-            {result.cases.map(([id, file]) => (
-              <li key={id}>{`#${id} → ${file}: ${NEEDS_REPO}`}</li>
-            ))}
-          </ul>
-          {(result.skipped ?? []).length > 0 && (
-            <div className="space-y-0.5" aria-label="Skipped">
-              <p className="text-xs text-warning">Not added, and why:</p>
-              <ul className="space-y-0.5 text-xs text-warning">
-                {(result.skipped ?? []).map(([id, why]) => (
-                  <li key={id}>{`#${id}: ${why}`}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {result.missing_navigation.length > 0 && (
-            <p className="text-xs text-warning">{`The clone's navigation.json has no entry for: ${result.missing_navigation.join(", ")}`}</p>
-          )}
-          {result.record_error && <p className="text-xs text-warning">{result.record_error}</p>}
-          <FinishInRepo clone={clone} org={org} project={project} result={result} />
+      {states.isLoading && <Hint>Reading what was exported…</Hint>}
+      {states.isError && <p className="whitespace-pre-wrap text-xs text-danger">{states.error.message}</p>}
+      {states.isSuccess && rows.length === 0 && <Hint>No scripts in this project yet.</Hint>}
+      {rows.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+          <table className="w-full text-sm" aria-label="Cases">
+            <thead className="border-b border-border bg-surface-2">
+              <tr>
+                <th className="w-10 px-3 py-2">
+                  <span className="sr-only">Tick</span>
+                </th>
+                <th className={th}>Case</th>
+                <th className={th}>Title</th>
+                <th className={th}>State</th>
+                <th className={th}>Exported</th>
+                <th className={th}>Where</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.case_id} className="border-b border-border last:border-b-0 hover:bg-surface-2/60">
+                  <td className="px-3 py-2 align-middle">
+                    <Checkbox
+                      checked={ticked.has(r.case_id)}
+                      disabled={!tickable(r) || busy}
+                      ariaLabel={`Tick #${r.case_id} ${r.title}`}
+                      onCheckedChange={(on) => tick(r.case_id, on)}
+                    />
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-muted">{`#${r.case_id}`}</td>
+                  <td className="px-3 py-2 text-text">{r.title}</td>
+                  <td className="px-3 py-2">
+                    <StatusBadge tone={stateTone(r.state)}>{stateText(r.state)}</StatusBadge>
+                    {r.state.kind === "OutOfDate" && <div className="mt-0.5 text-xs text-muted">{r.state.why}</div>}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-xs text-muted">
+                    {r.exported_at ? `exported ${localTime(r.exported_at)}` : <span className="text-faint">-</span>}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-muted">
+                    {(r.state.kind === "InRepoNotFromApp" || r.state.kind === "ExcludedInRepo") && r.repo_note}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
-      {states.isLoading && <p className="text-xs text-muted">Reading what was exported…</p>}
-      {states.isError && <p className="whitespace-pre-wrap text-xs text-danger">{states.error.message}</p>}
-      {states.isSuccess && rows.length === 0 && <p className="text-xs text-muted">No scripts in this project yet.</p>}
-      <ul className="space-y-1">
-        {rows.map((r) => (
-          <li key={r.case_id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-            <Checkbox
-              checked={ticked.has(r.case_id)}
-              disabled={!tickable(r) || busy}
-              ariaLabel={`Tick #${r.case_id} ${r.title}`}
-              onCheckedChange={(on) => tick(r.case_id, on)}
-            />
-            <span className="text-text">{`#${r.case_id} ${r.title}`}</span>
-            <span className={`text-xs ${stateTone(r.state)}`}>{stateText(r.state)}</span>
-            {r.exported_at && <span className="text-xs text-muted">{`exported ${localTime(r.exported_at)}`}</span>}
-            {(r.state.kind === "InRepoNotFromApp" || r.state.kind === "ExcludedInRepo") && r.repo_note && (
-              <span className="text-xs text-muted">{r.repo_note}</span>
+      <div ref={resultRef}>
+        {nothingNew && <Hint>Nothing new to add</Hint>}
+        {result && !nothingNew && (
+          <Card title="Updated" aria-label="Updated" bodyClassName="space-y-2 p-3">
+            {result.cases.length > 0 && (
+              <ul className="space-y-0.5 text-xs text-text">
+                {result.cases.map(([id, file]) => (
+                  <li key={id}>{`#${id} → ${file}: ${NEEDS_REPO}`}</li>
+                ))}
+              </ul>
             )}
-          </li>
-        ))}
-      </ul>
+            {(result.skipped ?? []).length > 0 && (
+              <div className="space-y-0.5" aria-label="Skipped">
+                <p className="text-xs font-medium text-warning">Not added, and why:</p>
+                <ul className="space-y-0.5 text-xs text-warning">
+                  {(result.skipped ?? []).map(([id, why]) => (
+                    <li key={id}>{`#${id}: ${why}`}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {result.missing_navigation.length > 0 && (
+              <p className="text-xs text-warning">{`The clone's navigation.json has no entry for: ${result.missing_navigation.join(", ")}`}</p>
+            )}
+            {result.record_error && <p className="text-xs text-warning">{result.record_error}</p>}
+            <FinishInRepo clone={clone} org={org} project={project} result={result} />
+          </Card>
+        )}
+      </div>
     </section>
   );
 }
