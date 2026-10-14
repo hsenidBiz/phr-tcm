@@ -3,7 +3,7 @@
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import PlaywrightExportDialog, { SKIP_NOTE } from "./PlaywrightExportDialog";
 
@@ -24,8 +24,8 @@ const PREVIEW = {
   map: { areas: {}, accounts: { other: { x: "Y" } } },
   suggested: {},
   cases: [
-    { case_id: 10, title: "Create a cycle", exportable: true, reason: null, seg: "sl/admin/pm/wizard", user_key: "REPO_ADMIN", add_user_command: null },
-    { case_id: 11, title: "Open the report", exportable: false, reason: "its newest run did not pass", seg: null, user_key: null, add_user_command: null },
+    { case_id: 10, title: "Create a cycle", exportable: true, reason: null, seg: "sl/admin/pm/wizard", user_key: "REPO_ADMIN", add_user_command: null, has_script: true },
+    { case_id: 11, title: "Open the report", exportable: false, reason: "its newest run did not pass", seg: null, user_key: null, add_user_command: null, has_script: true },
     {
       case_id: 12,
       title: "Approve the plan",
@@ -34,9 +34,23 @@ const PREVIEW = {
       seg: null,
       user_key: null,
       add_user_command: "npm run add-user -- kim <password>",
+      has_script: true,
+    },
+    {
+      case_id: 15,
+      title: "",
+      exportable: false,
+      reason: "no script - record or write one in Auto Run",
+      seg: null,
+      user_key: null,
+      add_user_command: null,
+      has_script: false,
     },
   ],
 };
+
+/** The Export button, which says how many cases it sends. */
+const EXPORT = /^Export \(\d+\)$/;
 
 type Call = { cmd: string; args: Record<string, unknown> };
 
@@ -60,8 +74,8 @@ function mount(handlers: Record<string, (args: Record<string, unknown>) => unkno
         org="acme"
         project="Web"
         pbiId={7}
-        caseIds={[10, 11, 12]}
-        modules={[[10, "Definition Wizard"], [11, ""], [12, "Performance"]]}
+        caseIds={[10, 11, 12, 15]}
+        modules={[[10, "Definition Wizard"], [11, ""], [12, "Performance"], [15, "Performance"]]}
         onClose={onClose}
       />
     </QueryClientProvider>,
@@ -77,6 +91,23 @@ test("lists_reasons_and_only_ticks_exportable", async () => {
   expect(screen.getByText("its newest run did not pass")).toBeInTheDocument();
   expect(screen.getByText("npm run add-user -- kim <password>")).toBeInTheDocument();
   expect(screen.getByText("C:/repo")).toBeInTheDocument();
+});
+
+test("a case without a script is not listed at all, only counted", async () => {
+  mount();
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  expect(screen.queryByText("#15")).not.toBeInTheDocument();
+  expect(screen.queryByText(/no script - record or write one/)).not.toBeInTheDocument();
+  expect(screen.getByText("1 case without a script is not shown.")).toBeInTheDocument();
+  // The cases are grouped by Module, and the summary counts what goes.
+  const cases = screen.getByRole("region", { name: "Cases" });
+  expect(within(within(cases).getByRole("group", { name: "Definition Wizard" })).getByText("Create a cycle")).toBeInTheDocument();
+  expect(within(within(cases).getByRole("group", { name: "No module" })).getByText("Open the report")).toBeInTheDocument();
+  expect(within(within(cases).getByRole("group", { name: "Performance" })).getByText("Approve the plan")).toBeInTheDocument();
+  const summary = screen.getByLabelText("Summary");
+  expect(within(summary).getByText("to export").previousElementSibling?.textContent).toBe("1");
+  expect(within(summary).getByText("cannot export yet").previousElementSibling?.textContent).toBe("2");
+  expect(screen.getByRole("button", { name: "Export (1)" })).toBeEnabled();
 });
 
 test("choosing_a_clone_saves_it", async () => {
@@ -122,12 +153,12 @@ test("export_sends_the_ticked_ids_and_shows_the_summary", async () => {
     }),
   });
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
-  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  fireEvent.click(screen.getByRole("button", { name: EXPORT }));
   expect(await screen.findByText("suites/sl/admin/pm/wizard/test-cases/wizard.md")).toBeInTheDocument();
   const write = calls.find((c) => c.cmd === "pw_export_write")!;
   expect(write.args).toMatchObject({ organization: "acme", project: "Web", caseIds: [10], replace: [] });
   // The same Modules the preview was given, so the write picks the same areas.
-  const modules = [[10, "Definition Wizard"], [11, ""], [12, "Performance"]];
+  const modules = [[10, "Definition Wizard"], [11, ""], [12, "Performance"], [15, "Performance"]];
   expect(write.args.modules).toEqual(modules);
   expect(calls.find((c) => c.cmd === "pw_export_preview")?.args.modules).toEqual(modules);
   expect(screen.getByText("#10 → suites/sl/admin/pm/wizard/raw/a.spec.ts - run as REPO_ADMIN")).toBeInTheDocument();
@@ -147,7 +178,7 @@ test("a_refused_export_shows_the_reason_and_writes_nothing_else", async () => {
     },
   });
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
-  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  fireEvent.click(screen.getByRole("button", { name: EXPORT }));
   expect(await screen.findByText("case 10 cannot be exported: its area is not mapped")).toBeInTheDocument();
   expect(screen.queryByText(/test-refactorer/)).not.toBeInTheDocument();
 });
@@ -155,17 +186,17 @@ test("a_refused_export_shows_the_reason_and_writes_nothing_else", async () => {
 test("Export is disabled when the clone is not ok or nothing is ticked", async () => {
   mount({}, { ...PREVIEW, clone_ok: false, clone_problem: "that folder is not the repo" });
   expect(await screen.findByText("that folder is not the repo")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: EXPORT })).toBeDisabled();
 });
 
 test("unsaved mapping edits disable Export and say to save first", async () => {
   mount();
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
-  expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: EXPORT })).toBeEnabled();
   fireEvent.click(screen.getByRole("combobox", { name: "User for hr.admin" }));
   fireEvent.click(await screen.findByRole("option", { name: "REPO_EMP" }));
   expect(screen.getByText("Save the mappings first")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: EXPORT })).toBeDisabled();
 });
 
 test("a half-filled or blanked saved area row blocks the save", async () => {
@@ -188,7 +219,7 @@ test("a failed refresh after a write keeps the summary and is shown separately",
     pw_export_write: () => ({ files: ["a/b.md"], cases: [[10, "a/raw.spec.ts"]], user_keys: [], missing_navigation: [] }),
   });
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
-  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  fireEvent.click(screen.getByRole("button", { name: EXPORT }));
   expect(await screen.findByText("a/b.md")).toBeInTheDocument();
   expect(await screen.findByText(/could not be refreshed: preview broke/)).toBeInTheDocument();
 });
@@ -208,7 +239,7 @@ test("an_unplaced_area_is_filled_with_the_suggestion_and_must_be_saved_first", a
   expect(screen.getByLabelText("Feature for Goal Setting")).toHaveValue("goal-setting");
   // A guess is not a mapping until the person saves it.
   expect(screen.getByText("Save the mappings first")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: EXPORT })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
   await waitFor(() => expect(calls.find((c) => c.cmd === "pw_export_save_map")).toBeTruthy());
   expect((calls.find((c) => c.cmd === "pw_export_save_map")?.args.map as { areas: unknown }).areas).toEqual({
@@ -239,6 +270,7 @@ const IN_REPO = {
       in_repo: true,
       repo_note: "in wizard.md and specs/wizard.spec.ts",
       from_app: false,
+      has_script: true,
     },
     {
       case_id: 14,
@@ -251,6 +283,7 @@ const IN_REPO = {
       in_repo: true,
       repo_note: "in wizard.md and index.json",
       from_app: true,
+      has_script: true,
     },
   ],
 };
@@ -263,8 +296,9 @@ test("new cases are ticked and cases the repo has are not, each saying where", a
   expect(screen.getByText(SKIP_NOTE)).toBeInTheDocument();
   expect(SKIP_NOTE).toBe("Cases already in the repo are skipped. Tick one to replace it.");
   expect(screen.getByText("New")).toBeInTheDocument();
-  expect(screen.getByText("In the repo: in wizard.md and specs/wizard.spec.ts")).toBeInTheDocument();
-  expect(screen.getByText("In the repo: in wizard.md and index.json (exported by this app)")).toBeInTheDocument();
+  expect(screen.getAllByText("In the repo")).toHaveLength(2);
+  expect(screen.getByText("in wizard.md and specs/wizard.spec.ts")).toBeInTheDocument();
+  expect(screen.getByText("in wizard.md and index.json (exported by this app)")).toBeInTheDocument();
   expect(document.body.textContent).not.toMatch(/[–—]/);
 });
 
@@ -274,13 +308,13 @@ test("ticking a case the repo has sends it as a replace", async () => {
     IN_REPO,
   );
   // Left as it is, only the new case goes and nothing is replaced.
-  fireEvent.click(await screen.findByRole("button", { name: "Export" }));
+  fireEvent.click(await screen.findByRole("button", { name: EXPORT }));
   await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_write")).toHaveLength(1));
   expect(calls.filter((c) => c.cmd === "pw_export_write")[0].args).toMatchObject({ caseIds: [10], replace: [] });
 
   fireEvent.click(screen.getByRole("checkbox", { name: /Close the cycle/ }));
   expect(screen.getByRole("checkbox", { name: /Close the cycle/ })).toHaveAttribute("aria-checked", "true");
-  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  fireEvent.click(screen.getByRole("button", { name: EXPORT }));
   await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_write")).toHaveLength(2));
   expect(calls.filter((c) => c.cmd === "pw_export_write")[1].args).toMatchObject({ caseIds: [10, 13], replace: [13] });
 });
@@ -302,6 +336,7 @@ test("a case the repo excludes is unticked, cannot be ticked and is never sent",
         repo_note: "Excluded in the repo (in pc-cycle-setup.md)",
         from_app: false,
         excluded: true,
+        has_script: true,
       },
     ],
   };
@@ -314,7 +349,7 @@ test("a case the repo excludes is unticked, cannot be ticked and is never sent",
   expect(box.hasAttribute("disabled") || box.getAttribute("aria-disabled") === "true" || box.hasAttribute("data-disabled")).toBe(true);
   expect(screen.getByText("Excluded in the repo (in pc-cycle-setup.md)")).toBeInTheDocument();
   fireEvent.click(box);
-  fireEvent.click(screen.getByRole("button", { name: "Export" }));
+  fireEvent.click(screen.getByRole("button", { name: EXPORT }));
   await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_write")).toHaveLength(1));
   expect(calls.find((c) => c.cmd === "pw_export_write")!.args).toMatchObject({ caseIds: [10], replace: [] });
 });

@@ -48,6 +48,9 @@ pub struct PreviewCase {
     /// purpose, so it is never exported and cannot be ticked. `repo_note`
     /// then says "Excluded in the repo (in <file>)".
     pub excluded: bool,
+    /// Auto Run has a script for it. The dialog lists only cases that do:
+    /// one without a script has nothing to export.
+    pub has_script: bool,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -335,6 +338,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
         repo_note: None,
         from_app: false,
         excluded: false,
+        has_script: false,
     };
     let fail = |mut pc: PreviewCase, why: String| {
         pc.reason = Some(why);
@@ -343,11 +347,16 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
 
     let script = match script {
         Ok(s) => s,
-        Err(why) => return fail(pc, why),
+        // A script that is there but cannot be read is still a script.
+        Err(why) => {
+            pc.has_script = true;
+            return fail(pc, why);
+        }
     };
     let Some(script) = script else {
         return fail(pc, "no script - record or write one in Auto Run".into());
     };
+    pc.has_script = true;
     pc.title = script.title.clone();
 
     // The person's verdict on the newest run that holds the case.

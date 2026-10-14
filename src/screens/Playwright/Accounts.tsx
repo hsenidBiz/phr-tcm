@@ -3,34 +3,38 @@
 // apply: a rename rewrites every reference, a referenced account cannot be
 // deleted, a changed username or password clears its saved session.
 //
-// Every change is previewed first (the CLI without --apply), and Apply is
-// offered only under that preview. Editing the form again drops the preview.
+// The accounts are a table with each row's actions as icon buttons. Add,
+// Edit, Rename and Delete open a form in a dialog. Every change is previewed
+// first (the CLI without --apply), and Apply is offered only under that
+// preview. Editing the form again drops the preview.
 //
 // Passwords: the list carries none. Show asks Rust for one
 // (`pw_users_password`) and holds it in this component's state only; Hide,
 // any change, or leaving the screen drops it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { commands, type AccountChange, type AccountField, type ChangeOutcome, type RepoAccount } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import { Modal } from "../../components/ui/modal";
 import { Select } from "../../components/ui/select";
 import {
   IconAdd,
   IconCancel,
   IconConfirm,
   IconEdit,
-  IconHideDetails,
+  IconHideSecret,
   IconRefresh,
   IconRemove,
   IconRename,
   IconReview,
-  IconShowDetails,
+  IconShowSecret,
 } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
+import { MODAL_SHORT } from "../AutoRun/modalWidths";
+import { Hint } from "./parts";
 
-const sectionTitle = "text-xs font-semibold uppercase tracking-wide text-muted";
 const fieldLabel = "flex flex-col gap-1 text-xs text-muted";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -85,10 +89,25 @@ function heading(form: Form): string {
   }
 }
 
-function references(a: RepoAccount): string {
-  if (a.specs === 0 && a.other_refs === 0) return "Not used";
-  const parts = [a.specs ? plural(a.specs, "spec") : "", a.other_refs ? plural(a.other_refs, "other reference") : ""];
-  return parts.filter(Boolean).join(", ");
+function references(a: RepoAccount): string[] {
+  if (a.specs === 0 && a.other_refs === 0) return ["Not used"];
+  return [a.specs ? plural(a.specs, "spec") : "", a.other_refs ? plural(a.other_refs, "other reference") : ""].filter(Boolean);
+}
+
+/** `text` with a line-break chance after each of `chars`: a long dotted key
+ * or an address wraps at its dots instead of mid-word. */
+function breakAfter(text: string, chars: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let run = "";
+  for (const ch of text) {
+    run += ch;
+    if (chars.includes(ch)) {
+      out.push(run, <wbr key={out.length} />);
+      run = "";
+    }
+  }
+  out.push(run);
+  return out;
 }
 
 function Field({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (v: string) => void; type?: string }) {
@@ -102,6 +121,7 @@ function Field({ label, value, onChange, type = "text" }: { label: string; value
 
 export default function Accounts({ clone, onChanged }: { clone: string; onChanged?: () => void }) {
   const qc = useQueryClient();
+  const titleId = useId();
   const accounts = useQuery({
     queryKey: [ACCOUNTS_KEY, clone],
     queryFn: () => unwrapStr(commands.pwUsersList(clone)),
@@ -183,11 +203,12 @@ export default function Accounts({ clone, onChanged }: { clone: string; onChange
   };
 
   const active = busy || accounts.isFetching;
+  const close = () => !busy && open(null);
+  const th = "px-3 py-2 text-left text-xs font-medium text-muted";
+  const iconButton = "px-2";
 
   return (
     <section className="space-y-3" aria-label="Accounts">
-      <h3 className={sectionTitle}>Accounts</h3>
-
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" disabled={active} onClick={() => open(EMPTY_ADD)}>
           <IconAdd aria-hidden />
@@ -197,124 +218,221 @@ export default function Accounts({ clone, onChanged }: { clone: string; onChange
           <IconRefresh aria-hidden />
           List again
         </Button>
+        <Hint className="min-w-0 flex-1">
+          Changed through the repo's npm run users, previewed first. Passwords stay hidden until you show one.
+        </Hint>
       </div>
 
-      {error && <p className="whitespace-pre-wrap text-xs text-danger">{error}</p>}
+      {error && !form && <p className="whitespace-pre-wrap text-xs text-danger">{error}</p>}
       {done.length > 0 && (
-        <pre aria-label="Applied" className="overflow-x-auto rounded border border-border bg-surface p-2 text-xs text-text">
-          {done.join("\n")}
-        </pre>
-      )}
-
-      {form && (
-        <div className="space-y-2 rounded border border-border bg-surface p-3" role="group" aria-label={heading(form)}>
-          <h4 className={sectionTitle}>{heading(form)}</h4>
-          {form.mode === "add" && (
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Field label="Key" value={form.key} onChange={(key) => edit({ ...form, key })} />
-              <Field label="Username" value={form.username} onChange={(username) => edit({ ...form, username })} />
-              <Field label="Password" type="password" value={form.password} onChange={(password) => edit({ ...form, password })} />
-              <Field label="Employee number" value={form.employee_no} onChange={(employee_no) => edit({ ...form, employee_no })} />
-              <Field label="Display name" value={form.display_name} onChange={(display_name) => edit({ ...form, display_name })} />
-              <Field label="Title" value={form.title} onChange={(title) => edit({ ...form, title })} />
-              <Field label="Supervisor" value={form.supervisor} onChange={(supervisor) => edit({ ...form, supervisor })} />
-            </div>
-          )}
-          {form.mode === "edit" && (
-            <div className="flex flex-wrap items-end gap-2">
-              <Select aria-label="Field" value={form.field} onChange={(e) => edit({ ...form, field: e.target.value as AccountField, value: "" })}>
-                {FIELDS.map((f) => (
-                  <option key={f.field} value={f.field}>
-                    {f.label}
-                  </option>
-                ))}
-              </Select>
-              <Field
-                label="New value"
-                type={form.field === "Password" ? "password" : "text"}
-                value={form.value}
-                onChange={(value) => edit({ ...form, value })}
-              />
-              <p className="text-xs text-muted">Leave it empty to clear an optional field.</p>
-            </div>
-          )}
-          {form.mode === "rename" && (
-            <>
-              <Field label="New key" value={form.to} onChange={(to) => edit({ ...form, to })} />
-              <p className="text-xs text-muted">Every spec and test case that names it is rewritten too.</p>
-            </>
-          )}
-          {form.mode === "delete" && <p className="text-xs text-muted">The repo refuses while anything still uses the account.</p>}
-
-          {preview && (
-            <div className="space-y-1">
-              <p className="text-xs text-muted">What npm run users will do:</p>
-              <pre aria-label="Preview" className="overflow-x-auto rounded border border-border bg-surface p-2 text-xs text-text">
-                {preview.join("\n")}
-              </pre>
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center gap-2">
-            {preview ? (
-              <Button size="sm" disabled={busy} onClick={() => void apply()}>
-                <IconConfirm aria-hidden />
-                Apply
-              </Button>
-            ) : (
-              <Button size="sm" disabled={busy} onClick={() => void showPreview()}>
-                <IconReview aria-hidden />
-                Preview
-              </Button>
-            )}
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => open(null)}>
-              <IconCancel aria-hidden />
-              Cancel
-            </Button>
-          </div>
+        <div className="rounded-lg border border-success/40 bg-success/10 p-3">
+          <p className="mb-1 text-xs font-medium text-success">Applied</p>
+          <pre aria-label="Applied" className="overflow-x-auto font-mono text-xs text-text">
+            {done.join("\n")}
+          </pre>
         </div>
       )}
 
-      {accounts.isLoading && <p className="text-xs text-muted">Listing the accounts…</p>}
+      {accounts.isLoading && <Hint>Listing the accounts…</Hint>}
       {accounts.isError && <p className="whitespace-pre-wrap text-xs text-danger">{accounts.error.message}</p>}
-      {accounts.isSuccess && list.length === 0 && <p className="text-xs text-muted">No accounts in the repo yet.</p>}
-      <ul className="space-y-2">
-        {list.map((a) => (
-          <li key={a.key} className="space-y-1 rounded border border-border p-2">
-            <div className="flex flex-wrap items-baseline gap-x-3">
-              <span className="text-sm text-text">{a.key}</span>
-              <span className="text-xs text-muted">{references(a)}</span>
+      {accounts.isSuccess && list.length === 0 && <Hint>No accounts in the repo yet.</Hint>}
+      {list.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+          <table className="w-full text-sm" aria-label="Test accounts">
+            <thead className="border-b border-border bg-surface-2">
+              <tr>
+                <th className={th}>Key</th>
+                <th className={th}>Username</th>
+                <th className={`${th} whitespace-nowrap`}>Employee no</th>
+                <th className={th}>Display name</th>
+                <th className={th}>Title</th>
+                <th className={th}>Used by</th>
+                <th className={`${th} text-right`}>
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map((a) => {
+                const showing = a.key in shown;
+                return (
+                  <tr key={a.key} className="border-b border-border align-top last:border-b-0 hover:bg-surface-2/60">
+                    <td className="px-3 py-2">
+                      <span className="font-mono text-xs font-medium text-text">{breakAfter(a.key, ".")}</span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="text-text">{breakAfter(a.username, "@.")}</div>
+                      {showing && (
+                        <div className="mt-0.5 text-xs text-muted">
+                          {"Password: "}
+                          <code aria-label={`Password of ${a.key}`} className="font-mono text-text">
+                            {shown[a.key]}
+                          </code>
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs whitespace-nowrap text-muted">{a.employee_no || "-"}</td>
+                    <td className="px-3 py-2">
+                      <div className="text-text">{a.display_name || <span className="text-faint">-</span>}</div>
+                      {a.supervisor && <div className="text-xs text-muted">{["reports to ", ...breakAfter(a.supervisor, ".")]}</div>}
+                    </td>
+                    <td className="px-3 py-2 text-muted">{a.title || <span className="text-faint">-</span>}</td>
+                    <td className="px-3 py-2 text-xs">
+                      {references(a).map((r) => (
+                        <div key={r} className={r === "Not used" ? "text-faint" : "text-muted"}>
+                          {r}
+                        </div>
+                      ))}
+                    </td>
+                    <td className="w-px px-2 py-1.5 whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-0.5">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className={iconButton}
+                          aria-label={`${showing ? "Hide" : "Show"} password of ${a.key}`}
+                          title={showing ? "Hide password" : "Show password"}
+                          onClick={() => void togglePassword(a.key)}
+                        >
+                          {showing ? <IconHideSecret aria-hidden /> : <IconShowSecret aria-hidden />}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className={iconButton}
+                          aria-label={`Edit ${a.key}`}
+                          title="Edit"
+                          disabled={active}
+                          onClick={() => open({ mode: "edit", key: a.key, field: "Username", value: "" })}
+                        >
+                          <IconEdit aria-hidden />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className={iconButton}
+                          aria-label={`Rename ${a.key}`}
+                          title="Rename"
+                          disabled={active}
+                          onClick={() => open({ mode: "rename", key: a.key, to: a.key })}
+                        >
+                          <IconRename aria-hidden />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className={`${iconButton} hover:text-danger`}
+                          aria-label={`Delete ${a.key}`}
+                          title="Delete"
+                          disabled={active}
+                          onClick={() => open({ mode: "delete", key: a.key })}
+                        >
+                          <IconRemove aria-hidden />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {form && (
+        <Modal onClose={close} labelledBy={titleId} className={`${MODAL_SHORT} flex max-h-[90vh] flex-col`}>
+          <div className="flex min-h-0 flex-1 flex-col" role="group" aria-label={heading(form)}>
+            <div className="border-b border-border px-5 py-3">
+              <h2 id={titleId} className="text-sm font-semibold text-text">
+                {heading(form)}
+              </h2>
+              <ol className="mt-1 flex items-center gap-2 text-xs" aria-label="Steps">
+                <li className={preview ? "text-muted" : "font-medium text-accent"}>1. Fill in and preview</li>
+                <li aria-hidden className="text-faint">
+                  /
+                </li>
+                <li className={preview ? "font-medium text-accent" : "text-faint"}>2. Apply</li>
+              </ol>
             </div>
-            <p className="text-xs text-muted">
-              {[a.username, a.display_name, a.employee_no, a.title, a.supervisor ? `reports to ${a.supervisor}` : ""].filter(Boolean).join(" · ")}
-            </p>
-            {a.key in shown && (
-              <p className="text-xs text-text">
-                {"Password: "}
-                <code aria-label={`Password of ${a.key}`}>{shown[a.key]}</code>
-              </p>
-            )}
-            <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="outline" aria-label={`${a.key in shown ? "Hide" : "Show"} password of ${a.key}`} onClick={() => void togglePassword(a.key)}>
-                {a.key in shown ? <IconHideDetails aria-hidden /> : <IconShowDetails aria-hidden />}
-                {a.key in shown ? "Hide password" : "Show password"}
-              </Button>
-              <Button size="sm" variant="outline" aria-label={`Edit ${a.key}`} disabled={active} onClick={() => open({ mode: "edit", key: a.key, field: "Username", value: "" })}>
-                <IconEdit aria-hidden />
-                Edit
-              </Button>
-              <Button size="sm" variant="outline" aria-label={`Rename ${a.key}`} disabled={active} onClick={() => open({ mode: "rename", key: a.key, to: a.key })}>
-                <IconRename aria-hidden />
-                Rename
-              </Button>
-              <Button size="sm" variant="outline" aria-label={`Delete ${a.key}`} disabled={active} onClick={() => open({ mode: "delete", key: a.key })}>
-                <IconRemove aria-hidden />
-                Delete
-              </Button>
+
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+              {form.mode === "add" && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Key" value={form.key} onChange={(key) => edit({ ...form, key })} />
+                  <Field label="Username" value={form.username} onChange={(username) => edit({ ...form, username })} />
+                  <Field label="Password" type="password" value={form.password} onChange={(password) => edit({ ...form, password })} />
+                  <Field label="Employee number" value={form.employee_no} onChange={(employee_no) => edit({ ...form, employee_no })} />
+                  <Field label="Display name" value={form.display_name} onChange={(display_name) => edit({ ...form, display_name })} />
+                  <Field label="Title" value={form.title} onChange={(title) => edit({ ...form, title })} />
+                  <Field label="Supervisor" value={form.supervisor} onChange={(supervisor) => edit({ ...form, supervisor })} />
+                </div>
+              )}
+              {form.mode === "edit" && (
+                <div className="grid gap-3 sm:grid-cols-[12rem_minmax(0,1fr)] sm:items-end">
+                  <div className={fieldLabel}>
+                    <span aria-hidden>Field</span>
+                    <Select aria-label="Field" value={form.field} onChange={(e) => edit({ ...form, field: e.target.value as AccountField, value: "" })}>
+                      {FIELDS.map((f) => (
+                        <option key={f.field} value={f.field}>
+                          {f.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  <Field
+                    label="New value"
+                    type={form.field === "Password" ? "password" : "text"}
+                    value={form.value}
+                    onChange={(value) => edit({ ...form, value })}
+                  />
+                  <Hint className="sm:col-span-2">Leave it empty to clear an optional field.</Hint>
+                </div>
+              )}
+              {form.mode === "rename" && (
+                <>
+                  <Field label="New key" value={form.to} onChange={(to) => edit({ ...form, to })} />
+                  <Hint>Every spec and test case that names it is rewritten too.</Hint>
+                </>
+              )}
+              {form.mode === "delete" && <Hint>The repo refuses while anything still uses the account.</Hint>}
+              {(form.mode === "add" || (form.mode === "edit" && form.field === "Password")) && (
+                <Hint>
+                  While the change runs, the password is visible in the Windows process list for a few seconds. It is never
+                  kept in a file or in the app's log.
+                </Hint>
+              )}
+
+              {preview && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-text">What npm run users will do:</p>
+                  <pre aria-label="Preview" className="overflow-x-auto rounded-md border border-border bg-bg p-2 font-mono text-xs text-text">
+                    {preview.join("\n")}
+                  </pre>
+                </div>
+              )}
+              {error && <p className="whitespace-pre-wrap text-xs text-danger">{error}</p>}
             </div>
-          </li>
-        ))}
-      </ul>
+
+            <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => open(null)}>
+                <IconCancel aria-hidden />
+                Cancel
+              </Button>
+              {preview ? (
+                <Button size="sm" disabled={busy} onClick={() => void apply()}>
+                  <IconConfirm aria-hidden />
+                  Apply
+                </Button>
+              ) : (
+                <Button size="sm" disabled={busy} onClick={() => void showPreview()}>
+                  <IconReview aria-hidden />
+                  Preview
+                </Button>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
     </section>
   );
 }

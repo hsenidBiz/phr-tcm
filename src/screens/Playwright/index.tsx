@@ -2,15 +2,15 @@
 // the clone folder Export to Playwright uses. Offered exactly where Auto Run
 // is (lib/extras); Rust refuses its commands everywhere else.
 //
-// Top to bottom: the clone folder, the health line, what the clone holds,
-// the Runner (./Runner), the test accounts (./Accounts) and Sync (./Sync).
-// Export to Playwright opens here, from Auto Run's menu item
-// (lib/playwrightExport).
+// A header (the clone folder and its health badges), then four tabs:
+// Overview (what the clone holds), the Runner (./Runner), the test accounts
+// (./Accounts) and Sync (./Sync). Export to Playwright opens here, from Auto
+// Run's menu item (lib/playwrightExport).
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useState } from "react";
-import { commands, type RepoFeature, type RepoStructure } from "../../bindings";
+import { useState, type ReactNode } from "react";
+import { commands, type HealthIssue, type RepoStructure } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { IconBrowse, IconRefresh } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
@@ -20,41 +20,86 @@ import {
   usePlaywrightExportRequest,
 } from "../../lib/playwrightExport";
 import Accounts from "./Accounts";
-import HealthLine from "./HealthLine";
+import HealthLine, { HEALTH_TEXT, WARNING_ONLY } from "./HealthLine";
+import { Hint, Stat, SubTabs, type TabSpec } from "./parts";
 import PlaywrightExportDialog from "./PlaywrightExportDialog";
 import Runner from "./Runner";
 import Sync, { SYNC_KEY } from "./Sync";
 
-const sectionTitle = "text-xs font-semibold uppercase tracking-wide text-muted";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** The query key of the clone's structure; the folder is part of it. */
 export const STRUCTURE_KEY = "pw-repo-structure";
 
-function Summary({ s }: { s: RepoStructure }) {
+type Tab = "overview" | "runner" | "accounts" | "sync";
+/** The tab last chosen, kept for the session: coming back to Playwright
+ * opens where the person left it. */
+let lastTab: Tab = "overview";
+
+function Overview({ s }: { s: RepoStructure }) {
   const specs = s.features.reduce((n, f) => n + f.spec_count, 0);
   const cases = s.features.reduce((n, f) => n + f.case_count, 0);
+  const th = "px-3 py-2 text-left text-xs font-medium text-muted";
+  const num = "px-3 py-2 text-right tabular-nums";
   return (
-    <p className="text-xs text-muted">
-      {[
-        plural(s.features.length, "feature"),
-        plural(specs, "spec"),
-        plural(cases, "test case"),
-        plural(s.generated_ids.length, "raw spec"),
-        plural(s.user_keys.length, "account"),
-        plural(s.navigation_keys.length, "navigation entry", "navigation entries"),
-      ].join(" · ")}
-    </p>
+    <section className="space-y-4" aria-label="Repo structure">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+        <Stat value={s.features.length} label={s.features.length === 1 ? "feature" : "features"} />
+        <Stat value={specs} label={specs === 1 ? "spec" : "specs"} />
+        <Stat value={cases} label={cases === 1 ? "test case" : "test cases"} />
+        <Stat value={s.generated_ids.length} label={s.generated_ids.length === 1 ? "raw spec" : "raw specs"} />
+        <Stat value={s.user_keys.length} label={s.user_keys.length === 1 ? "account" : "accounts"} />
+        <Stat
+          value={s.navigation_keys.length}
+          label={s.navigation_keys.length === 1 ? "navigation entry" : "navigation entries"}
+        />
+      </div>
+      {s.features.length === 0 ? (
+        <Hint>No features under suites yet.</Hint>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+          <table className="w-full text-sm" aria-label="Features">
+            <thead className="border-b border-border bg-surface-2">
+              <tr>
+                <th className={th}>Country</th>
+                <th className={th}>Side</th>
+                <th className={th}>Module</th>
+                <th className={th}>Feature</th>
+                <th className={`${th} text-right`}>Specs</th>
+                <th className={`${th} text-right`}>Cases</th>
+              </tr>
+            </thead>
+            <tbody>
+              {s.features.map((f) => (
+                <tr key={`${f.country}/${f.side}/${f.module}/${f.feature}`} className="border-b border-border last:border-b-0">
+                  <td className="px-3 py-2 uppercase text-muted">{f.country}</td>
+                  <td className="px-3 py-2 text-muted">{f.side}</td>
+                  <td className="px-3 py-2 text-text">{f.module}</td>
+                  <td className="px-3 py-2 font-medium text-text">{f.feature}</td>
+                  <td className={`${num} text-text`}>{f.spec_count}</td>
+                  <td className={`${num} ${f.case_count ? "text-text" : "text-faint"}`}>{f.case_count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 
-function FeatureRow({ f }: { f: RepoFeature }) {
+/** In place of an area the clone cannot serve yet: why, and what to do. */
+function Blocked({ area, issues }: { area: string; issues: HealthIssue[] }) {
+  const blocking = issues.filter((i) => !WARNING_ONLY.has(i));
   return (
-    <li className="flex flex-wrap items-baseline gap-x-3 text-sm">
-      <span className="text-text">{`${f.country} / ${f.side} / ${f.module} / ${f.feature}`}</span>
-      <span className="text-xs text-muted">{`${plural(f.spec_count, "spec")}, ${plural(f.case_count, "test case")}`}</span>
-    </li>
+    <div className="rounded-lg border border-dashed border-border bg-surface px-4 py-6 text-center">
+      <p className="text-sm font-medium text-text">{`The ${area} needs a working clone.`}</p>
+      {blocking.map((i) => (
+        <p key={i} className="mt-1 text-xs text-danger">
+          {HEALTH_TEXT[i]}
+        </p>
+      ))}
+    </div>
   );
 }
 
@@ -64,6 +109,11 @@ export default function Playwright({ org, project }: { org: string; project: str
   useClearExportRequestOnUnmount();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [tab, setTabState] = useState<Tab>(lastTab);
+  const setTab = (t: Tab) => {
+    lastTab = t;
+    setTabState(t);
+  };
 
   const settings = useQuery({ queryKey: ["app-settings"], queryFn: () => commands.getAppSettings() });
   const clone = settings.data?.playwright_clone ?? "";
@@ -99,66 +149,66 @@ export default function Playwright({ org, project }: { org: string; project: str
   const s = structure.data;
   const usable = s && !s.health.includes("NotTheRepo");
   // Nothing can run without the clone's node_modules and Node: the health
-  // line says so, and the Runner is not offered.
+  // badges say so, and the Runner and Accounts show why instead.
   const runnable = usable && !s.health.includes("NoNodeModules") && !s.health.includes("NoNode");
+  const changed = () => void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY, clone] });
+
+  const tabs: TabSpec<Tab>[] = [
+    { id: "overview", label: "Overview" },
+    { id: "runner", label: "Runner" },
+    { id: "accounts", label: "Accounts", count: s?.user_keys.length },
+    { id: "sync", label: "Sync" },
+  ];
+  const panels: Record<Tab, ReactNode> = {
+    overview: s && <Overview s={s} />,
+    runner: runnable ? <Runner key={clone} clone={clone} /> : s && <Blocked area="Runner" issues={s.health} />,
+    accounts: runnable ? (
+      <Accounts key={clone} clone={clone} onChanged={changed} />
+    ) : (
+      s && <Blocked area="Accounts tab" issues={s.health} />
+    ),
+    sync: <Sync key={clone} clone={clone} org={org} project={project} onUpdated={changed} />,
+  };
 
   return (
-    <div className="space-y-4">
-      <section className="space-y-1">
-        <h3 className={sectionTitle}>Clone folder</h3>
+    <div className="space-y-5">
+      <header className="space-y-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <h2 className="text-lg font-semibold text-text">Playwright</h2>
+          <div className="flex min-w-0 flex-1 basis-64 items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5">
+            <IconBrowse aria-hidden className="size-4 shrink-0 text-muted" />
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-text" title={clone || undefined}>
+              {settings.isSuccess ? clone || "No folder chosen yet." : "Loading…"}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" disabled={busy || !clone || structure.isFetching} onClick={() => void structure.refetch()}>
+              <IconRefresh aria-hidden />
+              Refresh
+            </Button>
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => void choose()}>
+              <IconBrowse aria-hidden />
+              {clone ? "Change…" : "Choose…"}
+            </Button>
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="min-w-0 flex-1 break-all text-sm text-text">
-            {settings.isSuccess ? clone || "No folder chosen yet." : "Loading…"}
-          </span>
-          <Button size="sm" variant="outline" disabled={busy || !clone || structure.isFetching} onClick={() => void structure.refetch()}>
-            <IconRefresh aria-hidden />
-            Refresh
-          </Button>
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => void choose()}>
-            <IconBrowse aria-hidden />
-            {clone ? "Change…" : "Choose…"}
-          </Button>
+          {s && <HealthLine issues={s.health} />}
+          {structure.isLoading && <Hint>Reading the clone…</Hint>}
+          {settings.isSuccess && !clone && <Hint>Choose your clone of the team's PHR-PLAYWRIGHT-AUTOMATION repo.</Hint>}
         </div>
         {error && <p className="text-xs text-danger">{error}</p>}
-        {settings.isSuccess && !clone && (
-          <p className="text-xs text-muted">Choose your clone of the team's PHR-PLAYWRIGHT-AUTOMATION repo.</p>
-        )}
-        {structure.isLoading && <p className="text-xs text-muted">Reading the clone…</p>}
         {structure.isError && <p className="text-xs text-danger">{structure.error.message}</p>}
-        {s && <HealthLine issues={s.health} />}
-      </section>
+      </header>
 
-      {usable && (
-        <section className="space-y-2" aria-label="Repo structure">
-          <h3 className={sectionTitle}>In the repo</h3>
-          <Summary s={s} />
-          {s.features.length === 0 ? (
-            <p className="text-xs text-muted">No features under suites yet.</p>
-          ) : (
-            <ul className="space-y-1">
-              {s.features.map((f) => (
-                <FeatureRow key={`${f.country}/${f.side}/${f.module}/${f.feature}`} f={f} />
-              ))}
-            </ul>
-          )}
-        </section>
+      {s && !usable && (
+        <div className="rounded-lg border border-dashed border-border bg-surface px-4 py-8 text-center">
+          <p className="text-sm font-medium text-text">{HEALTH_TEXT.NotTheRepo}</p>
+          <Hint className="mt-1">Press Change… and pick your clone of the PHR-PLAYWRIGHT-AUTOMATION repo.</Hint>
+        </div>
       )}
 
-      {runnable && <Runner key={clone} clone={clone} />}
-
-      {runnable && (
-        <Accounts key={clone} clone={clone} onChanged={() => void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY, clone] })} />
-      )}
-
-      {usable && (
-        <Sync
-          key={clone}
-          clone={clone}
-          org={org}
-          project={project}
-          onUpdated={() => void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY, clone] })}
-        />
-      )}
+      {usable && <SubTabs label="Playwright sections" tabs={tabs} shown={tab} onShow={setTab} panels={panels} />}
 
       {exportRequest && (
         <PlaywrightExportDialog

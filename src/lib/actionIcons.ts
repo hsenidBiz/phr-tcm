@@ -178,4 +178,8 @@ export {
   FlaskConical as IconTestCases,
   // A small button beside a name that reveals what the thing is for.
   Info as IconAbout,
+  // Showing and hiding a secret on screen (a repo test account's password):
+  // an eye, open to show it and struck through to hide it again.
+  Eye as IconShowSecret,
+  EyeOff as IconHideSecret,
 } from "lucide-react";

@@ -5,8 +5,11 @@
 // the clone, which the summary says in order; Finish in the repo gives the
 // prompt that has Claude Code there run the repo's own last steps.
 //
-// Four parts, top to bottom: the clone folder, where each area's specs live,
-// which repo user each of TCM's accounts signs in as, and the cases. The
+// The clone folder at the top; then a summary strip, the cases grouped by
+// Module and, beside them, the mappings: where each area's specs live and
+// which repo user each of TCM's accounts signs in as. Cancel and Export stay
+// in a footer while the body scrolls. A case with no Auto Run script is not
+// listed at all: there is nothing of it to export. The
 // preview (what each case needs, and why one cannot go) is read again after
 // a mapping is saved or the clone changes, so the reasons stay current.
 //
@@ -35,9 +38,9 @@ import { copyText } from "../../lib/clipboard";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrapStr } from "../../lib/ipc";
 import FinishInRepo from "./FinishInRepo";
+import { Card, Hint, Stat, StatusBadge } from "./parts";
 
 const SIDES = ["admin", "self"];
-const sectionTitle = "text-xs font-semibold uppercase tracking-wide text-muted";
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const NEXT_STEPS = [
@@ -209,157 +212,128 @@ export default function PlaywrightExportDialog({
   const setPlace = (name: string, patch: Partial<Placement>) =>
     setAreas((cur) => ({ ...(cur ?? {}), [name]: { ...place(name), ...patch } }));
 
-  return (
-    <Modal onClose={() => !busy && onClose()} labelledBy={titleId} className={`${MODAL_LARGE} flex flex-col gap-3 p-4`}>
-      <h2 id={titleId} className="text-sm font-semibold text-text">Export to Playwright</h2>
-      <p className="text-xs text-muted">
-        Copies the passing scripts of PBI {pbiId} into your clone of the Playwright repo. Nothing is run,
-        committed or pushed.
-      </p>
-      {error && <p className="text-xs text-danger">{error}</p>}
+  // A case with no Auto Run script has nothing to export: it is not listed.
+  const listed = cases.filter((c) => c.has_script);
+  const noScript = cases.length - listed.length;
+  const inRepoCount = listed.filter((c) => c.in_repo && !c.excluded).length;
+  const excludedCount = listed.filter((c) => c.excluded).length;
+  const blockedCount = listed.filter((c) => !c.exportable && !c.excluded).length;
+  // Grouped by each case's Module, in the order the cases come.
+  const moduleOf = new Map(modules);
+  const groups: [string, PreviewCase[]][] = [];
+  for (const c of listed) {
+    const name = moduleOf.get(c.case_id)?.trim() || "No module";
+    const group = groups.find(([g]) => g === name);
+    if (group) group[1].push(c);
+    else groups.push([name, [c]]);
+  }
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
-        <section className="space-y-1">
-          <h3 className={sectionTitle}>Clone folder</h3>
-          <div className="flex items-center gap-2">
-            <span className="min-w-0 flex-1 break-all text-sm text-text">{clone || "No folder chosen yet."}</span>
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => void choose()}>
-              <IconBrowse aria-hidden />
-              Choose…
+  const caseRow = (c: PreviewCase) => {
+    const head = (
+      <>
+        <span className="w-16 shrink-0 pt-0.5 font-mono text-xs text-muted">{`#${c.case_id}`}</span>
+        <span className="min-w-0 flex-1">
+          <span className={`block text-sm ${c.exportable ? "text-text" : "text-muted"}`}>{c.title}</span>
+          {c.in_repo && c.repo_note && !c.excluded && (
+            <span className="block text-xs text-muted">{`${c.repo_note}${c.from_app ? " (exported by this app)" : ""}`}</span>
+          )}
+          {c.excluded && c.repo_note && <span className="block text-xs text-muted">{c.repo_note}</span>}
+          {!c.exportable && c.reason && <span className="block text-xs text-muted">{c.reason}</span>}
+        </span>
+        <span className="shrink-0 pt-0.5">
+          {c.excluded ? (
+            <StatusBadge tone="muted" title={repoStatus(c)}>
+              Excluded
+            </StatusBadge>
+          ) : !c.exportable ? (
+            <StatusBadge tone="danger" title={c.reason ?? undefined}>
+              Cannot export
+            </StatusBadge>
+          ) : c.in_repo ? (
+            <StatusBadge tone="warning" title={repoStatus(c)}>
+              In the repo
+            </StatusBadge>
+          ) : (
+            <StatusBadge tone="success">New</StatusBadge>
+          )}
+        </span>
+      </>
+    );
+    if (c.exportable) {
+      return (
+        <label key={c.case_id} className="flex cursor-pointer items-start gap-3 px-3 py-2 hover:bg-surface-2/60">
+          <span className="pt-0.5">
+            <Checkbox checked={isTicked(c)} ariaLabel={`#${c.case_id} ${c.title}`} onCheckedChange={(on) => setTick(c, on)} />
+          </span>
+          {head}
+        </label>
+      );
+    }
+    return (
+      <div key={c.case_id} className="space-y-1.5 px-3 py-2">
+        <div className="flex items-start gap-3">
+          <span className="pt-0.5">
+            {/* The team left it out of the repo on purpose: never exported. */}
+            {c.excluded ? (
+              <Checkbox checked={false} disabled ariaLabel={`#${c.case_id} ${c.title}`} onCheckedChange={() => {}} />
+            ) : (
+              <span className="block size-4" aria-hidden />
+            )}
+          </span>
+          {head}
+        </div>
+        {c.add_user_command && (
+          <div className="ml-[6.75rem] flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded-md border border-border bg-bg px-2 py-1 font-mono text-xs text-text" title={c.add_user_command}>
+              {c.add_user_command}
+            </code>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={`Copy command for #${c.case_id}`}
+              onClick={() => void copyText(c.add_user_command ?? "")}
+            >
+              <IconCopy aria-hidden />
+              Copy
             </Button>
           </div>
-          {preview && !preview.clone_ok && preview.clone_problem && (
-            <p className="text-xs text-danger">{preview.clone_problem}</p>
-          )}
-        </section>
-
-        {preview && areas && users && (
-          <>
-            <section className="space-y-2">
-              <h3 className={sectionTitle}>Areas</h3>
-              {preview.areas.length === 0 && <p className="text-xs text-muted">No areas yet.</p>}
-              {preview.areas.map((name) => (
-                <div key={name} className="flex flex-wrap items-center gap-2">
-                  <span className="w-48 text-sm text-text">{name}</span>
-                  <Select
-                    aria-label={`Side for ${name}`}
-                    className="w-28"
-                    value={place(name).side}
-                    onChange={(e) => setPlace(name, { side: e.target.value })}
-                  >
-                    {SIDES.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </Select>
-                  <Input
-                    aria-label={`Module for ${name}`}
-                    placeholder="module"
-                    className="w-44"
-                    value={place(name).module}
-                    onChange={(e) => setPlace(name, { module: e.target.value })}
-                  />
-                  <Input
-                    aria-label={`Feature for ${name}`}
-                    placeholder="feature"
-                    className="w-44"
-                    value={place(name).feature}
-                    onChange={(e) => setPlace(name, { feature: e.target.value })}
-                  />
-                  {invalid.has(name) && <span className="text-xs text-danger">needs module and feature</span>}
-                </div>
-              ))}
-            </section>
-
-            <section className="space-y-2">
-              <h3 className={sectionTitle}>Accounts</h3>
-              {preview.accounts.length === 0 && <p className="text-xs text-muted">No accounts yet.</p>}
-              {preview.accounts.map((key) => {
-                // A saved pick the clone no longer has: shown, and said, not left blank.
-                const stale = Boolean(users[key]) && !preview.user_keys.includes(users[key]);
-                return (
-                  <div key={key} className="flex flex-wrap items-center gap-2">
-                    <span className="w-48 text-sm text-text">{key}</span>
-                    <Select
-                      aria-label={`User for ${key}`}
-                      className="w-64"
-                      value={users[key] ?? ""}
-                      onChange={(e) => setUsers((cur) => ({ ...(cur ?? {}), [key]: e.target.value }))}
-                    >
-                      <option value="">Not mapped</option>
-                      {stale && <option value={users[key]}>{users[key]}</option>}
-                      {preview.user_keys.map((k) => (
-                        <option key={k} value={k}>{k}</option>
-                      ))}
-                    </Select>
-                    {stale && (
-                      <span className="text-xs text-warning">{`${users[key]} is not in this clone's users.json`}</span>
-                    )}
-                  </div>
-                );
-              })}
-            </section>
-
-            <div className="flex items-center justify-end gap-2">
-              {unsaved && <span className="text-xs text-warning">Save the mappings first</span>}
-              <Button size="sm" variant="outline" disabled={busy || invalid.size > 0} onClick={() => void saveMappings()}>
-                <IconConfirm aria-hidden />
-                Save mappings
-              </Button>
-            </div>
-
-            <section className="space-y-2">
-              <h3 className={sectionTitle}>Cases</h3>
-              <p className="text-xs text-muted">{SKIP_NOTE}</p>
-              {cases.map((c) =>
-                c.exportable ? (
-                  <label key={c.case_id} className="flex flex-wrap items-center gap-2 text-sm text-text">
-                    <Checkbox
-                      checked={isTicked(c)}
-                      ariaLabel={`#${c.case_id} ${c.title}`}
-                      onCheckedChange={(on) => setTick(c, on)}
-                    />
-                    <span>{`#${c.case_id} ${c.title}`}</span>
-                    <span className={`text-xs ${c.in_repo ? "text-warning" : "text-success"}`}>{repoStatus(c)}</span>
-                  </label>
-                ) : c.excluded ? (
-                  // The team left it out of the repo on purpose: never exported.
-                  <label key={c.case_id} className="flex flex-wrap items-center gap-2 text-sm text-faint">
-                    <Checkbox checked={false} disabled ariaLabel={`#${c.case_id} ${c.title}`} onCheckedChange={() => {}} />
-                    <span>{`#${c.case_id} ${c.title}`}</span>
-                    <span className="text-xs">{repoStatus(c)}</span>
-                  </label>
-                ) : (
-                  <div key={c.case_id} className="space-y-1 text-sm text-faint">
-                    <p>{`#${c.case_id} ${c.title}`}</p>
-                    {c.in_repo && <p className="text-xs">{repoStatus(c)}</p>}
-                    {c.reason && <p className="text-xs">{c.reason}</p>}
-                    {c.add_user_command && (
-                      <div className="flex items-center gap-2">
-                        <code className="rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-text">
-                          {c.add_user_command}
-                        </code>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`Copy command for #${c.case_id}`}
-                          onClick={() => void copyText(c.add_user_command ?? "")}
-                        >
-                          <IconCopy aria-hidden />
-                          Copy
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                ),
-              )}
-            </section>
-          </>
         )}
+      </div>
+    );
+  };
+
+  return (
+    <Modal onClose={() => !busy && onClose()} labelledBy={titleId} className={`${MODAL_LARGE} flex flex-col overflow-hidden`}>
+      <div className="space-y-3 border-b border-border px-5 pt-4 pb-3">
+        <div>
+          <h2 id={titleId} className="text-base font-semibold text-text">Export to Playwright</h2>
+          <Hint>
+            Copies the passing scripts of PBI {pbiId} into your clone of the Playwright repo. Nothing is run,
+            committed or pushed.
+          </Hint>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-bg px-2.5 py-1.5">
+            <IconBrowse aria-hidden className="size-4 shrink-0 text-muted" />
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-text" title={clone || undefined}>
+              {clone || "No folder chosen yet."}
+            </span>
+          </div>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void choose()}>
+            <IconBrowse aria-hidden />
+            Choose…
+          </Button>
+        </div>
+        {preview && !preview.clone_ok && preview.clone_problem && <p className="text-xs text-danger">{preview.clone_problem}</p>}
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+        {error && <p className="whitespace-pre-wrap rounded-md border border-danger/40 bg-danger/10 p-2 text-xs text-danger">{error}</p>}
 
         {result && (
-          <section className="space-y-2 border-t border-border pt-3" aria-label="Export summary">
-            <h3 className={sectionTitle}>Exported</h3>
-            <ul className="space-y-0.5 text-xs text-text">
+          <section className="space-y-2 rounded-lg border border-success/40 bg-success/5 p-3" aria-label="Export summary">
+            <h3 className="text-sm font-semibold text-success">Exported</h3>
+            <ul className="space-y-0.5 font-mono text-xs text-text">
               {result.files.map((f) => (
                 <li key={f}>{f}</li>
               ))}
@@ -380,30 +354,158 @@ export default function PlaywrightExportDialog({
                 </ul>
               </div>
             )}
-            <p className="text-xs text-muted">Next:</p>
+            <p className="text-xs font-medium text-text">Next:</p>
             <ol className="list-decimal space-y-0.5 pl-5 text-xs text-muted">
               {NEXT_STEPS.map((s) => (
                 <li key={s}>{s}</li>
               ))}
             </ol>
-            <p className="text-xs text-muted">
+            <Hint>
               Exporting a case again rewrites its section from Azure DevOps; the repo's Added by engineer, Also and Assertion floor blocks and every other section and file stay as they are.
-            </p>
+            </Hint>
             {result.record_error && <p className="text-xs text-warning">{result.record_error}</p>}
             {refreshError && <p className="text-xs text-faint">{refreshError}</p>}
+            <FinishInRepo clone={clone} org={org} project={project} result={result} />
           </section>
         )}
-        {result && <FinishInRepo clone={clone} org={org} project={project} result={result} />}
+
+        {preview && areas && users && (
+          <>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Summary">
+              <Stat value={ticked.length} label="to export" />
+              <Stat value={inRepoCount} label="already in the repo" />
+              <Stat value={excludedCount} label="excluded in the repo" />
+              <Stat value={blockedCount} label="cannot export yet" />
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem] lg:items-start">
+              <Card
+                title={
+                  <>
+                    Cases <span className="text-xs font-normal text-faint">{listed.length}</span>
+                  </>
+                }
+                aria-label="Cases"
+              >
+                <div className="space-y-0.5 border-b border-border px-3 py-2">
+                  <Hint>{SKIP_NOTE}</Hint>
+                  {noScript > 0 && (
+                    <Hint className="text-faint">{`${noScript} ${noScript === 1 ? "case without a script is" : "cases without a script are"} not shown.`}</Hint>
+                  )}
+                </div>
+                {listed.length === 0 && <Hint className="px-3 py-4">None of these cases has an Auto Run script yet.</Hint>}
+                {groups.map(([name, rows]) => (
+                  <div key={name} role="group" aria-label={name}>
+                    <div className="border-b border-border bg-surface-2 px-3 py-1 text-xs font-medium text-muted">
+                      {name} <span className="text-faint">{rows.length}</span>
+                    </div>
+                    <div className="divide-y divide-border">{rows.map(caseRow)}</div>
+                  </div>
+                ))}
+              </Card>
+
+              <Card
+                title="Mappings"
+                actions={
+                  <>
+                    {unsaved && <span className="text-xs text-warning">Save the mappings first</span>}
+                    <Button size="sm" variant="outline" disabled={busy || invalid.size > 0} onClick={() => void saveMappings()}>
+                      <IconConfirm aria-hidden />
+                      Save mappings
+                    </Button>
+                  </>
+                }
+                bodyClassName="space-y-4 p-3"
+              >
+                <section className="space-y-2">
+                  <h4 className="text-xs font-medium text-text">Areas</h4>
+                  <Hint>Where each area's specs go in the clone: side, module and feature.</Hint>
+                  {preview.areas.length === 0 && <Hint>No areas yet.</Hint>}
+                  {preview.areas.map((name) => (
+                    <div key={name} className="space-y-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="text-sm text-text">{name}</span>
+                        {invalid.has(name) && <span className="text-xs text-danger">needs module and feature</span>}
+                      </div>
+                      <div className="grid grid-cols-[5.5rem_minmax(0,1fr)_minmax(0,1fr)] gap-1.5">
+                        <Select aria-label={`Side for ${name}`} triggerClassName="py-1.5 text-xs" value={place(name).side} onChange={(e) => setPlace(name, { side: e.target.value })}>
+                          {SIDES.map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </Select>
+                        <Input
+                          aria-label={`Module for ${name}`}
+                          placeholder="module"
+                          className="py-1.5 text-xs"
+                          value={place(name).module}
+                          onChange={(e) => setPlace(name, { module: e.target.value })}
+                        />
+                        <Input
+                          aria-label={`Feature for ${name}`}
+                          placeholder="feature"
+                          className="py-1.5 text-xs"
+                          value={place(name).feature}
+                          onChange={(e) => setPlace(name, { feature: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </section>
+
+                <section className="space-y-2 border-t border-border pt-3">
+                  <h4 className="text-xs font-medium text-text">Accounts</h4>
+                  <Hint>The repo user each of your accounts signs in as.</Hint>
+                  {preview.accounts.length === 0 && <Hint>No accounts yet.</Hint>}
+                  {preview.accounts.map((key) => {
+                    // A saved pick the clone no longer has: shown, and said, not left blank.
+                    const stale = Boolean(users[key]) && !preview.user_keys.includes(users[key]);
+                    return (
+                      <div key={key} className="space-y-1">
+                        <div className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] items-center gap-2">
+                          <span className="truncate text-sm text-text" title={key}>
+                            {key}
+                          </span>
+                          <Select
+                            aria-label={`User for ${key}`}
+                            triggerClassName="py-1.5 text-xs"
+                            value={users[key] ?? ""}
+                            onChange={(e) => setUsers((cur) => ({ ...(cur ?? {}), [key]: e.target.value }))}
+                          >
+                            <option value="">Not mapped</option>
+                            {stale && <option value={users[key]}>{users[key]}</option>}
+                            {preview.user_keys.map((k) => (
+                              <option key={k} value={k}>
+                                {k}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+                        {stale && <p className="text-xs text-warning">{`${users[key]} is not in this clone's users.json`}</p>}
+                      </div>
+                    );
+                  })}
+                </section>
+              </Card>
+            </div>
+          </>
+        )}
       </div>
 
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex items-center justify-end gap-2 border-t border-border bg-surface px-5 py-3">
+        {preview && !result && unsaved ? (
+          <Hint className="mr-auto text-warning">Save the mappings to export.</Hint>
+        ) : (
+          preview && !result && ticked.length === 0 && listed.length > 0 && <Hint className="mr-auto">Tick at least one case to export.</Hint>
+        )}
         <Button variant="ghost" size="sm" disabled={busy} onClick={onClose}>
           <IconCancel aria-hidden />
           {result ? "Close" : "Cancel"}
         </Button>
         <Button size="sm" disabled={!canExport} onClick={() => void doExport()}>
           <IconExport aria-hidden />
-          Export
+          {`Export (${ticked.length})`}
         </Button>
       </div>
     </Modal>

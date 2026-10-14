@@ -444,3 +444,13 @@ test("a run that ends before its start comes back still ends", async () => {
   expect(button("Stop")).toBeDisabled();
   expect(button("Run picked (2)")).toBeEnabled();
 });
+
+test("each branch counts its ticked tests, and the output panel waits for a run", async () => {
+  mount();
+  await screen.findByText("User can create a new rating method");
+  expect(screen.getByRole("log", { name: "Run output" })).toHaveTextContent("No run yet");
+  fireEvent.click(box("Tick the app shell loads"));
+  // SL holds three tests, one of them ticked.
+  expect(within(box("Tick SL").parentElement!).getByText("1/3")).toBeInTheDocument();
+  expect(within(box("Tick Common Components").parentElement!).getByText("1")).toBeInTheDocument();
+});

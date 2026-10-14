@@ -76,8 +76,28 @@ test("the list shows each account without a password", async () => {
   expect(screen.getByText(SUPERVISOR.key)).toBeTruthy();
   expect(screen.getByText("3 specs")).toBeTruthy();
   expect(screen.getByText("1 other reference")).toBeTruthy();
-  expect(screen.getByText(/fake\.general@example\.test · Fake General · Analyst/)).toBeTruthy();
+  const row = screen.getByRole("row", { name: (name) => name.startsWith(`${GENERAL.key} `) });
+  for (const text of [GENERAL.username, GENERAL.display_name, GENERAL.title, `reports to ${SUPERVISOR.key}`]) {
+    expect(within(row).getByText(text)).toBeTruthy();
+  }
+  // Each row's actions are named buttons, a tooltip saying which.
+  for (const name of [`Show password of ${GENERAL.key}`, `Edit ${GENERAL.key}`, `Rename ${GENERAL.key}`, `Delete ${GENERAL.key}`]) {
+    expect(within(row).getByRole("button", { name })).toHaveAttribute("title");
+  }
   expect(document.body.textContent).not.toContain(PASSWORD);
+});
+
+test("a form opens in a dialog, says which step it is on, and Cancel closes it", async () => {
+  mount();
+  await screen.findByText(GENERAL.key);
+  fireEvent.click(screen.getByRole("button", { name: `Rename ${GENERAL.key}` }));
+  const dialog = screen.getByRole("dialog", { name: `Rename ${GENERAL.key}` });
+  expect(within(dialog).getByText("1. Fill in and preview")).toHaveClass("text-accent");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Preview" }));
+  await within(dialog).findByLabelText("Preview");
+  expect(within(dialog).getByText("2. Apply")).toHaveClass("text-accent");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
 test("Show password asks for it, and Hide drops it", async () => {

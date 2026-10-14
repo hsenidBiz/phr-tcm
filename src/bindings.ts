@@ -4374,6 +4374,11 @@ export type PreviewCase = {
 	 *  then says "Excluded in the repo (in <file>)".
 	 */
 	excluded: boolean,
+	/**
+	 *  Auto Run has a script for it. The dialog lists only cases that do:
+	 *  one without a script has nothing to export.
+	 */
+	has_script: boolean,
 };
 
 export type Project = {
