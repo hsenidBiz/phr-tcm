@@ -42,6 +42,7 @@ import {
 } from "../bindings";
 import { describeAction, sentenceText } from "../screens/AutoRun/describeAction";
 import { isCaptureMode } from "./capture";
+import { playwrightPatches } from "./demoPlaywright";
 
 const DEMO_KEY = "tcm-v2-dev-demo";
 const PREFS_KEY = "tcm-v2-prefs";
@@ -943,7 +944,13 @@ function applyPatches() {
   const allCases = () => [...casesByPbi.values()].flat();
   const findCase = (id: number) => allCases().find((c) => c.id === id);
 
+  // The live settings, read before the patches replace the command: the
+  // sample clone stands in for the Playwright folder only.
+  const realGetAppSettings = commands.getAppSettings;
+
   const patches = {
+    // The Playwright tab: a made-up clone of the team's repo (dev/demoPlaywright).
+    ...playwrightPatches({ getAppSettings: realGetAppSettings }),
     authStatus: () => Promise.resolve(auth),
     resumeSession: () => Promise.resolve(auth),
     signIn: () => ok(auth),
