@@ -3,6 +3,7 @@ import { type PbiHit, type Step, type TestCase } from "../bindings";
 import DefaultTagsDialog from "../components/DefaultTagsDialog";
 import ModuleField from "../components/ModuleField";
 import PickPbiEmpty from "../components/PickPbiEmpty";
+import PrioritySelect, { DEFAULT_PRIORITY } from "../components/PrioritySelect";
 import QueueSection from "../components/QueueSection";
 import StepsEditor from "../components/StepsEditor";
 import TagsField from "../components/TagsField";
@@ -40,6 +41,7 @@ export default function ManualEntry({
   const [extras, setExtras] = useState("");
   const [editingDefaults, setEditingDefaults] = useState(false);
   const [status, setStatus] = useState("Not Automated");
+  const [priority, setPriority] = useState<number>(DEFAULT_PRIORITY);
   const [moduleValue, setModuleValue] = useState("");
   const [preconditions, setPreconditions] = useState("");
   useEffect(() => {
@@ -80,6 +82,7 @@ export default function ManualEntry({
       module_value: moduleValue.trim(),
       preconditions: preconditions.trim(),
       update_id: null,
+      priority,
     };
     setQueue((q) => [...q, tc]);
     setTitle("");
@@ -117,6 +120,7 @@ export default function ManualEntry({
                 <option>Not Automated</option>
                 <option>Planned</option>
               </Select>
+              <PrioritySelect value={priority} onChange={(p) => setPriority(p ?? DEFAULT_PRIORITY)} />
             </div>
             <Button variant="ghost" size="sm" onClick={() => setEditingDefaults(true)}>
               <IconSetDefault aria-hidden />

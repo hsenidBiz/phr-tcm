@@ -550,6 +550,11 @@ pub fn parse_ops_full(
                             ))
                         }
                     };
+                    let priority = match crate::import_parser::read_priority(rv) {
+                        None => None,
+                        Some(Ok(p)) => Some(p),
+                        Some(Err(why)) => return Err(format!("{label}: cases[{j}] ('{title}'): {why}")),
+                    };
                     cases.push(TestCase {
                         title,
                         steps,
@@ -566,6 +571,7 @@ pub fn parse_ops_full(
                             .to_string(),
                         preconditions: rv["preconditions"].as_str().unwrap_or("").to_string(),
                         update_id,
+                        priority,
                         // The file importer's own alias lists, not a copy of
                         // them: the copy that used to live here was already
                         // one spelling short, and a case inserted by an
@@ -1247,12 +1253,14 @@ fn known_keys(op_name: &str) -> &'static [&'static str] {
 /// The case-object keys `insert_cases` reads (importer aliases included).
 /// Everything else on an inserted case is DISCARDED by the rebuild, and
 /// §15's evidence showed `author`, `priority` and `step_number` vanishing
-/// with `warnings: []` - so the discard is now echoed.
+/// with `warnings: []` - so the discard is now echoed. `priority` has since
+/// become a real field: it is read (and refused when outside 1-4), so it
+/// survives an insert like every other case field.
 fn insert_case_unknown_keys(rv: &serde_json::Value) -> Vec<String> {
     const KNOWN: &[&str] = &[
         "title", "name", "test_case_name", "steps", "tags", "automation_status", "module",
         "module_value", "preconditions", "id", "test_case_id", "work_item_id", "update_id",
-        "spec_order", "tester_order",
+        "spec_order", "tester_order", "priority",
     ];
     let mut out = vec![];
     if let Some(obj) = rv.as_object() {

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type TestCase, type TestCaseFull } from "../../bindings";
 import ModuleField from "../../components/ModuleField";
+import PrioritySelect from "../../components/PrioritySelect";
 import StepsEditor from "../../components/StepsEditor";
 import TagsField from "../../components/TagsField";
 import { Button } from "../../components/ui/button";
@@ -116,6 +117,12 @@ export default function CaseEditor({
           <option>Not Automated</option>
           <option>Planned</option>
         </Select>
+        <PrioritySelect
+          value={tc.priority}
+          onChange={(p) => setTc((t) => ({ ...t, priority: p }))}
+          // A work item with no priority keeps having none unless one is picked.
+          keepLabel={original.priority == null ? "Keep current" : undefined}
+        />
       </div>
       <div className="flex gap-2">
         <TagsField

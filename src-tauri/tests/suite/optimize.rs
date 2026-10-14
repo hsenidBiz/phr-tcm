@@ -20,6 +20,7 @@ fn case(title: &str, module: &str, pre: &str, steps: Vec<Step>) -> TestCase {
         module_value: module.into(),
         preconditions: pre.into(),
         update_id: None,
+        priority: None,
         comment: String::new(),
         reviewer_notes: String::new(),
         area: String::new(),

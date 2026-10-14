@@ -8030,7 +8030,9 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         Each case: `title` (required, <=255 chars), `steps` (required, each\n\
         `{{\"action\", \"expected\"}}`, or `{{\"shared\": N}}` for a Shared Steps reference - keep those exactly as exported, never invent one),\n\
         `tags` (semicolon-separated, never commas),\n\
-        `automation_status` (exactly {statuses}), `module` (ONLY from the list\n\
+        `automation_status` (exactly {statuses}),\n\
+        `priority` (optional, a number 1-4: a new case without one is created with 2,\n\
+        and an update without one leaves the work item's priority as it is), `module` (ONLY from the list\n\
         below), `preconditions` (state, not steps), and `comment` - the developer's own note, which round-trips\n\
         through the file and is never sent to Azure DevOps. You never write\n\
         `comment`: leave it exactly as you found it, and never add one.\n\
@@ -8360,7 +8362,7 @@ fn case_page(
             if titles_only {
                 serde_json::json!({ "id": c.id, "title": c.title })
             } else {
-                serde_json::json!({
+                let mut rec = serde_json::json!({
                     "id": c.id,
                     "title": c.title,
                     "tags": c.tags,
@@ -8368,7 +8370,13 @@ fn case_page(
                     "module": c.module_value,
                     "preconditions": c.preconditions,
                     "steps": c.steps.iter().map(crate::import_parser::step_json).collect::<Vec<_>>(),
-                })
+                });
+                // Present only when the work item has one, the importer's
+                // shape rule for optional fields.
+                if let Some(p) = c.priority {
+                    rec["priority"] = serde_json::json!(p);
+                }
+                rec
             }
         })
         .collect();

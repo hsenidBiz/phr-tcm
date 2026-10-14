@@ -456,6 +456,9 @@ impl AdoClient {
                 "value": crate::steps_xml::build_steps_xml(&tc.steps)}),
             serde_json::json!({"op": "add", "path": "/fields/Microsoft.VSTS.TCM.AutomationStatus",
                 "value": tc.automation_status}),
+            // Every created case gets a priority: its own, or the default.
+            serde_json::json!({"op": "add", "path": "/fields/Microsoft.VSTS.Common.Priority",
+                "value": tc.priority.unwrap_or(crate::model::DEFAULT_PRIORITY)}),
         ];
         if !area_path.is_empty() {
             patch.push(serde_json::json!({"op": "add", "path": "/fields/System.AreaPath", "value": area_path}));
@@ -713,6 +716,12 @@ impl AdoClient {
             .iter()
             .map(|(r, v)| serde_json::json!({"op": "add", "path": format!("/fields/{r}"), "value": v}))
             .collect();
+        // Priority only when the case sets one, whatever `blanks` says:
+        // `None` means "leave Azure DevOps' value alone", and an update
+        // never resets a priority to the create default.
+        if let Some(p) = tc.priority {
+            ops.push(serde_json::json!({"op": "add", "path": "/fields/Microsoft.VSTS.Common.Priority", "value": p}));
+        }
         ops.extend(tag_ops);
         ops
     }
@@ -747,6 +756,19 @@ impl AdoClient {
         Ok(())
     }
 
+}
+
+/// A work item's `Microsoft.VSTS.Common.Priority` as read back: a number
+/// (or its string form) in 1-4, else `None` - a missing or odd value leaves
+/// the case without one, so a save does not write it back.
+pub fn parse_priority(v: &serde_json::Value) -> Option<i32> {
+    let n = match v {
+        serde_json::Value::Number(n) => n.as_i64()?,
+        serde_json::Value::String(s) => s.trim().parse::<i64>().ok()?,
+        _ => return None,
+    };
+    let n = i32::try_from(n).ok()?;
+    crate::model::VALID_PRIORITIES.contains(&n).then_some(n)
 }
 
 /// Is this relation "the test cases that test THIS work item"?
@@ -941,6 +963,7 @@ impl AdoClient {
             "System.Tags",
             "Microsoft.VSTS.TCM.AutomationStatus",
             "Microsoft.VSTS.TCM.Steps",
+            "Microsoft.VSTS.Common.Priority",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -978,6 +1001,7 @@ impl AdoClient {
                         let s = str_of("Microsoft.VSTS.TCM.AutomationStatus");
                         if s.is_empty() { "Not Automated".to_string() } else { s }
                     },
+                    priority: parse_priority(&f["Microsoft.VSTS.Common.Priority"]),
                     steps: crate::steps_xml::parse_steps_xml(&str_of("Microsoft.VSTS.TCM.Steps")),
                     step_ids: crate::steps_xml::parse_step_ids(&str_of("Microsoft.VSTS.TCM.Steps")),
                     steps_xml: str_of("Microsoft.VSTS.TCM.Steps"),

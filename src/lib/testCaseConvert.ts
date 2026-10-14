@@ -11,5 +11,8 @@ export function toTestCase(c: TestCaseFull): TestCase {
     module_value: c.module_value,
     preconditions: c.preconditions,
     update_id: c.id,
+    // The real value from Azure DevOps, so an edit round-trips it. Null
+    // (a work item with none) leaves it alone on save.
+    priority: c.priority,
   };
 }

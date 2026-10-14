@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { TestCase } from "../bindings";
 import ModuleField from "./ModuleField";
+import PrioritySelect from "./PrioritySelect";
 import TagsField from "./TagsField";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -30,6 +31,7 @@ export default function QueueBulkEditDialog({
   onApply: (edit: (tc: TestCase) => TestCase) => void;
 }) {
   const [status, setStatus] = useState(""); // "" = unchanged
+  const [priority, setPriority] = useState<number | null>(null); // null = unchanged
   const [moduleValue, setModuleValue] = useState("");
   const [applyModule, setApplyModule] = useState(false);
   const [tagsMode, setTagsMode] = useState<"unchanged" | "add" | "replace">("unchanged");
@@ -38,11 +40,11 @@ export default function QueueBulkEditDialog({
   const [applyPreconditions, setApplyPreconditions] = useState(false);
 
   const nothingChosen =
-    !status && !applyModule && tagsMode === "unchanged" && !applyPreconditions;
+    !status && priority == null && !applyModule && tagsMode === "unchanged" && !applyPreconditions;
 
   const buildEdit = (): ((tc: TestCase) => TestCase) => {
     // Captured once, so the edit is the same pure function for every case.
-    const chosen = { status, moduleValue, applyModule, tagsMode, tags, preconditions, applyPreconditions };
+    const chosen = { status, priority, moduleValue, applyModule, tagsMode, tags, preconditions, applyPreconditions };
     return (tc) => {
       const mergedTags =
         chosen.tagsMode === "replace"
@@ -59,6 +61,7 @@ export default function QueueBulkEditDialog({
         ...tc,
         tags: mergedTags,
         automation_status: chosen.status || tc.automation_status,
+        priority: chosen.priority ?? tc.priority ?? null,
         module_value: chosen.applyModule ? chosen.moduleValue : tc.module_value,
         preconditions: chosen.applyPreconditions ? chosen.preconditions : tc.preconditions,
       };
@@ -85,6 +88,16 @@ export default function QueueBulkEditDialog({
             <option>Not Automated</option>
             <option>Planned</option>
           </Select>
+        </label>
+
+        <label className="block text-xs text-muted">
+          Priority
+          <PrioritySelect
+            className="mt-1 w-full"
+            value={priority}
+            onChange={setPriority}
+            keepLabel="Leave unchanged"
+          />
         </label>
 
         <div className="space-y-1">

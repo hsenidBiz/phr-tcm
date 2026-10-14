@@ -180,6 +180,22 @@ pub(crate) fn read_case_id(v: &serde_json::Value, keys: &[&str]) -> Option<Resul
     Some(work_item_id(&s).ok_or(s))
 }
 
+/// A case object's `priority`: `None` when absent or null, `Some(Ok(n))`
+/// for 1-4 (a number, or a string holding one), and `Some(Err(sentence))`
+/// for anything else, so the caller refuses the case rather than guess.
+pub(crate) fn read_priority(v: &serde_json::Value) -> Option<Result<i32, String>> {
+    let raw = json_value(v, &["priority"])?;
+    let n = match raw {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    };
+    match n.and_then(|n| i32::try_from(n).ok()) {
+        Some(n) if crate::model::VALID_PRIORITIES.contains(&n) => Some(Ok(n)),
+        _ => Some(Err(crate::model::priority_error(&value_to_string(raw)))),
+    }
+}
+
 /// A case object's valid work item id, under any spelling the importer accepts.
 pub(crate) fn case_id_of(v: &serde_json::Value) -> Option<i32> {
     read_case_id(v, &ID_KEYS).and_then(Result::ok)
@@ -529,6 +545,7 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
             module_value,
             preconditions,
             update_id,
+            priority: None,
             // The spreadsheet format carries none of the app-only fields -
             // the notes and both sort orders are JSON only.
             comment: String::new(),
@@ -624,6 +641,15 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
                 "{label} ('{title}'): id '{s}' is not a valid work item ID; it will be created as a new test case instead of updating."
             )),
         }
+
+        let priority = match read_priority(&raw_v) {
+            None => None,
+            Some(Ok(p)) => Some(p),
+            Some(Err(why)) => {
+                warnings.push(format!("{label} ('{title}'): skipped - {why}"));
+                continue;
+            }
+        };
 
         let tags = read_tags(&raw_v);
         if tags.contains(',') {
@@ -778,6 +804,7 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
             module_value,
             preconditions,
             update_id,
+            priority,
             comment,
             reviewer_notes,
             area,

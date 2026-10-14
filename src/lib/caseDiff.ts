@@ -93,6 +93,15 @@ export function diffCase(
       new: queued.automation_status,
     });
   }
+  // Written only when the queued case sets one: a null leaves the work
+  // item's priority alone, so it is no change.
+  if (queued.priority != null && queued.priority !== current.priority) {
+    fields.push({
+      name: "Priority",
+      old: current.priority == null ? "" : String(current.priority),
+      new: String(queued.priority),
+    });
+  }
 
   // Blank-skip fields: a blank queued value intentionally leaves the
   // server value alone (only noted when there IS a server value to keep).

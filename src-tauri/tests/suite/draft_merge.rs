@@ -498,6 +498,7 @@ fn an_after_case_with_every_field_set_round_trips_through_a_write() {
         module_value: "Checkout".into(),
         preconditions: "Signed in.".into(),
         update_id: Some(777),
+        priority: None,
         comment: "reviewer note".into(),
         reviewer_notes: "from Spec.md 4.2".into(),
         area: "Checkout / Pay / Card".into(),
