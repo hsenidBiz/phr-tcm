@@ -720,7 +720,9 @@ pub fn export_queue_page_in(
         parts.push(format!("<script>{NOTE_JS}</script>"));
     }
     parts.push("</body></html>".into());
-    std::fs::write(path, parts.join("\n")).map_err(|e| e.to_string())
+    // Through a temp file and a rename: the page a browser polls is never
+    // read half written.
+    crate::ai_tools::atomic_write(std::path::Path::new(path), &parts.join("\n"))
 }
 
 /// One area section of a grouped page: a native disclosure, open, whose
