@@ -27,6 +27,27 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.0",
+    date: "2026-10-15",
+    items: [
+      "New Playwright tab (with Advanced Features on): point it at your clone of the team's Playwright repo. Overview shows what the repo holds; Runner picks tests from the repo's tree and runs them hidden, shown or in debug with the same count check as npm run qa, live output, Stop and past reports; Accounts adds, edits, renames and deletes the repo's test accounts through npm run users, with a preview first and passwords shown only when you ask; Sync shows which exported cases changed and updates just those, or adds the ones not in the repo yet.",
+      "Export to Playwright writes a PBI's passing Auto Run scripts into your clone. It checks the repo first: new cases are ticked, cases already in the repo are skipped unless you tick one to replace it, cases the repo marks as Excluded are never exported, and the repo's own Added by engineer, Also and Assertion floor blocks are kept. Table checks now export too. Nothing is run, committed or pushed in the clone.",
+      "After an export, a Finish in the repo card gives a ready-to-copy prompt for Claude Code in your clone that runs the raw specs, then the repo's own refactor, lint and live check, to turn the export into a finished page object and spec.",
+      "Test cases now carry a Priority (1 to 4). New cases are created with Priority 2 unless you pick another; updating a case leaves its priority as it is unless you change it. Priority is in Manual Entry, the case editors, bulk edit, and the JSON import and export as \"priority\".",
+      "A script's setup now runs whenever its case runs, with no approval step.",
+      "Auto Run groups a run into batches wherever it has to pause. Scripts can say which settings they need, such as Approval workflow ON, and Auto Run groups the cases so each batch agrees, tries to keep the pauses few, and pauses before each batch to say what to set and what to put back.",
+      "An unattended run waits out a dropped network or VPN instead of failing every case: it pauses, tells you, counts down, and re-runs the case it interrupted once the connection is back. You can stop it at any time.",
+      "Auto Run is faster and steadier: trips around the site open menus from where the page already is, screenshots no longer hold up the next step, it waits for a page to finish loading before clicking, closes known pop-ups (such as PeoplesHR's cookie banner) by itself, and opens and refreshes quickly on a PBI with many cases without freezing the window.",
+      "Auto Run no longer leaves Edge windows behind, shows one browser window per case when watched, and no longer stops answering on a computer where Edge syncs your account. A Release Auto Run browser button in Setup frees a browser that has gone, and a rejected saved sign-in is dropped and replaced with a fresh one.",
+      "Auto Run shows saved, repaired or deleted scripts without reloading the screen, and the Setup panel follows you down the page.",
+      "New Auto Run checks: whether a checkbox or switch is ticked, whether a control is enabled or disabled, and whether an attribute is absent. Clicks reach checkboxes and switches drawn behind their label without following a link in it.",
+      "API template runs on the same account within two minutes reuse one signed-in browser and skip the sign-in. API fixtures can record the exact name a step gave a draft, so a script can open its own draft by name, and can skip a stage their cycle does not include.",
+      "Your assistant writes and repairs Auto Run scripts faster and with fewer mistakes: it explores the site itself before writing, maps menus, reads pages as working locators including their visible text, runs several discovery steps at once, checks a save without saving, sends only the steps a repair changes, gets clearer answers about long replays and failures, and can read or delete a script (a deleted script is kept aside for 30 days). A discovery for a case marked Must not save blocks every save the page sends.",
+      "How To Use shows Auto Run, API Templates and Playwright only when Advanced Features is on.",
+      "The Playwright tab opens much faster: it no longer freezes the window while reading the repo, keeps the test list across restarts until the specs change, shows accounts straight away, and only loads a tab when you open it. Many other screens no longer freeze the window while reading files, and long lists redraw only the rows that change.",
+    ],
+  },
+  {
     version: "2.1.3-beta.28",
     date: "2026-10-14",
     items: [
