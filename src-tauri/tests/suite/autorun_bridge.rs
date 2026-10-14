@@ -1592,6 +1592,7 @@ fn probed_page_at(href: &'static str, found: usize) -> crate::common::ScriptedDr
             "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS => {
                 Ok(serde_json::json!({ "result": { "value": true } }))
             }
+            "Accessibility.getPartialAXTree" => Ok(serde_json::json!({ "nodes": [] })),
             "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(serde_json::json!({
                 "result": { "value": { "tag": "button", "text": "Archive", "rect": [10.0, 20.0, 80.0, 24.0] } }
             })),
@@ -1733,6 +1734,7 @@ fn probed_page_showing(found: usize, shown: &'static [usize]) -> crate::common::
                 let visible = shown.iter().any(|i| id == format!("el-{i}"));
                 Ok(serde_json::json!({ "result": { "value": visible } }))
             }
+            "Accessibility.getPartialAXTree" => Ok(serde_json::json!({ "nodes": [] })),
             "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(serde_json::json!({
                 "result": { "value": { "tag": "button", "text": "Archive", "rect": [10.0, 20.0, 80.0, 24.0] } }
             })),
@@ -2935,17 +2937,51 @@ async fn an_order_is_saved_for_the_pbi_with_a_warning_for_each_case_with_no_scri
         lines,
         vec![
             "saved Auto Run's order for PBI 100: 503, 502, 501, 504",
+            v2_lib::ai_bridge::ORDER_REPLACED,
             "case 503 has no saved script",
             "case 504 has no saved script",
         ]
     );
     assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), Some(vec![503, 502, 501, 504]));
 
-    // Every case scripted: no warning.
+    // Every case scripted: no warning. The answer says it replaced the
+    // PBI's whole order.
     let body = serde_json::json!({ "pbi_id": 100, "case_ids": [502, 501] }).to_string();
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-order", &body, "1.0.0").await;
-    assert_eq!((status, out.as_str()), (200, "saved Auto Run's order for PBI 100: 502, 501"));
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out, format!("saved Auto Run's order for PBI 100: 502, 501\n{}", v2_lib::ai_bridge::ORDER_REPLACED));
+    assert!(out.contains("replaced the PBI's whole Auto Run order") && out.contains("mode: \"append\""), "{out}");
     assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), Some(vec![502, 501]));
+}
+
+/// `mode: "append"` keeps the saved order's other cases after the listed
+/// ones, as they were, and says so; an unknown mode is refused.
+#[tokio::test]
+async fn an_appended_order_keeps_the_rest_of_the_saved_one() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    for id in [501, 502, 503, 504] {
+        v2_lib::autorun::store::save_script(dir.path(), &scripted(id)).unwrap();
+    }
+    let (_server, client) = client_with_pbi(100, &[501, 502, 503, 504]).await;
+    v2_lib::autorun::store::save_order(dir.path(), 100, &[501, 502, 503, 504]).unwrap();
+
+    let body = serde_json::json!({ "pbi_id": 100, "case_ids": [504, 502], "mode": "append" }).to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-order", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(
+        out,
+        "saved Auto Run's order for PBI 100: 504, 502\nAppended: the saved order's other cases run after these, as they were: 501, 503"
+    );
+    assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), Some(vec![504, 502, 501, 503]));
+
+    let body = serde_json::json!({ "pbi_id": 100, "case_ids": [501], "mode": "merge" }).to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-order", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.starts_with("mode \"merge\" is not one"), "{out}");
+    assert_eq!(v2_lib::autorun::store::load_order(dir.path(), 100), Some(vec![504, 502, 501, 503]));
+    assert_eq!(v2_lib::autorun::store::append_order(&[1, 2, 3], &[3, 9]), vec![3, 9, 1, 2]);
 }
 
 /// An id the PBI is not tested by is refused, each one by name, and

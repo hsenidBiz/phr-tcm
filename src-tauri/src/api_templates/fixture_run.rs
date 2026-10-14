@@ -20,7 +20,7 @@
 //! ids and names only.
 
 use super::exec;
-use super::fixture::{validate, Fixture, FixtureRun};
+use super::fixture::{sent_ref, validate, Fixture, FixtureRun};
 use super::fixture_store;
 use super::runner::{
     account_lease, claim, open_session, preflight, run_in_session, stopped_before_sign_in, Mode, RunReport, RunRequest,
@@ -238,6 +238,18 @@ fn resolve(placeholder: &str, vars: &BTreeMap<String, Value>) -> Option<Value> {
     }
 }
 
+/// The value an output or a `creates` name stands for: a whole
+/// `{{steps.<n>.<output>}}` a step captured, or the text a step SENT for a
+/// param (`fixture::sent_ref`, read from that step's own params when
+/// `step` is given), as the run recorded it under `steps.<n>.params.<param>`.
+fn resolve_value(f: &Fixture, value: &str, vars: &BTreeMap<String, Value>, step: Option<usize>) -> Option<Value> {
+    if let Some(v) = resolve(value, vars) {
+        return Some(v);
+    }
+    let (m, param) = sent_ref(f, value, step)?;
+    vars.get(&format!("steps.{m}.params.{param}")).cloned()
+}
+
 /// Said when a stop (`cancel`) ended a fixture run between its steps.
 pub const RUN_STOPPED: &str = "the run was stopped";
 
@@ -400,6 +412,13 @@ async fn run_steps<B: Browsers>(
                     }
                     req
                 };
+                // What this step sends, as text, for an output or a
+                // `creates` name that names it (`fixture::sent_ref`): kept
+                // before the step runs, so a step that fails after making
+                // something still names it.
+                for (name, v) in &req.values {
+                    ran.vars.insert(format!("steps.{n}.params.{name}"), Value::String(plain(v)));
+                }
                 let report = run_in_session(&mut d, root, &req, timing, &session, limit, retry_pauses).await;
                 if report.ok {
                     for (name, v) in &report.outputs {
@@ -515,7 +534,7 @@ pub async fn run_fixture_for<B: Browsers>(
 
     let ok = ran.failed.is_none();
     let outputs: BTreeMap<String, Value> = if ok {
-        f.outputs.iter().filter_map(|(name, p)| resolve(p, &ran.vars).map(|v| (name.clone(), v))).collect()
+        f.outputs.iter().filter_map(|(name, p)| resolve_value(f, p, &ran.vars, None).map(|v| (name.clone(), v))).collect()
     } else {
         BTreeMap::new()
     };
@@ -530,7 +549,12 @@ pub async fn run_fixture_for<B: Browsers>(
             ));
             continue;
         };
-        let name = match resolve(&c.name, &ran.vars) {
+        // A sent name is read from the step that captured the id.
+        let id_step = exec::placeholders(&c.id).first().and_then(|p| {
+            let rest = p.strip_prefix("steps.")?;
+            rest.split_once('.')?.0.parse::<usize>().ok()
+        });
+        let name = match resolve_value(f, &c.name, &ran.vars, id_step) {
             Some(v) => plain(&v),
             None => {
                 applog::info(format!(

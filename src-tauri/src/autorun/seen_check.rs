@@ -31,6 +31,8 @@
 //!   parts; a whole token (`#{{setup.x}}`) or any other place in a
 //!   selector stays literal. The text around it must match the sighting as
 //!   written, and so must the role (or the rest of the selector).
+//!   A name or a text that is nothing but a placeholder fits nothing
+//!   (`ONLY_A_PLACEHOLDER`): it would stand for any element of its role.
 //!   `{{prefix}}` and `{{now:...}}` are not data placeholders: Auto Run
 //!   never fills them in, so they stay literal and are refused. Once the
 //!   run has filled a placeholder in, the locator is checked again
@@ -139,7 +141,14 @@
 //! plain one-link locator (`discovery_map::plain_link`) is compared by its
 //! key, as always; a chain or a narrowed locator (`nth`, `exact`,
 //! `visible`) that matched one counts as one only as that whole locator,
-//! written the same way (`Sightings::whole`). A css selector seen with a
+//! written the same way (`Sightings::whole`). A data placeholder in such a
+//! locator stands for the value the seen one holds in that place, fitted
+//! per name, text or selector, anchored, with the rest written exactly as
+//! seen (`same_link_filled`): a placeholder locator cannot be probed as
+//! written, so probing it with a real value counts for it, and the probed
+//! one must still have matched exactly one. The run-time check takes such
+//! a locator as a whole the same way (`SeenBoth::whole_filled`), each
+//! value the run filled in shaped as the probed one was. A css selector seen with a
 //! state pseudo-class (`:checked`) does not stand for the selector without
 //! it here.
 //!
@@ -245,11 +254,33 @@ pub const SEEN_ONLY_IN_CHECKS: &str = "was used only in saved checks that may ma
 /// `nth` included, is counted when it is probed.
 pub const NEVER_COUNTED_NTH: &str = "was seen on the live app, but never counted as matching exactly one element: probe it with its nth as written, then save again.";
 
+/// [`NEVER_COUNTED`] for a locator holding a data placeholder, which cannot
+/// be probed as written: the same locator probed with a real value in each
+/// placeholder's place counts for it (`same_link_filled`).
+pub const NEVER_COUNTED_FILLED: &str = "was seen on the live app, but never counted as matching exactly one element: probe the same locator with a real value in place of each {{...}} placeholder (and its nth, if it has one), then save again.";
+
+/// Said of a locator whose whole name or text is one data placeholder
+/// (`button "{{setup.label}}"`): it would match any element of that role,
+/// so nothing seen, probed or not, counts for it.
+pub const ONLY_A_PLACEHOLDER: &str = "is named only by a placeholder, which would fit any name: write the words around it as the page shows them, or reach it by a css attribute that holds the value, such as div[data-cycle-id=\"{{setup.cycle_id}}\"].";
+
+/// Is `raw`, a name or a text, a data placeholder and nothing else: no
+/// literal word around it once folded (`name_pattern`)?
+fn only_placeholder(raw: &str) -> bool {
+    let pieces = name_pattern(raw);
+    has_wild(&pieces) && pieces.iter().all(|p| !matches!(p, Piece::Lit(l) if !l.trim().is_empty()))
+}
+
+/// Is `link`'s name or text only a data placeholder (`only_placeholder`)?
+fn named_only_by_placeholder(link: &LocatorStep) -> bool {
+    [&link.name, &link.text].into_iter().flatten().any(|v| only_placeholder(v))
+}
+
 /// Is `hint` one of the sentences said after the locator in place of "was
 /// never seen on the live app" (`never_seen`), rather than a clause after
 /// it?
 pub fn is_own_sentence(hint: &str) -> bool {
-    [SEEN_ONLY_MANY, SEEN_ONLY_IN_CHECKS, NEVER_COUNTED, NEVER_COUNTED_NTH].contains(&hint)
+    [SEEN_ONLY_MANY, SEEN_ONLY_IN_CHECKS, NEVER_COUNTED, NEVER_COUNTED_NTH, NEVER_COUNTED_FILLED, ONLY_A_PLACEHOLDER].contains(&hint)
 }
 
 /// What a use of a locator needs, in one clause, for a refusal of one never
@@ -411,6 +442,86 @@ fn same_link(a: &LocatorStep, b: &LocatorStep) -> bool {
         && (!a.exact || (a.name == b.name && a.text == b.text))
 }
 
+/// `same_link` for `written`, a link of a script, against `seen`, a link
+/// seen as part of a whole: a data placeholder in `written`'s name, text or
+/// css stands for the value `seen` holds there, each one fitted on its own
+/// and anchored at both ends (`fit`, the text around it as written), and
+/// what is left must then be the same link exactly. So a chain probed with
+/// a real id (`div[data-cycle-id="274"]`, then button "Edit") counts as
+/// seen matching one for the same chain written with
+/// `{{setup.cycle_id}}`. A placeholder in a role never fits.
+fn same_link_filled(seen: &LocatorStep, written: &LocatorStep) -> bool {
+    if !link_holds_placeholder(written) {
+        return same_link(seen, written);
+    }
+    if written.role.as_deref().is_some_and(holds_data_placeholder) || named_only_by_placeholder(written) {
+        return false;
+    }
+    let mut filled = written.clone();
+    let named = |w: &Option<String>, s: &Option<String>, css: bool| -> Option<Option<String>> {
+        match (w.as_deref(), s.as_deref()) {
+            (Some(w), Some(s)) if holds_data_placeholder(w) => {
+                let fits = if css {
+                    wild_fits(&css_pieces(w.trim()), s.trim())
+                } else {
+                    wild_fits(&name_pattern(w), &norm_name(s))
+                };
+                fits.then(|| Some(s.to_string()))
+            }
+            (Some(w), None) if holds_data_placeholder(w) => None,
+            _ => Some(w.clone()),
+        }
+    };
+    let (Some(name), Some(text), Some(css)) =
+        (named(&written.name, &seen.name, false), named(&written.text, &seen.text, false), named(&written.css, &seen.css, true))
+    else {
+        return false;
+    };
+    filled.name = name;
+    filled.text = text;
+    filled.css = css;
+    same_link(seen, &filled)
+}
+
+/// The values `pieces` (a saved name, text or selector with placeholders)
+/// take in `seen` and in `got`, when both fit, each `got` value shaped as
+/// its `seen` one (`same_shape`) and, in a selector, unable to leave its
+/// value (`safe_filled`).
+fn filled_like(pieces: &[Piece], seen: &str, got: &str, css: bool) -> bool {
+    match (fit(pieces, seen), fit(pieces, got)) {
+        (Some(stood), Some(took)) => same_shape(&stood, &took) && (!css || took.iter().all(|v| safe_filled(v))),
+        _ => false,
+    }
+}
+
+/// Run time: does `filled`, the run's copy of the saved link `saved`, fit
+/// `seen`, a link of a whole seen matching one: `saved` fits it as the
+/// save fitted it (`same_link_filled`), and every value the run put in
+/// has the shape the probed value had there. A link with no placeholder
+/// must be the seen one as written.
+fn filled_fits(seen: &LocatorStep, saved: &LocatorStep, filled: &LocatorStep) -> bool {
+    if !link_holds_placeholder(saved) {
+        return same_link(seen, filled);
+    }
+    if link_holds_placeholder(filled) || !same_link_filled(seen, saved) {
+        return false;
+    }
+    let field = |w: &Option<String>, s: &Option<String>, f: &Option<String>, css: bool| match (w.as_deref(), s.as_deref(), f.as_deref()) {
+        (Some(w), Some(s), Some(f)) if holds_data_placeholder(w) => {
+            if css {
+                filled_like(&css_pieces(w.trim()), s.trim(), f.trim(), true)
+            } else {
+                filled_like(&name_pattern(w), &norm_name(s), &norm_name(f), false)
+            }
+        }
+        (Some(w), _, _) if holds_data_placeholder(w) => false,
+        _ => true,
+    };
+    field(&saved.name, &seen.name, &filled.name, false)
+        && field(&saved.text, &seen.text, &filled.text, false)
+        && field(&saved.css, &seen.css, &filled.css, true)
+}
+
 /// What the map has seen, read both ways: everything, for a use that may
 /// match several (`takes_many`), and only what matched one, for any other.
 /// `vouched` is everything but what only saved checks vouch for, to say
@@ -454,7 +565,21 @@ impl SeenBoth {
     /// narrowed locator seen matching one, written the same way? Only a
     /// use that needs one asks; any other reads every link anyway.
     fn whole(&self, chain: &[LocatorStep], many: bool) -> bool {
-        !many && self.one.whole.iter().any(|w| w.len() == chain.len() && w.iter().zip(chain).all(|(a, b)| same_link(a, b)))
+        !many
+            && self.one.whole.iter().any(|w| w.len() == chain.len() && w.iter().zip(chain).all(|(a, b)| same_link_filled(a, b)))
+    }
+
+    /// Run time: is `filled`, the run's copy of the saved chain `saved`,
+    /// a whole seen matching one, each link fitting as `filled_fits` says?
+    /// What lets a placeholder chain the save took as a whole
+    /// (`same_link_filled`) through at run time too: its scope links were
+    /// never counted on their own.
+    fn whole_filled(&self, saved: &[LocatorStep], filled: &[LocatorStep], many: bool) -> bool {
+        !many
+            && saved.len() == filled.len()
+            && self.one.whole.iter().any(|w| {
+                w.len() == saved.len() && w.iter().zip(saved).zip(filled).all(|((s, sv), f)| filled_fits(s, sv, f))
+            })
     }
 
     /// The sightings a locator used this way is checked against: `many`
@@ -487,6 +612,9 @@ impl SeenBoth {
         kind: &str,
         everywhere: bool,
     ) -> Option<String> {
+        if links.iter().any(|l| link_holds_placeholder(l) && named_only_by_placeholder(l)) {
+            return Some(ONLY_A_PLACEHOLDER.to_string());
+        }
         if !many && links.iter().all(|l| self.any.has(l, true)) {
             if !links.iter().all(|l| self.vouched.has(l, true)) {
                 return Some(SEEN_ONLY_IN_CHECKS.to_string());
@@ -494,6 +622,9 @@ impl SeenBoth {
             let several = if legacy { &self.many_legacy } else { &self.many };
             if link.seen_key().is_some_and(|k| several.contains(&k)) {
                 return Some(SEEN_ONLY_MANY.to_string());
+            }
+            if links.iter().any(link_holds_placeholder) {
+                return Some(NEVER_COUNTED_FILLED.to_string());
             }
             if links.iter().any(|l| l.nth.is_some()) {
                 return Some(NEVER_COUNTED_NTH.to_string());
@@ -664,7 +795,10 @@ impl Sightings {
         // The placeholders are found in the raw name before it is folded
         // (`name_pattern`): folding first would turn a `{{Setup.x}}` the
         // run never fills into one it does.
-        let fits = |raw: &str, seen: &str| norm_name(raw) == seen || (wild && wild_fits(&name_pattern(raw), seen));
+        // A name that is only a placeholder would fit anything: never.
+        let fits = |raw: &str, seen: &str| {
+            norm_name(raw) == seen || (wild && !only_placeholder(raw) && wild_fits(&name_pattern(raw), seen))
+        };
         if let Some(role) = &link.role {
             let (r, n) = (fold_name(role), link.name.as_deref().unwrap_or(""));
             return self.roles.iter().any(|(sr, sn, _)| *sr == r && fits(n, sn));
@@ -1960,6 +2094,11 @@ pub fn check_resolved_inputs_with(
             };
             for (st, ft) in own_targets(sa).into_iter().zip(own_targets(fa)) {
                 let chain = ft.links();
+                // A placeholder chain or narrowed locator the save took as
+                // a whole (`SeenBoth::whole`) is fitted as a whole here too.
+                if both.whole_filled(&st.links(), &chain, takes_many(fa)) {
+                    continue;
+                }
                 let seen = both.for_use(takes_many(fa), ft.is_legacy());
                 let off = st.links().iter().zip(&chain).any(|(sl, fl)| {
                     link_holds_placeholder(sl)
@@ -1995,6 +2134,9 @@ pub fn check_resolved_inputs_with(
                 for (m, r) in as_saved.iter().flat_map(Action::each).zip(ran.iter().flat_map(Action::each)) {
                     for (mt, rt) in own_targets(m).into_iter().zip(own_targets(r)) {
                         let chain = rt.links();
+                        if both.whole_filled(&mt.links(), &chain, takes_many(r)) {
+                            continue;
+                        }
                         let seen = both.for_use(takes_many(r), rt.is_legacy());
                         let fed = mt.links().iter().zip(&chain).any(|(ml, rl)| {
                             let changed = ml != rl || link_holds_placeholder(rl);

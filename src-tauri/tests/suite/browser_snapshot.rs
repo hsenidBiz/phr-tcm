@@ -23,6 +23,7 @@ fn node(id: &str, role: &str, name: &str, children: &[&str]) -> AxNode {
         disabled: false,
         backend: None,
         required: false,
+        protected: false,
     }
 }
 
@@ -46,8 +47,9 @@ fn locator_role_only(role: &str) -> String {
 fn folded_nodes_disappear_but_their_children_print_at_the_parents_depth() {
     let nodes = vec![
         node("1", "dialog", "Add Rating Method", &["2", "5"]),
-        node("2", "generic", "", &["3", "4"]),
-        node("3", "button", "Add Method", &[]),
+        node("2", "generic", "", &["3"]),
+        // The button's own words: its name already says them.
+        node("3", "button", "Add Method", &["4"]),
         node("4", "StaticText", "Add Method", &[]),
         AxNode { ignored: true, ..node("5", "group", "", &["6"]) },
         node("6", "heading", "Section", &[]),
@@ -415,6 +417,7 @@ async fn probe_of_one_match_describes_it_in_one_line() {
         match method {
             "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
             "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+            "Accessibility.getPartialAXTree" => Ok(serde_json::json!({ "nodes": [] })),
             "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(json!({
                 "result": { "value": { "tag": "button", "text": "Save changes", "rect": [120.0, 340.0, 200.0, 32.0] } }
             })),
@@ -439,6 +442,7 @@ async fn probe_of_several_matches_lists_each_and_asks_to_narrow() {
         match method {
             "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
             "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": on != "el-1" } })),
+            "Accessibility.getPartialAXTree" => Ok(serde_json::json!({ "nodes": [] })),
             "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => {
                 let (tag, text, rect) = match on {
                     "el-0" => ("button", "Save", vec![10.0, 20.0, 80.0, 24.0]),
@@ -477,6 +481,7 @@ async fn probe_of_a_password_field_never_shows_the_typed_value() {
         match method {
             "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
             "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+            "Accessibility.getPartialAXTree" => Ok(serde_json::json!({ "nodes": [] })),
             "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(json!({
                 "result": { "value": { "tag": "input", "text": "[password]", "rect": [5.0, 5.0, 100.0, 20.0] } }
             })),
@@ -508,6 +513,7 @@ async fn probe_text_with_a_control_character_is_sanitized() {
         match method {
             "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
             "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+            "Accessibility.getPartialAXTree" => Ok(serde_json::json!({ "nodes": [] })),
             "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(json!({
                 "result": { "value": { "tag": "div", "text": "line one\nline two", "rect": [0.0, 0.0, 10.0, 10.0] } }
             })),
@@ -864,4 +870,158 @@ fn a_within_read_lists_one_elements_subtree() {
     let none = render_frames_read_within(&nodes, &[], DEFAULT_LIMIT, 99);
     assert_eq!(none.text, "that element holds nothing a locator could name");
     assert!(none.lines.is_empty());
+}
+
+
+// --- render: text lines -------------------------------------------------
+
+fn text_locator(text: &str) -> String {
+    format!(" -> {}", json!({ "text": text }))
+}
+
+/// Visible text Chrome folds away (a span, a div, a paragraph's words)
+/// prints as a `text` line with a text locator, unless the nearest printed
+/// line's name already says it (a button's own words), at the depth the
+/// folded node would have used. Blank text and its InlineTextBox children
+/// print nothing.
+#[test]
+fn folded_text_prints_as_a_text_line_unless_its_parent_says_it() {
+    let nodes = vec![
+        node("1", "RootWebArea", "Cycles", &["2"]),
+        node("2", "generic", "", &["3", "4", "5", "7", "9"]),
+        node("3", "StaticText", "Name", &[]),
+        node("4", "StaticText", "  AUTOTEST   Preview 2027 ", &["40"]),
+        node("40", "InlineTextBox", "AUTOTEST Preview 2027", &[]),
+        node("5", "paragraph", "", &["6"]),
+        node("6", "StaticText", "Self 20%", &[]),
+        node("7", "button", "Edit AUTOTEST Preview 2027", &["8"]),
+        node("8", "StaticText", "edit autotest preview 2027", &[]),
+        node("9", "StaticText", "   ", &[]),
+    ];
+    let expected = [
+        "RootWebArea \"Cycles\"".to_string(),
+        format!(" text \"Name\"{}", text_locator("Name")),
+        format!(" text \"AUTOTEST Preview 2027\"{}", text_locator("AUTOTEST Preview 2027")),
+        format!(" paragraph \"\"{}", locator_role_only("paragraph")),
+        format!("  text \"Self 20%\"{}", text_locator("Self 20%")),
+        format!(" button \"Edit AUTOTEST Preview 2027\"{}", locator("button", "Edit AUTOTEST Preview 2027")),
+    ]
+    .join("
+");
+    assert_eq!(render(&nodes, DEFAULT_LIMIT), expected);
+    let read = render_frames_read(&nodes, &[], DEFAULT_LIMIT);
+    let texts: Vec<&str> = read.lines.iter().filter(|l| l.role == "text").map(|l| l.name.as_str()).collect();
+    assert_eq!(texts, vec!["Name", "AUTOTEST Preview 2027", "Self 20%"]);
+    let t: Target = serde_json::from_value(json!({ "text": "Self 20%" })).unwrap();
+    assert!(read.lines.iter().any(|l| l.locator == t));
+}
+
+/// Text in a frame is reached through the frame, as every line in it is.
+#[test]
+fn a_text_line_in_a_frame_carries_the_frame_step() {
+    let nodes = vec![node("1", "RootWebArea", "", &["2"]), AxNode { backend: Some(9), ..node("2", "Iframe", "", &[]) }];
+    let frame = FrameTree {
+        iframe_id: "2".into(),
+        step: json!({ "css": "iframe", "nth": 0 }),
+        nodes: vec![node("f1", "RootWebArea", "", &["f2"]), node("f2", "StaticText", "Inside the frame", &[])],
+        unreadable: None,
+        cross_origin: false,
+        frames: vec![],
+    };
+    let text = render_frames(&nodes, &[frame], DEFAULT_LIMIT);
+    let chain = json!([{ "css": "iframe", "nth": 0 }, { "text": "Inside the frame" }]);
+    assert!(text.contains(&format!("text \"Inside the frame\" -> {chain}")), "{text}");
+}
+
+/// The line cap keeps every control before any text line: with more lines
+/// than the limit, text lines are what is left out, and the cut is said.
+#[test]
+fn the_line_cap_drops_text_lines_before_controls() {
+    let mut nodes = vec![node("1", "RootWebArea", "", &[])];
+    let mut kids = Vec::new();
+    for i in 0..4 {
+        let (b, t) = (format!("b{i}"), format!("t{i}"));
+        nodes.push(node(&t, "StaticText", &format!("Value {i}"), &[]));
+        nodes.push(node(&b, "button", &format!("Button {i}"), &[]));
+        kids.push(t);
+        kids.push(b);
+    }
+    nodes[0].children = kids;
+    let read = render_frames_read(&nodes, &[], 6);
+    let roles: Vec<(&str, &str)> = read.lines.iter().map(|l| (l.role.as_str(), l.name.as_str())).collect();
+    assert_eq!(
+        roles,
+        vec![("text", "Value 0"), ("button", "Button 0"), ("button", "Button 1"), ("button", "Button 2"), ("button", "Button 3")]
+    );
+    assert!(read.cut);
+    assert!(read.text.ends_with("3 more lines - call get_autorun_page with a larger limit or within"), "{}", read.text);
+    // More controls (the page line among them) than the limit: the first
+    // of them, and no text at all.
+    let read = render_frames_read(&nodes, &[], 3);
+    let names: Vec<&str> = read.lines.iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(names, vec!["Button 0", "Button 1"]);
+}
+
+/// The probe says the name the page read gives the element, where its own
+/// text is not that name: an icon button named by its aria-label.
+#[tokio::test]
+async fn probe_says_the_name_the_page_read_gives() {
+    let mut d = ScriptedDriver::new(|method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+            "Accessibility.getPartialAXTree" => {
+                assert_eq!(params["objectId"], "el-0");
+                Ok(json!({ "nodes": [{ "nodeId": "5", "role": { "value": "button" }, "name": { "value": "Edit AUTOTEST Preview 2027" } }] }))
+            }
+            "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(json!({
+                "result": { "value": { "tag": "button", "text": "", "rect": [1.0, 2.0, 24.0, 24.0] } }
+            })),
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => Ok(json!({ "result": [ { "name": "0", "value": { "objectId": "el-0" } } ] })),
+            other => panic!("unexpected {other}"),
+        }
+    });
+    let out = probe(&mut d, &Target::from("button.edit")).await.unwrap();
+    assert_eq!(out, "matches: 1
+button \"\" visible at 1,2 24x24 - page read: button \"Edit AUTOTEST Preview 2027\"");
+}
+
+/// The name the page read gives an element, after its probe line, is not
+/// read as the line's visibility: a visible icon button still counts.
+#[test]
+fn a_probe_line_with_the_page_read_name_still_counts_as_visible() {
+    use v2_lib::ai_bridge::visible_matches;
+    let with_name = "matches: 1\nbutton \"\" visible at 1,2 24x24 - page read: button \"Edit AUTOTEST Preview 2027\"";
+    assert_eq!(visible_matches(with_name), Some(1));
+    let hidden = "matches: 1\nbutton \"\" hidden at 1,2 24x24 - page read: button \"Edit\"";
+    assert_eq!(visible_matches(hidden), None);
+    let two = "matches: 2\nbutton \"Save\" visible at 1,2 3x4\nbutton \"\" visible at 5,6 7x8 - page read: button \"Save draft\"";
+    assert_eq!(visible_matches(two), Some(2));
+}
+
+/// Text inside a field is its value, never a text line: a textbox's typed
+/// words, a combobox's pick, and above all a password's, protected or not.
+#[test]
+fn text_inside_a_field_never_prints_as_a_text_line() {
+    let nodes = vec![
+        node("1", "RootWebArea", "", &["2", "4", "6", "8", "10"]),
+        AxNode { value: Some("typed words".into()), ..node("2", "textbox", "Notes", &["3"]) },
+        node("3", "StaticText", "typed words", &[]),
+        AxNode { protected: true, ..node("4", "textbox", "Secret", &["5"]) },
+        node("5", "StaticText", "s3cret", &[]),
+        node("6", "combobox", "Colour", &["7"]),
+        node("7", "StaticText", "Teal", &[]),
+        node("8", "spinbutton", "Count", &["9"]),
+        node("9", "generic", "", &["90"]),
+        node("90", "StaticText", "42", &[]),
+        node("10", "StaticText", "Outside", &[]),
+    ];
+    let read = render_frames_read(&nodes, &[], DEFAULT_LIMIT);
+    let texts: Vec<&str> = read.lines.iter().filter(|l| l.role == "text").map(|l| l.name.as_str()).collect();
+    assert_eq!(texts, vec!["Outside"]);
+    for never in ["typed words\" ->", "s3cret", "Teal\" ->", "\"42\""] {
+        assert!(!read.text.contains(&format!("text \"{never}")) && !read.text.contains("s3cret"), "{never}: {}", read.text);
+    }
 }

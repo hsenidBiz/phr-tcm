@@ -2496,6 +2496,7 @@ fn cycles_page_at(href: &'static str, found: usize, visible: bool) -> ScriptedDr
             "Runtime.evaluate" if params["expression"] == "location.href" => Ok(json!({ "result": { "value": href } })),
             "Runtime.evaluate" if params["expression"] == "document.title" => Ok(json!({ "result": { "value": "Cycles" } })),
             "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": visible } })),
+            "Accessibility.getPartialAXTree" => Ok(serde_json::json!({ "nodes": [] })),
             "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(json!({
                 "result": { "value": { "tag": "button", "text": "2", "rect": [10.0, 20.0, 30.0, 24.0] } }
             })),

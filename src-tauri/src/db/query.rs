@@ -194,7 +194,7 @@ pub async fn run_query<R: Runner>(
                 json!({ "connection": conn, "verdict": verdict_str, "sql": sql, "ok": false, "duration_ms": duration_ms }),
             );
             crate::applog::info(format!("db query ({kind_title}) on {conn}: failed, {duration_ms} ms"));
-            Err((502, format!("the database refused the statement: {said}")))
+            Err((502, failed_sentence("the database refused the statement: ", &said)))
         }
     }
 }
@@ -276,7 +276,7 @@ pub async fn run_batch_query<R: Runner>(
                 }),
             );
             crate::applog::info(format!("db batch ({n} statements{dry}) on {conn}: failed, {duration_ms} ms"));
-            Err((502, said))
+            Err((502, failed_sentence("", &said)))
         }
     }
 }
@@ -446,5 +446,40 @@ async fn read<R: Runner>(
         // so whether sqlcmd's own row/character cap fired is not something
         // an assistant reading `render_lookup`/`render_describe` needs.
         .map(|(text, _capped)| text)
-        .map_err(|said| (502, format!("the database could not be read: {said}")))
+        .map_err(|said| (502, failed_sentence("the database could not be read: ", &said)))
+}
+
+/// What an assistant's database tool says when the server could not be
+/// reached at all (the VPN down, the network away): nothing it sent was
+/// wrong, and trying again later is all there is to do. The server's own
+/// words go to the app log only.
+pub const DB_UNREACHABLE: &str = "the database is not reachable right now (VPN or network?) - try again";
+
+/// Does sqlcmd's error say it never reached the server: a connection that
+/// could not be opened, a login that timed out, a server not found? A
+/// statement the server refused says none of these.
+pub fn is_unreachable(said: &str) -> bool {
+    let said = said.to_lowercase();
+    [
+        "could not open a connection",
+        "named pipes provider",
+        "tcp provider",
+        "login timeout expired",
+        "a network-related or instance-specific error",
+        "server was not found or was not accessible",
+        "error locating server",
+        "server is not found or not accessible",
+    ]
+    .iter()
+    .any(|m| said.contains(m))
+}
+
+/// `prefix` and the server's words, or `DB_UNREACHABLE` when they say it
+/// was never reached (`is_unreachable`), the words logged instead.
+fn failed_sentence(prefix: &str, said: &str) -> String {
+    if is_unreachable(said) {
+        crate::applog::warn(format!("db: the database could not be reached: {said}"));
+        return DB_UNREACHABLE.to_string();
+    }
+    format!("{prefix}{said}")
 }

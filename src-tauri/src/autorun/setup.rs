@@ -288,6 +288,58 @@ pub fn resolve(
     Ok(CaseScript { steps, ..script.clone() })
 }
 
+/// The sentence for an assistant's replay of case `case_id` refused because
+/// its setup is not approved (`NOT_APPROVED`): approving is the person's
+/// alone, in the script editor; no tool approves a setup.
+pub fn not_approved_for_replay(case_id: i32) -> String {
+    format!(
+        "case {case_id} cannot be replayed: its setup is not approved, or it changed since it was approved. The person approves it in the script editor (Auto Run, case {case_id}'s script, Approve setup); no tool can approve a setup. Ask them, then replay again."
+    )
+}
+
+/// The cases whose saved script has a setup running fixture `fixture_id`
+/// that is approved for what is saved now. Read before that fixture is
+/// changed, so the change can say whose approval it undid
+/// (`no_longer_approved`).
+pub fn approved_setups(root: &Path, org: &str, project: &str, fixture_id: &str) -> Vec<i32> {
+    super::store::list_scripts(root)
+        .into_iter()
+        .filter(|s| s.setup.as_ref().is_some_and(|x| x.fixture == fixture_id))
+        .filter(|s| setup_approved(root, org, project, s))
+        .map(|s| s.case_id)
+        .collect()
+}
+
+/// Of `cases`, the ones whose setup's approval no longer counts: the
+/// setup, its fixture or a template it runs changed since.
+pub fn no_longer_approved(root: &Path, org: &str, project: &str, cases: &[i32]) -> Vec<i32> {
+    cases
+        .iter()
+        .copied()
+        .filter(|id| match super::store::load_script(root, *id) {
+            Ok(Some(script)) => !setup_approved(root, org, project, &script),
+            _ => false,
+        })
+        .collect()
+}
+
+/// Is `script`'s setup approved for what is saved now?
+fn setup_approved(root: &Path, org: &str, project: &str, script: &CaseScript) -> bool {
+    let Some(setup) = &script.setup else { return false };
+    current(root, org, project, setup)
+        .is_ok_and(|now| matches!(approvals::state(root, script.case_id, &now.fingerprint), Approval::Approved { .. }))
+}
+
+/// The line a change answers with when it undid setup approvals: each case
+/// by its id, and who approves them again.
+pub fn needs_reapproval_line(cases: &[i32]) -> String {
+    let ids: Vec<String> = cases.iter().map(|c| format!("#{c}")).collect();
+    format!(
+        "needs re-approval: {} - this change undid the approval of each one's setup, so its runs and replays are Blocked until the person approves it again in the script editor (no tool can)",
+        ids.join(", ")
+    )
+}
+
 /// A setup's fixture as it is saved now, with its fingerprint.
 pub struct Current {
     pub fixture: Fixture,

@@ -8,8 +8,14 @@
 //! `<capture>` is one of the earlier template's declared `outputs`: those
 //! are the values a template run hands back (see `runner`, which reports
 //! only the declared outputs), so they are all a later step can read.
+//!
+//! An output and a `creates` name may also be what a step SENT (`sent_ref`):
+//! `{{steps.<n>.params.<param>}}`, or the exact text of one step's param as
+//! written (`"{{prefix}} cycle {{now:yyyyMMddHHmmss}}"`). Either resolves,
+//! once per run, to the text that step sent for that param, so a script can
+//! open its own draft by a unique name when no template hands the name back.
 
-use super::flow::{creating_stage, required_before, Flow};
+use super::flow::{creating_stage, required_before, Flow, Stage};
 use super::{exec, ApiTemplate, Effect};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -45,6 +51,12 @@ pub struct Fixture {
     pub outputs: BTreeMap<String, String>,
     #[serde(default)]
     pub creates: Vec<Creates>,
+    /// Stages of a flow that the record this fixture makes does not
+    /// include (a cycle with Competencies off), by stage title or id: the
+    /// flow gate (`flow_problems`) does not ask an earlier step to perform
+    /// them. Never the creating stage, and never one a step performs.
+    #[serde(default)]
+    pub skip_stages: Vec<String>,
 }
 
 /// One running of a fixture, as its history keeps it.
@@ -88,6 +100,50 @@ fn comes_from(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>, name
     templates(&f.steps[m - 1].template).is_some_and(|t| t.outputs.iter().any(|o| o == capture))
 }
 
+/// The step (1-based) and the param whose SENT text `value` stands for:
+/// `{{steps.<m>.params.<param>}}` naming a param step m has, or the exact
+/// text (trimmed) of a param as some step writes it. With `step`, only that
+/// step's params are read; else the first step that sends it.
+pub fn sent_ref(f: &Fixture, value: &str, step: Option<usize>) -> Option<(usize, String)> {
+    let v = value.trim();
+    if v.is_empty() {
+        return None;
+    }
+    let names = exec::placeholders(v);
+    if let [one] = names.as_slice() {
+        if v.starts_with("{{") && v.ends_with("}}") && v.matches("{{").count() == 1 {
+            if let Some((m, capture)) = steps_ref(one) {
+                let param = capture.strip_prefix("params.")?;
+                let has = m >= 1 && m <= f.steps.len() && f.steps[m - 1].params.contains_key(param);
+                return (has && step.is_none_or(|s| s == m)).then(|| (m, param.to_string()));
+            }
+        }
+    }
+    f.steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (i + 1, s))
+        .filter(|(m, _)| step.is_none_or(|s| s == *m))
+        .find_map(|(m, s)| s.params.iter().find(|(_, raw)| raw.trim() == v).map(|(p, _)| (m, p.clone())))
+}
+
+/// Said when an output is neither a step's capture nor what a step sent.
+pub fn output_not_from_a_step(name: &str, value: &str) -> String {
+    format!(
+        "output {name}: {} does not come from a step - an output is one {{{{steps.<n>.<output>}}}} (a value step n captured), one {{{{steps.<n>.params.<param>}}}} (the text step n sent for that param), or the exact text of one step's param as written",
+        value.trim()
+    )
+}
+
+/// Said when a `creates` name is neither a capture nor what the step that
+/// captured its id sent.
+pub fn creates_name_not_from_a_step(kind: &str, value: &str) -> String {
+    format!(
+        "creates: {kind}'s name {} does not come from a step - use the capture holding the name the creating step gave it, {{{{steps.<n>.params.<param>}}}} for the name that step sent, or the exact text of that param as written",
+        value.trim()
+    )
+}
+
 /// A whole value that is exactly one `{{steps.<m>.<capture>}}` placeholder
 /// from some step of the fixture.
 fn is_step_value(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>, value: &str) -> bool {
@@ -108,7 +164,10 @@ fn step_ref_of(value: &str, n: usize) -> Option<(usize, String)> {
     if names.len() != 1 || !v.starts_with("{{") || !v.ends_with("}}") || v.matches("{{").count() != 1 {
         return None;
     }
-    steps_ref(&names[0]).filter(|(m, _)| *m >= 1 && *m < n).map(|(m, c)| (m, c.to_string()))
+    // `{{steps.<m>.params.<param>}}` is what a step sent, not a capture.
+    steps_ref(&names[0])
+        .filter(|(m, c)| *m >= 1 && *m < n && !c.starts_with("params."))
+        .map(|(m, c)| (m, c.to_string()))
 }
 
 /// A step whose template performs a stage of a flow. Its flow must still
@@ -148,15 +207,17 @@ fn flow_problems(
         earlier.stage.filter(|s| s.flow == flow.id).map(|s| s.id)
     };
     let performed: Vec<String> = (1..n).filter_map(on_flow).collect();
+    // The stages this record does not include, each in the flow it is of.
+    let skipped = skipped_ids(f, templates, flows);
     let mut problems = Vec::new();
     let missing: Vec<&str> = required_before(&flow, &stage.id)
         .into_iter()
-        .filter(|s| !performed.iter().any(|p| p == &s.id))
+        .filter(|s| !performed.iter().any(|p| p == &s.id) && !skipped.iter().any(|(fl, st)| fl == &flow.id && st == &s.id))
         .map(|s| s.title.as_str())
         .collect();
     if !missing.is_empty() {
         problems.push(format!(
-            "step {n}: template {} performs {} of flow {}, so the steps before it must perform {}",
+            "step {n}: template {} performs {} of flow {}, so the steps before it must perform {} - or, for a stage this record does not include, name it in the fixture's skip_stages",
             t.id,
             stage.title,
             flow.title,
@@ -179,6 +240,143 @@ fn flow_problems(
         ));
     }
     problems
+}
+
+/// Each `skip_stages` entry resolved to the one stage it names, in the flow
+/// that owns it: `(entry, Some((flow id, stage id)))`, or `None` with the
+/// sentence that refuses it. An entry is a stage's title or id (case and
+/// the space around it ignored), or `<flow id>/<stage id>`; it is read
+/// against the flows `f`'s steps are on, and must name exactly one stage
+/// of them - a title or an id two of them share is refused, asking for the
+/// stage id or the flow-qualified form.
+fn resolve_skips(f: &Fixture, on: &[Flow]) -> Vec<(String, Result<(String, String), String>)> {
+    f.skip_stages
+        .iter()
+        .map(|entry| {
+            let n = entry.trim();
+            let hits: Vec<(&Flow, &Stage)> = match n.split_once('/') {
+                Some((flow, stage)) => on
+                    .iter()
+                    .filter(|fl| fl.id.eq_ignore_ascii_case(flow.trim()))
+                    .flat_map(|fl| fl.stages.iter().filter(|s| s.id.eq_ignore_ascii_case(stage.trim())).map(move |s| (fl, s)))
+                    .collect(),
+                None => {
+                    let by = |m: &dyn Fn(&Stage) -> bool| -> Vec<(&Flow, &Stage)> {
+                        on.iter().flat_map(|fl| fl.stages.iter().filter(|s| m(s)).map(move |s| (fl, s))).collect()
+                    };
+                    let by_id = by(&|s: &Stage| s.id.eq_ignore_ascii_case(n));
+                    if by_id.len() == 1 {
+                        by_id
+                    } else {
+                        let by_title = by(&|s: &Stage| s.title.trim().eq_ignore_ascii_case(n));
+                        if by_id.is_empty() { by_title } else { by_id }
+                    }
+                }
+            };
+            let said = match hits.as_slice() {
+                [(fl, s)] => Ok((fl.id.clone(), s.id.clone())),
+                [] => {
+                    let titles: Vec<String> = on.iter().map(|fl| fl.title.clone()).collect();
+                    let where_ = if titles.is_empty() { "no flow: no step performs a flow's stage".to_string() } else { titles.join(", ") };
+                    Err(format!("skip_stages: {n} is not a stage of {where_}"))
+                }
+                many => {
+                    let named: Vec<String> = many.iter().map(|(fl, s)| format!("{}/{}", fl.id, s.id)).collect();
+                    Err(format!(
+                        "skip_stages: {n} names more than one stage ({}) - name the one you mean by its stage id, or as <flow id>/<stage id>",
+                        named.join(", ")
+                    ))
+                }
+            };
+            (entry.clone(), said)
+        })
+        .collect()
+}
+
+/// The stages `f` skips, as `(flow id, stage id)`, each the one its entry
+/// names (`resolve_skips`); an entry that names none or several skips
+/// nothing.
+fn skipped_ids(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>, flows: &dyn Fn(&str) -> Option<Flow>) -> Vec<(String, String)> {
+    if f.skip_stages.is_empty() {
+        return vec![];
+    }
+    resolve_skips(f, &flows_of(f, templates, flows)).into_iter().filter_map(|(_, r)| r.ok()).collect()
+}
+
+/// The flows the steps of `f` perform stages of, each once, in step order.
+fn flows_of(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>, flows: &dyn Fn(&str) -> Option<Flow>) -> Vec<Flow> {
+    let mut out: Vec<Flow> = Vec::new();
+    for step in &f.steps {
+        let Some(r) = templates(&step.template).and_then(|t| t.stage) else { continue };
+        if out.iter().any(|fl| fl.id == r.flow) {
+            continue;
+        }
+        if let Some(fl) = flows(&r.flow) {
+            out.push(fl);
+        }
+    }
+    out
+}
+
+/// What is wrong with `f`'s `skip_stages`: an entry naming no stage of a
+/// flow its steps are on, or more than one (`resolve_skips`), the creating
+/// stage (a fixture always makes its record), or a stage one of its steps
+/// performs.
+fn skip_problems(
+    f: &Fixture,
+    templates: &dyn Fn(&str) -> Option<ApiTemplate>,
+    flows: &dyn Fn(&str) -> Option<Flow>,
+) -> Vec<String> {
+    if f.skip_stages.is_empty() {
+        return vec![];
+    }
+    let on = flows_of(f, templates, flows);
+    let mut problems = Vec::new();
+    for (_, resolved) in resolve_skips(f, &on) {
+        let (flow, stage) = match resolved {
+            Ok(ids) => ids,
+            Err(why) => {
+                problems.push(why);
+                continue;
+            }
+        };
+        let Some(fl) = on.iter().find(|fl| fl.id == flow) else { continue };
+        let Some(s) = fl.stages.iter().find(|s| s.id == stage) else { continue };
+        if s.creates {
+            problems.push(format!("skip_stages: {} makes the record in flow {}, so it cannot be skipped", s.title, fl.title));
+        }
+        let performing = f.steps.iter().enumerate().find(|(_, st)| {
+            templates(&st.template).and_then(|t| t.stage).is_some_and(|r| r.flow == fl.id && r.id == s.id)
+        });
+        if let Some((i, _)) = performing {
+            problems.push(format!(
+                "skip_stages: step {} performs {}, so it is part of this record - take it out of skip_stages",
+                i + 1,
+                s.title
+            ));
+        }
+    }
+    problems
+}
+
+/// The stages `f` skips, as the answer to a save echoes them: `<stage
+/// title> (flow <flow title>)`, each once.
+pub fn skipped_stages(
+    f: &Fixture,
+    templates: &dyn Fn(&str) -> Option<ApiTemplate>,
+    flows: &dyn Fn(&str) -> Option<Flow>,
+) -> Vec<String> {
+    let on = flows_of(f, templates, flows);
+    let mut out = Vec::new();
+    for (flow, stage) in skipped_ids(f, templates, flows) {
+        let Some(fl) = on.iter().find(|fl| fl.id == flow) else { continue };
+        let Some(s) = fl.stages.iter().find(|s| s.id == stage) else { continue };
+        let line = format!("{} (flow {})", s.title, fl.title);
+        if !out.contains(&line) {
+            out.push(line);
+        }
+    }
+    out
 }
 
 /// Said when a `creates` entry is not wholly the work of one step whose
@@ -206,6 +404,14 @@ pub fn name_without_prefix(kind: &str, step: usize) -> String {
     )
 }
 
+/// Said when a `creates` name is what its step sent for `param`, and that
+/// text does not start with `{{prefix}}`.
+pub fn sent_name_without_prefix(kind: &str, step: usize, param: &str) -> String {
+    format!(
+        "creates: {kind}'s name cannot start with the test prefix - step {step} sends {param} without {{{{prefix}}}} at its start; give it a name such as \"{{{{prefix}}}} {kind}\""
+    )
+}
+
 /// What is wrong with how `c` (from one creating step, `from_one_creating_step`)
 /// names its thing: the same capture as its id (`name_is_the_id`), or a step
 /// that sends no value starting with `{{prefix}}` (`name_without_prefix`) -
@@ -213,14 +419,23 @@ pub fn name_without_prefix(kind: &str, step: usize) -> String {
 /// one that never does is told so once (`NEEDS_PREFIX`).
 fn name_problem(f: &Fixture, c: &Creates, uses_prefix: bool) -> Option<String> {
     let id = step_ref_of(&c.id, f.steps.len() + 1)?;
-    let name = step_ref_of(&c.name, f.steps.len() + 1)?;
-    if id == name {
-        return Some(name_is_the_id(&c.kind, &c.name));
-    }
     let starts_with_prefix = |v: &String| {
         let v = v.trim();
         v.strip_prefix("{{").and_then(|r| r.split_once("}}")).is_some_and(|(inner, _)| inner.trim() == "prefix")
     };
+    // What the creating step sent: that param's own text is the name.
+    if step_ref_of(&c.name, f.steps.len() + 1).is_none() {
+        let (m, param) = sent_ref(f, &c.name, Some(id.0))?;
+        let raw = &f.steps[m - 1].params[&param];
+        if step_ref_of(raw, m) == Some(id) {
+            return Some(name_is_the_id(&c.kind, &c.name));
+        }
+        return (uses_prefix && !starts_with_prefix(raw)).then(|| sent_name_without_prefix(&c.kind, m, &param));
+    }
+    let name = step_ref_of(&c.name, f.steps.len() + 1)?;
+    if id == name {
+        return Some(name_is_the_id(&c.kind, &c.name));
+    }
     let step = &f.steps[name.0 - 1];
     (uses_prefix && !step.params.values().any(starts_with_prefix)).then(|| name_without_prefix(&c.kind, name.0))
 }
@@ -246,7 +461,9 @@ pub fn naming_problems(f: &Fixture) -> Vec<String> {
 /// offer to delete it.
 fn from_one_creating_step(f: &Fixture, templates: &dyn Fn(&str) -> Option<ApiTemplate>, c: &Creates) -> bool {
     let step_of = |v: &str| step_ref_of(v, f.steps.len() + 1).map(|(m, _)| m);
-    match (step_of(&c.id), step_of(&c.name)) {
+    let id_step = step_of(&c.id);
+    let name_step = step_of(&c.name).or_else(|| id_step.and_then(|m| sent_ref(f, &c.name, Some(m))).map(|(m, _)| m));
+    match (id_step, name_step) {
         (Some(a), Some(b)) if a == b => templates(&f.steps[a - 1].template).is_some_and(|t| {
             t.effect == Effect::Create && t.steps.iter().any(|s| s.method == super::Method::Post)
         }),
@@ -296,18 +513,27 @@ pub fn validate(
     }
 
     for (name, value) in &f.outputs {
-        if !is_step_value(f, templates, value) {
-            problems.push(format!("output {name}: {} does not come from a step", value.trim()));
+        if !is_step_value(f, templates, value) && sent_ref(f, value, None).is_none() {
+            problems.push(output_not_from_a_step(name, value));
         }
     }
 
     for c in &f.creates {
         let mut from_steps = true;
-        for value in [&c.id, &c.name] {
-            if !is_step_value(f, templates, value) {
-                problems.push(format!("creates: {} does not come from a step", value.trim()));
-                from_steps = false;
-            }
+        if !is_step_value(f, templates, &c.id) {
+            problems.push(format!("creates: {} does not come from a step", c.id.trim()));
+            from_steps = false;
+        }
+        // The name: a capture, or what the step that captured the id sent.
+        let id_step = step_ref_of(&c.id, f.steps.len() + 1).map(|(m, _)| m);
+        let sent_name = id_step.is_some_and(|m| sent_ref(f, &c.name, Some(m)).is_some());
+        if !is_step_value(f, templates, &c.name) && !sent_name {
+            problems.push(if step_ref_of(&c.name, f.steps.len() + 1).is_none() {
+                creates_name_not_from_a_step(&c.kind, &c.name)
+            } else {
+                format!("creates: {} does not come from a step", c.name.trim())
+            });
+            from_steps = false;
         }
         // Only what a creating step made is recorded as test-made - so
         // Clean up only ever offers to delete a thing the tests created -
@@ -321,6 +547,8 @@ pub fn validate(
         problems.push(NEEDS_PREFIX.to_string());
     }
 
+    problems.extend(skip_problems(f, templates, flows));
+
     // The same bad placeholder in several params is one problem, said once.
     let mut seen = std::collections::HashSet::new();
     problems.retain(|p| seen.insert(p.clone()));
@@ -329,5 +557,29 @@ pub fn validate(
         Ok(())
     } else {
         Err(problems)
+    }
+}
+
+/// Why `raw`, sent as a fixture, does not read as one, named by where the
+/// problem is: `creates[1].id is missing` rather than serde's bare "missing
+/// field `id`", which reads as if the fixture's own id were missing. Each
+/// `steps` and `creates` entry is read on its own first; `err` (the whole
+/// fixture's error) is said when none of them is the problem.
+pub fn shape_problem(raw: &Value, err: &serde_json::Error) -> String {
+    fn entry<T: serde::de::DeserializeOwned>(list: &str, raw: &Value) -> Option<String> {
+        let items = raw.get(list)?.as_array()?;
+        items.iter().enumerate().find_map(|(i, item)| {
+            let e = serde_json::from_value::<T>(item.clone()).err()?;
+            let said = e.to_string();
+            Some(match said.strip_prefix("missing field `").and_then(|r| r.split_once('`')) {
+                Some((field, _)) => format!("{list}[{i}].{field} is missing"),
+                None => format!("{list}[{i}]: {said}"),
+            })
+        })
+    }
+    let said = entry::<FixtureStep>("steps", raw).or_else(|| entry::<Creates>("creates", raw));
+    match said {
+        Some(where_) => where_,
+        None => err.to_string(),
     }
 }

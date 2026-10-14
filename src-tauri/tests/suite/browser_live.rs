@@ -3753,3 +3753,54 @@ async fn role_lookups_keep_answering_with_the_page_the_only_tab_shown() {
         .collect();
     assert_eq!(pages.len(), 1, "the browser opened tabs of its own: {pages:?}");
 }
+
+fn text_fixture_url() -> String {
+    fixture_url().replace("autorun-live.html", "autorun-text.html")
+}
+
+/// Plain text in spans, divs and paragraphs prints as text lines, each of
+/// which the resolver finds; a button's own words never print twice; the
+/// rest of the page's lines still resolve; and the probe of an icon button
+/// says the name the page read gives it, not its empty text.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn text_lines_resolve_and_the_probe_says_the_reads_name() {
+    use v2_lib::browser::snapshot::{probe, snapshot_with_lines};
+    let mut live = open().await;
+    let out = run(&mut live, json!({ "kind": "navigate", "url": text_fixture_url() })).await;
+    assert!(out.ok, "the text fixture did not load: {}", out.detail);
+    must(run(&mut live, json!({ "kind": "expect_visible", "selector": { "css": "#save" } })).await);
+
+    let (text, lines) = snapshot_with_lines(&mut live.cdp, 2000).await.expect("the page read failed");
+    let texts: Vec<&str> = lines.iter().filter(|l| l.role == "text").map(|l| l.name.as_str()).collect();
+    for want in ["AUTOTEST Preview 2027", "Self 20%", "Draft"] {
+        assert!(texts.contains(&want), "no text line {want:?}:\n{text}");
+    }
+    assert!(!texts.contains(&"Save card"), "a button's own words printed as text:\n{text}");
+    // A field's value is never a text line, and a password is never shown,
+    // whether the page set it or someone typed it.
+    must(run(&mut live, json!({ "kind": "fill", "selector": { "css": "#pin" }, "value": "typed s3cret" })).await);
+    let (after, after_lines) = snapshot_with_lines(&mut live.cdp, 2000).await.expect("the page read failed");
+    let after_texts: Vec<&str> = after_lines.iter().filter(|l| l.role == "text").map(|l| l.name.as_str()).collect();
+    for value in ["typed value 77", "typed words here", "hunter2x", "s3cret"] {
+        assert!(!after_texts.iter().any(|t| t.contains(value)), "{value:?} printed as text:\n{after}");
+    }
+    assert!(!after.contains("hunter2x") && !after.contains("s3cret"), "a password leaked into the read:\n{after}");
+    assert!(
+        lines.iter().any(|l| l.role == "button" && l.name == "Edit AUTOTEST Preview 2027"),
+        "the icon button's line:\n{text}"
+    );
+    let mut missing = Vec::new();
+    for line in &lines {
+        match resolve(&mut live.cdp, &line.locator).await {
+            Ok(found) if found.is_empty() => missing.push(format!("{} \"{}\"", line.role, line.name)),
+            Ok(_) => {}
+            Err(e) => missing.push(format!("{} \"{}\": {e}", line.role, line.name)),
+        }
+    }
+    assert!(missing.is_empty(), "the read printed these, and the resolver found none: {missing:?}\n{text}");
+
+    let said = probe(&mut live.cdp, &action_target(json!({ "css": "button.edit" }))).await.expect("the probe failed");
+    assert!(said.contains("button \"\" visible"), "{said}");
+    assert!(said.contains(" - page read: button \"Edit AUTOTEST Preview 2027\""), "{said}");
+}

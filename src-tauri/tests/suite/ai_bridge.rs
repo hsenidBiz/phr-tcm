@@ -2509,6 +2509,29 @@ mod db_tests {
         assert!(refused.1.contains("(hidden)"), "{}", refused.1);
     }
 
+    /// A server that could not be reached at all (the VPN down) is said in
+    /// one sentence to try again; sqlcmd's own words go to the log only.
+    /// A statement the server refused still says what the server said.
+    #[tokio::test]
+    async fn an_unreachable_database_says_to_try_again() {
+        use v2_lib::db::query::{is_unreachable, DB_UNREACHABLE};
+        let _act = crate::serial::activity_log();
+        let said = "Sqlcmd: Error: Microsoft ODBC Driver 17 for SQL Server : Named Pipes Provider: Could not open a connection to SQL Server [53].";
+        let fake = FakeRunner::failing(said);
+        let refused = run_query(&fake, &exe(), &dev_login(), false, "SELECT 1 AS n").await.unwrap_err();
+        assert_eq!(refused, (502, DB_UNREACHABLE.to_string()));
+        assert!(DB_UNREACHABLE.contains("(VPN or network?)") && DB_UNREACHABLE.ends_with("try again"));
+        for unreachable in [
+            "TCP Provider: No connection could be made",
+            "Login timeout expired",
+            "A network-related or instance-specific error has occurred",
+        ] {
+            assert!(is_unreachable(unreachable), "{unreachable}");
+        }
+        assert!(!is_unreachable("Invalid object name 'dbo.Nope'."));
+        assert!(!is_unreachable("Login failed for user 'x'."));
+    }
+
     #[tokio::test]
     async fn a_capped_answer_says_so_on_its_first_line() {
         let _act = crate::serial::activity_log();
@@ -3661,6 +3684,13 @@ mod api_template_routes {
         assert_eq!(v["flows"].as_array().unwrap().len(), 1, "the flow it is on: {v}");
         assert_eq!(v["flows"][0]["id"], FLOW);
 
+        // `flow: false` leaves the flow and the Test files out.
+        let (status, v, out) = list("/api-templates?with_flow=false&id=pms-set-eval-rules").await;
+        assert_eq!(status, 200, "{out}");
+        assert_eq!(v["templates"][0]["id"], "pms-set-eval-rules", "{out}");
+        assert!(v.get("flows").is_none() && v.get("test_files").is_none(), "{v}");
+        assert_eq!(v["left_out"], "the flows and the Test files (flow: false)");
+
         let (status, _, out) = list("/api-templates?id=tpl-999").await;
         assert_eq!(status, 404, "{out}");
         assert_eq!(out, "no template called \"tpl-999\" is saved for this project - list_api_templates shows the ones that are");
@@ -3955,4 +3985,100 @@ async fn the_starting_style_switched_on_carries_the_old_trial_rules() {
         assert!(flat.contains(needle), "missing {needle:?} in:\n{g}");
     }
     assert!(!style::DEFAULT_RISK_TIERED.contains('\u{2014}') && !style::DEFAULT_RISK_TIERED.contains('\u{2013}'));
+}
+
+/// `page: false` leaves the page dump out of a discovery action's or a
+/// replay's answer, saying where to read it; any other body, and an answer
+/// with no page, is unchanged.
+#[test]
+fn page_false_leaves_the_page_out() {
+    use v2_lib::ai_bridge::{without_page, PAGE_LEFT_OUT};
+    let answer = (200, serde_json::json!({ "ok": true, "detail": "clicked", "page": "button \"Save\"\n" }).to_string());
+    let (status, out) = without_page(answer.clone(), r#"{"action":{"kind":"reload"},"page":false}"#);
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v.get("page").is_none(), "{v}");
+    assert_eq!(v["page_left_out"], PAGE_LEFT_OUT);
+    assert_eq!(v["detail"], "clicked");
+    for body in [r#"{"action":{"kind":"reload"}}"#, r#"{"page":true}"#, "not json"] {
+        assert_eq!(without_page(answer.clone(), body), answer, "{body}");
+    }
+    let refused = (409, "case 7 cannot be replayed".to_string());
+    assert_eq!(without_page(refused.clone(), r#"{"page":false}"#), refused);
+}
+
+/// Every answer of a discovery that must not save says so; any other is
+/// unchanged.
+#[test]
+fn a_no_save_discovery_says_so_on_every_answer() {
+    use v2_lib::ai_bridge::{with_no_save_note, NO_SAVE_ON};
+    assert_eq!(NO_SAVE_ON, "(must not save: on for this discovery)");
+    let json_answer = (200, serde_json::json!({ "ok": true }).to_string());
+    let (_, out) = with_no_save_note(json_answer.clone(), true);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["must_not_save"], NO_SAVE_ON);
+    assert_eq!(with_no_save_note(json_answer.clone(), false), json_answer);
+    let refused = (409, "action 2: that is not an action".to_string());
+    assert_eq!(with_no_save_note(refused, true).1, format!("action 2: that is not an action {NO_SAVE_ON}"));
+}
+
+/// A template or fixture run refused its account while the assistant's
+/// own discovery holds it says so, and how to go on.
+#[test]
+fn a_run_refused_by_a_discovery_says_how_to_go_on() {
+    use v2_lib::ai_bridge::{discovery_holds_hint, with_discovery_hint};
+    let held = v2_lib::autorun::lease::in_use_by_browser("admin");
+    let template = (502, serde_json::json!({ "ok": false, "sentence": format!("failed at Sign in: {held}") }).to_string());
+    let (_, out) = with_discovery_hint(template.clone(), true, false);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["discovery"], discovery_holds_hint(false));
+    assert!(discovery_holds_hint(false).contains("end_autorun_discovery"));
+    assert!(discovery_holds_hint(false).contains("another account"));
+    assert!(discovery_holds_hint(true).contains("its own account"));
+    let fixture = (502, format!("step 1: {held}"));
+    assert_eq!(with_discovery_hint(fixture.clone(), true, true).1, format!("step 1: {held}\n{}", discovery_holds_hint(true)));
+    // No discovery, another holder, or a run that passed: unchanged.
+    assert_eq!(with_discovery_hint(template.clone(), false, false), template);
+    let other = (502, "the account admin was in use by an unattended run - try again when it is free".to_string());
+    assert_eq!(with_discovery_hint(other.clone(), true, false), other);
+    let ok = (200, held.clone());
+    assert_eq!(with_discovery_hint(ok.clone(), true, false), ok);
+}
+
+/// A repair may send only the steps it changes: each replaces that step
+/// of the saved script, the rest is kept, and the entry's other keys win.
+#[test]
+fn patch_steps_merge_into_the_saved_script() {
+    use v2_lib::ai_bridge::apply_patch_steps;
+    let saved: v2_lib::autorun::CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 7, "title": "Saved", "area": "Cycles",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "reload" }] },
+            { "step_number": 2, "actions": [{ "kind": "reload" }] },
+            { "step_number": 3, "actions": [{ "kind": "reload" }], "unchecked": "nothing to see" }
+        ]
+    }))
+    .unwrap();
+    let load = |id: i32| Ok(if id == 7 { Some(saved.clone()) } else { None });
+    let new_actions = serde_json::json!([{ "kind": "click", "selector": { "role": "button", "name": "Save" } }]);
+    let mut items = vec![serde_json::json!({
+        "case_id": 7, "title": "Renamed",
+        "patch_steps": [{ "step": 2, "actions": new_actions }]
+    })];
+    apply_patch_steps(&mut items, &load).unwrap();
+    let merged: v2_lib::autorun::CaseScript = serde_json::from_value(items[0].clone()).unwrap();
+    assert_eq!(merged.title, "Renamed");
+    assert_eq!(merged.area_name(), Some("Cycles"));
+    assert_eq!(merged.steps.len(), 3);
+    assert_eq!(serde_json::to_value(&merged.steps[1].actions).unwrap(), new_actions);
+    assert_eq!(merged.steps[0], saved.steps[0]);
+    assert_eq!(merged.steps[2], saved.steps[2]);
+
+    let refused = |item: serde_json::Value| apply_patch_steps(&mut [item], &load).unwrap_err();
+    assert!(refused(serde_json::json!({ "case_id": 8, "patch_steps": [{ "step": 1, "actions": [] }] })).contains("no saved script to patch"));
+    assert!(refused(serde_json::json!({ "case_id": 7, "patch_steps": [{ "step": 9, "actions": [] }] })).contains("step 9 is not in its saved script"));
+    assert!(refused(serde_json::json!({ "case_id": 7, "steps": [], "patch_steps": [{ "step": 1, "actions": [] }] })).contains("not both"));
+    assert!(refused(serde_json::json!({ "case_id": 7, "patch_steps": [{ "step": 1, "actions": [] }, { "step": 1, "actions": [] }] })).contains("twice"));
+    assert!(refused(serde_json::json!({ "case_id": 7, "patch_steps": [{ "step": 1 }] })).contains("no \"actions\""));
+    assert!(refused(serde_json::json!({ "patch_steps": [{ "step": 1, "actions": [] }] })).contains("needs its \"case_id\""));
 }

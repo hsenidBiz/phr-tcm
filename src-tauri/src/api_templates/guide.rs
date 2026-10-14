@@ -340,6 +340,15 @@ name one `{{steps.<n>.<output>}}` each, and a `creates` entry's id and name
 both come from one step whose template creates (effect `create`). A placeholder whose step gave no
 value stops the run at that step; it is never sent as text.
 
+An output, and a `creates` name, may also be what a step SENT rather than
+what it captured: `{{steps.<n>.params.<param>}}`, or the exact text of one
+step's param as written (such as `"{{prefix}} cycle {{now:yyyyMMddHHmmss}}"`).
+Each run resolves it once, to the exact text that step sent, so a template
+that hands back only an id still gives a script a unique name to open its
+own draft by: `"outputs": { "cycle_name": "{{steps.1.params.cycleName}}" }`,
+then `{{setup.cycle_name}}` in the script. A `creates` name read this way is
+the param of the step that captured the id.
+
 A fixture performs a flow's stages itself, in order: a step whose template
 performs a later stage of a flow needs earlier steps that perform every
 stage before it, and takes the flow's subject as
@@ -347,13 +356,24 @@ stage before it, and takes the flow's subject as
 creating stage - so every stage acts on the one record that step made. A
 step whose flow, or whose stage, is no longer saved is refused.
 
+A stage the record does not include (a cycle with Competencies off) is not
+asked for: name it in the fixture's `skip_stages`, by its title or id, such
+as `"skip_stages": ["Competencies"]`. The save answers `skipped_stages`,
+each with its flow. Never the creating stage, and never a stage one of the
+fixture's own steps performs. Each entry names one stage of the flow that
+owns it: a title two of the fixture's flows share is refused - name it by
+its stage id, or as `<flow id>/<stage id>`. The person's approval of a
+setup covers its fixture's `skip_stages`: changing them asks for it again.
+
 Name what it makes with `{{prefix}}`: a fixture with `creates` must use it
 in a step's params. Everything a run makes is recorded as test-made - even
 when a later step fails - and Clean up only finds a name that starts with
 the prefix; the run warns about one that does not. A `creates` name is the
 capture holding the name the creating step sent, and that step must send a
-value starting with `{{prefix}}`; a name that is the same capture as its id
-is refused at save.
+value starting with `{{prefix}}`; or it is the creating step's own param
+(`{{steps.<n>.params.<param>}}` or its text as written), which must start
+with `{{prefix}}`. A name that is the same capture as its id is refused at
+save.
 
 `save_api_fixture { fixture }` checks the fixture and saves it, or answers
 with every problem, one sentence each. `run_api_fixture { id }` runs it and

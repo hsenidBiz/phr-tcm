@@ -74,6 +74,7 @@ fn fixture(id: &str) -> Fixture {
         }],
         outputs: [("cycle_id".to_string(), "{{steps.1.cycleId}}".to_string())].into(),
         creates: vec![Creates { kind: "cycle".into(), id: "{{steps.1.cycleId}}".into(), name: "{{steps.1.cycleName}}".into() }],
+        skip_stages: vec![],
     }
 }
 
@@ -1235,4 +1236,92 @@ async fn the_supervised_browser_question_is_answered_during_a_setup() {
     // Nobody stopped it: the hanging step ran into its limit.
     let why = blocked.unwrap();
     assert!(why.starts_with("setup failed: step 1: "), "{why}");
+}
+
+/// Changing a fixture undoes the approval of every setup that runs it, and
+/// the save's answer names each of those cases; a setup that was not
+/// approved, or runs another fixture, is not named. Approving stays the
+/// person's: the replay refusal says so, by the case.
+#[test]
+fn a_fixture_change_names_the_setups_it_needs_approved_again() {
+    use v2_lib::ai_bridge::{api_fixture_save, BridgeContext};
+    let _root = crate::serial::autorun();
+    let r = setup_rig(vec![]);
+    let root = r.root.path();
+    store::set_root(root.to_path_buf());
+    let steps = json!([{ "step_number": 1, "actions": [check("{{setup.cycle_id}}")] }]);
+    let approved = script(21, Some("own"), steps.clone());
+    let never = script(22, Some("own"), steps.clone());
+    let other = script(23, Some("shared"), steps);
+    for sc in [&approved, &never, &other] {
+        store::save_script(root, sc).unwrap();
+    }
+    approve(root, &approved);
+    approve(root, &other);
+    assert_eq!(setup::approved_setups(root, ORG, PROJECT, "own"), vec![21]);
+
+    let ctx = BridgeContext { org: ORG.into(), project: PROJECT.into(), api_writes: true, ..BridgeContext::default() };
+    // Saved unchanged: nothing is undone, and the answer says nothing more.
+    let (status, out) = api_fixture_save(&ctx, &json!({ "fixture": fixture("own") }).to_string());
+    assert_eq!(status, 200, "{out}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert!(v.get("needs_reapproval").is_none(), "{v}");
+
+    let mut changed = fixture("own");
+    changed.steps[0].params.insert("cycleName".into(), "{{prefix}} cycle {{now:yyyyMMdd}}".into());
+    let (status, out) = api_fixture_save(&ctx, &json!({ "fixture": changed }).to_string());
+    assert_eq!(status, 200, "{out}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["needs_reapproval"], json!([21]));
+    assert_eq!(v["note"], json!(setup::needs_reapproval_line(&[21])));
+    assert!(setup::needs_reapproval_line(&[21, 30]).starts_with("needs re-approval: #21, #30 - "));
+    assert_eq!(state(root, &approved), Approval::Changed);
+    assert!(matches!(state(root, &other), Approval::Approved { .. }));
+
+    let said = setup::not_approved_for_replay(21);
+    assert!(said.contains("case 21") && said.contains("The person approves it in the script editor"), "{said}");
+    assert!(said.contains("no tool can approve a setup"), "{said}");
+}
+
+/// `skip_stages` is in the fingerprint once a fixture names any, so the
+/// person's approval covers that claim; a fixture that skips nothing
+/// (every one made before skip_stages) keeps the fingerprint it had, so no
+/// approval given before is undone.
+#[test]
+fn skip_stages_is_in_the_fingerprint_only_when_it_names_any() {
+    use sha2::{Digest, Sha256};
+    fn sorted(v: &Value) -> Value {
+        match v {
+            Value::Object(m) => {
+                let mut keys: Vec<&String> = m.keys().collect();
+                keys.sort();
+                let mut out = serde_json::Map::new();
+                for k in keys {
+                    out.insert(k.clone(), sorted(&m[k]));
+                }
+                Value::Object(out)
+            }
+            Value::Array(a) => Value::Array(a.iter().map(sorted).collect()),
+            other => other.clone(),
+        }
+    }
+    let f = fixture("own");
+    let s = Setup { fixture: "own".into() };
+    let t = make_cycle();
+    // The fingerprint as it was before skip_stages.
+    let mut body = serde_json::to_value(&t).unwrap();
+    body.as_object_mut().unwrap().remove("proven");
+    let before = json!({
+        "setup": s,
+        "fixture": { "steps": f.steps, "outputs": f.outputs, "creates": f.creates, "account": f.account },
+        "templates": [body],
+    });
+    let text = serde_json::to_string(&sorted(&before)).unwrap();
+    let want: String = Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(approvals::fingerprint(&s, &f, &[Some(t.clone())]), want);
+
+    let skipping = Fixture { skip_stages: vec!["Competencies".into()], ..fixture("own") };
+    assert_ne!(approvals::fingerprint(&s, &skipping, &[Some(t.clone())]), want);
+    let other = Fixture { skip_stages: vec!["Evaluators".into()], ..fixture("own") };
+    assert_ne!(approvals::fingerprint(&s, &skipping, &[Some(t.clone())]), approvals::fingerprint(&s, &other, &[Some(t)]));
 }

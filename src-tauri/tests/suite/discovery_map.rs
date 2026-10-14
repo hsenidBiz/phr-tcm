@@ -964,3 +964,27 @@ fn a_part_read_counts_against_the_whole_page_and_explores_nothing() {
     let lone = a.sightings.iter().find(|s| s.key == role_key("button", "Lone")).unwrap();
     assert_eq!(lone.matched, NOT_ONE, "without the page's lines a cut count of one is not known");
 }
+
+/// A text line of a read is filed as never counted, even from a whole
+/// read: a text locator finds every element whose visible text holds it,
+/// a control's own words among them, which no read's lines can count.
+/// Only a probe counts one.
+#[test]
+fn a_text_line_is_never_counted_as_one_by_a_read() {
+    use v2_lib::autorun::discovery_map::{record_read, NOT_ONE};
+    let dir = tempfile::tempdir().unwrap();
+    let text = SnapLine {
+        role: "text".into(),
+        name: "Draft".into(),
+        locator: Target::One(LocatorStep { text: Some("Draft".into()), ..LocatorStep::default() }),
+        required: false,
+    };
+    record_read(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[text, line("button", "Edit")], None, Some(1), true, 5)
+        .unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let area = &map.areas[0];
+    let draft = area.sightings.iter().find(|s| s.key == SeenKey::Text("Draft".into())).unwrap();
+    assert_eq!(draft.matched, NOT_ONE);
+    let edit = area.sightings.iter().find(|s| s.key == role_key("button", "Edit")).unwrap();
+    assert_eq!(edit.matched, 1, "a control line of the same whole read is counted");
+}

@@ -923,6 +923,10 @@ fn list_api_templates_forwards_filters_and_paging() {
         "/api-templates?module=PMS%20%2F%20Cycle&search=cycle%26id&flow=pms-performance-cycle&offset=25&limit=50"
     );
     assert_eq!(path_for(serde_json::json!({ "id": "pms-create-draft-cycle" })), "/api-templates?id=pms-create-draft-cycle");
+    assert_eq!(
+        path_for(serde_json::json!({ "id": "pms-create-draft-cycle", "flow": false })),
+        "/api-templates?with_flow=false&id=pms-create-draft-cycle"
+    );
 
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
@@ -1503,19 +1507,24 @@ fn the_guide_tool_no_longer_points_at_the_source() {
 }
 
 /// `get_autorun_guide` takes `quick`, says what it answers, and forwards it
-/// to the bridge as `?quick=true`; without it the full guide is asked for.
+/// to the bridge as `?quick=true`; with no arguments it asks for the
+/// overview (the Quick rules and the section titles), and for the whole
+/// guide only with `full` true.
 #[test]
 fn the_guide_tool_takes_quick() {
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "get_autorun_guide").unwrap();
     assert_eq!(tool["inputSchema"]["properties"]["quick"]["type"], "boolean", "{tool}");
+    assert_eq!(tool["inputSchema"]["properties"]["full"]["type"], "boolean", "{tool}");
     assert!(tool["description"].as_str().unwrap().contains("Quick rules"), "{tool}");
 
     for (args, want) in [
         (r#"{"quick":true}"#, "/autorun-guide?quick=true"),
-        (r#"{"quick":false}"#, "/autorun-guide"),
-        ("{}", "/autorun-guide"),
+        (r#"{"quick":false}"#, "/autorun-guide?overview=true"),
+        ("{}", "/autorun-guide?overview=true"),
+        (r#"{"full":true}"#, "/autorun-guide"),
+        (r#"{"full":false}"#, "/autorun-guide?overview=true"),
     ] {
         let calls = std::cell::RefCell::new(vec![]);
         let call = |method: &str, path: &str, _body: &str| {

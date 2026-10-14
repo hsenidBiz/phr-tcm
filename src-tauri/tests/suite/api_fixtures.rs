@@ -77,6 +77,7 @@ fn fixture() -> Fixture {
             id: "{{steps.1.cycleId}}".into(),
             name: "{{steps.1.cycleName}}".into(),
         }],
+        skip_stages: vec![],
     }
 }
 
@@ -150,9 +151,106 @@ fn an_output_must_come_from_a_step() {
     f.outputs.insert("late".into(), "{{steps.9.cycleId}}".into());
     f.outputs.insert("plain".into(), "just text".into());
     let p = problems(&f);
-    assert!(p.contains(&"output bad: {{steps.1.nothing}} does not come from a step".to_string()), "{p:?}");
-    assert!(p.contains(&"output late: {{steps.9.cycleId}} does not come from a step".to_string()), "{p:?}");
-    assert!(p.contains(&"output plain: just text does not come from a step".to_string()), "{p:?}");
+    use v2_lib::api_templates::fixture::output_not_from_a_step;
+    assert!(p.contains(&output_not_from_a_step("bad", "{{steps.1.nothing}}")), "{p:?}");
+    assert!(p.contains(&output_not_from_a_step("late", "{{steps.9.cycleId}}")), "{p:?}");
+    assert!(p.contains(&output_not_from_a_step("plain", "just text")), "{p:?}");
+    assert!(output_not_from_a_step("plain", "just text").starts_with("output plain: just text does not come from a step - "));
+}
+
+/// An output may be what a step sent: `{{steps.<n>.params.<param>}}`, or
+/// the exact text of one step's param as written. Anything else that is
+/// not a capture is refused, a param a step does not send included.
+#[test]
+fn an_output_may_be_what_a_step_sent() {
+    use v2_lib::api_templates::fixture::{output_not_from_a_step, sent_ref};
+    let mut f = fixture();
+    f.outputs.insert("cycle_name".into(), "{{steps.1.params.cycleName}}".into());
+    f.outputs.insert("same_name".into(), " {{prefix}} cycle {{now:yyyyMMdd}} ".into());
+    validate(&f, &lookup, &no_flow).unwrap();
+    assert_eq!(sent_ref(&f, "{{steps.1.params.cycleName}}", None), Some((1, "cycleName".to_string())));
+    assert_eq!(sent_ref(&f, "{{prefix}} cycle {{now:yyyyMMdd}}", None), Some((1, "cycleName".to_string())));
+    // Step 2 sends cycleName too, as the capture; the text form finds the
+    // first step that sends it, the placeholder form names its step.
+    assert_eq!(sent_ref(&f, "{{steps.2.params.cycleName}}", None), Some((2, "cycleName".to_string())));
+    assert_eq!(sent_ref(&f, "{{steps.2.params.cycleName}}", Some(1)), None);
+
+    let mut f = fixture();
+    f.outputs.insert("nope".into(), "{{steps.1.params.other}}".into());
+    f.outputs.insert("late".into(), "{{steps.3.params.cycleName}}".into());
+    f.outputs.insert("near".into(), "{{prefix}} cycle {{now:yyyyMMddHHmm}}".into());
+    let p = problems(&f);
+    for (name, v) in [
+        ("nope", "{{steps.1.params.other}}"),
+        ("late", "{{steps.3.params.cycleName}}"),
+        ("near", "{{prefix}} cycle {{now:yyyyMMddHHmm}}"),
+    ] {
+        assert!(p.contains(&output_not_from_a_step(name, v)), "{name}: {p:?}");
+    }
+    assert_eq!(p.len(), 3, "{p:?}");
+}
+
+/// A `creates` name may be the creating step's own param, as
+/// `{{steps.<n>.params.<param>}}` or its text: it must start with
+/// `{{prefix}}`, come from the step that captured the id, and not be the
+/// id's capture.
+#[test]
+fn a_creates_name_may_be_what_the_creating_step_sent() {
+    use v2_lib::api_templates::fixture::{
+        creates_name_not_from_a_step, naming_problems, sent_name_without_prefix,
+    };
+    for name in ["{{steps.1.params.cycleName}}", "{{prefix}} cycle {{now:yyyyMMdd}}"] {
+        let mut f = fixture();
+        f.creates[0].name = name.into();
+        validate(&f, &lookup, &no_flow).unwrap();
+        assert!(naming_problems(&f).is_empty(), "{name}: {:?}", naming_problems(&f));
+    }
+
+    // Not prefixed: refused at save.
+    let mut f = fixture();
+    f.steps[0].params.insert("cycleName".into(), "cycle {{prefix}}".into());
+    f.steps[1].params.insert("note".into(), "{{prefix}} note".into());
+    f.creates[0].name = "{{steps.1.params.cycleName}}".into();
+    assert_eq!(naming_problems(&f), vec![sent_name_without_prefix("cycle", 1, "cycleName")]);
+
+    // Another step's param: not the step that made it.
+    let mut f = fixture();
+    f.steps[1].params.insert("label".into(), "{{prefix}} label".into());
+    f.creates[0].name = "{{steps.2.params.label}}".into();
+    assert_eq!(problems(&f), vec![creates_name_not_from_a_step("cycle", "{{steps.2.params.label}}")]);
+
+    // Text no step sends.
+    let mut f = fixture();
+    f.creates[0].name = "{{prefix}} other".into();
+    assert_eq!(problems(&f), vec![creates_name_not_from_a_step("cycle", "{{prefix}} other")]);
+
+    // A param that sends an earlier step's capture never starts with the
+    // prefix: step 2 makes a suite, and sends the cycle's id as cycleId.
+    let mut f = fixture();
+    f.creates = vec![Creates { kind: "suite".into(), id: "{{steps.2.cycleId}}".into(), name: "{{steps.2.params.cycleId}}".into() }];
+    validate(&f, &lookup, &no_flow).unwrap();
+    assert_eq!(naming_problems(&f), vec![sent_name_without_prefix("suite", 2, "cycleId")]);
+}
+
+/// A fixture that does not read names where it went wrong: a `creates`
+/// entry with no id is `creates[0].id`, not the fixture's own id.
+#[test]
+fn a_shape_refusal_names_the_entry() {
+    use v2_lib::api_templates::fixture::shape_problem;
+    let raw = json!({
+        "id": "f", "name": "F", "account": "admin",
+        "steps": [{ "template": "make-cycle", "params": {} }],
+        "creates": [{ "kind": "cycle", "id": "{{steps.1.cycleId}}", "name": "n" }, { "kind": "cycle", "name": "n" }]
+    });
+    let e = serde_json::from_value::<Fixture>(raw.clone()).unwrap_err();
+    assert_eq!(shape_problem(&raw, &e), "creates[1].id is missing");
+    let raw = json!({ "id": "f", "name": "F", "account": "admin", "steps": [{ "params": {} }] });
+    let e = serde_json::from_value::<Fixture>(raw.clone()).unwrap_err();
+    assert_eq!(shape_problem(&raw, &e), "steps[0].template is missing");
+    // The fixture's own field: serde's sentence, as it was.
+    let raw = json!({ "name": "F", "account": "admin", "steps": [] });
+    let e = serde_json::from_value::<Fixture>(raw.clone()).unwrap_err();
+    assert_eq!(shape_problem(&raw, &e), e.to_string());
 }
 
 #[test]
@@ -162,7 +260,8 @@ fn a_creates_entry_must_come_from_a_step() {
     f.creates[0].name = "fixed name".into();
     let p = problems(&f);
     assert!(p.contains(&"creates: {{steps.1.nothing}} does not come from a step".to_string()), "{p:?}");
-    assert!(p.contains(&"creates: fixed name does not come from a step".to_string()), "{p:?}");
+    let named = v2_lib::api_templates::fixture::creates_name_not_from_a_step("cycle", "fixed name");
+    assert!(p.contains(&named), "{p:?}");
 }
 
 /// A template that only reads: one GET, effect `edit`, with the same
@@ -516,7 +615,7 @@ fn a_later_stage_alone_is_refused() {
     assert_eq!(
         flow_problems(&f),
         vec![
-            "step 1: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Cycle setup, Evaluation rules",
+            "step 1: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Cycle setup, Evaluation rules - or, for a stage this record does not include, name it in the fixture's skip_stages",
             "step 1: template flow-publish performs Publish of flow Performance cycle wizard, so its cycleId must be one {{steps.<m>.<output>}} of an earlier step on that flow",
         ]
     );
@@ -611,8 +710,59 @@ fn a_missing_middle_stage_is_refused() {
     ]);
     assert_eq!(
         flow_problems(&f),
-        vec!["step 2: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Evaluation rules"]
+        vec!["step 2: template flow-publish performs Publish of flow Performance cycle wizard, so the steps before it must perform Evaluation rules - or, for a stage this record does not include, name it in the fixture's skip_stages"]
     );
+}
+
+/// A stage the record does not include (a cycle with Competencies off) is
+/// named in `skip_stages`, by title or id: the gate no longer asks for it,
+/// and the save echoes it with its flow. A name that is no stage, the
+/// creating stage, or a stage a step performs is refused.
+#[test]
+fn a_stage_the_record_does_not_include_can_be_skipped() {
+    use v2_lib::api_templates::fixture::skipped_stages;
+    let two = || {
+        flow_fixture(vec![
+            step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+            step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+        ])
+    };
+    for name in ["Evaluation rules", " evaluation RULES ", "rules"] {
+        let f = Fixture { skip_stages: vec![name.into()], ..two() };
+        validate(&f, &flow_lookup, &flows).unwrap();
+        assert_eq!(skipped_stages(&f, &flow_lookup, &flows), vec!["Evaluation rules (flow Performance cycle wizard)"]);
+    }
+    assert!(skipped_stages(&two(), &flow_lookup, &flows).is_empty());
+
+    let f = Fixture { skip_stages: vec!["Competencies".into()], ..two() };
+    let p = flow_problems(&f);
+    assert!(p.contains(&"skip_stages: Competencies is not a stage of Performance cycle wizard".to_string()), "{p:?}");
+    assert_eq!(p.len(), 2, "the gate still asks for rules: {p:?}");
+
+    let f = Fixture { skip_stages: vec!["setup".into()], ..two() };
+    let p = flow_problems(&f);
+    assert!(p.contains(&"skip_stages: Cycle setup makes the record in flow Performance cycle wizard, so it cannot be skipped".to_string()), "{p:?}");
+    assert!(p.contains(&"skip_stages: step 1 performs Cycle setup, so it is part of this record - take it out of skip_stages".to_string()), "{p:?}");
+
+    let all = flow_fixture(vec![
+        step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+        step("flow-rules", &[("cycleId", "{{steps.1.cycleId}}")]),
+        step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+    ]);
+    let f = Fixture { skip_stages: vec!["Evaluation rules".into()], ..all };
+    assert_eq!(
+        flow_problems(&f),
+        vec!["skip_stages: step 2 performs Evaluation rules, so it is part of this record - take it out of skip_stages"]
+    );
+
+    // A fixture on no flow: nothing to skip.
+    let f = Fixture { skip_stages: vec!["rules".into()], ..fixture() };
+    assert_eq!(flow_problems(&f), vec!["skip_stages: rules is not a stage of no flow: no step performs a flow's stage"]);
+
+    // A fixture saved before it reads as skipping nothing.
+    let mut v = serde_json::to_value(fixture()).unwrap();
+    v.as_object_mut().unwrap().remove("skip_stages");
+    assert_eq!(serde_json::from_value::<Fixture>(v).unwrap(), fixture());
 }
 
 #[test]
@@ -713,6 +863,7 @@ mod running {
                 id: "{{steps.1.cycleId}}".into(),
                 name: "{{steps.1.cycleName}}".into(),
             }],
+            skip_stages: vec![],
         }
     }
 
@@ -747,6 +898,32 @@ mod running {
 
     fn the_cycle() -> Value {
         answer(200, json!({ "cycleId": 274, "cycleName": "AUTOTEST cycle 20261006" }))
+    }
+
+    /// An output and a `creates` name that are what step 1 SENT resolve,
+    /// once per run, to the exact text it sent, so a script gets a unique
+    /// name even from a template that hands back only an id.
+    #[tokio::test]
+    async fn what_a_step_sent_is_an_output_and_names_what_it_made() {
+        let _act = crate::serial::activity_log();
+        let _held = crate::serial::held_browsers();
+        let mut f = fixture();
+        f.outputs.insert("cycle_name".into(), "{{steps.1.params.cycleName}}".into());
+        f.outputs.insert("cycle_text".into(), "{{prefix}} cycle {{now:yyyyMMdd}}".into());
+        f.creates[0].name = "{{prefix}} cycle {{now:yyyyMMdd}}".into();
+        let mut r = rig_with(
+            vec![the_cycle(), answer(200, json!({ "suiteId": 9 }))],
+            &f,
+            &[make_cycle(), add_suite()],
+        );
+        let report = run(&mut r, &f).await;
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.outputs["cycle_name"], json!("AUTOTEST cycle 20261006"));
+        assert_eq!(report.outputs["cycle_text"], json!("AUTOTEST cycle 20261006"));
+        assert_eq!(r.fetched()[0][0]["body"]["fields"]["CycleName"], json!("AUTOTEST cycle 20261006"));
+        assert_eq!(report.made.len(), 1);
+        assert_eq!((report.made[0].id.as_str(), report.made[0].name.as_str()), ("274", "AUTOTEST cycle 20261006"));
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     }
 
     /// The rig's browsers, noting how many held browsers had been closed
@@ -1314,7 +1491,8 @@ mod running {
 
         let (status, out) = api_fixture_save(&on, &body);
         assert_eq!(status, 400);
-        assert_eq!(out, "step 2: template add-suite is not proven\noutput suite_id: {{steps.2.suiteId}} does not come from a step");
+        let refused = v2_lib::api_templates::fixture::output_not_from_a_step("suite_id", "{{steps.2.suiteId}}");
+        assert_eq!(out, format!("step 2: template add-suite is not proven\n{refused}"));
         assert_eq!(fixture_store::load(dir.path(), ORG, PROJECT, "draft-cycle").unwrap(), None);
 
         store::save(dir.path(), ORG, PROJECT, &add_suite()).unwrap();
@@ -1442,4 +1620,61 @@ fn the_guide_explains_delete_templates() {
     let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(one_line.contains("both come from one step whose template creates"), "{one_line}");
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+}
+
+/// A second flow that also has an "Evaluation rules" stage (id `checks`),
+/// whose creating stage `other-setup` performs.
+fn two_flows(id: &str) -> Option<v2_lib::api_templates::flow::Flow> {
+    match id {
+        "other-flow" => serde_json::from_value(json!({
+            "id": "other-flow", "title": "Suite wizard", "module": "PMS",
+            "subject": { "name": "suiteId", "type": "number" },
+            "stages": [
+                { "id": "start", "title": "Suite setup", "creates": true, "check": "SELECT 1 FROM s WHERE id = {{suiteId}}" },
+                { "id": "checks", "title": "Evaluation rules", "requires": ["start"], "check": "SELECT 1 FROM c WHERE id = {{suiteId}}" }
+            ]
+        }))
+        .ok(),
+        other => flows(other),
+    }
+}
+
+fn two_flow_lookup(id: &str) -> Option<ApiTemplate> {
+    match id {
+        "other-setup" => {
+            let mut t = template(id, "create", true);
+            t.stage = Some(v2_lib::api_templates::flow::StageRef { flow: "other-flow".into(), id: "start".into() });
+            Some(t)
+        }
+        _ => flow_lookup(id),
+    }
+}
+
+/// A skip names the stage in the flow that owns it: a title two of the
+/// fixture's flows share is refused, asking for the stage id or
+/// `<flow id>/<stage id>`; either of those skips only that flow's stage.
+#[test]
+fn a_skip_names_one_stage_in_the_flow_that_owns_it() {
+    use v2_lib::api_templates::fixture::skipped_stages;
+    let with = |skip: &str| Fixture {
+        skip_stages: vec![skip.into()],
+        ..flow_fixture(vec![
+            step("flow-setup", &[("cycleName", "{{prefix}} cycle")]),
+            step("flow-publish", &[("cycleId", "{{steps.1.cycleId}}")]),
+            step("other-setup", &[("cycleName", "{{prefix}} suite")]),
+        ])
+    };
+    let refused = validate(&with("Evaluation rules"), &two_flow_lookup, &two_flows).unwrap_err();
+    assert!(
+        refused.contains(&"skip_stages: Evaluation rules names more than one stage (cycle-flow/rules, other-flow/checks) - name the one you mean by its stage id, or as <flow id>/<stage id>".to_string()),
+        "{refused:?}"
+    );
+    for skip in ["rules", "cycle-flow/rules", "CYCLE-FLOW / rules"] {
+        let f = with(skip);
+        validate(&f, &two_flow_lookup, &two_flows).unwrap_or_else(|p| panic!("{skip}: {p:?}"));
+        assert_eq!(skipped_stages(&f, &two_flow_lookup, &two_flows), vec!["Evaluation rules (flow Performance cycle wizard)"]);
+    }
+    // The other flow's stage does not stand in for this one.
+    let p = validate(&with("other-flow/checks"), &two_flow_lookup, &two_flows).unwrap_err();
+    assert!(p.iter().any(|l| l.contains("must perform Evaluation rules")), "{p:?}");
 }

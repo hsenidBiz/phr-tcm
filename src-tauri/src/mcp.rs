@@ -322,10 +322,11 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_guide",
-            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. Locators come from what you saw on the live app, through discovery; every assertion comes from the test case's own expected result, never from what the code happens to do. The full guide is long: with `quick` true it answers only the Quick rules and this project's live sections, for work you have done before; with `section` it answers the Quick rules and that one section.",
+            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands (including checks of the application's own API requests), how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. Locators come from what you saw on the live app, through discovery; every assertion comes from the test case's own expected result, never from what the code happens to do. The full guide is too long for one answer: with no arguments this answers the Quick rules, this project's live sections and the title of every section; with `section` it answers the Quick rules and that one section; with `quick` true only the Quick rules and the live sections; the whole guide only with `full` true.",
             "inputSchema": schema(serde_json::json!({
-                "quick": { "type": "boolean", "description": "true: answer only the Quick rules (the short form of the guide's rules) and the live sections: the active environment and whether get_accounts gives passwords, and this project's areas, areas to explore, components and quirks. Read the full guide, without quick, when something comes up that the quick rules do not cover." },
+                "quick": { "type": "boolean", "description": "true: answer only the Quick rules (the short form of the guide's rules) and the live sections: the active environment and whether get_accounts gives passwords, and this project's areas, areas to explore, components and quirks. Ask for a section, or the full guide, when something comes up that the quick rules do not cover." },
                 "section": { "type": "string", "description": "The title of one section of the guide, such as \"Selectors\" or \"Saving it\" (case ignored): answers the Quick rules and that section, down to the next one. An unknown title answers the list of section titles." },
+                "full": { "type": "boolean", "description": "true: the whole guide, every section. It is long (over 100,000 characters); prefer `section`." },
             }), &[]),
         },
         {
@@ -334,7 +335,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "scripts": {
                     "type": "array",
-                    "description": "One entry per test case: { case_id, title, account?, area, steps, changes?, needs_unchanged?, needs_state? }. needs_state maps each setting the case needs to its value, e.g. { \"Approval workflow\": \"ON\" }; see get_autorun_guide.",
+                    "description": "One entry per test case: { case_id, title, account?, area, steps, changes?, needs_unchanged?, needs_state? }. needs_state maps each setting the case needs to its value, e.g. { \"Approval workflow\": \"ON\" }; see get_autorun_guide. A repair may send { case_id, patch_steps: [{ step, actions }] } in place of the whole script: each listed step's actions replace that step of the saved script, every other step is kept, and `edits` must still declare each patched step.",
                     "items": { "type": "object" },
                 },
                 "edits": {
@@ -361,7 +362,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_page",
-            "description": "Read the page in the Auto Run browser, the one the person opened on the Auto Run tab or your discovery browser, as text: Chrome's own accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script - what a password field holds is never shown. It answers the first 120 lines, then a line saying how many more there are: ask for more with `limit`, or list one part of the page with `within`. During a discovery with an area, a read records what it shows as seen under that area, and the answer ends with a line saying what was recorded; only a read of the whole page marks the area explored. Needs a supervised or discovery browser to be open.",
+            "description": "Read the page in the Auto Run browser, the one the person opened on the Auto Run tab or your discovery browser, as text: Chrome's own accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script - what a password field holds is never shown. Visible text that no line's name already says (a span, a div, a paragraph) prints as a `text \"...\"` line with a text locator; a read never counts one as matching exactly one element, so probe it before an action or a one-element check uses it. Past the line limit, text lines are left out before any control. It answers the first 120 lines, then a line saying how many more there are: ask for more with `limit`, or list one part of the page with `within`. During a discovery with an area, a read records what it shows as seen under that area, and the answer ends with a line saying what was recorded; only a read of the whole page marks the area explored. Needs a supervised or discovery browser to be open.",
             "inputSchema": schema(serde_json::json!({
                 "limit": { "type": "number", "description": "How many lines before the snapshot stops (default 120, at most 3000)." },
                 "within": {
@@ -373,7 +374,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "probe_autorun_locator",
-            "description": "Ask the open browser what a locator matches RIGHT NOW: how many elements, and for each one its tag, its text, whether it is visible and where it sits. Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. What it matched is recorded as seen, with how many elements it matched: an action needs a locator seen matching exactly one, while a check that can pass with several matches (expect_hidden, expect_count, wait_for) may use one seen matching several. A chain can pass through a same-origin iframe: name the iframe as one step and the element inside as the next. Needs a supervised or discovery browser to be open.",
+            "description": "Ask the open browser what a locator matches RIGHT NOW: how many elements, and for each one its tag, its text, whether it is visible and where it sits, and the role and name the page read gives it when it has one (an icon button's text is empty, its name is its label). Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. What it matched is recorded as seen, with how many elements it matched: an action needs a locator seen matching exactly one, while a check that can pass with several matches (expect_hidden, expect_count, wait_for) may use one seen matching several. A chain can pass through a same-origin iframe: name the iframe as one step and the element inside as the next. Needs a supervised or discovery browser to be open.",
             "inputSchema": schema(serde_json::json!({
                 "selector": {
                     "type": ["object", "string", "array"],
@@ -402,6 +403,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The case whose saved script is replayed." },
                 "step": { "type": "number", "description": "The step to stop before: the failing step. Steps 1 to step - 1 run." },
+                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer; get_autorun_page reads it. True when left out." },
             }), &["case_id", "step"]),
         },
         {
@@ -432,6 +434,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "type": "object",
                     "description": "Optional, with a use_component action only: the component to try in place of the saved one of that name, exactly as you will send it to save_autorun_component: { name, description, inputs, actions }.",
                 },
+                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). True when left out." },
             }), &["action"]),
         },
         {
@@ -444,6 +447,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "items": { "type": "object" },
                 },
                 "stop_on_failure": { "type": "boolean", "description": "Optional: false carries on past a failed action. True when left out." },
+                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). True when left out." },
                 "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
                 "case_id": { "type": "number", "description": "Optional: the case this discovery explores for. When its saved script is marked no_save, every save the page tries is BLOCKED (not only reported) from then until the discovery ends, and each answer names the blocked request in `blocked_writes`." },
                 "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries from then until the discovery ends, as for a case marked no_save. Pass it, or the case_id, whenever the case you explore for must not save." },
@@ -521,7 +525,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "record_autorun_quirk",
-            "description": "Record one line about how this application behaves, so the next script or API template - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; one list per project, read by both the Auto Run guide and the API template guide. A line already on the list is not written twice, and one you retired comes back rather than being copied (one a person wrote or retired is refused - ask them). Name the cases and steps it explains in `cases` - each step must have failed in its case's newest run - so later runs can count whether it helped; or put it on the edit of every case you repair for it. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire and the oldest of the others.",
+            "description": "Record one line (at most 300 characters) about how this application behaves, so the next script or API template - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; one list per project, read by both the Auto Run guide and the API template guide. A line already on the list is not written twice, and one you retired comes back rather than being copied (one a person wrote or retired is refused - ask them). Name the cases and steps it explains in `cases` - each step must have failed in its case's newest run - so later runs can count whether it helped; or put it on the edit of every case you repair for it. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire and the oldest of the others.",
             "inputSchema": schema(serde_json::json!({
                 "text": { "type": "string", "description": "One line, at most 300 characters, e.g. \"the results grid paginates at 25 rows\"." },
                 "cases": quirk_cases(),
@@ -548,7 +552,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "set_autorun_order",
-            "description": "Set the order Auto Run runs a PBI's test cases in on this machine, for Run selected and Run unattended. Put each case that needs shared state unchanged before the cases that change it, and keep cases that need the same settings together, so a run needs as few pauses as possible; the scripts' changes, needs_unchanged and needs_state marks say which those are. It does not change Run Tests' order. Every id must be one of the PBI's test cases: one that is not is refused with `case <id> is not in PBI <pbi>`, and nothing is saved. Cases you leave out run after the listed ones, in list order. A listed case with no saved script is saved in the order and named back: `case <id> has no saved script`.",
+            "description": "Set the order Auto Run runs a PBI's test cases in on this machine, for Run selected and Run unattended. Put each case that needs shared state unchanged before the cases that change it, and keep cases that need the same settings together, so a run needs as few pauses as possible; the scripts' changes, needs_unchanged and needs_state marks say which those are. It does not change Run Tests' order. Every id must be one of the PBI's test cases: one that is not is refused with `case <id> is not in PBI <pbi>`, and nothing is saved. Each call REPLACES the PBI's whole saved order (`mode: \"replace\"`, the default): cases you leave out run after the listed ones, in list order. `mode: \"append\"` keeps the saved order's other cases, in their order, after the ones you list. The answer says which it did. A listed case with no saved script is saved in the order and named back: `case <id> has no saved script`.",
             "inputSchema": schema(serde_json::json!({
                 "pbi_id": { "type": "number", "description": "The PBI whose cases these are." },
                 "case_ids": {
@@ -556,6 +560,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "items": { "type": "number" },
                     "description": "The PBI's test case ids, in the order Auto Run should run them, each once.",
                 },
+                "mode": { "type": "string", "enum": ["replace", "append"], "description": "Optional: \"replace\" (the default) saves exactly this order; \"append\" keeps the saved order's other cases after these." },
             }), &["pbi_id", "case_ids"]),
         },
         {
@@ -606,8 +611,8 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "module": { "type": "string", "description": "Only templates whose module contains this text (case does not matter)." },
                 "search": { "type": "string", "description": "Only templates whose id, title, or a param or output name contains this text (case does not matter)." },
-                "flow": { "type": "string", "description": "A flow id: only that flow, and the templates on its stages." },
-                "id": { "type": "string", "description": "One template's id: that template in full, with the flow it is on. The other arguments are ignored with it." },
+                "flow": { "type": ["string", "boolean"], "description": "A flow id: only that flow, and the templates on its stages. Or false: leave the flows (every stage) and the Test files out of an answer in full, such as one template by `id`." },
+                "id": { "type": "string", "description": "One template's id: that template in full, with the flow it is on (send flow: false to leave the flow and the Test files out). The other arguments are ignored with it." },
                 "offset": { "type": "number", "description": "How many matching templates to skip: the `next_offset` of the previous answer. 0 by default." },
                 "limit": { "type": "number", "description": "How many templates one answer carries: 25 by default, 100 at most." },
             }), &[]),
@@ -626,7 +631,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "run_api_template",
-            "description": "Run a saved API template and return its outputs - or, when a step fails, which step failed, the start of the response, and what had already been created (nothing is rolled back). Every run is added to the template's history on the API Templates tab. Refused while the API templates switch on the AI Bridge tab is off.",
+            "description": "Run a saved API template and return its outputs - or, when a step fails, which step failed, the start of the response, and what had already been created (nothing is rolled back). Every run is added to the template's history on the API Templates tab. Refused while the API templates switch on the AI Bridge tab is off. While your discovery holds the account in the Auto Run browser the run is refused, and the answer says so: end the discovery first, or run as another account.",
             "inputSchema": schema(serde_json::json!({
                 "id": { "type": "string", "description": "The template's id, from list_api_templates." },
                 "account": { "type": "string", "description": "The KEY of the account to sign in as - one the guide lists, never a username or password." },
@@ -654,14 +659,14 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "save_api_fixture",
-            "description": "Save a fixture: an ordered list of proven API templates that makes a draft the same way every time, so a test can have a fresh one in seconds. Each step names a template and its params as text, which may hold {{steps.<n>.<output>}} (an earlier step's declared output, n from 1), {{now:yyyyMMdd}} (the run's start time; the letters yyyy MM dd HH mm ss) and {{prefix}} (the environment's test name prefix). `outputs` maps a name to one {{steps.<n>.<output>}}; `creates` lists what the fixture makes as { kind, id, name } placeholders, recorded as test-made so Clean up can remove it. Every problem comes back together, one sentence each, and nothing is saved: a template that is not proven, one that deletes, a placeholder no earlier step gives, or creates without {{prefix}} in a step's params. Refused while the API templates switch on the AI Bridge tab is off. Call get_api_template_guide first.",
+            "description": "Save a fixture: an ordered list of proven API templates that makes a draft the same way every time, so a test can have a fresh one in seconds. Each step names a template and its params as text, which may hold {{steps.<n>.<output>}} (an earlier step's declared output, n from 1), {{now:yyyyMMdd}} (the run's start time; the letters yyyy MM dd HH mm ss) and {{prefix}} (the environment's test name prefix). `outputs` maps a name to one {{steps.<n>.<output>}}, or to what a step sent: {{steps.<n>.params.<param>}} or the exact text of one step's param as written (resolved once per run to the text that step sent, so a script can open its draft by a unique name); `creates` lists what the fixture makes as { kind, id, name } placeholders, recorded as test-made so Clean up can remove it - a name may be the creating step's own param in the same way, and must then start with {{prefix}}. Every problem comes back together, one sentence each, and nothing is saved: a template that is not proven, one that deletes, a placeholder no earlier step gives, or creates without {{prefix}} in a step's params. Changing a fixture undoes the approval of every setup that runs it: the answer lists those cases in `needs_reapproval`, and only the person can approve them again, in the script editor. Refused while the API templates switch on the AI Bridge tab is off. Call get_api_template_guide first.",
             "inputSchema": schema(serde_json::json!({
-                "fixture": { "type": "object", "description": "{ id, name, account, steps: [{ template, params }], outputs?, creates? }, as get_api_template_guide describes." },
+                "fixture": { "type": "object", "description": "{ id, name, account, steps: [{ template, params }], outputs?, creates?, skip_stages? }, as get_api_template_guide describes. skip_stages names flow stages (by title, by id, or as <flow id>/<stage id> when a title is in two flows) that the record this fixture makes does not include, such as [\"Competencies\"] for a cycle with Competencies off: the flow gate does not ask an earlier step to perform them, and the answer echoes them as skipped_stages." },
             }), &["fixture"]),
         },
         {
             "name": "run_api_fixture",
-            "description": "Run a saved fixture - its templates in order, in one browser signed in once as the fixture's account - and return its sentence, its outputs, what it made and any warnings. The run stops at the first failed step, with that step's own sentence. Whatever it made, even when a later step failed, is recorded as test-made. A successful run's outputs become the fixture's current outputs; a failed one keeps the ones before. Use it to Rebuild a damaged shared draft, never a hand fix. Refused while the API templates switch on the AI Bridge tab is off.",
+            "description": "Run a saved fixture - its templates in order, in one browser signed in once as the fixture's account - and return its sentence, its outputs, what it made and any warnings. The run stops at the first failed step, with that step's own sentence. Whatever it made, even when a later step failed, is recorded as test-made. A successful run's outputs become the fixture's current outputs; a failed one keeps the ones before. Use it to Rebuild a damaged shared draft, never a hand fix. Refused while the API templates switch on the AI Bridge tab is off. While your discovery holds the fixture's account in the Auto Run browser the run is refused, and the answer says so: end the discovery first.",
             "inputSchema": schema(serde_json::json!({
                 "id": { "type": "string", "description": "The fixture's id, from list_api_fixtures." },
                 "browser": { "type": "string", "description": "\"edge\" (the default) or \"chrome\"." },
@@ -677,7 +682,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "record_app_quirk",
-            "description": "Record one line about how this application behaves that you learned building API templates (a handler that needs a header the screen sends, an id the response returns as text), so the next template or script does not rediscover it. The project's one list, shared with whoever writes its Auto Run scripts, and shown as (assistant, API). A line already on the list is not written twice; one a person wrote or retired is refused - ask them. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire and the oldest of the others.",
+            "description": "Record one line (at most 300 characters) about how this application behaves that you learned building API templates (a handler that needs a header the screen sends, an id the response returns as text), so the next template or script does not rediscover it. The project's one list, shared with whoever writes its Auto Run scripts, and shown as (assistant, API). A line already on the list is not written twice; one a person wrote or retired is refused - ask them. A project keeps 60 active quirks: past that, this is refused with the best candidates to retire and the oldest of the others.",
             "inputSchema": schema(serde_json::json!({
                 "text": { "type": "string", "description": "One line, at most 300 characters." },
                 "cases": quirk_cases(),
@@ -1022,7 +1027,10 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "get_autorun_guide" => match args["section"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
             Some(section) => call("GET", &format!("/autorun-guide?section={}", percent_encode(section)), ""),
             None if args["quick"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide?quick=true", ""),
-            None => call("GET", "/autorun-guide", ""),
+            None if args["full"].as_bool().unwrap_or(false) => call("GET", "/autorun-guide", ""),
+            // The whole guide is too long for one answer: the Quick rules,
+            // the live sections and the section titles.
+            None => call("GET", "/autorun-guide?overview=true", ""),
         },
         "save_autorun_script" => {
             // The bridge takes the bare array, so a caller that wrapped it
@@ -1153,6 +1161,11 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             // number) is forwarded as written, so the route refuses it by
             // name rather than this dispatch quietly dropping it.
             let mut params: Vec<String> = vec![];
+            // `flow: false` is not a flow id: it leaves the flows and the
+            // Test files out of an answer in full.
+            if args["flow"] == serde_json::json!(false) {
+                params.push("with_flow=false".to_string());
+            }
             for key in ["module", "search", "flow", "id", "offset", "limit"] {
                 let paging = matches!(key, "offset" | "limit");
                 let value = match &args[key] {

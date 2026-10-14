@@ -3472,6 +3472,13 @@ export type Fixture = {
 	steps: FixtureStep[],
 	outputs?: { [key in string]: string },
 	creates?: Creates[],
+	/**
+	 *  Stages of a flow that the record this fixture makes does not
+	 *  include (a cycle with Competencies off), by stage title or id: the
+	 *  flow gate (`flow_problems`) does not ask an earlier step to perform
+	 *  them. Never the creating stage, and never one a step performs.
+	 */
+	skip_stages?: string[],
 };
 
 /**  What a fixture run did. */

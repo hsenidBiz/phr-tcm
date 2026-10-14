@@ -1291,7 +1291,7 @@ fn the_guide_opens_with_the_quick_rules() {
         let re = regex::Regex::new(&format!("(?i){hidden}")).unwrap();
         assert!(!re.is_match(&quick), "the quick rules name {hidden:?}");
     }
-    assert!(quick.contains("call `get_autorun_guide`\nwithout `quick` and read the full guide"), "{quick}");
+    assert!(quick.contains("call `get_autorun_guide`\nwith the `section` that covers it, or with `full` true for the whole guide."), "{quick}");
 }
 
 /// Review Focus 5: the quick guide never contradicts the full guide. Each
@@ -1451,4 +1451,21 @@ fn a_page_reads_limit_and_within_are_read_from_the_query() {
     assert!(matches!(within_target(r#"[{"role":"dialog"},{"css":"form"}]"#).unwrap(), Target::Chain(_)));
     assert!(within_target(r#"{"role":"dialog","colour":"red"}"#).unwrap_err().starts_with("within is not a locator"));
     assert!(within_target(r#"{"name":"Edit"}"#).unwrap_err().starts_with("within is not a locator"));
+}
+
+/// With no arguments `get_autorun_guide` answers the overview: the Quick
+/// rules, then every section title of the full guide and how to ask for
+/// one. The whole guide is far too long for one answer.
+#[test]
+fn the_overview_lists_every_section_and_how_to_ask() {
+    use v2_lib::autorun::guide::{autorun_guide, guide_overview, quick_rules, section_titles};
+    let full = autorun_guide();
+    let overview = guide_overview(&quick_rules(), &full);
+    assert!(overview.starts_with(quick_rules().trim_end()), "{overview}");
+    for title in section_titles(&full) {
+        assert!(overview.contains(&format!("\n- {title}\n")) || overview.ends_with(&format!("\n- {title}\n")), "{title}");
+    }
+    assert!(overview.contains("`section`") && overview.contains("`full` true"), "{overview}");
+    assert!(overview.len() * 4 < full.len(), "the overview is {} of {} characters", overview.len(), full.len());
+    assert!(!overview.contains('\u{2014}') && !overview.contains('\u{2013}'), "no em or en dashes");
 }

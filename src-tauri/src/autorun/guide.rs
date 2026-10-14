@@ -100,6 +100,20 @@ pub fn guide_section(guide: &str, title: &str) -> Result<String, String> {
     Ok(format!("{}\n\n{}\n", quick.trim_end(), section.trim_end()))
 }
 
+/// What `get_autorun_guide` answers with no arguments: `quick` (the Quick
+/// rules and the project's live sections, as `quick: true` answers them),
+/// then every `##` section title of `full` (the live guide) and how to ask
+/// for one. The whole guide is too long for one answer, so it is sent only
+/// when asked for with `full: true`.
+pub fn guide_overview(quick: &str, full: &str) -> String {
+    let titles: Vec<String> = section_titles(full).iter().map(|t| format!("- {t}")).collect();
+    format!(
+        "{}\n\n## Sections of the full guide\n\nThis answer is the Quick rules and this project's live sections. Ask for one section of the guide with `section` (its title, case ignored), or for the whole guide with `full` true (it is long):\n\n{}\n",
+        quick.trim_end(),
+        titles.join("\n")
+    )
+}
+
 /// The Quick rules section alone: what `get_autorun_guide` with
 /// `quick: true` answers before the project's live sections. Every rule
 /// here is also in the full guide, in the section it belongs to;
@@ -111,7 +125,7 @@ pub fn quick_rules() -> String {
 const QUICK_RULES: &str = r##"## Quick rules
 
 Short form: for anything these rules do not cover, call `get_autorun_guide`
-without `quick` and read the full guide.
+with the `section` that covers it, or with `full` true for the whole guide.
 
 - Discover the live app; never read the application's code to write scripts.
   A save refuses any locator the app has not seen. During a discovery with
@@ -1180,13 +1194,22 @@ browser (see "Discovering the app"):
   element and what is inside it is listed; a `within` that matches none
   or several is refused with the count; a css string counts every
   visible match. A replay's page, and the page `discover_autorun_action`
-  and `discover_autorun_actions` answer, stop at 120 lines too.
+  and `discover_autorun_actions` answer, stop at 120 lines too; send
+  `page: false` to those three to leave the page out of the answer.
+- Visible text that no line's name already says (a span, a div, a
+  paragraph: "Self 20%", a status badge) prints as a `text "..."` line
+  with a text locator on its end. A read never counts a text line as
+  matching exactly one element: probe it before an action or a
+  one-element check uses it. Past the line limit, text lines are left out
+  before any control's line.
 - A line with no locator on its end names nothing a script can act on:
   the page itself, a list bullet, and the options of a native list
   (a customizable one included), which a script picks with `fill` on the
   list, by the option's label.
 - `probe_autorun_locator` says how many elements a locator matches right
-  now, before it goes into a script.
+  now, before it goes into a script, and for each the role and name the
+  page read gives it (`page read: button "Edit ..."`) when its own text
+  is not that name.
 - `try_autorun_action` runs one action in that same browser and says what
   happened - a rehearsal, not a run; nothing is recorded. Every try names
   the case it is for, `case_id` beside the `action`, and is refused
@@ -1715,6 +1738,19 @@ showed you - that bare shape is only for a case with no script yet:
     }
   ]
 }
+
+A repair need not send the whole script again: a script entry may carry
+`patch_steps` in place of `steps`, `{ "case_id": 142696, "patch_steps":
+[{ "step": 7, "actions": [...] }] }`. Each listed step's actions replace
+that step of the saved script, every other step is kept as saved, and any
+other key of the entry (`title`, `area`) replaces the saved one. It is
+checked exactly as the whole script would be, so `edits` must still
+declare every patched step. A step the saved script does not have is
+refused: send the whole script to add one.
+
+When a save is refused, every case's refusals of the same kind come back
+in one answer: every undeclared change, every expected result nothing
+checks, and every locator never seen or never counted as one.
 
 `edits` is a TOP-LEVEL list beside `scripts`, as above - never inside
 a script - with one entry per case you are changing: the `case_id`, every
