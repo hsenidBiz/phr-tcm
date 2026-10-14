@@ -427,11 +427,12 @@ export async function stopRun(): Promise<void> {
 /** Stop, while the run waits for the network: the run ends there, every
  * remaining case recorded as not run. A refused stop (the wait just ended)
  * leaves the run to carry on. */
-export async function stopNetworkWait(runId?: string): Promise<void> {
+export async function stopNetworkWait(runId?: string): Promise<boolean> {
   const id = runId ?? state.run?.networkWait?.run_id;
-  if (!id) return;
+  if (!id) return false;
   const stopped = await commands.autoRunStopNetworkWait(id).catch(() => false);
   if (stopped) patchRun({ stopping: true });
+  return stopped;
 }
 
 /** The answer at the reset point: Continue runs the next phase, Stop ends

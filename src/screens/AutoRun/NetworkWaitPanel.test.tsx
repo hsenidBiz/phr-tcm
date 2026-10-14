@@ -29,6 +29,26 @@ test("counts the time waited as it ticks", () => {
   expect(waitedLabel(0)).toBe("0:00");
 });
 
+test("Gives up in counts down with the wait", () => {
+  vi.useFakeTimers();
+  render(<NetworkWaitPanel giveUpAfterS={1800} onStop={() => {}} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Gives up in 30 min.");
+  act(() => {
+    vi.advanceTimersByTime(25 * 60_000);
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("Gives up in 5 min.");
+});
+
+test("a Stop that went through stays down", async () => {
+  const onStop = vi.fn(async () => true);
+  render(<NetworkWaitPanel giveUpAfterS={1800} onStop={onStop} />);
+  const stop = screen.getByRole("button", { name: /^Stop/ });
+  await act(async () => {
+    fireEvent.click(stop);
+  });
+  expect(stop).toBeDisabled();
+});
+
 test("Stop calls onStop and is disabled while the stop is pending", async () => {
   let done = () => {};
   const onStop = vi.fn(() => new Promise<void>((r) => (done = r)));
