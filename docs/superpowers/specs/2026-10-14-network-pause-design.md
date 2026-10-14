@@ -64,8 +64,16 @@ The QA site itself is reachable from the internet, so it is not the signal.
 Advanced Features on, or a development build) - the unattended run is already behind
 that gate, so nothing new is gated separately.
 
+**Armed once the database has answered (Avin, after the final review).** Every
+environment names a database (a new one gets the default), so "no database, no check"
+almost never applies. A run therefore only starts watching once the database server has
+answered at least once in that run: until then every check counts as "no check", and a
+run started off the VPN behaves exactly as today. This is the "it was there and went
+away" case the feature is for.
+
 **Before each case** (including the first): check the database server. Reachable: run
-the case as today. Unreachable: pause before the case.
+the case as today (and the run is armed). Unreachable: pause before the case - only once
+armed.
 
 **After a case ends Failed or Blocked:** check the database server. Reachable: keep the
 record as today (including the existing one-time transient retry). Unreachable: the
