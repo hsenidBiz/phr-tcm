@@ -613,3 +613,14 @@ fn a_component_is_exported_as_the_actions_it_runs() {
     assert!(!pc.exportable);
     assert!(pc.reason.unwrap().starts_with("step 1:"));
 }
+
+#[test]
+fn the_preview_says_which_cases_have_a_script() {
+    let fx = Fx::new();
+    fx.good(120, "One twenty");
+    assert!(preview_of(&fx, 120).has_script);
+    // No script on this machine: listed, but marked so the dialog can leave it out.
+    let none = preview_of(&fx, 121);
+    assert!(!none.has_script);
+    assert!(!none.exportable);
+}
