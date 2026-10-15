@@ -303,8 +303,7 @@ fn every_seg_part_and_the_file_stem_must_be_a_plain_name() {
     for md in ["suites/x/test-cases/feature.md", "suites/sl/a--b/test-cases/feature.md"] {
         let c = clone();
         index_add(&c.root, 9301, "shallow.spec.ts");
-        put(&c.root, md, "## 9301 Shallow
-");
+        put(&c.root, md, "## 9301 Shallow\n");
         let e = cards_at(&c.root, &record(&[9301]), &none(), &none(), &[9301]).unwrap_err();
         assert_eq!(
             e,
@@ -320,10 +319,7 @@ fn a_grouped_feature_gets_its_card_at_its_own_depth() {
     put(&c.root, "src/navigation.json", r#"{"entries":{"definition-wizard/competencies":{}}}"#);
     index_add(&c.root, 9400, "comp.spec.ts");
     let md = "suites/sl/admin/performance/definition-wizard/competencies/test-cases/competencies.md";
-    put(&c.root, md, "# C
-
-## 9400 Comp
-");
+    put(&c.root, md, "# C\n\n## 9400 Comp\n");
     let cards = cards_at(&c.root, &record(&[9400]), &none(), &none(), &[9400]).unwrap();
     assert_eq!(cards[0].seg, "sl/admin/performance/definition-wizard/competencies");
     assert_eq!(cards[0].problem, None);

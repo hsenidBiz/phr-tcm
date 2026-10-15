@@ -19,7 +19,8 @@
 //! declares one.
 //!
 //! The prompt is fixed text plus values checked here only: the case ids,
-//! `<seg>` folders (`layout::valid_name`) and file stems matching `^[a-z0-9][a-z0-9-]*$`, raw spec
+//! `<seg>` folders (`layout::valid_name`), file stems matching
+//! `^[a-z0-9][a-z0-9-]*$`, raw spec
 //! names from `index.json`, and user keys from the clone's `users.json`.
 //! The app only builds this text; it never starts Claude Code or anything
 //! else for it. Read only.
@@ -49,7 +50,8 @@ pub struct HandoffCard {
     pub already: Vec<String>,
 }
 
-/// Whether `name` is a folder or file stem the prompt may carry: `^[a-z0-9][a-z0-9-]*$`.
+/// Whether `name` is a file stem the prompt may carry: `^[a-z0-9][a-z0-9-]*$`.
+/// (Folders are checked by `layout::valid_name`.)
 pub fn valid_name(name: &str) -> bool {
     let mut bytes = name.bytes();
     matches!(bytes.next(), Some(b) if b.is_ascii_lowercase() || b.is_ascii_digit())
