@@ -20,6 +20,7 @@ pub mod discovery;
 pub mod environments;
 pub mod guide;
 pub mod misc;
+pub mod modules;
 pub mod pw_export;
 pub mod pw_repo;
 pub mod prs;

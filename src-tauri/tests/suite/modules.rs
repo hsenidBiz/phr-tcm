@@ -258,3 +258,66 @@ fn preconditions_need_database_access_as_well_as_the_switch() {
     assert_eq!(read("commands/autorun_replay.rs").matches("preconditions::read_access(db_read_access)").count(), 1);
     assert!(read("ai_bridge.rs").contains("crate::autorun::preconditions::read_access(!ctx.disabled_tools"));
 }
+
+mod commands {
+    use super::set;
+    use v2_lib::commands::modules::{modules_set_with, AUTO_RUN_BUSY, PLAYWRIGHT_BUSY};
+    use v2_lib::modules::Module;
+
+    fn dir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
+    }
+
+    #[test]
+    fn a_busy_run_refuses_switching_auto_run_off() {
+        let d = dir();
+        let mut st = set(&[Module::DbAccess, Module::AutoRun]);
+        let err = modules_set_with(&mut st, d.path(), Module::AutoRun, false, true, false).unwrap_err();
+        assert_eq!(err, AUTO_RUN_BUSY);
+        assert!(st.contains(&Module::AutoRun));
+    }
+
+    #[test]
+    fn a_busy_repo_command_refuses_switching_playwright_off() {
+        let d = dir();
+        let mut st = set(&[Module::DbAccess, Module::AutoRun, Module::Playwright]);
+        let err = modules_set_with(&mut st, d.path(), Module::Playwright, false, false, true).unwrap_err();
+        assert_eq!(err, PLAYWRIGHT_BUSY);
+        assert!(st.contains(&Module::Playwright));
+    }
+
+    #[test]
+    fn a_cascade_that_would_switch_off_a_busy_auto_run_is_refused() {
+        let d = dir();
+        let mut st = set(&[Module::DbAccess, Module::AutoRun]);
+        let err = modules_set_with(&mut st, d.path(), Module::DbAccess, false, true, false).unwrap_err();
+        assert_eq!(err, AUTO_RUN_BUSY);
+        assert_eq!(st, set(&[Module::DbAccess, Module::AutoRun]));
+    }
+
+    #[test]
+    fn busy_checks_do_not_block_switching_on() {
+        let d = dir();
+        let mut st = set(&[Module::DbAccess]);
+        let now = modules_set_with(&mut st, d.path(), Module::AutoRun, true, true, true).unwrap();
+        assert_eq!(now, vec![Module::DbAccess, Module::AutoRun]);
+    }
+
+    #[test]
+    fn a_locked_module_is_refused() {
+        let d = dir();
+        let mut st = set(&[]);
+        let err = modules_set_with(&mut st, d.path(), Module::AutoRun, true, false, false).unwrap_err();
+        assert_eq!(err, "\"Auto Run\" needs \"Database Access\" switched on first.");
+    }
+
+    #[test]
+    fn a_cascade_answers_with_what_is_left_on() {
+        let d = dir();
+        let all: Vec<Module> = Module::ALL.to_vec();
+        let mut st = set(&all);
+        let now = modules_set_with(&mut st, d.path(), Module::DbAccess, false, false, false).unwrap();
+        assert_eq!(now, vec![Module::WritingStyle]);
+        assert_eq!(st, set(&[Module::WritingStyle]));
+    }
+}
