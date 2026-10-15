@@ -3,16 +3,16 @@
  * (scripts/docs-shots.mjs) flips on before reloading, so a shot never
  * carries anything a normal install does not show: the DEV BUILD panel, the
  * hidden Extras card, or an unprompted tour, "what's new", update banner or
- * session-expired modal covering the screen. Auto Run and API Templates are
- * shown, as Enable Advanced Features shows them (lib/extras.ts).
+ * session-expired modal covering the screen. Every module reports on
+ * (lib/modules.ts), so Auto Run, API Templates and Playwright are shown.
  *
  * Unlike dev/demo.ts, this module has no module-level side effects (no
  * dataset built at import time) - it is safe as a plain, always-present
- * import from files that ship in release too (lib/extras.ts, App.tsx),
+ * import from files that ship in release too (lib/modules.ts, App.tsx),
  * because `import.meta.env.DEV` is a compile-time constant: Vite folds it to
  * `false` in a `tauri build`, which makes the body below unreachable past
  * the first line and drops out under minification, the same way
- * `AUTO_RUN_DEV` and `DEV_TOOLS` already do elsewhere in this app.
+ * `DEV_TOOLS` already does elsewhere in this app.
  */
 const CAPTURE_KEY = "tcm-v2-dev-capture";
 

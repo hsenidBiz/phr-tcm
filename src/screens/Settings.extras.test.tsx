@@ -223,3 +223,20 @@ test("Play the brick game opens the bundled game, and Close shuts it", async () 
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
+
+// The Extras switch gates no feature any more (the modules do): the card
+// shows the games and Reset, and says nothing about Auto Run.
+test("the Extras card no longer shows or mentions Auto Run", async () => {
+  ipc(true);
+  renderSettings();
+  const heading = await screen.findByRole("heading", { name: "Extras" });
+  expect(heading.closest("section")!.textContent).not.toMatch(/Auto Run/);
+});
+
+test("the Enable Advanced Features row is gone, locked or unlocked", async () => {
+  ipc(true);
+  renderSettings();
+  await screen.findByRole("heading", { name: "Extras" });
+  expect(screen.queryByText("Enable Advanced Features")).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "Enable Advanced Features" })).not.toBeInTheDocument();
+});

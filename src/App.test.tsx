@@ -13,6 +13,7 @@ import { saveApiWrites } from "./lib/apiTemplates";
 import { claimCacheFor } from "./lib/cache";
 import { resetForTests as resetNotifications } from "./lib/notifications";
 import { extrasUnlockedSnapshot, resetExtrasStore } from "./lib/extras";
+import { ALL_MODULES, modulesSnapshot, resetModulesStore } from "./lib/modules";
 import { resetSplashForTests } from "./lib/splash";
 import { CHANGELOG } from "./lib/changelog";
 import { flagSessionExpired } from "./lib/sessionExpired";
@@ -50,6 +51,8 @@ afterEach(() => {
   // This machine's optional extras switch is a module-level store: a
   // failed assertion mid-test must not leave it unlocked for later tests.
   resetExtrasStore();
+  // The modules store is module-level too.
+  resetModulesStore();
 });
 
 function renderApp() {
@@ -64,8 +67,13 @@ function renderApp() {
   return { ...result, qc };
 }
 
+/** Rust's answer to modules_get for tests that want every screen: all five
+ * on, as a machine with everything switched on (a fresh install has none). */
+const EVERY_MODULE = [...ALL_MODULES];
+
 function signedInMocks(extra: (cmd: string, args: unknown) => unknown = () => undefined) {
   mockIPC((cmd, args) => {
+    if (cmd === "modules_get") return EVERY_MODULE;
     if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
     if (cmd === "check_update") return null;
     if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
@@ -104,6 +112,75 @@ test("the app asks for this machine's optional extras switch at startup", async 
   renderApp();
   await waitFor(() => expect(extrasUnlockedSnapshot()).toBe(true));
   expect(calls.filter((c) => c === "get_extras_unlocked")).toHaveLength(1);
+});
+
+// The same for the modules: App asks Rust once at startup, and a fresh
+// install (none on) shows no Auto Run, API Templates or Playwright row.
+test("the app asks which modules are on at startup, and shows only those", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    if (cmd === "resume_session") return { signed_in: false, account: null };
+    if (cmd === "check_update") return null;
+    if (cmd === "modules_get") return ["db_access", "auto_run"];
+  });
+  renderApp();
+  await waitFor(() => expect([...modulesSnapshot()].sort()).toEqual(["auto_run", "db_access"]));
+  expect(calls.filter((c) => c === "modules_get")).toHaveLength(1);
+});
+
+test("with no module on, the rail has neither Auto Run, API Templates nor Playwright", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  mockIPC((cmd) => {
+    if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
+    if (cmd === "check_update") return null;
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "modules_get") return [];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  expect(screen.getByRole("button", { name: "Suite Management" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "API Templates" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
+  // Ctrl+6 is Search Suites then: the order closes up around the hidden rows.
+  fireEvent.keyDown(window, { key: "6", ctrlKey: true });
+  expect(await screen.findByRole("heading", { name: "Search Suites" })).toBeInTheDocument();
+});
+
+// A saved last tab of an off module is redirected only once the modules have
+// loaded: a machine with Auto Run on keeps it across a restart, and one with
+// it off lands on Manual Entry rather than a heading over a blank body.
+test("a saved Auto Run tab is kept when its module is on, and left once it is off", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({ org: "acme", project: "proj", section: "autorun", pbi: null, workMode: false }),
+  );
+  let on = true;
+  mockIPC((cmd) => {
+    if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
+    if (cmd === "check_update") return null;
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "modules_get") return on ? EVERY_MODULE : [];
+  });
+  const first = renderApp();
+  expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
+  first.unmount();
+  resetModulesStore();
+
+  on = false;
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({ org: "acme", project: "proj", section: "autorun", pbi: null, workMode: false }),
+  );
+  renderApp();
+  expect(await screen.findByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
 });
 
 // The loading screen (index.html's #splash) covers the launch until the app
@@ -1540,7 +1617,7 @@ test("signing out mid-tour ends the tour and unlocks the app", async () => {
 
 // Task 3 (help site): a dev-only capture mode for the screenshot script.
 // `isCaptureMode()` reads `import.meta.env.DEV` directly (true by default
-// under vitest, same as AUTO_RUN_DEV elsewhere) so this needs no env
+// under vitest) so this needs no env
 // stubbing - only the "tcm-v2-dev-capture" flag. Sidebar's own gate (Auto
 // Run) is covered in Sidebar.test.tsx; this covers the gates that live in
 // App itself. The flag is never set in any other test in this file, so

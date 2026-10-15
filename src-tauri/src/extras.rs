@@ -27,7 +27,6 @@ use serde::{Deserialize, Serialize};
 const FILE: &str = "extras.json";
 
 static UNLOCKED: AtomicBool = AtomicBool::new(false);
-static ADVANCED: AtomicBool = AtomicBool::new(false);
 static DIR: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Default, Serialize, Deserialize)]
@@ -81,7 +80,6 @@ pub fn save_advanced(dir: &Path, advanced: bool) -> Result<(), String> {
 pub fn init(dir: PathBuf) {
     let disk = read(&dir);
     UNLOCKED.store(disk.unlocked, Ordering::SeqCst);
-    ADVANCED.store(disk.advanced, Ordering::SeqCst);
     let _ = DIR.set(dir);
 }
 
@@ -101,20 +99,5 @@ pub fn set_unlocked(on: bool) -> Result<(), String> {
     let dir = DIR.get().ok_or_else(|| "could not save: setup has not finished yet".to_string())?;
     save(dir, on)?;
     UNLOCKED.store(on, Ordering::SeqCst);
-    Ok(())
-}
-
-/// Enable Advanced Features as this process last loaded or set it. Like
-/// `unlocked`, always false in the `--mcp` proxy process.
-pub fn advanced() -> bool {
-    ADVANCED.load(Ordering::SeqCst)
-}
-
-/// Save first, then publish - the same rule, for the same reasons, as
-/// `set_unlocked`.
-pub fn set_advanced(on: bool) -> Result<(), String> {
-    let dir = DIR.get().ok_or_else(|| "could not save: setup has not finished yet".to_string())?;
-    save_advanced(dir, on)?;
-    ADVANCED.store(on, Ordering::SeqCst);
     Ok(())
 }

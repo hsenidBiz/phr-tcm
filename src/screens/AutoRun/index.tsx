@@ -50,6 +50,7 @@ import CaseCard from "./CaseCard";
 import CaseSearch, { matchesSearch } from "./CaseSearch";
 import ExecutionOrderDialog from "./ExecutionOrderDialog";
 import { requestPlaywrightExport } from "../../lib/playwrightExport";
+import { useModule } from "../../lib/modules";
 import ResetNeededPanel from "./ResetNeededPanel";
 import NetworkWaitPanel from "./NetworkWaitPanel";
 import { fetchPlan, pauseHeading } from "./plan";
@@ -227,6 +228,8 @@ export default function AutoRun({
     retry: false,
   });
   const runCount = runs.data ? runs.data.length : null;
+  // "Export to Playwright" belongs to the Playwright module: no item while it is off.
+  const playwrightOn = useModule("playwright");
 
   /** One file, many cases - the shape `save_autorun_script` writes, so an
    * assistant's whole-PBI output imports in one go. Every script
@@ -812,9 +815,10 @@ export default function AutoRun({
                     Select all shown
                   </label>
                   {/* The rare actions. Clear scripts is housekeeping shown
-                      wherever Auto Run is (dev, or unlocked) - the whole tab
-                      is gated in one place (`autoRunVisible` in
-                      lib/extras.ts), so no further gating belongs here.
+                      wherever Auto Run is - the whole tab is gated in one
+                      place (the Auto Run module, lib/modules.ts), so no
+                      further gating belongs here, except Export to
+                      Playwright, which needs the Playwright module.
                       Disabled rather than hidden: an item that vanishes the
                       moment it would do nothing invites "where did it go".
                       Danger only on hover, and it still asks first. */}
@@ -834,18 +838,22 @@ export default function AutoRun({
                           disabled: !rows.some((_, i) => hasScript(i)),
                           onSelect: () => setOrderingOpen(true),
                         },
-                        {
-                          label: "Export to Playwright",
-                          description: "Copy the passing scripts into your clone of the Playwright repo.",
-                          disabled: !rows.some((_, i) => hasScript(i)),
-                          // A shortcut: the dialog lives in the Playwright tab.
-                          onSelect: () =>
-                            requestPlaywrightExport({
-                              pbiId: pbi.id,
-                              caseIds: rows.map((c) => c.id),
-                              modules: rows.map((c): [number, string] => [c.id, c.module_value]),
-                            }),
-                        },
+                        ...(playwrightOn
+                          ? [
+                              {
+                                label: "Export to Playwright",
+                                description: "Copy the passing scripts into your clone of the Playwright repo.",
+                                disabled: !rows.some((_, i) => hasScript(i)),
+                                // A shortcut: the dialog lives in the Playwright tab.
+                                onSelect: () =>
+                                  requestPlaywrightExport({
+                                    pbiId: pbi.id,
+                                    caseIds: rows.map((c) => c.id),
+                                    modules: rows.map((c): [number, string] => [c.id, c.module_value]),
+                                  }),
+                              },
+                            ]
+                          : []),
                         {
                           label: "Clear scripts",
                           danger: true,

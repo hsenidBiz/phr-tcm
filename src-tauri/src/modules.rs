@@ -251,7 +251,7 @@ pub fn set_in(state: &mut BTreeSet<Module>, dir: &Path, m: Module, want: bool) -
     Ok(next)
 }
 
-/// Save first, then publish, like `extras::set_advanced` (`set_in`).
+/// Save first, then publish, like `extras::set_unlocked` (`set_in`).
 pub fn set(m: Module, want: bool) -> Result<BTreeSet<Module>, String> {
     let dir = DIR.get().ok_or_else(|| "could not save: setup has not finished yet".to_string())?;
     let mut guard = state();

@@ -1,13 +1,15 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import CommandPalette from "./CommandPalette";
 import { sectionShortcut, shortcutOrder, visibleCaseItems } from "./Sidebar";
+import { ALL_MODULES, resetModulesStore, setModulesForTest } from "../lib/modules";
 
 afterEach(() => {
   clearMocks();
   localStorage.clear();
+  resetModulesStore();
 });
 
 function renderPalette(onNavigate = vi.fn(), onSwitchProject = vi.fn(), onToggleWork = vi.fn()) {
@@ -56,6 +58,7 @@ test("switch-project entries come from the current org", async () => {
 // "mod+4" said Run Tests while Ctrl+4 opened View Test Cases. Each row's
 // digit must be its 1-based slot in the same order App's Ctrl+N uses.
 test("every Go-to hint is the section's 1-based slot in the shortcut order", async () => {
+  setModulesForTest(ALL_MODULES);
   mockIPC((cmd) => {
     if (cmd === "list_projects") return [];
   });
@@ -80,6 +83,26 @@ test("every Go-to hint is the section's 1-based slot in the shortcut order", asy
     expect(row?.textContent?.trim().endsWith(String(slot))).toBe(true);
   }
   expect(sectionShortcut("settings")).toBeUndefined();
+});
+
+// A module that is off has no item in the palette, and switching one on adds
+// its item without reopening anything.
+test("Go-to items follow the modules", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_projects") return [];
+  });
+  renderPalette();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  await screen.findByPlaceholderText(/Type a command/);
+  expect(screen.getByText("Suite Management")).toBeInTheDocument();
+  expect(screen.queryByText("Auto Run")).not.toBeInTheDocument();
+  expect(screen.queryByText("API Templates")).not.toBeInTheDocument();
+  expect(screen.queryByText("Playwright")).not.toBeInTheDocument();
+
+  act(() => setModulesForTest(["db_access", "auto_run", "playwright"]));
+  expect(await screen.findByText("Auto Run")).toBeInTheDocument();
+  expect(screen.getByText("Playwright")).toBeInTheDocument();
+  expect(screen.queryByText("API Templates")).not.toBeInTheDocument();
 });
 
 test("typing narrows the list; a query nothing matches says so, and Enter then runs nothing", async () => {

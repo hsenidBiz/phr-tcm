@@ -284,10 +284,13 @@ test("Auto Run and API Templates answer from the sample data, with no password a
     return r.data;
   };
 
-  // Enable Advanced Features reads on in a capture, and a click on it is
-  // answered without saving anything to this machine.
-  expect(await commands.getAdvancedFeatures()).toBe(true);
-  expect(await commands.setAdvancedFeatures(false)).toEqual({ status: "ok", data: null });
+  // Every module reads on in a capture, and a click on one is answered
+  // without saving anything to this machine.
+  expect(await commands.modulesGet()).toEqual(["db_access", "writing_style", "auto_run", "api_templates", "playwright"]);
+  expect(await commands.modulesSet("auto_run", false)).toEqual({
+    status: "ok",
+    data: ["db_access", "writing_style", "auto_run", "api_templates", "playwright"],
+  });
 
   type Script = { no_save?: boolean; preconditions?: unknown[]; steps: unknown[] } | null;
   const scripts = await Promise.all([5001, 5002, 5003, 5004, 5005].map((id) => ok<Script>(commands.autoRunLoadScript(id))));

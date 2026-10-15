@@ -32,8 +32,8 @@ import {
   useEnvironments,
 } from "../lib/environments";
 import { WritingStyleCard } from "../components/WritingStyleCard";
-import { useAutoRunVisible } from "../lib/extras";
-import { autoRunToolsShown, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
+import { useModule } from "../lib/modules";
+import { loadDisabledTools, toolShown, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
 import { logUi } from "../lib/uiLog";
 import {
@@ -89,6 +89,15 @@ function copy(text: string, label: string) {
 
 export default function AiBridge() {
   const qc = useQueryClient();
+  // Each card follows its module (lib/modules). Environments exist for Auto
+  // Run - its site, accounts and sign-ins - so that card needs Auto Run; the
+  // API templates switch needs API Templates. Subscribing here also makes
+  // the tool rows and the breakdown below follow a module switched while
+  // this screen is open.
+  const dbOn = useModule("db_access");
+  const writingOn = useModule("writing_style");
+  const autoRunOn = useModule("auto_run");
+  const apiTemplatesOn = useModule("api_templates");
 
   // The repository everything on this tab is scoped to: the CURRENT one of
   // the saved list, while its AI-tools switch is on. Read through the
@@ -175,6 +184,7 @@ export default function AiBridge() {
   const databases = useQuery({
     queryKey: ["db-databases"],
     queryFn: async () => (await commands.dbDatabases()) ?? [],
+    enabled: dbOn,
   });
   const selectedDb = databases.data?.find((d) => d.id === dbId) ?? null;
   // Every database is listed under the picker - the one place a login is
@@ -211,9 +221,6 @@ export default function AiBridge() {
   // The environments: which one is active, its address, and the database
   // it uses - the card above Database Read Access mirrors the active one.
   const envs = useEnvironments();
-  // Environments exist for Auto Run - its site, accounts and sign-ins - so
-  // the card shows only where Auto Run does (never in a capture).
-  const environmentsShown = useAutoRunVisible();
   const activeEnv = envs.data?.environments.find((e) => e.id === envs.data?.active) ?? null;
   const dbGone = activeDbMissing(
     envs.data,
@@ -718,8 +725,8 @@ export default function AiBridge() {
       </section>
 
       {/* Which rules the writing guide carries: the standard ones, or the
-          person's own writing style. Shown to everyone. */}
-      <WritingStyleCard />
+          person's own writing style. Needs the Writing Style module. */}
+      {writingOn && <WritingStyleCard />}
 
       </div>
 
@@ -731,7 +738,7 @@ export default function AiBridge() {
           child margins would leak through contents into the outer grid. */}
       <div className="flex flex-col gap-6 2xl:contents">
       <div className="flex min-w-0 flex-col gap-6">
-      {environmentsShown && (
+      {autoRunOn && (
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
           <Globe size={14} className="shrink-0 text-muted" />
@@ -773,6 +780,7 @@ export default function AiBridge() {
       </section>
       )}
 
+      {dbOn && (
       <section data-tour="ai-db" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
           <Database size={14} className="shrink-0 text-muted" />
@@ -956,15 +964,16 @@ export default function AiBridge() {
           .
         </p>
       </section>
+      )}
 
       {/* Proving and running a template writes test data through the
           application's own endpoints - a decision separate from whether
           the four tools are reachable at all (the "API templates" row
           above), the same shape as the database card's write switch.
-          Shown wherever Auto Run is - a locked release build hides it, and
-          capture mode shows it, since the help site documents it. It names
-          no tool, so unlike the tool rows it needs no capture gate. */}
-      {environmentsShown && (
+          Shown while the API Templates module is on (capture mode reports
+          every module on, since the help site documents it). It names no
+          tool, so unlike the tool rows it needs no capture gate. */}
+      {apiTemplatesOn && (
         <section data-tour="ai-api-templates" className="space-y-3 rounded-md border border-border bg-surface p-4">
           <h2 className="text-sm font-semibold text-text">API templates</h2>
           <div className="space-y-1 rounded-md border border-border/60 p-2">
@@ -1030,6 +1039,7 @@ export default function AiBridge() {
             from the address in your browser. Searching and reading are one switch
             because reading only works on a page the search found.
           </li>
+          {dbOn && (
           <li>
             <span className="font-medium text-text">Database Read Access</span>: two tools under one switch: one finds the tables and columns behind a
             topic, the other runs a single statement on the connection you chose
@@ -1039,7 +1049,8 @@ export default function AiBridge() {
             beside that connection. Off, the assistant's database tools are
             switched off.
           </li>
-          {autoRunToolsShown() && (
+          )}
+          {toolShown("get_autorun_guide") && (
             <li>
               <span className="font-medium text-text">Auto Run scripts</span>: everything an assistant needs to write one
               browser script and keep it working. It reads the script guide, looks
@@ -1051,7 +1062,7 @@ export default function AiBridge() {
               something you drive by hand.
             </li>
           )}
-          {autoRunToolsShown() && (
+          {toolShown("get_api_template_guide") && (
             <li>
               <span className="font-medium text-text">API templates</span>: everything an
               assistant needs to build, prove and run a template that writes test data

@@ -1,15 +1,42 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import { afterEach, expect, test, vi } from "vitest";
-import { autoRunToolsOffered, autoRunToolsShown, CORE_TOOLS, DEV_BUILD, DEV_ONLY_TOOLS, loadDisabledTools, MCP_TOOLS, toggleRow, toggleTool, visibleRows, visibleTools } from "./mcpTools";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import {
+  API_TEMPLATE_TOOLS,
+  AUTORUN_TOOLS,
+  CORE_TOOLS,
+  DB_TOOLS,
+  dbReadAccessOn,
+  disabledToolsSnapshot,
+  loadDisabledTools,
+  MCP_TOOLS,
+  moduleOfTool,
+  subscribeDisabledTools,
+  toggleRow,
+  toggleTool,
+  toolOffered,
+  toolShown,
+  visibleRows,
+  visibleTools,
+} from "./mcpTools";
+import { ALL_MODULES, resetModulesStore, setModule, setModulesForTest } from "./modules";
 
 // The capture flag is a bare localStorage key this file's own tests set and
 // clear by hand (no shared afterEach existed here before); a test that
 // throws before its own removeItem would otherwise leak it into every test
 // that runs after it in the same file.
+// A fresh store has no module on. Most tests here want the tool rows of every
+// module, as a machine with everything switched on shows them; the ones that
+// are about a module being off set their own.
+beforeEach(() => {
+  setModulesForTest(ALL_MODULES);
+});
+
 afterEach(() => {
   localStorage.removeItem("tcm-v2-dev-capture");
+  resetModulesStore();
+  clearMocks();
 });
 
 /**
@@ -59,7 +86,7 @@ test("core tools cannot be toggled", () => {
 /// was a control that did nothing, and the eight core tools are enforced
 /// on the Rust side whatever this list shows - so they are never offered
 /// here, in either build kind.
-test("core tools are never listed, in either build kind", () => {
+test("core tools are never listed, whatever is switched on", () => {
   const listed = visibleTools().map((t) => t.name);
   for (const name of CORE_TOOLS) {
     expect(listed).not.toContain(name);
@@ -67,11 +94,8 @@ test("core tools are never listed, in either build kind", () => {
   // The switchable ones are still all there - this must not empty the list.
   expect(listed).toContain("search_wiki");
   expect(listed).toContain("get_tags");
-  // The two dev-only tools are part of the count only when this build
-  // offers them at all - see the DEV-stubbed tests below for both values.
-  expect(listed.length).toBe(
-    MCP_TOOLS.length - CORE_TOOLS.length - (DEV_BUILD ? 0 : DEV_ONLY_TOOLS.length),
-  );
+  // Every module is on here, so nothing but the core tools is missing.
+  expect(listed.length).toBe(MCP_TOOLS.length - CORE_TOOLS.length);
 });
 
 test("a saved list naming a core tool is ignored on load", () => {
@@ -81,12 +105,12 @@ test("a saved list naming a core tool is ignored on load", () => {
 });
 
 /**
- * CORE_TOOLS and DEV_ONLY_TOOLS are each hand-written twice - once in
+ * CORE_TOOLS and each module's tool list are hand-written twice - once in
  * `ai_tools.rs`, once here - and nothing else keeps them in sync. Read the
  * Rust consts directly and compare, so a change on one side that forgets
  * the other fails a test instead of drifting quietly.
  */
-test("the core and dev-only tool lists match the Rust side", () => {
+test("the core and per-module tool lists match the Rust side", () => {
   const rs = readFileSync(resolve(process.cwd(), "src-tauri/src/ai_tools.rs"), "utf8");
 
   const extractList = (constName: string): string[] => {
@@ -98,17 +122,15 @@ test("the core and dev-only tool lists match the Rust side", () => {
     return [...slice.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
   };
 
-  const rsCore = extractList("CORE_TOOLS");
-  // The Rust side lists each module's tools on its own; this side still
-  // keeps the Auto Run and API template ones in one list (until the store
-  // follows the modules), and has no list for the two database tools.
-  const rsDevOnly = [...extractList("AUTORUN_TOOLS"), ...extractList("API_TEMPLATE_TOOLS")];
-  const rsDb = extractList("DB_TOOLS");
-
-  expect([...rsCore].sort()).toEqual([...CORE_TOOLS].sort());
-  expect([...rsDevOnly].sort()).toEqual([...DEV_ONLY_TOOLS].sort());
-  expect(rsDb).toEqual(["db_lookup", "db_query"]);
-  for (const name of rsDb) expect(DEV_ONLY_TOOLS as readonly string[]).not.toContain(name);
+  // One list per module on each side: moduleOfTool mirrors module_of_tool.
+  expect([...extractList("CORE_TOOLS")].sort()).toEqual([...CORE_TOOLS].sort());
+  expect(extractList("AUTORUN_TOOLS")).toEqual([...AUTORUN_TOOLS]);
+  expect(extractList("API_TEMPLATE_TOOLS")).toEqual([...API_TEMPLATE_TOOLS]);
+  expect(extractList("DB_TOOLS")).toEqual([...DB_TOOLS]);
+  for (const name of extractList("AUTORUN_TOOLS")) expect(moduleOfTool(name)).toBe("auto_run");
+  for (const name of extractList("API_TEMPLATE_TOOLS")) expect(moduleOfTool(name)).toBe("api_templates");
+  for (const name of extractList("DB_TOOLS")) expect(moduleOfTool(name)).toBe("db_access");
+  for (const name of extractList("CORE_TOOLS")) expect(moduleOfTool(name)).toBeNull();
 });
 
 /// `get_wiki_page` reads a page that `search_wiki` found - it has no way to
@@ -172,13 +194,10 @@ test("validate, optimise and merge are always on and not listed", () => {
   }
 });
 
-/// This suite (and this file's default vitest env) runs as a development
-/// build - DEV_BUILD is true unless a test stubs it otherwise - so the
-/// Auto Run pair is one of the rows here too. The suite pair takes one
-/// switch, like the wiki pair: a reader that can never be handed a suite
-/// id is no choice at all.
-test("only the switchable tools are left, as eight rows in a development build", () => {
-  expect(DEV_BUILD, "this file's default env").toBe(true);
+/// With every module on, the Auto Run pair is one of the rows too. The
+/// suite pair takes one switch, like the wiki pair: a reader that can never
+/// be handed a suite id is no choice at all.
+test("only the switchable tools are left, as eight rows with every module on", () => {
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_results",
@@ -196,9 +215,9 @@ test("only the switchable tools are left, as eight rows in a development build",
 });
 
 /// Reading the database is one choice - find the table, read it - so it is
-/// one row and one switch, and neither tool is core or development-only:
-/// a release build offers the row exactly as this one does.
-test("the two database tools are one switchable row in either build kind", async () => {
+/// one row and one switch, and neither tool is core: the Database Access
+/// module owns the row.
+test("the two database tools are one switchable row, there while Database Access is on", () => {
   const row = visibleRows().find((r) => r.names.includes("db_lookup"));
   expect(row, "the database row exists").toBeTruthy();
   expect(row!.names).toEqual(["db_lookup", "db_query"]);
@@ -213,22 +232,14 @@ test("the two database tools are one switchable row in either build kind", async
   expect([...loadDisabledTools()].sort()).toEqual(["db_lookup", "db_query"]);
   localStorage.clear();
 
-  vi.stubEnv("DEV", false);
-  vi.resetModules();
-  const mod = await import("./mcpTools");
-  expect(mod.visibleRows().some((r) => r.label === "Database Read Access")).toBe(true);
-  vi.unstubAllEnvs();
-  vi.resetModules();
+  setModulesForTest([]);
+  expect(visibleRows().some((r) => r.label === "Database Read Access")).toBe(false);
 });
 
-/// With DEV stubbed true, the Auto Run group is offered as one row and its
-/// switch moves every tool in it together, the same as any other pair.
-test("with DEV stubbed true, the Auto Run scripts row carries all twenty-four tools", async () => {
-  vi.stubEnv("DEV", true);
-  vi.resetModules();
-  const mod = await import("./mcpTools");
-
-  const row = mod.visibleRows().find((r) => r.label === "Auto Run scripts");
+/// With Auto Run on, its group is offered as one row and its switch moves
+/// every tool in it together, the same as any other pair.
+test("the Auto Run scripts row carries all twenty-five tools", () => {
+  const row = visibleRows().find((r) => r.label === "Auto Run scripts");
   expect(row, "the Auto Run scripts row exists").toBeTruthy();
   expect(row!.names).toEqual([
     "get_autorun_guide",
@@ -257,18 +268,15 @@ test("with DEV stubbed true, the Auto Run scripts row carries all twenty-four to
     "list_test_files",
     "get_autorun_network_wait",
   ]);
-  for (const name of row!.names) expect(mod.DEV_ONLY_TOOLS as readonly string[]).toContain(name);
+  for (const name of row!.names) expect(AUTORUN_TOOLS as readonly string[]).toContain(name);
 
-  const off = mod.toggleRow([], row!.names);
+  const off = toggleRow([], row!.names);
   expect([...off].sort()).toEqual([...row!.names].sort());
-  expect(mod.toggleRow(off, row!.names)).toEqual([]);
-
-  vi.unstubAllEnvs();
-  vi.resetModules();
+  expect(toggleRow(off, row!.names)).toEqual([]);
 });
 
 /// Building an API template is one job - guide, list, prove, run, the
-/// flow it belongs to and the fixtures built from it - and the quirks it learns - so its eleven tools are one row with one switch, offered where Auto Run is.
+/// flow it belongs to and the fixtures built from it - and the quirks it learns - so its eleven tools are one row with one switch, offered while API Templates is on.
 test("the API templates row carries all eleven tools and switches them together", () => {
   const row = visibleRows().find((r) => r.label === "API templates");
   expect(row, "the API templates row exists").toBeTruthy();
@@ -288,7 +296,7 @@ test("the API templates row carries all eleven tools and switches them together"
   expect(row!.summary).toBe(
     "Map a module's stages, then build, prove and run templates that write test data through the application's own endpoints, in the order the application allows.",
   );
-  for (const name of row!.names) expect(DEV_ONLY_TOOLS as readonly string[]).toContain(name);
+  for (const name of row!.names) expect(API_TEMPLATE_TOOLS as readonly string[]).toContain(name);
 
   const off = toggleRow([], row!.names);
   expect([...off].sort()).toEqual([...row!.names].sort());
@@ -300,29 +308,62 @@ test("the API templates row carries all eleven tools and switches them together"
   localStorage.clear();
 });
 
-/// With DEV stubbed false, the row disappears entirely and a list saved
-/// while the app was built for development cannot carry the two names
-/// into a release build's requests, where they would be meaningless.
-test("with DEV stubbed false, no row mentions Auto Run and a saved list is stripped of it", async () => {
-  vi.stubEnv("DEV", false);
-  vi.resetModules();
-  const mod = await import("./mcpTools");
+/// A module that is off takes its tools with it: the row disappears
+/// entirely and a list saved while the module was on cannot carry its names
+/// into requests, where they would be meaningless.
+test("with Auto Run and API Templates off, no row mentions them and a saved list is stripped of their tools", () => {
+  setModulesForTest(["db_access", "writing_style"]);
 
-  expect(mod.visibleRows().some((r) => r.label.includes("Auto Run"))).toBe(false);
-  expect(mod.visibleRows().some((r) => r.label === "API templates")).toBe(false);
-  for (const name of mod.DEV_ONLY_TOOLS) {
-    expect(mod.visibleRows().flatMap((r) => r.names)).not.toContain(name);
+  expect(visibleRows().some((r) => r.label.includes("Auto Run"))).toBe(false);
+  expect(visibleRows().some((r) => r.label === "API templates")).toBe(false);
+  for (const name of [...AUTORUN_TOOLS, ...API_TEMPLATE_TOOLS]) {
+    expect(visibleRows().flatMap((r) => r.names)).not.toContain(name);
   }
 
-  localStorage.setItem(
-    "tcm-v2-mcp-disabled",
-    JSON.stringify([...mod.DEV_ONLY_TOOLS, "get_tags"]),
-  );
-  expect(mod.loadDisabledTools()).toEqual(["get_tags"]);
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...AUTORUN_TOOLS, ...API_TEMPLATE_TOOLS, "get_tags"]));
+  expect(loadDisabledTools()).toEqual(["get_tags"]);
   localStorage.clear();
+});
 
-  vi.unstubAllEnvs();
-  vi.resetModules();
+/// Each module owns its row.
+test("each module's row follows its own module", () => {
+  setModulesForTest(["db_access", "auto_run"]);
+  expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(true);
+  expect(visibleRows().some((r) => r.label === "API templates")).toBe(false);
+  expect(visibleRows().some((r) => r.label === "Database Read Access")).toBe(true);
+
+  setModulesForTest([]);
+  expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(false);
+  expect(visibleRows().some((r) => r.label === "Database Read Access")).toBe(false);
+  // Core and the Azure DevOps reading tools are always there.
+  expect(visibleRows().some((r) => r.key === "search_wiki+get_wiki_page")).toBe(true);
+});
+
+test("a tool's module is the mirror of Rust's module_of_tool", () => {
+  expect(moduleOfTool("save_autorun_script")).toBe("auto_run");
+  expect(moduleOfTool("run_api_template")).toBe("api_templates");
+  expect(moduleOfTool("db_query")).toBe("db_access");
+  expect(moduleOfTool("get_tags")).toBeNull();
+  expect(moduleOfTool("get_test_cases")).toBeNull();
+});
+
+/// A saved list that refused database reading survives the module being
+/// switched off and on: dropping it would quietly re-enable db_query.
+test("a saved list naming the database tools is kept while Database Access is off", () => {
+  setModulesForTest([]);
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["db_query"]));
+  expect([...loadDisabledTools()].sort()).toEqual(["db_lookup", "db_query"]);
+  localStorage.clear();
+});
+
+test("Database Read Access follows its module and the person's switch", () => {
+  setModulesForTest([]);
+  expect(dbReadAccessOn()).toBe(false);
+  setModulesForTest(["db_access"]);
+  expect(dbReadAccessOn()).toBe(true);
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["db_query"]));
+  expect(dbReadAccessOn()).toBe(false);
+  localStorage.clear();
 });
 
 /// The screen shows names people read, not identifiers. An underscore in a
@@ -334,103 +375,63 @@ test("every row label is human, with no identifier in it", () => {
   }
 });
 
-/// Fix round 1 (Task 3): capture mode hides the Auto Run tools row and its
-/// tools even in this development build (DEV_BUILD is true by default under
-/// vitest) - the AI Tools tab is a documented, captured screen. Off, this
-/// build's ordinary behaviour (shown) is unchanged.
-///
-/// Fix round 2: display only. `autoRunToolsOffered()` itself must NOT go
-/// capture-aware (see the next test) - only the screen's own gate,
-/// `autoRunToolsShown()`, does.
-test("capture mode hides the Auto Run tools row and its tools, even in this development build", () => {
-  expect(DEV_BUILD, "this file's default env").toBe(true);
+/// Capture mode reports every module on, but the AI Tools tab is a
+/// documented, captured screen: it hides the Auto Run and API template
+/// tools in a shot (display only).
+test("capture mode hides the Auto Run and API template rows and tools, everything on", () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
 
-  expect(autoRunToolsShown()).toBe(false);
+  expect(toolShown("get_autorun_guide")).toBe(false);
+  expect(toolShown("get_api_template_guide")).toBe(false);
   expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(false);
   expect(visibleRows().some((r) => r.label === "API templates")).toBe(false);
-  expect(visibleTools().some((t) => (DEV_ONLY_TOOLS as readonly string[]).includes(t.name))).toBe(false);
+  expect(visibleTools().some((t) => moduleOfTool(t.name) === "auto_run" || moduleOfTool(t.name) === "api_templates")).toBe(false);
+  // The database row is documented and stays.
+  expect(visibleRows().some((r) => r.label === "Database Read Access")).toBe(true);
 
   localStorage.removeItem("tcm-v2-dev-capture");
-  expect(autoRunToolsShown()).toBe(true);
+  expect(toolShown("get_autorun_guide")).toBe(true);
   expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(true);
 });
 
-/// Fix round 2 (Task 3): capture mode must never reach anything persisted
-/// or sent to Rust. `autoRunToolsOffered()` - which loadDisabledTools() and
-/// snapshotKeyFor() key on, and which feeds AiBridge's `register` ->
-/// `commands.registerAiTool(..., loadDisabledTools(), ...)` -> real command
-/// files Rust writes to disk - stays true here exactly as it would with the
-/// flag off, so a Register click in capture mode cannot silently re-enable
-/// a scripts tool the person had actually disabled.
-test("capture mode does not affect autoRunToolsOffered() or what loadDisabledTools() keeps", () => {
-  expect(DEV_BUILD, "this file's default env").toBe(true);
-  localStorage.setItem(
-    "tcm-v2-mcp-disabled",
-    JSON.stringify([...DEV_ONLY_TOOLS, "get_tags"]),
-  );
+/// Capture mode must never put anything on disk: `toolOffered` feeds
+/// loadDisabledTools(), snapshotKeyFor() and so AiBridge's `register` ->
+/// `commands.registerAiTool(..., loadDisabledTools(), ...)`. It is not
+/// narrowed by the display gate, so a saved list keeps the tools the person
+/// had switched off.
+test("capture mode does not narrow toolOffered() or what loadDisabledTools() keeps", () => {
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...AUTORUN_TOOLS, "get_tags"]));
   localStorage.setItem("tcm-v2-dev-capture", "on");
 
-  expect(autoRunToolsOffered()).toBe(true);
-  expect(loadDisabledTools().sort()).toEqual([...DEV_ONLY_TOOLS, "get_tags"].sort());
+  expect(toolOffered("get_autorun_guide")).toBe(true);
+  expect(toolShown("get_autorun_guide")).toBe(false);
+  expect(loadDisabledTools().sort()).toEqual([...AUTORUN_TOOLS, "get_tags"].sort());
 
   localStorage.removeItem("tcm-v2-mcp-disabled");
 });
 
-/// A release build whose optional extras are unlocked offers the Auto Run
-/// row like a development build does, and a saved list naming its tools is
-/// kept while unlocked and stripped again once relocked. App re-pushes the
-/// bridge context off `subscribeDisabledTools`, so it must fire on either.
-test("with DEV stubbed false, unlocking this machine's extras brings the Auto Run row back", async () => {
-  vi.stubEnv("DEV", false);
-  vi.resetModules();
-  const mod = await import("./mcpTools");
-  const extras = await import("./extras");
-  mockIPC(() => null);
+/// Switching a module fires the disabled-tools subscription, so App
+/// re-pushes the bridge context, and changes which saved names count.
+test("switching a module re-fires the subscription and changes which saved names count", async () => {
+  setModulesForTest([]);
+  mockIPC((cmd) => (cmd === "modules_set" ? ["db_access", "auto_run"] : null));
 
-  expect(mod.autoRunToolsOffered()).toBe(false);
-  expect(mod.visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(false);
+  expect(toolOffered("get_autorun_guide")).toBe(false);
+  expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(false);
 
   const fired = vi.fn();
-  const off = mod.subscribeDisabledTools(fired);
-  await extras.setExtrasUnlocked(true);
+  const off = subscribeDisabledTools(fired);
+  await setModule("auto_run", true);
   expect(fired).toHaveBeenCalled();
-  expect(mod.autoRunToolsOffered()).toBe(true);
-  expect(mod.visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(true);
+  expect(toolOffered("get_autorun_guide")).toBe(true);
+  expect(visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(true);
 
-  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...mod.DEV_ONLY_TOOLS]));
-  expect([...mod.disabledToolsSnapshot()].sort()).toEqual([...mod.DEV_ONLY_TOOLS].sort());
-  await extras.setExtrasUnlocked(false);
-  expect(mod.disabledToolsSnapshot()).toEqual([]);
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...AUTORUN_TOOLS]));
+  expect([...disabledToolsSnapshot()].sort()).toEqual([...AUTORUN_TOOLS].sort());
+  mockIPC((cmd) => (cmd === "modules_set" ? [] : null));
+  await setModule("db_access", false);
+  expect(disabledToolsSnapshot()).toEqual([]);
 
   off();
   localStorage.clear();
-  clearMocks();
-  vi.unstubAllEnvs();
-  vi.resetModules();
-});
-
-/// Enable Advanced Features offers the Auto Run tools the same way, and
-/// fires the same subscription so App re-pushes the bridge context.
-test("with DEV stubbed false, Enable Advanced Features offers the Auto Run tools", async () => {
-  vi.stubEnv("DEV", false);
-  vi.resetModules();
-  const mod = await import("./mcpTools");
-  const extras = await import("./extras");
-  mockIPC(() => null);
-
-  expect(mod.autoRunToolsOffered()).toBe(false);
-  const fired = vi.fn();
-  const off = mod.subscribeDisabledTools(fired);
-  await extras.setAdvancedFeatures(true);
-  expect(fired).toHaveBeenCalled();
-  expect(mod.autoRunToolsOffered()).toBe(true);
-  expect(mod.visibleRows().some((r) => r.label === "Auto Run scripts")).toBe(true);
-  await extras.setAdvancedFeatures(false);
-  expect(mod.autoRunToolsOffered()).toBe(false);
-
-  off();
-  clearMocks();
-  vi.unstubAllEnvs();
-  vi.resetModules();
 });

@@ -6,9 +6,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { toast } from "../lib/toast";
 import {
   hydrateExtras,
-  setAdvancedFeatures,
   setExtrasUnlocked,
-  useAdvancedFeatures,
   useExtrasUnlocked,
 } from "../lib/extras";
 import { isCaptureMode } from "../dev/capture";
@@ -135,13 +133,6 @@ export default function Settings({ org, project }: { org: string; project: strin
     setExtrasUnlocked(false)
       .then(() => setConfirmReset(false))
       .catch((e) => toast.error(saveFailedMessage(e)));
-  };
-  // Enable Advanced Features: shows Auto Run, API Templates and their AI
-  // tools. The store publishes only after Rust saved it, so a failed save
-  // leaves the switch where it was.
-  const advancedOn = useAdvancedFeatures();
-  const toggleAdvanced = (on: boolean) => {
-    setAdvancedFeatures(on).catch((e) => toast.error(saveFailedMessage(e)));
   };
   const [choice, setChoiceState] = useState<ThemeChoice>(getThemeChoice());
   const [accent, setAccentState] = useState<Accent>(getAccent());
@@ -579,7 +570,7 @@ export default function Settings({ org, project }: { org: string; project: strin
       className={cn(tiles.spareStack && LEFT_TRACK_WIDTH)}
     >
       <SettingRow
-        description="Optional extras on this machine. While they are on, Auto Run shows in the sidebar and its tools are offered on the AI Bridge tab."
+        description="A few optional extras on this machine."
         control={
           <>
             <Button size="sm" variant="outline" onClick={() => setGameOpen(true)}>
@@ -755,19 +746,6 @@ export default function Settings({ org, project }: { org: string; project: strin
             {selectedRate.hint}
           </p>
         </SettingRow>
-        {/* Shown in capture mode too: the help site documents it. */}
-        <SettingRow
-          asLabel
-          name="Enable Advanced Features"
-          description="Shows Auto Run and API Templates, and the AI tools that go with them."
-          control={
-            <Switch
-              checked={advancedOn}
-              onCheckedChange={toggleAdvanced}
-              ariaLabel="Enable Advanced Features"
-            />
-          }
-        />
       </SettingsCard>
 
       {!tiles.spareStack && aiToolsCard}
