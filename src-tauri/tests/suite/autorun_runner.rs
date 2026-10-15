@@ -15,6 +15,7 @@ use v2_lib::autorun::StepScript;
 use v2_lib::browser::actions::Action;
 use v2_lib::browser::cdp::CdpError;
 use v2_lib::browser::downloads::{DownloadEntry, DownloadState};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 #[test]
@@ -210,39 +211,86 @@ async fn a_successful_sign_in_sets_the_account_and_the_actions_after_it_run() {
     assert!(!out[1].detail.contains("not run"), "{:?}", out[1]);
 }
 
+/// What each action after a step's first failure records: it is never
+/// carried out, so it never waits for something that cannot appear.
+const AFTER_ACTION: &str = "not run: an earlier action in this step failed";
+
+fn click(css: &str) -> Action {
+    serde_json::from_value(json!({ "kind": "click", "selector": { "css": css } })).unwrap()
+}
+
 #[tokio::test]
-async fn an_ordinary_failed_action_does_not_stop_the_actions_after_it() {
+async fn a_failed_action_stops_the_rest_of_its_step() {
     let dir = tempfile::tempdir().unwrap();
-    let mut d = ScriptedDriver::new(|method, _| match method {
-        "Page.navigate" => Ok(json!({ "frameId": "F", "loaderId": "L" })),
-        _ => Ok(json!({})),
-    });
-    d.on_call_events.push((
-        "Page.navigate".into(),
-        v2_lib::browser::cdp::Event {
-            method: "Page.lifecycleEvent".into(),
-            params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }),
-        },
-    ));
+    let (mut d, state) = stateful_app(false, Some("#broken"));
     let mut acc: Option<String> = None;
     let out = run_step(
         &mut d,
         dir.path(),
         "Acme",
         "Web",
-        &step(vec![
-            Action::CheckText { value: "definitely not on the page".into() },
-            Action::Navigate { url: "https://anywhere.example/".into() },
-        ]),
+        &step(vec![click("#save"), click("#broken"), click("#save")]),
         &quick(),
         &mut acc,
     )
     .await
     .unwrap();
+    assert_eq!(out.len(), 3, "one outcome per action, as always: {out:?}");
+    assert!(out[0].ok, "{:?}", out[0]);
+    // The failure is the second action's own, pictured as before.
+    assert!(!out[1].ok && out[1].detail.contains("#broken"), "{:?}", out[1]);
+    assert!(!out[1].detail.starts_with("not run:"), "{:?}", out[1]);
+    // The third is never carried out.
+    assert!(!out[2].ok, "{:?}", out[2]);
+    assert_eq!(out[2].detail, AFTER_ACTION);
+    assert!(out[2].screenshot.is_none(), "a skipped action is not pictured: {:?}", out[2]);
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 1, "only the first #save was clicked");
+}
+
+#[tokio::test]
+async fn a_guard_whose_target_never_shows_does_not_stop_the_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = stateful_app(false, None);
+    let mut acc: Option<String> = None;
+    let guard: Action = serde_json::from_value(json!({ "kind": "when_visible", "selector": { "css": "#other-session" },
+        "within_ms": 40, "then": [ { "kind": "click", "selector": { "css": "#other-session" } } ] }))
+    .unwrap();
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![click("#save"), guard, click("#save")]), &quick(), &mut acc)
+        .await
+        .unwrap();
+    assert_eq!(out.len(), 3);
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 2, "both #save clicks ran");
+}
+
+#[tokio::test]
+async fn a_failing_guarded_action_stops_the_step_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = stateful_app(false, Some("#broken"));
+    let mut acc: Option<String> = None;
+    let guard: Action = serde_json::from_value(json!({ "kind": "when_visible", "selector": { "css": "#banner" },
+        "within_ms": 200, "then": [ { "kind": "click", "selector": { "css": "#broken" } } ] }))
+    .unwrap();
+    let out =
+        run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard, click("#save")]), &quick(), &mut acc).await.unwrap();
     assert_eq!(out.len(), 2);
-    assert!(!out[0].ok, "{:?}", out[0]);
-    assert!(!out[1].detail.contains("not run"), "{:?}", out[1]);
-    assert!(!d.calls_to("Page.navigate").is_empty(), "the navigate after the failure still ran");
+    assert!(!out[0].ok && out[0].detail.contains("#broken"), "{:?}", out[0]);
+    assert_eq!(out[1].detail, AFTER_ACTION);
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_step_whose_actions_all_pass_runs_every_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = stateful_app(false, None);
+    let mut acc: Option<String> = None;
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![click("#a"), click("#b"), click("#c")]), &quick(), &mut acc)
+        .await
+        .unwrap();
+    assert_eq!(out.len(), 3);
+    assert!(out.iter().all(|o| o.ok && !o.detail.starts_with("not run:")), "{out:?}");
+    assert!(out.iter().all(|o| o.screenshot.is_none()), "{out:?}");
+    assert_eq!(state.clicks.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]
@@ -727,14 +775,18 @@ async fn a_tab_no_step_expects_does_not_fail_the_step() {
 
 #[tokio::test]
 async fn a_tab_action_fails_with_the_spec_sentences() {
+    // Each in a step of its own: a failed action stops the rest of its step.
     let mut d = yes_page();
-    let s = tab_step(json!([
-        { "kind": "expect_tab", "name": "report", "within_ms": 10000 },
-        { "kind": "switch_tab", "name": "report" },
-        { "kind": "close_tab", "name": "report" },
-        { "kind": "expect_tab_closed", "name": "report" }
-    ]));
-    let (out, _) = run_tab_step(&mut d, &s).await;
+    let mut out = Vec::new();
+    for a in [
+        json!({ "kind": "expect_tab", "name": "report", "within_ms": 10000 }),
+        json!({ "kind": "switch_tab", "name": "report" }),
+        json!({ "kind": "close_tab", "name": "report" }),
+        json!({ "kind": "expect_tab_closed", "name": "report" }),
+    ] {
+        let (o, _) = run_tab_step(&mut d, &tab_step(json!([a]))).await;
+        out.extend(o);
+    }
     let said: Vec<&str> = out.iter().map(|o| o.detail.as_str()).collect();
     assert_eq!(
         said,
@@ -930,6 +982,28 @@ mod components_in_a_step {
     }
 
     #[tokio::test]
+    async fn a_failure_inside_a_component_stops_the_step() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Acme", "Web", made("Confirm the save", 1, json!([]), json!([
+            { "kind": "check_text", "value": "Saved" },
+            { "kind": "click", "selector": { "css": "#close" } }
+        ]))).unwrap();
+        let s = step_of(json!([
+            { "kind": "use_component", "component": "Confirm the save", "inputs": {} },
+            { "kind": "click", "selector": { "css": "#next" } }
+        ]));
+        let mut d = FakePage { body_has_text: false, ..FakePage::default() }.driver();
+        let (out, _) = run_in(&mut d, dir.path(), &s).await;
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert!(!out[0].ok && !out[0].detail.starts_with("not run:"), "{:?}", out[0]);
+        for i in [1, 2] {
+            assert_eq!(out[i].detail, super::AFTER_ACTION, "{:?}", out[i]);
+        }
+        assert_eq!(out[1].component.as_deref(), Some("Confirm the save"));
+        assert!(d.calls_to("Input.dispatchMouseEvent").is_empty(), "a click ran: {:?}", d.calls);
+    }
+
+    #[tokio::test]
     async fn a_failure_inside_a_component_never_logs_a_typed_value() {
         let _log = crate::serial::log_tail();
         let dir = tempfile::tempdir().unwrap();
@@ -1023,9 +1097,9 @@ async fn a_step_tells_which_action_it_is_on_and_how_many_failed() {
     let dir = tempfile::tempdir().unwrap();
     let mut d = common::FakePage { body_has_text: false, ..common::FakePage::default() }.driver();
     let s = tab_step(json!([
+        { "kind": "expect_visible", "selector": { "css": "#save" } },
         { "kind": "check_text", "value": "a" },
-        { "kind": "check_text", "value": "b" },
-        { "kind": "expect_visible", "selector": { "css": "#save" } }
+        { "kind": "check_text", "value": "b" }
     ]));
     let progress = StepProgress::new();
     let (mut acc, mut lease) = (None, v2_lib::autorun::lease::Held::supervised());
@@ -1045,10 +1119,12 @@ async fn a_step_tells_which_action_it_is_on_and_how_many_failed() {
     )
     .await
     .unwrap();
-    assert_eq!(out.iter().map(|o| o.ok).collect::<Vec<_>>(), [false, false, true], "{out:?}");
+    assert_eq!(out.iter().map(|o| o.ok).collect::<Vec<_>>(), [true, false, false], "{out:?}");
+    // The failed check stopped the step: the one after it never began.
+    assert_eq!(out[2].detail, AFTER_ACTION);
     let now = progress.now();
-    assert_eq!((now.index, now.of, now.kind.as_str(), now.target.as_str()), (3, 3, "expect_visible", "#save"));
-    assert_eq!(now.failed, 2);
+    assert_eq!((now.index, now.of, now.kind.as_str()), (2, 3, "check_text"));
+    assert_eq!(now.failed, 1);
     assert!(now.since.is_some());
     progress.reset();
     assert_eq!(progress.now().index, 0);

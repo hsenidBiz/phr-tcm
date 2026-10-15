@@ -307,7 +307,8 @@ async fn with_the_option_an_unexpected_dialog_fails_the_step_it_appeared_in() {
     let (out, _) = run(&mut d, &s, true).await;
     assert!(!out[0].ok);
     assert_eq!(out[0].detail, "an unexpected confirm dialog appeared: \"Discard changes?\"");
-    assert!(out[1].ok, "the rest of the step still ran: {out:?}");
+    // The failure stops the rest of the step.
+    assert_eq!(out[1].detail, "not run: an earlier action in this step failed", "{out:?}");
     // Still accepted, so the page can go on.
     assert_eq!(answers(&d), [json!({ "accept": true })]);
     // A claimed one is not unexpected, option or not.

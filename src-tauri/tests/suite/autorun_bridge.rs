@@ -3550,10 +3550,11 @@ async fn a_tried_component_answers_each_of_its_actions() {
     assert_eq!(status, 200, "{text}");
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 4, "{text}");
-    assert!(lines[0].starts_with("failed: action 1 (check_text") && lines[0].contains("(2 of 3 failed)"), "{text}");
+    // The first failure stops the component's step: the rest is not run.
+    assert!(lines[0].starts_with("failed: action 1 (check_text") && !lines[0].contains(" failed)"), "{text}");
     assert!(lines[1].starts_with("1. failed: check_text"), "{text}");
-    assert!(lines[2].starts_with("2. failed: check_text"), "{text}");
-    assert!(lines[3].starts_with("3. ok: expect_visible"), "{text}");
+    assert_eq!(lines[2], "2. not run: check_text (an earlier action in this step failed)", "{text}");
+    assert!(lines[3].starts_with("3. not run: expect_visible"), "{text}");
 
     let mut d = crate::common::FakePage::default().driver();
     let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &use_it).await;
