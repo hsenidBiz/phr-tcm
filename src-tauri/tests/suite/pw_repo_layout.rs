@@ -105,8 +105,20 @@ fn the_walk_does_not_follow_links() {
     let d = tempfile::tempdir().unwrap();
     fs::create_dir_all(d.path().join("sl/admin/m/f/specs")).unwrap();
     let link = d.path().join("sl/admin/m/again");
+    // A symbolic link needs Developer Mode or admin on Windows; a junction
+    // needs neither, and Rust reports both as links, so fall back to one.
     #[cfg(windows)]
-    let made = std::os::windows::fs::symlink_dir(d.path().join("sl/admin/m/f"), &link);
+    let made = std::os::windows::fs::symlink_dir(d.path().join("sl/admin/m/f"), &link).or_else(|_| {
+        let ok = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            // mklink reads a `/` as the start of a switch.
+            .arg(link.to_string_lossy().replace('/', "\\"))
+            .arg(d.path().join("sl/admin/m/f").to_string_lossy().replace('/', "\\"))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if ok { Ok(()) } else { Err(std::io::Error::other("no junction")) }
+    });
     #[cfg(unix)]
     let made = std::os::unix::fs::symlink(d.path().join("sl/admin/m/f"), &link);
     if made.is_err() {
