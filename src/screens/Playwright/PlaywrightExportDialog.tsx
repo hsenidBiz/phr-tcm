@@ -219,6 +219,13 @@ export default function PlaywrightExportDialog({
       }
     });
 
+  // A typed path that is not one of the clone's features: Export creates it.
+  // Only said once the clone's folders are read, and never blocks anything.
+  const isNewFolder = (raw: string) => {
+    const typed = raw.trim().replace(/[\s/]+$/, "");
+    return featurePaths.length > 0 && typed !== "" && !featurePaths.includes(typed);
+  };
+
   const place = (name: string): Placement => areas?.[name] ?? { path: "" };
   const setPlace = (name: string, patch: Partial<Placement>) =>
     setAreas((cur) => ({ ...(cur ?? {}), [name]: { ...place(name), ...patch } }));
@@ -452,6 +459,7 @@ export default function PlaywrightExportDialog({
                         value={place(name).path}
                         onChange={(e) => setPlace(name, { path: e.target.value })}
                       />
+                      {isNewFolder(place(name).path) && <p className="text-xs text-warning">A new folder will be created.</p>}
                     </div>
                   ))}
                 </section>

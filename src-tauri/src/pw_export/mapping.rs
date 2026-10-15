@@ -71,12 +71,15 @@ impl Placement {
         &self.path
     }
 
-    /// The last folder: the feature's own name.
+    /// The last folder: the feature's own name. Like `navigation_key`, this
+    /// assumes a validated path (`validate`): an empty or odd one gives an
+    /// empty or odd name.
     pub fn feature(&self) -> &str {
         self.path.rsplit('/').next().unwrap_or("")
     }
 
-    /// The key of this feature's `navigation.json` entry.
+    /// The key of this feature's `navigation.json` entry. Assumes a validated
+    /// path, as `feature` does.
     pub fn navigation_key(&self) -> String {
         let folders: Vec<String> = self.path.split('/').map(str::to_string).collect();
         crate::pw_repo::layout::navigation_key(&folders)

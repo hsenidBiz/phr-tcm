@@ -725,3 +725,40 @@ fn update_rewrites_a_grouped_file_in_place() {
     assert!(md.contains("Second pass") && !md.contains("Click go"));
     assert!(!fx.exists("suites/sl/admin/performance/competencies/test-cases/competencies.md"));
 }
+
+const OLD_FOUR: &str = "suites/sl/admin/performance/proficiency-levels/test-cases/proficiency-levels.md";
+const MOVED: &str = "suites/sl/admin/performance/definition-wizard/proficiency-levels/test-cases/proficiency-levels.md";
+
+#[test]
+fn an_update_after_the_repo_moved_the_feature_rewrites_it_where_it_is() {
+    let fx = Fx::new();
+    fx.good(80, "Moved case");
+    export(&fx, &[80], &docs(&[(80, "Moved case")])).unwrap();
+    // The repo moves the feature under a group; the saved placement stays old.
+    let from = fx.clone.path().join("suites/sl/admin/performance/proficiency-levels");
+    let to = fx.clone.path().join("suites/sl/admin/performance/definition-wizard/proficiency-levels");
+    fs::create_dir_all(to.parent().unwrap()).unwrap();
+    fs::rename(&from, &to).unwrap();
+    let mut d = docs(&[(80, "Moved case")]);
+    d.get_mut(&80).unwrap().steps = vec![("Second pass".into(), "x".into())];
+    let r = export(&fx, &[80], &d).unwrap();
+    let md = fx.read_clone(MOVED);
+    assert_eq!(md.matches("## 80 \u{2014}").count(), 1, "{md}");
+    assert!(md.contains("Second pass") && !md.contains("Click go"), "{md}");
+    assert!(!fx.exists("suites/sl/admin/performance/proficiency-levels"), "old folder re-created");
+    assert!(!fx.exists(OLD_FOUR));
+    assert!(r.files.contains(&MOVED.to_string()), "{:?}", r.files);
+    assert!(!r.files.contains(&OLD_FOUR.to_string()), "{:?}", r.files);
+}
+
+#[test]
+fn a_case_with_sections_in_two_test_case_files_is_refused_on_update() {
+    let fx = Fx::new();
+    fx.good(81, "Twice case");
+    export(&fx, &[81], &docs(&[(81, "Twice case")])).unwrap();
+    let a = fx.read_clone(OLD_FOUR);
+    write(fx.clone.path().join(MOVED), &a);
+    let e = export(&fx, &[81], &docs(&[(81, "Twice case")])).unwrap_err();
+    assert!(e.starts_with("Case 81 has a section in more than one test-case file: "), "{e}");
+    assert!(e.contains(OLD_FOUR) && e.contains(MOVED), "{e}");
+}

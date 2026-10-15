@@ -391,3 +391,15 @@ test("a refused path shows its sentence and nothing is lost", async () => {
   expect(await screen.findByText(/must be lowercase letters, digits and hyphens/)).toBeInTheDocument();
   expect(folder).toHaveValue("Sl/admin/x");
 });
+
+test("an area placed outside the clone's features says a new folder will be created", async () => {
+  mount();
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  const folder = screen.getByLabelText("Folder for Definition Wizard");
+  await waitFor(() => expect(offered(folder).length).toBe(2));
+  fireEvent.change(folder, { target: { value: "sl/self/pm/wizard" } });
+  expect(screen.getByText("A new folder will be created.")).toBeInTheDocument();
+  // An existing feature's path, even with a trailing slash, needs no note.
+  fireEvent.change(folder, { target: { value: "sl/admin/performance/rating-methods/" } });
+  expect(screen.queryByText("A new folder will be created.")).not.toBeInTheDocument();
+});

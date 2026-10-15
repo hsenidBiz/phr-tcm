@@ -127,3 +127,19 @@ fn the_walk_does_not_follow_links() {
     }
     assert_eq!(layout::feature_dirs(d.path()), vec![s(&["sl", "admin", "m", "f"])]);
 }
+
+#[test]
+fn a_spec_location_accepts_a_spec_nested_below_specs() {
+    assert_eq!(
+        layout::spec_location("suites/sl/admin/performance/competencies/specs/sub/deeper/x.spec.ts"),
+        Some(SpecLocation { path: s(&["sl", "admin", "performance", "competencies"]), stem: "x".into() })
+    );
+    // The last `specs` folder is the one.
+    assert_eq!(
+        layout::spec_location("sl/a/specs/b/specs/sub/x.spec.ts"),
+        Some(SpecLocation { path: s(&["sl", "a", "specs", "b"]), stem: "x".into() })
+    );
+    for bad in ["specs/sub/a.spec.ts", "_x/y/specs/sub/a.spec.ts", "sl/y/specs/sub/a.ts"] {
+        assert_eq!(layout::spec_location(bad), None, "{bad}");
+    }
+}

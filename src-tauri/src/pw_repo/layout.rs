@@ -45,7 +45,8 @@ fn path_ok(path: &[&str]) -> bool {
 }
 
 /// Reads `file` (relative to `suites/` or to the clone; a leading `suites/`
-/// is dropped; `/` or `\`) as `<folders>/specs/<stem>.spec.ts`.
+/// is dropped; `/` or `\`) as `<folders>/specs/<anything>/<stem>.spec.ts`:
+/// the LAST `specs` folder is the one, so a spec may sit in folders below it.
 pub fn spec_location(file: &str) -> Option<SpecLocation> {
     let mut p = parts(file);
     if p.first() == Some(&"suites") {
@@ -53,7 +54,9 @@ pub fn spec_location(file: &str) -> Option<SpecLocation> {
     }
     let name = p.pop()?;
     let stem = name.strip_suffix(".spec.ts").filter(|s| !s.is_empty())?;
-    if p.pop()? != "specs" || !path_ok(&p) {
+    let at = p.iter().rposition(|s| *s == "specs")?;
+    p.truncate(at);
+    if !path_ok(&p) {
         return None;
     }
     Some(SpecLocation { path: p.iter().map(|s| s.to_string()).collect(), stem: stem.to_string() })
