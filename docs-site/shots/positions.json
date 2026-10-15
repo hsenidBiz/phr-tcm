@@ -3295,21 +3295,21 @@
       }
     }
   },
-  "settings-advanced": {
+  "settings-modules": {
     "size": {
       "w": 1440,
       "h": 900
     },
     "controls": {
-      "advanced-features": {
-        "x": 695,
-        "y": 655,
-        "w": 32,
-        "h": 18
-      },
       "allow-machine-wide": {
         "x": 695,
         "y": 764,
+        "w": 32,
+        "h": 18
+      },
+      "open-modules": {
+        "x": 695,
+        "y": 655,
         "w": 32,
         "h": 18
       },

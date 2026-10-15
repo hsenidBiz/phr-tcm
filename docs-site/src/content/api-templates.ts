@@ -38,7 +38,7 @@ export const apiTemplates: Screen = {
     "An API template is a recipe for creating or changing test data through the site's own requests, the ones its pages send: create a user, lock an account, add an address. " +
     "An assistant builds each one from the application's code and proves it on your site before it appears here; after that, a script's precondition or the assistant itself can run it for the data a test needs. " +
     "This screen shows them, and lets you read and remove them. " +
-    "API Templates is part of the advanced features: turn on **Enable Advanced Features** in Settings, under General, and it appears at the end of the sidebar.",
+    "API Templates is a module: switch it on in Settings, under General, on the **Modules** page (it needs Auto Run), and it appears at the end of the sidebar.",
   shots: [
     { id: LIST, route: [NAV, READY], alt: "API Templates: the templates grouped by module, each with what it does and when it last ran" },
     {
@@ -452,7 +452,7 @@ export const apiTemplates: Screen = {
     {
       title: "Get your first templates",
       steps: [
-        "Turn on **Enable Advanced Features** in Settings, under General.",
+        "Switch on **API Templates** in Settings, under General, on the **Modules** page. It needs Auto Run, which needs Database Access.",
         "Set up the site address and your accounts in the Setup panel on the Auto Run tab.",
         "On the AI Bridge tab, connect your assistant and switch **API templates** on.",
         "Ask the assistant to build a template for the data you need. It proves the template on your site, and it appears here once it worked.",

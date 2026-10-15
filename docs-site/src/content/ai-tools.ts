@@ -73,12 +73,12 @@ export const aiBridge: Screen = {
     {
       id: "environment",
       title: "Environment",
-      summary: "The site and database Auto Run and API Templates work against. Shown while Enable Advanced Features is on, in Settings.",
+      summary: "The site and database Auto Run and API Templates work against. Shown while the Auto Run module is on, in Settings, under General, on the **Modules** page.",
     },
     {
       id: "api-templates",
       title: "API templates",
-      summary: "Whether an assistant may create and change test data on your site with API templates. Shown while Enable Advanced Features is on, in Settings.",
+      summary: "Whether an assistant may create and change test data on your site with API templates. Shown while the API Templates module is on, in Settings, under General, on the **Modules** page.",
     },
     { id: "company-database", title: "Database Read Access", summary: "The one database the assistants' tools work with, and how they sign in to it." },
     { id: "tools-breakdown", title: "AI Tools Breakdown", summary: "What each tool does, in plain words." },
@@ -227,7 +227,7 @@ export const aiBridge: Screen = {
       does:
         "Lets a connected assistant prove and run API templates: build a template for the test data a case needs, prove it end to end on your site, and run a saved one for the records it creates. " +
         "Proving and running write real test data through the site's own requests, as your Auto Run accounts, against the active environment's site address, so this is off until you turn it on. " +
-        "The card is shown while **Enable Advanced Features** is on, in Settings, under General. The templates themselves are listed on the API Templates tab.",
+        "The card is shown while the **API Templates** module is on, in Settings, under General, on the **Modules** page. The templates themselves are listed on the API Templates tab.",
     },
     {
       id: "database",

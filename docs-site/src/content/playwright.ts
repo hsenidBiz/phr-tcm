@@ -8,8 +8,8 @@
 // FinishInRepo.tsx.
 // The screen has no shots yet: it needs a clone of the repo, which the
 // capture's sample data does not have, so it is described in tips and
-// how-tos only. Shown only while Enable Advanced Features is on
-// (../advanced.ts).
+// how-tos only. Shown only while the Playwright module is on
+// (../modules.ts).
 
 import type { Screen } from "../types";
 
@@ -20,7 +20,7 @@ export const playwright: Screen = {
   summary:
     "Work with your clone of the team's Playwright repo without leaving the app: run its tests, manage its test accounts, and keep the repo's copies of your Auto Run scripts up to date. " +
     "The app runs only the repo's own commands, in the clone, and never commits, pulls or pushes. " +
-    "Playwright is part of the advanced features: turn on **Enable Advanced Features** in Settings, under General, and it appears in the sidebar under Auto Run.",
+    "Playwright is a module: switch it on in Settings, under General, on the **Modules** page (it needs Auto Run), and it appears in the sidebar under Auto Run.",
   shots: [],
   controls: [],
   tips: [

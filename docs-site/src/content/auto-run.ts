@@ -68,7 +68,7 @@ export const autoRun: Screen = {
   summary:
     "Let the app run a test case for you. A script tells it what to do at each step, and the app does it in a real browser: with you watching and deciding the result, or unattended while you work on something else. " +
     "Results stay on this computer until you review a run and send it to Azure DevOps. " +
-    "Auto Run is part of the advanced features: turn on **Enable Advanced Features** in Settings, under General, and it appears in the sidebar under Run Tests.",
+    "Auto Run is a module: switch it on in Settings, under General, on the **Modules** page (it needs Database Access), and it appears in the sidebar under Run Tests.",
   shots: [
     {
       id: CASES,
@@ -908,8 +908,8 @@ export const autoRun: Screen = {
       title: "Turn Auto Run on",
       steps: [
         "Open Settings with the gear at the top right.",
-        "Under **General**, turn on **Enable Advanced Features**.",
-        "**Auto Run** appears in the sidebar under Run Tests, **Playwright** under Auto Run, and **API Templates** at the end.",
+        "Under **General**, press **Modules**. Switch on **Database Access** if it is off, then **Auto Run**.",
+        "**Auto Run** appears in the sidebar under Run Tests. Switch on **Playwright** or **API Templates** on the same page when you need them: they appear under Auto Run and at the end.",
       ],
     },
     {
