@@ -34,19 +34,20 @@ const ok = <T,>(data: T) => Promise.resolve({ status: "ok" as const, data });
 let demoClone = "C:\\Users\\demo\\source\\PHR-PLAYWRIGHT-AUTOMATION";
 
 const FEATURES: RepoStructure["features"] = [
-  { country: "sl", side: "admin", module: "leave", feature: "leave-types", spec_count: 2, case_count: 6, case_ids: [4101, 4102, 4103, 4104, 4105, 4106] },
-  { country: "sl", side: "admin", module: "performance", feature: "goal-setting", spec_count: 1, case_count: 4, case_ids: [4201, 4202, 4203, 4204] },
-  { country: "sl", side: "admin", module: "performance", feature: "rating-methods", spec_count: 2, case_count: 5, case_ids: [4211, 4212, 4213, 4214, 4215] },
-  { country: "sl", side: "admin", module: "payroll", feature: "salary-components", spec_count: 1, case_count: 3, case_ids: [4301, 4302, 4303] },
-  { country: "sl", side: "self", module: "leave", feature: "apply-leave", spec_count: 1, case_count: 3, case_ids: [4401, 4402, 4403] },
-  { country: "sl", side: "self", module: "smoke", feature: "framework-smoke", spec_count: 1, case_count: 0, case_ids: [] },
+  { path: ["sl", "admin", "leave", "leave-types"], navigation_key: "leave/leave-types", spec_count: 2, case_count: 6, case_ids: [4101, 4102, 4103, 4104, 4105, 4106] },
+  { path: ["sl", "admin", "payroll", "salary-components"], navigation_key: "payroll/salary-components", spec_count: 1, case_count: 3, case_ids: [4301, 4302, 4303] },
+  { path: ["sl", "admin", "performance", "definition-wizard", "competencies"], navigation_key: "definition-wizard/competencies", spec_count: 1, case_count: 2, case_ids: [4221, 4222] },
+  { path: ["sl", "admin", "performance", "goal-setting"], navigation_key: "performance/goal-setting", spec_count: 1, case_count: 4, case_ids: [4201, 4202, 4203, 4204] },
+  { path: ["sl", "admin", "performance", "rating-methods"], navigation_key: "performance/rating-methods", spec_count: 2, case_count: 5, case_ids: [4211, 4212, 4213, 4214, 4215] },
+  { path: ["sl", "self", "leave", "apply-leave"], navigation_key: "leave/apply-leave", spec_count: 1, case_count: 3, case_ids: [4401, 4402, 4403] },
+  { path: ["sl", "self", "smoke", "framework-smoke"], navigation_key: "smoke/framework-smoke", spec_count: 1, case_count: 0, case_ids: [] },
 ];
 
 const STRUCTURE: RepoStructure = {
   features: FEATURES,
   generated_ids: [4101, 4102, 4201, 4211, 4212],
   user_keys: ["DemoSL.admin.hr", "DemoSL.performance.general", "DemoSL.performance.supervisor", "DemoSL.leave.employee", "DemoSL.payroll.officer"],
-  navigation_keys: ["leave/leave-types", "performance/goal-setting", "performance/rating-methods", "payroll/salary-components", "leave/apply-leave"],
+  navigation_keys: ["leave/leave-types", "definition-wizard/competencies", "performance/goal-setting", "performance/rating-methods", "payroll/salary-components", "leave/apply-leave"],
   health: [],
 };
 

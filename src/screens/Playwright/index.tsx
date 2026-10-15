@@ -61,9 +61,7 @@ function Overview({ s }: { s: RepoStructure }) {
           <table className="w-full text-sm" aria-label="Features">
             <thead className="border-b border-border bg-surface-2">
               <tr>
-                <th className={th}>Country</th>
-                <th className={th}>Side</th>
-                <th className={th}>Module</th>
+                <th className={th}>Folder</th>
                 <th className={th}>Feature</th>
                 <th className={`${th} text-right`}>Specs</th>
                 <th className={`${th} text-right`}>Cases</th>
@@ -71,11 +69,9 @@ function Overview({ s }: { s: RepoStructure }) {
             </thead>
             <tbody>
               {s.features.map((f) => (
-                <tr key={`${f.country}/${f.side}/${f.module}/${f.feature}`} className="border-b border-border last:border-b-0">
-                  <td className="px-3 py-2 uppercase text-muted">{f.country}</td>
-                  <td className="px-3 py-2 text-muted">{f.side}</td>
-                  <td className="px-3 py-2 text-text">{f.module}</td>
-                  <td className="px-3 py-2 font-medium text-text">{f.feature}</td>
+                <tr key={f.path.join("/")} className="border-b border-border last:border-b-0">
+                  <td className="px-3 py-2 text-muted">{f.path.slice(0, -1).join(" / ")}</td>
+                  <td className="px-3 py-2 font-medium text-text">{f.path[f.path.length - 1]}</td>
                   <td className={`${num} text-text`}>{f.spec_count}</td>
                   <td className={`${num} ${f.case_count ? "text-text" : "text-faint"}`}>{f.case_count}</td>
                 </tr>

@@ -4,7 +4,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use v2_lib::pw_repo::structure::{case_headings, node_on_path, read, structure_for, HealthIssue, RepoFeature};
+use v2_lib::pw_repo::structure::{case_headings, node_on_path, read, structure_for, HealthIssue};
 use v2_lib::pw_repo::NOT_OFFERED;
 
 fn fixture() -> PathBuf {
@@ -37,33 +37,24 @@ fn the_fixture_repo_reads_as_its_features_ids_and_keys() {
     let d = healthy_copy();
     let s = read(d.path(), true).unwrap();
     assert_eq!(s.health, Vec::<HealthIssue>::new());
+    let got: Vec<(String, String, u32, u32, Vec<i32>)> = s
+        .features
+        .iter()
+        .map(|f| (f.path.join("/"), f.navigation_key.clone(), f.spec_count, f.case_count, f.case_ids.clone()))
+        .collect();
     assert_eq!(
-        s.features,
+        got,
         vec![
-            RepoFeature {
-                country: "sl".into(),
-                side: "admin".into(),
-                module: "performance".into(),
-                feature: "rating-methods".into(),
-                spec_count: 1,
-                case_count: 3,
-                case_ids: vec![135152, 135179, 135180],
-            },
-            RepoFeature {
-                country: "sl".into(),
-                side: "self".into(),
-                module: "smoke".into(),
-                feature: "framework-smoke".into(),
-                spec_count: 2,
-                case_count: 0,
-                case_ids: vec![],
-            },
+            ("sl/admin/performance/definition-wizard/competencies".to_string(), "definition-wizard/competencies".to_string(), 1, 1, vec![135300]),
+            ("sl/admin/performance/rating-methods".to_string(), "performance/rating-methods".to_string(), 1, 3, vec![135152, 135179, 135180]),
+            ("sl/self/smoke/framework-smoke".to_string(), "smoke/framework-smoke".to_string(), 2, 0, vec![]),
         ],
-        "_generated, common-components and an empty country are not features"
+        "_generated and an empty country are not features; a group folder is not one"
     );
+    assert_eq!(s.features[1].path, vec!["sl", "admin", "performance", "rating-methods"]);
     assert_eq!(s.generated_ids, vec![135152, 135179, 135190]);
     assert_eq!(s.user_keys, vec!["FixtureSL.performance.general", "FixtureSL.performance.supervisor"]);
-    assert_eq!(s.navigation_keys, vec!["performance/rating-methods"]);
+    assert_eq!(s.navigation_keys, vec!["performance/rating-methods", "definition-wizard/competencies"]);
 }
 
 #[test]

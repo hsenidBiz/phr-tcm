@@ -243,6 +243,22 @@ fn a_case_whose_section_or_raw_spec_is_gone_is_not_in_the_repo() {
 }
 
 #[test]
+fn a_grouped_case_is_in_the_repo() {
+    let sx = Sx::new();
+    sx.fx.good(22, "Twenty two");
+    sx.export(&[22], &docs(&[(22, "Twenty two")])).unwrap();
+    assert_eq!(sx.state(22), SyncState::Current);
+
+    // The team moves the feature one level deeper, into a group folder.
+    let from = sx.fx.clone.path().join(MD_REL);
+    let grouped = "suites/sl/admin/performance/definition-wizard/proficiency-levels/test-cases/proficiency-levels.md";
+    let to = sx.fx.clone.path().join(grouped);
+    fs::create_dir_all(to.parent().unwrap()).unwrap();
+    fs::rename(&from, &to).unwrap();
+    assert_eq!(sx.state(22), SyncState::Current, "a grouped section counts as in the repo");
+}
+
+#[test]
 fn a_script_of_the_project_never_exported_says_so() {
     let sx = Sx::new();
     sx.fx.good(30, "Thirty");

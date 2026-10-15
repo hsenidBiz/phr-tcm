@@ -26,19 +26,11 @@ pub struct ExportMap {
     pub accounts: BTreeMap<String, BTreeMap<String, String>>,
 }
 
-fn is_kebab(s: &str) -> bool {
-    !s.is_empty()
-        && !s.starts_with('-')
-        && !s.ends_with('-')
-        && !s.contains("--")
-        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-}
-
 fn check(label: &str, value: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Err(format!("The {label} is empty."));
     }
-    if !is_kebab(value) {
+    if !crate::pw_repo::layout::valid_name(value) {
         return Err(format!(
             "The {label} \"{value}\" must be lowercase letters, digits and hyphens, not starting or ending with a hyphen."
         ));

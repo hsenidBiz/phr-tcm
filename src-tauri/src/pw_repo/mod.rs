@@ -27,6 +27,7 @@
 //! Advanced Features off every command of the tab is refused.
 
 pub mod handoff;
+pub mod layout;
 pub mod presence;
 pub mod process;
 pub mod runner;

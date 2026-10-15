@@ -1,7 +1,7 @@
 //! What the clone holds, and whether the tab can work with it.
 //!
-//! - The features: every `suites/<country>/<side>/<module>/<feature>/`
-//!   folder, with how many specs it has and the test case ids of the `## <id>`
+//! - The features: every folder under `suites/` that holds `specs/`,
+//!   `test-cases/`, `pages/` or `data/`, at any depth (`layout`), with how many specs it has and the test case ids of the `## <id>`
 //!   headings in its `test-cases/*.md`.
 //! - The generated raw specs' ids, from `suites/_generated/index.json`.
 //! - The KEYS of `src/users/users.json` (never its values, which hold
@@ -11,6 +11,7 @@
 //!
 //! Read only. Node is looked for on PATH; nothing is started.
 
+use super::layout;
 use crate::pw_export::clone::{self, NOT_A_CLONE};
 use serde::Serialize;
 use std::ffi::OsStr;
@@ -30,13 +31,13 @@ pub enum HealthIssue {
     NoQaOptions,
 }
 
-/// One `suites/<country>/<side>/<module>/<feature>/` folder.
+/// One feature folder under `suites/`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct RepoFeature {
-    pub country: String,
-    pub side: String,
-    pub module: String,
-    pub feature: String,
+    /// The folders from `suites/` down to it.
+    pub path: Vec<String>,
+    /// The key of its `navigation.json` entry (`layout::navigation_key`).
+    pub navigation_key: String,
     /// `*.spec.ts` files in its `specs/`.
     pub spec_count: u32,
     /// Test case sections (`## <id>` headings) in its `test-cases/*.md`.
@@ -48,7 +49,7 @@ pub struct RepoFeature {
 /// The clone as the Playwright tab shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct RepoStructure {
-    /// Sorted by country, side, module, feature.
+    /// Sorted by path.
     pub features: Vec<RepoFeature>,
     /// The ids `suites/_generated/index.json` maps to a raw spec, in its order.
     pub generated_ids: Vec<i32>,
@@ -106,23 +107,6 @@ pub fn read(root: &Path, node_found: bool) -> Result<RepoStructure, String> {
     Ok(out)
 }
 
-/// The sub-folders of `dir` the walk descends into, sorted. `_generated`,
-/// `common-components` and dot-folders are the repo's own, not a level of
-/// the tree.
-fn folders(dir: &Path) -> Vec<String> {
-    let mut out: Vec<String> = std::fs::read_dir(dir)
-        .map(|rd| {
-            rd.flatten()
-                .filter(|e| e.path().is_dir())
-                .map(|e| e.file_name().to_string_lossy().to_string())
-                .filter(|n| !n.starts_with('_') && !n.starts_with('.') && n != "common-components")
-                .collect()
-        })
-        .unwrap_or_default();
-    out.sort();
-    out
-}
-
 /// File names in `dir` ending in `suffix`, sorted.
 fn files_ending(dir: &Path, suffix: &str) -> Vec<String> {
     let mut out: Vec<String> = std::fs::read_dir(dir)
@@ -139,53 +123,37 @@ fn files_ending(dir: &Path, suffix: &str) -> Vec<String> {
 }
 
 fn features(suites: &Path) -> Vec<RepoFeature> {
-    let mut out = Vec::new();
-    for country in folders(suites) {
-        let c = suites.join(&country);
-        for side in folders(&c) {
-            let s = c.join(&side);
-            for module in folders(&s) {
-                let m = s.join(&module);
-                for feature in folders(&m) {
-                    let f = m.join(&feature);
-                    let spec_count = files_ending(&f.join("specs"), ".spec.ts").len() as u32;
-                    let mut case_ids: Vec<i32> = Vec::new();
-                    let cases = f.join("test-cases");
-                    for name in files_ending(&cases, ".md") {
-                        let text = std::fs::read_to_string(cases.join(&name)).unwrap_or_default();
-                        for id in case_headings(&text) {
-                            if !case_ids.contains(&id) {
-                                case_ids.push(id);
-                            }
-                        }
+    layout::feature_dirs(suites)
+        .into_iter()
+        .map(|path| {
+            let f = path.iter().fold(suites.to_path_buf(), |p, part| p.join(part));
+            let spec_count = files_ending(&f.join("specs"), ".spec.ts").len() as u32;
+            let mut case_ids: Vec<i32> = Vec::new();
+            let cases = f.join("test-cases");
+            for name in files_ending(&cases, ".md") {
+                let text = std::fs::read_to_string(cases.join(&name)).unwrap_or_default();
+                for id in case_headings(&text) {
+                    if !case_ids.contains(&id) {
+                        case_ids.push(id);
                     }
-                    out.push(RepoFeature {
-                        country: country.clone(),
-                        side: side.clone(),
-                        module: module.clone(),
-                        feature,
-                        spec_count,
-                        case_count: case_ids.len() as u32,
-                        case_ids,
-                    });
                 }
             }
-        }
-    }
-    out
+            RepoFeature {
+                navigation_key: layout::navigation_key(&path),
+                path,
+                spec_count,
+                case_count: case_ids.len() as u32,
+                case_ids,
+            }
+        })
+        .collect()
 }
 
 /// Whether `rel` (relative to the clone, forward slashes) is a test-case
-/// file the feature walk reads: `suites/<country>/<side>/<module>/<feature>/
-/// test-cases/<name>.md`, no level being `_…`, `.…` or `common-components`
-/// (`folders`).
+/// file the feature walk reads: `suites/<path>/test-cases/<name>.md`
+/// (`layout::test_case_file`).
 pub fn feature_test_cases(rel: &str) -> bool {
-    let parts: Vec<&str> = rel.split('/').collect();
-    parts.len() == 7
-        && parts[0] == "suites"
-        && parts[1..5].iter().all(|p| !p.starts_with('_') && !p.starts_with('.') && *p != "common-components")
-        && parts[5] == "test-cases"
-        && parts[6].ends_with(".md")
+    layout::test_case_file(rel).is_some()
 }
 
 /// The ids of a test-case file's `## <id>` headings, in order: a level-two

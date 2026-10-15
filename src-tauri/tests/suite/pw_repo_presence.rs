@@ -43,7 +43,7 @@ fn each_of_the_three_places_is_found_on_the_fixture() {
     // Nowhere: not in the repo. A heading that is not a case is no id.
     assert!(!p.has(135999));
     assert_eq!(p.note(135999), None);
-    assert_eq!(p.cases.keys().copied().collect::<Vec<_>>(), vec![135152, 135179, 135180, 135185, 135190, 135301]);
+    assert_eq!(p.cases.keys().copied().collect::<Vec<_>>(), vec![135152, 135179, 135180, 135185, 135190, 135300, 135301]);
 
     // A `## Excluded <id>` section: in the repo, and left out on purpose.
     assert!(p.excluded(135185) && p.has(135185));
@@ -207,8 +207,9 @@ fn the_scans_sections_are_the_ones_the_feature_walk_counts() {
     assert!(!walked(&fixture()).is_empty());
     assert_eq!(scanned(&fixture()), walked(&fixture()));
 
-    // Sections the feature walk does not read: a common-components file, a
-    // `_` folder, a level too deep. And an Excluded heading is no section.
+    // Sections the feature walk reads at any depth (a common-components
+    // file, a level deeper) and ones it does not (a `_` folder). An Excluded
+    // heading is no section.
     let d = tempfile::tempdir().unwrap();
     crate::pw_repo_structure::copy_dir(&fixture(), d.path());
     for (rel, text) in [
@@ -222,11 +223,16 @@ fn the_scans_sections_are_the_ones_the_feature_walk_counts() {
         std::fs::write(path, text).unwrap();
     }
     assert_eq!(scanned(d.path()), walked(d.path()));
-    for id in [991001, 991002, 991003, 991004] {
+    for id in [991001, 991003] {
+        assert!(scanned(d.path()).contains(&id), "{id}");
+    }
+    for id in [991002, 991004] {
         assert!(!scanned(d.path()).contains(&id), "{id}");
     }
 
     assert!(feature_test_cases("suites/sl/admin/performance/rating-methods/test-cases/rating-methods.md"));
-    assert!(!feature_test_cases("suites/common-components/x/y/z/test-cases/a.md"));
+    assert!(feature_test_cases("suites/sl/admin/performance/definition-wizard/competencies/test-cases/a.md"));
+    assert!(feature_test_cases("suites/common-components/x/y/z/test-cases/a.md"));
+    assert!(!feature_test_cases("suites/_generated/test-cases/a.md"));
     assert!(!feature_test_cases("suites/sl/admin/performance/rating-methods/test-cases/a.txt"));
 }

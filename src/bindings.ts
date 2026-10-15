@@ -4949,12 +4949,12 @@ export type RepoAccount = {
 	supervisor: string,
 };
 
-/**  One `suites/<country>/<side>/<module>/<feature>/` folder. */
+/**  One feature folder under `suites/`. */
 export type RepoFeature = {
-	country: string,
-	side: string,
-	module: string,
-	feature: string,
+	/**  The folders from `suites/` down to it. */
+	path: string[],
+	/**  The key of its `navigation.json` entry (`layout::navigation_key`). */
+	navigation_key: string,
 	/**  `*.spec.ts` files in its `specs/`. */
 	spec_count: number,
 	/**  Test case sections (`## <id>` headings) in its `test-cases/*.md`. */
@@ -4970,7 +4970,7 @@ export type RepoRef = {
 
 /**  The clone as the Playwright tab shows it. */
 export type RepoStructure = {
-	/**  Sorted by country, side, module, feature. */
+	/**  Sorted by path. */
 	features: RepoFeature[],
 	/**  The ids `suites/_generated/index.json` maps to a raw spec, in its order. */
 	generated_ids: number[],
