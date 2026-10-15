@@ -12,7 +12,7 @@ const MAIN = "settings-main";
 const MORE = "settings-more";
 const LOGS = "settings-logs";
 const BUG = "settings-report-bug";
-const ADVANCED = "settings-advanced";
+const MODULES = "settings-modules";
 
 const OPEN: Step = { click: { role: "button", name: "Settings" } };
 
@@ -30,9 +30,9 @@ export const settings: Screen = {
       alt: "Settings scrolled down to the AI tools, Updates, Backup and Help cards",
     },
     {
-      id: ADVANCED,
-      route: [OPEN, { scrollTo: { role: "switch", name: "Enable Advanced Features" } }],
-      alt: "The end of the General card, with Enable Advanced Features turned on, and the AI tools card under it",
+      id: MODULES,
+      route: [OPEN, { scrollTo: { role: "button", name: "Modules" } }],
+      alt: "The end of the General card, with the Modules row, and the AI tools card under it",
     },
     // From the top of Settings: the log is shorter than the changelog, so a page
     // that arrived scrolled snaps up when it opens, and the two theme passes
@@ -53,8 +53,9 @@ export const settings: Screen = {
     {
       id: "general",
       title: "General",
-      summary: "Running in the tray, starting with Windows, how fast the app may call Azure DevOps, and the advanced features.",
+      summary: "Running in the tray, starting with Windows, how fast the app may call Azure DevOps, and the Modules page.",
     },
+    { id: "modules", title: "Modules", summary: "Switch on the parts of the app you need, such as Auto Run. Each module can be switched on once the one above it is." },
     { id: "ai-tools", title: "AI tools", summary: "Where AI tools may be registered." },
     { id: "updates", title: "Updates", summary: "The version you have, beta builds, and checking for a new version." },
     { id: "backup", title: "Backup and transfer", summary: "Move your settings to another computer." },
@@ -89,7 +90,7 @@ export const settings: Screen = {
     },
     {
       id: "request-rate",
-      shot: ADVANCED,
+      shot: MODULES,
       group: "general",
       locate: { role: "button", nameRe: "^Full speed" },
       name: "Azure DevOps request rate",
@@ -98,15 +99,22 @@ export const settings: Screen = {
         "**Full speed** is the default; choose **Balanced** if Azure DevOps warns you about usage, or **Gentle** while you are working in Azure DevOps too.",
     },
     {
-      id: "advanced-features",
-      shot: ADVANCED,
-      group: "general",
-      locate: { role: "switch", name: "Enable Advanced Features" },
-      name: "Enable Advanced Features",
+      id: "open-modules",
+      shot: MODULES,
+      group: "modules",
+      locate: { role: "button", name: "Modules" },
+      name: "Modules",
       does:
-        "Off by default. On: the sidebar adds **Auto Run**, under Run Tests, **Playwright**, under Auto Run, and **API Templates**, at the end, and the AI Bridge tab adds the environments they work in and the AI tools that go with them. " +
-        "Off again: they are hidden, and your scripts, runs and templates are kept on this computer for when you turn it back on.",
-      tips: ["With the advanced features on, the sidebar's shortcuts run from [[Ctrl+1]] to [[Ctrl+9]]: Auto Run takes [[Ctrl+6]] and the screens after it move down one."],
+        "Switch on the parts of the app you need, such as Auto Run. Opens a full page, **Modules**, with **Back to Settings** at the top. " +
+        "At the top sits **Core**, which is always on: Test cases, suites, runs and the board. Under it is one card per module, each with its name, what it is for and its state: **On**, **Off · click to switch on**, or **Locked · needs** the module above it.",
+      tips: [
+        "**Database Access**: Connect TCM to your test environments' databases. Your assistant can look data up, and Auto Run uses it to check preconditions and to notice when the VPN drops. It adds the Database Read Access card on the AI Bridge tab.",
+        "**Writing Style**: Your own rules for how test cases are worded and split into steps. Your assistant follows them instead of the standard guide when it writes cases. It adds the Writing style card on the AI Bridge tab.",
+        "**Auto Run**: Script a test case once, then run it in a browser, watched or unattended, and review the results before they go to Azure DevOps. Includes environments, accounts, areas and test files. It needs Database Access, and adds Auto Run to the sidebar under Run Tests and the Environment card on the AI Bridge tab.",
+        "**API Templates**: Create the test data a case needs, such as cycles, drafts and settings, through the app's own pages before the case runs, so every run starts from a known state. It needs Auto Run, and adds API Templates at the end of the sidebar.",
+        "**Playwright**: Export passing Auto Run scripts into the team's Playwright repo, run its tests, manage its test accounts and keep exported cases in sync. It needs Auto Run, and adds Playwright to the sidebar under Auto Run.",
+        "With Auto Run on, the sidebar's shortcuts run from [[Ctrl+1]] to [[Ctrl+9]]: Auto Run takes [[Ctrl+6]] and the screens after it move down one.",
+      ],
     },
 
     // --- Changelog, backup, updates -------------------------------------------
@@ -200,7 +208,7 @@ export const settings: Screen = {
     },
     {
       id: "allow-machine-wide",
-      shot: ADVANCED,
+      shot: MODULES,
       group: "ai-tools",
       locate: { role: "switch", name: "Allow registering AI tools machine-wide" },
       name: "Allow registering AI tools machine-wide",
@@ -296,6 +304,17 @@ export const settings: Screen = {
       does:
         "Opens a filled-in issue on GitHub in your browser, for you to check and submit, and opens the folder with a copy of the log. Drag that log file onto the issue before submitting. " +
         "Nothing is sent from the app, and your organisation, project and work item names are removed from the log first.",
+    },
+  ],
+  howTo: [
+    {
+      title: "Switch a module on or off",
+      steps: [
+        "Open Settings and, in the **General** card, press **Modules**.",
+        "Press the card of the module you want. Its state changes from **Off · click to switch on** to **On**. A module shows **Locked · needs** and the name of another module until that one is on, so switch the one above it on first.",
+        "To switch a module off, press its card again. Switching off a module also switches off the modules below it, and the app tells you which before it does. Nothing is deleted: your scripts, runs, templates and settings are kept on this computer for when you switch it back on.",
+        "Press **Back to Settings** to return.",
+      ],
     },
   ],
   tips: [

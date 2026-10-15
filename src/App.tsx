@@ -5,6 +5,7 @@ import {
   lazy,
   Suspense,
   useCallback,
+  useMemo,
   useEffect,
   useRef,
   useState,
@@ -71,12 +72,13 @@ import { useAutoRunScriptsSync } from "./hooks/useAutoRunScriptsSync";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
-import { hydrateExtras, shouldLeaveHidden, useAutoRunVisible, useExtrasHydrated } from "./lib/extras";
+import { hydrateExtras } from "./lib/extras";
+import { hydrateModules, sectionShown, shouldLeaveHidden, useModules, useModulesHydrated } from "./lib/modules";
 import TitleBar from "./components/TitleBar";
 import UiTour from "./tour/UiTour";
 import { installTourBackend, restoreTourBackend } from "./tour/tourBackend";
 import { TOUR_ORG, TOUR_PBI, TOUR_PROJECT, TOUR_REPO_PATH } from "./tour/tourData";
-import { tourControl, type TourWhere } from "./tour/tourScript";
+import { tourControl, tourStepsFor, type TourWhere } from "./tour/tourScript";
 import { START_TOUR_EVENT, setTourRunning, tourDone, tourRunningSnapshot } from "./tour/tourState";
 import { Button } from "./components/ui/button";
 import { unwrap } from "./lib/ipc";
@@ -199,8 +201,10 @@ export default function App() {
   const qc = useQueryClient();
   const initial = loadPrefs();
   const [section, setSection] = useState<Section>(initial.section);
-  const autoRunShown = useAutoRunVisible();
-  const extrasHydrated = useExtrasHydrated();
+  const modules = useModules();
+  const modulesHydrated = useModulesHydrated();
+  // The tour skips the stop for a card whose module is off.
+  const tourSteps = useMemo(() => tourStepsFor(modules), [modules]);
   const [org, setOrgRaw] = useState(initial.org);
   const [project, setProjectRaw] = useState(initial.project);
   const [pbi, setPbiRaw] = useState<PbiHit | null>(initial.pbi);
@@ -348,22 +352,22 @@ export default function App() {
   // Push the saved ADO pacing into the Rust limiter before anything fetches.
   useEffect(() => applyRateLevel(), []);
 
-  // This machine's optional extras switch lives in Rust; ask once, so a
-  // release build whose extras are unlocked shows Auto Run.
+  // The hidden Extras switch and the modules both live in Rust; ask once,
+  // so the Extras card and every module's screens follow them.
   useEffect(() => {
     void hydrateExtras();
+    void hydrateModules();
   }, []);
 
-  // If Auto Run (or API Templates, offered exactly where it is) stops being
-  // offered while it is the open tab (the optional extras got reset, or a
-  // future lock path outside Settings), move off it rather than leave its
-  // heading over a blank body. Gated on hydration: extrasHydrated starts
-  // false the same way a locked machine reads, so without the gate a
-  // restart with a saved Auto Run tab bounces straight to Manual Entry
-  // before hydrateExtras' answer comes back.
+  // If the open tab belongs to a module that is switched off (or gets
+  // switched off while it is open), move off it rather than leave its
+  // heading over a blank body. Gated on hydration: the set starts empty the
+  // same way a fresh install reads, so without the gate a restart with a
+  // saved Auto Run tab bounces straight to Manual Entry before
+  // hydrateModules' answer comes back.
   useEffect(() => {
-    if (shouldLeaveHidden(section, autoRunShown, extrasHydrated)) setSection("manual");
-  }, [autoRunShown, section, extrasHydrated]);
+    if (shouldLeaveHidden(section, sectionShown(section, modules), modulesHydrated)) setSection("manual");
+  }, [modules, section, modulesHydrated]);
 
   // Keyboard shortcuts: Ctrl+1..9 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
@@ -377,9 +381,9 @@ export default function App() {
         return;
       }
       // Read at the moment of the press: the rows close up around a
-      // hidden Auto Run row (a release build whose optional extras are
-      // locked), and unlocking can add it while the app runs. The
-      // palette's hints read the same list, so they cannot drift.
+      // module's hidden rows, and switching it on can add them while the
+      // app runs. The palette's hints read the same list, so they cannot
+      // drift.
       const order = shortcutOrder();
       const n = Number(e.key);
       if (n >= 1 && n <= order.length) {
@@ -1073,7 +1077,7 @@ export default function App() {
         }
         beta={isBetaVersion(appVersion.data ?? "") && !isCaptureMode()}
         // Environments are an Auto Run setting: named only where it shows.
-        environment={autoRunShown ? environmentName : null}
+        environment={modules.has("auto_run") ? environmentName : null}
         // An unattended run going, paused, or ended: a click opens its
         // window from anywhere, or its review once it has finished.
         status={<RunPill />}
@@ -1085,6 +1089,7 @@ export default function App() {
           onAwait={setTourAwaited}
           onAct={setTourActing}
           onClose={endTour}
+          steps={tourSteps}
         />
       )}
 
@@ -1241,7 +1246,7 @@ export default function App() {
               must not add a second scrollbar around the board. */}
           <main
             className={
-              signedIn && (workMode || (autoRunShown && section === "playwright"))
+              signedIn && (workMode || (modules.has("playwright") && section === "playwright"))
                 ? // No bottom padding in work mode: the board's columns own
                   // the full height, and a padded strip under them read as a
                   // gap at the bottom of the screen - boards run flush to the
@@ -1370,7 +1375,7 @@ export default function App() {
                     }
                   />
                 )}
-                {autoRunShown && section === "autorun" && (
+                {modules.has("auto_run") && section === "autorun" && (
                   <AutoRun org={org} project={project} pbi={pbi} />
                 )}
                 {section === "manage" && (
@@ -1383,10 +1388,10 @@ export default function App() {
                   />
                 )}
                 {section === "ai" && <AiBridge />}
-                {autoRunShown && section === "apitemplates" && (
+                {modules.has("api_templates") && section === "apitemplates" && (
                   <ApiTemplates org={org} project={project} onOpenAiBridge={() => goToSection("ai")} />
                 )}
-                {autoRunShown && section === "playwright" && <Playwright org={org} project={project} />}
+                {modules.has("playwright") && section === "playwright" && <Playwright org={org} project={project} />}
                 {section === "settings" && <Settings org={org} project={project} />}
               </div>
             )}

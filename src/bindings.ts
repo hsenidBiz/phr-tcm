@@ -1242,13 +1242,6 @@ export const commands = {
 	 *  the log; the person gets a sentence they can act on.
 	 */
 	setExtrasUnlocked: (unlocked: boolean) => typedError<null, string>(__TAURI_INVOKE("set_extras_unlocked", { unlocked })),
-	/**  Whether Settings' Enable Advanced Features is on (see `crate::extras`). */
-	getAdvancedFeatures: () => __TAURI_INVOKE<boolean>("get_advanced_features"),
-	/**
-	 *  Turn Enable Advanced Features on or off. The raw reason goes to the
-	 *  log; the person gets a sentence they can act on.
-	 */
-	setAdvancedFeatures: (on: boolean) => typedError<null, string>(__TAURI_INVOKE("set_advanced_features", { on })),
 	/**
 	 *  Open the "How To Use" guide in the default browser - Settings' "How To
 	 *  Use" button. Opens the downloaded guide (`help/<installed folder>/`,
@@ -1256,6 +1249,14 @@ export const commands = {
 	 *  there is none. A development build opens the repository's copy.
 	 */
 	openHelp: () => typedError<null, string>(__TAURI_INVOKE("open_help")),
+	/**  The modules on now, in tree order. */
+	modulesGet: () => __TAURI_INVOKE<Module[]>("modules_get"),
+	/**
+	 *  Switch `module` on or off; the answer is every module now on. Refused
+	 *  while switching it off would stop a run or a repo command that is going
+	 *  (its cascade counts: Database Access off takes Auto Run with it).
+	 */
+	modulesSet: (module: Module, on: boolean) => typedError<Module[], string>(__TAURI_INVOKE("modules_set", { module, on })),
 	/**  Whether How To Use is on disk and current, and the download's size. */
 	guideStatus: () => __TAURI_INVOKE<GuideStatus>("guide_status"),
 	/**
@@ -3870,6 +3871,8 @@ export type Mention = {
 };
 
 export type Method = "GET" | "POST";
+
+export type Module = "db_access" | "writing_style" | "auto_run" | "api_templates" | "playwright";
 
 export type ModuleRecordResult = {
 	saved: boolean,

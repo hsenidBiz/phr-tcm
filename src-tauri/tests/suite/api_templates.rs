@@ -891,7 +891,7 @@ fn removing_a_flow_is_refused_where_auto_run_is_not_offered() {
     flow_store::save(dir.path(), "Org", "Proj", &a_flow()).unwrap();
 
     let err = remove_flow_at(false, dir.path(), "Org", "Proj", "pms-performance-cycle").unwrap_err();
-    assert_eq!(err, "not available in this build");
+    assert_eq!(err, "API Templates is switched off in Modules");
     assert!(
         flow_store::load(dir.path(), "Org", "Proj", "pms-performance-cycle").unwrap().is_some(),
         "a refused removal must leave the flow where it is"

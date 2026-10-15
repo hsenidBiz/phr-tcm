@@ -964,7 +964,7 @@ mod page_tests {
         let palette = PagePalette::default();
 
         let refused = write_flow_page_at(false, dir.path(), org, project, "pms-performance-cycle", &palette);
-        assert_eq!(refused.unwrap_err(), "not available in this build");
+        assert_eq!(refused.unwrap_err(), "API Templates is switched off in Modules");
 
         let missing = write_flow_page_at(true, dir.path(), org, project, "pms-performance-cycle", &palette);
         assert_eq!(missing.unwrap_err(), "the flow pms-performance-cycle is no longer saved");

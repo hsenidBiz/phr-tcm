@@ -43,6 +43,7 @@ import {
 import { describeAction, sentenceText } from "../screens/AutoRun/describeAction";
 import { isCaptureMode } from "./capture";
 import { playwrightPatches } from "./demoPlaywright";
+import { ALL_MODULES } from "../lib/modules";
 
 const DEMO_KEY = "tcm-v2-dev-demo";
 const PREFS_KEY = "tcm-v2-prefs";
@@ -947,6 +948,11 @@ function applyPatches() {
   const patches = {
     // The Playwright tab: a made-up clone of the team's repo (dev/demoPlaywright).
     ...playwrightPatches({ getAppSettings: realGetAppSettings }),
+    // Every module on, so the sample app shows everything (and the help
+    // site documents it); a click on a module is answered here and never
+    // saved to this machine's modules.json.
+    modulesGet: () => Promise.resolve([...ALL_MODULES]),
+    modulesSet: () => ok([...ALL_MODULES]),
     authStatus: () => Promise.resolve(auth),
     resumeSession: () => Promise.resolve(auth),
     signIn: () => ok(auth),
@@ -1841,10 +1847,6 @@ function applyPatches() {
   // logins - and the sample tools lack the fields the tab reads to say where
   // each one is registered.
   const captureOnly = {
-    // Enable Advanced Features, on - the help site documents what it
-    // shows - and a click on it answered here, never saved to this machine.
-    getAdvancedFeatures: () => Promise.resolve(true),
-    setAdvancedFeatures: () => ok(null),
     detectAiTools: () => Promise.resolve(CAPTURE_AI_TOOLS),
     dbDatabases: () => Promise.resolve(CAPTURE_DATABASES),
     // The open thread's reply carries a pasted screenshot.

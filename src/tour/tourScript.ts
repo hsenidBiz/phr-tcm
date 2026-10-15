@@ -11,6 +11,7 @@
  * - one or two short sentences, in the words a tester uses;
  * - nothing about how the app works inside.
  */
+import type { Module } from "../lib/modules";
 import type { Section, WorkSection } from "../components/Sidebar";
 
 /** The `data-tour` names the script is allowed to ring. Each one must
@@ -58,6 +59,9 @@ export type TourStep = {
   anchor?: TourAnchor;
   title: string;
   body: string;
+  /** The stop describes something a module owns: it is left out of the tour
+   * while that module is off (see `tourStepsFor`). */
+  module?: Module;
   /** This stop hands the reader something to DO on the screen behind it
    * (the theme), rather than something to read. The way on then says
    * "Continue" instead of "Next".
@@ -166,6 +170,7 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     anchor: "ai-db",
+    module: "db_access",
     title: "Database Read Access",
     body: "Your assistant can look up tables and check real data while it writes, using the connection you choose here.",
   },
@@ -211,6 +216,13 @@ export function sameTourWhere(a: TourWhere | undefined, b: TourWhere | undefined
   if (!a || !b) return a === b;
   if (a.area === "cases") return b.area === "cases" && a.section === b.section;
   return b.area === "work" && a.workSection === b.workSection;
+}
+
+/** The tour's stops for these modules on: a stop describing a card that is
+ * not there (its module is off) is dropped. Every lookup below takes this
+ * array, so a dropped stop is never a destination either. */
+export function tourStepsFor(modules: ReadonlySet<Module>): TourStep[] {
+  return TOUR_STEPS.filter((s) => !s.module || modules.has(s.module));
 }
 
 /**

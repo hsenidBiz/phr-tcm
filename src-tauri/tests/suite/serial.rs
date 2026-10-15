@@ -118,8 +118,8 @@ pub fn held_browsers() -> MutexGuard<'static, ()> {
     hold(&L)
 }
 
-/// The machine-wide extras switch and Enable Advanced Features
-/// (`extras::set_unlocked` / `set_advanced`), and the folder `extras::init`
+/// The machine-wide extras switch
+/// (`extras::set_unlocked`), and the folder `extras::init`
 /// points them at - set at most once for the whole binary.
 pub fn extras() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
@@ -156,6 +156,12 @@ pub fn pw_repo() -> MutexGuard<'static, ()> {
 /// network (`autorun::network::waits`): a wait one test begins would be
 /// another test's `current()`.
 pub fn network_waits() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}
+
+/// The process-wide module choice (`modules::init` / `set` / `current`).
+pub fn modules() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }

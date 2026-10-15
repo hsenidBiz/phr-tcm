@@ -251,7 +251,7 @@ fn every_command_is_refused_where_auto_run_is_not_offered() {
     let root = tempfile::tempdir().unwrap();
     let picked = tempfile::tempdir().unwrap();
     let file = write(picked.path(), "cv.pdf", b"x");
-    let refused = "not available in this build";
+    let refused = "Auto Run is switched off in Modules";
     assert_eq!(list_at(false, root.path(), ORG, PROJECT).unwrap_err(), refused);
     assert_eq!(add_at(false, root.path(), ORG, PROJECT, &file, false).unwrap_err(), refused);
     assert_eq!(remove_at(false, root.path(), ORG, PROJECT, "cv.pdf").unwrap_err(), refused);

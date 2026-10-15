@@ -1,16 +1,11 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, expect, test, vi } from "vitest";
 import {
-  advancedFeaturesSnapshot,
-  autoRunVisible,
   extrasHydratedSnapshot,
   extrasUnlockedSnapshot,
-  featuresOnSnapshot,
   hydrateExtras,
   resetExtrasStore,
-  setAdvancedFeatures,
   setExtrasUnlocked,
-  shouldLeaveHidden,
   subscribeExtras,
 } from "./extras";
 
@@ -72,11 +67,8 @@ test("a slow read that answers after a save does not undo it", async () => {
   expect(extrasUnlockedSnapshot()).toBe(true);
 });
 
-// Regression for M-1: on a release build, the redirect that steers away
-// from Auto Run once it disappears must not fire on the very first render,
-// before Rust's answer to get_extras_unlocked comes back - or a saved
-// Auto Run tab on an unlocked machine gets bounced to Manual Entry on
-// every restart.
+// `unlocked` starts false the same way a locked machine reads, so a caller
+// that must not act before Rust has answered reads the hydrated flag.
 test("hydration starts false and flips true once the read settles, success or not", async () => {
   expect(extrasHydratedSnapshot()).toBe(false);
   mockIPC((cmd) => (cmd === "get_extras_unlocked" ? true : undefined));
@@ -100,97 +92,12 @@ test("resetting the store for tests also resets the hydrated flag", async () => 
   expect(extrasHydratedSnapshot()).toBe(false);
 });
 
-test("the Auto Run redirect waits for hydration before it fires", () => {
-  // Not hydrated yet: never redirect, whatever autoRunShown says right now.
-  expect(shouldLeaveHidden("autorun", false, false)).toBe(false);
-  expect(shouldLeaveHidden("autorun", true, false)).toBe(false);
-  // Hydrated: redirect only off Auto Run, and only once it is not shown.
-  expect(shouldLeaveHidden("autorun", false, true)).toBe(true);
-  expect(shouldLeaveHidden("autorun", true, true)).toBe(false);
-  expect(shouldLeaveHidden("manual", false, true)).toBe(false);
-});
-
-// API Templates is offered exactly where Auto Run is, so the same
-// redirect moves off it - and waits for hydration the same way.
-test("the redirect leaves API Templates too, once hydration settles", () => {
-  expect(shouldLeaveHidden("apitemplates", false, true)).toBe(true);
-  expect(shouldLeaveHidden("apitemplates", false, false)).toBe(false);
-  expect(shouldLeaveHidden("apitemplates", true, true)).toBe(false);
-  expect(shouldLeaveHidden("ai", false, true)).toBe(false);
-});
-
-test("a development build shows Auto Run whatever the switch says", () => {
-  expect(autoRunVisible()).toBe(true);
-});
-
-// The help site documents Auto Run and API Templates, so the screenshot
-// script's capture mode shows them - whatever either flag says.
-test("capture mode shows Auto Run with both flags off", () => {
-  localStorage.setItem("tcm-v2-dev-capture", "on");
-  try {
-    expect(featuresOnSnapshot()).toBe(false);
-    expect(autoRunVisible()).toBe(true);
-  } finally {
-    localStorage.removeItem("tcm-v2-dev-capture");
-  }
-});
-
-test("a release build shows Auto Run only once unlocked", async () => {
-  vi.stubEnv("DEV", false);
-  vi.resetModules();
-  const fresh = await import("./extras");
+// The Extras Easter egg gates no feature any more: unlocking it moves no
+// module (lib/modules.ts) - the card it reveals is the only thing it shows.
+test("unlocking the extras does not touch the modules store", async () => {
+  const { modulesSnapshot, resetModulesStore } = await import("./modules");
+  resetModulesStore();
   mockIPC(() => null);
-  expect(fresh.autoRunVisible()).toBe(false);
-  await fresh.setExtrasUnlocked(true);
-  expect(fresh.autoRunVisible()).toBe(true);
-  await fresh.setExtrasUnlocked(false);
-  expect(fresh.autoRunVisible()).toBe(false);
-  vi.unstubAllEnvs();
-  vi.resetModules();
-});
-
-test("hydrating reads Enable Advanced Features too, and it alone does not unlock the extras", async () => {
-  mockIPC((cmd) => (cmd === "get_advanced_features" ? true : cmd === "get_extras_unlocked" ? false : undefined));
-  await hydrateExtras();
-  expect(advancedFeaturesSnapshot()).toBe(true);
-  expect(extrasUnlockedSnapshot()).toBe(false);
-  expect(featuresOnSnapshot()).toBe(true);
-  expect(extrasHydratedSnapshot()).toBe(true);
-});
-
-test("saving Enable Advanced Features goes through Rust first; a refused save changes nothing", async () => {
-  const saved: unknown[] = [];
-  let refuse = false;
-  mockIPC((cmd, args) => {
-    if (cmd === "set_advanced_features") {
-      if (refuse) throw "Could not save this setting. The app log in Settings has the details.";
-      saved.push(args);
-    }
-    return null;
-  });
-  const seen = vi.fn();
-  const off = subscribeExtras(seen);
-  await setAdvancedFeatures(true);
-  expect(saved).toEqual([{ on: true }]);
-  expect(advancedFeaturesSnapshot()).toBe(true);
-  expect(seen).toHaveBeenCalledTimes(1);
-  refuse = true;
-  await expect(setAdvancedFeatures(false)).rejects.toThrow("Could not save this setting");
-  expect(advancedFeaturesSnapshot()).toBe(true);
-  off();
-});
-
-test("a release build shows Auto Run while Enable Advanced Features is on", async () => {
-  vi.stubEnv("DEV", false);
-  vi.resetModules();
-  const fresh = await import("./extras");
-  mockIPC(() => null);
-  expect(fresh.autoRunVisible()).toBe(false);
-  await fresh.setAdvancedFeatures(true);
-  expect(fresh.autoRunVisible()).toBe(true);
-  expect(fresh.extrasUnlockedSnapshot()).toBe(false);
-  await fresh.setAdvancedFeatures(false);
-  expect(fresh.autoRunVisible()).toBe(false);
-  vi.unstubAllEnvs();
-  vi.resetModules();
+  await setExtrasUnlocked(true);
+  expect(modulesSnapshot().size).toBe(0);
 });

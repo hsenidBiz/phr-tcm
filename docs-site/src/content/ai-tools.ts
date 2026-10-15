@@ -30,7 +30,7 @@ export const aiBridge: Screen = {
     "run results, tags, Product Backlog Items and wiki pages, and check the drafts it writes, while you stay in charge of what reaches Azure DevOps: " +
     "none of these tools can write to it. The tools are registered per working repository; the other settings here apply to the whole app.",
   shots: [
-    { id: TAB, route: [NAV, { waitFor: { role: "button", name: "Unregister" } }], alt: "The AI Bridge tab with a working repository, the AI tools, the environment and Database Read Access" },
+    { id: TAB, route: [NAV, { waitFor: { role: "button", name: "Unregister" } }], alt: "The AI Bridge tab with a working repository, the AI tools and the cards of the modules that are on" },
     {
       id: OTHER,
       route: [NAV, { click: { text: "Other tools" } }, { waitFor: { role: "button", name: "Copy command" } }],
@@ -53,7 +53,7 @@ export const aiBridge: Screen = {
     {
       id: API,
       route: [NAV, { scrollTo: { role: "switch", name: "API templates (create, edit and delete)" } }],
-      alt: "The API templates card, with the switch that lets an assistant prove and run templates",
+      alt: "Further down the AI Bridge tab, down to the AI Tools Breakdown",
     },
     {
       id: OPTIONS,
@@ -73,12 +73,12 @@ export const aiBridge: Screen = {
     {
       id: "environment",
       title: "Environment",
-      summary: "The site and database Auto Run and API Templates work against. Shown while Enable Advanced Features is on, in Settings.",
+      summary: "The site and database Auto Run and API Templates work against. Shown while the Auto Run module is on, in Settings, under General, on the **Modules** page.",
     },
     {
       id: "api-templates",
       title: "API templates",
-      summary: "Whether an assistant may create and change test data on your site with API templates. Shown while Enable Advanced Features is on, in Settings.",
+      summary: "Whether an assistant may create and change test data on your site with API templates. Shown while the API Templates module is on, in Settings, under General, on the **Modules** page.",
     },
     { id: "company-database", title: "Database Read Access", summary: "The one database the assistants' tools work with, and how they sign in to it." },
     { id: "tools-breakdown", title: "AI Tools Breakdown", summary: "What each tool does, in plain words." },
@@ -196,7 +196,7 @@ export const aiBridge: Screen = {
       locate: { role: "switch", name: "Test Suites" },
       name: "Tool switch",
       does:
-        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Database Read Access, Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted.",
+        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Project tags, Find a Product Backlog Item and Project wiki, and Database Read Access while the Database Access module is on. A connected assistant sees the change without being restarted.",
     },
     {
       id: "environment-pick",
@@ -227,7 +227,7 @@ export const aiBridge: Screen = {
       does:
         "Lets a connected assistant prove and run API templates: build a template for the test data a case needs, prove it end to end on your site, and run a saved one for the records it creates. " +
         "Proving and running write real test data through the site's own requests, as your Auto Run accounts, against the active environment's site address, so this is off until you turn it on. " +
-        "The card is shown while **Enable Advanced Features** is on, in Settings, under General. The templates themselves are listed on the API Templates tab.",
+        "The card is shown while the **API Templates** module is on, in Settings, under General, on the **Modules** page. The templates themselves are listed on the API Templates tab.",
     },
     {
       id: "database",

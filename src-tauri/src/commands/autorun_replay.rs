@@ -298,6 +298,7 @@ pub async fn auto_run_replay(
     retry_transient: bool,
     db_read_access: bool,
 ) -> Result<LocalRun, String> {
+    let db_read_access = crate::autorun::preconditions::read_access(db_read_access);
     let _claim = OneAtATime::claim().ok_or_else(|| {
         "an unattended run is already going - wait for it, or stop it first".to_string()
     })?;
@@ -352,10 +353,10 @@ pub async fn auto_run_replay(
     let notify_network = |n: &crate::events::AutorunNetworkWait| {
         let _ = n.clone().emit(&app);
     };
-    // The database server, found once for the whole run: only where Auto
-    // Run is offered, and only when the active environment's database has a
+    // The database server, found once for the whole run: only while the
+    // Auto Run module is on (the network pause is its), and only when the active environment's database has a
     // knowable host and port. Otherwise nothing is ever checked.
-    let network_target = if crate::ai_tools::autorun_offered() {
+    let network_target = if crate::modules::on(crate::modules::Module::AutoRun) {
         use tauri::Manager;
         let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
         crate::environments::active(&root)

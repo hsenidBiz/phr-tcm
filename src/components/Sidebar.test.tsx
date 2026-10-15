@@ -6,10 +6,13 @@ import { afterEach, expect, test, vi } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import Sidebar, { WORK_ITEMS, sectionShortcut, shortcutOrder, visibleCaseItems, type WorkSection } from "./Sidebar";
 import { clearTourExpanded, setTourExpanded } from "../lib/sidebarState";
+import { ALL_MODULES, resetModulesStore, setModule, setModulesForTest, shouldLeaveHidden, type Module } from "../lib/modules";
 
 afterEach(() => {
   clearTourExpanded();
   localStorage.clear();
+  resetModulesStore();
+  clearMocks();
 });
 
 test("the tour override renders the sidebar expanded over a stored collapsed setting", () => {
@@ -38,6 +41,7 @@ test("a badge count lands on its item and reaches the accessible name", () => {
 /// pill after the label. The row keeps its plain name, so every shortcut,
 /// tour stop and test that finds it by "Auto Run" still does.
 test("Auto Run carries an In Dev pill, and no other row does", () => {
+  setModulesForTest(ALL_MODULES);
   render(<Sidebar section="manual" onSelect={() => {}} />);
   const autoRun = screen.getByRole("button", { name: "Auto Run" });
   expect(autoRun).toHaveTextContent("In Dev");
@@ -45,99 +49,67 @@ test("Auto Run carries an In Dev pill, and no other row does", () => {
   expect(screen.getByRole("button", { name: "Run Tests" })).not.toHaveTextContent("In Dev");
 });
 
-/// Auto Run is a development-build tab: `tauri build` sets DEV false and
-/// the row disappears; dev and test builds keep it. Fresh module import
-/// each time, because the flag is read once at module load.
-test("Auto Run is offered in dev builds and hidden in release builds", async () => {
-  const { vi } = await import("vitest");
-
-  vi.stubEnv("DEV", true);
-  vi.resetModules();
-  const dev = await import("./Sidebar");
-  const { unmount } = render(<dev.default section="manual" onSelect={() => {}} />);
-  expect(screen.getByRole("button", { name: /Auto Run/ })).toBeInTheDocument();
-  unmount();
-
-  vi.stubEnv("DEV", false);
-  vi.resetModules();
-  const release = await import("./Sidebar");
-  render(<release.default section="manual" onSelect={() => {}} />);
-  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Search Suites" })).toBeInTheDocument();
-
-  vi.unstubAllEnvs();
-  vi.resetModules();
-});
-
-/// Suite Management ships in release builds now, unlike Auto Run.
-test("Suite Management is offered in release builds", async () => {
-  const { vi } = await import("vitest");
-
-  vi.stubEnv("DEV", false);
-  vi.resetModules();
-  const release = await import("./Sidebar");
-  render(<release.default section="manual" onSelect={() => {}} />);
+/// Each module's rows appear when it is switched on and go again when it is
+/// switched off - live, without a reload, because the rail subscribes to the
+/// modules. A fresh install (none on) shows neither.
+test("Auto Run, API Templates and Playwright follow their own modules, live", async () => {
+  mockIPC((cmd) => (cmd === "modules_set" ? [] : null));
+  render(<Sidebar section="manual" onSelect={() => {}} />);
   expect(screen.getByRole("button", { name: "Suite Management" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
+  expect(shortcutOrder()).not.toContain("autorun");
 
-  vi.unstubAllEnvs();
-  vi.resetModules();
-});
-
-/// A release build shows Auto Run once this machine's optional extras are
-/// unlocked, and hides it again when they are reset - live, without a
-/// reload, because the rail subscribes to the switch.
-test("in a release build Auto Run appears once unlocked and goes again when reset", async () => {
-  vi.stubEnv("DEV", false);
-  vi.resetModules();
-  const release = await import("./Sidebar");
-  const extras = await import("../lib/extras");
-  mockIPC(() => null);
-
-  render(<release.default section="manual" onSelect={() => {}} />);
-  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
-  expect(release.shortcutOrder()).not.toContain("autorun");
-
-  await act(() => extras.setExtrasUnlocked(true));
+  act(() => setModulesForTest(["db_access", "auto_run"]));
   expect(screen.getByRole("button", { name: /Auto Run/ })).toBeInTheDocument();
-  expect(release.shortcutOrder()).toContain("autorun");
-  expect(release.sectionShortcut("autorun")).toBe("mod+6");
+  expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
+  expect(shortcutOrder()).toContain("autorun");
+  expect(sectionShortcut("autorun")).toBe("mod+6");
 
-  await act(() => extras.setExtrasUnlocked(false));
+  act(() => setModulesForTest(["db_access", "auto_run", "api_templates"]));
+  expect(screen.getByRole("button", { name: /API Templates/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
+
+  act(() => setModulesForTest(["db_access", "auto_run", "playwright"]));
+  expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Playwright" })).toBeInTheDocument();
+  // Playwright takes no Ctrl number, so the tabs below keep theirs.
+  expect(shortcutOrder()).not.toContain("playwright");
+  expect(sectionShortcut("playwright")).toBeUndefined();
+  expect(sectionShortcut("ai")).toBe("mod+9");
+
+  await act(() => setModule("db_access", false));
   expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
-  expect(release.sectionShortcut("autorun")).toBeUndefined();
-
-  clearMocks();
-  vi.unstubAllEnvs();
-  vi.resetModules();
+  expect(sectionShortcut("autorun")).toBeUndefined();
+  expect(shouldLeaveHidden("playwright", false, true)).toBe(true);
 });
 
-/// Capture mode (the screenshot script) shows Auto Run and API Templates,
-/// as Enable Advanced Features does: the help site documents both. Off, a
-/// dev build's ordinary behaviour (both shown) is unchanged.
-test("capture mode shows Auto Run and API Templates in a dev build; off, dev behaviour is unchanged", async () => {
-  vi.stubEnv("DEV", true);
+/// Capture mode (the screenshot script) reports every module on: the help
+/// site documents Auto Run, API Templates and Playwright. Off, the rail
+/// follows the modules.
+test("capture mode shows every module's rows; off, the rail follows the modules", () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
   const { unmount } = render(<Sidebar section="manual" onSelect={() => {}} />);
   expect(screen.getByRole("button", { name: /Auto Run/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /API Templates/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Playwright" })).toBeInTheDocument();
   expect(shortcutOrder()).toContain("autorun");
-  expect(shortcutOrder()).toContain("apitemplates");
   unmount();
 
   localStorage.removeItem("tcm-v2-dev-capture");
   render(<Sidebar section="manual" onSelect={() => {}} />);
-  expect(screen.getByRole("button", { name: /Auto Run/ })).toBeInTheDocument();
-  expect(shortcutOrder()).toContain("autorun");
-
-  localStorage.removeItem("tcm-v2-dev-capture");
-  vi.unstubAllEnvs();
+  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
 });
+
+const ON = new Set<Module>(ALL_MODULES);
+const NONE = new Set<Module>();
 
 /// The Ctrl+N order closes up around a hidden Auto Run row, whichever way
 /// the answer comes.
 test("the shortcut order with and without Auto Run", () => {
-  expect(shortcutOrder(true)).toEqual([
+  expect(shortcutOrder(ON)).toEqual([
     "manual",
     "import",
     "edit",
@@ -149,81 +121,38 @@ test("the shortcut order with and without Auto Run", () => {
     "ai",
     "apitemplates",
   ]);
-  expect(shortcutOrder(false)).toEqual(["manual", "import", "edit", "view", "run", "suites", "manage", "ai"]);
+  expect(shortcutOrder(NONE)).toEqual(["manual", "import", "edit", "view", "run", "suites", "manage", "ai"]);
 });
 
 /// Playwright sits right under Auto Run in the rail, but has no Ctrl number,
 /// so Search Suites, Suite Management and AI Bridge keep theirs.
 test("Playwright sits under Auto Run and moves no one's Ctrl number", () => {
-  const rows = visibleCaseItems(true).map((i) => i.id);
+  const rows = visibleCaseItems(ON).map((i) => i.id);
   expect(rows.indexOf("playwright")).toBe(rows.indexOf("autorun") + 1);
-  expect(sectionShortcut("playwright", true)).toBeUndefined();
-  expect(sectionShortcut("suites", true)).toBe("mod+7");
-  expect(sectionShortcut("manage", true)).toBe("mod+8");
-  expect(sectionShortcut("ai", true)).toBe("mod+9");
+  expect(sectionShortcut("playwright", ON)).toBeUndefined();
+  expect(sectionShortcut("suites", ON)).toBe("mod+7");
+  expect(sectionShortcut("manage", ON)).toBe("mod+8");
+  expect(sectionShortcut("ai", ON)).toBe("mod+9");
 });
 
 /// API Templates sits after AI Bridge so every existing tab keeps its
 /// Ctrl+number, and it gets none of its own: App's handler only reaches
 /// Ctrl+1..9, and a hint for a key that does nothing would be a lie.
 test("API Templates comes last and has no Ctrl number", () => {
-  expect(sectionShortcut("apitemplates", true)).toBeUndefined();
-  expect(sectionShortcut("ai", true)).toBe("mod+9");
-  expect(sectionShortcut("autorun", true)).toBe("mod+6");
-  expect(sectionShortcut("apitemplates", false)).toBeUndefined();
+  expect(sectionShortcut("apitemplates", ON)).toBeUndefined();
+  expect(sectionShortcut("ai", ON)).toBe("mod+9");
+  expect(sectionShortcut("autorun", ON)).toBe("mod+6");
+  expect(sectionShortcut("apitemplates", NONE)).toBeUndefined();
 });
 
-/// Offered exactly where Auto Run is: a locked release build shows
-/// neither, and unlocking this machine's extras brings both.
-test("a locked release build hides API Templates, and unlocking shows it", async () => {
-  vi.stubEnv("DEV", false);
-  vi.resetModules();
-  const release = await import("./Sidebar");
-  const extras = await import("../lib/extras");
-  mockIPC(() => null);
-
-  render(<release.default section="manual" onSelect={() => {}} />);
-  expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
-  expect(release.shortcutOrder()).not.toContain("apitemplates");
-
-  await act(() => extras.setExtrasUnlocked(true));
-  expect(screen.getByRole("button", { name: /API Templates/ })).toBeInTheDocument();
-
-  await act(() => extras.setExtrasUnlocked(false));
-  expect(screen.queryByRole("button", { name: /API Templates/ })).not.toBeInTheDocument();
-
-  clearMocks();
-  vi.unstubAllEnvs();
-  vi.resetModules();
-});
-
-/// The Playwright tab is offered exactly where Auto Run is: a release
-/// build with Advanced Features off has no tab, and turning it on adds it,
-/// under Auto Run and without a Ctrl number.
-test("Playwright shows only with Advanced Features on", async () => {
-  vi.stubEnv("DEV", false);
-  vi.resetModules();
-  const release = await import("./Sidebar");
-  const extras = await import("../lib/extras");
-  mockIPC(() => null);
-
-  render(<release.default section="manual" onSelect={() => {}} />);
-  expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
-  expect(release.shortcutOrder()).not.toContain("playwright");
-  expect(extras.shouldLeaveHidden("playwright", false, true)).toBe(true);
-
-  await act(() => extras.setAdvancedFeatures(true));
-  expect(screen.getByRole("button", { name: "Playwright" })).toBeInTheDocument();
-  expect(release.shortcutOrder()).not.toContain("playwright");
-  expect(release.sectionShortcut("playwright")).toBeUndefined();
-  expect(release.sectionShortcut("ai")).toBe("mod+9");
-
-  await act(() => extras.setAdvancedFeatures(false));
-  expect(screen.queryByRole("button", { name: "Playwright" })).not.toBeInTheDocument();
-
-  clearMocks();
-  vi.unstubAllEnvs();
-  vi.resetModules();
+/// API Templates and Playwright are separate modules under Auto Run: either
+/// can be on without the other.
+test("API Templates and Playwright are separate rows", () => {
+  const base: Module[] = ["db_access", "auto_run"];
+  expect(visibleCaseItems(new Set<Module>([...base, "api_templates"])).map((i) => i.id)).toContain("apitemplates");
+  expect(visibleCaseItems(new Set<Module>([...base, "api_templates"])).map((i) => i.id)).not.toContain("playwright");
+  expect(visibleCaseItems(new Set<Module>([...base, "playwright"])).map((i) => i.id)).toContain("playwright");
+  expect(visibleCaseItems(new Set<Module>([...base, "playwright"])).map((i) => i.id)).not.toContain("apitemplates");
 });
 
 test("zero and absent counts render no bubble", () => {

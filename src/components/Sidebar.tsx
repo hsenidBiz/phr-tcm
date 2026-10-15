@@ -24,7 +24,7 @@ import {
   sidebarCollapsedSnapshot,
   subscribeSidebar,
 } from "../lib/sidebarState";
-import { autoRunVisible, useAutoRunVisible } from "../lib/extras";
+import { modulesSnapshot, sectionShown, useModules, type Module } from "../lib/modules";
 import { cn } from "../lib/cn";
 
 /** The v1 tabs, one screen each. Settings and the Work Manager switch live
@@ -84,29 +84,23 @@ export const CASE_ITEMS: Item<Section>[] = [
   { id: "apitemplates", label: "API Templates", icon: GlyphApiTemplates, tone: "nav-ico nav-ico-apitemplates" },
 ];
 
-/** The tabs offered only where Auto Run is. */
-const WITH_AUTO_RUN: ReadonlySet<Section> = new Set<Section>(["autorun", "apitemplates", "playwright"]);
-
 /** Rows shown in the rail but left out of the Ctrl+N order, so the tabs
  * after them keep their numbers. */
 const NO_SHORTCUT: ReadonlySet<Section> = new Set<Section>(["playwright"]);
 
 /** The rows the rail shows: CASE_ITEMS, with Auto Run, API Templates and Playwright
- * only where they are offered - always in a development build
- * (`import.meta.env.DEV`: true for `tauri dev` and vitest, false in `tauri
- * build`), and in a release build while this machine's optional extras are
- * unlocked (lib/extras). A function, not a constant: the answer can change
- * while the app runs. Ctrl+1..N and the palette's "mod+N" hints are both
+ * only while their module is on (lib/modules, `sectionModule`). A function,
+ * not a constant: the answer can change while the app runs. Ctrl+1..N and the palette's "mod+N" hints are both
  * read off this list, so a number can never open one screen and be
  * labelled as another. */
-export function visibleCaseItems(autoRun: boolean = autoRunVisible()): Item<Section>[] {
-  return CASE_ITEMS.filter((i) => !WITH_AUTO_RUN.has(i.id) || autoRun);
+export function visibleCaseItems(on: ReadonlySet<Module> = modulesSnapshot()): Item<Section>[] {
+  return CASE_ITEMS.filter((i) => sectionShown(i.id, on));
 }
 
 /** Section ids in Ctrl+N order: 1-based index = the shortcut digit. Rows in
  * NO_SHORTCUT are skipped, so they have no number and move no one else's. */
-export function shortcutOrder(autoRun: boolean = autoRunVisible()): Section[] {
-  return visibleCaseItems(autoRun)
+export function shortcutOrder(on: ReadonlySet<Module> = modulesSnapshot()): Section[] {
+  return visibleCaseItems(on)
     .map((i) => i.id)
     .filter((id) => !NO_SHORTCUT.has(id));
 }
@@ -115,8 +109,8 @@ export function shortcutOrder(autoRun: boolean = autoRunVisible()): Section[] {
  * that have no number (Settings, a hidden tab, or a row past the ninth -
  * App's handler answers Ctrl+1..9 only, so a tenth row gets no hint for a
  * key that would do nothing). */
-export function sectionShortcut(section: Section, autoRun: boolean = autoRunVisible()): string | undefined {
-  const n = shortcutOrder(autoRun).indexOf(section);
+export function sectionShortcut(section: Section, on: ReadonlySet<Module> = modulesSnapshot()): string | undefined {
+  const n = shortcutOrder(on).indexOf(section);
   return n === -1 || n >= 9 ? undefined : `mod+${n + 1}`;
 }
 
@@ -151,10 +145,10 @@ export default function Sidebar<T extends string = Section>({
   locked?: boolean;
   liveItem?: T | null;
 }) {
-  // Subscribed, so unlocking or resetting the optional extras adds or
-  // removes the Auto Run and API Templates rows at once.
-  const autoRun = useAutoRunVisible();
-  const list = items ?? (visibleCaseItems(autoRun) as unknown as Item<T>[]);
+  // Subscribed, so switching a module on or off adds or
+  // removes its rail rows at once.
+  const on = useModules();
+  const list = items ?? (visibleCaseItems(on) as unknown as Item<T>[]);
   // Reads back through the shared store rather than its own state, so a
   // tour override (or any other future writer) can move it - the toggle
   // below still writes storage and publishes exactly as before.

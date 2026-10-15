@@ -1,16 +1,25 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Toaster } from "../components/ui/toaster";
 import { TooltipLayer } from "../components/ui/tooltip";
 import { MCP_TOOLS } from "../lib/mcpTools";
 import AiBridge from "./AiBridge";
 import { selectedDbSnapshot, subscribeDbSettings } from "../lib/dbServer";
+import { ALL_MODULES, resetModulesStore, setModulesForTest } from "../lib/modules";
 
 afterEach(() => {
   clearMocks();
   localStorage.clear();
+  resetModulesStore();
+});
+
+// A fresh store has no module on. Most of this file is about a card or a row
+// a module owns, so it starts with every module on; the tests about a module
+// being off set their own.
+beforeEach(() => {
+  setModulesForTest(ALL_MODULES);
 });
 
 // jsdom has no Clipboard API - stub one that returns real Promises so
@@ -148,18 +157,17 @@ test("the AI Tools Breakdown card names every MCP tool", async () => {
   expect(card.textContent).not.toMatch(/[a-z]+_[a-z]/);
 });
 
-// Fix round 1 (Task 3), corrected in round 2: the AI Tools tab's own
-// display gate, autoRunToolsShown() (autoRunToolsOffered() && !capture),
-// now hides every render site - the switch row, the breakdown-card entry
-// and the numbered-list bullet - in capture mode. autoRunToolsOffered()
-// itself stays capture-blind, since it also decides what gets saved and
-// registered (see mcpTools.test.ts). This is a documented, captured
-// screen; off, the tests above and below pin that this build's ordinary
-// behaviour is unchanged.
+// The AI Tools tab's own display gate, toolShown() (toolOffered() &&
+// !capture for the Auto Run and API template tools), hides every render
+// site - the switch row, the breakdown-card entry and the numbered-list
+// bullet - in capture mode. toolOffered() itself stays capture-blind, since
+// it also decides what gets saved and registered (see mcpTools.test.ts).
+// This is a documented, captured screen; off, the tests above and below pin
+// that this build's ordinary behaviour is unchanged.
 //
 // The API templates card names no tool, and the help site documents it, so
-// capture mode shows it - with the Environment card - as Enable Advanced
-// Features does. Only the tool rows and the breakdown entries stay hidden.
+// capture mode shows it - with the Environment card - as every module on
+// does. Only the tool rows and the breakdown entries stay hidden.
 test("capture mode hides every mention of the Auto Run tools on the AI Tools tab, but shows the Environment and API templates cards", async () => {
   localStorage.setItem("tcm-v2-dev-capture", "on");
   mockIPC((cmd) => {
@@ -179,13 +187,70 @@ test("capture mode hides every mention of the Auto Run tools on the AI Tools tab
   expect(screen.queryByText(/^API templates:/)).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "API templates" })).toBeInTheDocument();
   expect(screen.getByRole("switch", { name: "API templates (create, edit and delete)" })).toBeInTheDocument();
-  // The writing style is for everyone, so capture mode shows its card; the
-  // old trial switch is gone.
+  // Capture mode reports every module on, so the writing style card shows;
+  // the old trial switch is gone.
   expect(screen.getByRole("heading", { name: "Writing style" })).toBeInTheDocument();
   expect(screen.queryByText("Test design rules")).not.toBeInTheDocument();
-  // Environments exist for Auto Run, which capture mode shows (as Enable
-  // Advanced Features does), so their card shows with it.
+  // Environments exist for Auto Run, which capture mode shows, so their card
+  // shows with it.
   expect(screen.getByRole("heading", { name: "Environment" })).toBeInTheDocument();
+});
+
+// Each card, and the tool rows, follow their module. Nothing is deleted:
+// the cards are only hidden.
+test("with every module off, only the always-there cards and tools remain", async () => {
+  setModulesForTest([]);
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    return [];
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  await screen.findByText("Tools an assistant may use");
+  expect(screen.queryByRole("heading", { name: "Database Read Access" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Writing style" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Environment" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "API templates" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("switch", { name: "API templates (create, edit and delete)" })).not.toBeInTheDocument();
+  // No tool row of any module, and no breakdown entry for one.
+  expect(screen.queryByLabelText("Auto Run scripts")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("API templates")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Database Read Access")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Auto Run stays something you drive by hand/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/^Database Read Access:/)).not.toBeInTheDocument();
+  // The reading tools that need no module are still switchable.
+  expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
+});
+
+test("each card and tool row appears with its own module and no other", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    return [];
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByText("Tools an assistant may use");
+
+  act(() => setModulesForTest(["db_access"]));
+  expect(screen.getByRole("heading", { name: "Database Read Access" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Database Read Access")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Writing style" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Environment" })).not.toBeInTheDocument();
+
+  act(() => setModulesForTest(["db_access", "writing_style"]));
+  expect(screen.getByRole("heading", { name: "Writing style" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Environment" })).not.toBeInTheDocument();
+
+  act(() => setModulesForTest(["db_access", "writing_style", "auto_run"]));
+  expect(screen.getByRole("heading", { name: "Environment" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Auto Run scripts")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "API templates" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("API templates")).not.toBeInTheDocument();
+
+  act(() => setModulesForTest(["db_access", "writing_style", "auto_run", "api_templates"]));
+  expect(screen.getByRole("heading", { name: "API templates" })).toBeInTheDocument();
+  expect(screen.getByLabelText("API templates")).toBeInTheDocument();
 });
 
 test("the copy button writes the registration command to the clipboard", async () => {
@@ -1732,4 +1797,30 @@ test("the Environment card shows only the site name of the full address", async 
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   await screen.findByRole("combobox", { name: "Environment" });
   expect(await within(envCard()).findByText("hrmmainslqaautom.phrsandbox.dev")).toBeInTheDocument();
+});
+
+// Off hides, never deletes: a tool choice made for a module survives the
+// module being off while other switches are used.
+test("tool choices of a switched-off module survive other toggles and Turn all on", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    return [];
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByText("Tools an assistant may use");
+
+  fireEvent.click(screen.getByLabelText("Auto Run scripts"));
+  expect(screen.getByLabelText("Auto Run scripts")).not.toBeChecked();
+
+  act(() => setModulesForTest(["db_access", "writing_style"]));
+  // Only hidden names are disabled: no Turn all on to offer.
+  expect(screen.queryByRole("button", { name: "Turn all on" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Project wiki"));
+  expect(screen.getByRole("button", { name: "Turn all on" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Turn all on" }));
+  expect(screen.getByLabelText("Project wiki")).toBeChecked();
+
+  act(() => setModulesForTest(ALL_MODULES));
+  expect(screen.getByLabelText("Auto Run scripts")).not.toBeChecked();
 });

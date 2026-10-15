@@ -1249,11 +1249,11 @@ mod accounts_for_the_assistant {
     /// The account routes are offered exactly where Auto Run is.
     #[test]
     fn the_account_routes_are_gated_like_auto_run() {
-        use v2_lib::ai_bridge::{autorun_guard_for, smells_like_a_write};
+        use v2_lib::ai_bridge::{module_guard_for, smells_like_a_write};
         for path in ["/accounts", "/accounts-propose"] {
-            let (status, body) = autorun_guard_for(path, false).unwrap_or_else(|| panic!("{path} was not refused"));
-            assert_eq!((status, body.as_str()), (404, "not available in this build"), "{path}");
-            assert!(autorun_guard_for(path, true).is_none(), "{path}");
+            let (status, body) = module_guard_for(path, &Default::default()).unwrap_or_else(|| panic!("{path} was not refused"));
+            assert_eq!((status, body.as_str()), (404, "Auto Run is switched off in Modules"), "{path}");
+            assert!(module_guard_for(path, &v2_lib::modules::Module::ALL.into_iter().collect()).is_none(), "{path}");
             assert!(!smells_like_a_write("POST", path) && !smells_like_a_write("GET", path), "{path}");
         }
     }

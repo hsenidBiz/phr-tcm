@@ -23,8 +23,8 @@
 //! `presence` finds which ADO ids the clone already has, and where: what
 //! Export skips by default and what Sync's Add new leaves alone.
 //!
-//! Offered exactly where Auto Run is (`ai_tools::autorun_offered`): with
-//! Advanced Features off every command of the tab is refused.
+//! Offered while the Playwright module is on (`modules::on`): with it off
+//! every command of the tab, and Export to Playwright, is refused.
 
 pub mod handoff;
 pub mod presence;
@@ -34,10 +34,11 @@ pub mod structure;
 pub mod sync;
 pub mod users;
 
-/// The refusal every Playwright tab command gives where it is not offered.
-pub const NOT_OFFERED: &str = "not available in this build";
+/// The refusal every Playwright command gives while the module is off -
+/// `Module::Playwright.off_sentence()`, spelled out so it can be a const.
+pub const NOT_OFFERED: &str = "Playwright is switched off in Modules";
 
-/// `Err(NOT_OFFERED)` unless the tab is offered (`ai_tools::autorun_offered`).
+/// `Err(NOT_OFFERED)` unless the Playwright module is on (`offered`).
 pub fn ensure_offered(offered: bool) -> Result<(), String> {
     if offered {
         Ok(())

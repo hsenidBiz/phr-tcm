@@ -2,6 +2,7 @@
 //! paths). `commands/ai_tools.rs` supplies the real home/appdata dirs and
 //! PATH probe, and does the actual file/process I/O.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 pub const TOOL_SPECS: &[ToolSpec] = &[
@@ -140,19 +141,11 @@ pub const CORE_TOOLS: &[&str] = &[
     "merge_case_files",
 ];
 
-/// The Auto Run tools. Offered only where Auto Run itself is: in a
-/// development build, and in a release build whose optional extras are
-/// unlocked (`autorun_offered`). Where they are offered they are listed,
-/// switchable and callable like any other tool; where they are not, they
-/// are not present at all - not listed, no switch, no skill file, and a
-/// direct call is refused. (The name predates the unlock; the TS mirror
-/// and its sync test read it, so it stays.)
-///
-/// The API template tools ride here too: a template runs in the same
-/// signed-in browser Auto Run drives, so it is offered exactly where Auto
-/// Run is. Proving and running one also need the person's own switch
-/// (`BridgeContext::api_writes`), which the bridge checks.
-pub const DEV_ONLY_TOOLS: &[&str] = &[
+/// The Auto Run tools: the Auto Run module's. Where it is on they are
+/// listed, switchable and callable like any other tool; where it is off
+/// they are not present at all - not listed, no switch, no skill file, and
+/// a direct call is refused (`module_of_tool`).
+pub const AUTORUN_TOOLS: &[&str] = &[
     "get_autorun_guide",
     "save_autorun_script",
     "get_autorun_script",
@@ -178,6 +171,13 @@ pub const DEV_ONLY_TOOLS: &[&str] = &[
     "get_accounts",
     "list_test_files",
     "get_autorun_network_wait",
+];
+
+/// The API template tools: the API Templates module's. A template runs in
+/// the same signed-in browser Auto Run drives, so the module hangs off Auto
+/// Run. Proving and running one also need the person's own switch
+/// (`BridgeContext::api_writes`), which the bridge checks.
+pub const API_TEMPLATE_TOOLS: &[&str] = &[
     "get_api_template_guide",
     "list_api_templates",
     "prove_api_template",
@@ -191,6 +191,33 @@ pub const DEV_ONLY_TOOLS: &[&str] = &[
     "retire_app_quirk",
 ];
 
+/// The database tools: the Database Access module's. What they may do is
+/// decided by the connection the person chose and the write switch beside
+/// it; whether they are there at all, by the module.
+pub const DB_TOOLS: &[&str] = &["db_lookup", "db_query"];
+
+/// The module a tool belongs to; `None` for a tool that is part of Core.
+/// One function, read by `tools/list`, the call-time refusal, the skill
+/// writer and the `--mcp` proxy, so no path can disagree with another
+/// about whose a tool is.
+pub fn module_of_tool(name: &str) -> Option<crate::modules::Module> {
+    use crate::modules::Module;
+    if AUTORUN_TOOLS.contains(&name) {
+        Some(Module::AutoRun)
+    } else if API_TEMPLATE_TOOLS.contains(&name) {
+        Some(Module::ApiTemplates)
+    } else if DB_TOOLS.contains(&name) {
+        Some(Module::DbAccess)
+    } else {
+        None
+    }
+}
+
+/// Every tool that belongs to a module, in the order above.
+pub fn module_tools() -> impl Iterator<Item = &'static str> {
+    AUTORUN_TOOLS.iter().chain(API_TEMPLATE_TOOLS).chain(DB_TOOLS).copied()
+}
+
 /// Whether this process is a development build: `cargo test` and
 /// `tauri dev` compile with debug assertions on, `tauri build` does not.
 /// The one place that reads `cfg!(debug_assertions)`, so every other spot
@@ -200,35 +227,18 @@ pub fn dev_build() -> bool {
     cfg!(debug_assertions)
 }
 
-/// Whether the Auto Run tools are offered: always in a development build,
-/// and in a release build once this machine's optional extras are
-/// unlocked or Enable Advanced Features is on (`extras::features_on`; the
-/// parameter keeps its old name). Both inputs explicit, so every combination is testable from
-/// this (development) test binary.
-pub fn autorun_offered_for(dev: bool, unlocked: bool) -> bool {
-    dev || unlocked
-}
-
-/// `autorun_offered_for` for this process: its own build kind and the
-/// extras switch or Enable Advanced Features as the app last loaded or set
-/// them. Only meaningful in the app
-/// process - the `--mcp` proxy learns the app's answer from `/tools`.
-pub fn autorun_offered() -> bool {
-    autorun_offered_for(dev_build(), crate::extras::features_on())
-}
-
-/// The disabled set as it is actually applied: where the Auto Run tools
-/// are not offered, they come first, always; where they are, they are
-/// added only when `disabled` names them. Then whatever the frontend sent,
-/// minus the core tools and duplicates, either way. One function, used by
+/// The disabled set as it is actually applied: every tool of a module that
+/// is off comes first, always; a tool of a module that is on is added only
+/// when `disabled` names it. Then whatever the frontend sent, minus the
+/// core tools and duplicates, either way. One function, used by
 /// tools/list, the call-time refusal and the skill writer, so no path can
-/// disagree with another about what is off.
-pub fn effective_disabled_for(disabled: &[String], offered: bool) -> Vec<String> {
-    let mut out: Vec<String> = if offered {
-        Vec::new()
-    } else {
-        DEV_ONLY_TOOLS.iter().map(|s| s.to_string()).collect()
-    };
+/// disagree with another about what is off. `on` is passed in so every
+/// combination is testable.
+pub fn effective_disabled_for(disabled: &[String], on: &BTreeSet<crate::modules::Module>) -> Vec<String> {
+    let mut out: Vec<String> = module_tools()
+        .filter(|t| module_of_tool(t).is_some_and(|m| !on.contains(&m)))
+        .map(str::to_string)
+        .collect();
     for d in disabled {
         if !CORE_TOOLS.contains(&d.as_str()) && !out.iter().any(|o| o == d) {
             out.push(d.clone());
@@ -237,9 +247,9 @@ pub fn effective_disabled_for(disabled: &[String], offered: bool) -> Vec<String>
     out
 }
 
-/// `effective_disabled_for` for this process (`autorun_offered`).
+/// `effective_disabled_for` for this process (`modules::current`).
 pub fn effective_disabled(disabled: &[String]) -> Vec<String> {
-    effective_disabled_for(disabled, autorun_offered())
+    effective_disabled_for(disabled, &crate::modules::current())
 }
 
 /// One command per thing a person reaches for by name; every other tool

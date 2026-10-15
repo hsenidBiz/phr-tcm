@@ -8,10 +8,11 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Profiler } from "react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { toast } from "../../lib/toast";
 import { resetBackgroundRun } from "../../lib/backgroundRun";
 import { clearPlaywrightExportRequest, playwrightExportSnapshot } from "../../lib/playwrightExport";
+import { resetModulesStore, setModulesForTest } from "../../lib/modules";
 import AutoRun from "./index";
 import ReplayPane from "./ReplayPane";
 
@@ -20,7 +21,14 @@ vi.mock("../../lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), w
 /** What auto_run_load_recipe answers; a test that needs a recipe sets it. */
 let savedRecipe: unknown = null;
 
+// Auto Run's own screen is only ever open while Auto Run (and so Database
+// Access) is on; "Export to Playwright" also needs the Playwright module.
+beforeEach(() => {
+  setModulesForTest(["db_access", "auto_run", "playwright"]);
+});
+
 afterEach(() => {
+  resetModulesStore();
   resetBackgroundRun();
   savedRecipe = null;
   clearMocks();
@@ -487,6 +495,19 @@ test("Export to Playwright asks for the Playwright tab's Export dialog with this
   });
   expect(screen.queryByRole("heading", { name: "Export to Playwright" })).not.toBeInTheDocument();
   clearPlaywrightExportRequest();
+});
+
+// Without the Playwright module there is no tab to hand the cases to, so the
+// menu has no such item (the other items stay).
+test("without the Playwright module the More menu has no Export to Playwright", async () => {
+  setModulesForTest(["db_access", "auto_run"]);
+  mockList([caseRow(1, "Alpha check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  expect(screen.getByRole("menuitem", { name: /Execution order/ })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: "Export to Playwright" })).not.toBeInTheDocument();
 });
 
 test("Clear scripts and Clear results are disabled when there is nothing to clear", async () => {

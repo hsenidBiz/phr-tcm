@@ -200,6 +200,12 @@ pub fn is_held(env: &str, key: &str) -> bool {
     table().contains_key(&(env.to_string(), key.to_string()))
 }
 
+/// Whether the supervised Auto Run browser or an Auto Run setup browser holds
+/// an account right now - the two holders only a person closes. Only looks.
+pub fn a_browser_is_held() -> bool {
+    table().values().any(|e| matches!(e.holder, Holder::Browser | Holder::Setup))
+}
+
 /// The lease, now, or the sentence that says who has it.
 pub fn try_acquire(env: &str, key: &str, holder: Holder) -> Result<Lease, String> {
     take(env, key, &holder).map_err(|(by, _)| in_use(key, by))

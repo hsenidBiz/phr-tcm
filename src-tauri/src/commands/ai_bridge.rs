@@ -178,10 +178,14 @@ pub fn set_bridge_context(
     // per repository now, so switching repository with the same toggles has
     // to re-sync - into the new repository's dir. Still a no-op unless that
     // dir already exists (see `sync_commands`).
-    type SyncKey = (Vec<String>, Option<String>);
+    //
+    // And on the modules: a module switched off takes its commands with it
+    // (`ai_tools::effective_disabled`), so the next push after a switch
+    // re-syncs even with the same toggles.
+    type SyncKey = (Vec<String>, Option<String>, std::collections::BTreeSet<crate::modules::Module>);
     static LAST: std::sync::Mutex<Option<SyncKey>> = std::sync::Mutex::new(None);
     let mut last = LAST.lock().unwrap();
-    let key: SyncKey = (disabled_tools.clone(), working_dir.clone());
+    let key: SyncKey = (disabled_tools.clone(), working_dir.clone(), crate::modules::current());
     if last.as_ref() != Some(&key) {
         *last = Some(key);
         crate::commands::ai_tools::sync_commands(&disabled_tools, working_dir.as_deref());

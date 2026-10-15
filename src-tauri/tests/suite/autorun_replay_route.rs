@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 use v2_lib::ai_bridge::{
-    after_ended_discovery, autorun_guard_for, autorun_replay_with, route, AssistantReplay, BridgeContext,
+    after_ended_discovery, module_guard_for, autorun_replay_with, route, AssistantReplay, BridgeContext,
     DiscoveryEnded, HostFuture, ReplayHost, ENDED_DISCOVERY_FIRST,
 };
 use v2_lib::autorun::mapping_summary::MappingSummary;
@@ -282,8 +282,8 @@ async fn database_read_access_follows_the_db_query_switch() {
 /// running anything.
 #[tokio::test]
 async fn the_route_is_gated_with_the_auto_run_routes() {
-    assert!(autorun_guard_for("/autorun-replay", false).is_some());
-    assert!(autorun_guard_for("/autorun-replay", true).is_none());
+    assert!(module_guard_for("/autorun-replay", &Default::default()).is_some());
+    assert!(module_guard_for("/autorun-replay", &v2_lib::modules::Module::ALL.into_iter().collect()).is_none());
     let _a = crate::serial::autorun();
     let dir = tempfile::tempdir().unwrap();
     store::set_root(dir.path().to_path_buf());

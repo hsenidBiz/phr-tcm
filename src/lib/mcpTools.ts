@@ -4,7 +4,7 @@
 // later release is then available by default rather than silently missing
 // because it wasn't in someone's saved list.
 
-import { featuresOnSnapshot, subscribeExtras } from "./extras";
+import { modulesSnapshot, realModulesSnapshot, subscribeModules, type Module } from "./modules";
 import { isCaptureMode } from "../dev/capture";
 
 const KEY = "tcm-v2-mcp-disabled";
@@ -242,11 +242,11 @@ export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_
   // is a set nobody can ship.
   "validate_cases", "optimize_cases", "merge_case_files"] as const;
 
-/** The Auto Run tools, and the API template tools that ride on the same
- * signed-in browser: offered only where Auto Run is (autoRunToolsOffered)
- * - absent entirely (not listed, no switch, no skill file) elsewhere.
- * Mirrors `ai_tools.rs`'s `DEV_ONLY_TOOLS`. */
-export const DEV_ONLY_TOOLS = [
+/** The tools of each module, mirroring `ai_tools.rs`'s `AUTORUN_TOOLS`,
+ * `API_TEMPLATE_TOOLS` and `DB_TOOLS` (a test reads the Rust consts and
+ * compares). A tool whose module is off is absent entirely - not listed, no
+ * switch, no skill file - and Rust refuses a direct call. */
+export const AUTORUN_TOOLS = [
   "get_autorun_guide",
   "save_autorun_script",
   "get_autorun_script",
@@ -272,6 +272,9 @@ export const DEV_ONLY_TOOLS = [
   "get_accounts",
   "list_test_files",
   "get_autorun_network_wait",
+] as const;
+
+export const API_TEMPLATE_TOOLS = [
   "get_api_template_guide",
   "list_api_templates",
   "prove_api_template",
@@ -285,34 +288,36 @@ export const DEV_ONLY_TOOLS = [
   "retire_app_quirk",
 ] as const;
 
-/** True in `tauri dev` and in this test suite, false in `tauri build` - a
- * compile-time constant, read once at module load. Mirrors
- * `lib/extras.ts`'s `autoRunVisible` and `ai_tools.rs`'s `dev_build()`. */
-export const DEV_BUILD: boolean = import.meta.env.DEV;
+export const DB_TOOLS = ["db_lookup", "db_query"] as const;
 
-/** Whether the Auto Run tools are offered right now: always in a
- * development build, and in a release build once this machine's optional
- * extras are unlocked or Enable Advanced Features is on (lib/extras'
- * `featuresOnSnapshot`). Read live, not at module load. Mirrors
- * `ai_tools.rs`'s `autorun_offered()`.
- *
- * Deliberately NOT capture-mode-aware: this also decides what
- * `loadDisabledTools()` keeps and what `snapshotKeyFor()` keys on, which
- * feed `register`'s `commands.registerAiTool(...)` - real files Rust writes
- * to disk. Capture mode must affect display only; see `autoRunToolsShown`
- * for the screen's own gate. */
-export function autoRunToolsOffered(): boolean {
-  return DEV_BUILD || featuresOnSnapshot();
+/** The module a tool belongs to; null for a tool that is part of Core.
+ * Mirrors `ai_tools.rs`'s `module_of_tool`. */
+export function moduleOfTool(name: string): Module | null {
+  if ((AUTORUN_TOOLS as readonly string[]).includes(name)) return "auto_run";
+  if ((API_TEMPLATE_TOOLS as readonly string[]).includes(name)) return "api_templates";
+  if ((DB_TOOLS as readonly string[]).includes(name)) return "db_access";
+  return null;
 }
 
-/** Whether the AI Tools screen should show anything about the Auto Run
- * tools right now: `autoRunToolsOffered()`, hidden again in capture mode -
- * the screen is documented and captured, so a shot must never name them.
+/** Whether a tool is offered right now: Core, or its module is really on.
+ * Read live from the REAL set, not capture mode's all-on view: it decides
+ * what `loadDisabledTools()` keeps and what `snapshotKeyFor()` keys on,
+ * which feed `register`'s `commands.registerAiTool(...)` - real files Rust
+ * writes to disk. Capture mode must affect display only; see `toolShown`. */
+export function toolOffered(name: string): boolean {
+  const m = moduleOfTool(name);
+  return m === null || realModulesSnapshot().has(m);
+}
+
+/** Whether the AI Tools screen should show a tool right now: its module is
+ * on (capture mode's view: every module), hidden again in capture mode for the Auto Run and API template tools - the
+ * screen is documented and captured, so a shot must never name them.
  * DISPLAY ONLY: never wire this into `loadDisabledTools`, `snapshotKeyFor`,
- * or anything that feeds `register`/`setBridgeContext` - what is actually
- * offered, saved and registered must never depend on capture mode. */
-export function autoRunToolsShown(): boolean {
-  return autoRunToolsOffered() && !isCaptureMode();
+ * or anything that feeds `register`/`setBridgeContext`. */
+export function toolShown(name: string): boolean {
+  const m = moduleOfTool(name);
+  if (m !== null && !modulesSnapshot().has(m)) return false;
+  return !(isCaptureMode() && (m === "auto_run" || m === "api_templates"));
 }
 
 export function isCoreTool(name: string): boolean {
@@ -338,7 +343,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // its steps: read the format, look at the page, try a locator or an
   // action, read what a run did, save the result and record what you
   // learned. Half of them switched on is half a job, so they move
-  // together. Offered only where Auto Run is; see autoRunToolsOffered.
+  // together. Offered only while the Auto Run module is on; see toolOffered.
   // The accounts a script runs as belong to the same job: proposing
   // logins for the environment, and reading the keys a script names.
   [
@@ -371,7 +376,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // Building an API template is one job too: read the format, see what
   // is saved, prove a draft, run it. A list with no way to run what it
   // lists, or a prove with no guide to the format, is half a job. Offered
-  // only where Auto Run is. Proving and running also need the separate
+  // only while the API Templates module is on. Proving and running also need the separate
   // API templates switch - a different decision, like database writes.
   // The stages a module's wizard is mapped into belong to that job: a
   // template that writes to a stage is only as good as the order the
@@ -480,8 +485,8 @@ export function visibleTools(): McpToolInfo[] {
   return MCP_TOOLS.filter(
     (t) =>
       !isCoreTool(t.name) &&
-      // Display gate only - see autoRunToolsShown's own doc comment.
-      (autoRunToolsShown() || !(DEV_ONLY_TOOLS as readonly string[]).includes(t.name)),
+      // Display gate only - see toolShown's own doc comment.
+      toolShown(t.name),
   );
 }
 
@@ -492,11 +497,11 @@ export const RENAMED_TOOLS: Readonly<Record<string, string>> = {
   get_run_failures: "get_run_results",
 };
 
-/** Whether Database Read Access is switched on: the reading pair's
- * `db_query` is not among the disabled tools. Auto Run's precondition
- * checks follow it - while it is off, none is run. */
+/** Whether Database Read Access is switched on: the Database Access module
+ * is on and the reading pair's `db_query` is not among the disabled tools.
+ * Auto Run's precondition checks follow it - while it is off, none is run. */
 export function dbReadAccessOn(): boolean {
-  return !disabledToolsSnapshot().includes("db_query");
+  return modulesSnapshot().has("db_access") && !disabledToolsSnapshot().includes("db_query");
 }
 
 export function loadDisabledTools(): string[] {
@@ -510,11 +515,12 @@ export function loadDisabledTools(): string[] {
       (t) =>
         typeof t === "string" &&
         !isCoreTool(t) &&
-        // A list saved while the Auto Run tools were offered can name one
-        // of them. Dropped where the Auto Run tools are not offered,
-        // where it would be meaningless - there is no request it could
-        // ever be attached to.
-        (autoRunToolsOffered() || !(DEV_ONLY_TOOLS as readonly string[]).includes(t)),
+        // A list saved while a module was on can name one of its tools.
+        // Dropped while that module is off, where it would be meaningless -
+        // there is no request it could ever be attached to. The database
+        // pair is the exception: switching Database Access off and on
+        // again must not quietly re-enable reading the person had refused.
+        (toolOffered(t) || moduleOfTool(t) === "db_access"),
     );
     // A list saved before the pairing can name one half of a pair. Complete
     // it toward OFF: the pair is one switch now, and the alternative would
@@ -532,10 +538,27 @@ export function loadDisabledTools(): string[] {
 
 const listeners = new Set<() => void>();
 
-export function saveDisabledTools(names: string[]): void {
+/** Every name in storage, unfiltered. */
+function storedNames(): string[] {
   try {
-    if (names.length === 0) localStorage.removeItem(KEY);
-    else localStorage.setItem(KEY, JSON.stringify(names));
+    const parsed = JSON.parse(localStorage.getItem(KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Save the list the screen shows. Off hides, never deletes: the names of a
+ * module that is off are not on the screen's list (the read side hides
+ * them), so they are carried over from storage - otherwise any toggle made
+ * while a module is off would erase them, and they would come back enabled
+ * with the module. */
+export function saveDisabledTools(names: string[]): void {
+  const hidden = storedNames().filter((n) => !isCoreTool(n) && moduleOfTool(n) !== null && !toolOffered(n));
+  const all = [...new Set([...names, ...hidden])];
+  try {
+    if (all.length === 0) localStorage.removeItem(KEY);
+    else localStorage.setItem(KEY, JSON.stringify(all));
   } catch {
     // storage unavailable -> the choice lasts for this session only
   }
@@ -544,22 +567,21 @@ export function saveDisabledTools(names: string[]): void {
 
 /** Subscription so App can re-push the bridge context the moment a tool is
  * toggled, instead of the change waiting for the next org/project change.
- * Also fires when the optional extras are unlocked or relocked, or Enable
- * Advanced Features changes: that
- * changes which saved names count. */
+ * Also fires when a module is switched on or off: that changes which saved
+ * names count. */
 export function subscribeDisabledTools(cb: () => void): () => void {
   listeners.add(cb);
-  const offExtras = subscribeExtras(cb);
+  const offModules = subscribeModules(cb);
   return () => {
     listeners.delete(cb);
-    offExtras();
+    offModules();
   };
 }
 
-/** Keyed on the stored list AND whether the Auto Run tools are offered:
- * the same stored list loads differently either side of an unlock. */
+/** Keyed on the stored list AND which modules are on: the same stored list
+ * loads differently either side of a module being switched. */
 function snapshotKeyFor(raw: string): string {
-  return `${autoRunToolsOffered() ? 1 : 0}:${raw}`;
+  return `${[...realModulesSnapshot()].sort().join("+")}:${raw}`;
 }
 
 let snapshot: string[] = loadDisabledTools();

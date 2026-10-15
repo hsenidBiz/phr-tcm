@@ -38,6 +38,7 @@ pub mod capture;
 pub mod commands;
 pub mod events;
 pub mod extras;
+pub mod modules;
 pub mod filewatch;
 pub mod guide;
 pub mod help;
@@ -82,7 +83,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, discovery, environments, guide, misc, prs, pw_export, pw_repo, queue, run_order, runs,
+        autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, discovery, environments, guide, misc, modules, prs, pw_export, pw_repo, queue, run_order, runs,
         test_files, testplan, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
@@ -323,9 +324,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             run_order::save_run_order,
             misc::get_extras_unlocked,
             misc::set_extras_unlocked,
-            misc::get_advanced_features,
-            misc::set_advanced_features,
             misc::open_help,
+            modules::modules_get,
+            modules::modules_set,
             guide::guide_status,
             guide::guide_download,
             app_settings::get_app_settings,
@@ -577,6 +578,7 @@ pub fn run() {
                 // This machine's optional extras switch (see extras.rs):
                 // read once here, so the AI bridge can answer from memory.
                 extras::init(dir.clone());
+                modules::init(dir.clone());
                 // Close-to-tray and beta updates: read before any page (see app_settings.rs).
                 crate::app_settings::init(dir.clone());
                 // The AI Bridge tab's writing style, read by the guide on each

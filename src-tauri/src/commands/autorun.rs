@@ -270,6 +270,12 @@ pub async fn supervised_session_is_open() -> bool {
     SESSION.lock().await.is_some()
 }
 
+/// `supervised_session_is_open` without waiting: a session lock that is
+/// taken counts as open (something is using the browser).
+pub fn supervised_session_is_open_now() -> bool {
+    SESSION.try_lock().map_or(true, |slot| slot.is_some())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_open_browser(app: tauri::AppHandle, browser_name: String) -> Result<(), String> {
@@ -1219,6 +1225,7 @@ pub async fn auto_run_replay_to_step(
     step: i32,
     db_read_access: bool,
 ) -> Result<crate::autorun::replay_to::ReplayAnswer, String> {
+    let db_read_access = crate::autorun::preconditions::read_access(db_read_access);
     let req = crate::autorun::replay_to::ReplayRequest { case_id, step, db_read_access };
     // The person's own replay, as their own step: it may lift an earlier
     // case's guard. The tabs its steps ran in go to the pane beside them.
@@ -1515,6 +1522,7 @@ pub async fn auto_run_check_preconditions(
     case_id: i32,
     db_read_access: bool,
 ) -> Result<crate::autorun::preconditions::PreconditionCheck, String> {
+    let db_read_access = crate::autorun::preconditions::read_access(db_read_access);
     let root = root(&app)?;
     // A watched case starts here: the last case's tabs are closed, even
     // when it is the same case started again.
@@ -2262,7 +2270,7 @@ pub const REPORT_RUN_GONE: &str = "this run is no longer on this machine";
 /// (`autorun::report`), written atomically to `<root>/reports/<run id>.html`
 /// - the same file, overwritten, on every open. The reports folder sits
 /// beside the shots folder, which is how the page links its pictures
-/// (`../shots/<name>`). "Is Auto Run offered here" is passed in, the way the
+/// (`../shots/<name>`). "Is Auto Run on" is passed in, the way the
 /// Test files commands take it, so a locked build's refusal is testable.
 /// The run id is checked with `store::safe_run_id` before anything touches
 /// the disk, since it becomes a file name. The scripts on this machine
@@ -2280,7 +2288,7 @@ pub fn write_report_at(
     run_id: &str,
     ran_at: &str,
 ) -> Result<std::path::PathBuf, String> {
-    crate::commands::api_templates::refuse_unless(offered)?;
+    crate::modules::require(crate::modules::Module::AutoRun, offered)?;
     if !safe_run_id(run_id) {
         return Err(format!("run id {run_id:?} is not a safe filename"));
     }
@@ -2335,7 +2343,7 @@ pub async fn auto_run_open_report(
     run_id: String,
     ran_at: String,
 ) -> Result<(), String> {
-    let offered = crate::ai_tools::autorun_offered();
+    let offered = crate::modules::on(crate::modules::Module::AutoRun);
     let root = root(&app)?;
     let path = tauri::async_runtime::spawn_blocking(move || write_report_at(offered, &root, &organization, &project, &run_id, &ran_at))
         .await
@@ -2351,7 +2359,7 @@ pub async fn auto_run_open_report(
 
 /// The pure half of [`auto_run_open_download`]: the one path Open may hand
 /// to the default app, a plain name in the run's own download folder
-/// (`store::download_file`). "Is Auto Run offered here" is passed in, as the
+/// (`store::download_file`). "Is Auto Run on" is passed in, as the
 /// report takes it.
 pub fn download_path_at(
     offered: bool,
@@ -2359,7 +2367,7 @@ pub fn download_path_at(
     run_id: &str,
     name: &str,
 ) -> Result<std::path::PathBuf, String> {
-    crate::commands::api_templates::refuse_unless(offered)?;
+    crate::modules::require(crate::modules::Module::AutoRun, offered)?;
     store::download_file(root, run_id, name)
 }
 
@@ -2369,7 +2377,7 @@ pub fn download_sizes_at(
     root: &std::path::Path,
     run_id: &str,
 ) -> Result<Vec<crate::autorun::DownloadFile>, String> {
-    crate::commands::api_templates::refuse_unless(offered)?;
+    crate::modules::require(crate::modules::Module::AutoRun, offered)?;
     Ok(store::download_files(root, run_id))
 }
 
@@ -2382,7 +2390,7 @@ pub const DOWNLOAD_NOT_OPENED: &str = "the file could not be opened - see Settin
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_open_download(app: tauri::AppHandle, run_id: String, name: String) -> Result<(), String> {
-    let path = download_path_at(crate::ai_tools::autorun_offered(), &root(&app)?, &run_id, &name)?;
+    let path = download_path_at(crate::modules::on(crate::modules::Module::AutoRun), &root(&app)?, &run_id, &name)?;
     tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| {
         crate::applog::warn(format!("a run's download could not be opened: {e}"));
         DOWNLOAD_NOT_OPENED.to_string()
@@ -2398,7 +2406,7 @@ pub fn auto_run_download_sizes(
     app: tauri::AppHandle,
     run_id: String,
 ) -> Result<Vec<crate::autorun::DownloadFile>, String> {
-    download_sizes_at(crate::ai_tools::autorun_offered(), &root(&app)?, &run_id)
+    download_sizes_at(crate::modules::on(crate::modules::Module::AutoRun), &root(&app)?, &run_id)
 }
 
 /// A run id the frontend can stamp on a new session.

@@ -56,6 +56,20 @@ fn take_after_put_returns_the_entry_once() {
     assert!(matches!(held::take::<Tag>(ENV, key, fingerprint()), Taken::Nothing), "handed back twice");
 }
 
+/// `held::any` is what Modules asks before Auto Run is switched off: true
+/// while a template run's browser is kept, false once it is taken out.
+#[test]
+fn any_says_whether_a_browser_is_kept() {
+    let _h = crate::serial::held_browsers();
+    let _l = crate::serial::account_leases();
+    let key = "held.any";
+    assert!(!held::any());
+    assert!(held::put(ENV, key, entry(9, ENV, key)).is_none());
+    assert!(held::any());
+    let _ = held::take::<Tag>(ENV, key, fingerprint());
+    assert!(!held::any());
+}
+
 #[test]
 fn a_case_taking_the_account_makes_the_held_browser_give_way() {
     let _h = crate::serial::held_browsers();

@@ -538,7 +538,7 @@ fn removing_a_fixture_takes_its_history_and_needs_auto_run() {
 
     assert_eq!(
         remove_fixture_at(false, root, ORG, PROJECT, "cycle-fixture").unwrap_err(),
-        "not available in this build"
+        "API Templates is switched off in Modules"
     );
     assert!(fixture_store::load(root, ORG, PROJECT, "cycle-fixture").unwrap().is_some());
 

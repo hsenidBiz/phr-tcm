@@ -4,7 +4,13 @@
 //! development build opens straight from the repository.
 
 use v2_lib::guide::{DAMAGED, DOWNLOAD_FAILED, NOT_DOWNLOADED, NOT_PUBLISHED};
+use std::collections::BTreeSet;
 use v2_lib::help::{guide_address, guide_opening, launcher_html, GuideOpening, DEV_INDEX, OPEN_ERROR};
+use v2_lib::modules::Module;
+
+fn mods(ms: &[Module]) -> BTreeSet<Module> {
+    ms.iter().copied().collect()
+}
 
 /// No sentence the guide's buttons can show names a URL or a path.
 #[test]
@@ -34,15 +40,34 @@ fn the_site_is_not_embedded() {
     assert!(!help.contains("include_dir!"), "help.rs embeds the site again");
 }
 
-/// The guide is told whether Enable Advanced Features is on through its
-/// address: `?advanced=1` while on, nothing while off, and the guide hides
-/// Auto Run and API Templates unless it is there.
+/// The guide is told which modules are on through its address:
+/// `?modules=` with their snake_case names in tree order while any is,
+/// nothing while none is, and the guide hides every module's pages it is
+/// not told about.
 #[test]
-fn the_guide_address_says_whether_advanced_features_are_on() {
+fn the_guide_address_names_the_modules_that_are_on() {
     let index = std::path::Path::new(DEV_INDEX);
-    let on = guide_address(index, true).expect("a file URL");
-    let off = guide_address(index, false).expect("a file URL");
-    assert!(on.starts_with("file:///") && on.ends_with("/help/index.html?advanced=1"), "{on}");
+    let all: BTreeSet<Module> = Module::ALL.into_iter().collect();
+    let on = guide_address(index, &all).expect("a file URL");
+    let off = guide_address(index, &mods(&[])).expect("a file URL");
+    assert!(
+        on.starts_with("file:///")
+            && on.contains("/help/index.html?modules=db_access,writing_style,auto_run,api_templates,playwright"),
+        "{on}"
+    );
+    let some = guide_address(index, &mods(&[Module::AutoRun, Module::DbAccess])).expect("a file URL");
+    assert!(some.contains("/help/index.html?modules=db_access,auto_run"), "{some}");
+    // Transitional for one release: while Auto Run is on the query also
+    // carries the old flag, so a guide downloaded under an earlier version
+    // still shows its Auto Run pages. Nothing else carries it.
+    assert!(
+        on.ends_with("?modules=db_access,writing_style,auto_run,api_templates,playwright&advanced=1"),
+        "{on}"
+    );
+    assert!(some.ends_with("?modules=db_access,auto_run&advanced=1"), "{some}");
+    let no_auto_run = guide_address(index, &mods(&[Module::DbAccess, Module::WritingStyle])).expect("a file URL");
+    assert!(no_auto_run.ends_with("/help/index.html?modules=db_access,writing_style"), "{no_auto_run}");
+    assert!(!no_auto_run.contains("advanced"), "{no_auto_run}");
     assert!(off.starts_with("file:///") && off.ends_with("/help/index.html"), "{off}");
     assert!(!off.contains('?'), "{off}");
     // A path with spaces (this repository's own) is encoded, not cut short.
@@ -53,7 +78,7 @@ fn the_guide_address_says_whether_advanced_features_are_on() {
 /// meta refresh, and carries nothing else.
 #[test]
 fn the_launcher_goes_on_to_the_guide() {
-    let address = "file:///C:/a%20b/help/index.html?advanced=1";
+    let address = "file:///C:/a%20b/help/index.html?modules=db_access,auto_run";
     let page = launcher_html(address);
     assert!(page.contains(&format!("location.replace(\"{address}\")")), "{page}");
     assert!(page.contains(&format!("url={address}")), "{page}");
@@ -70,14 +95,14 @@ fn every_opening_tells_the_guide() {
     }
 }
 
-/// Off, the index opens as it is: no launcher is written. On, the launcher
-/// carries the flag.
+/// With no module on, the index opens as it is: no launcher is written.
+/// With any on, the launcher names them.
 #[test]
-fn off_opens_the_index_itself_and_on_goes_through_the_launcher() {
+fn no_module_opens_the_index_itself_and_any_goes_through_the_launcher() {
     let index = std::path::Path::new(DEV_INDEX);
-    assert_eq!(guide_opening(index, false), GuideOpening::Index);
-    match guide_opening(index, true) {
-        GuideOpening::Launcher(page) => assert!(page.contains("index.html?advanced=1"), "{page}"),
+    assert_eq!(guide_opening(index, &mods(&[])), GuideOpening::Index);
+    match guide_opening(index, &mods(&[Module::WritingStyle])) {
+        GuideOpening::Launcher(page) => assert!(page.contains("index.html?modules=writing_style"), "{page}"),
         other => panic!("{other:?}"),
     }
 }

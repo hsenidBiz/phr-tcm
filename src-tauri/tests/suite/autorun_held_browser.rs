@@ -252,7 +252,11 @@ async fn the_assistant_releases_through_its_route() {
     assert!(said.contains("release") || said.contains("released"), "{said}");
     let mcp = include_str!("../../src/mcp.rs");
     assert!(mcp.contains("\"release_autorun_browser\" => call(\"POST\", \"/autorun-release\""), "the tool does not reach the route");
-    assert!(v2_lib::ai_tools::DEV_ONLY_TOOLS.contains(&"release_autorun_browser"), "not on the Auto Run gate");
+    assert_eq!(
+        v2_lib::ai_tools::module_of_tool("release_autorun_browser"),
+        Some(v2_lib::modules::Module::AutoRun),
+        "not on the Auto Run gate"
+    );
     let guide = include_str!("../../src/autorun/guide.rs");
     assert!(guide.contains("`release_autorun_browser`"), "the guide does not name it");
 }
