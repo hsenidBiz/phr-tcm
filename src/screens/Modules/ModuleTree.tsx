@@ -145,7 +145,7 @@ export default function ModuleTree({
 }: {
   modules: ReadonlySet<Module>;
   hydrated: boolean;
-  /** The module whose change is being saved, if any. */
+  /** The module whose change is being saved, if any; every switch waits. */
   busy: Module | null;
   /** Ask to switch `m` on or off. A locked module never reaches this. */
   onToggle: (m: Module, next: boolean) => void;
@@ -209,11 +209,13 @@ export default function ModuleTree({
                 type="button"
                 role="switch"
                 aria-checked={on}
-                aria-disabled={locked || busy === m || undefined}
+                aria-disabled={locked || busy !== null || undefined}
                 aria-labelledby={`mod-${m}-name mod-${m}-status`}
                 aria-describedby={`mod-${m}-desc${locked ? ` mod-${m}-needs` : ""}`}
                 onClick={() => {
-                  if (busy === m) return;
+                  // One save at a time: replies arriving out of order could
+                  // otherwise leave the page showing the older set.
+                  if (busy !== null) return;
                   if (locked) return shake(m);
                   onToggle(m, !on);
                 }}

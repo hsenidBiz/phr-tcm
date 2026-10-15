@@ -165,3 +165,27 @@ test("a path runs from the parent card's bottom edge to the child card's top edg
   expect(ends("auto_run")).toEqual({ fromY: top("db_access") + 120, toY: top("auto_run") });
   vi.restoreAllMocks();
 });
+
+test("while one change saves, every switch waits", async () => {
+  const sets: unknown[] = [];
+  let release!: (v: Module[]) => void;
+  mockIPC((cmd, args) => {
+    if (cmd !== "modules_set") return [];
+    sets.push(args);
+    return new Promise<Module[]>((r) => (release = r));
+  });
+  show(["db_access"]);
+  fireEvent.click(sw(/^Auto Run/));
+  await waitFor(() => expect(sets).toHaveLength(1));
+  expect(sw(/^Writing Style/)).toHaveAttribute("aria-disabled", "true");
+  fireEvent.click(sw(/^Writing Style/));
+  expect(sets).toHaveLength(1);
+  await act(async () => release(["db_access", "auto_run"]));
+  await waitFor(() => expect(sw(/^Writing Style/)).not.toHaveAttribute("aria-disabled"));
+});
+
+test("the core's name and line are read out", () => {
+  show([]);
+  expect(screen.getByText("Core").closest("[aria-hidden]")).toBeNull();
+  expect(screen.getByText("Test cases, suites, runs and the board").closest("[aria-hidden]")).toBeNull();
+});
