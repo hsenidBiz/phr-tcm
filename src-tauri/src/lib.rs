@@ -38,6 +38,7 @@ pub mod capture;
 pub mod commands;
 pub mod events;
 pub mod extras;
+pub mod modules;
 pub mod filewatch;
 pub mod guide;
 pub mod help;
@@ -577,6 +578,7 @@ pub fn run() {
                 // This machine's optional extras switch (see extras.rs):
                 // read once here, so the AI bridge can answer from memory.
                 extras::init(dir.clone());
+                modules::init(dir.clone());
                 // Close-to-tray and beta updates: read before any page (see app_settings.rs).
                 crate::app_settings::init(dir.clone());
                 // The AI Bridge tab's writing style, read by the guide on each
