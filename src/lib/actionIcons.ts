@@ -134,6 +134,15 @@ export {
   // its own glyph rather than reusing that one for something else.
   SendHorizontal as IconSendResults,
 
+  // The Modules page: the tree root and one tile per module.
+  Blocks as IconModules,
+  Zap as IconCore,
+  Database as IconModuleDatabase,
+  PenLine as IconModuleWritingStyle,
+  CirclePlay as IconModuleAutoRun,
+  Braces as IconModuleApiTemplates,
+  FlaskConical as IconModulePlaywright,
+
   // Everything else
   // Opening the calendar to choose a date (DateField).
   CalendarDays as IconPickDate,

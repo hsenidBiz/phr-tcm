@@ -15,6 +15,7 @@ import { commands, events, type AppSettings, type GuideStatus } from "../binding
 import { copyText } from "../lib/clipboard";
 import AccountSettings from "../components/AccountSettings";
 import BackgroundSettings from "../components/BackgroundSettings";
+import Modules from "./Modules";
 import { SettingRow, SettingsCard } from "../components/settings/SettingsCard";
 import { useTileLayout } from "../components/settings/useTileLayout";
 import ChangelogVersionTitle from "../components/ChangelogVersionTitle";
@@ -51,6 +52,7 @@ import {
   IconPlayGame,
   IconRefresh,
   IconTour,
+  IconModules,
   IconUndo,
 } from "../lib/actionIcons";
 import RunnerGameModal from "../components/RunnerGameModal";
@@ -124,6 +126,7 @@ export default function Settings({ org, project }: { org: string; project: strin
   useExtrasSequence(panelRef);
   const extrasUnlocked = useExtrasUnlocked();
   const [confirmReset, setConfirmReset] = useState(false);
+  const [modulesOpen, setModulesOpen] = useState(false);
   const [gameOpen, setGameOpen] = useState(false);
   const [breakerOpen, setBreakerOpen] = useState(false);
   useEffect(() => {
@@ -606,6 +609,8 @@ export default function Settings({ org, project }: { org: string; project: strin
     </SettingsCard>
   );
 
+  if (modulesOpen) return <Modules onBack={() => setModulesOpen(false)} />;
+
   return (
     // Two columns on wide windows; below lg everything stacks into one
     // column: the cards, then the changelog/log panel.
@@ -746,6 +751,16 @@ export default function Settings({ org, project }: { org: string; project: strin
             {selectedRate.hint}
           </p>
         </SettingRow>
+        <SettingRow
+          name="Modules"
+          description="Switch on the parts of the app you need, such as Auto Run."
+          control={
+            <Button size="sm" variant="outline" onClick={() => setModulesOpen(true)}>
+              <IconModules aria-hidden />
+              Modules
+            </Button>
+          }
+        />
       </SettingsCard>
 
       {!tiles.spareStack && aiToolsCard}

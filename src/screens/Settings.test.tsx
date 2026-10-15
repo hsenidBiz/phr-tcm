@@ -1511,3 +1511,14 @@ test("a failed How To Use re-asks the status and offers Download", async () => {
   expect(await screen.findByRole("button", { name: "Download How to Use (31 MB)" })).toBeEnabled();
   expect(statusCalls).toBe(2);
 });
+
+test("Modules opens the modules page from Settings, and Back to Settings returns", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  fireEvent.click(screen.getByRole("button", { name: "Modules" }));
+  expect(await screen.findAllByRole("switch")).toHaveLength(5);
+  expect(screen.queryByRole("heading", { name: "Appearance" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Back to Settings/ }));
+  expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+});

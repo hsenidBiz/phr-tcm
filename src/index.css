@@ -1449,3 +1449,106 @@ table {
     transition: none !important;
   }
 }
+
+/* The Modules page (screens/Modules). The tree's paths, the lit cards and the
+   power core. Everything that MOVES sits in the no-preference block, so
+   reduced motion shows the end state: no pulsing rings, no travelling light,
+   no glow flash (the shake is .t-shake, guarded with the other transitions). */
+.mod-edge {
+  fill: none;
+  stroke: var(--color-border-strong);
+  stroke-width: 3;
+  transition: stroke 0.25s;
+}
+.mod-edge-lit {
+  stroke: var(--color-accent);
+  filter: drop-shadow(0 0 5px var(--color-accent));
+}
+.mod-pulse {
+  fill: none;
+  stroke: var(--color-text);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  opacity: 0;
+}
+.mod-node-lit {
+  box-shadow:
+    0 0 0 1px var(--color-accent),
+    0 0 16px var(--color-accent-soft);
+}
+.mod-core {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+.mod-core-orb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border-radius: 9999px;
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  box-shadow: 0 0 22px var(--color-accent-soft);
+}
+.mod-core-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 2px solid var(--color-accent);
+  opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mod-pulse[data-running="true"] {
+    animation: mod-run 0.7s ease-out forwards;
+  }
+  @keyframes mod-run {
+    0% {
+      opacity: 1;
+      stroke-dashoffset: 1;
+    }
+    85% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+      stroke-dashoffset: 0;
+    }
+  }
+  .mod-flash {
+    animation: mod-flash 0.6s ease-out;
+  }
+  @keyframes mod-flash {
+    40% {
+      box-shadow:
+        0 0 0 1px var(--color-accent),
+        0 0 34px var(--color-accent);
+    }
+  }
+  .mod-core-orb {
+    animation: mod-breathe 2.4s ease-in-out infinite;
+  }
+  @keyframes mod-breathe {
+    50% {
+      box-shadow: 0 0 36px var(--color-accent);
+    }
+  }
+  .mod-core-ring {
+    animation: mod-ring 2.4s ease-out infinite;
+  }
+  .mod-core-ring-late {
+    animation-delay: 1.2s;
+  }
+  @keyframes mod-ring {
+    from {
+      transform: scale(1);
+      opacity: 0.8;
+    }
+    to {
+      transform: scale(2.1);
+      opacity: 0;
+    }
+  }
+}
