@@ -298,6 +298,7 @@ pub async fn auto_run_replay(
     retry_transient: bool,
     db_read_access: bool,
 ) -> Result<LocalRun, String> {
+    let db_read_access = crate::autorun::preconditions::read_access(db_read_access);
     let _claim = OneAtATime::claim().ok_or_else(|| {
         "an unattended run is already going - wait for it, or stop it first".to_string()
     })?;

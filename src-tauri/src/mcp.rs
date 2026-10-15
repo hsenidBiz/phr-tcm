@@ -163,11 +163,15 @@ pub fn tool_policy_from(reply: Result<(u16, String), String>) -> (Vec<String>, B
         Ok((200, body)) => serde_json::from_str::<serde_json::Value>(&body).ok(),
         _ => None,
     };
-    let on: BTreeSet<Module> = answer
-        .as_ref()
-        .and_then(|v| v["modules"].as_array().cloned())
-        .map(|a| a.iter().filter_map(|n| n.as_str().and_then(Module::from_key)).collect())
-        .unwrap_or_default();
+    // Mended like a stored choice: a module whose parent is not named is
+    // off, so a confused answer can never offer a tool the tree forbids.
+    let on: BTreeSet<Module> = crate::modules::normalise(
+        answer
+            .as_ref()
+            .and_then(|v| v["modules"].as_array().cloned())
+            .map(|a| a.iter().filter_map(|n| n.as_str().and_then(Module::from_key)).collect())
+            .unwrap_or_default(),
+    );
     let list: Vec<String> = answer
         .as_ref()
         .and_then(|v| v["disabled"].as_array().cloned())

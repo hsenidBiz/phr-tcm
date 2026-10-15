@@ -112,31 +112,34 @@ fn a_broken_tree_is_mended_on_load() {
     assert_eq!(load_or_create(d.path(), false).len(), 4);
 }
 
+/// A switch whose save fails changes nothing and says why: the pure half
+/// of `set`, on a local state, so it runs whatever this process's own
+/// choice is and never touches it.
 #[test]
 fn a_set_whose_save_fails_leaves_the_state_unchanged() {
-    let _g = crate::serial::modules();
     let d = tempfile::tempdir().unwrap();
-    // Every module on: this is the one test that sets the process-wide
-    // choice, and the route tests elsewhere in this binary - which take no
-    // lock - reach every gate as a development build does. It must never
-    // leave, even for a moment, anything switched off.
-    std::fs::write(
-        d.path().join("modules.json"),
-        r#"{"on":["db_access","writing_style","auto_run","api_templates","playwright"]}"#,
-    )
-    .unwrap();
-    v2_lib::modules::init(d.path().to_path_buf());
-    // DIR is set once per process, so the save goes to this dir only if
-    // this is the first init. Make it fail: a directory where the file goes.
-    let file = d.path().join("modules.json");
-    std::fs::remove_file(&file).unwrap();
-    std::fs::create_dir(&file).unwrap();
-    let before = v2_lib::modules::current();
-    assert_eq!(before, Module::ALL.into_iter().collect::<BTreeSet<_>>());
-    // Switching on what is already on: whether the save fails or not, the
-    // state is what it was.
-    let _ = v2_lib::modules::set(Module::WritingStyle, true);
-    assert_eq!(v2_lib::modules::current(), before);
+    // A directory where the file goes: the save cannot succeed.
+    std::fs::create_dir(d.path().join("modules.json")).unwrap();
+    let mut state: BTreeSet<Module> = Module::ALL.into_iter().collect();
+    let before = state.clone();
+    let r = v2_lib::modules::set_in(&mut state, d.path(), Module::WritingStyle, false);
+    assert!(r.is_err(), "{r:?}");
+    assert_eq!(state, before, "a switch that was not saved is not made");
+}
+
+/// The same switch into a dir that can take it is made and saved.
+#[test]
+fn a_set_that_saves_changes_the_state_and_the_file() {
+    let d = tempfile::tempdir().unwrap();
+    let mut state: BTreeSet<Module> = Module::ALL.into_iter().collect();
+    let next = v2_lib::modules::set_in(&mut state, d.path(), Module::AutoRun, false).unwrap();
+    assert_eq!(next, set(&[Module::DbAccess, Module::WritingStyle]));
+    assert_eq!(state, next);
+    assert_eq!(load_or_create(d.path(), false), next);
+    // Locked: refused, nothing changed.
+    let err = v2_lib::modules::set_in(&mut state, d.path(), Module::Playwright, true).unwrap_err();
+    assert_eq!(err, "\"Playwright\" needs \"Auto Run\" switched on first.");
+    assert_eq!(state, next);
 }
 
 // ---- every gate asks its module ------------------------------------------
@@ -238,4 +241,20 @@ fn the_writing_guide_drops_the_custom_style_with_writing_style_off() {
         bridge.contains("custom_style_when(crate::modules::on(crate::modules::Module::WritingStyle))"),
         "the guide asks Writing Style"
     );
+}
+
+/// Preconditions are read only while the AI Bridge tab's Database Read
+/// Access switch is on AND the Database Access module is on.
+#[test]
+fn preconditions_need_database_access_as_well_as_the_switch() {
+    use v2_lib::autorun::preconditions::read_access_with;
+    assert!(read_access_with(true, true));
+    assert!(!read_access_with(true, false), "Database Access off");
+    assert!(!read_access_with(false, true), "the switch off");
+    assert!(!read_access_with(false, false));
+    // Every entry point that takes the switch passes it through the module.
+    let read = |p: &str| std::fs::read_to_string(format!("{}/src/{p}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    assert_eq!(read("commands/autorun.rs").matches("preconditions::read_access(db_read_access)").count(), 2);
+    assert_eq!(read("commands/autorun_replay.rs").matches("preconditions::read_access(db_read_access)").count(), 1);
+    assert!(read("ai_bridge.rs").contains("crate::autorun::preconditions::read_access(!ctx.disabled_tools"));
 }

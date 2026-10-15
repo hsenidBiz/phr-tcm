@@ -1219,6 +1219,7 @@ pub async fn auto_run_replay_to_step(
     step: i32,
     db_read_access: bool,
 ) -> Result<crate::autorun::replay_to::ReplayAnswer, String> {
+    let db_read_access = crate::autorun::preconditions::read_access(db_read_access);
     let req = crate::autorun::replay_to::ReplayRequest { case_id, step, db_read_access };
     // The person's own replay, as their own step: it may lift an earlier
     // case's guard. The tabs its steps ran in go to the pane beside them.
@@ -1515,6 +1516,7 @@ pub async fn auto_run_check_preconditions(
     case_id: i32,
     db_read_access: bool,
 ) -> Result<crate::autorun::preconditions::PreconditionCheck, String> {
+    let db_read_access = crate::autorun::preconditions::read_access(db_read_access);
     let root = root(&app)?;
     // A watched case starts here: the last case's tabs are closed, even
     // when it is the same case started again.

@@ -237,7 +237,7 @@ pub async fn route(
     // Every route that belongs to a module is answered only while that
     // module is on, and the check runs ONCE here, by path, before the
     // router's match (`module_guard_for`).
-    if let Some(refused) = module_guard_for(path, &crate::modules::current()) {
+    if let Some(refused) = module_guard(path, body, &crate::modules::current()) {
         return refused;
     }
     match (method, path) {
@@ -407,11 +407,16 @@ pub async fn route(
         // call, so a toggle in the app takes effect on the assistant's next
         // tools/list. `modules` names the modules that are on: the proxy is
         // a separate process and cannot read the app's choice.
+        //
+        // `autorun` is TRANSITIONAL, for one release: a proxy from before
+        // modules, still running in an editor, reads it to decide whether
+        // the Auto Run tools are offered. Remove it in the release after.
         ("GET", "/tools") => (
             200,
             serde_json::json!({
                 "disabled": ctx.disabled_tools,
                 "modules": crate::modules::current().iter().map(|m| m.key()).collect::<Vec<_>>(),
+                "autorun": crate::modules::on(crate::modules::Module::AutoRun),
                 // Only while writes are on too: without them there is no
                 // change to run, asked about or not.
                 "db_no_ask": crate::app_settings::current().db_auto_approve && ctx.db_writes,
@@ -490,6 +495,26 @@ pub fn module_guard_for(path: &str, on: &std::collections::BTreeSet<crate::modul
         Some(m) if !on.contains(&m) => Some((404, m.off_sentence())),
         _ => None,
     }
+}
+
+/// `module_guard_for`, plus the one route shared by two modules: the quirk
+/// routes are Auto Run's, but a quirk sent `from: "api"` (the
+/// `record_app_quirk` / `retire_app_quirk` tools) is API Templates' too, so
+/// it is refused with that module's sentence while API Templates is off.
+pub fn module_guard(path: &str, body: &str, on: &std::collections::BTreeSet<crate::modules::Module>) -> Option<(u16, String)> {
+    use crate::modules::Module;
+    if let Some(refused) = module_guard_for(path, on) {
+        return Some(refused);
+    }
+    if path.starts_with("/autorun-quirk") && !on.contains(&Module::ApiTemplates) {
+        let from_api = serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .is_some_and(|v| v.get("from").and_then(|f| f.as_str()) == Some(crate::autorun::quirks::FROM_API));
+        if from_api {
+            return Some((404, Module::ApiTemplates.off_sentence()));
+        }
+    }
+    None
 }
 
 /// Said when a prove or a run arrives while the person's API templates
@@ -5178,7 +5203,8 @@ pub async fn autorun_replay_with(
     if let Some((answer, id)) = same {
         return wait_for_replay(answer, id, case_id, step, wait).await;
     }
-    let db_read_access = !ctx.disabled_tools.iter().any(|t| t == "db_query");
+    let db_read_access =
+        crate::autorun::preconditions::read_access(!ctx.disabled_tools.iter().any(|t| t == "db_query"));
     let req = ReplayRequest { case_id, step, db_read_access };
     if let Err(why) = replay_to::check(&root, &ctx.org, &ctx.project, &req) {
         return (409, why);

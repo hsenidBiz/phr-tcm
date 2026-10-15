@@ -1046,7 +1046,37 @@ async fn the_bridge_lists_the_modules_that_are_on() {
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     let want: Vec<&str> = v2_lib::modules::current().iter().map(|m| m.key()).collect();
     assert_eq!(v["modules"], serde_json::json!(want));
-    assert!(v.get("autorun").is_none(), "{body}");
+    // Transitional, for one release: a proxy from before modules reads it.
+    assert_eq!(v["autorun"], serde_json::json!(v2_lib::modules::on(v2_lib::modules::Module::AutoRun)), "{body}");
+}
+
+/// The quirk routes are Auto Run's, but one sent `from: "api"` (the API
+/// template tools' names for them) is API Templates' too.
+#[test]
+fn an_api_quirk_needs_api_templates_too() {
+    use v2_lib::ai_bridge::module_guard;
+    use v2_lib::modules::Module;
+    let all: std::collections::BTreeSet<Module> = Module::ALL.into_iter().collect();
+    let no_api: std::collections::BTreeSet<Module> = [Module::DbAccess, Module::AutoRun].into_iter().collect();
+    for path in ["/autorun-quirk", "/autorun-quirk-retire"] {
+        let api = r#"{"text":"x","id":"q1","from":"api"}"#;
+        let autorun = r#"{"text":"x","id":"q1","from":"autorun"}"#;
+        assert_eq!(
+            module_guard(path, api, &no_api),
+            Some((404, "API Templates is switched off in Modules".to_string())),
+            "{path}"
+        );
+        assert!(module_guard(path, autorun, &no_api).is_none(), "{path}: an Auto Run quirk needs only Auto Run");
+        assert!(module_guard(path, r#"{"text":"x"}"#, &no_api).is_none(), "{path}");
+        assert!(module_guard(path, api, &all).is_none(), "{path}");
+        assert_eq!(
+            module_guard(path, api, &[Module::DbAccess].into_iter().collect()),
+            Some((404, "Auto Run is switched off in Modules".to_string())),
+            "{path}: Auto Run off says Auto Run"
+        );
+    }
+    let bridge = include_str!("../../src/ai_bridge.rs");
+    assert!(bridge.contains("module_guard(path, body, &crate::modules::current())"), "route uses the body-aware guard");
 }
 
 // ---- round 7 §§1-5: optimize_cases takes a path, like every other tool --

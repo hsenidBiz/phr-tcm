@@ -246,6 +246,20 @@ pub fn environment_db(
     Ok(SqlcmdStageDb { runner: crate::db::RealRunner, exe, conn })
 }
 
+/// Whether preconditions may be read: the AI Bridge tab's Database Read
+/// Access switch (`switch`) AND the Database Access module (`db_on`). Both
+/// explicit so every combination is testable.
+pub fn read_access_with(switch: bool, db_on: bool) -> bool {
+    switch && db_on
+}
+
+/// `read_access_with` for this process: the switch as the caller holds
+/// it, and `modules::on(DbAccess)`. Every entry point that takes the switch
+/// passes it through here before anything reads it.
+pub fn read_access(switch: bool) -> bool {
+    read_access_with(switch, crate::modules::on(crate::modules::Module::DbAccess))
+}
+
 /// Where a run started from the app asks its preconditions: nowhere while
 /// Database Read Access is off (`db_read_access` is the AI Bridge tab's
 /// switch, as the webview holds it: `db_query` not among the disabled

@@ -716,6 +716,19 @@ fn the_proxy_takes_the_modules_from_the_app() {
     assert_eq!(off, expected, "API Templates off: exactly its tools");
 }
 
+/// The answer is mended like a stored choice: a module whose parent is
+/// not named is off, so `auto_run` alone offers no Auto Run tool.
+#[test]
+fn the_proxy_mends_a_broken_tree() {
+    let (off, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["auto_run"]}"#.into())));
+    assert!(on.is_empty(), "{on:?}");
+    for t in AUTORUN_TOOLS {
+        assert!(off.iter().any(|o| o == t), "{t} offered without Database Access");
+    }
+    let (_, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","playwright"]}"#.into())));
+    assert_eq!(on, [Module::DbAccess].into_iter().collect());
+}
+
 /// Everything short of a `modules` list naming a module means that module
 /// is off: an app too old to send the field, a non-200 answer, garbage, or
 /// no app at all. A development build adds nothing - the proxy never

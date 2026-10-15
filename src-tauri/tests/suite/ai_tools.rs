@@ -554,8 +554,52 @@ fn strings(names: &[&str]) -> Vec<String> {
 /// Every module tool belongs to exactly one module, and the rest are Core.
 #[test]
 fn each_tool_belongs_to_its_module() {
-    assert_eq!(AUTORUN_TOOLS.len(), 25);
-    assert_eq!(API_TEMPLATE_TOOLS.len(), 11);
+    assert_eq!(
+        AUTORUN_TOOLS,
+        [
+            "get_autorun_guide",
+            "save_autorun_script",
+            "get_autorun_script",
+            "delete_autorun_script",
+            "get_autorun_page",
+            "probe_autorun_locator",
+            "try_autorun_action",
+            "replay_autorun_to_step",
+            "start_autorun_discovery",
+            "discover_autorun_action",
+            "discover_autorun_actions",
+            "save_autorun_area",
+            "end_autorun_discovery",
+            "release_autorun_browser",
+            "save_autorun_component",
+            "remove_autorun_component",
+            "get_autorun_failures",
+            "record_autorun_quirk",
+            "retire_autorun_quirk",
+            "mark_autorun_suspected_defect",
+            "set_autorun_order",
+            "propose_accounts",
+            "get_accounts",
+            "list_test_files",
+            "get_autorun_network_wait"
+        ]
+    );
+    assert_eq!(
+        API_TEMPLATE_TOOLS,
+        [
+            "get_api_template_guide",
+            "list_api_templates",
+            "prove_api_template",
+            "run_api_template",
+            "save_api_flow",
+            "get_api_flow_progress",
+            "save_api_fixture",
+            "run_api_fixture",
+            "list_api_fixtures",
+            "record_app_quirk",
+            "retire_app_quirk"
+        ]
+    );
     assert_eq!(DB_TOOLS, ["db_lookup", "db_query"]);
     for t in AUTORUN_TOOLS {
         assert_eq!(module_of_tool(t), Some(Module::AutoRun), "{t}");

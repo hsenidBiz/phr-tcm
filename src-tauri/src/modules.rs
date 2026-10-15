@@ -141,9 +141,10 @@ struct Disk {
     on: BTreeSet<Module>,
 }
 
-/// Drop any module whose parent is off, so a hand-edited or damaged file
-/// can never hold a state the tree forbids.
-fn normalise(on: BTreeSet<Module>) -> BTreeSet<Module> {
+/// Drop any module whose parent is off, so a hand-edited or damaged file -
+/// or a `/tools` answer the `--mcp` proxy reads - can never hold a state the
+/// tree forbids.
+pub fn normalise(on: BTreeSet<Module>) -> BTreeSet<Module> {
     // ALL lists parents before children.
     Module::ALL.into_iter().filter(|m| on.contains(m)).fold(BTreeSet::new(), |mut out, m| {
         if m.parent().map_or(true, |p| out.contains(&p)) {
@@ -239,13 +240,23 @@ pub fn require(m: Module, on: bool) -> Result<(), String> {
     }
 }
 
-/// Save first, then publish, like `extras::set_advanced`.
+/// Pure half of `set`: switch `m` in `state`, saving into `dir` first and
+/// changing `state` only once the save has worked - a switch that could
+/// not be saved is not reported as made, only to come back at the next
+/// launch.
+pub fn set_in(state: &mut BTreeSet<Module>, dir: &Path, m: Module, want: bool) -> Result<BTreeSet<Module>, String> {
+    let next = apply(state, m, want)?;
+    write(dir, &next)?;
+    *state = next.clone();
+    Ok(next)
+}
+
+/// Save first, then publish, like `extras::set_advanced` (`set_in`).
 pub fn set(m: Module, want: bool) -> Result<BTreeSet<Module>, String> {
     let dir = DIR.get().ok_or_else(|| "could not save: setup has not finished yet".to_string())?;
     let mut guard = state();
-    let now = guard.clone().unwrap_or_else(|| before_setup(crate::ai_tools::dev_build()));
-    let next = apply(&now, m, want)?;
-    write(dir, &next)?;
+    let mut now = guard.clone().unwrap_or_else(|| before_setup(crate::ai_tools::dev_build()));
+    let next = set_in(&mut now, dir, m, want)?;
     *guard = Some(next.clone());
     Ok(next)
 }

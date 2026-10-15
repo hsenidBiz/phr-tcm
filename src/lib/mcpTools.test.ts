@@ -99,10 +99,16 @@ test("the core and dev-only tool lists match the Rust side", () => {
   };
 
   const rsCore = extractList("CORE_TOOLS");
-  const rsDevOnly = extractList("DEV_ONLY_TOOLS");
+  // The Rust side lists each module's tools on its own; this side still
+  // keeps the Auto Run and API template ones in one list (until the store
+  // follows the modules), and has no list for the two database tools.
+  const rsDevOnly = [...extractList("AUTORUN_TOOLS"), ...extractList("API_TEMPLATE_TOOLS")];
+  const rsDb = extractList("DB_TOOLS");
 
   expect([...rsCore].sort()).toEqual([...CORE_TOOLS].sort());
   expect([...rsDevOnly].sort()).toEqual([...DEV_ONLY_TOOLS].sort());
+  expect(rsDb).toEqual(["db_lookup", "db_query"]);
+  for (const name of rsDb) expect(DEV_ONLY_TOOLS as readonly string[]).not.toContain(name);
 });
 
 /// `get_wiki_page` reads a page that `search_wiki` found - it has no way to
