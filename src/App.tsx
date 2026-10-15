@@ -5,6 +5,7 @@ import {
   lazy,
   Suspense,
   useCallback,
+  useMemo,
   useEffect,
   useRef,
   useState,
@@ -77,7 +78,7 @@ import TitleBar from "./components/TitleBar";
 import UiTour from "./tour/UiTour";
 import { installTourBackend, restoreTourBackend } from "./tour/tourBackend";
 import { TOUR_ORG, TOUR_PBI, TOUR_PROJECT, TOUR_REPO_PATH } from "./tour/tourData";
-import { tourControl, type TourWhere } from "./tour/tourScript";
+import { tourControl, tourStepsFor, type TourWhere } from "./tour/tourScript";
 import { START_TOUR_EVENT, setTourRunning, tourDone, tourRunningSnapshot } from "./tour/tourState";
 import { Button } from "./components/ui/button";
 import { unwrap } from "./lib/ipc";
@@ -202,6 +203,8 @@ export default function App() {
   const [section, setSection] = useState<Section>(initial.section);
   const modules = useModules();
   const modulesHydrated = useModulesHydrated();
+  // The tour skips the stop for a card whose module is off.
+  const tourSteps = useMemo(() => tourStepsFor(modules), [modules]);
   const [org, setOrgRaw] = useState(initial.org);
   const [project, setProjectRaw] = useState(initial.project);
   const [pbi, setPbiRaw] = useState<PbiHit | null>(initial.pbi);
@@ -1086,6 +1089,7 @@ export default function App() {
           onAwait={setTourAwaited}
           onAct={setTourActing}
           onClose={endTour}
+          steps={tourSteps}
         />
       )}
 

@@ -10,6 +10,7 @@ import {
   dbReadAccessOn,
   disabledToolsSnapshot,
   loadDisabledTools,
+  saveDisabledTools,
   MCP_TOOLS,
   moduleOfTool,
   subscribeDisabledTools,
@@ -434,4 +435,37 @@ test("switching a module re-fires the subscription and changes which saved names
 
   off();
   localStorage.clear();
+});
+
+/// Off hides, never deletes: saving the list while a module is off (a toggle
+/// of some other tool) must not erase that module's saved names - they
+/// would come back ENABLED when the module does.
+test("saving the list while a module is off keeps that module's saved names", () => {
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...AUTORUN_TOOLS]));
+  setModulesForTest(["db_access"]);
+  // What the screen sees and saves: the read side hides Auto Run's names.
+  expect(loadDisabledTools()).toEqual([]);
+  saveDisabledTools(toggleRow(loadDisabledTools(), ["search_wiki", "get_wiki_page"]));
+  setModulesForTest(["db_access", "auto_run"]);
+  expect(AUTORUN_TOOLS.every((n) => loadDisabledTools().includes(n))).toBe(true);
+  expect(loadDisabledTools()).toContain("search_wiki");
+
+  // And "Turn all on" (saving nothing) while it is off keeps them too.
+  setModulesForTest(["db_access"]);
+  saveDisabledTools([]);
+  setModulesForTest(["db_access", "auto_run"]);
+  expect(AUTORUN_TOOLS.every((n) => loadDisabledTools().includes(n))).toBe(true);
+  localStorage.clear();
+});
+
+/// toolOffered feeds what is registered with real assistants: it reads the
+/// real modules, not capture mode's all-on view of them.
+test("in capture mode with no module really on, toolOffered is false and saved names are dropped", () => {
+  setModulesForTest([]);
+  localStorage.setItem("tcm-v2-dev-capture", "on");
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([...AUTORUN_TOOLS, "get_tags"]));
+  expect(toolOffered("get_autorun_guide")).toBe(false);
+  expect(loadDisabledTools()).toEqual(["get_tags"]);
+  // The screen's display view is the capture one: database row shown.
+  expect(visibleRows().some((r) => r.label === "Database Read Access")).toBe(true);
 });

@@ -33,7 +33,7 @@ import {
 } from "../lib/environments";
 import { WritingStyleCard } from "../components/WritingStyleCard";
 import { useModule } from "../lib/modules";
-import { loadDisabledTools, toolShown, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
+import { disabledToolsSnapshot, loadDisabledTools, subscribeDisabledTools, toolShown, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
 import { logUi } from "../lib/uiLog";
 import {
@@ -173,7 +173,9 @@ export default function AiBridge() {
   });
 
   // Tools the user has switched off; App re-pushes these to the bridge.
-  const [disabled, setDisabled] = useState<string[]>(loadDisabledTools);
+  // Read off the store, not a one-shot copy: a mount before the modules
+  // have loaded corrects itself, and a save re-renders every reader.
+  const disabled = useSyncExternalStore(subscribeDisabledTools, disabledToolsSnapshot);
   const visible = visibleRows();
   // Which database the app's own tools use. Read through the store so App's
   // bridge push and this card agree the moment it changes.
@@ -681,9 +683,7 @@ export default function AiBridge() {
                   ariaLabel={row.label}
                   ariaDescribedBy={`ai-tool-about-${row.key}`}
                   onCheckedChange={() => {
-                    const next = toggleRow(disabled, row.names);
-                    setDisabled(next);
-                    saveDisabledTools(next);
+                    saveDisabledTools(toggleRow(disabled, row.names));
                   }}
                   className="mt-0.5"
                 />
@@ -709,12 +709,11 @@ export default function AiBridge() {
             );
           })}
         </ul>
-        {disabled.length > 0 && (
+        {visible.some((r) => r.names.some((n) => disabled.includes(n))) && (
           <Button
             size="sm"
             variant="outline"
             onClick={() => {
-              setDisabled([]);
               saveDisabledTools([]);
             }}
           >

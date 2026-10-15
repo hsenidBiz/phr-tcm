@@ -69,8 +69,10 @@ pub fn save(dir: &Path, unlocked: bool) -> Result<(), String> {
     write(dir, &Disk { unlocked, ..read(dir) })
 }
 
-/// Write Enable Advanced Features into `dir` (created if missing),
-/// atomically, keeping the saved extras switch.
+/// Write the old Enable Advanced Features value into `dir` (created if
+/// missing), atomically, keeping the saved extras switch. Nothing in the app
+/// writes it any more (the upgrade only reads it); kept so tests can seed an
+/// older install's file.
 pub fn save_advanced(dir: &Path, advanced: bool) -> Result<(), String> {
     write(dir, &Disk { advanced, ..read(dir) })
 }

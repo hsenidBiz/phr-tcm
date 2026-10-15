@@ -65,6 +65,12 @@ export function modulesSnapshot(): ReadonlySet<Module> {
   return isCaptureMode() ? ALL : on;
 }
 
+/** The modules really on, without capture mode's all-on view. For what is
+ * registered, saved or sent to Rust - never for what is drawn. */
+export function realModulesSnapshot(): ReadonlySet<Module> {
+  return on;
+}
+
 export function modulesHydratedSnapshot(): boolean {
   return isCaptureMode() || hydrated;
 }
@@ -81,6 +87,9 @@ export async function hydrateModules(): Promise<void> {
     // no IPC here
   }
   if (started === generation) publishHydrated();
+  // A save landed while this read was in flight and discarded its answer. If
+  // that save was refused, nothing else will ever flip hydrated: ask again.
+  else if (!hydrated) await hydrateModules();
 }
 
 /** Switch one module through Rust, then tell every screen what Rust says is

@@ -4,7 +4,7 @@
 // later release is then available by default rather than silently missing
 // because it wasn't in someone's saved list.
 
-import { modulesSnapshot, subscribeModules, type Module } from "./modules";
+import { modulesSnapshot, realModulesSnapshot, subscribeModules, type Module } from "./modules";
 import { isCaptureMode } from "../dev/capture";
 
 const KEY = "tcm-v2-mcp-disabled";
@@ -299,24 +299,24 @@ export function moduleOfTool(name: string): Module | null {
   return null;
 }
 
-/** Whether a tool is offered right now: Core, or its module is on. Read
- * live. Deliberately NOT capture-mode-aware: it also decides what
- * `loadDisabledTools()` keeps and what `snapshotKeyFor()` keys on, which
- * feed `register`'s `commands.registerAiTool(...)` - real files Rust writes
- * to disk. Capture mode must affect display only; see `toolShown`. */
+/** Whether a tool is offered right now: Core, or its module is really on.
+ * Read live from the REAL set, not capture mode's all-on view: it decides
+ * what `loadDisabledTools()` keeps and what `snapshotKeyFor()` keys on,
+ * which feed `register`'s `commands.registerAiTool(...)` - real files Rust
+ * writes to disk. Capture mode must affect display only; see `toolShown`. */
 export function toolOffered(name: string): boolean {
   const m = moduleOfTool(name);
-  return m === null || modulesSnapshot().has(m);
+  return m === null || realModulesSnapshot().has(m);
 }
 
-/** Whether the AI Tools screen should show a tool right now: `toolOffered`,
- * hidden again in capture mode for the Auto Run and API template tools - the
+/** Whether the AI Tools screen should show a tool right now: its module is
+ * on (capture mode's view: every module), hidden again in capture mode for the Auto Run and API template tools - the
  * screen is documented and captured, so a shot must never name them.
  * DISPLAY ONLY: never wire this into `loadDisabledTools`, `snapshotKeyFor`,
  * or anything that feeds `register`/`setBridgeContext`. */
 export function toolShown(name: string): boolean {
-  if (!toolOffered(name)) return false;
   const m = moduleOfTool(name);
+  if (m !== null && !modulesSnapshot().has(m)) return false;
   return !(isCaptureMode() && (m === "auto_run" || m === "api_templates"));
 }
 
@@ -538,10 +538,27 @@ export function loadDisabledTools(): string[] {
 
 const listeners = new Set<() => void>();
 
-export function saveDisabledTools(names: string[]): void {
+/** Every name in storage, unfiltered. */
+function storedNames(): string[] {
   try {
-    if (names.length === 0) localStorage.removeItem(KEY);
-    else localStorage.setItem(KEY, JSON.stringify(names));
+    const parsed = JSON.parse(localStorage.getItem(KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Save the list the screen shows. Off hides, never deletes: the names of a
+ * module that is off are not on the screen's list (the read side hides
+ * them), so they are carried over from storage - otherwise any toggle made
+ * while a module is off would erase them, and they would come back enabled
+ * with the module. */
+export function saveDisabledTools(names: string[]): void {
+  const hidden = storedNames().filter((n) => !isCoreTool(n) && moduleOfTool(n) !== null && !toolOffered(n));
+  const all = [...new Set([...names, ...hidden])];
+  try {
+    if (all.length === 0) localStorage.removeItem(KEY);
+    else localStorage.setItem(KEY, JSON.stringify(all));
   } catch {
     // storage unavailable -> the choice lasts for this session only
   }
@@ -564,7 +581,7 @@ export function subscribeDisabledTools(cb: () => void): () => void {
 /** Keyed on the stored list AND which modules are on: the same stored list
  * loads differently either side of a module being switched. */
 function snapshotKeyFor(raw: string): string {
-  return `${[...modulesSnapshot()].sort().join("+")}:${raw}`;
+  return `${[...realModulesSnapshot()].sort().join("+")}:${raw}`;
 }
 
 let snapshot: string[] = loadDisabledTools();

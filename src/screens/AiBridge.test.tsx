@@ -1798,3 +1798,29 @@ test("the Environment card shows only the site name of the full address", async 
   await screen.findByRole("combobox", { name: "Environment" });
   expect(await within(envCard()).findByText("hrmmainslqaautom.phrsandbox.dev")).toBeInTheDocument();
 });
+
+// Off hides, never deletes: a tool choice made for a module survives the
+// module being off while other switches are used.
+test("tool choices of a switched-off module survive other toggles and Turn all on", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    return [];
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  await screen.findByText("Tools an assistant may use");
+
+  fireEvent.click(screen.getByLabelText("Auto Run scripts"));
+  expect(screen.getByLabelText("Auto Run scripts")).not.toBeChecked();
+
+  act(() => setModulesForTest(["db_access", "writing_style"]));
+  // Only hidden names are disabled: no Turn all on to offer.
+  expect(screen.queryByRole("button", { name: "Turn all on" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Project wiki"));
+  expect(screen.getByRole("button", { name: "Turn all on" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Turn all on" }));
+  expect(screen.getByLabelText("Project wiki")).toBeChecked();
+
+  act(() => setModulesForTest(ALL_MODULES));
+  expect(screen.getByLabelText("Auto Run scripts")).not.toBeChecked();
+});

@@ -116,3 +116,27 @@ test("the redirect leaves API Templates and Playwright too, once hydration settl
   }
   expect(shouldLeaveHidden("ai", false, true)).toBe(false);
 });
+
+// A save that fails while the first read is still in flight must not leave
+// the store unhydrated for good (the saved-tab redirect would never fire).
+test("a refused save during the first hydrate still ends hydrated, with Rust's answer", async () => {
+  let answer!: (v: string[]) => void;
+  const pending = new Promise<string[]>((r) => {
+    answer = r;
+  });
+  let reads = 0;
+  mockIPC((cmd) => {
+    if (cmd === "modules_get") {
+      reads += 1;
+      return reads === 1 ? pending : ["db_access"];
+    }
+    if (cmd === "modules_set") throw "refused";
+    return undefined;
+  });
+  const read = hydrateModules();
+  await expect(setModule("auto_run", true)).rejects.toThrow("refused");
+  answer([]);
+  await read;
+  expect(modulesHydratedSnapshot()).toBe(true);
+  expect([...modulesSnapshot()]).toEqual(["db_access"]);
+});

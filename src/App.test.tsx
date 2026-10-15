@@ -1068,6 +1068,39 @@ test("every stop rings an area that is there, with something in it", async () =>
   // running.
 }, 45_000);
 
+// A fresh install starts with no module on, and the tour runs for new users:
+// the stop for a card that is not there is skipped, not described. (With
+// every module on, the route test above rings the Database Read Access card.)
+test("the tour skips the Database Read Access stop while Database Access is off", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "resume_session") return { signed_in: true, account: "a@b.com" };
+    if (cmd === "check_update") return null;
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "list_projects") return [{ id: "p1", name: "Payments" }];
+    if (cmd === "list_plans_with_suites") return [];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "modules_get") return [];
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await startTour();
+
+  const total = TOUR_STEPS.length - 1;
+  const seen: string[] = [];
+  for (let guard = 0; guard < 4 * total; guard++) {
+    const dialog = screen.getByRole("dialog", { name: "Interface tour" });
+    seen.push(dialog.textContent ?? "");
+    if (screen.queryByText(`${total} / ${total}`) && !tourWaiting()) break;
+    advance();
+    await act(async () => {});
+  }
+  expect(screen.queryByText(`${total} / ${total}`)).toBeInTheDocument();
+  expect(seen.join(" | ")).not.toContain("Database Read Access");
+  fireEvent.click(screen.getByText("Skip tour"));
+}, 45_000);
+
 /// The theme stop is the one the person is meant to ACT on, and the whole
 /// point of moving it out of the card is that they use the real swatches.
 /// That cannot work while the shell below is inert - inert is inherited,
