@@ -110,6 +110,32 @@ happened that motivates it.
     sign-in page. PeoplesHR allows one session per user, so the held session
     must yield to a run or a person's browser on the same account.
 
+## Discovery speed: validation refusals (agreed 2026-10-15)
+
+While scripting PBI 135592 the assistants kept walking into the page's own
+validation: a click "succeeds" (the button was clicked) while the page
+refuses with a message, and the agent only finds out several calls later
+when a wait times out or the next locator is missing - then reads the page,
+works out the rule, and the next agent hits the same rule again.
+
+18. **A validation refusal fails the discovery action.** After each click in
+    `discover_autorun_action(s)` (and `try_autorun_action`), look for the
+    page's refusal signals: field messages (`.invalid-feedback`,
+    `.text-danger`, `[aria-invalid="true"]` with a message), an error toast or
+    `alert-danger`, a SweetAlert/bootbox error, or a Save & Continue whose
+    step indicator did not move. If one shows, answer the action as failed -
+    "page refused: <message text>" - and stop the batch there, as a failed
+    locator does. A replay or run step that ends on a refusal should say the
+    same in its failure line instead of only the later timeout.
+
+19. **Remember refusals per area.** Each refusal from 18 is stored with the
+    area, the wizard step or page, the action that caused it and the message,
+    deduplicated, and listed in the guide's quick live section ("known
+    validation rules"). An agent then sees, before it starts, e.g. "Eval
+    Rules: 'At least one assessment component must be enabled.' when Goals and
+    Competencies are both off". Today this only happens when an agent records
+    a quirk by hand, and quirks are capped at 40.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
