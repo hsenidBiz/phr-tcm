@@ -270,6 +270,12 @@ pub async fn supervised_session_is_open() -> bool {
     SESSION.lock().await.is_some()
 }
 
+/// `supervised_session_is_open` without waiting: a session lock that is
+/// taken counts as open (something is using the browser).
+pub fn supervised_session_is_open_now() -> bool {
+    SESSION.try_lock().map_or(true, |slot| slot.is_some())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_open_browser(app: tauri::AppHandle, browser_name: String) -> Result<(), String> {

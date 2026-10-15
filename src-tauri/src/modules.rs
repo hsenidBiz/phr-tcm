@@ -136,9 +136,12 @@ pub fn apply(on: &BTreeSet<Module>, m: Module, want: bool) -> Result<BTreeSet<Mo
     Ok(next)
 }
 
+/// The names are read as plain strings and mapped through `Module::from_key`,
+/// so a module a newer app wrote (unknown here) is dropped while every module
+/// this app knows is kept - the file is never failed whole.
 #[derive(Serialize, Deserialize)]
 struct Disk {
-    on: BTreeSet<Module>,
+    on: Vec<String>,
 }
 
 /// Drop any module whose parent is off, so a hand-edited or damaged file -
@@ -156,7 +159,30 @@ pub fn normalise(on: BTreeSet<Module>) -> BTreeSet<Module> {
 
 fn read(dir: &Path) -> Option<BTreeSet<Module>> {
     let s = std::fs::read_to_string(dir.join(FILE)).ok()?;
-    serde_json::from_str::<Disk>(&s).ok().map(|d| normalise(d.on))
+    serde_json::from_str::<Disk>(&s).ok().map(|d| normalise(d.on.iter().filter_map(|n| Module::from_key(n)).collect()))
+}
+
+/// The choice saved in `dir`, mended; `None` when there is no file or it
+/// cannot be read. Creates and writes nothing: this is what the `--mcp`
+/// proxy reads when the app cannot be asked.
+pub fn saved(dir: &Path) -> Option<BTreeSet<Module>> {
+    read(dir)
+}
+
+/// The bundle identifier (`tauri.conf.json`), which Tauri appends to the
+/// roaming app-data folder to make the app data dir.
+pub const APP_IDENTIFIER: &str = "com.avinalwis.testcasemanager.v2";
+
+/// Where the app keeps its data, given the roaming app-data folder
+/// (`%APPDATA%`): what `app_data_dir()` resolves to, for a process that has
+/// no Tauri handle. `None` without that folder.
+pub fn data_dir_in(roaming: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    roaming.filter(|r| !r.is_empty()).map(|r| PathBuf::from(r).join(APP_IDENTIFIER))
+}
+
+/// The modules saved on this machine, for the `--mcp` proxy (see `saved`).
+pub fn saved_on_this_machine() -> Option<BTreeSet<Module>> {
+    saved(&data_dir_in(std::env::var_os("APPDATA"))?)
 }
 
 /// Whether `dir` holds any app data from an earlier launch. A person who
@@ -169,7 +195,7 @@ pub fn existing_install(dir: &Path) -> bool {
 
 fn write(dir: &Path, on: &BTreeSet<Module>) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
-    let body = serde_json::to_string(&Disk { on: on.clone() }).map_err(|e| e.to_string())?;
+    let body = serde_json::to_string(&Disk { on: on.iter().map(|m| m.key().to_string()).collect() }).map_err(|e| e.to_string())?;
     crate::ai_tools::atomic_write(&dir.join(FILE), &body)
 }
 

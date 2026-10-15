@@ -52,12 +52,22 @@ fn the_guide_address_names_the_modules_that_are_on() {
     let off = guide_address(index, &mods(&[])).expect("a file URL");
     assert!(
         on.starts_with("file:///")
-            && on.ends_with("/help/index.html?modules=db_access,writing_style,auto_run,api_templates,playwright"),
+            && on.contains("/help/index.html?modules=db_access,writing_style,auto_run,api_templates,playwright"),
         "{on}"
     );
     let some = guide_address(index, &mods(&[Module::AutoRun, Module::DbAccess])).expect("a file URL");
-    assert!(some.ends_with("/help/index.html?modules=db_access,auto_run"), "{some}");
-    assert!(!on.contains("advanced"), "{on}");
+    assert!(some.contains("/help/index.html?modules=db_access,auto_run"), "{some}");
+    // Transitional for one release: while Auto Run is on the query also
+    // carries the old flag, so a guide downloaded under an earlier version
+    // still shows its Auto Run pages. Nothing else carries it.
+    assert!(
+        on.ends_with("?modules=db_access,writing_style,auto_run,api_templates,playwright&advanced=1"),
+        "{on}"
+    );
+    assert!(some.ends_with("?modules=db_access,auto_run&advanced=1"), "{some}");
+    let no_auto_run = guide_address(index, &mods(&[Module::DbAccess, Module::WritingStyle])).expect("a file URL");
+    assert!(no_auto_run.ends_with("/help/index.html?modules=db_access,writing_style"), "{no_auto_run}");
+    assert!(!no_auto_run.contains("advanced"), "{no_auto_run}");
     assert!(off.starts_with("file:///") && off.ends_with("/help/index.html"), "{off}");
     assert!(!off.contains('?'), "{off}");
     // A path with spaces (this repository's own) is encoded, not cut short.

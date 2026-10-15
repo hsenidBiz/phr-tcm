@@ -197,6 +197,11 @@ pub fn shut() {
     SHUT.store(true, Ordering::SeqCst);
 }
 
+/// Whether any browser is kept right now. Only looks.
+pub fn any() -> bool {
+    !store().is_empty()
+}
+
 /// Takes out every entry to be closed: one whose idle time has run out,
 /// and one that has given way (its account was taken by anything other
 /// than a template run since it signed in).

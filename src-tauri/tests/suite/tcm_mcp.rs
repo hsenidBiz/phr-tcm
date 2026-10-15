@@ -449,7 +449,9 @@ fn calling_a_disabled_tool_is_refused() {
 }
 
 /// A bridge that cannot be reached must not strip every tool - the app
-/// being closed is not the same as the user disabling everything.
+/// being closed is not the same as the user disabling everything. With no
+/// answer AND no saved modules there is nothing to offer from a module
+/// (the saved-modules fallback is `tools_reply_or_saved`, tested below).
 #[test]
 fn an_unreachable_bridge_disables_nothing() {
     let call = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> {
@@ -463,6 +465,39 @@ fn an_unreachable_bridge_disables_nothing() {
     // on, so the 38 module tools are not offered - and nothing else goes.
     assert_eq!(names.len(), 53 - 38, "an unreachable bridge must not disable a Core tool: {names:?}");
     assert!(names.iter().all(|n| module_of_tool(n).is_none()), "{names:?}");
+}
+
+/// The editor keeps the tool list it got when it connected. An editor
+/// started before the app must still see the modules the person has on,
+/// so with no answer from the app the proxy reads this machine's saved
+/// modules (`modules.json`), mended, and offers exactly those.
+#[test]
+fn an_unreachable_bridge_falls_back_to_the_saved_modules() {
+    use v2_lib::mcp::tools_reply_or_saved;
+    let names_with = |saved: Option<BTreeSet<Module>>| -> Vec<String> {
+        let call = move |_m: &str, _p: &str, _b: &str| tools_reply_or_saved(Err("connection refused".into()), saved.clone());
+        let resp =
+            v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect()
+    };
+    let db_only = names_with(Some([Module::DbAccess].into_iter().collect()));
+    assert!(db_only.iter().any(|n| n == "db_lookup") && db_only.iter().any(|n| n == "db_query"), "{db_only:?}");
+    assert!(AUTORUN_TOOLS.iter().all(|t| !db_only.iter().any(|n| n == t)), "{db_only:?}");
+    // no file (or an unreadable one): none listed, as before
+    let none = names_with(None);
+    assert!(none.iter().all(|n| module_of_tool(n).is_none()), "{none:?}");
+    // a 503 from a bridge that is up but unwell reads the file too
+    let (_, on) = v2_lib::mcp::tool_policy_from(
+        tools_reply_or_saved(Ok((503, String::new())), Some([Module::DbAccess].into_iter().collect())),
+    );
+    assert_eq!(on, [Module::DbAccess].into_iter().collect());
+    // but a real answer is never overridden by the file
+    let (_, on) = v2_lib::mcp::tool_policy_from(tools_reply_or_saved(
+        Ok((200, r#"{"disabled":[],"modules":[]}"#.into())),
+        Some([Module::DbAccess].into_iter().collect()),
+    ));
+    assert!(on.is_empty());
 }
 
 /// The description is the only thing an assistant reads. It used to name

@@ -1,7 +1,7 @@
 //! The module tree and its stored choice.
 
 use std::collections::BTreeSet;
-use v2_lib::modules::{apply, initial, load_or_create, save, Module};
+use v2_lib::modules::{apply, initial, load_or_create, save, saved, Module};
 
 fn set(ms: &[Module]) -> BTreeSet<Module> {
     ms.iter().copied().collect()
@@ -65,6 +65,40 @@ fn an_unreadable_file_on_an_existing_install_is_rebuilt_from_the_old_flags() {
     assert_eq!(load_or_create(d.path(), false), all);
     // and it was saved, so the next read is the file
     assert_eq!(load_or_create(d.path(), false), all);
+}
+
+/// A newer app's module this one does not know is dropped; every module it
+/// does know stays - the file is not thrown away and rebuilt from old flags.
+#[test]
+fn a_file_naming_an_unknown_module_keeps_every_known_one() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("modules.json"), r#"{"on":["db_access","future_thing"]}"#).unwrap();
+    assert_eq!(load_or_create(d.path(), false), set(&[Module::DbAccess]));
+}
+
+/// What the `--mcp` proxy reads when the app cannot be asked: the saved
+/// file, mended; nothing when there is none or it cannot be read.
+#[test]
+fn the_saved_choice_is_read_without_creating_anything() {
+    let d = tempfile::tempdir().unwrap();
+    assert_eq!(saved(d.path()), None);
+    assert!(!d.path().join("modules.json").exists(), "reading must not write");
+    std::fs::write(d.path().join("modules.json"), "not json").unwrap();
+    assert_eq!(saved(d.path()), None);
+    std::fs::write(d.path().join("modules.json"), r#"{"on":["auto_run","writing_style"]}"#).unwrap();
+    assert_eq!(saved(d.path()), Some(set(&[Module::WritingStyle])), "mended: auto_run needs db_access");
+}
+
+/// The proxy finds the file where the app writes it: Tauri's app data dir
+/// is the roaming app-data folder plus the bundle identifier.
+#[test]
+fn the_proxy_looks_in_the_apps_data_folder() {
+    let conf = include_str!("../../tauri.conf.json");
+    let v: serde_json::Value = serde_json::from_str(conf).unwrap();
+    assert_eq!(v["identifier"].as_str().unwrap(), v2_lib::modules::APP_IDENTIFIER);
+    let dir = v2_lib::modules::data_dir_in(Some(std::ffi::OsString::from("C:/Roaming"))).unwrap();
+    assert!(dir.ends_with(v2_lib::modules::APP_IDENTIFIER), "{dir:?}");
+    assert_eq!(v2_lib::modules::data_dir_in(None), None);
 }
 
 #[test]
@@ -261,7 +295,7 @@ fn preconditions_need_database_access_as_well_as_the_switch() {
 
 mod commands {
     use super::set;
-    use v2_lib::commands::modules::{modules_set_with, AUTO_RUN_BUSY, PLAYWRIGHT_BUSY};
+    use v2_lib::commands::modules::{modules_set_with, AUTO_RUN_BROWSER_OPEN, AUTO_RUN_BUSY, PLAYWRIGHT_BUSY, SAVE_FAILED};
     use v2_lib::modules::Module;
 
     fn dir() -> tempfile::TempDir {
@@ -272,7 +306,7 @@ mod commands {
     fn a_busy_run_refuses_switching_auto_run_off() {
         let d = dir();
         let mut st = set(&[Module::DbAccess, Module::AutoRun]);
-        let err = modules_set_with(&mut st, d.path(), Module::AutoRun, false, true, false).unwrap_err();
+        let err = modules_set_with(&mut st, d.path(), Module::AutoRun, false, true, false, false).unwrap_err();
         assert_eq!(err, AUTO_RUN_BUSY);
         assert!(st.contains(&Module::AutoRun));
     }
@@ -281,7 +315,7 @@ mod commands {
     fn a_busy_repo_command_refuses_switching_playwright_off() {
         let d = dir();
         let mut st = set(&[Module::DbAccess, Module::AutoRun, Module::Playwright]);
-        let err = modules_set_with(&mut st, d.path(), Module::Playwright, false, false, true).unwrap_err();
+        let err = modules_set_with(&mut st, d.path(), Module::Playwright, false, false, false, true).unwrap_err();
         assert_eq!(err, PLAYWRIGHT_BUSY);
         assert!(st.contains(&Module::Playwright));
     }
@@ -290,7 +324,7 @@ mod commands {
     fn a_cascade_that_would_switch_off_a_busy_auto_run_is_refused() {
         let d = dir();
         let mut st = set(&[Module::DbAccess, Module::AutoRun]);
-        let err = modules_set_with(&mut st, d.path(), Module::DbAccess, false, true, false).unwrap_err();
+        let err = modules_set_with(&mut st, d.path(), Module::DbAccess, false, true, false, false).unwrap_err();
         assert_eq!(err, AUTO_RUN_BUSY);
         assert_eq!(st, set(&[Module::DbAccess, Module::AutoRun]));
     }
@@ -299,7 +333,7 @@ mod commands {
     fn busy_checks_do_not_block_switching_on() {
         let d = dir();
         let mut st = set(&[Module::DbAccess]);
-        let now = modules_set_with(&mut st, d.path(), Module::AutoRun, true, true, true).unwrap();
+        let now = modules_set_with(&mut st, d.path(), Module::AutoRun, true, true, false, true).unwrap();
         assert_eq!(now, vec![Module::DbAccess, Module::AutoRun]);
     }
 
@@ -307,7 +341,7 @@ mod commands {
     fn a_locked_module_is_refused() {
         let d = dir();
         let mut st = set(&[]);
-        let err = modules_set_with(&mut st, d.path(), Module::AutoRun, true, false, false).unwrap_err();
+        let err = modules_set_with(&mut st, d.path(), Module::AutoRun, true, false, false, false).unwrap_err();
         assert_eq!(err, "\"Auto Run\" needs \"Database Access\" switched on first.");
     }
 
@@ -316,8 +350,61 @@ mod commands {
         let d = dir();
         let all: Vec<Module> = Module::ALL.to_vec();
         let mut st = set(&all);
-        let now = modules_set_with(&mut st, d.path(), Module::DbAccess, false, false, false).unwrap();
+        let now = modules_set_with(&mut st, d.path(), Module::DbAccess, false, false, false, false).unwrap();
         assert_eq!(now, vec![Module::WritingStyle]);
         assert_eq!(st, set(&[Module::WritingStyle]));
+    }
+
+    #[test]
+    fn an_open_auto_run_browser_refuses_switching_auto_run_off() {
+        let d = dir();
+        let mut st = set(&[Module::DbAccess, Module::AutoRun]);
+        let err = modules_set_with(&mut st, d.path(), Module::AutoRun, false, false, true, false).unwrap_err();
+        assert_eq!(err, "Auto Run can't be switched off while its browser is open - close it first.");
+        assert_eq!(err, AUTO_RUN_BROWSER_OPEN);
+        // by cascade too, and switching on is never blocked by it
+        let err = modules_set_with(&mut st, d.path(), Module::DbAccess, false, false, true, false).unwrap_err();
+        assert_eq!(err, AUTO_RUN_BROWSER_OPEN);
+        assert_eq!(st, set(&[Module::DbAccess, Module::AutoRun]));
+        // Auto Run already off: nothing for the browser to block
+        let mut off = set(&[Module::DbAccess]);
+        assert!(modules_set_with(&mut off, d.path(), Module::DbAccess, false, false, true, false).is_ok());
+    }
+
+    /// The states behind `auto_run_browser_open`: a setup browser (a lease
+    /// that only a person closes) and a held API template browser.
+    #[test]
+    fn the_browser_states_are_read_from_their_owners() {
+        use v2_lib::autorun::lease::{try_acquire, Holder};
+        let _h = crate::serial::held_browsers();
+        let _g = crate::serial::account_leases();
+        assert!(!v2_lib::commands::modules::auto_run_browser_open());
+        let lease = try_acquire("env-modules-test", "acct", Holder::Setup).unwrap();
+        assert!(v2_lib::commands::modules::auto_run_browser_open(), "a setup browser is open");
+        drop(lease);
+        assert!(!v2_lib::commands::modules::auto_run_browser_open());
+        let lease = try_acquire("env-modules-test", "acct", Holder::Browser).unwrap();
+        assert!(v2_lib::commands::modules::auto_run_browser_open(), "the supervised browser holds an account");
+        drop(lease);
+        // A run's own lease (a case) is the run, not an open browser.
+        let lease = try_acquire("env-modules-test", "acct", Holder::Case { run: "r".into() }).unwrap();
+        assert!(!v2_lib::commands::modules::auto_run_browser_open());
+        drop(lease);
+    }
+
+    #[test]
+    fn a_failed_save_says_so_without_a_path() {
+        // A file where the data folder should be: the save cannot work.
+        let d = dir();
+        let file = d.path().join("blocked");
+        std::fs::write(&file, "x").unwrap();
+        let mut st = set(&[Module::DbAccess]);
+        let err = modules_set_with(&mut st, &file, Module::WritingStyle, true, false, false, false).unwrap_err();
+        assert_eq!(err, SAVE_FAILED);
+        assert!(!err.contains(['/', char::from(92), ':']) && !err.contains("blocked"), "{err}");
+        assert_eq!(st, set(&[Module::DbAccess]), "and nothing was changed");
+        // a refusal from the tree is still its own sentence
+        let err = modules_set_with(&mut st, &file, Module::Playwright, true, false, false, false).unwrap_err();
+        assert!(err.contains("needs"), "{err}");
     }
 }

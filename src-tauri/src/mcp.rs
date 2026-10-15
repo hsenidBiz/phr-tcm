@@ -152,12 +152,13 @@ fn quirk_cases() -> serde_json::Value {
 ///
 /// A bridge that can't be reached disables nothing extra among the core
 /// tools - losing the whole toolset because the app is closed would be
-/// worse than showing tools that then say "sign in first". But it never
-/// WIDENS anything: the proxy is its own process and cannot read the app's
-/// modules, so a module's tools are offered only when `modules` names it -
-/// an app too old to send the field, a non-200 answer or no app at all all
-/// mean "no module on". A development build adds nothing: its app says
-/// what it has on like any other.
+/// worse than showing tools that then say "sign in first". It never WIDENS
+/// anything on a guess: a module's tools are offered only when `modules`
+/// names it - an app too old to send the field or a garbled answer mean "no
+/// module on". When the app does not answer at all, the proxy's `bridge_call`
+/// substitutes this machine's saved modules first (`tools_reply_or_saved`),
+/// so this function still only ever sees an answer. A development build
+/// adds nothing: its app says what it has on like any other.
 pub fn tool_policy_from(reply: Result<(u16, String), String>) -> (Vec<String>, BTreeSet<Module>) {
     let answer = match reply {
         Ok((200, body)) => serde_json::from_str::<serde_json::Value>(&body).ok(),
@@ -1377,7 +1378,35 @@ impl ToolError {
     }
 }
 
+/// `/tools` as the proxy uses it: the app's answer, or - when the app cannot
+/// be reached or does not answer 200 - this machine's saved modules in the
+/// same shape. An editor keeps the tool list it got when it connected, so
+/// one started before the app must still see the modules the person has on
+/// (the app writes them to `modules.json`; "Updates take nothing away").
+/// With no saved file (`None`) the original reply stands and no module's
+/// tools are offered. The saved set is mended by `tool_policy_from`.
+pub fn tools_reply_or_saved(
+    reply: Result<(u16, String), String>,
+    saved: Option<BTreeSet<Module>>,
+) -> Result<(u16, String), String> {
+    match (&reply, saved) {
+        (Ok((200, _)), _) | (_, None) => reply,
+        (_, Some(on)) => {
+            let names: Vec<&str> = Module::ALL.into_iter().filter(|m| on.contains(m)).map(Module::key).collect();
+            Ok((200, serde_json::json!({ "disabled": [], "modules": names }).to_string()))
+        }
+    }
+}
+
 fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), String> {
+    let reply = bridge_request(method, path, body);
+    if method == "GET" && path == "/tools" {
+        return tools_reply_or_saved(reply, crate::modules::saved_on_this_machine());
+    }
+    reply
+}
+
+fn bridge_request(method: &str, path: &str, body: &str) -> Result<(u16, String), String> {
     let hs: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(crate::ai_bridge::handshake_path())
             .map_err(|_| "handshake file missing - is the app running?".to_string())?,

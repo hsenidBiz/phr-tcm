@@ -28,13 +28,19 @@ pub fn open_index(index: &std::path::Path) -> Result<(), String> {
 
 /// The guide's address: `index` as a file URL, with
 /// `?modules=<names>` naming the modules that are on (their snake_case
-/// keys, comma-separated, in tree order), and no query while none is. The
+/// keys, comma-separated, in tree order, then `&advanced=1` while Auto Run
+/// is on - transitional), and no query while none is. The
 /// guide hides every module's pages it is not told about, so unknown is
 /// hidden.
 pub fn guide_address(index: &std::path::Path, on: &BTreeSet<Module>) -> Option<String> {
     let mut url = tauri::Url::from_file_path(index).ok()?;
     let names = Module::ALL.into_iter().filter(|m| on.contains(m)).map(Module::key).collect::<Vec<_>>().join(",");
-    url.set_query((!names.is_empty()).then(|| format!("modules={names}")).as_deref());
+    // Transitional, for one release (like the /tools "autorun" key): a guide
+    // downloaded under an earlier version decides its Auto Run pages from
+    // `advanced=1`, so it is sent while Auto Run is on. The current guide
+    // ignores it.
+    let advanced = if on.contains(&Module::AutoRun) { "&advanced=1" } else { "" };
+    url.set_query((!names.is_empty()).then(|| format!("modules={names}{advanced}")).as_deref());
     Some(url.to_string())
 }
 
