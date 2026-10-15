@@ -119,8 +119,8 @@ export function SubTabs<T extends string>({
     refs.current[id]?.focus();
   };
   return (
-    <div className="space-y-4">
-      <div role="tablist" aria-label={label} className="flex gap-1 border-b border-border">
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <div role="tablist" aria-label={label} className="flex shrink-0 gap-1 border-b border-border">
         {tabs.map(({ id, label: name, count }, i) => {
           const on = shown === id;
           return (
@@ -164,7 +164,9 @@ export function SubTabs<T extends string>({
           id={`${ids}-${id}-panel`}
           aria-labelledby={`${ids}-${id}-tab`}
           hidden={shown !== id}
-          className="min-w-0"
+          // Takes the height the tabs leave and scrolls inside; pb-6 is the
+          // ordinary margin under the last thing on the tab.
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto pb-6"
         >
           {seen.current.has(id) && panels[id]}
         </div>

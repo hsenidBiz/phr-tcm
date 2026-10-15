@@ -1241,11 +1241,13 @@ export default function App() {
               must not add a second scrollbar around the board. */}
           <main
             className={
-              signedIn && workMode
+              signedIn && (workMode || (autoRunShown && section === "playwright"))
                 ? // No bottom padding in work mode: the board's columns own
                   // the full height, and a padded strip under them read as a
                   // gap at the bottom of the screen - boards run flush to the
-                  // edge, the way every kanban surface does.
+                  // edge, the way every kanban surface does. The Playwright
+                  // tab is laid out the same way: its runner's panels fill
+                  // the window and scroll inside themselves.
                   "flex min-h-0 flex-1 flex-col overflow-hidden px-6 pt-6"
                 : // Room under the last thing on every screen, so what floats
                   // at the bottom - the sticky Collapse all at the left, the
@@ -1314,7 +1316,7 @@ export default function App() {
               // key={section} remounts the wrapper on tab switch, so every
               // screen fades up briefly (120ms) instead of snapping in.
               // 120ms fade chosen for snappiness (user request 2026-08-22).
-              <div key={section} className="t-screen-in">
+              <div key={section} className={section === "playwright" ? "t-screen-in flex min-h-0 flex-1 flex-col" : "t-screen-in"}>
                 <div className="mb-4 flex items-center gap-2">
                   <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
                   {section === "ai" && <BridgeStatusBadge />}
