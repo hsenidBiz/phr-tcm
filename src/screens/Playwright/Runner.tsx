@@ -373,7 +373,10 @@ export default function Runner({ clone, onBusy }: { clone: string; onBusy?: (bus
         : "text-muted";
 
   return (
-    <section className="space-y-3" aria-label="Runner">
+    // Side by side (wide windows) the two columns fill the tab's height and
+    // end on one line, the tests and the output scrolling inside; stacked,
+    // each keeps its own height and the tab scrolls.
+    <section className="flex flex-col gap-3 min-[1400px]:h-full" aria-label="Runner">
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface p-2">
         <Button size="sm" disabled={active || picked.length === 0} onClick={() => void run("Picked")}>
           <IconRun aria-hidden />
@@ -428,8 +431,9 @@ export default function Runner({ clone, onBusy }: { clone: string; onBusy?: (bus
         </p>
       ))}
 
-      <div className="grid gap-3 min-[1400px]:grid-cols-2 min-[1400px]:items-start">
+      <div className="grid gap-3 min-[1400px]:min-h-0 min-[1400px]:flex-1 min-[1400px]:grid-cols-2">
         <Card
+          className="min-[1400px]:flex min-[1400px]:min-h-0 min-[1400px]:flex-col"
           title={
             <>
               Tests <span className="text-xs font-normal text-faint">{list.length}</span>
@@ -451,7 +455,7 @@ export default function Runner({ clone, onBusy }: { clone: string; onBusy?: (bus
               </Button>
             </div>
           }
-          bodyClassName="max-h-[34rem] overflow-auto p-2"
+          bodyClassName="max-h-[34rem] overflow-auto p-2 min-[1400px]:max-h-none min-[1400px]:min-h-0 min-[1400px]:flex-1"
         >
           {tests.isLoading && <Hint className="p-2">Listing the tests…</Hint>}
           {tests.isError && <p className="whitespace-pre-wrap p-2 text-xs text-danger">{tests.error.message}</p>}
@@ -475,9 +479,9 @@ export default function Runner({ clone, onBusy }: { clone: string; onBusy?: (bus
           {branches.length > 0 && <RunnerTree branches={branches} ticked={ticked} onTick={tick} />}
         </Card>
 
-        <div className="min-w-0 space-y-3">
+        <div className="flex min-w-0 flex-col gap-3 min-[1400px]:min-h-0">
           {preview && (
-            <Card title="Preview" aria-label="Preview" bodyClassName="space-y-1 p-3">
+            <Card title="Preview" aria-label="Preview" className="shrink-0" bodyClassName="space-y-1 p-3">
               <Hint>{`Would run ${preview.expected}:`}</Hint>
               <pre className="overflow-x-auto rounded-md bg-surface-2 p-2 font-mono text-xs text-text">
                 {`${preview.run_list ?? ""}${preview.run_list ? "\n" : ""}${preview.command}`}
@@ -487,6 +491,8 @@ export default function Runner({ clone, onBusy }: { clone: string; onBusy?: (bus
 
           <Card
             title="Output"
+            className="min-[1400px]:flex min-[1400px]:min-h-0 min-[1400px]:flex-1 min-[1400px]:flex-col"
+            bodyClassName="min-[1400px]:flex min-[1400px]:min-h-0 min-[1400px]:flex-1 min-[1400px]:flex-col"
             actions={
               <>
                 {status && <span className={`text-xs ${statusTone}`}>{status}</span>}
@@ -505,7 +511,7 @@ export default function Runner({ clone, onBusy }: { clone: string; onBusy?: (bus
                 const el = e.currentTarget;
                 follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
               }}
-              className="h-72 overflow-auto bg-bg p-3 font-mono text-xs leading-relaxed text-text"
+              className="h-72 overflow-auto bg-bg p-3 font-mono text-xs leading-relaxed text-text min-[1400px]:h-auto min-[1400px]:min-h-40 min-[1400px]:flex-1"
             >
               {output.length > 0 ? (
                 output.join("\n")
@@ -515,7 +521,7 @@ export default function Runner({ clone, onBusy }: { clone: string; onBusy?: (bus
             </pre>
           </Card>
 
-          <Card title="Reports" aria-label="Reports" bodyClassName="max-h-64 overflow-auto">
+          <Card title="Reports" aria-label="Reports" className="shrink-0" bodyClassName="max-h-64 overflow-auto">
             {reports.isError && <p className="p-3 text-xs text-danger">{reports.error.message}</p>}
             {reports.data && reports.data.length === 0 && <Hint className="p-3">No report yet. Run something first.</Hint>}
             <ul className="divide-y divide-border">

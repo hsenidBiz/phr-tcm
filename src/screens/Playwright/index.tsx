@@ -205,8 +205,10 @@ export default function Playwright({ org, project }: { org: string; project: str
   };
 
   return (
-    <div className="space-y-5">
-      <header className="space-y-2">
+    // Fills the main area (App lays this tab out like the board): the
+    // section tabs take what the header leaves, and scroll inside.
+    <div className="flex min-h-0 flex-1 flex-col gap-5">
+      <header className="shrink-0 space-y-2">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <h2 className="text-lg font-semibold text-text">Playwright</h2>
           <div className="flex min-w-0 flex-1 basis-64 items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5">
