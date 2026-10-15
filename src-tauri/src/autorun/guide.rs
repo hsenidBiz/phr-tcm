@@ -199,6 +199,10 @@ These are examples, not a rule:
 
 Each step of the test case becomes one entry with a `step_number` and a
 list of `actions`, run in order: `{ "step_number": 1, "actions": [ ... ], "unchecked": "<why, optional>" }`.
+The first action that fails stops its step: the actions after it are not
+run and record `not run: an earlier action in this step failed` (a
+`when_visible` whose target never showed has not failed). So the failure a
+run reports is the step's first, and what follows it is untested.
 `step_number` is the position of the
 step IN THE TEST CASE - 1 for the first step, 2 for the second, and so
 on - because per-step results are matched back to the case's own steps by

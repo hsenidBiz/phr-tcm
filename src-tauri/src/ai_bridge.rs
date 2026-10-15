@@ -5028,7 +5028,7 @@ pub fn replay_still_running(case_id: i32, step: i32, at: i32, of: i32) -> String
 /// `replay_still_running`, saying too which action of the step it is on
 /// (`runner::ActionNow`), for how long, and how many of the step's actions
 /// already failed. A replay never tries an action again: a failed one is
-/// pictured and the step carries on to its end, and the replay stops after
+/// pictured, the rest of its step is not run, and the replay stops after
 /// that step.
 pub fn replay_still_running_on(
     case_id: i32,
@@ -5315,7 +5315,8 @@ fn component_outcome(steps: &[(String, crate::browser::actions::ActionOutcome)])
             ActionOutcome::passed(if n == 1 { "its 1 action passed".to_string() } else { format!("all {n} of its actions passed") })
         }
         Some((i, (what, o))) => {
-            let failed = steps.iter().filter(|(_, o)| !o.ok).count();
+            // An action the failure stopped was never carried out.
+            let failed = steps.iter().filter(|(_, o)| !o.ok && !o.detail.starts_with("not run:")).count();
             let more = if failed > 1 { format!(" ({failed} of {} failed)", steps.len()) } else { String::new() };
             let mut out = ActionOutcome::failed(format!("action {} ({what}) failed: {}{more}", i + 1, o.detail));
             out.screenshot = o.screenshot.clone();
@@ -5370,6 +5371,11 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
     // A component's try answers each of its actions, as a discovery's does.
     for (i, (what, o)) in steps.iter().enumerate() {
         let detail = o.detail.trim();
+        // One the failure before it stopped says so, and why, not "failed".
+        if let Some(why) = detail.strip_prefix("not run: ").filter(|_| !o.ok) {
+            text.push_str(&format!("\n{}. not run: {what} ({why})", i + 1));
+            continue;
+        }
         let said = if detail.is_empty() { what.clone() } else { format!("{what}: {}", one_short_line(detail)) };
         text.push_str(&format!("\n{}. {}: {said}", i + 1, if o.ok { "ok" } else { "failed" }));
     }

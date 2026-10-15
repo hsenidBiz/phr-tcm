@@ -360,13 +360,13 @@ pub fn changes_the_page(action: &Action) -> bool {
 
 /// Run one step's actions in order and report every outcome.
 ///
-/// Actions after an ORDINARY failure still run: the watcher learns more
-/// from "the click worked, the check did not" than from a run that stops
-/// at the first red. A failed `sign_in` is the one exception - what
-/// follows would run as the wrong person, or as nobody, and report
-/// results that mean nothing - so once a `sign_in` action fails, every
-/// remaining action of that step is not executed and is reported as such.
-/// The outcomes list still has one entry per action, in order.
+/// The first action that fails stops the step: every action after it is
+/// not executed and is reported as `AFTER_ACTION_FAILED` (or the sharper
+/// reason its failure set - a failed `sign_in`, whose rest would run as the
+/// wrong person or as nobody), so none of them waits its full timeout for
+/// something the failure means cannot appear. The failure keeps its own
+/// detail and picture. The outcomes list still has one entry per action,
+/// in order.
 ///
 /// A `sign_in` here takes its account's lease (`lease`) only for the step:
 /// a browser that stays signed in between steps keeps its lease in its own
@@ -479,8 +479,8 @@ pub struct ActionNow {
     /// When it began.
     pub since: Option<Instant>,
     /// How many of the step's actions have already failed (a wait that ran
-    /// out of time included). A step carries on past a failed action, and
-    /// never tries one again.
+    /// out of time included). A failed action stops its step: the rest is
+    /// not run, and none is tried again.
     pub failed: u32,
 }
 
@@ -550,6 +550,20 @@ impl Default for StepProgress {
 /// has no Stop to end it: the person, or the assistant, is waiting on the
 /// answer, and a step must never hold the browser for two minutes unasked.
 pub const WATCHED_DOWNLOAD_WAIT_MS: u32 = 30_000;
+
+/// Every action of a step after one that failed: it is never carried out,
+/// so it never waits its full timeout for what cannot appear now.
+pub const AFTER_ACTION_FAILED: &str = "not run: an earlier action in this step failed";
+
+/// Why the rest of a step must not run after `outcome`, when it must not:
+/// any failed action stops its step, whatever its kind - a `when_visible`
+/// whose target never showed passed, so it does not. The one place every
+/// run, watched step, try and replay decides it, since they all run their
+/// steps through `run_expanded`; a reason an action already set (a failed
+/// `sign_in`, a Stop, a refused session) is kept in its place.
+fn stops_the_step(outcome: &ActionOutcome) -> Option<&'static str> {
+    (!outcome.ok).then_some(AFTER_ACTION_FAILED)
+}
 
 /// What an action interrupted by the run's Stop, and every action after it
 /// in the step, records: what a stopped case records for what it never
@@ -901,6 +915,7 @@ async fn run_expanded<D: Driver>(
         if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP {
             outcome.screenshot = picture(d, root).await;
         }
+        blocked = blocked.or(stops_the_step(&outcome));
         out.push(outcome);
     }
     // Judging a dialog answers it, which changes the page.
