@@ -19,12 +19,13 @@
 //! declares one.
 //!
 //! The prompt is fixed text plus values checked here only: the case ids,
-//! `<seg>` parts and file stems matching `^[a-z0-9][a-z0-9-]*$`, raw spec
+//! `<seg>` folders (`layout::valid_name`) and file stems matching `^[a-z0-9][a-z0-9-]*$`, raw spec
 //! names from `index.json`, and user keys from the clone's `users.json`.
 //! The app only builds this text; it never starts Claude Code or anything
 //! else for it. Read only.
 
 use crate::pw_export::clone::ClonedRepo;
+use crate::pw_repo::layout;
 use crate::pw_repo::presence::{self, INDEX_REL};
 use crate::pw_repo::sync::ExportRecord;
 use serde::Serialize;
@@ -34,7 +35,7 @@ use std::path::Path;
 /// One prompt: the cases of one test-case file, in the order they were asked for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct HandoffCard {
-    /// `<country>/<side>/<module>/<feature>`.
+    /// The feature's folders under `suites/`, at least two, e.g. `<country>/<side>/<module>/[<group>/]<feature>`.
     pub seg: String,
     /// The test-case file's stem, and so the spec's: `--spec <stem>`.
     pub stem: String,
@@ -53,6 +54,12 @@ pub fn valid_name(name: &str) -> bool {
     let mut bytes = name.bytes();
     matches!(bytes.next(), Some(b) if b.is_ascii_lowercase() || b.is_ascii_digit())
         && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// The `navigation.json` key of a feature: the last two folders of `seg`.
+fn nav_key_of(seg: &str) -> String {
+    let folders: Vec<String> = seg.split('/').map(str::to_string).collect();
+    layout::navigation_key(&folders)
 }
 
 /// "101", "101 and 102", "101, 102 and 103".
@@ -78,7 +85,7 @@ pub struct PromptInput<'a> {
     pub section: &'a str,
     /// The repo user every raw spec runs as.
     pub user_key: &'a str,
-    /// `src/navigation.json` has an entry for `<module>/<feature>`.
+    /// `src/navigation.json` has an entry for the feature's last two folders.
     pub navigation_captured: bool,
 }
 
@@ -87,8 +94,7 @@ pub fn prompt(p: &PromptInput) -> String {
     let id_list: Vec<String> = p.ids.iter().map(i32::to_string).collect();
     let several = p.ids.len() > 1;
     let (cases, whose, them) = if several { ("cases", "each case's", "them") } else { ("case", "the case's", "it") };
-    let parts: Vec<&str> = p.seg.split('/').collect();
-    let nav_key = format!("{}/{}", parts.get(2).unwrap_or(&""), parts.get(3).unwrap_or(&""));
+    let nav_key = nav_key_of(p.seg);
     let key = p.user_key;
     let seg = p.seg;
     let stem = p.stem;
@@ -148,14 +154,15 @@ fn plain_spec_name(name: &str) -> bool {
     carriable(name) && name.ends_with(".spec.ts") && !name.contains('/') && !name.contains('\\')
 }
 
-/// `(seg, stem)` of a test-case file `suites/<c>/<s>/<m>/<f>/test-cases/<stem>.md`,
-/// every part `valid_name`.
+/// `(seg, stem)` of a test-case file `suites/<folders>/test-cases/<stem>.md`
+/// with at least two folders (a feature is always at least two deep), every
+/// folder `layout::valid_name` and the stem `valid_name`.
 fn seg_of(md: &str) -> Option<(String, String)> {
     let rest = md.strip_prefix("suites/")?;
     let (seg, name) = rest.rsplit_once("/test-cases/")?;
     let stem = name.strip_suffix(".md")?;
     let parts: Vec<&str> = seg.split('/').collect();
-    (parts.len() == 4 && parts.iter().all(|p| valid_name(p)) && valid_name(stem))
+    (parts.len() >= 2 && parts.iter().all(|p| layout::valid_name(p)) && valid_name(stem))
         .then(|| (seg.to_string(), stem.to_string()))
 }
 
@@ -223,7 +230,7 @@ fn check(repo: &ClonedRepo, found: &presence::Presence, record: &ExportRecord, w
         }
     };
     let (seg, stem) = seg_of(&section).ok_or_else(|| {
-        format!("Case {id}'s test-case file is not suites/<country>/<side>/<module>/<feature>/test-cases/<name>.md with names in lower-case letters, digits and hyphens.")
+        format!("Case {id}'s test-case file is not suites/<folders>/<feature>/test-cases/<name>.md with names in lower-case letters, digits and hyphens.")
     })?;
     let in_specs = found
         .places(id)
@@ -339,7 +346,6 @@ pub fn cards(
                 Err(problem) => card.problem = Some(problem),
                 Ok(key) => {
                     let raw: Vec<String> = todo.iter().map(|c| c.raw.clone()).collect();
-                    let parts: Vec<&str> = seg.split('/').collect();
                     card.prompt = prompt(&PromptInput {
                         seg: &seg,
                         stem: &stem,
@@ -347,7 +353,7 @@ pub fn cards(
                         raw_specs: &raw,
                         section: &section,
                         user_key: &key,
-                        navigation_captured: repo.navigation_keys.contains(&format!("{}/{}", parts[2], parts[3])),
+                        navigation_captured: repo.navigation_keys.contains(&nav_key_of(&seg)),
                     });
                 }
             }

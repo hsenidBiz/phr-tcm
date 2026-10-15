@@ -3579,7 +3579,7 @@ export type GuideStatus = {
 
 /**  One prompt: the cases of one test-case file, in the order they were asked for. */
 export type HandoffCard = {
-	/**  `<country>/<side>/<module>/<feature>`. */
+	/**  The feature's folders under `suites/`, at least two, e.g. `<country>/<side>/<module>/[<group>/]<feature>`. */
 	seg: string,
 	/**  The test-case file's stem, and so the spec's: `--spec <stem>`. */
 	stem: string,
