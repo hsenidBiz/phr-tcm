@@ -7,11 +7,16 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { resetModulesStore, setModulesForTest } from "../../lib/modules";
 import { toast } from "../../lib/toast";
 import RunPane from "./RunPane";
 
+// Auto Run sits under Database Access, which these tests expect on.
+beforeEach(() => setModulesForTest(["db_access", "auto_run"]));
+
 afterEach(() => {
+  resetModulesStore();
   clearMocks();
   localStorage.clear();
   vi.restoreAllMocks();

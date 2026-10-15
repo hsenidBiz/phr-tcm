@@ -8,11 +8,16 @@
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { resetModulesStore, setModulesForTest } from "../../lib/modules";
 import { backgroundRunSnapshot, openRunSetup, resetBackgroundRun } from "../../lib/backgroundRun";
 import ReplayPane, { statusOf } from "./ReplayPane";
 
+// Auto Run sits under Database Access, which these tests expect on.
+beforeEach(() => setModulesForTest(["db_access", "auto_run"]));
+
 afterEach(() => {
+  resetModulesStore();
   resetBackgroundRun();
   clearMocks();
   localStorage.clear();
