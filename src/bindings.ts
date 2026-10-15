@@ -3664,14 +3664,8 @@ export type LastResult = "Passed" | "Failed" | "Flaky" | "Skipped";
 export type ListedTest = {
 	/**  Unique and stable across listings: `["<file>", ...title path]`. */
 	id: string,
-	/**  `sl`, `ph`, `in`, or `common-components` for the shared tree. */
-	country: string,
-	/**  `self` or `admin`; empty under `common-components`. */
-	side: string,
-	/**  Empty under `common-components`. */
-	module: string,
-	/**  The feature folder, or the component under `common-components`. */
-	feature: string,
+	/**  The folders from `suites/` to the feature, the feature last. */
+	path: string[],
 	/**  The spec's file name without `.spec.ts`. */
 	spec: string,
 	/**  Relative to `suites/`, with `/`. */

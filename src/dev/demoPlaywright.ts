@@ -67,10 +67,10 @@ function test(
   const title_path = [spec.split("-").map((w) => w[0].toUpperCase() + w.slice(1)).join(" "), title];
   return {
     id: JSON.stringify([file, ...title_path]),
-    country,
-    side: where.side,
-    module: where.module,
-    feature: where.feature,
+    path:
+      country === "common-components"
+        ? [country, where.feature]
+        : [country, where.side, where.module, where.feature],
     spec,
     file,
     title,

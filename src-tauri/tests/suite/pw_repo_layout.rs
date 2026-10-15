@@ -93,3 +93,25 @@ fn a_test_case_file_is_recognised_at_any_depth() {
         assert_eq!(layout::test_case_file(bad), None, "{bad}");
     }
 }
+
+#[test]
+fn the_navigation_key_of_a_short_path_is_what_there_is() {
+    assert_eq!(layout::navigation_key(&s(&["only"])), "only");
+    assert_eq!(layout::navigation_key(&[]), "");
+}
+
+#[test]
+fn the_walk_does_not_follow_links() {
+    let d = tempfile::tempdir().unwrap();
+    fs::create_dir_all(d.path().join("sl/admin/m/f/specs")).unwrap();
+    let link = d.path().join("sl/admin/m/again");
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_dir(d.path().join("sl/admin/m/f"), &link);
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(d.path().join("sl/admin/m/f"), &link);
+    if made.is_err() {
+        eprintln!("skipped: this account cannot create a directory link");
+        return;
+    }
+    assert_eq!(layout::feature_dirs(d.path()), vec![s(&["sl", "admin", "m", "f"])]);
+}

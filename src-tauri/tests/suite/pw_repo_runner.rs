@@ -18,8 +18,8 @@ use std::time::Duration;
 use v2_lib::pw_repo::process::{Launch, RunEvent, Sink};
 use v2_lib::pw_repo::runner::{
     self, build_test_list, build_tree, count_matches, describe_command, explain_mismatch, list_args, marker_above,
-    parse_list_stdout, parse_suite_path, plan, read_options, render_test_list, report_index, reports, run_args,
-    test_titles, BrowserMode, LastResult, ListedTest, RunAction, RunOptions, RunStart, SuitePath, Target, NOTHING_FAILED,
+    parse_list_stdout, plan, read_options, render_test_list, report_index, reports, run_args,
+    test_titles, BrowserMode, LastResult, ListedTest, RunAction, RunOptions, RunStart, Target, NOTHING_FAILED,
     NOTHING_PICKED, NO_SUCH_REPORT, RUN_LIST,
 };
 
@@ -88,8 +88,8 @@ fn the_tree_comes_from_a_saved_listing() {
 
     let create = find(&tree, "User can create a new rating method");
     assert_eq!(
-        (create.country.as_str(), create.side.as_str(), create.module.as_str(), create.feature.as_str(), create.spec.as_str()),
-        ("sl", "admin", "performance", "rating-methods", "rating-methods")
+        (create.path.clone(), create.spec.as_str()),
+        (vec!["sl".to_string(), "admin".into(), "performance".into(), "rating-methods".into()], "rating-methods")
     );
     assert_eq!(create.file, RM);
     assert_eq!(create.title_path, ["Rating Methods", "User can create a new rating method"]);
@@ -99,10 +99,7 @@ fn the_tree_comes_from_a_saved_listing() {
 
     // The shared tree has no side or module and runs under SL.
     let shared = find(&tree, "finds an employee by name");
-    assert_eq!(
-        (shared.country.as_str(), shared.side.as_str(), shared.module.as_str(), shared.feature.as_str()),
-        ("common-components", "", "", "employee-search")
-    );
+    assert_eq!(shared.path, ["common-components", "employee-search"]);
     assert_eq!(shared.project, "SL");
 }
 
@@ -118,37 +115,80 @@ fn a_banner_ahead_of_the_json_is_passed_over() {
     assert_eq!(count_matches(&saved("list.json")).unwrap(), 5);
 }
 
+/// A saved-listing shape holding one spec at `file`, run under `projects`.
+fn listing_of(file: &str, projects: &[&str]) -> serde_json::Value {
+    let tests: Vec<_> = projects
+        .iter()
+        .map(|p| serde_json::json!({"projectId": p, "projectName": p, "status": "skipped", "results": []}))
+        .collect();
+    serde_json::json!({"suites": [{
+        "title": file, "file": file, "line": 0, "column": 0, "specs": [{
+            "title": "picks a competency", "file": file, "line": 5, "column": 3, "tests": tests
+        }]
+    }]})
+}
+
+const GROUPED: &str = "sl/admin/performance/definition-wizard/competencies/specs/competencies.spec.ts";
+
+fn path_of(parts: &[&str]) -> Vec<String> {
+    parts.iter().map(|p| p.to_string()).collect()
+}
+
 #[test]
-fn suite_paths_read_as_the_repo_reads_them() {
-    assert_eq!(
-        parse_suite_path(RM),
-        Some(SuitePath::Country {
-            country: "sl".into(),
-            side: "admin".into(),
-            module: "performance".into(),
-            feature: "rating-methods".into(),
-            stem: "rating-methods".into()
-        })
-    );
-    assert_eq!(
-        parse_suite_path("common-components/employee-search/specs/x.spec.ts"),
-        Some(SuitePath::Common { component: "employee-search".into(), stem: "x".into() })
-    );
-    // A country module that happens to be called common-components keeps
-    // its country.
-    assert!(matches!(
-        parse_suite_path("sl/admin/common-components/search/specs/x.spec.ts"),
-        Some(SuitePath::Country { .. })
-    ));
-    for not_a_spec in [
-        "_generated/x.spec.ts",
-        "../src/users/registry.test.ts",
-        "auth.setup.ts",
-        "sl/elsewhere/performance/x/specs/x.spec.ts",
-        "sl/admin/performance/x/x.spec.ts",
-    ] {
-        assert_eq!(parse_suite_path(not_a_spec), None, "{not_a_spec}");
+fn a_grouped_spec_lists_with_its_whole_path() {
+    let d = clone();
+    let json = listing_of(GROUPED, &["SL", "PH"]);
+    let tree = build_tree(d.path(), &json);
+    assert_eq!(tree.tests.len(), 1);
+    let t = &tree.tests[0];
+    assert_eq!(t.path, path_of(&["sl", "admin", "performance", "definition-wizard", "competencies"]));
+    assert_eq!((t.spec.as_str(), t.project.as_str()), ("competencies", "SL"));
+    assert_eq!(t.ado_id, Some(135300));
+    assert_eq!(count_matches(&json.to_string()).unwrap(), 1);
+}
+
+#[test]
+fn a_backslash_path_is_located() {
+    let d = clone();
+    let json = listing_of(&GROUPED.replace('/', "\\"), &["SL"]);
+    let tree = build_tree(d.path(), &json);
+    assert_eq!(tree.tests[0].path, path_of(&["sl", "admin", "performance", "definition-wizard", "competencies"]));
+    assert_eq!(count_matches(&json.to_string()).unwrap(), 1);
+}
+
+#[test]
+fn any_folder_depth_is_kept_and_only_non_specs_are_dropped() {
+    let d = clone();
+    // No side check any more: a spec under sl/elsewhere is a spec.
+    let kept = listing_of("sl/elsewhere/performance/x/specs/x.spec.ts", &["SL"]);
+    assert_eq!(build_tree(d.path(), &kept).tests[0].path, path_of(&["sl", "elsewhere", "performance", "x"]));
+    // A project other than the owner's does not count.
+    assert_eq!(count_matches(&listing_of(GROUPED, &["PH"]).to_string()).unwrap(), 0);
+    for not_a_spec in ["_generated/x.spec.ts", "../src/users/registry.test.ts", "auth.setup.ts", "sl/admin/performance/x/x.spec.ts"] {
+        assert_eq!(count_matches(&listing_of(not_a_spec, &["SL"]).to_string()).unwrap(), 0, "{not_a_spec}");
     }
+}
+
+#[test]
+fn tests_sort_by_the_shown_names_level_by_level() {
+    let d = clone();
+    let mut json = listing_of("sl/admin/performance/rating-methods/specs/r.spec.ts", &["SL"]);
+    let more = [GROUPED, "common-components/employee-search/specs/e.spec.ts", "sl/admin/performance/definition-wizard/competencies/specs/a.spec.ts"];
+    for f in more {
+        let one = listing_of(f, &["SL"]);
+        json["suites"].as_array_mut().unwrap().push(one["suites"][0].clone());
+    }
+    let tree = build_tree(d.path(), &json);
+    let order: Vec<String> = tree.tests.iter().map(|t| format!("{}/{}", t.path.join("/"), t.spec)).collect();
+    assert_eq!(
+        order,
+        [
+            "common-components/employee-search/e",
+            "sl/admin/performance/definition-wizard/competencies/a",
+            "sl/admin/performance/definition-wizard/competencies/competencies",
+            "sl/admin/performance/rating-methods/r",
+        ]
+    );
 }
 
 #[test]

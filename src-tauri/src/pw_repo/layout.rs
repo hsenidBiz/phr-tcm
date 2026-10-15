@@ -76,13 +76,13 @@ pub fn owning_project(path: &[String]) -> String {
 }
 
 /// Every feature folder's path under `suites`, sorted. A content folder is
-/// never walked into, nor a skipped one; folders below a feature are.
+/// never walked into, nor a skipped one or a link; folders below a feature are.
 pub fn feature_dirs(suites: &Path) -> Vec<Vec<String>> {
     fn walk(dir: &Path, path: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
         let mut names: Vec<String> = std::fs::read_dir(dir)
             .map(|rd| {
                 rd.flatten()
-                    .filter(|e| e.path().is_dir())
+                    .filter(|e| e.file_type().is_ok_and(|t| t.is_dir() && !t.is_symlink()))
                     .map(|e| e.file_name().to_string_lossy().to_string())
                     .collect()
             })
