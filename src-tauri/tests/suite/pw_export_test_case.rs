@@ -17,7 +17,7 @@ fn doc(id: i32, title: &str) -> CaseDoc {
             ("Open the page".into(), "Page shows".into()),
             ("Click a | b".into(), "Line1\r\nLine2".into()),
         ],
-        side: "sl/admin/x".into(),
+        folder: "sl/admin/x".into(),
         navigation_captured: true,
         feature_title: "Competencies".into(),
     }
@@ -43,8 +43,7 @@ fn splice_replaces_only_its_own_section() {
     let b = splice(&a, 3, &section(&doc(3, "C2")));
     assert!(b.contains(s2));
     assert!(b.starts_with("# T\r\n\r\n## 1 \u{2014} A2\n"));
-    assert!(!b.contains("
-old"));
+    assert!(!b.contains("\nold"));
     assert!(b.ends_with("| # | Action |\n|---|--------|\n\n"));
     // an ### heading never ends a section
     let nested = "## 5 \u{2014} X\n### Metadata\nm\n## 6 \u{2014} Y\ny\n";

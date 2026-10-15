@@ -775,7 +775,7 @@ pub fn write_with(
         let feature_title = title_case(p.feature());
 
         let mut doc = docs[&id].clone();
-        doc.side = p.seg().to_string();
+        doc.folder = p.seg().to_string();
         doc.navigation_captured = captured;
         doc.feature_title = feature_title.clone();
 

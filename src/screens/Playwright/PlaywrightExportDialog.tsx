@@ -177,7 +177,7 @@ export default function PlaywrightExportDialog({
   const invalid = new Set<string>();
   const draftAreas: Record<string, Placement> = {};
   for (const [name, p] of Object.entries(areas ?? {})) {
-    const typed = p.path.trim().replace(/\/+$/, "").trim();
+    const typed = p.path.trim().replace(/[\s/]+$/, "");
     if (typed) draftAreas[name] = { path: typed };
     else if (p.path.trim() || name in savedAreas) invalid.add(name);
   }

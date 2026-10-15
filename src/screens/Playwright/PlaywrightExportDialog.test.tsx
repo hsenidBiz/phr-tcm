@@ -150,8 +150,8 @@ test("saving_a_mapping_sends_the_map", async () => {
       "sl/admin/performance/rating-methods",
     ]),
   );
-  // Typed text is trimmed, and so is a trailing slash; the case is the person's.
-  fireEvent.change(folder, { target: { value: "  sl/self/pm/wizard/  " } });
+  // Typed text is trimmed, and so are trailing slashes and spaces together; the case is the person's.
+  fireEvent.change(folder, { target: { value: "  sl/self/pm/wizard/ /  " } });
   fireEvent.click(screen.getByRole("combobox", { name: "User for hr.admin" }));
   fireEvent.click(await screen.findByRole("option", { name: "REPO_EMP" }));
   fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));

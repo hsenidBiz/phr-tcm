@@ -137,7 +137,7 @@ pub(crate) fn doc(id: i32, title: &str) -> CaseDoc {
         tags: "t1".into(),
         preconditions: "pre".into(),
         steps: vec![("Click go".into(), "It goes".into())],
-        side: String::new(),
+        folder: String::new(),
         navigation_captured: false,
         feature_title: String::new(),
     }

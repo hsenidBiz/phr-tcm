@@ -90,7 +90,7 @@ pub(crate) async fn read_docs(
                 preconditions: c.preconditions,
                 steps: c.steps.into_iter().map(|s| (s.action, s.expected)).collect(),
                 // Filled in by the export from the area's placement and the clone.
-                side: String::new(),
+                folder: String::new(),
                 navigation_captured: false,
                 feature_title: String::new(),
             },

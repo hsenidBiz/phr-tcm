@@ -451,7 +451,7 @@ fn the_record_is_written_atomically() {
 fn a_re_export_keeps_the_repos_blocks_in_a_section() {
     use v2_lib::pw_export::test_case::{section, splice};
     let mut d = doc(7, "Seven");
-    d.side = "admin".into();
+    d.folder = "sl/admin/performance/competencies".into();
     d.feature_title = "F".into();
     let ours = section(&d);
     let engineer = "**Added by engineer (not from ADO):**\r\n\r\n| # | Step | Expected |\r\n| 2 | More | Done |\r\n\r\n";
@@ -495,7 +495,7 @@ fn doc_135271() -> CaseDoc {
         ("Click the Core Competencies template card.".into(), "A new group appears".into()),
         ("Click it a second time.".into(), "A warning is shown".into()),
     ];
-    d.side = "admin".into();
+    d.folder = "sl/admin/performance/competencies".into();
     d.navigation_captured = true;
     d.feature_title = "Competencies".into();
     d
@@ -538,7 +538,7 @@ fn the_135271_section_is_rewritten_with_the_engineers_block_before_cleanup() {
         "| Project | HRM |\n",
         "| Module | Performance |\n",
         "| Tags |  |\n",
-        "\n**Folder:** admin \u{2014} mapped in TCM.\n\n",
+        "\n**Folder:** sl/admin/performance/competencies \u{2014} mapped in TCM.\n\n",
         "**Navigation:** captured in src/navigation.json.\n\n",
         "### Preconditions\n\n| # | Condition |\n|---|-----------|\n| 1 | Signed in as an HR admin |\n",
         "\n### Test Data & Validation\n\n",
