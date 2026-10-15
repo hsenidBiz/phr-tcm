@@ -30,7 +30,7 @@ pub(crate) fn write(p: PathBuf, s: &str) {
 }
 
 fn placement() -> Placement {
-    Placement { side: "admin".into(), module: "performance".into(), feature: "proficiency-levels".into() }
+    Placement { path: "sl/admin/performance/proficiency-levels".into() }
 }
 
 impl Fx {
@@ -137,7 +137,7 @@ pub(crate) fn doc(id: i32, title: &str) -> CaseDoc {
         tags: "t1".into(),
         preconditions: "pre".into(),
         steps: vec![("Click go".into(), "It goes".into())],
-        side: String::new(),
+        folder: String::new(),
         navigation_captured: false,
         feature_title: String::new(),
     }
@@ -561,11 +561,15 @@ fn an_area_not_placed_yet_comes_with_a_suggestion_from_its_name() {
     fx.click_script(161, "One sixty one", "admin", "");
     fx.run("r161", "5", 161, "Passed");
     fx.modules.borrow_mut().insert(161, "unplaced".into());
+    // No feature of that name in the clone: no guess.
+    let p = preview_with(fx.root.path(), ORG, PROJECT, &[160, 161], &fx.clone_path(), &fx.modules.borrow()).unwrap();
+    assert!(p.suggested.is_empty(), "{:?}", p.suggested);
+    write(fx.clone.path().join("suites/sl/admin/performance/unplaced/specs/a.spec.ts"), "");
     let p = preview_with(fx.root.path(), ORG, PROJECT, &[160, 161], &fx.clone_path(), &fx.modules.borrow()).unwrap();
     assert_eq!(p.suggested.len(), 1, "{:?}", p.suggested);
     assert_eq!(
         p.suggested.get("Unplaced"),
-        Some(&Placement { side: "admin".into(), module: "performance".into(), feature: "unplaced".into() })
+        Some(&Placement { path: "sl/admin/performance/unplaced".into() })
     );
     // A guess is never saved by the preview.
     let saved = v2_lib::pw_export::mapping::load(fx.root.path(), ORG, PROJECT).unwrap();
@@ -668,4 +672,93 @@ fn no_runs_as_and_no_account_on_the_run_is_still_refused() {
     let pc = preview_of(&fx, 132);
     assert!(!pc.exportable);
     assert!(pc.reason.unwrap_or_default().contains("Runs as"));
+}
+
+const GROUPED: &str = "suites/sl/admin/performance/definition-wizard/competencies/test-cases/competencies.md";
+
+fn place_grouped(fx: &Fx) {
+    let mut map = v2_lib::pw_export::mapping::load(fx.root.path(), ORG, PROJECT).unwrap();
+    map.areas.insert(
+        "Definition Wizard".into(),
+        Placement { path: "sl/admin/performance/definition-wizard/competencies".into() },
+    );
+    save(fx.root.path(), ORG, PROJECT, &map).unwrap();
+}
+
+#[test]
+fn a_case_placed_in_a_grouped_feature_goes_to_its_folder() {
+    let fx = Fx::new();
+    place_grouped(&fx);
+    let nav = fx.clone.path().join("src/navigation.json");
+    fs::write(&nav, "{ \"entries\": { \"definition-wizard/competencies\": {} } }").unwrap();
+    fx.good(70, "Grouped case");
+    let r = export(&fx, &[70], &docs(&[(70, "Grouped case")])).unwrap();
+    assert!(r.files.contains(&GROUPED.to_string()), "{:?}", r.files);
+    assert!(r.missing_navigation.is_empty(), "{:?}", r.missing_navigation);
+    let md = fx.read_clone(GROUPED);
+    assert!(md.contains("## 70 \u{2014} Grouped case"));
+    assert!(md.contains("**Folder:** sl/admin/performance/definition-wizard/competencies"), "{md}");
+    assert!(md.contains("**Navigation:** captured in src/navigation.json."));
+    assert!(!fx.exists("suites/sl/admin/performance/competencies"));
+}
+
+#[test]
+fn a_grouped_feature_without_its_navigation_entry_is_reported() {
+    let fx = Fx::new();
+    place_grouped(&fx);
+    fx.good(71, "Grouped case");
+    let r = export(&fx, &[71], &docs(&[(71, "Grouped case")])).unwrap();
+    assert_eq!(r.missing_navigation, vec!["definition-wizard/competencies"]);
+}
+
+#[test]
+fn update_rewrites_a_grouped_file_in_place() {
+    let fx = Fx::new();
+    place_grouped(&fx);
+    fx.good(72, "Grouped case");
+    export(&fx, &[72], &docs(&[(72, "Grouped case")])).unwrap();
+    let mut d = docs(&[(72, "Grouped case")]);
+    d.get_mut(&72).unwrap().steps = vec![("Second pass".into(), "x".into())];
+    export(&fx, &[72], &d).unwrap();
+    let md = fx.read_clone(GROUPED);
+    assert_eq!(md.matches("## 72 \u{2014}").count(), 1);
+    assert!(md.contains("Second pass") && !md.contains("Click go"));
+    assert!(!fx.exists("suites/sl/admin/performance/competencies/test-cases/competencies.md"));
+}
+
+const OLD_FOUR: &str = "suites/sl/admin/performance/proficiency-levels/test-cases/proficiency-levels.md";
+const MOVED: &str = "suites/sl/admin/performance/definition-wizard/proficiency-levels/test-cases/proficiency-levels.md";
+
+#[test]
+fn an_update_after_the_repo_moved_the_feature_rewrites_it_where_it_is() {
+    let fx = Fx::new();
+    fx.good(80, "Moved case");
+    export(&fx, &[80], &docs(&[(80, "Moved case")])).unwrap();
+    // The repo moves the feature under a group; the saved placement stays old.
+    let from = fx.clone.path().join("suites/sl/admin/performance/proficiency-levels");
+    let to = fx.clone.path().join("suites/sl/admin/performance/definition-wizard/proficiency-levels");
+    fs::create_dir_all(to.parent().unwrap()).unwrap();
+    fs::rename(&from, &to).unwrap();
+    let mut d = docs(&[(80, "Moved case")]);
+    d.get_mut(&80).unwrap().steps = vec![("Second pass".into(), "x".into())];
+    let r = export(&fx, &[80], &d).unwrap();
+    let md = fx.read_clone(MOVED);
+    assert_eq!(md.matches("## 80 \u{2014}").count(), 1, "{md}");
+    assert!(md.contains("Second pass") && !md.contains("Click go"), "{md}");
+    assert!(!fx.exists("suites/sl/admin/performance/proficiency-levels"), "old folder re-created");
+    assert!(!fx.exists(OLD_FOUR));
+    assert!(r.files.contains(&MOVED.to_string()), "{:?}", r.files);
+    assert!(!r.files.contains(&OLD_FOUR.to_string()), "{:?}", r.files);
+}
+
+#[test]
+fn a_case_with_sections_in_two_test_case_files_is_refused_on_update() {
+    let fx = Fx::new();
+    fx.good(81, "Twice case");
+    export(&fx, &[81], &docs(&[(81, "Twice case")])).unwrap();
+    let a = fx.read_clone(OLD_FOUR);
+    write(fx.clone.path().join(MOVED), &a);
+    let e = export(&fx, &[81], &docs(&[(81, "Twice case")])).unwrap_err();
+    assert!(e.starts_with("Case 81 has a section in more than one test-case file: "), "{e}");
+    assert!(e.contains(OLD_FOUR) && e.contains(MOVED), "{e}");
 }

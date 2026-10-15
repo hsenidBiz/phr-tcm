@@ -8,12 +8,30 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Where one area's specs live: `sl/<side>/<module>/<feature>`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+/// Where one area's specs live: the feature folder's path under `suites/`,
+/// such as `sl/admin/performance/definition-wizard/competencies`.
+///
+/// Reads the older `{side, module, feature}` shape too (as
+/// `sl/<side>/<module>/<feature>`); always writes `{path}`.
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 pub struct Placement {
-    pub side: String,
-    pub module: String,
-    pub feature: String,
+    pub path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Wire {
+    Path { path: String },
+    Old { side: String, module: String, feature: String },
+}
+
+impl<'de> Deserialize<'de> for Placement {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match Wire::deserialize(d)? {
+            Wire::Path { path } => Placement { path },
+            Wire::Old { side, module, feature } => Placement { path: format!("sl/{side}/{module}/{feature}") },
+        })
+    }
 }
 
 /// A project's export choices. `accounts[env_id][tcm_account_key]` is the
@@ -26,53 +44,67 @@ pub struct ExportMap {
     pub accounts: BTreeMap<String, BTreeMap<String, String>>,
 }
 
-fn is_kebab(s: &str) -> bool {
-    !s.is_empty()
-        && !s.starts_with('-')
-        && !s.ends_with('-')
-        && !s.contains("--")
-        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-}
-
-fn check(label: &str, value: &str) -> Result<(), String> {
-    if value.trim().is_empty() {
-        return Err(format!("The {label} is empty."));
-    }
-    if !is_kebab(value) {
-        return Err(format!(
-            "The {label} \"{value}\" must be lowercase letters, digits and hyphens, not starting or ending with a hyphen."
-        ));
-    }
-    Ok(())
-}
-
 impl Placement {
     pub fn validate(&self) -> Result<(), String> {
-        if self.side != "admin" && self.side != "self" {
-            return Err(format!("The side \"{}\" must be exactly \"admin\" or \"self\".", self.side));
+        if self.path.trim().is_empty() {
+            return Err("The path is empty.".into());
         }
-        check("module", &self.module)?;
-        check("feature", &self.feature)
-    }
-
-    pub fn seg(&self) -> String {
-        format!("sl/{}/{}/{}", self.side, self.module, self.feature)
-    }
-
-    /// A first guess the person confirms.
-    pub fn suggest(area_name: &str) -> Placement {
-        let mut feature = String::new();
-        for c in area_name.chars() {
-            if c.is_ascii_alphanumeric() {
-                feature.push(c.to_ascii_lowercase());
-            } else if !feature.is_empty() && !feature.ends_with('-') {
-                feature.push('-');
+        let folders: Vec<&str> = self.path.split('/').collect();
+        if folders.len() < 2 {
+            return Err(format!(
+                "The path \"{}\" needs at least a country and a feature folder, such as sl/admin/performance/rating-methods.",
+                self.path
+            ));
+        }
+        for f in folders {
+            if !crate::pw_repo::layout::valid_name(f) {
+                return Err(format!(
+                    "The folder \"{f}\" must be lowercase letters, digits and hyphens, not starting or ending with a hyphen."
+                ));
             }
         }
-        while feature.ends_with('-') {
-            feature.pop();
+        Ok(())
+    }
+
+    /// The feature's folder path under `suites/`.
+    pub fn seg(&self) -> &str {
+        &self.path
+    }
+
+    /// The last folder: the feature's own name. Like `navigation_key`, this
+    /// assumes a validated path (`validate`): an empty or odd one gives an
+    /// empty or odd name.
+    pub fn feature(&self) -> &str {
+        self.path.rsplit('/').next().unwrap_or("")
+    }
+
+    /// The key of this feature's `navigation.json` entry. Assumes a validated
+    /// path, as `feature` does.
+    pub fn navigation_key(&self) -> String {
+        let folders: Vec<String> = self.path.split('/').map(str::to_string).collect();
+        crate::pw_repo::layout::navigation_key(&folders)
+    }
+
+    /// A first guess the person confirms: the repo feature whose last folder
+    /// is the area name in kebab case (the first by path order), if any.
+    pub fn suggest(area_name: &str, features: &[Vec<String>]) -> Option<Placement> {
+        let mut kebab = String::new();
+        for c in area_name.chars() {
+            if c.is_ascii_alphanumeric() {
+                kebab.push(c.to_ascii_lowercase());
+            } else if !kebab.is_empty() && !kebab.ends_with('-') {
+                kebab.push('-');
+            }
         }
-        Placement { side: "admin".into(), module: "performance".into(), feature }
+        while kebab.ends_with('-') {
+            kebab.pop();
+        }
+        if kebab.is_empty() {
+            return None;
+        }
+        let mut found: Vec<&Vec<String>> = features.iter().filter(|f| f.last() == Some(&kebab)).collect();
+        found.sort();
+        found.first().map(|f| Placement { path: f.join("/") })
     }
 }
 

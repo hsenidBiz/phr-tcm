@@ -25,6 +25,7 @@
 //!
 //! Every list, count and run is a repo command (`process`), one at a time.
 
+use super::layout;
 use super::process::{self, Launch, RunEvent, Sink};
 use crate::cache::{self, keys};
 use serde::{Deserialize, Serialize};
@@ -102,14 +103,8 @@ pub enum LastResult {
 pub struct ListedTest {
     /// Unique and stable across listings: `["<file>", ...title path]`.
     pub id: String,
-    /// `sl`, `ph`, `in`, or `common-components` for the shared tree.
-    pub country: String,
-    /// `self` or `admin`; empty under `common-components`.
-    pub side: String,
-    /// Empty under `common-components`.
-    pub module: String,
-    /// The feature folder, or the component under `common-components`.
-    pub feature: String,
+    /// The folders from `suites/` to the feature, the feature last.
+    pub path: Vec<String>,
     /// The spec's file name without `.spec.ts`.
     pub spec: String,
     /// Relative to `suites/`, with `/`.
@@ -216,47 +211,6 @@ pub struct PwReport {
     pub stats: Option<ReportStats>,
 }
 
-// ---- Suite paths (cli/paths/suite-path.mjs) ----------------------------------
-
-/// Where a spec sits in the suite tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SuitePath {
-    Country { country: String, side: String, module: String, feature: String, stem: String },
-    Common { component: String, stem: String },
-}
-
-/// The taxonomy of a refactored spec, or `None` for anything else: raw
-/// `_generated/` output, `../` paths, `auth.setup.ts`.
-pub fn parse_suite_path(path: &str) -> Option<SuitePath> {
-    let segments: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
-    if segments.iter().any(|s| *s == ".." || *s == "_generated") {
-        return None;
-    }
-    let stem = segments.last()?.strip_suffix(".spec.ts")?.to_string();
-    let specs = segments.iter().rposition(|s| *s == "specs")?;
-    if specs >= 2 && segments[specs - 2] == "common-components" && (specs == 2 || segments[specs - 3] == "suites") {
-        let component = segments[specs - 1].to_string();
-        return Some(SuitePath::Common { component, stem });
-    }
-    if specs < 4 {
-        return None;
-    }
-    let [country, side, module, feature] = [0, 1, 2, 3].map(|i| segments[specs - 4 + i].to_string());
-    if side != "self" && side != "admin" {
-        return None;
-    }
-    Some(SuitePath::Country { country, side, module, feature, stem })
-}
-
-/// The one project that runs a spec: its country upper-cased, or SL for the
-/// shared tree (the baseline project every country's shared specs run in).
-pub fn owning_project(path: &SuitePath) -> String {
-    match path {
-        SuitePath::Country { country, .. } => country.to_uppercase(),
-        SuitePath::Common { .. } => "SL".to_string(),
-    }
-}
-
 // ---- The listing (cli/inventory/) ----------------------------------------------
 
 /// The listing's argv after `npx`.
@@ -333,12 +287,12 @@ fn specs_of(json: &Value) -> Vec<Spec> {
 
 /// The specs a QA engineer sees: each kept only under the project that owns
 /// its folder, which drops duplicates and everything that is not a spec.
-fn owned(json: &Value) -> Vec<(Spec, SuitePath, String)> {
+fn owned(json: &Value) -> Vec<(Spec, layout::SpecLocation, String)> {
     specs_of(json)
         .into_iter()
         .filter_map(|s| {
-            let parsed = parse_suite_path(&s.file)?;
-            let project = owning_project(&parsed);
+            let parsed = layout::spec_location(&s.file)?;
+            let project = layout::owning_project(&parsed.path);
             s.tests.iter().any(|(p, _)| *p == project).then_some((s, parsed, project))
         })
         .collect()
@@ -369,8 +323,20 @@ pub fn to_title(segment: &str) -> String {
         .join(" ")
 }
 
-/// The tree from a listing: the owned tests, sorted country, side, module,
-/// feature and spec by their shown names, and tests by line.
+/// The shown name of a tree level: the first folder uppercased (`SL`),
+/// `common-components` as `Common Components`, any other title-cased.
+pub fn level_name(index: usize, folder: &str) -> String {
+    if folder == layout::SHARED {
+        "Common Components".to_string()
+    } else if index == 0 {
+        folder.to_uppercase()
+    } else {
+        to_title(folder)
+    }
+}
+
+/// The tree from a listing: the owned tests, sorted level by level by their
+/// shown names, then spec, and tests by line.
 pub fn build_tree(clone: &Path, json: &Value) -> TestTree {
     let titles = generated_titles(clone);
     let (last_report, results) = last_results(clone);
@@ -378,12 +344,7 @@ pub fn build_tree(clone: &Path, json: &Value) -> TestTree {
     let mut tests: Vec<ListedTest> = owned(json)
         .into_iter()
         .map(|(s, parsed, project)| {
-            let (country, side, module, feature, spec) = match parsed {
-                SuitePath::Country { country, side, module, feature, stem } => (country, side, module, feature, stem),
-                SuitePath::Common { component, stem } => {
-                    ("common-components".to_string(), String::new(), String::new(), component, stem)
-                }
-            };
+            let layout::SpecLocation { path, stem: spec } = parsed;
             let source = sources.entry(s.file.clone()).or_insert_with(|| {
                 std::fs::read_to_string(clone.join("suites").join(&s.file))
                     .map(|t| t.lines().map(str::to_string).collect())
@@ -394,10 +355,7 @@ pub fn build_tree(clone: &Path, json: &Value) -> TestTree {
             ListedTest {
                 last_result: results.get(&id).copied(),
                 id,
-                country,
-                side,
-                module,
-                feature,
+                path,
                 spec,
                 file: s.file,
                 title: s.title,
@@ -408,9 +366,10 @@ pub fn build_tree(clone: &Path, json: &Value) -> TestTree {
             }
         })
         .collect();
-    let key = |t: &ListedTest| {
-        let country = if t.country == "common-components" { "Common Components".to_string() } else { t.country.to_uppercase() };
-        [country, to_title(&t.side), to_title(&t.module), to_title(&t.feature), t.spec.clone()].map(|s| s.to_lowercase())
+    let key = |t: &ListedTest| -> Vec<String> {
+        let mut k: Vec<String> = t.path.iter().enumerate().map(|(i, f)| level_name(i, f).to_lowercase()).collect();
+        k.push(t.spec.to_lowercase());
+        k
     };
     tests.sort_by(|a, b| key(a).cmp(&key(b)).then(a.line.cmp(&b.line)).then(a.title.cmp(&b.title)));
     let mut projects: Vec<String> = tests.iter().map(|t| t.project.clone()).collect::<HashSet<_>>().into_iter().collect();

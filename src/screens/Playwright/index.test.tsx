@@ -23,19 +23,22 @@ afterEach(() => {
 const HEALTHY: RepoStructure = {
   features: [
     {
-      country: "sl",
-      side: "admin",
-      module: "performance",
-      feature: "rating-methods",
+      path: ["sl", "admin", "performance", "definition-wizard", "competencies"],
+      navigation_key: "definition-wizard/competencies",
+      spec_count: 1,
+      case_count: 1,
+      case_ids: [135300],
+    },
+    {
+      path: ["sl", "admin", "performance", "rating-methods"],
+      navigation_key: "performance/rating-methods",
       spec_count: 1,
       case_count: 3,
       case_ids: [135152, 135179, 135180],
     },
     {
-      country: "sl",
-      side: "self",
-      module: "smoke",
-      feature: "framework-smoke",
+      path: ["sl", "self", "smoke", "framework-smoke"],
+      navigation_key: "smoke/framework-smoke",
       spec_count: 2,
       case_count: 0,
       case_ids: [],
@@ -43,7 +46,7 @@ const HEALTHY: RepoStructure = {
   ],
   generated_ids: [135152, 135179],
   user_keys: ["A", "B"],
-  navigation_keys: ["performance/rating-methods"],
+  navigation_keys: ["performance/rating-methods", "definition-wizard/competencies"],
   health: [],
 };
 
@@ -85,15 +88,18 @@ test("a healthy clone shows one All good badge, and what it holds", async () => 
   expect(screen.getByText("C:/repo")).toHaveAttribute("title", "C:/repo");
   const structure = screen.getByRole("region", { name: "Repo structure" });
   const stat = (label: string) => within(structure).getByText(label).previousElementSibling?.textContent;
-  expect(stat("features")).toBe("2");
-  expect(stat("specs")).toBe("3");
-  expect(stat("test cases")).toBe("3");
+  expect(stat("features")).toBe("3");
+  expect(stat("specs")).toBe("4");
+  expect(stat("test cases")).toBe("4");
   expect(stat("raw specs")).toBe("2");
   expect(stat("accounts")).toBe("2");
-  expect(stat("navigation entry")).toBe("1");
+  expect(stat("navigation entries")).toBe("2");
   const table = within(structure).getByRole("table", { name: "Features" });
-  expect(within(table).getByRole("row", { name: "sl admin performance rating-methods 1 3" })).toBeInTheDocument();
-  expect(within(table).getByRole("row", { name: "sl self smoke framework-smoke 2 0" })).toBeInTheDocument();
+  expect(within(table).getByRole("row", { name: "sl / admin / performance rating-methods 1 3" })).toBeInTheDocument();
+  expect(within(table).getByRole("row", { name: "sl / self / smoke framework-smoke 2 0" })).toBeInTheDocument();
+  expect(
+    within(table).getByRole("row", { name: "sl / admin / performance / definition-wizard competencies 1 1" }),
+  ).toBeInTheDocument();
   expect(calls.find((c) => c.cmd === "pw_repo_structure")?.args).toEqual({ clone: "C:/repo" });
 });
 

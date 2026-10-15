@@ -28,14 +28,14 @@ export const playwright: Screen = {
     "Under the folder, a badge reads **All good** when nothing is wrong. Otherwise each badge names what stops the tab working, and pointing at it says what to do: the folder is not a clone of the repo; the clone has no node_modules, so run npm install in it; or Node was not found, so install Node.js and restart the app. Until those are fixed the Runner and Accounts tabs say why instead of showing their lists.",
     "A missing qa-options.json is only a warning: runs use the repo's default options. The app reads that file and never writes it.",
     "The rest of the tab is split into four tabs: **Overview**, **Runner**, **Accounts** and **Sync**. The tab opens on the one you chose last.",
-    "**Overview** sums up the clone: its features, specs, test cases, raw specs, accounts and navigation entries, then a table lists each feature by country, side, module and feature with its specs and test cases.",
+    "**Overview** sums up the clone: its features, specs, test cases, raw specs, accounts and navigation entries, then a table lists each feature by its folder and feature name with its specs and test cases. The folder is wherever the feature sits under the repo's suites folder, at any depth.",
     "Only one repo command runs at a time. While a run, a listing or an account change is going, the buttons that would start another are greyed out.",
   ],
   howTo: [
     {
       title: "Pick and run tests",
       steps: [
-        "On the **Runner** tab, the tests are listed the way the repo's own console lists them: country, side, module, feature, spec, then each test. Fold or unfold a branch with the arrow beside it. Each test shows its Azure DevOps case number and, after a run, whether it passed, failed, was flaky or was skipped.",
+        "On the **Runner** tab, the tests are listed the way the repo's own console lists them: one level for each folder on the way down (however many the repo has), then the feature, the spec and each test. Fold or unfold a branch with the arrow beside it. Each test shows its Azure DevOps case number and, after a run, whether it passed, failed, was flaky or was skipped.",
         "Tick the tests you want, or tick a branch to take everything under it. **Tick all** ticks every test and **Clear** clears them. The ticks are remembered for this clone.",
         "If the specs changed in the repo, press **List again** to read the tests afresh.",
         "Choose how the browser shows: **Browser hidden**, **Browser shown** or **Debug**. Debug pauses at the start of every test, so a debug run of more than one test asks first; press **Run in debug** to go ahead or **Cancel**.",
@@ -78,7 +78,7 @@ export const playwright: Screen = {
       title: "Export scripts to the repo",
       steps: [
         "Export to Playwright now lives in this tab. On **Auto Run**, pick the Product Backlog Item, press **More** and choose **Export to Playwright**: the Playwright tab opens with the export window over it.",
-        "Check the clone folder, then, under **Mappings**, where each area's specs go (side, module and feature) and which repo user each of your accounts signs in as. Press **Save mappings** when you change them.",
+        "Check the clone folder, then, under **Mappings**, where each area's specs go (one **Folder for** field per area: the feature's folder path under suites, with the repo's own feature paths suggested as you type) and which repo user each of your accounts signs in as. Press **Save mappings** when you change them.",
         "Under **Cases**, the cases are grouped by module, and each says **New** or **In the repo**, with where the repo has it. Cases already in the repo are skipped. Tick one to replace it. A case the repo marks as excluded cannot be ticked. A case with no Auto Run script is not listed: the window only says how many there are.",
         "Untick any new case you do not want. A case that cannot go says why, with a command to copy when the repo is missing its user.",
         "Press **Export**, which shows how many cases it sends. The summary lists the files written and the steps still to do in the repo. Nothing is run, committed or pushed.",

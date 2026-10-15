@@ -3580,7 +3580,7 @@ export type GuideStatus = {
 
 /**  One prompt: the cases of one test-case file, in the order they were asked for. */
 export type HandoffCard = {
-	/**  `<country>/<side>/<module>/<feature>`. */
+	/**  The feature's folders under `suites/`, at least two, e.g. `<country>/<side>/<module>/[<group>/]<feature>`. */
 	seg: string,
 	/**  The test-case file's stem, and so the spec's: `--spec <stem>`. */
 	stem: string,
@@ -3665,14 +3665,8 @@ export type LastResult = "Passed" | "Failed" | "Flaky" | "Skipped";
 export type ListedTest = {
 	/**  Unique and stable across listings: `["<file>", ...title path]`. */
 	id: string,
-	/**  `sl`, `ph`, `in`, or `common-components` for the shared tree. */
-	country: string,
-	/**  `self` or `admin`; empty under `common-components`. */
-	side: string,
-	/**  Empty under `common-components`. */
-	module: string,
-	/**  The feature folder, or the component under `common-components`. */
-	feature: string,
+	/**  The folders from `suites/` to the feature, the feature last. */
+	path: string[],
 	/**  The spec's file name without `.spec.ts`. */
 	spec: string,
 	/**  Relative to `suites/`, with `/`. */
@@ -4096,11 +4090,15 @@ export type PdfSpec_Serialize = {
  */
 export type Phrases = string | string[];
 
-/**  Where one area's specs live: `sl/<side>/<module>/<feature>`. */
+/**
+ *  Where one area's specs live: the feature folder's path under `suites/`,
+ *  such as `sl/admin/performance/definition-wizard/competencies`.
+ * 
+ *  Reads the older `{side, module, feature}` shape too (as
+ *  `sl/<side>/<module>/<feature>`); always writes `{path}`.
+ */
 export type Placement = {
-	side: string,
-	module: string,
-	feature: string,
+	path: string,
 };
 
 /**
@@ -4952,12 +4950,12 @@ export type RepoAccount = {
 	supervisor: string,
 };
 
-/**  One `suites/<country>/<side>/<module>/<feature>/` folder. */
+/**  One feature folder under `suites/`. */
 export type RepoFeature = {
-	country: string,
-	side: string,
-	module: string,
-	feature: string,
+	/**  The folders from `suites/` down to it. */
+	path: string[],
+	/**  The key of its `navigation.json` entry (`layout::navigation_key`). */
+	navigation_key: string,
 	/**  `*.spec.ts` files in its `specs/`. */
 	spec_count: number,
 	/**  Test case sections (`## <id>` headings) in its `test-cases/*.md`. */
@@ -4973,7 +4971,7 @@ export type RepoRef = {
 
 /**  The clone as the Playwright tab shows it. */
 export type RepoStructure = {
-	/**  Sorted by country, side, module, feature. */
+	/**  Sorted by path. */
 	features: RepoFeature[],
 	/**  The ids `suites/_generated/index.json` maps to a raw spec, in its order. */
 	generated_ids: number[],

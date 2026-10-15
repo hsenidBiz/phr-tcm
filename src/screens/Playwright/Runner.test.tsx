@@ -11,6 +11,7 @@ import { StrictMode } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { ListedTest, PwReport, PwRunning, RunStart, TestTree } from "../../bindings";
 import Runner from "./Runner";
+import { buildBranches, type Branch } from "./RunnerTree";
 
 /** How many times a tick box has rendered: the tree's own renders. */
 const boxes = vi.hoisted(() => ({ renders: 0 }));
@@ -37,10 +38,7 @@ function listed(title: string, over: Partial<ListedTest> = {}): ListedTest {
   const title_path = over.title_path ?? ["Rating Methods", title];
   return {
     id: JSON.stringify([file, ...title_path]),
-    country: "sl",
-    side: "admin",
-    module: "performance",
-    feature: "rating-methods",
+    path: ["sl", "admin", "performance", "rating-methods"],
     spec: "rating-methods",
     file,
     title,
@@ -56,18 +54,13 @@ function listed(title: string, over: Partial<ListedTest> = {}): ListedTest {
 const CREATE = listed("User can create a new rating method", { ado_id: 135152, last_result: "Passed" });
 const DELETE = listed("User can delete a rating method", { ado_id: 135179, last_result: "Failed", line: 7 });
 const SHELL = listed("the app shell loads", {
-  side: "self",
-  module: "smoke",
-  feature: "framework-smoke",
+  path: ["sl", "self", "smoke", "framework-smoke"],
   spec: "framework-smoke",
   file: "sl/self/smoke/framework-smoke/specs/framework-smoke.spec.ts",
   title_path: ["the app shell loads"],
 });
 const SHARED = listed("finds an employee by name", {
-  country: "common-components",
-  side: "",
-  module: "",
-  feature: "employee-search",
+  path: ["common-components", "employee-search"],
   spec: "employee-search",
   file: "common-components/employee-search/specs/employee-search.spec.ts",
   title_path: ["finds an employee by name"],
@@ -177,6 +170,33 @@ test("the tree shows each test with its ADO id and last result, under its levels
   expect(screen.queryByText("User can create a new rating method")).not.toBeInTheDocument();
   fireEvent.click(button("Unfold Rating Methods"));
   expect(screen.getByText("User can create a new rating method")).toBeInTheDocument();
+});
+
+const GROUPED_FILE = "sl/admin/performance/definition-wizard/competencies/specs/competencies.spec.ts";
+const GROUPED = listed("picks a competency", {
+  path: ["sl", "admin", "performance", "definition-wizard", "competencies"],
+  spec: "competencies",
+  file: GROUPED_FILE,
+  title_path: ["picks a competency"],
+});
+
+/** The label chain down the first branch each time, to the spec. */
+function chain(branches: Branch[]): string[] {
+  const out: string[] = [];
+  for (let at: Branch | undefined = branches[0]; at; at = at.children[0]) out.push(at.label);
+  return out;
+}
+
+test("a grouped test hangs from one level per folder, a four-level one from one fewer", async () => {
+  expect(chain(buildBranches([GROUPED]))).toEqual(["SL", "Admin", "Performance", "Definition Wizard", "Competencies", "competencies"]);
+  expect(chain(buildBranches([CREATE]))).toEqual(["SL", "Admin", "Performance", "Rating Methods", "rating-methods"]);
+  expect(chain(buildBranches([SHARED]))).toEqual(["Common Components", "Employee Search", "employee-search"]);
+
+  mount({ tree: { tests: [GROUPED], projects: ["SL"], last_report: null, load_errors: [] } });
+  expect(await screen.findByText("picks a competency")).toBeInTheDocument();
+  for (const level of ["SL", "Admin", "Performance", "Definition Wizard", "Competencies", "competencies"]) {
+    expect(screen.getByText(level)).toBeInTheDocument();
+  }
 });
 
 test("ticks: one test, a branch, Tick all and Clear, remembered per clone", async () => {

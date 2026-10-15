@@ -1,6 +1,6 @@
-// The Runner's folding tree: country, side, module, feature, spec, test, as
-// the repo's own `npm run qa` shows it. The shared tree (common-components)
-// has no side or module. Every branch and test has a tick box; a branch's
+// The Runner's folding tree: one level per folder from suites/ to the
+// feature (any depth), then spec, test, as the repo's own `npm run qa` shows
+// it. Every branch and test has a tick box; a branch's
 // box ticks or clears everything under it, and says how many of its tests
 // are ticked. Each level hangs from a guide line, and a test's last result
 // is a coloured dot beside its word.
@@ -29,23 +29,18 @@ export const toTitle = (s: string) =>
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
 
-/** The levels a test hangs from, as [id, label] pairs. */
+/** A level's shown name: the first folder uppercased (`SL`), the shared tree
+ * as `Common Components`, any other folder title-cased. Mirrors
+ * `level_name` in runner.rs. */
+export const levelName = (index: number, folder: string) =>
+  folder === "common-components" ? "Common Components" : index === 0 ? folder.toUpperCase() : toTitle(folder);
+
+/** The levels a test hangs from, as [id, label] pairs: one per folder of its
+ * path, then the spec. */
 function levels(t: ListedTest): [string, string][] {
-  if (t.country === "common-components") {
-    return [
-      ["common-components", "Common Components"],
-      [`common-components/${t.feature}`, toTitle(t.feature)],
-      [t.file, t.spec],
-    ];
-  }
-  const c = t.country;
-  return [
-    [c, c.toUpperCase()],
-    [`${c}/${t.side}`, toTitle(t.side)],
-    [`${c}/${t.side}/${t.module}`, toTitle(t.module)],
-    [`${c}/${t.side}/${t.module}/${t.feature}`, toTitle(t.feature)],
-    [t.file, t.spec],
-  ];
+  const out: [string, string][] = t.path.map((folder, i) => [t.path.slice(0, i + 1).join("/"), levelName(i, folder)]);
+  out.push([t.file, t.spec]);
+  return out;
 }
 
 /** The tests, already in tree order, as branches. */

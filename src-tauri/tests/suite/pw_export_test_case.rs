@@ -17,7 +17,7 @@ fn doc(id: i32, title: &str) -> CaseDoc {
             ("Open the page".into(), "Page shows".into()),
             ("Click a | b".into(), "Line1\r\nLine2".into()),
         ],
-        side: "admin".into(),
+        folder: "sl/admin/x".into(),
         navigation_captured: true,
         feature_title: "Competencies".into(),
     }
@@ -25,7 +25,7 @@ fn doc(id: i32, title: &str) -> CaseDoc {
 
 #[test]
 fn a_section_in_the_repos_layout() {
-    let want = "## 7 \u{2014} My case\n\n### Metadata\n\n| Field | Value |\n|-------|-------|\n| ID | 7 |\n| Title | My case |\n| State | Design |\n| Area Path | HRM\\Gamma |\n| Iteration | HRM\\Gamma\\S5 |\n| Project | HRM |\n| Module | Performance |\n| Tags | A; B |\n\n**Side:** admin \u{2014} mapped in TCM.\n\n**Navigation:** captured in src/navigation.json.\n\n### Preconditions\n\n| # | Condition |\n|---|-----------|\n| 1 | Logged in |\n| 2 | Data exists |\n\n### Test Data & Validation\n\n| Name | Value / Rule | Source | Expected After Save | Notes |\n|------|--------------|--------|---------------------|-------|\n\n### Navigation Path\n\n```text\nCompetencies\n```\n\n### Test Steps\n\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | Open the page | Page shows |\n| 2 | Click a \\| b | Line1<br>Line2 |\n\n### Cleanup / Postconditions\n\n| # | Action |\n|---|--------|\n\n";
+    let want = "## 7 \u{2014} My case\n\n### Metadata\n\n| Field | Value |\n|-------|-------|\n| ID | 7 |\n| Title | My case |\n| State | Design |\n| Area Path | HRM\\Gamma |\n| Iteration | HRM\\Gamma\\S5 |\n| Project | HRM |\n| Module | Performance |\n| Tags | A; B |\n\n**Folder:** sl/admin/x \u{2014} mapped in TCM.\n\n**Navigation:** captured in src/navigation.json.\n\n### Preconditions\n\n| # | Condition |\n|---|-----------|\n| 1 | Logged in |\n| 2 | Data exists |\n\n### Test Data & Validation\n\n| Name | Value / Rule | Source | Expected After Save | Notes |\n|------|--------------|--------|---------------------|-------|\n\n### Navigation Path\n\n```text\nCompetencies\n```\n\n### Test Steps\n\n| Step | Action | Expected Result |\n|------|--------|-----------------|\n| 1 | Open the page | Page shows |\n| 2 | Click a \\| b | Line1<br>Line2 |\n\n### Cleanup / Postconditions\n\n| # | Action |\n|---|--------|\n\n";
     assert_eq!(section(&doc(7, "My case")), want);
     let mut d = doc(7, "My case");
     d.navigation_captured = false;
@@ -43,7 +43,7 @@ fn splice_replaces_only_its_own_section() {
     let b = splice(&a, 3, &section(&doc(3, "C2")));
     assert!(b.contains(s2));
     assert!(b.starts_with("# T\r\n\r\n## 1 \u{2014} A2\n"));
-    assert!(!b.contains("old"));
+    assert!(!b.contains("\nold"));
     assert!(b.ends_with("| # | Action |\n|---|--------|\n\n"));
     // an ### heading never ends a section
     let nested = "## 5 \u{2014} X\n### Metadata\nm\n## 6 \u{2014} Y\ny\n";

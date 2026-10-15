@@ -7,6 +7,9 @@ import { useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { Badge } from "../../components/ui/badge";
 import { cn } from "../../lib/cn";
 
+/** The query key of the clone's structure; the folder is part of it. */
+export const STRUCTURE_KEY = "pw-repo-structure";
+
 export type Tone = "success" | "warning" | "danger" | "info" | "muted" | "neutral";
 
 const TONE: Record<Tone, string> = {

@@ -3,8 +3,24 @@
   "entries": {
     "performance/rating-methods": {
       "side": "admin",
-      "menu": ["Talent", "Performance Management System"],
-      "moduleNav": ["Definition Wizard"]
+      "menu": [
+        "Talent",
+        "Performance Management System"
+      ],
+      "moduleNav": [
+        "Definition Wizard"
+      ]
+    },
+    "definition-wizard/competencies": {
+      "side": "admin",
+      "menu": [
+        "Talent",
+        "Performance Management System"
+      ],
+      "moduleNav": [
+        "Definition Wizard",
+        "Competencies"
+      ]
     }
   }
 }

@@ -17,6 +17,7 @@ use crate::autorun::{accounts, components, runner, store, CaseScript, LocalRun};
 use crate::browser::actions::Action;
 use crate::browser::locator::Target;
 use crate::pw_repo::presence::{self, Presence};
+use crate::pw_repo::{layout, structure};
 use crate::pw_repo::sync;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -404,7 +405,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
     if let Err(e) = placement.validate() {
         return fail(pc, format!("area \"{area_name}\" has a placement that is not valid: {e}"));
     }
-    pc.seg = Some(placement.seg());
+    pc.seg = Some(placement.seg().to_string());
 
     // Account.
     let Some(account) = script.account.as_deref().map(str::trim).filter(|a| !a.is_empty()) else {
@@ -468,8 +469,8 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
     // paths and step texts only reach comments.
     let trial = translate::raw_spec(&RawSpecInput {
         script: &script,
-        md_path: format!("suites/{}/test-cases/{}.md", placement.seg(), placement.feature),
-        feature_title: title_case(&placement.feature),
+        md_path: format!("suites/{}/test-cases/{}.md", placement.seg(), placement.feature()),
+        feature_title: title_case(placement.feature()),
         after_sign_in: &recipe.after_sign_in,
         area_clicks: &area_clicks,
         area_clicks_by_name: &by_name,
@@ -514,12 +515,18 @@ pub fn preview_with(
     // A guess only for an area one of these cases starts in and that is
     // not placed yet - not for every area the project has recorded.
     let mut suggested: BTreeMap<String, Placement> = BTreeMap::new();
+    let features: Vec<Vec<String>> = ctx
+        .clone
+        .as_ref()
+        .map(|c| crate::pw_repo::layout::feature_dirs(&c.root.join("suites")))
+        .unwrap_or_default();
     for &id in case_ids {
         let script = load_expanded(root, org, project, id, &ctx.runs);
         if let Some(Ok((name, _, _))) = script.as_ref().ok().and_then(Option::as_ref).map(|s| route(&ctx, id, s)) {
             if placed(&ctx.map, &name).is_none() && !suggested.keys().any(|k| k.eq_ignore_ascii_case(&name)) {
-                let p = Placement::suggest(&name);
-                suggested.insert(name, p);
+                if let Some(p) = Placement::suggest(&name, &features) {
+                    suggested.insert(name, p);
+                }
             }
         }
         let mut pc = evaluate(&ctx, id, script).0;
@@ -737,7 +744,8 @@ pub fn write_with(
 ) -> Result<ExportResult, String> {
     let ctx = Ctx::load(root, org, project, clone_path, modules)?;
     let repo = ctx.clone.as_ref().map_err(|e| e.clone())?;
-    refuse_present(&presence::scan_repo(repo), case_ids, replace)?;
+    let found = presence::scan_repo(repo);
+    refuse_present(&found, case_ids, replace)?;
 
     // Refuse everything unless every case is exportable.
     let ready = eligible(&ctx, root, org, project, case_ids)?;
@@ -758,18 +766,48 @@ pub fn write_with(
 
     for (id, r) in &ready {
         let id = *id;
-        let p = &r.placement;
-        let seg = p.seg();
-        let md_rel = format!("suites/{seg}/test-cases/{}.md", p.feature);
-        let nav_key = format!("{}/{}", p.module, p.feature);
+        // A case the repo already has is rewritten where its section is, not
+        // where the saved placement says: the repo may have moved the feature.
+        let existing: Vec<&String> = found
+            .cases
+            .get(&id)
+            .map(|f| f.sections.iter().filter(|p| structure::feature_test_cases(p)).collect())
+            .unwrap_or_default();
+        let here: Option<(String, Vec<String>)> = match existing.as_slice() {
+            [] => None,
+            [one] => layout::test_case_file(one).map(|path| ((*one).clone(), path)),
+            several => {
+                let names: Vec<&str> = several.iter().map(|p| p.as_str()).collect();
+                return Err(format!(
+                    "Case {id} has a section in more than one test-case file: {}. Nothing was written.",
+                    names.join(", ")
+                ));
+            }
+        };
+        let (md_rel, folders, feature, nav_key) = match here {
+            Some((rel, path)) => {
+                let feature = path.last().cloned().unwrap_or_default();
+                let key = layout::navigation_key(&path);
+                (rel, path.join("/"), feature, key)
+            }
+            None => {
+                let p = &r.placement;
+                (
+                    format!("suites/{}/test-cases/{}.md", p.seg(), p.feature()),
+                    p.seg().to_string(),
+                    p.feature().to_string(),
+                    p.navigation_key(),
+                )
+            }
+        };
         let captured = repo.navigation_keys.contains(&nav_key);
         if !captured && !missing_navigation.contains(&nav_key) {
             missing_navigation.push(nav_key);
         }
-        let feature_title = title_case(&p.feature);
+        let feature_title = title_case(&feature);
 
         let mut doc = docs[&id].clone();
-        doc.side = p.side.clone();
+        doc.folder = folders;
         doc.navigation_captured = captured;
         doc.feature_title = feature_title.clone();
 
@@ -779,7 +817,7 @@ pub fn write_with(
             let start = if path.is_file() {
                 std::fs::read_to_string(&path).map_err(|e| format!("could not read {md_rel}: {e}"))?
             } else {
-                test_case::new_file(&feature_title, &p.feature, &r.user_key)
+                test_case::new_file(&feature_title, &feature, &r.user_key)
             };
             md_files.insert(md_rel.clone(), start);
         }

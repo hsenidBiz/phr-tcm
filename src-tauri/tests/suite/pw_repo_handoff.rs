@@ -299,6 +299,45 @@ fn every_seg_part_and_the_file_stem_must_be_a_plain_name() {
         let e = cards_at(&c.root, &record(&[9300]), &none(), &none(), &[9300]).unwrap_err();
         assert!(e.contains("names in lower-case letters, digits and hyphens"), "{md}: {e}");
     }
+    // Too shallow (one folder) or a folder name layout::valid_name refuses.
+    for md in ["suites/x/test-cases/feature.md", "suites/sl/a--b/test-cases/feature.md"] {
+        let c = clone();
+        index_add(&c.root, 9301, "shallow.spec.ts");
+        put(&c.root, md, "## 9301 Shallow\n");
+        let e = cards_at(&c.root, &record(&[9301]), &none(), &none(), &[9301]).unwrap_err();
+        assert_eq!(
+            e,
+            "Case 9301's test-case file is not suites/<folders>/<feature>/test-cases/<name>.md with names in lower-case letters, digits and hyphens.",
+            "{md}"
+        );
+    }
+}
+
+#[test]
+fn a_grouped_feature_gets_its_card_at_its_own_depth() {
+    let c = clone();
+    put(&c.root, "src/navigation.json", r#"{"entries":{"definition-wizard/competencies":{}}}"#);
+    index_add(&c.root, 9400, "comp.spec.ts");
+    let md = "suites/sl/admin/performance/definition-wizard/competencies/test-cases/competencies.md";
+    put(&c.root, md, "# C\n\n## 9400 Comp\n");
+    let cards = cards_at(&c.root, &record(&[9400]), &none(), &none(), &[9400]).unwrap();
+    assert_eq!(cards[0].seg, "sl/admin/performance/definition-wizard/competencies");
+    assert_eq!(cards[0].problem, None);
+    let p = &cards[0].prompt;
+    assert!(
+        p.contains("`suites/sl/admin/performance/definition-wizard/competencies/specs/competencies.spec.ts` with --spec competencies"),
+        "{p}"
+    );
+    // Captured under the last two folders: no capture sentence.
+    assert!(!p.contains("navigation.json has no entry"), "{p}");
+    // Not captured: the sentence names the last two folders.
+    put(&c.root, "src/navigation.json", r#"{"entries":{"performance/competencies":{}}}"#);
+    let cards = cards_at(&c.root, &record(&[9400]), &none(), &none(), &[9400]).unwrap();
+    assert!(
+        cards[0].prompt.contains("src/navigation.json has no entry for definition-wizard/competencies yet"),
+        "{}",
+        cards[0].prompt
+    );
 }
 
 #[test]

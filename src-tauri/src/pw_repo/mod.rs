@@ -27,6 +27,7 @@
 //! every command of the tab, and Export to Playwright, is refused.
 
 pub mod handoff;
+pub mod layout;
 pub mod presence;
 pub mod process;
 pub mod runner;

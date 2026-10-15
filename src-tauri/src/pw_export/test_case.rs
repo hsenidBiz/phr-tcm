@@ -18,7 +18,7 @@ pub struct CaseDoc {
     pub tags: String,
     pub preconditions: String,
     pub steps: Vec<(String, String)>,
-    pub side: String,
+    pub folder: String,
     pub navigation_captured: bool,
     pub feature_title: String,
 }
@@ -66,7 +66,7 @@ pub fn section(doc: &CaseDoc) -> String {
     for (k, v) in rows {
         o.push_str(&format!("| {} | {} |\n", k, cell(&v)));
     }
-    o.push_str(&format!("\n**Side:** {} \u{2014} mapped in TCM.\n\n", one_line(&doc.side)));
+    o.push_str(&format!("\n**Folder:** {} \u{2014} mapped in TCM.\n\n", one_line(&doc.folder)));
     if doc.navigation_captured {
         o.push_str("**Navigation:** captured in src/navigation.json.\n\n");
     } else {
