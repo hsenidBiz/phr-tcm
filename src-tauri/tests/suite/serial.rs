@@ -159,3 +159,9 @@ pub fn network_waits() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// The process-wide module choice (`modules::init` / `set` / `current`).
+pub fn modules() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}

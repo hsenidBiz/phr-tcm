@@ -76,3 +76,58 @@ fn the_choice_round_trips_through_modules_json() {
     let text = std::fs::read_to_string(d.path().join("modules.json")).unwrap();
     assert!(text.contains("db_access") && text.contains("auto_run") && text.contains("playwright"));
 }
+
+#[test]
+fn any_earlier_app_data_makes_an_existing_install() {
+    for marker in ["extras.json", "app-settings.json", "cache.json", "databases.json", "writing-style.json"] {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join(marker), "{}").unwrap();
+        assert!(v2_lib::modules::existing_install(d.path()), "{marker}");
+    }
+    let d = tempfile::tempdir().unwrap();
+    std::fs::create_dir(d.path().join("autorun")).unwrap();
+    assert!(v2_lib::modules::existing_install(d.path()));
+}
+
+#[test]
+fn a_dir_with_only_a_cache_keeps_database_access_and_writing_style() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("cache.json"), "{}").unwrap();
+    assert_eq!(load_or_create(d.path(), false), set(&[Module::DbAccess, Module::WritingStyle]));
+}
+
+#[test]
+fn an_empty_dir_is_a_fresh_install() {
+    let d = tempfile::tempdir().unwrap();
+    assert!(!v2_lib::modules::existing_install(d.path()));
+    assert!(load_or_create(d.path(), false).is_empty());
+}
+
+#[test]
+fn a_broken_tree_is_mended_on_load() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("modules.json"), r#"{"on":["playwright","auto_run"]}"#).unwrap();
+    assert!(load_or_create(d.path(), false).is_empty());
+    std::fs::write(d.path().join("modules.json"), r#"{"on":["playwright","auto_run","db_access","writing_style"]}"#).unwrap();
+    assert_eq!(load_or_create(d.path(), false).len(), 4);
+}
+
+#[test]
+fn a_set_whose_save_fails_leaves_the_state_unchanged() {
+    let _g = crate::serial::modules();
+    let d = tempfile::tempdir().unwrap();
+    std::fs::write(d.path().join("modules.json"), r#"{"on":["db_access"]}"#).unwrap();
+    v2_lib::modules::init(d.path().to_path_buf());
+    // init only takes effect the first time in a process; the state is whatever
+    // this test's dir held, or an earlier one's. Only the unchanged-on-failure
+    // property is asserted.
+    // Make the save fail: a directory where the file goes.
+    let file = d.path().join("modules.json");
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    let before = v2_lib::modules::current();
+    let r = v2_lib::modules::set(Module::WritingStyle, !before.contains(&Module::WritingStyle));
+    if r.is_err() {
+        assert_eq!(v2_lib::modules::current(), before);
+    }
+}

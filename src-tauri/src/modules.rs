@@ -117,9 +117,29 @@ struct Disk {
     on: BTreeSet<Module>,
 }
 
+/// Drop any module whose parent is off, so a hand-edited or damaged file
+/// can never hold a state the tree forbids.
+fn normalise(on: BTreeSet<Module>) -> BTreeSet<Module> {
+    // ALL lists parents before children.
+    Module::ALL.into_iter().filter(|m| on.contains(m)).fold(BTreeSet::new(), |mut out, m| {
+        if m.parent().map_or(true, |p| out.contains(&p)) {
+            out.insert(m);
+        }
+        out
+    })
+}
+
 fn read(dir: &Path) -> Option<BTreeSet<Module>> {
     let s = std::fs::read_to_string(dir.join(FILE)).ok()?;
-    serde_json::from_str::<Disk>(&s).ok().map(|d| d.on)
+    serde_json::from_str::<Disk>(&s).ok().map(|d| normalise(d.on))
+}
+
+/// Whether `dir` holds any app data from an earlier launch. A person who
+/// never changed a setting may have only the cache, so any of these counts.
+pub fn existing_install(dir: &Path) -> bool {
+    ["extras.json", "app-settings.json", "cache.json", "databases.json", "writing-style.json", "autorun"]
+        .iter()
+        .any(|n| dir.join(n).exists())
 }
 
 fn write(dir: &Path, on: &BTreeSet<Module>) -> Result<(), String> {
@@ -139,10 +159,11 @@ pub fn load_or_create(dir: &Path, dev: bool) -> BTreeSet<Module> {
     if let Some(on) = read(dir) {
         return on;
     }
-    let existing = dir.join("extras.json").exists() || dir.join("app-settings.json").exists();
-    let on = initial(existing, crate::extras::load_advanced(dir), crate::extras::load(dir), dev);
-    // A failed save is not fatal: the same answer is rebuilt next launch.
-    let _ = write(dir, &on);
+    let on = initial(existing_install(dir), crate::extras::load_advanced(dir), crate::extras::load(dir), dev);
+    // A failed save is not fatal (the same answer is rebuilt next launch) but is logged.
+    if let Err(e) = write(dir, &on) {
+        crate::applog::warn(format!("modules: could not save modules.json: {e}"));
+    }
     on
 }
 
