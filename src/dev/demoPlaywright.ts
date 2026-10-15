@@ -180,7 +180,7 @@ const EXPORT_CASES: CaseTemplate[] = [
 const EXPORT_IDS = [5101, 5102, 5103, 5104, 5105, 5106, 5201, 5202, 5203, 5204, 5205];
 
 let exportMap: ExportMap = {
-  areas: { "Leave Types": { side: "admin", module: "leave", feature: "leave-types" } },
+  areas: { "Leave Types": { path: "sl/admin/leave/leave-types" } },
   accounts: { dev: { "hr.admin": "DemoSL.admin.hr", "perf.supervisor": "DemoSL.performance.supervisor" } },
 };
 
@@ -194,7 +194,7 @@ function exportPreview(caseIds: number[]): Preview {
     areas: ["Leave Types", "Goal Setting"],
     accounts: ["hr.admin", "perf.supervisor"],
     map: exportMap,
-    suggested: { "Goal Setting": { side: "admin", module: "performance", feature: "goal-setting" } },
+    suggested: { "Goal Setting": { path: "sl/admin/performance/goal-setting" } },
     cases: ids.map((case_id, i) => ({ ...EXPORT_CASES[i % EXPORT_CASES.length], case_id })),
   };
 }

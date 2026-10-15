@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use v2_lib::app_settings::AppSettings;
 use v2_lib::pw_export::mapping::{load, save, ExportMap, Placement};
 
-fn placement(side: &str, module: &str, feature: &str) -> Placement {
-    Placement { side: side.into(), module: module.into(), feature: feature.into() }
+fn placement(path: &str) -> Placement {
+    Placement { path: path.into() }
 }
 
 #[test]
@@ -15,7 +15,7 @@ fn a_missing_map_is_empty_and_a_saved_one_reads_back() {
     assert_eq!(load(d.path(), "org", "proj").unwrap(), ExportMap::default());
 
     let mut map = ExportMap::default();
-    map.areas.insert("Definition Wizard".into(), placement("admin", "performance", "definition-wizard"));
+    map.areas.insert("Definition Wizard".into(), placement("sl/admin/performance/definition-wizard"));
     let mut env = BTreeMap::new();
     env.insert("automation".to_string(), "AutomationSL.performance-management.general".to_string());
     map.accounts.insert("env-1".into(), env);
@@ -25,37 +25,68 @@ fn a_missing_map_is_empty_and_a_saved_one_reads_back() {
 }
 
 #[test]
-fn placement_rules() {
-    assert!(placement("admin", "performance", "proficiency-levels").validate().is_ok());
-    let side = placement("Admin", "performance", "x").validate().unwrap_err();
-    assert!(side.to_lowercase().contains("side"), "{side}");
-    for bad in ["foo", "user", ""] {
-        let e = placement(bad, "performance", "x").validate().unwrap_err();
-        assert!(e.to_lowercase().contains("side"), "{e}");
+fn an_old_placement_reads_as_its_path() {
+    for (side, want) in [("self", "sl/self/m/f"), ("admin", "sl/admin/m/f")] {
+        let old = format!(r#"{{"side":"{side}","module":"m","feature":"f"}}"#);
+        let p: Placement = serde_json::from_str(&old).unwrap();
+        assert_eq!(p, placement(want));
+        assert_eq!(serde_json::to_string(&p).unwrap(), format!(r#"{{"path":"{want}"}}"#));
     }
-    assert!(placement("self", "performance", "x").validate().is_ok());
-    let dbl_m = placement("admin", "a--b", "x").validate().unwrap_err();
-    assert!(dbl_m.to_lowercase().contains("module"), "{dbl_m}");
-    let dbl_f = placement("admin", "performance", "a--b").validate().unwrap_err();
-    assert!(dbl_f.to_lowercase().contains("feature"), "{dbl_f}");
-    let module = placement("admin", "Perf Mgmt", "x").validate().unwrap_err();
-    assert!(module.to_lowercase().contains("module"), "{module}");
-    let feature = placement("admin", "performance", "-x").validate().unwrap_err();
-    assert!(feature.to_lowercase().contains("feature"), "{feature}");
-    let empty = placement("admin", "performance", "").validate().unwrap_err();
-    assert!(empty.to_lowercase().contains("feature"), "{empty}");
-    assert_eq!(
-        placement("admin", "performance", "proficiency-levels").seg(),
-        "sl/admin/performance/proficiency-levels"
-    );
+    let p: Placement = serde_json::from_str(r#"{"path":"sl/admin/x/y/z"}"#).unwrap();
+    assert_eq!(p.path, "sl/admin/x/y/z");
+    // An old map file on disk reads too, and is written back as paths.
+    let d = tempfile::tempdir().unwrap();
+    let file = v2_lib::pw_export::mapping::path(d.path(), "org", "proj");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, r#"{"areas":{"A":{"side":"admin","module":"performance","feature":"a"}}}"#).unwrap();
+    let map = load(d.path(), "org", "proj").unwrap();
+    assert_eq!(map.areas["A"].path, "sl/admin/performance/a");
+    save(d.path(), "org", "proj", &map).unwrap();
+    assert!(std::fs::read_to_string(&file).unwrap().contains("\"path\": \"sl/admin/performance/a\""));
 }
 
 #[test]
-fn suggest_kebabs_the_area_name() {
-    let p = Placement::suggest("Definition Wizard");
-    assert_eq!(p.feature, "definition-wizard");
-    assert_eq!(p.side, "admin");
-    assert_eq!(p.module, "performance");
+fn a_typed_path_is_trimmed_or_refused() {
+    assert!(placement("sl/admin/performance/definition-wizard/competencies").validate().is_ok());
+    assert!(placement("sl/self/x").validate().is_ok());
+    assert_eq!(placement("").validate().unwrap_err(), "The path is empty.");
+    assert_eq!(
+        placement("sl").validate().unwrap_err(),
+        "The path \"sl\" needs at least a country and a feature folder, such as sl/admin/performance/rating-methods."
+    );
+    let bad = "The folder \"Sl\" must be lowercase letters, digits and hyphens, not starting or ending with a hyphen.";
+    assert_eq!(placement("Sl/admin/x").validate().unwrap_err(), bad);
+    assert_eq!(
+        placement("sl//x").validate().unwrap_err(),
+        "The folder \"\" must be lowercase letters, digits and hyphens, not starting or ending with a hyphen."
+    );
+    assert!(placement("sl/admin/a--b").validate().is_err());
+    let p = placement("sl/admin/performance/definition-wizard/competencies");
+    assert_eq!(p.seg(), "sl/admin/performance/definition-wizard/competencies");
+    assert_eq!(p.feature(), "competencies");
+    assert_eq!(p.navigation_key(), "definition-wizard/competencies");
+}
+
+#[test]
+fn suggest_finds_the_feature_named_like_the_area() {
+    let features: Vec<Vec<String>> = [
+        "sl/admin/performance/definition-wizard/competencies",
+        "sl/admin/performance/competencies",
+        "sl/admin/performance/rating-methods",
+    ]
+    .iter()
+    .map(|p| p.split('/').map(String::from).collect())
+    .collect();
+    // The first by path order when several match.
+    assert_eq!(
+        Placement::suggest("Competencies", &features),
+        Some(placement("sl/admin/performance/competencies"))
+    );
+    assert_eq!(
+        Placement::suggest("Rating  Methods!", &features),
+        Some(placement("sl/admin/performance/rating-methods"))
+    );
+    assert_eq!(Placement::suggest("Nothing", &features), None);
 }
 
 #[test]

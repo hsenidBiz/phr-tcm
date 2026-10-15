@@ -538,7 +538,7 @@ fn the_135271_section_is_rewritten_with_the_engineers_block_before_cleanup() {
         "| Project | HRM |\n",
         "| Module | Performance |\n",
         "| Tags |  |\n",
-        "\n**Side:** admin \u{2014} mapped in TCM.\n\n",
+        "\n**Folder:** admin \u{2014} mapped in TCM.\n\n",
         "**Navigation:** captured in src/navigation.json.\n\n",
         "### Preconditions\n\n| # | Condition |\n|---|-----------|\n| 1 | Signed in as an HR admin |\n",
         "\n### Test Data & Validation\n\n",

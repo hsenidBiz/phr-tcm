@@ -49,6 +49,23 @@ const PREVIEW = {
   ],
 };
 
+const feature = (path: string[]) => ({ path, navigation_key: path.slice(-2).join("/"), spec_count: 1, case_count: 0, case_ids: [] });
+/** The clone's folders, as the Overview reads them. */
+const STRUCTURE = {
+  features: [
+    feature(["sl", "admin", "performance", "definition-wizard", "competencies"]),
+    feature(["sl", "admin", "performance", "rating-methods"]),
+  ],
+  generated_ids: [],
+  user_keys: [],
+  navigation_keys: [],
+  health: [],
+};
+
+/** The paths the Folder field offers as you type. */
+const offered = (input: HTMLElement) =>
+  Array.from(document.querySelectorAll(`datalist#${input.getAttribute("list")} option`)).map((o) => (o as HTMLOptionElement).value);
+
 /** The Export button, which says how many cases it sends. */
 const EXPORT = /^Export \(\d+\)$/;
 
@@ -61,6 +78,7 @@ function mount(handlers: Record<string, (args: Record<string, unknown>) => unkno
     if (handlers[cmd]) return handlers[cmd]((args ?? {}) as Record<string, unknown>);
     if (cmd === "pw_export_preview") return preview;
     if (cmd === "get_app_settings") return { playwright_clone: "C:/repo" };
+    if (cmd === "pw_repo_structure") return STRUCTURE;
     if (cmd === "pw_handoff") {
       const ids = (args as { cases: number[] }).cases;
       return [{ seg: "sl/admin/pm", stem: "wizard", case_ids: ids, prompt: `finish ${ids.join(" ")}`, problem: null, already: [] }];
@@ -124,10 +142,16 @@ test("choosing_a_clone_saves_it", async () => {
 test("saving_a_mapping_sends_the_map", async () => {
   const { calls } = mount();
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
-  fireEvent.change(screen.getByLabelText("Module for Definition Wizard"), { target: { value: "pm" } });
-  fireEvent.change(screen.getByLabelText("Feature for Definition Wizard"), { target: { value: "wizard" } });
-  fireEvent.click(screen.getByRole("combobox", { name: "Side for Definition Wizard" }));
-  fireEvent.click(await screen.findByRole("option", { name: "self" }));
+  const folder = screen.getByLabelText("Folder for Definition Wizard");
+  // The clone's own features are offered as you type.
+  await waitFor(() =>
+    expect(offered(folder)).toEqual([
+      "sl/admin/performance/definition-wizard/competencies",
+      "sl/admin/performance/rating-methods",
+    ]),
+  );
+  // Typed text is trimmed, and so is a trailing slash; the case is the person's.
+  fireEvent.change(folder, { target: { value: "  sl/self/pm/wizard/  " } });
   fireEvent.click(screen.getByRole("combobox", { name: "User for hr.admin" }));
   fireEvent.click(await screen.findByRole("option", { name: "REPO_EMP" }));
   fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
@@ -136,7 +160,7 @@ test("saving_a_mapping_sends_the_map", async () => {
     organization: "acme",
     project: "Web",
     map: {
-      areas: { "Definition Wizard": { side: "self", module: "pm", feature: "wizard" } },
+      areas: { "Definition Wizard": { path: "sl/self/pm/wizard" } },
       accounts: { other: { x: "Y" }, env1: { "hr.admin": "REPO_EMP" } },
     },
   });
@@ -200,11 +224,11 @@ test("unsaved mapping edits disable Export and say to save first", async () => {
 });
 
 test("a half-filled or blanked saved area row blocks the save", async () => {
-  const saved = { ...PREVIEW, map: { areas: { "Definition Wizard": { side: "admin", module: "pm", feature: "wizard" } }, accounts: {} } };
+  const saved = { ...PREVIEW, map: { areas: { "Definition Wizard": { path: "sl/admin/pm/wizard" } }, accounts: {} } };
   const { calls } = mount({}, saved);
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
-  fireEvent.change(screen.getByLabelText("Feature for Definition Wizard"), { target: { value: "" } });
-  expect(screen.getByText("needs module and feature")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Folder for Definition Wizard"), { target: { value: " / " } });
+  expect(screen.getByText("needs a folder path")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save mappings" })).toBeDisabled();
   expect(calls.some((c) => c.cmd === "pw_export_save_map")).toBe(false);
 });
@@ -228,23 +252,22 @@ test("an_unplaced_area_is_filled_with_the_suggestion_and_must_be_saved_first", a
   const suggested = {
     ...PREVIEW,
     areas: ["Definition Wizard", "Goal Setting"],
-    map: { areas: { "Definition Wizard": { side: "admin", module: "pm", feature: "wizard" } }, accounts: {} },
-    suggested: { "Goal Setting": { side: "admin", module: "performance", feature: "goal-setting" } },
+    map: { areas: { "Definition Wizard": { path: "sl/admin/pm/wizard" } }, accounts: {} },
+    suggested: { "Goal Setting": { path: "sl/admin/performance/goal-setting" } },
   };
   const { calls } = mount({}, suggested);
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
   // The saved row keeps what is saved; the unplaced one shows the guess.
-  expect(screen.getByLabelText("Feature for Definition Wizard")).toHaveValue("wizard");
-  expect(screen.getByLabelText("Module for Goal Setting")).toHaveValue("performance");
-  expect(screen.getByLabelText("Feature for Goal Setting")).toHaveValue("goal-setting");
+  expect(screen.getByLabelText("Folder for Definition Wizard")).toHaveValue("sl/admin/pm/wizard");
+  expect(screen.getByLabelText("Folder for Goal Setting")).toHaveValue("sl/admin/performance/goal-setting");
   // A guess is not a mapping until the person saves it.
   expect(screen.getByText("Save the mappings first")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: EXPORT })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
   await waitFor(() => expect(calls.find((c) => c.cmd === "pw_export_save_map")).toBeTruthy());
   expect((calls.find((c) => c.cmd === "pw_export_save_map")?.args.map as { areas: unknown }).areas).toEqual({
-    "Definition Wizard": { side: "admin", module: "pm", feature: "wizard" },
-    "Goal Setting": { side: "admin", module: "performance", feature: "goal-setting" },
+    "Definition Wizard": { path: "sl/admin/pm/wizard" },
+    "Goal Setting": { path: "sl/admin/performance/goal-setting" },
   });
 });
 
@@ -352,4 +375,19 @@ test("a case the repo excludes is unticked, cannot be ticked and is never sent",
   fireEvent.click(screen.getByRole("button", { name: EXPORT }));
   await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_write")).toHaveLength(1));
   expect(calls.find((c) => c.cmd === "pw_export_write")!.args).toMatchObject({ caseIds: [10], replace: [] });
+});
+
+test("a refused path shows its sentence and nothing is lost", async () => {
+  const sentence = 'The folder "Sl" must be lowercase letters, digits and hyphens, not starting or ending with a hyphen.';
+  mount({
+    pw_export_save_map: () => {
+      throw sentence;
+    },
+  });
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  const folder = screen.getByLabelText("Folder for Definition Wizard");
+  fireEvent.change(folder, { target: { value: "Sl/admin/x" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
+  expect(await screen.findByText(/must be lowercase letters, digits and hyphens/)).toBeInTheDocument();
+  expect(folder).toHaveValue("Sl/admin/x");
 });

@@ -21,15 +21,14 @@ import {
 } from "../../lib/playwrightExport";
 import Accounts, { ACCOUNTS_KEY } from "./Accounts";
 import HealthLine, { HEALTH_TEXT, WARNING_ONLY } from "./HealthLine";
-import { Hint, Stat, SubTabs, type TabSpec } from "./parts";
+import { Hint, STRUCTURE_KEY, Stat, SubTabs, type TabSpec } from "./parts";
 import PlaywrightExportDialog from "./PlaywrightExportDialog";
 import Runner, { REPORTS_KEY, TESTS_KEY } from "./Runner";
 import Sync, { SYNC_KEY } from "./Sync";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The query key of the clone's structure; the folder is part of it. */
-export const STRUCTURE_KEY = "pw-repo-structure";
+export { STRUCTURE_KEY };
 
 type Tab = "overview" | "runner" | "accounts" | "sync";
 /** The tab last chosen, kept for the session: coming back to Playwright

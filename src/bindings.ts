@@ -4087,11 +4087,15 @@ export type PdfSpec_Serialize = {
  */
 export type Phrases = string | string[];
 
-/**  Where one area's specs live: `sl/<side>/<module>/<feature>`. */
+/**
+ *  Where one area's specs live: the feature folder's path under `suites/`,
+ *  such as `sl/admin/performance/definition-wizard/competencies`.
+ * 
+ *  Reads the older `{side, module, feature}` shape too (as
+ *  `sl/<side>/<module>/<feature>`); always writes `{path}`.
+ */
 export type Placement = {
-	side: string,
-	module: string,
-	feature: string,
+	path: string,
 };
 
 /**

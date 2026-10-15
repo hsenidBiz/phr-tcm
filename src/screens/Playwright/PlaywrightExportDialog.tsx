@@ -18,6 +18,7 @@
 // as chosen to replace; the write refuses a case the repo has otherwise.
 
 import { useCallback, useEffect, useId, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   commands,
@@ -38,9 +39,8 @@ import { copyText } from "../../lib/clipboard";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrapStr } from "../../lib/ipc";
 import FinishInRepo from "./FinishInRepo";
-import { Card, Hint, Stat, StatusBadge } from "./parts";
+import { Card, Hint, STRUCTURE_KEY, Stat, StatusBadge } from "./parts";
 
-const SIDES = ["admin", "self"];
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const NEXT_STEPS = [
@@ -95,6 +95,17 @@ export default function PlaywrightExportDialog({
   const [result, setResult] = useState<ExportResult | null>(null);
   /** A preview that failed after a successful write: secondary to the summary. */
   const [refreshError, setRefreshError] = useState("");
+
+  // The clone's own folders, offered as you type. The Overview's query, so
+  // an open Playwright tab has them already and nothing is cached twice.
+  const structure = useQuery({
+    queryKey: [STRUCTURE_KEY, clone],
+    queryFn: () => unwrapStr(commands.pwRepoStructure(clone)),
+    enabled: clone !== "",
+    staleTime: Infinity,
+  });
+  const featurePaths = (structure.data?.features ?? []).map((f) => f.path.join("/"));
+  const listId = useId();
 
   /** Reads the preview again. `reseed` puts the rows back to what is saved. */
   const refresh = useCallback(async (reseed = true) => {
@@ -158,17 +169,17 @@ export default function PlaywrightExportDialog({
     });
 
   // What the rows hold, as it would be saved, against what is saved. A row
-  // with one of module/feature blank, or blanked over a saved mapping, is
-  // invalid: it blocks the save instead of dropping the mapping.
+  // blanked over a saved mapping is invalid: it blocks the save instead of
+  // dropping the mapping. The text is trimmed, and so is a trailing slash;
+  // it is never lowercased for the person (the save refuses what is not valid).
   const savedAreas = preview?.map.areas ?? {};
   const savedUsers = preview?.map.accounts?.[preview.environment] ?? {};
   const invalid = new Set<string>();
   const draftAreas: Record<string, Placement> = {};
   for (const [name, p] of Object.entries(areas ?? {})) {
-    const filled = Boolean(p.module.trim()) && Boolean(p.feature.trim());
-    const touched = Boolean(p.module.trim()) || Boolean(p.feature.trim());
-    if (filled) draftAreas[name] = { side: p.side, module: p.module.trim(), feature: p.feature.trim() };
-    else if (touched || name in savedAreas) invalid.add(name);
+    const typed = p.path.trim().replace(/\/+$/, "").trim();
+    if (typed) draftAreas[name] = { path: typed };
+    else if (p.path.trim() || name in savedAreas) invalid.add(name);
   }
   const draftUsers = Object.fromEntries(Object.entries(users ?? {}).filter(([, v]) => v));
   const unsaved =
@@ -208,7 +219,7 @@ export default function PlaywrightExportDialog({
       }
     });
 
-  const place = (name: string): Placement => areas?.[name] ?? { side: "admin", module: "", feature: "" };
+  const place = (name: string): Placement => areas?.[name] ?? { path: "" };
   const setPlace = (name: string, patch: Partial<Placement>) =>
     setAreas((cur) => ({ ...(cur ?? {}), [name]: { ...place(name), ...patch } }));
 
@@ -419,37 +430,28 @@ export default function PlaywrightExportDialog({
               >
                 <section className="space-y-2">
                   <h4 className="text-xs font-medium text-text">Areas</h4>
-                  <Hint>Where each area's specs go in the clone: side, module and feature.</Hint>
+                  <Hint>Where each area's specs go in the clone: the feature's folder under suites/, such as sl/admin/performance/rating-methods.</Hint>
                   {preview.areas.length === 0 && <Hint>No areas yet.</Hint>}
+                  <datalist id={listId}>
+                    {featurePaths.map((p) => (
+                      <option key={p} value={p} />
+                    ))}
+                  </datalist>
                   {preview.areas.map((name) => (
                     <div key={name} className="space-y-1">
                       <div className="flex items-baseline justify-between gap-2">
                         <span className="text-sm text-text">{name}</span>
-                        {invalid.has(name) && <span className="text-xs text-danger">needs module and feature</span>}
+                        {invalid.has(name) && <span className="text-xs text-danger">needs a folder path</span>}
                       </div>
-                      <div className="grid grid-cols-[5.5rem_minmax(0,1fr)_minmax(0,1fr)] gap-1.5">
-                        <Select aria-label={`Side for ${name}`} triggerClassName="py-1.5 text-xs" value={place(name).side} onChange={(e) => setPlace(name, { side: e.target.value })}>
-                          {SIDES.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ))}
-                        </Select>
-                        <Input
-                          aria-label={`Module for ${name}`}
-                          placeholder="module"
-                          className="py-1.5 text-xs"
-                          value={place(name).module}
-                          onChange={(e) => setPlace(name, { module: e.target.value })}
-                        />
-                        <Input
-                          aria-label={`Feature for ${name}`}
-                          placeholder="feature"
-                          className="py-1.5 text-xs"
-                          value={place(name).feature}
-                          onChange={(e) => setPlace(name, { feature: e.target.value })}
-                        />
-                      </div>
+                      <Input
+                        aria-label={`Folder for ${name}`}
+                        placeholder="sl/admin/performance/feature"
+                        list={listId}
+                        spellCheck={false}
+                        className="py-1.5 font-mono text-xs"
+                        value={place(name).path}
+                        onChange={(e) => setPlace(name, { path: e.target.value })}
+                      />
                     </div>
                   ))}
                 </section>

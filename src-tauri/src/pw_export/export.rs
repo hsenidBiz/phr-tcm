@@ -404,7 +404,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
     if let Err(e) = placement.validate() {
         return fail(pc, format!("area \"{area_name}\" has a placement that is not valid: {e}"));
     }
-    pc.seg = Some(placement.seg());
+    pc.seg = Some(placement.seg().to_string());
 
     // Account.
     let Some(account) = script.account.as_deref().map(str::trim).filter(|a| !a.is_empty()) else {
@@ -468,8 +468,8 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
     // paths and step texts only reach comments.
     let trial = translate::raw_spec(&RawSpecInput {
         script: &script,
-        md_path: format!("suites/{}/test-cases/{}.md", placement.seg(), placement.feature),
-        feature_title: title_case(&placement.feature),
+        md_path: format!("suites/{}/test-cases/{}.md", placement.seg(), placement.feature()),
+        feature_title: title_case(placement.feature()),
         after_sign_in: &recipe.after_sign_in,
         area_clicks: &area_clicks,
         area_clicks_by_name: &by_name,
@@ -514,12 +514,18 @@ pub fn preview_with(
     // A guess only for an area one of these cases starts in and that is
     // not placed yet - not for every area the project has recorded.
     let mut suggested: BTreeMap<String, Placement> = BTreeMap::new();
+    let features: Vec<Vec<String>> = ctx
+        .clone
+        .as_ref()
+        .map(|c| crate::pw_repo::layout::feature_dirs(&c.root.join("suites")))
+        .unwrap_or_default();
     for &id in case_ids {
         let script = load_expanded(root, org, project, id, &ctx.runs);
         if let Some(Ok((name, _, _))) = script.as_ref().ok().and_then(Option::as_ref).map(|s| route(&ctx, id, s)) {
             if placed(&ctx.map, &name).is_none() && !suggested.keys().any(|k| k.eq_ignore_ascii_case(&name)) {
-                let p = Placement::suggest(&name);
-                suggested.insert(name, p);
+                if let Some(p) = Placement::suggest(&name, &features) {
+                    suggested.insert(name, p);
+                }
             }
         }
         let mut pc = evaluate(&ctx, id, script).0;
@@ -760,16 +766,16 @@ pub fn write_with(
         let id = *id;
         let p = &r.placement;
         let seg = p.seg();
-        let md_rel = format!("suites/{seg}/test-cases/{}.md", p.feature);
-        let nav_key = format!("{}/{}", p.module, p.feature);
+        let md_rel = format!("suites/{seg}/test-cases/{}.md", p.feature());
+        let nav_key = p.navigation_key();
         let captured = repo.navigation_keys.contains(&nav_key);
         if !captured && !missing_navigation.contains(&nav_key) {
             missing_navigation.push(nav_key);
         }
-        let feature_title = title_case(&p.feature);
+        let feature_title = title_case(p.feature());
 
         let mut doc = docs[&id].clone();
-        doc.side = p.side.clone();
+        doc.side = p.seg().to_string();
         doc.navigation_captured = captured;
         doc.feature_title = feature_title.clone();
 
@@ -779,7 +785,7 @@ pub fn write_with(
             let start = if path.is_file() {
                 std::fs::read_to_string(&path).map_err(|e| format!("could not read {md_rel}: {e}"))?
             } else {
-                test_case::new_file(&feature_title, &p.feature, &r.user_key)
+                test_case::new_file(&feature_title, p.feature(), &r.user_key)
             };
             md_files.insert(md_rel.clone(), start);
         }
