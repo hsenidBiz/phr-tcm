@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.1-beta.1",
+    date: "2026-10-15",
+    items: [
+      "Export to Playwright and Sync no longer refuse a case whose script has no Runs as: they use the account the case ran as on its newest passing run. A script's own Runs as still wins.",
+      "The Playwright tab fills the window: the Runner's test list and output grow to the bottom, and both columns end on the same line.",
+    ],
+  },
+  {
     version: "2.2.0",
     date: "2026-10-15",
     items: [
