@@ -30,7 +30,7 @@ export const aiBridge: Screen = {
     "run results, tags, Product Backlog Items and wiki pages, and check the drafts it writes, while you stay in charge of what reaches Azure DevOps: " +
     "none of these tools can write to it. The tools are registered per working repository; the other settings here apply to the whole app.",
   shots: [
-    { id: TAB, route: [NAV, { waitFor: { role: "button", name: "Unregister" } }], alt: "The AI Bridge tab with a working repository, the AI tools, the environment and Database Read Access" },
+    { id: TAB, route: [NAV, { waitFor: { role: "button", name: "Unregister" } }], alt: "The AI Bridge tab with a working repository, the AI tools and the cards of the modules that are on" },
     {
       id: OTHER,
       route: [NAV, { click: { text: "Other tools" } }, { waitFor: { role: "button", name: "Copy command" } }],
@@ -53,7 +53,7 @@ export const aiBridge: Screen = {
     {
       id: API,
       route: [NAV, { scrollTo: { role: "switch", name: "API templates (create, edit and delete)" } }],
-      alt: "The API templates card, with the switch that lets an assistant prove and run templates",
+      alt: "Further down the AI Bridge tab, down to the AI Tools Breakdown",
     },
     {
       id: OPTIONS,
@@ -196,7 +196,7 @@ export const aiBridge: Screen = {
       locate: { role: "switch", name: "Test Suites" },
       name: "Tool switch",
       does:
-        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Database Read Access, Project tags, Find a Product Backlog Item and Project wiki. A connected assistant sees the change without being restarted.",
+        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Project tags, Find a Product Backlog Item and Project wiki, and Database Read Access while the Database Access module is on. A connected assistant sees the change without being restarted.",
     },
     {
       id: "environment-pick",

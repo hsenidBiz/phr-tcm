@@ -92,6 +92,15 @@ describe("the content", () => {
     expect(bridge.howTo?.some((h) => h.title === "Let an assistant read the company database")).toBe(false);
   });
 
+  test("none on, the AI Bridge text names no module's card except where it says it needs that module", () => {
+    const bridge = forModules(content, new Set()).screens.find((s) => s.id === "ai-bridge")!;
+    // What a reader sees: a shot's capture route and a control's locator are not shown.
+    const text = JSON.stringify(bridge, (k, v) => (k === "route" || k === "locate" ? undefined : v)).replace(/Database Read Access while the Database Access module is on/g, "");
+    for (const name of ["Database Read Access", "the environment", "Environment", "Writing Style", "API templates"]) {
+      expect(text, name).not.toContain(name);
+    }
+  });
+
   test.each(MODULES.map((m) => [m] as const))("%s off removes exactly its own parts (and what hangs below it)", (m) => {
     const off = below(m);
     const shown = forModules(content, without(...off));
