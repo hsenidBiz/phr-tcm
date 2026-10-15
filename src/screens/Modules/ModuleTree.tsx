@@ -13,15 +13,16 @@ import PowerCore from "./PowerCore";
 
 // The tree is drawn on a fixed pixel board (the scroll area scrolls it), so
 // the paths are plain SVG in the same units as the cards and need no
-// measuring. Centres of each card / the core, in px.
+// measuring. The core's centre, and each card's top centre, in px: cards in a
+// row share a top edge whatever their height.
 const BOARD = { w: 800, h: 700 };
 const CORE_AT = { x: 400, y: 56, tail: 116 };
 const AT: Record<Module, { x: number; y: number }> = {
-  db_access: { x: 230, y: 215 },
-  writing_style: { x: 590, y: 215 },
-  auto_run: { x: 230, y: 395 },
-  api_templates: { x: 150, y: 585 },
-  playwright: { x: 450, y: 585 },
+  db_access: { x: 230, y: 145 },
+  writing_style: { x: 590, y: 145 },
+  auto_run: { x: 230, y: 325 },
+  api_templates: { x: 150, y: 515 },
+  playwright: { x: 450, y: 515 },
 };
 
 const ICON: Record<Module, ComponentType<{ className?: string; "aria-hidden"?: boolean }>> = {
@@ -42,12 +43,50 @@ function reducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }
 
-function pathFor(m: Module): string {
+/** A card's height until it has been measured (jsdom never measures). */
+const HEIGHT_GUESS = 140;
+
+/**
+ * A path runs from the parent card's bottom edge to the child card's top
+ * edge, never behind a card: a locked card is see-through, and a line drawn
+ * centre to centre showed through it.
+ */
+function pathFor(m: Module, height: Partial<Record<Module, number>>): string {
   const parent = infoOf(m).parent;
-  const from = parent ? AT[parent] : { x: CORE_AT.x, y: CORE_AT.tail };
+  const from = parent
+    ? { x: AT[parent].x, y: AT[parent].y + (height[parent] ?? HEIGHT_GUESS) }
+    : { x: CORE_AT.x, y: CORE_AT.tail };
   const to = AT[m];
   const mid = (from.y + to.y) / 2;
   return `M${from.x},${from.y} C${from.x},${mid} ${to.x},${mid} ${to.x},${to.y}`;
+}
+
+/** Each card's height, kept current as text wraps or the font changes. */
+function useHeights() {
+  const [height, setHeight] = useState<Partial<Record<Module, number>>>({});
+  const nodes = useRef(new Map<Module, HTMLElement>());
+  useEffect(() => {
+    const measure = () => {
+      const next: Partial<Record<Module, number>> = {};
+      for (const [m, el] of nodes.current) if (el.offsetHeight) next[m] = el.offsetHeight;
+      setHeight((prev) =>
+        Object.keys(next).length === Object.keys(prev).length &&
+        (Object.keys(next) as Module[]).every((m) => prev[m] === next[m])
+          ? prev
+          : next,
+      );
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    for (const el of nodes.current.values()) ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const refFor = (m: Module) => (el: HTMLElement | null) => {
+    if (el) nodes.current.set(m, el);
+    else nodes.current.delete(m);
+  };
+  return { height, refFor };
 }
 
 /**
@@ -112,6 +151,7 @@ export default function ModuleTree({
   onToggle: (m: Module, next: boolean) => void;
 }) {
   const { lit, running, flashing } = useLit(modules, hydrated);
+  const { height, refFor } = useHeights();
   const [shaking, setShaking] = useState<Module | null>(null);
   const shakeTimer = useRef<number>(0);
   useEffect(() => () => window.clearTimeout(shakeTimer.current), []);
@@ -134,9 +174,9 @@ export default function ModuleTree({
         >
           {MODULE_INFO.map(({ module: m }) => (
             <g key={m}>
-              <path d={pathFor(m)} data-edge-line={m} className={cn("mod-edge", lit.has(m) && "mod-edge-lit")} />
+              <path d={pathFor(m, height)} data-edge-line={m} className={cn("mod-edge", lit.has(m) && "mod-edge-lit")} />
               <path
-                d={pathFor(m)}
+                d={pathFor(m, height)}
                 pathLength={1}
                 data-edge={m}
                 data-running={running.has(m)}
@@ -159,9 +199,10 @@ export default function ModuleTree({
           return (
             <div
               key={m}
+              ref={refFor(m)}
               data-module={m}
               data-lit={isLit}
-              className="absolute z-10 w-[280px] -translate-x-1/2 -translate-y-1/2"
+              className="absolute z-10 w-[280px] -translate-x-1/2"
               style={{ left: AT[m].x, top: AT[m].y }}
             >
               <button

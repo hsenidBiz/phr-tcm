@@ -149,3 +149,19 @@ test("the paths are decorative and Back returns", () => {
   fireEvent.click(screen.getByRole("button", { name: /Back to Settings/ }));
   expect(onBack).toHaveBeenCalled();
 });
+
+test("a path runs from the parent card's bottom edge to the child card's top edge", () => {
+  // jsdom lays nothing out, so give every card a height the paths can read.
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(120);
+  show(["db_access"]);
+  const card = (m: Module) => document.querySelector<HTMLElement>(`[data-module="${m}"]`)!;
+  const top = (m: Module) => parseFloat(card(m).style.top);
+  const ends = (m: Module) => {
+    const nums = document.querySelector(`[data-edge-line="${m}"]`)!.getAttribute("d")!.match(/-?[\d.]+/g)!.map(Number);
+    return { fromY: nums[1], toY: nums[nums.length - 1] };
+  };
+  // Behind a see-through locked card, a centre-to-centre line showed through it.
+  expect(ends("playwright")).toEqual({ fromY: top("auto_run") + 120, toY: top("playwright") });
+  expect(ends("auto_run")).toEqual({ fromY: top("db_access") + 120, toY: top("auto_run") });
+  vi.restoreAllMocks();
+});
