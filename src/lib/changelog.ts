@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.1-beta.2",
+    date: "2026-10-15",
+    items: [
+      "When an action in an Auto Run step fails, the rest of that step is skipped instead of each later action waiting out its own timeout, so a failed step no longer holds a run up for minutes. The skipped actions show as not run.",
+    ],
+  },
+  {
     version: "2.2.1-beta.1",
     date: "2026-10-15",
     items: [
