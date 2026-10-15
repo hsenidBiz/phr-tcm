@@ -624,3 +624,48 @@ fn the_preview_says_which_cases_have_a_script() {
     assert!(!none.has_script);
     assert!(!none.exportable);
 }
+
+/// A run saved with the account each case ran as.
+fn run_as(fx: &Fx, run_id: &str, started: &str, case: i32, verdict: &str, account: Option<&str>) {
+    let run: LocalRun = serde_json::from_value(json!({
+        "id": run_id, "pbi_id": 1, "started_at": started,
+        "cases": [{ "case_id": case, "title": "t", "verdict": verdict, "note": "", "steps": [], "account": account }]
+    }))
+    .unwrap();
+    store::save_run(fx.root.path(), &run).unwrap();
+}
+
+/// A script with no Runs as has only ever run under the account chosen when
+/// its run started; the export takes the account its newest passing run
+/// used, so the case is exportable and mapped like any other.
+#[test]
+fn a_script_with_no_runs_as_takes_its_passing_runs_account() {
+    let fx = Fx::new();
+    fx.click_script(130, "No runs as", "", "Definition Wizard");
+    run_as(&fx, "r130", "5", 130, "Passed", Some("admin"));
+    let pc = preview_of(&fx, 130);
+    assert!(pc.exportable, "{:?}", pc.reason);
+    assert_eq!(pc.user_key.as_deref(), Some("REPO_KEY"));
+}
+
+#[test]
+fn the_scripts_own_runs_as_wins_over_the_runs() {
+    let fx = Fx::new();
+    fx.click_script(131, "Own runs as", "other", "Definition Wizard");
+    run_as(&fx, "r131", "5", 131, "Passed", Some("admin"));
+    // "other" maps to a key the clone does not have: refused for that, not
+    // exported as "admin".
+    let pc = preview_of(&fx, 131);
+    assert!(!pc.exportable);
+    assert_ne!(pc.user_key.as_deref(), Some("REPO_KEY"));
+}
+
+#[test]
+fn no_runs_as_and_no_account_on_the_run_is_still_refused() {
+    let fx = Fx::new();
+    fx.click_script(132, "Nobody", "", "Definition Wizard");
+    run_as(&fx, "r132", "5", 132, "Passed", None);
+    let pc = preview_of(&fx, 132);
+    assert!(!pc.exportable);
+    assert!(pc.reason.unwrap_or_default().contains("Runs as"));
+}

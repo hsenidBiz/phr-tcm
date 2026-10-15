@@ -252,9 +252,10 @@ pub async fn pw_handoff(
     let written = super::pw_export::written(&configured);
     blocking(clone, false, move |root, _| {
         let record = sync::load(&sync::record_path(&dir, &configured, &org, &project))?;
+        let runs = crate::autorun::store::list_runs(&autorun);
         let mapped: BTreeMap<i32, String> = cases
             .iter()
-            .filter_map(|&id| export::mapped_user_key(&autorun, &org, &project, id).map(|k| (id, k)))
+            .filter_map(|&id| export::mapped_user_key(&autorun, &org, &project, id, &runs).map(|k| (id, k)))
             .collect();
         handoff::cards_at(root, &record, &written, &mapped, &cases)
     })
