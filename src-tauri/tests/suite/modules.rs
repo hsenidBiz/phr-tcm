@@ -116,18 +116,126 @@ fn a_broken_tree_is_mended_on_load() {
 fn a_set_whose_save_fails_leaves_the_state_unchanged() {
     let _g = crate::serial::modules();
     let d = tempfile::tempdir().unwrap();
-    std::fs::write(d.path().join("modules.json"), r#"{"on":["db_access"]}"#).unwrap();
+    // Every module on: this is the one test that sets the process-wide
+    // choice, and the route tests elsewhere in this binary - which take no
+    // lock - reach every gate as a development build does. It must never
+    // leave, even for a moment, anything switched off.
+    std::fs::write(
+        d.path().join("modules.json"),
+        r#"{"on":["db_access","writing_style","auto_run","api_templates","playwright"]}"#,
+    )
+    .unwrap();
     v2_lib::modules::init(d.path().to_path_buf());
-    // init only takes effect the first time in a process; the state is whatever
-    // this test's dir held, or an earlier one's. Only the unchanged-on-failure
-    // property is asserted.
-    // Make the save fail: a directory where the file goes.
+    // DIR is set once per process, so the save goes to this dir only if
+    // this is the first init. Make it fail: a directory where the file goes.
     let file = d.path().join("modules.json");
     std::fs::remove_file(&file).unwrap();
     std::fs::create_dir(&file).unwrap();
     let before = v2_lib::modules::current();
-    let r = v2_lib::modules::set(Module::WritingStyle, !before.contains(&Module::WritingStyle));
-    if r.is_err() {
-        assert_eq!(v2_lib::modules::current(), before);
+    assert_eq!(before, Module::ALL.into_iter().collect::<BTreeSet<_>>());
+    // Switching on what is already on: whether the save fails or not, the
+    // state is what it was.
+    let _ = v2_lib::modules::set(Module::WritingStyle, true);
+    assert_eq!(v2_lib::modules::current(), before);
+}
+
+// ---- every gate asks its module ------------------------------------------
+
+/// Before setup has run (the test binary, the `--mcp` proxy), a development
+/// build reads every module on and a release build none.
+#[test]
+fn before_setup_a_development_build_reads_everything_on() {
+    assert_eq!(v2_lib::modules::before_setup(true), Module::ALL.into_iter().collect::<BTreeSet<_>>());
+    assert!(v2_lib::modules::before_setup(false).is_empty());
+}
+
+/// The stored names round-trip, and an unknown one is no module.
+#[test]
+fn each_module_has_its_stored_name() {
+    let keys: Vec<&str> = Module::ALL.iter().map(|m| m.key()).collect();
+    assert_eq!(keys, ["db_access", "writing_style", "auto_run", "api_templates", "playwright"]);
+    for m in Module::ALL {
+        assert_eq!(Module::from_key(m.key()), Some(m));
+        assert_eq!(serde_json::to_value(m).unwrap(), serde_json::json!(m.key()), "serde agrees");
     }
+    assert_eq!(Module::from_key("advanced"), None);
+}
+
+/// Every gate refuses with the same sentence for its module.
+#[test]
+fn the_refusal_names_the_module() {
+    for (m, said) in [
+        (Module::DbAccess, "Database Access is switched off in Modules"),
+        (Module::WritingStyle, "Writing Style is switched off in Modules"),
+        (Module::AutoRun, "Auto Run is switched off in Modules"),
+        (Module::ApiTemplates, "API Templates is switched off in Modules"),
+        (Module::Playwright, "Playwright is switched off in Modules"),
+    ] {
+        assert_eq!(m.off_sentence(), said);
+        assert_eq!(v2_lib::modules::require(m, false).unwrap_err(), said);
+        assert!(v2_lib::modules::require(m, true).is_ok());
+    }
+    assert_eq!(v2_lib::pw_repo::NOT_OFFERED, Module::Playwright.off_sentence());
+}
+
+/// Each IPC command group refuses while its module is off, with that
+/// module's sentence, and touches nothing.
+#[test]
+fn each_ipc_command_group_refuses_while_its_module_is_off() {
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(
+        v2_lib::commands::api_templates::remove_flow_at(false, root.path(), "acme", "Web", "flow-1").unwrap_err(),
+        Module::ApiTemplates.off_sentence()
+    );
+    assert_eq!(
+        v2_lib::commands::autorun::download_sizes_at(false, root.path(), "run-1").unwrap_err(),
+        Module::AutoRun.off_sentence()
+    );
+    assert_eq!(
+        v2_lib::commands::test_files::list_at(false, root.path(), "acme", "Web").unwrap_err(),
+        Module::AutoRun.off_sentence()
+    );
+    assert_eq!(v2_lib::pw_repo::ensure_offered(false).unwrap_err(), Module::Playwright.off_sentence());
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0, "nothing was touched");
+}
+
+/// Each IPC command reads its own module, never another's or the old flag.
+#[test]
+fn each_ipc_command_reads_its_own_module() {
+    let read = |p: &str| std::fs::read_to_string(format!("{}/src/{p}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    for (file, module) in [
+        ("commands/api_templates.rs", "Module::ApiTemplates"),
+        ("commands/autorun.rs", "Module::AutoRun"),
+        ("commands/test_files.rs", "Module::AutoRun"),
+        ("commands/autorun_replay.rs", "Module::AutoRun"),
+        ("commands/pw_repo.rs", "Module::Playwright"),
+        ("commands/pw_export.rs", "Module::Playwright"),
+    ] {
+        let src = read(file);
+        assert!(src.contains(module), "{file} does not ask {module}");
+        assert!(!src.contains("autorun_offered") && !src.contains("features_on"), "{file} still reads the old gate");
+    }
+    let export = read("commands/pw_export.rs");
+    assert_eq!(export.matches("ensure_offered()?;").count(), 3, "every Export to Playwright command is gated");
+}
+
+/// The writing guide carries the person's style only while Writing Style
+/// is on: off, it is the standard guide whatever is saved.
+#[test]
+fn the_writing_guide_drops_the_custom_style_with_writing_style_off() {
+    let _style = crate::serial::writing_style();
+    let d = tempfile::tempdir().unwrap();
+    v2_lib::writing_style::set_dir(Some(d.path().to_path_buf()));
+    let saved = v2_lib::writing_style::WritingStyle { enabled: true, text: "Name every screen in bold.".into() };
+    v2_lib::writing_style::save(d.path(), &saved).unwrap();
+    let on = v2_lib::ai_bridge::custom_style_when(true);
+    let off = v2_lib::ai_bridge::custom_style_when(false);
+    v2_lib::writing_style::set_dir(None);
+    assert!(on.expect("on, the style is carried").contains("Name every screen in bold."));
+    assert_eq!(off, None, "off, the guide is the standard one");
+    let bridge = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ai_bridge.rs")).unwrap();
+    assert!(
+        bridge.contains("custom_style_when(crate::modules::on(crate::modules::Module::WritingStyle))"),
+        "the guide asks Writing Style"
+    );
 }

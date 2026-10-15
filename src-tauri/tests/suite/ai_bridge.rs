@@ -1035,15 +1035,18 @@ async fn no_configuration_disables_nothing() {
     assert!(v["disabled"].as_array().unwrap().is_empty());
 }
 
-/// The bridge tells the proxy whether the Auto Run tools are offered - the
-/// proxy is a separate process and cannot read the switch itself. This
-/// test binary is a development build, so they always are here.
+/// The bridge tells the proxy which modules are on - the proxy is a
+/// separate process and cannot read the choice itself - by their stored
+/// names, and no longer says anything about `autorun`.
 #[tokio::test]
-async fn the_bridge_says_whether_auto_run_tools_are_offered() {
+async fn the_bridge_lists_the_modules_that_are_on() {
+    let _g = crate::serial::modules();
     let (status, body) = route(&ctx(), None, "GET", "/tools", "", "1.0.0").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(v["autorun"], true);
+    let want: Vec<&str> = v2_lib::modules::current().iter().map(|m| m.key()).collect();
+    assert_eq!(v["modules"], serde_json::json!(want));
+    assert!(v.get("autorun").is_none(), "{body}");
 }
 
 // ---- round 7 §§1-5: optimize_cases takes a path, like every other tool --
@@ -2859,7 +2862,7 @@ fn parse_http_reads_the_proxys_version() {
 mod api_template_routes {
     use super::{ctx, route, BridgeContext};
     use serde_json::json;
-    use v2_lib::ai_bridge::{autorun_guard_for, smells_like_a_write, API_WRITES_OFF};
+    use v2_lib::ai_bridge::{module_guard_for, smells_like_a_write, API_WRITES_OFF};
     use v2_lib::autorun::accounts::save_accounts;
     use v2_lib::autorun::recipe::save_recipe;
 
@@ -2915,10 +2918,10 @@ mod api_template_routes {
     #[test]
     fn api_template_routes_are_404_when_auto_run_is_not_offered() {
         for path in PATHS {
-            let (status, body) = autorun_guard_for(path, false).unwrap_or_else(|| panic!("{path} was not refused"));
+            let (status, body) = module_guard_for(path, &Default::default()).unwrap_or_else(|| panic!("{path} was not refused"));
             assert_eq!(status, 404, "{path}");
-            assert_eq!(body, "not available in this build", "{path}");
-            assert!(autorun_guard_for(path, true).is_none(), "{path} refused where Auto Run is offered");
+            assert_eq!(body, "API Templates is switched off in Modules", "{path}");
+            assert!(module_guard_for(path, &v2_lib::modules::Module::ALL.into_iter().collect()).is_none(), "{path} refused where Auto Run is offered");
         }
     }
 
@@ -3709,7 +3712,7 @@ mod api_template_routes {
             if method == "GET" && path.starts_with("/api-templates") {
                 *asked.borrow_mut() = Some(path.to_string());
             }
-            Ok((200, r#"{"autorun": true, "disabled": []}"#.to_string()))
+            Ok((200, r#"{"modules": ["db_access", "writing_style", "auto_run", "api_templates", "playwright"], "disabled": []}"#.to_string()))
         };
         let req = json!({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",

@@ -1242,11 +1242,16 @@ export const commands = {
 	 *  the log; the person gets a sentence they can act on.
 	 */
 	setExtrasUnlocked: (unlocked: boolean) => typedError<null, string>(__TAURI_INVOKE("set_extras_unlocked", { unlocked })),
-	/**  Whether Settings' Enable Advanced Features is on (see `crate::extras`). */
+	/**
+	 *  Whether Settings' Enable Advanced Features is on (see `crate::extras`).
+	 *  It gates nothing any more - the modules do (`crate::modules`); the
+	 *  webview still reads it until its switch goes.
+	 */
 	getAdvancedFeatures: () => __TAURI_INVOKE<boolean>("get_advanced_features"),
 	/**
-	 *  Turn Enable Advanced Features on or off. The raw reason goes to the
-	 *  log; the person gets a sentence they can act on.
+	 *  Turn Enable Advanced Features on or off. Gates nothing any more (see
+	 *  `get_advanced_features`). The raw reason goes to the log; the person
+	 *  gets a sentence they can act on.
 	 */
 	setAdvancedFeatures: (on: boolean) => typedError<null, string>(__TAURI_INVOKE("set_advanced_features", { on })),
 	/**

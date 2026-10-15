@@ -275,14 +275,17 @@ pub fn set_extras_unlocked(unlocked: bool) -> Result<(), String> {
 }
 
 /// Whether Settings' Enable Advanced Features is on (see `crate::extras`).
+/// It gates nothing any more - the modules do (`crate::modules`); the
+/// webview still reads it until its switch goes.
 #[tauri::command]
 #[specta::specta]
 pub fn get_advanced_features() -> bool {
     crate::extras::advanced()
 }
 
-/// Turn Enable Advanced Features on or off. The raw reason goes to the
-/// log; the person gets a sentence they can act on.
+/// Turn Enable Advanced Features on or off. Gates nothing any more (see
+/// `get_advanced_features`). The raw reason goes to the log; the person
+/// gets a sentence they can act on.
 #[tauri::command]
 #[specta::specta]
 pub fn set_advanced_features(on: bool) -> Result<(), String> {

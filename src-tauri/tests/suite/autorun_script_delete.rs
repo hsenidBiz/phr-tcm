@@ -167,10 +167,9 @@ fn a_delete_needs_a_case_id() {
 /// neither is an HTTP DELETE, and nothing in the store sends a request.
 #[test]
 fn both_tools_are_listed_and_neither_sends_a_delete() {
-    use v2_lib::ai_tools::DEV_ONLY_TOOLS;
     let mcp = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mcp.rs")).unwrap().replace("\r\n", "\n");
     for tool in ["get_autorun_script", "delete_autorun_script"] {
-        assert!(DEV_ONLY_TOOLS.contains(&tool), "{tool}");
+        assert_eq!(v2_lib::ai_tools::module_of_tool(tool), Some(v2_lib::modules::Module::AutoRun), "{tool}");
         assert!(mcp.contains(&format!("\"name\": \"{tool}\"")), "{tool} listed");
     }
     assert!(mcp.contains(r#""delete_autorun_script" => call("POST", "/autorun-script-delete""#));

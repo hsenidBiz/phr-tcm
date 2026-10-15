@@ -1148,3 +1148,50 @@ pub fn every_file(root: &std::path::Path) -> std::collections::BTreeMap<std::pat
     }
     out
 }
+
+
+// ---- the `--mcp` proxy's view of a development app ----------------------
+
+/// The module keys a development app with every module on reports in its
+/// `/tools` answer.
+pub const ALL_MODULES: [&str; 5] = ["db_access", "writing_style", "auto_run", "api_templates", "playwright"];
+
+/// A `/tools` answer from a development app with every module on and
+/// nothing switched off.
+pub fn all_modules_on() -> String {
+    json!({ "disabled": [], "modules": ALL_MODULES }).to_string()
+}
+
+/// `body` as a development app's `/tools` answer: a JSON object without a
+/// `modules` key gains every module; anything that is not a JSON object
+/// (a mock that answers every path with the same text) becomes
+/// `all_modules_on`. An object that names its modules keeps them.
+pub fn with_all_modules(body: &str) -> String {
+    match serde_json::from_str::<Value>(body) {
+        Ok(Value::Object(mut o)) => {
+            o.entry("modules").or_insert(json!(ALL_MODULES));
+            Value::Object(o).to_string()
+        }
+        _ => all_modules_on(),
+    }
+}
+
+/// A mock bridge `inner` behind a development app with every module on:
+/// its `/tools` answer is passed through `with_all_modules` when it is a
+/// 200 (a non-200 or a failure stays as it is - that is an app that could
+/// not say), and every other call goes to `inner` unchanged. `inner` still
+/// sees the `/tools` call, so a recorder records it.
+pub fn dev_app<'a>(
+    inner: &'a dyn Fn(&str, &str, &str) -> Result<(u16, String), String>,
+) -> impl Fn(&str, &str, &str) -> Result<(u16, String), String> + 'a {
+    move |method, path, body| {
+        let reply = inner(method, path, body);
+        if path != "/tools" {
+            return reply;
+        }
+        match reply {
+            Ok((200, b)) => Ok((200, with_all_modules(&b))),
+            other => other,
+        }
+    }
+}

@@ -535,108 +535,96 @@ fn the_repo_commands_land_under_the_repos_dot_claude() {
     assert!(files[0].1.contains(COMMAND_MARKER), "still ours to remove later");
 }
 
-use v2_lib::ai_tools::{effective_disabled_for, CORE_TOOLS, DEV_ONLY_TOOLS};
+use std::collections::BTreeSet;
+use v2_lib::ai_tools::{effective_disabled_for, module_of_tool, API_TEMPLATE_TOOLS, AUTORUN_TOOLS, CORE_TOOLS, DB_TOOLS};
+use v2_lib::modules::{apply, Module};
 
-use v2_lib::ai_tools::autorun_offered_for;
-
-/// The Auto Run tools are offered in a development build, and in a release
-/// build once this machine's optional extras are unlocked - and the
-/// disabled set follows that answer: offered, they are ordinary switchable
-/// tools; not offered, they are disabled first, always.
-#[test]
-fn auto_run_tools_are_offered_in_a_dev_build_or_once_unlocked() {
-    assert!(autorun_offered_for(true, false));
-    assert!(autorun_offered_for(true, true));
-    assert!(autorun_offered_for(false, true), "an unlocked release build offers them");
-    assert!(!autorun_offered_for(false, false), "a locked release build does not");
-
-    assert_eq!(effective_disabled_for(&[], autorun_offered_for(false, true)), Vec::<String>::new());
-    assert_eq!(
-        effective_disabled_for(&["save_autorun_script".into()], autorun_offered_for(false, true)),
-        vec!["save_autorun_script"],
-        "on an unlocked machine the person's own switch still turns them off"
-    );
-    assert_eq!(effective_disabled_for(&[], autorun_offered_for(false, false)), DEV_ONLY_TOOLS.to_vec());
+fn mods(ms: &[Module]) -> BTreeSet<Module> {
+    ms.iter().copied().collect()
 }
 
-/// The API template tools are offered exactly where Auto Run is: they are
-/// in the same list, so a locked release build disables them first and an
-/// unlocked or development one offers them as ordinary switchable tools.
+fn all_mods() -> BTreeSet<Module> {
+    Module::ALL.into_iter().collect()
+}
+
+fn strings(names: &[&str]) -> Vec<String> {
+    names.iter().map(|s| s.to_string()).collect()
+}
+
+/// Every module tool belongs to exactly one module, and the rest are Core.
 #[test]
-fn the_api_template_tools_are_offered_where_auto_run_is() {
-    for name in [
-        "get_api_template_guide",
-        "list_api_templates",
-        "prove_api_template",
-        "run_api_template",
-        "save_api_fixture",
-        "run_api_fixture",
-        "list_api_fixtures",
-    ] {
-        assert!(DEV_ONLY_TOOLS.contains(&name), "{name}");
-        assert!(!CORE_TOOLS.contains(&name), "{name} must be switchable");
-        assert!(effective_disabled_for(&[], false).contains(&name.to_string()), "{name}");
-        assert!(!effective_disabled_for(&[], true).contains(&name.to_string()), "{name}");
+fn each_tool_belongs_to_its_module() {
+    assert_eq!(AUTORUN_TOOLS.len(), 25);
+    assert_eq!(API_TEMPLATE_TOOLS.len(), 11);
+    assert_eq!(DB_TOOLS, ["db_lookup", "db_query"]);
+    for t in AUTORUN_TOOLS {
+        assert_eq!(module_of_tool(t), Some(Module::AutoRun), "{t}");
+    }
+    for t in API_TEMPLATE_TOOLS {
+        assert_eq!(module_of_tool(t), Some(Module::ApiTemplates), "{t}");
+    }
+    for t in DB_TOOLS {
+        assert_eq!(module_of_tool(t), Some(Module::DbAccess), "{t}");
+    }
+    for t in CORE_TOOLS.iter().chain(&["search_wiki", "search_pbis", "get_tags"]) {
+        assert_eq!(module_of_tool(t), None, "{t}");
     }
 }
 
-/// The policy: the Auto Run and API template tools are offered wherever Auto Run is
-/// (a development build, or a release build once unlocked), and the core
-/// set can never be switched off - whatever the frontend's list says, in
-/// either build kind.
+/// Each module off removes exactly its own tools - and nothing else - from
+/// what the assistant is offered; on, its tools are ordinary switchable
+/// tools that the person's own switch still turns off.
+#[test]
+fn each_module_off_disables_exactly_its_tools() {
+    let all = all_mods();
+    assert_eq!(effective_disabled_for(&[], &all), Vec::<String>::new());
+    for (m, tools) in [
+        (Module::AutoRun, AUTORUN_TOOLS),
+        (Module::ApiTemplates, API_TEMPLATE_TOOLS),
+        (Module::DbAccess, DB_TOOLS),
+    ] {
+        // Only `m` off - a state the tree forbids for DbAccess and AutoRun,
+        // used here to show each module removes its own tools and no other.
+        let mut on = all.clone();
+        on.remove(&m);
+        assert_eq!(effective_disabled_for(&[], &on), strings(tools), "{m:?}");
+    }
+    // Writing Style and Playwright have no assistant tools.
+    for m in [Module::WritingStyle, Module::Playwright] {
+        let mut on = all.clone();
+        on.remove(&m);
+        assert_eq!(effective_disabled_for(&[], &on), Vec::<String>::new(), "{m:?}");
+    }
+    assert_eq!(
+        effective_disabled_for(&["save_autorun_script".into()], &all),
+        vec!["save_autorun_script"],
+        "with Auto Run on the person's own switch still turns its tools off"
+    );
+}
+
+/// Switching Database Access off while Auto Run is on switches the whole
+/// family off, so every Auto Run, API template and database tool is
+/// disabled at once.
+#[test]
+fn database_access_off_takes_the_auto_run_family_tools_with_it() {
+    let on = apply(&all_mods(), Module::DbAccess, false).unwrap();
+    assert_eq!(on, mods(&[Module::WritingStyle]));
+    let off = effective_disabled_for(&[], &on);
+    let mut expected = strings(AUTORUN_TOOLS);
+    expected.extend(strings(API_TEMPLATE_TOOLS));
+    expected.extend(strings(DB_TOOLS));
+    assert_eq!(off, expected);
+}
+
+/// The core set can never be switched off - whatever the frontend's list
+/// says, with any modules on - and the off modules' tools come first,
+/// without duplicates.
 ///
 /// Validate, optimise and merge joined the core set: finishing a draft is
 /// part of writing one, and an assistant that can write cases but cannot
 /// check, order or merge them hands over nothing anyone can ship.
-///
-/// `dev_build()` itself is `cfg!(debug_assertions)`, which is true for
-/// this very test binary, so the release rule (`dev: false`) can only be
-/// exercised through `effective_disabled_for`'s explicit seam - never
-/// through `effective_disabled()`, which would always take this process's
-/// own (development) build kind.
 #[test]
-fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
-    assert_eq!(
-        DEV_ONLY_TOOLS,
-        [
-            "get_autorun_guide",
-            "save_autorun_script",
-            "get_autorun_script",
-            "delete_autorun_script",
-            "get_autorun_page",
-            "probe_autorun_locator",
-            "try_autorun_action",
-            "replay_autorun_to_step",
-            "start_autorun_discovery",
-            "discover_autorun_action",
-            "discover_autorun_actions",
-            "save_autorun_area",
-            "end_autorun_discovery",
-            "release_autorun_browser",
-            "save_autorun_component",
-            "remove_autorun_component",
-            "get_autorun_failures",
-            "record_autorun_quirk",
-            "retire_autorun_quirk",
-            "mark_autorun_suspected_defect",
-            "set_autorun_order",
-            "propose_accounts",
-            "get_accounts",
-            "list_test_files",
-            "get_autorun_network_wait",
-            "get_api_template_guide",
-            "list_api_templates",
-            "prove_api_template",
-            "run_api_template",
-            "save_api_flow",
-            "get_api_flow_progress",
-            "save_api_fixture",
-            "run_api_fixture",
-            "list_api_fixtures",
-            "record_app_quirk",
-            "retire_app_quirk"
-        ]
-    );
+fn the_effective_disabled_set_follows_the_modules_and_protects_the_core() {
     assert_eq!(
         CORE_TOOLS,
         [
@@ -650,58 +638,32 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
             "merge_case_files"
         ]
     );
-
-    // Release (dev: false): the dev-only tools are disabled first,
-    // always - the same rule the old always-hidden constant enforced.
-    assert_eq!(effective_disabled_for(&[], false), DEV_ONLY_TOOLS.to_vec());
-    // A core tool named in the frontend's list is dropped, not honoured.
+    let none = mods(&[]);
+    let mut module_tools = strings(AUTORUN_TOOLS);
+    module_tools.extend(strings(API_TEMPLATE_TOOLS));
+    module_tools.extend(strings(DB_TOOLS));
+    assert_eq!(effective_disabled_for(&[], &none), module_tools);
     assert_eq!(
-        effective_disabled_for(&["optimize_cases".into(), "merge_case_files".into()], false),
-        DEV_ONLY_TOOLS.to_vec(),
+        effective_disabled_for(&["optimize_cases".into(), "merge_case_files".into()], &none),
+        module_tools,
         "the three that finish a draft cannot be switched off"
     );
     let got = effective_disabled_for(
         &["begin_test_case_writing".into(), "search_wiki".into(), "get_autorun_guide".into()],
-        false,
+        &none,
     );
-    let mut expected: Vec<&str> = DEV_ONLY_TOOLS.to_vec();
-    expected.push("search_wiki");
-    assert_eq!(got, expected, "dev-only first, core dropped, no duplicates");
+    let mut expected = module_tools.clone();
+    expected.push("search_wiki".into());
+    assert_eq!(got, expected, "module tools first, core dropped, no duplicates");
 
-    // Development (dev: true): the dev-only tools default to ON, like
-    // every other switchable tool - not added unasked.
-    assert_eq!(effective_disabled_for(&[], true), Vec::<String>::new());
-    // Named in the person's own list, they switch off like anything else.
+    let all = all_mods();
     assert_eq!(
-        effective_disabled_for(&["save_autorun_script".into()], true),
-        vec!["save_autorun_script"]
-    );
-    // Core tools still cannot be switched off, and duplicates still
-    // collapse, in a development build too.
-    assert_eq!(
-        effective_disabled_for(
-            &["optimize_cases".into(), "search_wiki".into(), "search_wiki".into()],
-            true
-        ),
+        effective_disabled_for(&["optimize_cases".into(), "search_wiki".into(), "search_wiki".into()], &all),
         vec!["search_wiki"]
     );
-
-    // The two database tools are neither: they can be switched off, and a
-    // release build offers them exactly as a development build does. What
-    // they may DO is decided by the chosen connection and the write
-    // switch beside it, never by the build kind.
-    for name in ["db_lookup", "db_query"] {
-        assert!(!CORE_TOOLS.contains(&name), "{name} must be switchable");
-        assert!(!DEV_ONLY_TOOLS.contains(&name), "{name} must ship in a release build");
-        assert_eq!(
-            effective_disabled_for(&[name.to_string()], true),
-            vec![name],
-            "{name} switches off like any other tool"
-        );
-        assert!(
-            effective_disabled_for(&[name.to_string()], false).contains(&name.to_string()),
-            "{name} switches off in a release build too"
-        );
+    for name in DB_TOOLS {
+        assert!(!CORE_TOOLS.contains(name), "{name} must be switchable");
+        assert_eq!(effective_disabled_for(&[name.to_string()], &all), vec![*name], "{name} switches off like any other tool");
     }
 }
 
@@ -716,12 +678,12 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     assert_eq!(c.hint, "[case ids, or blank for every failed case in the newest run]");
 
     let dir = std::path::Path::new("D:/repo/.claude/commands/tcm");
-    let hidden = command_files_in(dir, &effective_disabled_for(&[], false));
+    let hidden = command_files_in(dir, &effective_disabled_for(&[], &mods(&[Module::DbAccess])));
     assert!(
         hidden.iter().all(|(p, _)| p.file_name().unwrap() != "heal.md"),
-        "heal must not be written where Auto Run is not offered"
+        "heal must not be written while Auto Run is off"
     );
-    let offered = command_files_in(dir, &effective_disabled_for(&[], true));
+    let offered = command_files_in(dir, &effective_disabled_for(&[], &all_mods()));
     assert!(offered.iter().any(|(p, _)| p.file_name().unwrap() == "heal.md"));
 
     let body = c.body.join("\n");
@@ -773,12 +735,12 @@ fn the_setup_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     assert_eq!(c.hint, "[PBI id or suite, optional]");
 
     let dir = std::path::Path::new("D:/repo/.claude/commands/tcm");
-    let hidden = command_files_in(dir, &effective_disabled_for(&[], false));
+    let hidden = command_files_in(dir, &effective_disabled_for(&[], &mods(&[Module::DbAccess])));
     assert!(
         hidden.iter().all(|(p, _)| p.file_name().unwrap() != "setup.md"),
-        "setup must not be written where Auto Run is not offered"
+        "setup must not be written while Auto Run is off"
     );
-    let offered = command_files_in(dir, &effective_disabled_for(&[], true));
+    let offered = command_files_in(dir, &effective_disabled_for(&[], &all_mods()));
     assert!(offered.iter().any(|(p, _)| p.file_name().unwrap() == "setup.md"));
 
     let body = c.body.join("\n");
@@ -1621,12 +1583,12 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
     assert!(!c.hint.is_empty());
 
     let dir = std::path::Path::new("D:/repo/.claude/commands/tcm");
-    let hidden = command_files_in(dir, &effective_disabled_for(&[], false));
+    let hidden = command_files_in(dir, &effective_disabled_for(&[], &mods(&[Module::DbAccess])));
     assert!(
         hidden.iter().all(|(p, _)| p.file_name().unwrap() != "discover.md"),
-        "discover must not be written where Auto Run is not offered"
+        "discover must not be written while Auto Run is off"
     );
-    let offered = command_files_in(dir, &effective_disabled_for(&[], true));
+    let offered = command_files_in(dir, &effective_disabled_for(&[], &all_mods()));
     assert!(offered.iter().any(|(p, _)| p.file_name().unwrap() == "discover.md"));
     let off = command_files_in(dir, &["start_autorun_discovery".to_string()]);
     assert!(off.iter().all(|(p, _)| p.file_name().unwrap() != "discover.md"), "switched off, no command");
@@ -1692,9 +1654,9 @@ fn the_map_menus_command_walks_the_menus_and_never_submits() {
     assert_eq!(c.tool, "start_autorun_discovery");
     assert!(!c.desc.is_empty() && !c.hint.is_empty());
     let dir = std::path::Path::new("D:/repo/.claude/commands/tcm");
-    let hidden = command_files_in(dir, &effective_disabled_for(&[], false));
+    let hidden = command_files_in(dir, &effective_disabled_for(&[], &mods(&[Module::DbAccess])));
     assert!(hidden.iter().all(|(p, _)| p.file_name().unwrap() != "map-menus.md"));
-    let offered = command_files_in(dir, &effective_disabled_for(&[], true));
+    let offered = command_files_in(dir, &effective_disabled_for(&[], &all_mods()));
     assert!(offered.iter().any(|(p, _)| p.file_name().unwrap() == "map-menus.md"));
     let off = command_files_in(dir, &["start_autorun_discovery".to_string()]);
     assert!(off.iter().all(|(p, _)| p.file_name().unwrap() != "map-menus.md"));

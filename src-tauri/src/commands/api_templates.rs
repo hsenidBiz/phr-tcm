@@ -3,8 +3,8 @@
 //! (later tasks); this module only reads what is already saved and lets
 //! the person remove one.
 //!
-//! Offered wherever Auto Run itself is offered - `ai_tools::autorun_offered`
-//! - since the whole feature rides on the same signed-in browser session.
+//! Offered while the API Templates module is on (`modules::on`); every
+//! command refuses with that module's sentence while it is off.
 
 use crate::api_templates::fixture_run::{self, FixtureReport};
 use crate::api_templates::fixture_store::{self, SavedFixture};
@@ -14,15 +14,17 @@ use crate::api_templates::share::{self, TemplatesExportResult, TemplatesImportNo
 use crate::api_templates::store::{self, SavedTemplate};
 use crate::autorun::recipe::{load_effective_recipe_if_any, origin_of};
 
-fn refuse_unless_offered() -> Result<(), String> {
-    refuse_unless(crate::ai_tools::autorun_offered())
+fn offered() -> bool {
+    crate::modules::on(crate::modules::Module::ApiTemplates)
 }
 
+fn refuse_unless_offered() -> Result<(), String> {
+    refuse_unless(offered())
+}
+
+/// `Err` with API Templates' off sentence unless `offered` (the module is on).
 pub(crate) fn refuse_unless(offered: bool) -> Result<(), String> {
-    if !offered {
-        return Err("not available in this build".to_string());
-    }
-    Ok(())
+    crate::modules::require(crate::modules::Module::ApiTemplates, offered)
 }
 
 /// Everything the tab needs to draw itself: the origin these templates run
@@ -119,11 +121,11 @@ pub async fn api_fixture_run(
 #[specta::specta]
 pub fn api_fixture_remove(app: tauri::AppHandle, organization: String, project: String, id: String) -> Result<(), String> {
     let root = crate::commands::autorun::root(&app)?;
-    remove_fixture_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, &id)
+    remove_fixture_at(offered(), &root, &organization, &project, &id)
 }
 
-/// `api_fixture_remove` for a given data root, with "is Auto Run offered
-/// here" passed in, as `remove_flow_at` takes it.
+/// `api_fixture_remove` for a given data root, with "is API Templates on"
+/// passed in, as `remove_flow_at` takes it.
 pub fn remove_fixture_at(
     offered: bool,
     root: &std::path::Path,
@@ -146,7 +148,7 @@ pub fn api_templates_remove_flow(
     id: String,
 ) -> Result<(), String> {
     let root = crate::commands::autorun::root(&app)?;
-    remove_flow_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, &id)
+    remove_flow_at(offered(), &root, &organization, &project, &id)
 }
 
 #[tauri::command(async)]
@@ -159,7 +161,7 @@ pub fn api_templates_open_flow(
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
     let root = crate::commands::autorun::root(&app)?;
-    let path = write_flow_page_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, &id, &palette)?;
+    let path = write_flow_page_at(offered(), &root, &organization, &project, &id, &palette)?;
     tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| {
         crate::applog::warn(format!("the flow page could not be opened: {e}"));
         "the flow page could not be opened in your browser - see Settings, Logs".to_string()
@@ -167,8 +169,8 @@ pub fn api_templates_open_flow(
 }
 
 /// `api_templates_open_flow` up to the page on disk: the saved flow and
-/// the templates on it, drawn on their own page (`flow_page`). "Is Auto Run
-/// offered here" is passed in, as `remove_flow_at` takes it.
+/// the templates on it, drawn on their own page (`flow_page`). "Is API
+/// Templates on" is passed in, as `remove_flow_at` takes it.
 pub fn write_flow_page_at(
     offered: bool,
     root: &std::path::Path,
@@ -184,8 +186,8 @@ pub fn write_flow_page_at(
     crate::api_templates::flow_page::write(&flow, &templates, palette)
 }
 
-/// `api_templates_remove_flow` for a given data root, with "is Auto Run
-/// offered here" passed in so a locked build's refusal is testable.
+/// `api_templates_remove_flow` for a given data root, with "is API
+/// Templates on" passed in so the module-off refusal is testable.
 pub fn remove_flow_at(
     offered: bool,
     root: &std::path::Path,
@@ -208,7 +210,7 @@ pub fn api_templates_export(
     path: String,
 ) -> Result<TemplatesExportResult, String> {
     let root = crate::commands::autorun::root(&app)?;
-    export_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, std::path::Path::new(&path))
+    export_at(offered(), &root, &organization, &project, std::path::Path::new(&path))
 }
 
 #[tauri::command(async)]
@@ -220,7 +222,7 @@ pub fn api_templates_import(
     path: String,
 ) -> Result<TemplatesImportResult, String> {
     let root = crate::commands::autorun::root(&app)?;
-    import_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, std::path::Path::new(&path))
+    import_at(offered(), &root, &organization, &project, std::path::Path::new(&path))
 }
 
 /// The name of the file a person picked, for a sentence or the log - never
@@ -251,7 +253,7 @@ fn unreadable(dir: &std::path::Path, listed: usize) -> u32 {
 /// logged there, as the tab's own listing logs it) and the export drops
 /// it. A saved file that does not parse is left out and counted, as the
 /// tab's listing leaves it out.
-/// "Is Auto Run offered here" is passed in, as `remove_flow_at` takes it.
+/// "Is API Templates on" is passed in, as `remove_flow_at` takes it.
 pub fn export_at(
     offered: bool,
     root: &std::path::Path,

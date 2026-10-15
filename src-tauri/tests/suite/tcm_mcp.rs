@@ -1,7 +1,21 @@
 //! The MCP dispatcher is pure: JSON-RPC string in, response string out,
 //! with the bridge call injected - no stdio, no sockets.
 
-use v2_lib::mcp::{handle_message, version_warning, PROXY_VERSION};
+use v2_lib::ai_tools::module_of_tool;
+use v2_lib::mcp::{version_warning, PROXY_VERSION};
+use v2_lib::modules::Module;
+
+/// Every call in this file goes to a development app with every module on
+/// (`common::dev_app`): a `/tools` answer that names no modules gains them
+/// all. A test about the modules themselves calls
+/// `v2_lib::mcp::handle_message` directly.
+fn handle_message(
+    msg: &str,
+    version: &str,
+    call: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String>,
+) -> Option<String> {
+    v2_lib::mcp::handle_message(msg, version, &crate::common::dev_app(call))
+}
 
 /// Bridge stub: records the call, returns a canned body.
 fn stub(status: u16, body: &str) -> impl Fn(&str, &str, &str) -> Result<(u16, String), String> + '_ {
@@ -442,12 +456,13 @@ fn an_unreachable_bridge_disables_nothing() {
         Err("connection refused".into())
     };
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
-    let resp = handle_message(req, "1.0.0", &call).unwrap();
+    let resp = v2_lib::mcp::handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 53 in this development build: nothing is disabled by an unreachable
-    // bridge, including the thirty-six dev-only tools, which default to ON here
-    // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 53, "an unreachable bridge must not disable anything, dev-only tools included");
+    let names: Vec<&str> = v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    // 53 tools in all; an unreachable bridge cannot say which modules are
+    // on, so the 38 module tools are not offered - and nothing else goes.
+    assert_eq!(names.len(), 53 - 38, "an unreachable bridge must not disable a Core tool: {names:?}");
+    assert!(names.iter().all(|n| module_of_tool(n).is_none()), "{names:?}");
 }
 
 /// The description is the only thing an assistant reads. It used to name
@@ -642,63 +657,77 @@ fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordina
     }
 }
 
-/// The release rule cannot be exercised through `handle_message` at all -
-/// this test binary is itself a development build - so it is proven
-/// directly through the `dev: bool` seam `mcp::refusal_text` exists for.
+/// A module's tool refused because its module is off names the module -
+/// there is no switch on the AI Bridge tab to turn back on.
 #[test]
-fn a_dev_only_tool_refused_outside_a_development_build_says_not_available() {
-    let text = v2_lib::mcp::refusal_text("save_autorun_script", false);
-    assert!(text.contains("not available"), "{text}");
-    assert!(!text.contains("switched off"), "{text}");
-}
-
-/// The same tool, switched off inside a development build, gets the
-/// ordinary sentence - the release wording is not a blanket rule for
-/// dev-only tools, only for the build kind that has no switch at all.
-#[test]
-fn a_dev_only_tool_refused_inside_a_development_build_gets_the_ordinary_sentence() {
-    let text = v2_lib::mcp::refusal_text("save_autorun_script", true);
-    assert!(text.contains("switched off"), "{text}");
-    assert!(!text.contains("not available"), "{text}");
-}
-
-/// A tool that was never dev-only is unaffected by the `dev` flag either
-/// way - the seam must not accidentally widen who gets the release
-/// wording.
-#[test]
-fn an_ordinary_tool_gets_the_switched_off_sentence_regardless_of_dev() {
-    for dev in [true, false] {
-        let text = v2_lib::mcp::refusal_text("search_wiki", dev);
-        assert!(text.contains("switched off"), "dev={dev}: {text}");
+fn a_tool_refused_because_its_module_is_off_names_the_module() {
+    let none = BTreeSet::new();
+    for (name, module) in [
+        ("save_autorun_script", "Auto Run"),
+        ("run_api_template", "API Templates"),
+        ("db_query", "Database Access"),
+    ] {
+        let text = v2_lib::mcp::refusal_text(name, &none);
+        assert_eq!(text, format!("The `{name}` tool is not available: {module} is switched off in Modules."));
+        assert!(!text.contains("AI Bridge"), "{text}");
     }
 }
 
-use v2_lib::ai_tools::DEV_ONLY_TOOLS;
-use v2_lib::mcp::tool_policy_from;
-
-/// The proxy is its own process and cannot read the app's optional-extras
-/// switch; the bridge's /tools answer carries it as `autorun`. An unlocked
-/// release app offers the Auto Run tools through the proxy like any other
-/// switchable tool.
+/// The same tool, switched off by the person while its module is on, gets
+/// the ordinary sentence - the module wording is only for a module that
+/// is off.
 #[test]
-fn an_unlocked_release_app_offers_the_auto_run_tools_through_the_proxy() {
-    let (off, offered) = tool_policy_from(
-        Ok((200, r#"{"disabled":["search_wiki"],"autorun":true}"#.into())),
-        false,
-    );
-    assert!(offered);
-    assert_eq!(off, vec!["search_wiki"]);
+fn a_module_tool_switched_off_with_its_module_on_gets_the_ordinary_sentence() {
+    let all: BTreeSet<Module> = Module::ALL.into_iter().collect();
+    let text = v2_lib::mcp::refusal_text("save_autorun_script", &all);
+    assert!(text.contains("switched off in Test Case Manager"), "{text}");
+    assert!(!text.contains("not available"), "{text}");
 }
 
-/// Everything short of an explicit `autorun: true` means "not offered"
-/// outside a development build: a locked app, an app too old to send the
-/// field, a non-200 answer, garbage, or no app at all. The proxy never
-/// widens a release build's tool list on a guess.
+/// A Core tool is unaffected by the modules either way.
 #[test]
-fn a_locked_older_absent_or_confused_app_offers_them_nowhere_outside_a_dev_build() {
-    let dev_only: Vec<String> = DEV_ONLY_TOOLS.iter().map(|s| s.to_string()).collect();
+fn an_ordinary_tool_gets_the_switched_off_sentence_whatever_is_on() {
+    for on in [BTreeSet::new(), Module::ALL.into_iter().collect()] {
+        let text = v2_lib::mcp::refusal_text("search_wiki", &on);
+        assert!(text.contains("switched off"), "{on:?}: {text}");
+    }
+}
+
+use std::collections::BTreeSet;
+use v2_lib::ai_tools::{API_TEMPLATE_TOOLS as API_TOOLS, AUTORUN_TOOLS, DB_TOOLS};
+use v2_lib::mcp::tool_policy_from;
+
+/// The proxy is its own process and cannot read the app's modules; the
+/// bridge's /tools answer carries them as `modules`, and the proxy takes
+/// exactly those.
+#[test]
+fn the_proxy_takes_the_modules_from_the_app() {
+    let (off, on) = tool_policy_from(Ok((
+        200,
+        r#"{"disabled":["search_wiki"],"modules":["db_access","writing_style","auto_run","api_templates","playwright"]}"#.into(),
+    )));
+    assert_eq!(on, Module::ALL.into_iter().collect());
+    assert_eq!(off, vec!["search_wiki"]);
+
+    let (off, on) =
+        tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","auto_run","a_module_from_later"]}"#.into())));
+    assert_eq!(on, [Module::DbAccess, Module::AutoRun].into_iter().collect(), "an unknown name is ignored");
+    let expected: Vec<String> = API_TOOLS.iter().map(|s| s.to_string()).collect();
+    assert_eq!(off, expected, "API Templates off: exactly its tools");
+}
+
+/// Everything short of a `modules` list naming a module means that module
+/// is off: an app too old to send the field, a non-200 answer, garbage, or
+/// no app at all. A development build adds nothing - the proxy never
+/// widens the tool list on a guess.
+#[test]
+fn an_older_absent_or_confused_app_offers_no_module_tools() {
+    let mut module_tools: Vec<String> = AUTORUN_TOOLS.iter().map(|s| s.to_string()).collect();
+    module_tools.extend(API_TOOLS.iter().map(|s| s.to_string()));
+    module_tools.extend(DB_TOOLS.iter().map(|s| s.to_string()));
     let replies: Vec<Result<(u16, String), String>> = vec![
-        Ok((200, r#"{"disabled":[],"autorun":false}"#.to_string())),
+        Ok((200, r#"{"disabled":[],"modules":[]}"#.to_string())),
+        Ok((200, r#"{"disabled":[],"autorun":true}"#.to_string())),
         Ok((200, r#"{"disabled":[]}"#.to_string())),
         Ok((503, String::new())),
         Ok((200, "not json".to_string())),
@@ -706,18 +735,90 @@ fn a_locked_older_absent_or_confused_app_offers_them_nowhere_outside_a_dev_build
     ];
     for reply in replies {
         let shown = format!("{reply:?}");
-        let (off, offered) = tool_policy_from(reply, false);
-        assert!(!offered, "{shown}");
-        assert_eq!(off, dev_only, "{shown}");
+        let (off, on) = tool_policy_from(reply);
+        assert!(on.is_empty(), "{shown}");
+        assert_eq!(off, module_tools, "{shown}");
     }
 }
 
-/// A development build offers them whatever the app says.
+/// Each module off removes exactly its tools from tools/list and refuses
+/// them at call time - through the real dispatch, no dev-build widening.
 #[test]
-fn a_development_build_offers_them_whatever_the_app_says() {
-    let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), true);
-    assert!(offered);
-    assert!(off.is_empty());
+fn each_module_off_removes_its_tools_from_the_list_and_refuses_them() {
+    let names_for = |modules: &str| -> Vec<String> {
+        let answer = format!(r#"{{"disabled":[],"modules":{modules}}}"#);
+        let call = move |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+            assert_eq!(path, "/tools");
+            Ok((200, answer.clone()))
+        };
+        let resp =
+            v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect()
+    };
+    let all = names_for(r#"["db_access","writing_style","auto_run","api_templates","playwright"]"#);
+    for (module, on_list, tools) in [
+        ("api_templates", r#"["db_access","writing_style","auto_run","playwright"]"#, API_TOOLS),
+        ("auto_run", r#"["db_access","writing_style"]"#, AUTORUN_TOOLS),
+        ("db_access", r#"["writing_style"]"#, DB_TOOLS),
+    ] {
+        let names = names_for(on_list);
+        for t in tools {
+            assert!(all.iter().any(|n| n == t), "{t} missing with every module on");
+            assert!(!names.iter().any(|n| n == t), "{t} listed with {module} off");
+        }
+        // Nothing else went: what is missing is only the off modules' tools.
+        let gone: Vec<&String> = all.iter().filter(|n| !names.contains(n)).collect();
+        assert!(gone.iter().all(|n| module_of_tool(n).is_some()), "{module}: a Core tool went: {gone:?}");
+
+        let answer = format!(r#"{{"disabled":[],"modules":{on_list}}}"#);
+        let call = move |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+            assert_eq!(path, "/tools", "a tool of an off module must never reach the bridge");
+            Ok((200, answer.clone()))
+        };
+        for t in tools {
+            let req = serde_json::json!({
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": { "name": t, "arguments": {} },
+            });
+            let resp = v2_lib::mcp::handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+            assert_eq!(v["result"]["isError"], true, "{t}");
+            let text = v["result"]["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains("is switched off in Modules"), "{t}: {text}");
+        }
+    }
+    // Writing Style and Playwright have no tools: switching them off leaves the list as it is.
+    assert_eq!(names_for(r#"["db_access","auto_run","api_templates"]"#), all);
+}
+
+/// The proxy asks `/tools` on every tools/list and every tools/call, so a
+/// module switched off in the app is gone on the assistant's next request,
+/// with no restart.
+#[test]
+fn the_proxy_asks_the_app_about_its_modules_on_every_list_and_call() {
+    let modules = std::cell::RefCell::new(r#"["db_access","auto_run"]"#.to_string());
+    let asked = std::cell::Cell::new(0);
+    let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            asked.set(asked.get() + 1);
+            return Ok((200, format!(r#"{{"disabled":[],"modules":{}}}"#, modules.borrow())));
+        }
+        Ok((200, "{}".into()))
+    };
+    let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_autorun_page","arguments":{}}}"#;
+    let v: serde_json::Value = serde_json::from_str(&v2_lib::mcp::handle_message(req, "1.0.0", &call).unwrap()).unwrap();
+    assert_ne!(v["result"]["isError"], true, "{v}");
+    assert_eq!(asked.get(), 1);
+
+    *modules.borrow_mut() = r#"["writing_style"]"#.to_string();
+    let v: serde_json::Value = serde_json::from_str(&v2_lib::mcp::handle_message(req, "1.0.0", &call).unwrap()).unwrap();
+    assert_eq!(v["result"]["isError"], true, "{v}");
+    assert_eq!(asked.get(), 2);
+    let list =
+        v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+    assert!(!list.contains("get_autorun_page"), "{list}");
+    assert_eq!(asked.get(), 3);
 }
 
 /// "Run database changes without asking" reaches the assistant as one line
@@ -793,11 +894,11 @@ fn the_api_template_tools_are_listed_where_auto_run_is_offered_and_absent_where_
         assert!(names.iter().any(|n| n == name), "{name} missing from {names:?}");
     }
 
-    let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), false);
-    assert!(!offered);
+    let (off, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
+    assert!(!on.contains(&Module::AutoRun));
     for name in API_TEMPLATE_TOOLS {
-        assert!(off.iter().any(|n| n == name), "{name} not disabled in a locked release app: {off:?}");
-        let text = v2_lib::mcp::refusal_text(name, false);
+        assert!(off.iter().any(|n| n == name), "{name} not disabled with its module off: {off:?}");
+        let text = v2_lib::mcp::refusal_text(name, &on);
         assert!(text.contains("not available"), "{name}: {text}");
     }
 
@@ -1068,7 +1169,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
     let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
     for name in ACCOUNT_TOOLS {
         assert!(names.iter().any(|n| n == name), "{name} missing from {names:?}");
-        assert!(DEV_ONLY_TOOLS.contains(&name), "{name}");
+        assert!(module_of_tool(name) == Some(Module::AutoRun), "{name}");
     }
 
     let row_off = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
@@ -1085,11 +1186,11 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         assert!(!names.iter().any(|n| n == name), "{name} listed with the row off: {names:?}");
     }
 
-    let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), false);
-    assert!(!offered);
+    let (off, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
+    assert!(!on.contains(&Module::AutoRun));
     for name in ACCOUNT_TOOLS {
-        assert!(off.iter().any(|n| n == name), "{name} not disabled in a locked release app: {off:?}");
-        assert!(v2_lib::mcp::refusal_text(name, false).contains("not available"), "{name}");
+        assert!(off.iter().any(|n| n == name), "{name} not disabled with its module off: {off:?}");
+        assert!(v2_lib::mcp::refusal_text(name, &on).contains("not available"), "{name}");
     }
 }
 
@@ -1166,14 +1267,14 @@ fn the_save_tool_documents_a_scripts_area() {
 /// route.
 #[test]
 fn list_test_files_is_an_auto_run_read_of_its_own_route() {
-    assert!(DEV_ONLY_TOOLS.contains(&"list_test_files"));
+    assert!(module_of_tool("list_test_files") == Some(Module::AutoRun));
     let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
     assert!(names.iter().any(|n| n == "list_test_files"), "{names:?}");
 
-    let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), false);
-    assert!(!offered);
-    assert!(off.iter().any(|n| n == "list_test_files"), "not disabled in a locked release app: {off:?}");
-    assert!(v2_lib::mcp::refusal_text("list_test_files", false).contains("not available"));
+    let (off, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
+    assert!(!on.contains(&Module::AutoRun));
+    assert!(off.iter().any(|n| n == "list_test_files"), "not disabled with its module off: {off:?}");
+    assert!(v2_lib::mcp::refusal_text("list_test_files", &on).contains("not available"));
 
     let calls = std::cell::RefCell::new(vec![]);
     let call = |method: &str, path: &str, body: &str| {
@@ -1199,7 +1300,7 @@ fn list_test_files_is_an_auto_run_read_of_its_own_route() {
 #[test]
 fn the_replay_tool_rides_with_the_auto_run_tools() {
     const NAME: &str = "replay_autorun_to_step";
-    assert!(DEV_ONLY_TOOLS.contains(&NAME));
+    assert!(module_of_tool(NAME) == Some(Module::AutoRun));
     assert!(listed_names(&stub(200, r#"{"disabled":[]}"#)).iter().any(|n| n == NAME));
 
     let row_off = stub(200, r#"{"disabled":["get_autorun_guide","replay_autorun_to_step"]}"#);
@@ -1209,10 +1310,10 @@ fn the_replay_tool_rides_with_the_auto_run_tools() {
     assert_eq!(v["result"]["isError"], true, "{v}");
     assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("switched off"), "{v}");
 
-    let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), false);
-    assert!(!offered);
+    let (off, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
+    assert!(!on.contains(&Module::AutoRun));
     assert!(off.iter().any(|n| n == NAME), "{off:?}");
-    assert!(v2_lib::mcp::refusal_text(NAME, false).contains("not available"));
+    assert!(v2_lib::mcp::refusal_text(NAME, &on).contains("not available"));
 
     let calls = std::cell::RefCell::new(vec![]);
     let call = |method: &str, path: &str, body: &str| -> Result<(u16, String), String> {
@@ -1250,7 +1351,7 @@ fn the_replay_tool_rides_with_the_auto_run_tools() {
 #[test]
 fn the_order_tool_rides_with_the_auto_run_tools() {
     const NAME: &str = "set_autorun_order";
-    assert!(DEV_ONLY_TOOLS.contains(&NAME));
+    assert!(module_of_tool(NAME) == Some(Module::AutoRun));
     assert!(listed_names(&stub(200, r#"{"disabled":[]}"#)).iter().any(|n| n == NAME));
 
     let row_off = stub(200, r#"{"disabled":["get_autorun_guide","set_autorun_order"]}"#);
@@ -1260,10 +1361,10 @@ fn the_order_tool_rides_with_the_auto_run_tools() {
     assert_eq!(v["result"]["isError"], true, "{v}");
     assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("switched off"), "{v}");
 
-    let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), false);
-    assert!(!offered);
+    let (off, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
+    assert!(!on.contains(&Module::AutoRun));
     assert!(off.iter().any(|n| n == NAME), "{off:?}");
-    assert!(v2_lib::mcp::refusal_text(NAME, false).contains("not available"));
+    assert!(v2_lib::mcp::refusal_text(NAME, &on).contains("not available"));
 
     let calls = std::cell::RefCell::new(vec![]);
     let call = |method: &str, path: &str, body: &str| -> Result<(u16, String), String> {
@@ -1378,7 +1479,7 @@ fn rides_with_the_auto_run_tools(tools: &[(&str, &str, serde_json::Value, serde_
     let list: serde_json::Value = serde_json::from_str(&resp).unwrap();
     for (name, route, args, required) in tools {
         let (name, route) = (*name, *route);
-        assert!(DEV_ONLY_TOOLS.contains(&name), "{name} must gate like probe_autorun_locator");
+        assert!(module_of_tool(name) == Some(Module::AutoRun), "{name} must gate like probe_autorun_locator");
         assert!(!v2_lib::ai_tools::CORE_TOOLS.contains(&name), "{name} must be switchable");
         assert!(listed.iter().any(|n| n == name), "{name} missing from {listed:?}");
 
@@ -1394,10 +1495,10 @@ fn rides_with_the_auto_run_tools(tools: &[(&str, &str, serde_json::Value, serde_
         assert_eq!(v["result"]["isError"], true, "{name}: {v}");
         assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains("switched off"), "{name}: {v}");
 
-        let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), false);
-        assert!(!offered);
+        let (off, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
+        assert!(!on.contains(&Module::AutoRun));
         assert!(off.iter().any(|n| n == name), "{name}: {off:?}");
-        assert!(v2_lib::mcp::refusal_text(name, false).contains("not available"), "{name}");
+        assert!(v2_lib::mcp::refusal_text(name, &on).contains("not available"), "{name}");
 
         let calls = std::cell::RefCell::new(vec![]);
         let call = |method: &str, path: &str, body: &str| -> Result<(u16, String), String> {
@@ -1587,13 +1688,13 @@ fn the_guide_takes_a_section_and_the_page_takes_within() {
 #[test]
 fn the_network_wait_tool_is_an_auto_run_read_of_its_own_route() {
     const NAME: &str = "get_autorun_network_wait";
-    assert!(DEV_ONLY_TOOLS.contains(&NAME));
+    assert!(module_of_tool(NAME) == Some(Module::AutoRun));
     assert!(listed_names(&stub(200, r#"{"disabled":[]}"#)).iter().any(|n| n == NAME));
 
-    let (off, offered) = tool_policy_from(Ok((200, r#"{"disabled":[],"autorun":false}"#.into())), false);
-    assert!(!offered);
-    assert!(off.iter().any(|n| n == NAME), "not disabled in a locked release app: {off:?}");
-    assert!(v2_lib::mcp::refusal_text(NAME, false).contains("not available"));
+    let (off, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
+    assert!(!on.contains(&Module::AutoRun));
+    assert!(off.iter().any(|n| n == NAME), "not disabled with its module off: {off:?}");
+    assert!(v2_lib::mcp::refusal_text(NAME, &on).contains("not available"));
 
     let calls = std::cell::RefCell::new(vec![]);
     let call = |method: &str, path: &str, body: &str| {

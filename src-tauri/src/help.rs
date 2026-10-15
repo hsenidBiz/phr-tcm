@@ -4,6 +4,10 @@
 //! repository's copy directly, so `npm run docs:build` is all it takes to
 //! see a guide change.
 
+use std::collections::BTreeSet;
+
+use crate::modules::Module;
+
 /// The repository's built site, opened by a development build. Its path is
 /// fixed at compile time; nothing is copied or downloaded.
 pub const DEV_INDEX: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/help/index.html");
@@ -22,12 +26,15 @@ pub fn open_index(index: &std::path::Path) -> Result<(), String> {
     })
 }
 
-/// The guide's address: `index` as a file URL, with `?advanced=1` while
-/// Enable Advanced Features is on. The guide hides Auto Run and API
-/// Templates without it (docs-site/src/advanced.ts), so unknown is hidden.
-pub fn guide_address(index: &std::path::Path, advanced: bool) -> Option<String> {
+/// The guide's address: `index` as a file URL, with
+/// `?modules=<names>` naming the modules that are on (their snake_case
+/// keys, comma-separated, in tree order), and no query while none is. The
+/// guide hides every module's pages it is not told about, so unknown is
+/// hidden.
+pub fn guide_address(index: &std::path::Path, on: &BTreeSet<Module>) -> Option<String> {
     let mut url = tauri::Url::from_file_path(index).ok()?;
-    url.set_query(advanced.then_some("advanced=1"));
+    let names = Module::ALL.into_iter().filter(|m| on.contains(m)).map(Module::key).collect::<Vec<_>>().join(",");
+    url.set_query((!names.is_empty()).then(|| format!("modules={names}")).as_deref());
     Some(url.to_string())
 }
 
@@ -52,33 +59,33 @@ fn launcher_path() -> std::path::PathBuf {
     std::env::temp_dir().join("tcm-how-to-use.html")
 }
 
-/// How the guide is opened: its index itself while Enable Advanced
-/// Features is off (no query needed: the guide hides those parts without
-/// one), or through a launcher page carrying `?advanced=1` while it is on.
+/// How the guide is opened: its index itself while no module is on (no
+/// query needed: the guide hides every module's pages without one), or
+/// through a launcher page carrying `?modules=...` while any is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuideOpening {
     Index,
     Launcher(String),
 }
 
-/// `GuideOpening` for this index and setting. A path that is no file URL
-/// opens the index itself.
-pub fn guide_opening(index: &std::path::Path, advanced: bool) -> GuideOpening {
-    if !advanced {
+/// `GuideOpening` for this index and these modules. A path that is no
+/// file URL opens the index itself.
+pub fn guide_opening(index: &std::path::Path, on: &BTreeSet<Module>) -> GuideOpening {
+    if on.is_empty() {
         return GuideOpening::Index;
     }
-    match guide_address(index, true) {
+    match guide_address(index, on) {
         Some(address) => GuideOpening::Launcher(launcher_html(&address)),
         None => GuideOpening::Index,
     }
 }
 
-/// Open the guide at `index`, telling it whether Enable Advanced Features
-/// is on (as the app decides what it shows: `ai_tools::autorun_offered`).
-/// Falls back to opening `index` itself, which shows the guide with those
-/// parts hidden, if the launcher cannot be written.
+/// Open the guide at `index`, telling it which modules are on (as the app
+/// decides what it shows: `modules::current`). Falls back to opening
+/// `index` itself, which shows the guide with every module's pages hidden,
+/// if the launcher cannot be written.
 pub fn open_guide(index: &std::path::Path) -> Result<(), String> {
-    let GuideOpening::Launcher(page) = guide_opening(index, crate::ai_tools::autorun_offered()) else {
+    let GuideOpening::Launcher(page) = guide_opening(index, &crate::modules::current()) else {
         return open_index(index);
     };
     let launcher = launcher_path();

@@ -1,15 +1,14 @@
 //! IPC surface for a project's Test files (`crate::test_files`): list,
-//! add, remove and open the folder. Offered exactly where Auto Run and API
-//! Templates are - `ai_tools::autorun_offered`, through the same refusal
-//! the API Templates commands use - since only those two upload a test
-//! file.
+//! add, remove and open the folder. Test files are the Auto Run module's
+//! (API Templates, which also uploads them, hangs off it): every command
+//! refuses with Auto Run's off sentence while it is off.
 //!
-//! Each command has a pure `*_at` half that takes "is it offered here" and
+//! Each command has a pure `*_at` half that takes "is Auto Run on" and
 //! the data root, so a test reaches it without an `AppHandle`. Removing a
 //! file deletes this machine's copy and nothing else: there is no network
 //! call anywhere in this module.
 
-use crate::commands::api_templates::refuse_unless;
+use crate::modules::{self, Module};
 use crate::test_files::{self, TestFile};
 use std::path::{Path, PathBuf};
 
@@ -21,7 +20,7 @@ pub const NOT_A_FULL_PATH: &str = "only a file picked with Add files can be adde
 
 /// The project's Test files folder, after the gate and a project check.
 fn folder_for(offered: bool, root: &Path, organization: &str, project: &str) -> Result<PathBuf, String> {
-    refuse_unless(offered)?;
+    modules::require(Module::AutoRun, offered)?;
     if organization.trim().is_empty() || project.trim().is_empty() {
         return Err(NO_PROJECT.to_string());
     }
@@ -67,7 +66,7 @@ pub fn ensure_folder_at(offered: bool, root: &Path, organization: &str, project:
 #[specta::specta]
 pub fn test_files_list(app: tauri::AppHandle, organization: String, project: String) -> Result<Vec<TestFile>, String> {
     let root = crate::commands::autorun::root(&app)?;
-    list_at(crate::ai_tools::autorun_offered(), &root, &organization, &project)
+    list_at(modules::on(Module::AutoRun), &root, &organization, &project)
 }
 
 /// Copies the file the person picked at `path` into Test files. `replace`
@@ -82,7 +81,7 @@ pub fn test_files_add(
     replace: bool,
 ) -> Result<TestFile, String> {
     let root = crate::commands::autorun::root(&app)?;
-    add_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, Path::new(&path), replace)
+    add_at(modules::on(Module::AutoRun), &root, &organization, &project, Path::new(&path), replace)
 }
 
 #[tauri::command]
@@ -94,7 +93,7 @@ pub fn test_files_remove(
     name: String,
 ) -> Result<(), String> {
     let root = crate::commands::autorun::root(&app)?;
-    remove_at(crate::ai_tools::autorun_offered(), &root, &organization, &project, &name)
+    remove_at(modules::on(Module::AutoRun), &root, &organization, &project, &name)
 }
 
 /// Opens the folder in the file explorer - from Rust, like every other
@@ -103,7 +102,7 @@ pub fn test_files_remove(
 #[specta::specta]
 pub fn test_files_open_folder(app: tauri::AppHandle, organization: String, project: String) -> Result<(), String> {
     let root = crate::commands::autorun::root(&app)?;
-    let dir = ensure_folder_at(crate::ai_tools::autorun_offered(), &root, &organization, &project)?;
+    let dir = ensure_folder_at(modules::on(Module::AutoRun), &root, &organization, &project)?;
     tauri_plugin_opener::open_path(&dir, None::<&str>).map_err(|e| {
         crate::applog::warn(format!("test files: the folder could not be opened: {e}"));
         "Could not open the Test files folder.".to_string()

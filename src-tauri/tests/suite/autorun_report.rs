@@ -356,7 +356,7 @@ fn opening_is_refused_where_auto_run_is_not_offered() {
     let root = seeded_root(&dir);
 
     let err = write_report_at(false, &root, "Acme", "Web", "run-1786000200000", "x").unwrap_err();
-    assert_eq!(err, "not available in this build");
+    assert_eq!(err, "Auto Run is switched off in Modules");
     assert!(!root.join("reports").exists());
 }
 

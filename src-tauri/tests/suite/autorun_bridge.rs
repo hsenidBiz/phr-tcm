@@ -9,7 +9,8 @@
 //! check the script against. Driving the browser never does.
 
 use v2_lib::ado::AdoClient;
-use v2_lib::ai_bridge::{autorun_guard_for, autorun_route_guard, describe_try, route, BridgeContext};
+use v2_lib::ai_bridge::{describe_try, module_guard_for, module_of_route, route, BridgeContext};
+use v2_lib::modules::Module;
 use v2_lib::autorun::guide::autorun_guide;
 use v2_lib::autorun::quirks::load_quirks;
 use v2_lib::autorun::store::{load_script, save_run, save_scripts_atomically, set_root};
@@ -641,7 +642,7 @@ fn tool_body(arguments: serde_json::Value) -> String {
         if (method, path) == ("POST", "/autorun-script") {
             *posted.borrow_mut() = Some(body.to_string());
         }
-        Ok((200, r#"{"autorun": true, "disabled": []}"#.to_string()))
+        Ok((200, r#"{"modules": ["db_access", "writing_style", "auto_run", "api_templates", "playwright"], "disabled": []}"#.to_string()))
     };
     let req = serde_json::json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -872,7 +873,7 @@ async fn a_bundles_own_edits_that_are_not_a_list_refuse_the_edits_beside_it() {
             if (method, path) == ("POST", "/autorun-script") {
                 *posted.borrow_mut() = true;
             }
-            Ok((200, r#"{"autorun": true, "disabled": []}"#.to_string()))
+            Ok((200, r#"{"modules": ["db_access", "writing_style", "auto_run", "api_templates", "playwright"], "disabled": []}"#.to_string()))
         };
         let req = serde_json::json!({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -2342,21 +2343,43 @@ async fn a_full_list_refuses_through_the_bridge_with_candidates() {
 // refuses outright) can only be proven through the guard's explicit
 // `dev: bool` seam, exercised directly here.
 
-/// Outside a development build, the guard refuses unconditionally with
-/// the exact sentence the autorun routes are meant to answer.
+/// Each route prefix belongs to its module: `/autorun-` and the accounts
+/// routes to Auto Run, `/api-template` to API Templates, the two database
+/// routes to Database Access; everything else is Core.
 #[test]
-fn the_guard_refuses_outside_a_development_build() {
-    let refused = autorun_route_guard(false);
-    let (status, body) = refused.expect("a release build must be refused");
-    assert_eq!(status, 404);
-    assert_eq!(body, "not available in this build");
+fn each_route_prefix_belongs_to_its_module() {
+    for path in ["/autorun-guide", "/autorun-anything-later", "/accounts", "/accounts-propose"] {
+        assert_eq!(module_of_route(path), Some(Module::AutoRun), "{path}");
+    }
+    for path in ["/api-template-guide", "/api-templates", "/api-template-fixture-run"] {
+        assert_eq!(module_of_route(path), Some(Module::ApiTemplates), "{path}");
+    }
+    for path in ["/db-lookup", "/db-query"] {
+        assert_eq!(module_of_route(path), Some(Module::DbAccess), "{path}");
+    }
+    for path in ["/ping", "/guide", "/tools", "/test-cases", "/db-query-later", "/accountsx"] {
+        assert_eq!(module_of_route(path), None, "{path}");
+    }
 }
 
-/// Inside a development build, the guard lets the request through - the
-/// caller falls through to the route's own handling.
+/// Each guard prefix refuses with its own module's sentence while that
+/// module is off, and lets the request through while it is on - whatever
+/// the other modules are.
 #[test]
-fn the_guard_lets_a_development_build_through() {
-    assert!(autorun_route_guard(true).is_none());
+fn each_guard_refuses_with_its_modules_sentence() {
+    for (path, m, said) in [
+        ("/autorun-guide", Module::AutoRun, "Auto Run is switched off in Modules"),
+        ("/accounts", Module::AutoRun, "Auto Run is switched off in Modules"),
+        ("/api-template-run", Module::ApiTemplates, "API Templates is switched off in Modules"),
+        ("/db-query", Module::DbAccess, "Database Access is switched off in Modules"),
+        ("/db-lookup", Module::DbAccess, "Database Access is switched off in Modules"),
+    ] {
+        let mut on: std::collections::BTreeSet<Module> = Module::ALL.into_iter().collect();
+        assert!(module_guard_for(path, &on).is_none(), "{path}");
+        on.remove(&m);
+        assert_eq!(module_guard_for(path, &on), Some((404, said.to_string())), "{path}");
+        assert!(module_guard_for(path, &[m].into_iter().collect()).is_none(), "{path}: only its own module counts");
+    }
 }
 
 /// The guard is applied by PATH, once, before the router's match - so a
@@ -2387,13 +2410,13 @@ fn the_guard_still_holds_for_every_new_route() {
     ];
     for path in autorun {
         let (status, body) =
-            autorun_guard_for(path, false).unwrap_or_else(|| panic!("{path} was not refused"));
+            module_guard_for(path, &Default::default()).unwrap_or_else(|| panic!("{path} was not refused"));
         assert_eq!(status, 404, "{path}");
-        assert_eq!(body, "not available in this build", "{path}");
-        assert!(autorun_guard_for(path, true).is_none(), "{path} refused in a dev build");
+        assert_eq!(body, "Auto Run is switched off in Modules", "{path}");
+        assert!(module_guard_for(path, &v2_lib::modules::Module::ALL.into_iter().collect()).is_none(), "{path} refused in a dev build");
     }
     for path in ["/ping", "/guide", "/test-cases", "/tools"] {
-        assert!(autorun_guard_for(path, false).is_none(), "{path} is not an Auto Run route");
+        assert!(module_guard_for(path, &Default::default()).is_none(), "{path} is not an Auto Run route");
     }
 }
 
@@ -2681,9 +2704,9 @@ async fn list_test_files_gives_names_and_sizes_only() {
     assert_eq!(status, 409, "{body}");
     assert!(body.contains("project"), "{body}");
 
-    let (status, body) = autorun_guard_for("/autorun-test-files", false).expect("refused outside Auto Run");
-    assert_eq!((status, body.as_str()), (404, "not available in this build"));
-    assert!(autorun_guard_for("/autorun-test-files", true).is_none());
+    let (status, body) = module_guard_for("/autorun-test-files", &Default::default()).expect("refused outside Auto Run");
+    assert_eq!((status, body.as_str()), (404, "Auto Run is switched off in Modules"));
+    assert!(module_guard_for("/autorun-test-files", &v2_lib::modules::Module::ALL.into_iter().collect()).is_none());
 }
 
 /// "The active environment" names its database as a person reads it - the

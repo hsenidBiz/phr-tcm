@@ -56,6 +56,30 @@ impl Module {
         }
     }
 
+    /// The stored and wire name: `db_access`, `writing_style`, `auto_run`,
+    /// `api_templates`, `playwright` - what serde writes, spelled out so a
+    /// URL or a log line needs no serialiser.
+    pub fn key(self) -> &'static str {
+        match self {
+            Module::DbAccess => "db_access",
+            Module::WritingStyle => "writing_style",
+            Module::AutoRun => "auto_run",
+            Module::ApiTemplates => "api_templates",
+            Module::Playwright => "playwright",
+        }
+    }
+
+    /// The module whose stored or wire name is `key`; `None` for anything
+    /// else (an unknown name from a newer app is ignored, never guessed at).
+    pub fn from_key(key: &str) -> Option<Module> {
+        Module::ALL.into_iter().find(|m| m.key() == key)
+    }
+
+    /// What every gate says when it refuses because this module is off.
+    pub fn off_sentence(self) -> String {
+        format!("{} is switched off in Modules", self.name())
+    }
+
     pub fn children(self) -> Vec<Module> {
         Module::ALL.into_iter().filter(|m| m.parent() == Some(self)).collect()
     }
@@ -167,36 +191,61 @@ pub fn load_or_create(dir: &Path, dev: bool) -> BTreeSet<Module> {
     on
 }
 
-static STATE: Mutex<BTreeSet<Module>> = Mutex::new(BTreeSet::new());
+/// `None` until setup has run.
+static STATE: Mutex<Option<BTreeSet<Module>>> = Mutex::new(None);
 static DIR: OnceLock<PathBuf> = OnceLock::new();
 
-fn state() -> std::sync::MutexGuard<'static, BTreeSet<Module>> {
+fn state() -> std::sync::MutexGuard<'static, Option<BTreeSet<Module>>> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// What a process reads before setup has run: everything in a development
+/// build (what a development build's first `modules.json` holds), nothing
+/// in a release build. Only processes that never run setup see it - the
+/// `--mcp` proxy, which never asks (it learns the app's answer from the
+/// bridge's `/tools`), and the test binary, whose route tests reach every
+/// gate the way a development build does.
+pub fn before_setup(dev: bool) -> BTreeSet<Module> {
+    if dev {
+        Module::ALL.into_iter().collect()
+    } else {
+        BTreeSet::new()
+    }
 }
 
 /// Called once from setup with the app data dir.
 pub fn init(dir: PathBuf) {
-    *state() = load_or_create(&dir, crate::ai_tools::dev_build());
+    *state() = Some(load_or_create(&dir, crate::ai_tools::dev_build()));
     let _ = DIR.set(dir);
 }
 
-/// Whether `m` is on in this process. Always false in the `--mcp` proxy
-/// process, which never runs setup - it learns the app's answer from the
-/// bridge's `/tools` instead.
+/// Whether `m` is on in this process - what every Rust gate asks.
 pub fn on(m: Module) -> bool {
-    state().contains(&m)
+    current().contains(&m)
 }
 
+/// The modules on in this process.
 pub fn current() -> BTreeSet<Module> {
-    state().clone()
+    state().clone().unwrap_or_else(|| before_setup(crate::ai_tools::dev_build()))
+}
+
+/// `Err(m.off_sentence())` unless `on`: the refusal an IPC command gives
+/// while its module is off. `on` is passed in so both answers are testable.
+pub fn require(m: Module, on: bool) -> Result<(), String> {
+    if on {
+        Ok(())
+    } else {
+        Err(m.off_sentence())
+    }
 }
 
 /// Save first, then publish, like `extras::set_advanced`.
 pub fn set(m: Module, want: bool) -> Result<BTreeSet<Module>, String> {
     let dir = DIR.get().ok_or_else(|| "could not save: setup has not finished yet".to_string())?;
     let mut guard = state();
-    let next = apply(&guard, m, want)?;
+    let now = guard.clone().unwrap_or_else(|| before_setup(crate::ai_tools::dev_build()));
+    let next = apply(&now, m, want)?;
     write(dir, &next)?;
-    *guard = next.clone();
+    *guard = Some(next.clone());
     Ok(next)
 }

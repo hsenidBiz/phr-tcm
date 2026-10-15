@@ -853,7 +853,7 @@ fn the_guide_teaches_going_to_another_area_and_back() {
 fn the_guide_never_points_at_the_source() {
     use v2_lib::autorun::discovery_map::{explore_section, AreaMap, DiscoveryMap};
     let stub = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> { Ok((200, "{}".into())) };
-    let resp = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub).unwrap();
+    let resp = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &crate::common::dev_app(&stub)).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let mut texts: Vec<(String, String)> = vec![
         ("the guide".into(), autorun_guide()),
@@ -1043,7 +1043,7 @@ fn the_areas_section_and_the_guide_give_one_rule_for_area() {
     // the guide, a tool description or a command - still tells it to leave
     // `area` out for the default area.
     let stub = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> { Ok((200, "{}".into())) };
-    let resp = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub).unwrap();
+    let resp = v2_lib::mcp::handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &crate::common::dev_app(&stub)).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let tools = v["result"]["tools"].as_array().unwrap();
     let save = tools.iter().find(|t| t["name"] == "save_autorun_script").unwrap();

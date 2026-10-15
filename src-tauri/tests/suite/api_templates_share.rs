@@ -323,11 +323,11 @@ fn export_and_import_are_refused_where_auto_run_is_not_offered() {
     let dir = tempfile::tempdir().unwrap();
     seed(root.path(), FROM);
     let out = dir.path().join("out.json");
-    assert_eq!(export_at(false, root.path(), ORG, FROM, &out).unwrap_err(), "not available in this build");
+    assert_eq!(export_at(false, root.path(), ORG, FROM, &out).unwrap_err(), "API Templates is switched off in Modules");
     assert!(!out.exists());
 
     let path = share_file(dir.path(), vec![template_json()], vec![flow_json()]);
-    assert_eq!(import_at(false, root.path(), ORG, TO, &path).unwrap_err(), "not available in this build");
+    assert_eq!(import_at(false, root.path(), ORG, TO, &path).unwrap_err(), "API Templates is switched off in Modules");
     assert!(store::list(root.path(), ORG, TO).unwrap().is_empty());
     assert!(flow_store::list(root.path(), ORG, TO).unwrap().is_empty());
 }

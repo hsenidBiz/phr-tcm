@@ -1,6 +1,6 @@
 //! The Playwright tab: the team's Playwright repo, read from its clone
-//! folder. Offered exactly where Auto Run is (`ai_tools::autorun_offered`),
-//! and refused everywhere else. The clone folder itself is the app setting
+//! folder. Offered while the Playwright module is on (`modules::on`), and
+//! refused while it is off. The clone folder itself is the app setting
 //! Export to Playwright uses (`set_playwright_clone`).
 
 use crate::pw_repo::process::{self, Launch, RunEvent};
@@ -30,7 +30,7 @@ fn emitter(app: tauri::AppHandle) -> process::Sink {
 /// Refused where the tab is not offered; else the app's own clone setting,
 /// if `clone` is it: the webview's path is never trusted on its own.
 fn chosen(clone: &str) -> Result<PathBuf, String> {
-    crate::pw_repo::ensure_offered(crate::ai_tools::autorun_offered())?;
+    crate::pw_repo::ensure_offered(crate::modules::on(crate::modules::Module::Playwright))?;
     runner::chosen_clone(clone, &crate::app_settings::current().playwright_clone)
 }
 
@@ -77,7 +77,7 @@ pub struct PwRunning {
 #[specta::specta]
 pub fn pw_repo_stop(run: u32) -> Result<(), String> {
     let _t = crate::pw_repo::timed("pw_repo_stop");
-    crate::pw_repo::ensure_offered(crate::ai_tools::autorun_offered())?;
+    crate::pw_repo::ensure_offered(crate::modules::on(crate::modules::Module::Playwright))?;
     process::stop(run)
 }
 
@@ -86,7 +86,7 @@ pub fn pw_repo_stop(run: u32) -> Result<(), String> {
 #[specta::specta]
 pub fn pw_repo_running() -> Result<Option<PwRunning>, String> {
     let _t = crate::pw_repo::timed("pw_repo_running");
-    crate::pw_repo::ensure_offered(crate::ai_tools::autorun_offered())?;
+    crate::pw_repo::ensure_offered(crate::modules::on(crate::modules::Module::Playwright))?;
     Ok(process::running_now().map(|(run, label, brief)| PwRunning { run, label, brief }))
 }
 

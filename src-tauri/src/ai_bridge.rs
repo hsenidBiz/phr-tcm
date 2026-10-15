@@ -234,13 +234,10 @@ pub async fn route(
     version: &str,
 ) -> (u16, String) {
     let path = target.split_once('?').map(|(p, _)| p).unwrap_or(target);
-    // Every Auto Run route is offered only where the Auto Run tools are -
-    // a development build, or a release build whose optional extras are
-    // unlocked - and the check runs ONCE here, by path, before the
-    // router's match, so a route added later is covered by the shape of
-    // its name rather than by somebody remembering to repeat the guard on
-    // its own arm.
-    if let Some(refused) = autorun_guard_for(path, crate::ai_tools::autorun_offered()) {
+    // Every route that belongs to a module is answered only while that
+    // module is on, and the check runs ONCE here, by path, before the
+    // router's match (`module_guard_for`).
+    if let Some(refused) = module_guard_for(path, &crate::modules::current()) {
         return refused;
     }
     match (method, path) {
@@ -401,21 +398,20 @@ pub async fn route(
                     .await;
             with_discovery_hint(answer, crate::commands::autorun::auto_run_discovery_active(), true)
         }
-        // The database routes. Not Auto Run and not dev-only: they are
-        // switchable like any ordinary tool, and what they may do is
-        // decided by the connection the person chose and the write switch
-        // beside it - never by the build kind.
+        // The database routes: Database Access's (the guard above). Beyond
+        // that, what they may do is decided by the connection the person
+        // chose and the write switch beside it - never by the build kind.
         ("POST", "/db-lookup") => db_lookup(ctx, body).await,
         ("POST", "/db-query") => db_query(ctx, body).await,
-        // The proxy asks for this before listing tools, so a toggle in the
-        // app takes effect on the assistant's next tools/list. `autorun`
-        // says whether the Auto Run tools are offered at all: the proxy is
-        // a separate process and cannot read the optional-extras switch.
+        // The proxy asks for this before listing tools and before every
+        // call, so a toggle in the app takes effect on the assistant's next
+        // tools/list. `modules` names the modules that are on: the proxy is
+        // a separate process and cannot read the app's choice.
         ("GET", "/tools") => (
             200,
             serde_json::json!({
                 "disabled": ctx.disabled_tools,
-                "autorun": crate::ai_tools::autorun_offered(),
+                "modules": crate::modules::current().iter().map(|m| m.key()).collect::<Vec<_>>(),
                 // Only while writes are on too: without them there is no
                 // change to run, asked about or not.
                 "db_no_ask": crate::app_settings::current().db_auto_approve && ctx.db_writes,
@@ -466,37 +462,33 @@ pub fn smells_like_a_write(method: &str, target: &str) -> bool {
         .any(|w| path.contains(w))
 }
 
-/// The guard every autorun route runs before doing anything else: where the
-/// Auto Run tools are not offered (a release build whose optional extras
-/// are locked) there is no switch that can turn them back on, so they
-/// refuse unconditionally rather than falling through to whatever
-/// `ctx.disabled_tools` says. `offered` is explicit so both branches are
-/// testable without a release build.
-pub fn autorun_route_guard(offered: bool) -> Option<(u16, String)> {
-    if offered {
-        None
+/// The module a bridge route belongs to, by the shape of its PATH: every
+/// `/autorun-` route and `/accounts` / every `/accounts-` one (the Auto Run
+/// accounts) is Auto Run's; every `/api-template` one is API Templates';
+/// `/db-lookup` and `/db-query` are Database Access's. Anything else is
+/// Core. By path rather than by arm, so a route added later is covered by
+/// its name rather than by somebody remembering to repeat a check.
+pub fn module_of_route(path: &str) -> Option<crate::modules::Module> {
+    use crate::modules::Module;
+    if path.starts_with("/autorun-") || path == "/accounts" || path.starts_with("/accounts-") {
+        Some(Module::AutoRun)
+    } else if path.starts_with("/api-template") {
+        Some(Module::ApiTemplates)
+    } else if path == "/db-lookup" || path == "/db-query" {
+        Some(Module::DbAccess)
     } else {
-        Some((404, "not available in this build".to_string()))
+        None
     }
 }
 
-/// The same guard, applied by PATH rather than by arm. `route` calls this
-/// once, before its match, so every `/autorun-` route - every
-/// `/api-template` one, which rides on the same signed-in browser and is
-/// offered exactly where Auto Run is, and `/accounts` and every
-/// `/accounts-` one, the Auto Run accounts - is covered by the shape of its
-/// name: a route added later cannot be left ungated by forgetting to
-/// repeat the check. `offered` is explicit for the same reason
-/// `autorun_route_guard`'s is: both branches stay testable.
-pub fn autorun_guard_for(path: &str, offered: bool) -> Option<(u16, String)> {
-    if path.starts_with("/autorun-")
-        || path.starts_with("/api-template")
-        || path == "/accounts"
-        || path.starts_with("/accounts-")
-    {
-        autorun_route_guard(offered)
-    } else {
-        None
+/// The guard `route` runs ONCE, before its match: a route whose module is
+/// off is refused 404 with that module's sentence, unconditionally - not
+/// falling through to whatever `ctx.disabled_tools` says. `on` is explicit
+/// so every combination stays testable.
+pub fn module_guard_for(path: &str, on: &std::collections::BTreeSet<crate::modules::Module>) -> Option<(u16, String)> {
+    match module_of_route(path) {
+        Some(m) if !on.contains(&m) => Some((404, m.off_sentence())),
+        _ => None,
     }
 }
 
@@ -8245,12 +8237,23 @@ const CUSTOM_STYLE_STEP: &str = "\
         before drafting, or a summary or review at the end), follow them at the point it says.\n\
 ";
 
+/// The guide's custom style section: the person's saved style while the
+/// Writing Style module is on (`on`), nothing while it is off - the guide is
+/// then exactly the standard one, whatever is saved. `on` is passed in so
+/// both answers are testable.
+pub fn custom_style_when(on: bool) -> Option<String> {
+    if !on {
+        return None;
+    }
+    crate::writing_style::current_text().map(|t| custom_style_section(&t))
+}
+
 /// Live writing guide: format rules from the importer's own constants +
 /// the org's Module values, fetched fresh (no snapshot staleness). The
 /// person's writing style is read from disk on every call, so a save takes
 /// effect the next time an assistant reads the guide.
 async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
-    let custom = crate::writing_style::current_text().map(|t| custom_style_section(&t));
+    let custom = custom_style_when(crate::modules::on(crate::modules::Module::WritingStyle));
     let statuses = crate::model::VALID_STATUSES
         .iter()
         .map(|v| format!("\"{v}\""))

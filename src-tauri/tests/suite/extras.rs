@@ -2,10 +2,7 @@
 //! machine-wide flags in one small file, read once at start and written
 //! through on every change.
 
-use v2_lib::ai_tools::autorun_offered_for;
-use v2_lib::extras::{
-    advanced, features_on, init, load, load_advanced, save, save_advanced, set_advanced, set_unlocked, unlocked,
-};
+use v2_lib::extras::{advanced, init, load, load_advanced, save, save_advanced, set_advanced, set_unlocked, unlocked};
 
 struct TempDir(std::path::PathBuf);
 
@@ -95,9 +92,10 @@ fn saving_one_flag_keeps_the_other() {
 #[test]
 fn the_switch_is_read_at_start_and_written_through() {
     let _lock = crate::serial::extras();
+    let _modules = crate::serial::modules();
+    let modules_before = v2_lib::modules::current();
     assert!(!unlocked(), "locked until something says otherwise");
     assert!(!advanced(), "off until something says otherwise");
-    assert!(!features_on());
     // Must run before `init` anywhere in this process sets DIR - it is a
     // OnceLock, set at most once for the whole test binary.
     assert!(set_unlocked(true).is_err(), "nowhere to save before init runs");
@@ -116,23 +114,19 @@ fn the_switch_is_read_at_start_and_written_through() {
     assert!(unlocked());
     assert!(load(dir.path()));
 
-    // features_on: either flag turns them on.
-    assert!(features_on(), "the extras switch alone");
+    // Neither flag gates anything any more: the modules decide.
     set_unlocked(false).unwrap();
-    assert!(!features_on(), "neither");
-    assert!(!autorun_offered_for(false, features_on()), "a release build with neither does not offer the tools");
+    assert_eq!(v2_lib::modules::current(), modules_before, "the extras switch moves no module");
     set_advanced(true).unwrap();
     assert!(advanced());
     assert!(load_advanced(dir.path()), "advanced is written to disk");
     assert!(!load(dir.path()), "without turning the extras switch back on");
-    assert!(features_on(), "advanced alone");
-    assert!(autorun_offered_for(false, features_on()), "a release build with advanced on offers the tools");
+    assert_eq!(v2_lib::modules::current(), modules_before, "Enable Advanced Features moves no module");
     set_unlocked(true).unwrap();
-    assert!(features_on(), "both");
     assert!(load_advanced(dir.path()), "saving the extras switch kept advanced");
+    assert_eq!(v2_lib::modules::current(), modules_before, "nor do both");
 
     // Leave the process as it started.
     set_advanced(false).unwrap();
     set_unlocked(false).unwrap();
-    assert!(!features_on());
 }

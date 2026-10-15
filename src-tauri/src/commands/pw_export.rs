@@ -7,6 +7,11 @@ use crate::pw_export::mapping::{self, ExportMap};
 use crate::pw_export::test_case::CaseDoc;
 use std::collections::BTreeMap;
 
+/// Export to Playwright is the Playwright module's: refused while it is off.
+fn ensure_offered() -> Result<(), String> {
+    crate::pw_repo::ensure_offered(crate::modules::on(crate::modules::Module::Playwright))
+}
+
 fn clone_path() -> String {
     crate::app_settings::current().playwright_clone
 }
@@ -23,6 +28,7 @@ pub fn pw_export_preview(
     modules: Vec<(i32, String)>,
 ) -> Result<Preview, String> {
     let _t = crate::pw_repo::timed("pw_export_preview");
+    ensure_offered()?;
     let root = super::autorun::root(&app)?;
     let dir = sync_dir(&app)?;
     let modules: BTreeMap<i32, String> = modules.into_iter().collect();
@@ -40,6 +46,7 @@ pub fn pw_export_save_map(
     map: ExportMap,
 ) -> Result<(), String> {
     let _t = crate::pw_repo::timed("pw_export_save_map");
+    ensure_offered()?;
     for (area, placement) in &map.areas {
         placement.validate().map_err(|e| format!("Area \"{area}\": {e}"))?;
     }
@@ -124,6 +131,7 @@ pub async fn pw_export_write(
     preconditions_ref: Option<String>,
 ) -> Result<ExportResult, String> {
     let _t = crate::pw_repo::timed("pw_export_write");
+    ensure_offered()?;
     if case_ids.is_empty() {
         return Ok(nothing_written());
     }

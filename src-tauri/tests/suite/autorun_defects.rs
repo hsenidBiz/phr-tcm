@@ -8,7 +8,7 @@
 //! and a person can clear it from the app.
 
 use v2_lib::ado::AdoClient;
-use v2_lib::ai_bridge::{autorun_guard_for, route, BridgeContext};
+use v2_lib::ai_bridge::{module_guard_for, route, BridgeContext};
 use crate::common;
 use std::sync::atomic::AtomicBool;
 use v2_lib::autorun::defects::{append_cleared, check_mark, passed};
@@ -488,9 +488,9 @@ async fn the_route_stores_the_mark_or_refuses_with_the_sentence() {
 /// Offered only where Auto Run is, like `record_autorun_quirk`.
 #[test]
 fn the_route_is_refused_where_auto_run_is_not_offered() {
-    let (status, body) = autorun_guard_for("/autorun-defect", false).expect("refused outside Auto Run");
-    assert_eq!((status, body.as_str()), (404, "not available in this build"));
-    assert!(autorun_guard_for("/autorun-defect", true).is_none());
+    let (status, body) = module_guard_for("/autorun-defect", &Default::default()).expect("refused outside Auto Run");
+    assert_eq!((status, body.as_str()), (404, "Auto Run is switched off in Modules"));
+    assert!(module_guard_for("/autorun-defect", &v2_lib::modules::Module::ALL.into_iter().collect()).is_none());
 }
 
 // --------------------------------------------- an assistant's repair

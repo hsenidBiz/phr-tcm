@@ -2,16 +2,16 @@
 //!
 //! It is turned on by a key sequence typed on the Settings screen
 //! (`src/lib/extrasSequence.ts`, wired in `src/screens/settingsExtras.ts`)
-//! and off again by that section's Reset to default. While it is on, a
-//! release build offers what a development build always does: the Auto Run
-//! tab and the Auto Run AI tools (`ai_tools::autorun_offered`). It is a
-//! hidden feature on purpose - nothing user-facing names it.
+//! and off again by that section's Reset to default. It reveals the Extras
+//! card and gates nothing else: what is on is the modules' choice
+//! (`crate::modules`). It is a hidden feature on purpose - nothing
+//! user-facing names it.
 //!
-//! Beside it, a second flag a person can see: Settings' Enable Advanced
-//! Features switch (`advanced`). It turns on the same things - Auto Run, API
-//! Templates and their AI tools - and nothing else; the Extras card stays
-//! with `unlocked` alone. `features_on` is what the gates read. The two are
-//! saved in the same file and each save keeps the other's value.
+//! Beside it, a second flag: Settings' old Enable Advanced Features switch
+//! (`advanced`). It gates nothing either; with `unlocked` it is read once,
+//! when `modules.json` is first created, so an upgrade keeps Auto Run, API
+//! Templates and Playwright on where either was. The two are saved in the
+//! same file and each save keeps the other's value.
 //!
 //! Its own small file rather than `crate::cache`: the cache is wiped
 //! whenever a different account signs in, and this belongs to the machine,
@@ -117,10 +117,4 @@ pub fn set_advanced(on: bool) -> Result<(), String> {
     save_advanced(dir, on)?;
     ADVANCED.store(on, Ordering::SeqCst);
     Ok(())
-}
-
-/// Whether Auto Run, API Templates and their AI tools are on for this
-/// machine: either flag turns them on.
-pub fn features_on() -> bool {
-    unlocked() || advanced()
 }

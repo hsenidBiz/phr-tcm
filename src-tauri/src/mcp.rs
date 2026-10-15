@@ -5,7 +5,10 @@
 //! (newline-delimited stdio) and the HTTP client that proxies to the app's
 //! localhost bridge via the handshake file.
 
+use std::collections::BTreeSet;
 use std::io::{BufRead, Write};
+
+use crate::modules::Module;
 
 type BridgeCall<'a> = &'a dyn Fn(&str, &str, &str) -> Result<(u16, String), String>;
 
@@ -88,7 +91,7 @@ pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<Stri
         "tools/list" => {
             let reply = call("GET", "/tools", "");
             let no_ask = db_no_ask_from(&reply);
-            tools_list(tool_policy_from(reply, crate::ai_tools::dev_build()).0, no_ask)
+            tools_list(tool_policy_from(reply).0, no_ask)
         }
         "tools/call" => tools_call(&v["params"], call),
         _ => {
@@ -143,25 +146,28 @@ fn quirk_cases() -> serde_json::Value {
 }
 
 /// What the app says about its tools right now: the disabled set as it is
-/// applied, and whether the Auto Run tools are offered at all. Asked fresh
-/// on every `tools/list` and `tools/call`, so a toggle takes effect without
-/// restarting the editor.
+/// applied, and which modules are on. Asked fresh on every `tools/list`
+/// and `tools/call`, so a toggle - a tool's switch or a whole module -
+/// takes effect without restarting the editor.
 ///
-/// A bridge that can't be reached disables nothing extra - losing the
-/// whole toolset because the app is closed would be worse than showing
-/// tools that then say "sign in first". But it never WIDENS anything: the
-/// proxy is its own process and cannot read the app's optional-extras
-/// switch, so outside a development build the Auto Run tools are offered
-/// only on an explicit `"autorun": true` - a locked app, an app too old to
-/// send the field, a non-200 answer or no app at all all mean "not
-/// offered". `dev` is explicit so the release branch is testable from this
-/// development test binary.
-pub fn tool_policy_from(reply: Result<(u16, String), String>, dev: bool) -> (Vec<String>, bool) {
+/// A bridge that can't be reached disables nothing extra among the core
+/// tools - losing the whole toolset because the app is closed would be
+/// worse than showing tools that then say "sign in first". But it never
+/// WIDENS anything: the proxy is its own process and cannot read the app's
+/// modules, so a module's tools are offered only when `modules` names it -
+/// an app too old to send the field, a non-200 answer or no app at all all
+/// mean "no module on". A development build adds nothing: its app says
+/// what it has on like any other.
+pub fn tool_policy_from(reply: Result<(u16, String), String>) -> (Vec<String>, BTreeSet<Module>) {
     let answer = match reply {
         Ok((200, body)) => serde_json::from_str::<serde_json::Value>(&body).ok(),
         _ => None,
     };
-    let offered = dev || answer.as_ref().and_then(|v| v["autorun"].as_bool()).unwrap_or(false);
+    let on: BTreeSet<Module> = answer
+        .as_ref()
+        .and_then(|v| v["modules"].as_array().cloned())
+        .map(|a| a.iter().filter_map(|n| n.as_str().and_then(Module::from_key)).collect())
+        .unwrap_or_default();
     let list: Vec<String> = answer
         .as_ref()
         .and_then(|v| v["disabled"].as_array().cloned())
@@ -171,7 +177,7 @@ pub fn tool_policy_from(reply: Result<(u16, String), String>, dev: bool) -> (Vec
                 .collect()
         })
         .unwrap_or_default();
-    (crate::ai_tools::effective_disabled_for(&list, offered), offered)
+    (crate::ai_tools::effective_disabled_for(&list, &on), on)
 }
 
 /// Whether the person has let database changes run without being asked:
@@ -193,8 +199,8 @@ pub fn db_no_ask_from(reply: &Result<(u16, String), String>) -> bool {
 /// person has switched on running database changes without being asked.
 pub const DB_NO_ASK: &str = " The person has allowed database changes without confirmation: do not stop to ask before running INSERT, UPDATE, DELETE or a procedure through this tool - run the batch with dry_run first, read the row counts, then run it for real, and tell them what changed afterwards.";
 
-fn tool_policy(call: BridgeCall) -> (Vec<String>, bool) {
-    tool_policy_from(call("GET", "/tools", ""), crate::ai_tools::dev_build())
+fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>) {
+    tool_policy_from(call("GET", "/tools", ""))
 }
 
 fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
@@ -810,15 +816,15 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
     serde_json::json!({ "tools": tools })
 }
 
-/// The call-time refusal text for a switched-off tool. An Auto Run tool
-/// where the Auto Run tools are not offered at all has no switch to turn
-/// back on - it is simply not available; every other switched-off tool
-/// (including an Auto Run one that IS offered and was switched off by the
-/// person) gets the ordinary AI Bridge sentence. `offered` is explicit so
-/// both branches are testable without a release build.
-pub fn refusal_text(name: &str, offered: bool) -> String {
-    if !offered && crate::ai_tools::DEV_ONLY_TOOLS.contains(&name) {
-        format!("The `{name}` tool is not available.")
+/// The call-time refusal text for a switched-off tool. A tool whose module
+/// is off has no switch on the AI Bridge tab to turn back on - it names
+/// the module instead; every other switched-off tool (including a module's
+/// tool whose module IS on and that the person switched off) gets the
+/// ordinary AI Bridge sentence. `on` is explicit so every branch is
+/// testable.
+pub fn refusal_text(name: &str, on: &BTreeSet<Module>) -> String {
+    if let Some(m) = crate::ai_tools::module_of_tool(name).filter(|m| !on.contains(m)) {
+        format!("The `{name}` tool is not available: {}.", m.off_sentence())
     } else {
         format!(
             "The `{name}` tool is switched off in Test Case Manager. \
@@ -906,9 +912,9 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
     let args = &params["arguments"];
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
-    let (off, offered) = tool_policy(call);
+    let (off, on) = tool_policy(call);
     if off.iter().any(|d| d == name) {
-        let text = refusal_text(name, offered);
+        let text = refusal_text(name, &on);
         return serde_json::json!({
             "content": [{
                 "type": "text",
