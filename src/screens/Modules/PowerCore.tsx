@@ -12,8 +12,10 @@ export default function PowerCore() {
         <span className="mod-core-ring mod-core-ring-late" />
         <IconCore aria-hidden className="size-6" />
       </div>
-      <div className="text-sm font-semibold text-text">{CORE_NAME}</div>
-      <div className="-mt-1 text-xs text-muted">{CORE_LINE}</div>
+      {/* Above the orb, with a thin halo of the board's colour around the
+          letters only (no box), so its rings pass behind the words. */}
+      <div className="mod-core-text relative z-10 text-sm font-semibold text-text">{CORE_NAME}</div>
+      <div className="mod-core-text relative z-10 -mt-1 text-xs text-muted">{CORE_LINE}</div>
     </div>
   );
 }

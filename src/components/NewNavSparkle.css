@@ -1,0 +1,58 @@
+/* A sidebar row a person has just revealed by switching a module on
+   (lib/newNav): an accent ring inside the row's own box, so nothing moves,
+   and a few sparkles twinkling and drifting in its top and bottom padding,
+   clear of the icon and the label. Theme tokens only. */
+.nav-new {
+  box-shadow:
+    inset 0 0 0 1px var(--color-accent),
+    0 0 8px -2px var(--color-accent);
+}
+
+.nav-sparkle {
+  position: absolute;
+  pointer-events: none;
+  background: var(--color-accent);
+  /* A four-pointed star. */
+  clip-path: polygon(50% 0%, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0% 50%, 38% 38%);
+  opacity: 0;
+  animation:
+    nav-sparkle-twinkle 2.4s ease-in-out infinite,
+    nav-sparkle-drift 3.2s ease-in-out infinite alternate;
+}
+
+@keyframes nav-sparkle-twinkle {
+  0%,
+  100% {
+    opacity: 0;
+    scale: 0.4;
+    rotate: 0deg;
+  }
+  45% {
+    opacity: 1;
+    scale: 1.15;
+    rotate: 45deg;
+  }
+  70% {
+    opacity: 0.55;
+    scale: 0.8;
+    rotate: 70deg;
+  }
+}
+
+@keyframes nav-sparkle-drift {
+  from {
+    translate: -3px 0;
+  }
+  to {
+    translate: 3px 0;
+  }
+}
+
+/* The ring stays; nothing moves. The row also renders no sparkles when the
+   setting is on at draw time - this covers a change made while it shows. */
+@media (prefers-reduced-motion: reduce) {
+  .nav-sparkle {
+    display: none;
+    animation: none;
+  }
+}

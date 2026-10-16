@@ -736,6 +736,10 @@ export default function AiBridge() {
           and C become columns 2 and 3. `gap`, not space-y: space-y's
           child margins would leak through contents into the outer grid. */}
       <div className="flex flex-col gap-6 2xl:contents">
+      {/* B holds only module cards. With none of them on it is left out, so
+          the breakdown (C) moves up to the second column instead of leaving
+          it empty. */}
+      {(autoRunOn || dbOn || apiTemplatesOn) && (
       <div className="flex min-w-0 flex-col gap-6">
       {autoRunOn && (
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
@@ -995,6 +999,7 @@ export default function AiBridge() {
       )}
 
       </div>
+      )}
 
       <div className="flex min-w-0 flex-col gap-6">
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">

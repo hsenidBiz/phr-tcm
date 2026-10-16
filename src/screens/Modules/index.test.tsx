@@ -2,11 +2,48 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { resetModulesStore, setModulesForTest, type Module } from "../../lib/modules";
+import { isNewNav, resetNewNavForTest } from "../../lib/newNav";
 import Modules from "./index";
+
+// WebGL never runs in jsdom: a stand-in records what the board asks the
+// electric layer to draw. (The real component's own guard is tested beside it.)
+vi.mock("../../components/ElectricLogo", () => ({
+  default: (p: { src: string; color: string; glowColor: string; theme: string; interactive: boolean; fitTo: string; raster: number }) => (
+    <div
+      data-testid="electric"
+      data-src={p.src}
+      data-color={p.color}
+      data-glow={p.glowColor}
+      data-theme-mode={p.theme}
+      data-interactive={String(p.interactive)}
+      data-fit={p.fitTo}
+      data-raster={p.raster}
+    />
+  ),
+}));
+
+const SVG_URL = "data:image/svg+xml;charset=utf-8,";
+
+/** The paths the electric layer is tracing, as path data. */
+function electricPaths(): string[] | null {
+  const el = screen.queryByTestId("electric");
+  if (!el) return null;
+  const src = el.getAttribute("data-src")!;
+  expect(src.startsWith(SVG_URL)).toBe(true);
+  const svg = decodeURIComponent(src.slice(SVG_URL.length));
+  expect(svg).toContain('viewBox="0 0 800 750"');
+  return [...svg.matchAll(/ d="([^"]+)"/g)].map((m) => m[1]);
+}
+
+/** The board's own path data for these modules. */
+const edges = (mods: Module[]) =>
+  mods.map((m) => document.querySelector(`[data-edge-line="${m}"]`)!.getAttribute("d"));
 
 afterEach(() => {
   clearMocks();
   resetModulesStore();
+  localStorage.clear();
+  resetNewNavForTest();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -188,4 +225,170 @@ test("the core's name and line are read out", () => {
   show([]);
   expect(screen.getByText("Core").closest("[aria-hidden]")).toBeNull();
   expect(screen.getByText("Test cases, suites, runs and the board").closest("[aria-hidden]")).toBeNull();
+});
+
+// A person's own switch-on marks the sidebar row it reveals; switching it
+// off again takes the mark away.
+test("switching a module on here marks its sidebar row, and off clears it", async () => {
+  let answer: Module[] = ["db_access", "auto_run"];
+  mockIPC((cmd) => (cmd === "modules_set" ? answer : undefined));
+  show(["db_access"]);
+  fireEvent.click(sw(/^Auto Run/));
+  await waitFor(() => expect(isNewNav("autorun")).toBe(true));
+  expect(isNewNav("ai")).toBe(false);
+
+  answer = ["db_access"];
+  fireEvent.click(sw(/^Auto Run/));
+  await waitFor(() => expect(isNewNav("autorun")).toBe(false));
+});
+
+test("Database Access and Writing Style mark AI Bridge, where their cards go", async () => {
+  mockIPC((cmd) => (cmd === "modules_set" ? ["writing_style"] : undefined));
+  show([]);
+  fireEvent.click(sw(/^Writing Style/));
+  await waitFor(() => expect(isNewNav("ai")).toBe(true));
+});
+
+test("a refused switch marks nothing", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "modules_set") throw "no";
+  });
+  show(["db_access"]);
+  fireEvent.click(sw(/^Auto Run/));
+  expect(await screen.findByRole("alert")).toBeInTheDocument();
+  expect(isNewNav("autorun")).toBe(false);
+});
+
+test("power flows only down the paths of modules that are on", () => {
+  show(["db_access", "auto_run"]);
+  // One electric layer for the whole board, tracing exactly the lit paths.
+  expect(screen.getAllByTestId("electric")).toHaveLength(1);
+  expect(electricPaths()).toEqual(edges(["db_access", "auto_run"]));
+  const lit = [...document.querySelectorAll(".mod-edge-lit")].map((p) => p.getAttribute("data-edge-line"));
+  expect(lit.sort()).toEqual(["auto_run", "db_access"]);
+  // It is decoration only, never in the way of a click, and maps the whole
+  // board picture onto the board.
+  const layer = document.querySelector("[data-electric]")!;
+  expect(layer).toHaveAttribute("aria-hidden", "true");
+  expect(layer).toHaveClass("pointer-events-none", "absolute", "inset-0");
+  expect(screen.getByTestId("electric")).toHaveAttribute("data-interactive", "false");
+  expect(screen.getByTestId("electric")).toHaveAttribute("data-fit", "image");
+  // Traced at the board's widest on-screen size, so curves stay smooth.
+  expect(screen.getByTestId("electric")).toHaveAttribute("data-raster", "1440");
+  expect(document.querySelector("svg.mod-edges")).toHaveAttribute("aria-hidden", "true");
+});
+
+test("no electric layer when nothing is lit", () => {
+  show([]);
+  expect(screen.queryByTestId("electric")).toBeNull();
+  expect(document.querySelector("[data-electric]")).toBeNull();
+});
+
+test("the electric layer follows a module switching on", async () => {
+  vi.useFakeTimers();
+  show(["db_access"]);
+  expect(electricPaths()).toEqual(edges(["db_access"]));
+  act(() => setModulesForTest(["db_access", "auto_run"]));
+  // The light runs the path first; the power arrives as the card lights.
+  expect(electricPaths()).toEqual(edges(["db_access"]));
+  await act(async () => {
+    vi.advanceTimersByTime(500);
+  });
+  expect(electricPaths()).toEqual(edges(["db_access", "auto_run"]));
+});
+
+test("switching the last module off fades the electric layer out over its drain", async () => {
+  vi.useFakeTimers();
+  show(["db_access"]);
+  const layer = () => document.querySelector<HTMLElement>("[data-electric]");
+  expect(layer()).toHaveAttribute("data-fading", "false");
+  expect(layer()!.style.opacity).toBe("1");
+  act(() => setModulesForTest([]));
+  // Still there for the drain, still tracing what was lit, fading as it empties.
+  expect(layer()).toHaveAttribute("data-fading", "true");
+  expect(layer()!.style.opacity).toBe("0");
+  expect(layer()!.style.transition).toBe("opacity 600ms ease-in");
+  expect(electricPaths()).toEqual(edges(["db_access"]));
+  await act(async () => {
+    vi.advanceTimersByTime(650);
+  });
+  expect(layer()).toBeNull();
+  expect(screen.queryByTestId("electric")).toBeNull();
+});
+
+test("with reduced motion there is no electric layer", () => {
+  vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("reduce"), media: q, addEventListener() {}, removeEventListener() {} }));
+  show(["db_access", "auto_run"]);
+  expect(screen.queryByTestId("electric")).toBeNull();
+  // The lit path is still drawn, as its steady end state.
+  expect(document.querySelector('[data-edge-line="auto_run"]')).toHaveClass("mod-edge-lit");
+});
+
+test("the electricity takes its colours from the theme tokens, and follows a theme change", async () => {
+  const root = document.documentElement;
+  root.style.setProperty("--color-accent", "#111111");
+  root.style.setProperty("--color-accent-hover", "#222222");
+  root.style.setProperty("--color-on-accent", "#333333");
+  try {
+    show(["db_access"]);
+    const el = () => screen.getByTestId("electric");
+    expect(el()).toHaveAttribute("data-glow", "#111111");
+    expect(el()).toHaveAttribute("data-color", "#333333");
+    expect(el()).toHaveAttribute("data-theme-mode", "light");
+    act(() => root.classList.add("dark"));
+    await waitFor(() => expect(el()).toHaveAttribute("data-theme-mode", "dark"));
+    expect(el()).toHaveAttribute("data-color", "#222222");
+  } finally {
+    root.classList.remove("dark");
+    root.style.removeProperty("--color-accent");
+    root.style.removeProperty("--color-accent-hover");
+    root.style.removeProperty("--color-on-accent");
+  }
+});
+
+test("switching off drains the power back up the path, the deepest first", async () => {
+  vi.useFakeTimers();
+  show(["db_access", "auto_run", "playwright"]);
+  act(() => setModulesForTest(["db_access"]));
+  const drain = (m: Module) => document.querySelector<SVGPathElement>(`[data-draining="${m}"]`);
+  // Playwright hangs below Auto Run, so its path empties first.
+  expect(drain("playwright")?.style.animationDelay).toBe("0ms");
+  expect(drain("auto_run")?.style.animationDelay).toBe("450ms");
+  expect(drain("db_access")).toBeNull();
+  // A draining path carries no electricity, and its card has lost power at once.
+  expect(electricPaths()).toEqual(edges(["db_access"]));
+  const card = (m: Module) => document.querySelector(`[data-module="${m}"]`)!;
+  expect(card("auto_run")).toHaveAttribute("data-lit", "false");
+  expect(card("playwright")).toHaveAttribute("data-lit", "false");
+  await act(async () => {
+    vi.advanceTimersByTime(1100);
+  });
+  expect(drain("auto_run")).toBeNull();
+  expect(drain("playwright")).toBeNull();
+  expect(card("auto_run")).toHaveAttribute("data-lit", "false");
+  expect(card("db_access")).toHaveAttribute("data-lit", "true");
+});
+
+test("with reduced motion a switch-off goes dark at once", () => {
+  vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("reduce"), media: q, addEventListener() {}, removeEventListener() {} }));
+  show(["db_access", "auto_run"]);
+  act(() => setModulesForTest(["db_access"]));
+  expect(document.querySelector("[data-draining]")).toBeNull();
+  expect(document.querySelector('[data-module="auto_run"]')).toHaveAttribute("data-lit", "false");
+});
+
+test("switching off while it lights up stops the light-up and only drains", async () => {
+  vi.useFakeTimers();
+  show(["db_access", "auto_run"]);
+  act(() => setModulesForTest(["db_access", "auto_run", "playwright"]));
+  expect(document.querySelector('[data-edge="playwright"]')).toHaveAttribute("data-running", "true");
+  act(() => setModulesForTest(["db_access", "auto_run"]));
+  expect(document.querySelector('[data-edge="playwright"]')).toHaveAttribute("data-running", "false");
+  expect(document.querySelector('[data-draining="playwright"]')).not.toBeNull();
+  await act(async () => {
+    vi.advanceTimersByTime(1500);
+  });
+  // The light-up's own timers must not light it again after it went off.
+  expect(document.querySelector('[data-module="playwright"]')).toHaveAttribute("data-lit", "false");
+  expect(document.querySelector('[data-draining="playwright"]')).toBeNull();
 });

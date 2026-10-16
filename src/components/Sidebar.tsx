@@ -26,6 +26,21 @@ import {
 } from "../lib/sidebarState";
 import { modulesSnapshot, sectionShown, useModules, type Module } from "../lib/modules";
 import { cn } from "../lib/cn";
+import { clearNewNav, isNewNav, useNewNav } from "../lib/newNav";
+import { reducedMotion } from "../lib/exitGhost";
+import { isCaptureMode } from "../dev/capture";
+import "./NewNavSparkle.css";
+
+/** Where each sparkle of a newly enabled row sits, as a share of the row's
+ * width, and on which edge. They stay in the row's top and bottom padding,
+ * clear of the icon and the label at every rail width. */
+const SPARKLES: { left: string; edge: "top" | "bottom"; delay: string; size: number }[] = [
+  { left: "14%", edge: "top", delay: "0s", size: 5 },
+  { left: "58%", edge: "top", delay: "0.9s", size: 4 },
+  { left: "86%", edge: "top", delay: "1.7s", size: 5 },
+  { left: "34%", edge: "bottom", delay: "1.3s", size: 4 },
+  { left: "74%", edge: "bottom", delay: "0.4s", size: 5 },
+];
 
 /** The v1 tabs, one screen each. Settings and the Work Manager switch live
  * in the context bar. Collapsible to an icon rail. In Work Manager mode the
@@ -70,7 +85,7 @@ export const CASE_ITEMS: Item<Section>[] = [
   { id: "run", label: "Run Tests", icon: GlyphRun, tone: "nav-ico nav-ico-run" },
   // A radar sweep, not a second play button: Run Tests owns the play
   // glyph, and the rail has to stay scannable at 16px.
-  { id: "autorun", label: "Auto Run", icon: GlyphAutoRun, tone: "nav-ico nav-ico-autorun", note: "In Dev" },
+  { id: "autorun", label: "Auto Run", icon: GlyphAutoRun, tone: "nav-ico nav-ico-autorun" },
   // Beside Auto Run, whose scripts it exports, but left out of the Ctrl+N
   // order (NO_SHORTCUT) so every tab below keeps its number. The theatre
   // masks are Playwright's own picture.
@@ -148,6 +163,11 @@ export default function Sidebar<T extends string = Section>({
   // Subscribed, so switching a module on or off adds or
   // removes its rail rows at once.
   const on = useModules();
+  // Rows a person has just revealed from the Modules page (lib/newNav).
+  // Never in a documentation screenshot.
+  const marks = useNewNav();
+  const showMarks = !isCaptureMode();
+  const sparkle = showMarks && !reducedMotion();
   const list = items ?? (visibleCaseItems(on) as unknown as Item<T>[]);
   // Reads back through the shared store rather than its own state, so a
   // tour override (or any other future writer) can move it - the toggle
@@ -186,19 +206,27 @@ export default function Sidebar<T extends string = Section>({
       {list.map(({ id, label, icon: Icon, tone, note }) => {
         const badge = badges?.[id] ?? 0;
         const dead = locked && id !== liveItem;
+        const fresh = showMarks && isNewNav(id, marks);
+        const tip = note ? `${label} (In Development)` : label;
+        const name = badge > 0 ? `${label} (${badge} new)` : label;
         return (
         // Only when collapsed: with the rail open the label is right there.
         // The note joins the tooltip so the status survives the icon rail.
-        <Tooltip key={id} label={note ? `${label} (In Development)` : label} side="right" disabled={!collapsed}>
+        <Tooltip key={id} label={fresh ? `${tip} · new` : tip} side="right" disabled={!collapsed}>
         <button
           data-tour={`nav-${id}`}
           disabled={dead}
           // Belt and braces: `disabled` already stops a click and a
           // keyboard activation, and this stops anything that reaches the
           // handler another way.
-          onClick={() => !dead && onSelect(id)}
+          onClick={() => {
+            if (dead) return;
+            clearNewNav(id);
+            onSelect(id);
+          }}
           aria-current={section === id ? "page" : undefined}
-          aria-label={badge > 0 ? `${label} (${badge} new)` : label}
+          aria-label={fresh ? `${name} (new)` : name}
+          data-new={fresh ? "" : undefined}
           className={cn(
             // px-3 keeps the icon at the exact same x whether the rail is
             // wide or collapsed (8px nav pad + 12px = centered in w-14), so
@@ -208,8 +236,26 @@ export default function Sidebar<T extends string = Section>({
             section === id
               ? "bg-accent-soft font-medium text-accent"
               : "text-muted hover:bg-surface-2 hover:text-text",
+            fresh && "nav-new",
           )}
         >
+          {fresh &&
+            sparkle &&
+            SPARKLES.map((p, i) => (
+              <span
+                key={i}
+                aria-hidden
+                data-sparkle
+                className="nav-sparkle"
+                style={{
+                  left: p.left,
+                  [p.edge]: "1px",
+                  width: p.size,
+                  height: p.size,
+                  animationDelay: `${p.delay}, ${p.delay}`,
+                }}
+              />
+            ))}
           <Icon
             size={16}
             className={cn(

@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { IconBack } from "../../lib/actionIcons";
-import { setModule, useModules, useModulesHydrated, type Module } from "../../lib/modules";
+import { realModulesSnapshot, setModule, useModules, useModulesHydrated, type Module } from "../../lib/modules";
+import { noteModuleSwitch } from "../../lib/newNav";
 import ModuleTree from "./ModuleTree";
 import { MODULE_INFO, infoOf, switchOffWarning } from "./modulesCopy";
 
@@ -31,7 +32,11 @@ export default function Modules({ onBack }: { onBack: () => void }) {
     setError(null);
     setBusy(m);
     try {
+      const before = realModulesSnapshot();
       await setModule(m, next);
+      // A person's own switch: mark in the sidebar what it revealed, or
+      // take the mark away from what it hid.
+      noteModuleSwitch(before, realModulesSnapshot());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -51,7 +56,7 @@ export default function Modules({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <div className="max-w-4xl space-y-4">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <Button size="sm" variant="outline" onClick={onBack}>
           <IconBack aria-hidden />
@@ -59,7 +64,7 @@ export default function Modules({ onBack }: { onBack: () => void }) {
         </Button>
         <h2 className="text-base font-semibold text-text">Modules</h2>
       </div>
-      <p className="text-sm text-muted">
+      <p className="max-w-4xl text-sm text-muted">
         Switch on the parts of the app you need. A module needs the one above it, and switching one off switches off
         those below it. Nothing is deleted.
       </p>
