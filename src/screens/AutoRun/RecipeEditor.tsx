@@ -31,6 +31,9 @@ const PLACEHOLDER = `{
   "close_when_shown": [
     { "name": "cookie banner", "shown": { "css": "#cookieBanner.show" }, "close": { "css": "#btnCookieClose" } }
   ],
+  "wait_while_shown": [
+    { "name": "page loader", "shown": { "css": "#ehrmLoader" } }
+  ],
   "allowed_origins": [],
   "session_minutes": 480
 }`;
@@ -111,7 +114,10 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
           closed, only when it is closed. "close_when_shown" lists pop-ups the runner closes by itself: right
           before each click, fill, drag or upload it looks once, without waiting, and clicks "close" while
           "shown" is up - so no script needs a guard for them. Point "close" at the pop-up's close button,
-          never at one that accepts something.
+          never at one that accepts something. "wait_while_shown" lists loading indicators the runner waits
+          out by itself: right before each click, fill, check or wait it looks once, and while "shown" is
+          visible it waits for it to go - up to 90 s, or "max_ms" (1000 to 180000) - before the action's own
+          timeout starts, so no script needs a long first-step wait.
         </p>
         {existing.isError && <p className="text-xs text-danger">{existing.error.message}</p>}
         <Textarea aria-label="Sign-in recipe JSON" className="min-h-[18rem] font-mono text-xs"

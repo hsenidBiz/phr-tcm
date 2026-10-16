@@ -760,6 +760,13 @@ export const commands = {
 	 *  not listed here is ever closed.
 	 */
 	close_when_shown?: ClosePopup_Serialize[],
+	/**
+	 *  Loading indicators the runner waits out by itself: before every
+	 *  action that touches or checks the page it looks once, without
+	 *  waiting, for each, and while one is visible it waits for it to go
+	 *  (`loading::wait_out`) - so no script needs a long first-step wait.
+	 */
+	wait_while_shown?: LoadingIndicator_Serialize[],
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Serialize,
 	/**
@@ -3718,6 +3725,61 @@ export type ListedTest = {
 	last_result: LastResult | null,
 };
 
+/**
+ *  A loading indicator the runner waits out by itself
+ *  (`SignInRecipe::wait_while_shown`): while `shown` is VISIBLE, right
+ *  before an action that touches or checks the page, the runner waits for
+ *  it to go, up to `max_ms`, and only then does the action start its own
+ *  timeout. Written for PeoplesHR's full-page spinner (2026-10-16), up for
+ *  20-60 s on a cold start, which made the first step of almost every run
+ *  time out. An indicator left in the page hidden is not loading.
+ */
+export type LoadingIndicator = LoadingIndicator_Serialize | LoadingIndicator_Deserialize;
+
+/**
+ *  A loading indicator the runner waits out by itself
+ *  (`SignInRecipe::wait_while_shown`): while `shown` is VISIBLE, right
+ *  before an action that touches or checks the page, the runner waits for
+ *  it to go, up to `max_ms`, and only then does the action start its own
+ *  timeout. Written for PeoplesHR's full-page spinner (2026-10-16), up for
+ *  20-60 s on a cold start, which made the first step of almost every run
+ *  time out. An indicator left in the page hidden is not loading.
+ */
+export type LoadingIndicator_Deserialize = {
+	/**  What a step that waited for it says: "waited 12 s for <name>". */
+	name: string,
+	/**  The indicator itself, as it looks while the page loads. */
+	shown: Target_Deserialize,
+	/**
+	 *  The longest the runner waits for it to go, from
+	 *  `loading::MIN_MAX_MS` to `loading::MAX_MAX_MS`; left out,
+	 *  `loading::DEFAULT_MAX_MS`.
+	 */
+	max_ms?: number | null,
+};
+
+/**
+ *  A loading indicator the runner waits out by itself
+ *  (`SignInRecipe::wait_while_shown`): while `shown` is VISIBLE, right
+ *  before an action that touches or checks the page, the runner waits for
+ *  it to go, up to `max_ms`, and only then does the action start its own
+ *  timeout. Written for PeoplesHR's full-page spinner (2026-10-16), up for
+ *  20-60 s on a cold start, which made the first step of almost every run
+ *  time out. An indicator left in the page hidden is not loading.
+ */
+export type LoadingIndicator_Serialize = {
+	/**  What a step that waited for it says: "waited 12 s for <name>". */
+	name: string,
+	/**  The indicator itself, as it looks while the page loads. */
+	shown: Target_Serialize,
+	/**
+	 *  The longest the runner waits for it to go, from
+	 *  `loading::MIN_MAX_MS` to `loading::MAX_MAX_MS`; left out,
+	 *  `loading::DEFAULT_MAX_MS`.
+	 */
+	max_ms?: number | null,
+};
+
 export type LocalRun = LocalRun_Serialize | LocalRun_Deserialize;
 
 export type LocalRun_Deserialize = {
@@ -5469,6 +5531,13 @@ export type SignInRecipe_Deserialize = {
 	 *  not listed here is ever closed.
 	 */
 	close_when_shown?: ClosePopup_Deserialize[],
+	/**
+	 *  Loading indicators the runner waits out by itself: before every
+	 *  action that touches or checks the page it looks once, without
+	 *  waiting, for each, and while one is visible it waits for it to go
+	 *  (`loading::wait_out`) - so no script needs a long first-step wait.
+	 */
+	wait_while_shown?: LoadingIndicator_Deserialize[],
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Deserialize,
 	/**
@@ -5503,6 +5572,13 @@ export type SignInRecipe_Serialize = {
 	 *  not listed here is ever closed.
 	 */
 	close_when_shown?: ClosePopup_Serialize[],
+	/**
+	 *  Loading indicators the runner waits out by itself: before every
+	 *  action that touches or checks the page it looks once, without
+	 *  waiting, for each, and while one is visible it waits for it to go
+	 *  (`loading::wait_out`) - so no script needs a long first-step wait.
+	 */
+	wait_while_shown?: LoadingIndicator_Serialize[],
 	/**  Exactly one visible match of this means "signed in". */
 	signed_in: Target_Serialize,
 	/**

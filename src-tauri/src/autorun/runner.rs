@@ -712,6 +712,7 @@ async fn run_expanded<D: Driver>(
     run.dialog = None;
     let mut ran_in: Option<String> = None;
     let popups = recipe.as_ref().map(|r| r.close_when_shown.as_slice()).unwrap_or(&[]);
+    let loaders = recipe.as_ref().map(|r| r.wait_while_shown.as_slice()).unwrap_or(&[]);
     let here = Here {
         root,
         organization,
@@ -720,6 +721,8 @@ async fn run_expanded<D: Driver>(
         direct_urls: nav_file.direct_urls,
         step: step.step_number,
         popups,
+        loaders,
+        cancel: run.cancel,
     };
     let mut out = Vec::with_capacity(step.actions.len());
     let mut blocked: Option<&'static str> = None;
@@ -864,15 +867,24 @@ async fn run_expanded<D: Driver>(
                 }
                 outcome
             }
-            Action::WhenVisible { .. } => {
-                let (outcome, stop) = when_visible(d, &here, action, &area, areas, timing).await;
-                blocked = stop;
-                outcome
-            }
-            Action::RepeatWhileVisible { .. } => {
-                let (outcome, stop) = repeat_while_visible(d, &here, action, &area, areas, timing).await;
-                blocked = stop;
-                outcome
+            // A guard's own look waits for the page to load first: under a
+            // spinner its target would read as not there.
+            Action::WhenVisible { .. } | Action::RepeatWhileVisible { .. } => {
+                match page_loaded(d, &here, action, timing).await {
+                    Err((outcome, stop)) => {
+                        blocked = stop;
+                        outcome
+                    }
+                    Ok(notes) => {
+                        let (mut outcome, stop) = match action {
+                            Action::WhenVisible { .. } => when_visible(d, &here, action, &area, areas, timing).await,
+                            _ => repeat_while_visible(d, &here, action, &area, areas, timing).await,
+                        };
+                        popups::add_notes(&mut outcome, &notes);
+                        blocked = stop;
+                        outcome
+                    }
+                }
             }
             other => {
                 let (outcome, stop) = plain(d, &here, other, timing).await;
@@ -1034,6 +1046,11 @@ struct Here<'a> {
     /// The recipe's `close_when_shown`: closed before an action that
     /// touches the page (`popups::close_shown`).
     popups: &'a [super::recipe::ClosePopup],
+    /// The recipe's `wait_while_shown`: waited out before an action that
+    /// touches or checks the page (`loading::wait_out`).
+    loaders: &'a [super::recipe::LoadingIndicator],
+    /// The run's Stop, heard while a loading indicator is waited out.
+    cancel: Option<&'a AtomicBool>,
 }
 
 /// Said by the actions after one the application refused the session for.
@@ -1085,10 +1102,30 @@ async fn after_session_refused<D: Driver>(
     ActionOutcome::failed(session_refused_mid_case(key))
 }
 
+/// Before `action`, the project's loading indicators waited out
+/// (`loading::wait_out`): the notes to add to its outcome, or the outcome
+/// it fails with - and why the rest of the step must not run - when the
+/// page was still loading at the indicator's `max_ms` or the run was
+/// stopped meanwhile.
+async fn page_loaded<D: Driver>(
+    d: &mut D,
+    here: &Here<'_>,
+    action: &Action,
+    timing: &Timing,
+) -> Result<Vec<String>, (ActionOutcome, Option<&'static str>)> {
+    use super::loading::NotReady;
+    match super::loading::wait_out(d, here.loaders, action, timing, here.cancel).await {
+        Ok(notes) => Ok(notes),
+        Err(NotReady::StillLoading(why)) => Err((ActionOutcome::failed(why), None)),
+        Err(NotReady::Stopped) => Err((ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP))),
+    }
+}
+
 /// A plain action - one a `when_visible` may guard - carried out, and why
 /// the rest of the step must not run, when it must not. The one place every
-/// run, try and replay carries out a plain action, so the project's known
-/// pop-ups are closed here, first, when one is up (`popups::close_shown`).
+/// run, try and replay carries out a plain action, so the project's loading
+/// indicators are waited out here, first (`page_loaded`), and then its
+/// known pop-ups closed, when one is up (`popups::close_shown`).
 async fn plain<D: Driver>(
     d: &mut D,
     here: &Here<'_>,
@@ -1100,7 +1137,11 @@ async fn plain<D: Driver>(
     if matches!(action, Action::Navigate { .. } | Action::OpenTab { .. }) && !here.direct_urls {
         return (ActionOutcome::failed(nav::no_address(here.step)), Some(AFTER_REFUSED_ADDRESS));
     }
-    let notes = popups::close_shown(d, here.popups, action, timing, here.policy).await;
+    let mut notes = match page_loaded(d, here, action, timing).await {
+        Ok(notes) => notes,
+        Err(failed) => return failed,
+    };
+    notes.extend(popups::close_shown(d, here.popups, action, timing, here.policy).await);
     let mut out = match action {
         Action::Upload { selector, file } => {
             upload(d, here.root, here.organization, here.project, action, selector, file, timing).await

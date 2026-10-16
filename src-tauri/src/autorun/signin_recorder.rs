@@ -704,6 +704,7 @@ impl Draft {
             steps,
             after_sign_in: existing.map(|r| r.after_sign_in.clone()).unwrap_or_default(),
             close_when_shown: existing.map(|r| r.close_when_shown.clone()).unwrap_or_default(),
+            wait_while_shown: existing.map(|r| r.wait_while_shown.clone()).unwrap_or_default(),
             signed_in,
             allowed_origins: existing.map(|r| r.allowed_origins.clone()).unwrap_or_default(),
             session_minutes: existing.map(|r| r.session_minutes).unwrap_or(480),

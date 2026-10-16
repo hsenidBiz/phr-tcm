@@ -116,6 +116,34 @@ pub struct ClosePopup {
     pub close: Target,
 }
 
+/// A loading indicator the runner waits out by itself
+/// (`SignInRecipe::wait_while_shown`): while `shown` is VISIBLE, right
+/// before an action that touches or checks the page, the runner waits for
+/// it to go, up to `max_ms`, and only then does the action start its own
+/// timeout. Written for PeoplesHR's full-page spinner (2026-10-16), up for
+/// 20-60 s on a cold start, which made the first step of almost every run
+/// time out. An indicator left in the page hidden is not loading.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(deny_unknown_fields)]
+pub struct LoadingIndicator {
+    /// What a step that waited for it says: "waited 12 s for <name>".
+    pub name: String,
+    /// The indicator itself, as it looks while the page loads.
+    pub shown: Target,
+    /// The longest the runner waits for it to go, from
+    /// `loading::MIN_MAX_MS` to `loading::MAX_MAX_MS`; left out,
+    /// `loading::DEFAULT_MAX_MS`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_ms: Option<u32>,
+}
+
+impl LoadingIndicator {
+    /// `max_ms`, or the default when it is left out.
+    pub fn limit_ms(&self) -> u32 {
+        self.max_ms.unwrap_or(super::loading::DEFAULT_MAX_MS)
+    }
+}
+
 fn default_minutes() -> u32 {
     480
 }
@@ -143,6 +171,12 @@ pub struct SignInRecipe {
     /// not listed here is ever closed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub close_when_shown: Vec<ClosePopup>,
+    /// Loading indicators the runner waits out by itself: before every
+    /// action that touches or checks the page it looks once, without
+    /// waiting, for each, and while one is visible it waits for it to go
+    /// (`loading::wait_out`) - so no script needs a long first-step wait.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wait_while_shown: Vec<LoadingIndicator>,
     /// Exactly one visible match of this means "signed in".
     pub signed_in: Target,
     /// Other origins `navigate` may go to. The start address's own origin
@@ -348,6 +382,41 @@ fn check_popups(popups: &[ClosePopup]) -> Result<(), String> {
     Ok(())
 }
 
+/// Each loading indicator the runner waits out, named "wait_while_shown
+/// <n> (<name>)" in a refusal: a name to say it by, a selector that can be
+/// looked up as it stands, and a `max_ms` in range.
+fn check_loaders(loaders: &[LoadingIndicator]) -> Result<(), String> {
+    use super::loading::{DEFAULT_MAX_MS, MAX_MAX_MS, MIN_MAX_MS};
+    for (i, l) in loaders.iter().enumerate() {
+        let n = i + 1;
+        let name = l.name.trim();
+        if name.is_empty() {
+            return Err(format!(
+                "wait_while_shown {n}: give the loading indicator a short name, such as \"page loader\" - a step that waited for it says \"waited 12 s for page loader\""
+            ));
+        }
+        let at = |e: String| format!("wait_while_shown {n} ({name}): {e}");
+        l.shown.validate().map_err(|e| at(format!("\"shown\" - {e}")))?;
+        if crate::browser::locator::has_input_placeholder(&l.shown) {
+            return Err(at("\"shown\" - a component input has no value here; write the selector out".to_string()));
+        }
+        if serde_json::to_value(l).is_ok_and(|v| has_placeholder_anywhere(&v)) {
+            return Err(at(
+                "{{username}} and {{password}} are filled in for the recipe's own steps only - here they would be typed as they are"
+                    .to_string(),
+            ));
+        }
+        if l.max_ms.is_some_and(|ms| !(MIN_MAX_MS..=MAX_MAX_MS).contains(&ms)) {
+            return Err(at(format!(
+                "max_ms must be from {MIN_MAX_MS} to {MAX_MAX_MS} ({} to {} s) - leave it out to wait up to {DEFAULT_MAX_MS}",
+                MIN_MAX_MS / 1000,
+                MAX_MAX_MS / 1000
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// The rule a recipe's `start_url` must pass, on its own: a recording asks
 /// before it opens a browser, with the same words `validate` refuses in.
 pub fn check_start_url(url: &str) -> Result<(), String> {
@@ -366,6 +435,7 @@ impl SignInRecipe {
         check_steps(&self.steps, "step", true)?;
         check_steps(&self.after_sign_in, "after_sign_in step", false)?;
         check_popups(&self.close_when_shown)?;
+        check_loaders(&self.wait_while_shown)?;
         self.signed_in.validate().map_err(|e| format!("signed_in: {e}"))?;
         for o in &self.allowed_origins {
             if !is_bare_origin(o) {

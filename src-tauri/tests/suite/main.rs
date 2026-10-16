@@ -94,6 +94,7 @@ mod autorun_store;
 mod autorun_tables;
 mod autorun_transient;
 mod autorun_repeat_while_visible;
+mod autorun_wait_while_loading;
 mod autorun_when_visible;
 mod backup;
 mod branchcheck;
