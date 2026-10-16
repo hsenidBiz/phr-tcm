@@ -7,11 +7,13 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import Sidebar, { WORK_ITEMS, sectionShortcut, shortcutOrder, visibleCaseItems, type WorkSection } from "./Sidebar";
 import { clearTourExpanded, setTourExpanded } from "../lib/sidebarState";
 import { ALL_MODULES, resetModulesStore, setModule, setModulesForTest, shouldLeaveHidden, type Module } from "../lib/modules";
+import { isNewNav, noteModuleSwitch, resetNewNavForTest } from "../lib/newNav";
 
 afterEach(() => {
   clearTourExpanded();
   localStorage.clear();
   resetModulesStore();
+  resetNewNavForTest();
   clearMocks();
 });
 
@@ -217,4 +219,65 @@ test("nothing is locked when the tour is not running", () => {
   render(<Sidebar section="manual" onSelect={() => {}} />);
   expect(screen.getByRole("button", { name: "Update Test Cases" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Close sidebar" })).toBeEnabled();
+});
+
+/// A row a person has just revealed from the Modules page carries a ring
+/// and sparkles until they open it, and its name says so.
+function markAutoRun() {
+  setModulesForTest(["db_access", "auto_run"]);
+  act(() => noteModuleSwitch(new Set<Module>(["db_access"]), new Set<Module>(["db_access", "auto_run"])));
+}
+
+test("a newly enabled row has a ring, sparkles and 'new' in its name", () => {
+  markAutoRun();
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  const row = screen.getByRole("button", { name: "Auto Run (new)" });
+  expect(row).toHaveClass("nav-new");
+  const sparkles = row.querySelectorAll("[data-sparkle]");
+  expect(sparkles.length).toBeGreaterThan(0);
+  for (const s of sparkles) {
+    expect(s).toHaveAttribute("aria-hidden");
+    expect(s).toHaveClass("nav-sparkle");
+  }
+  // The label is still there to read, and no other row is marked.
+  expect(row).toHaveTextContent("Auto Run");
+  expect(screen.getByRole("button", { name: "AI Bridge" })).not.toHaveClass("nav-new");
+});
+
+test("the mark shows on the collapsed icon rail too", () => {
+  localStorage.setItem("tcm-v2-sidebar", "collapsed");
+  markAutoRun();
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.getByRole("button", { name: "Auto Run (new)" })).toHaveClass("nav-new");
+});
+
+test("clicking the marked row clears the mark and still navigates", () => {
+  markAutoRun();
+  const onSelect = vi.fn();
+  render(<Sidebar section="manual" onSelect={onSelect} />);
+  fireEvent.click(screen.getByRole("button", { name: "Auto Run (new)" }));
+  expect(onSelect).toHaveBeenCalledWith("autorun");
+  expect(isNewNav("autorun")).toBe(false);
+  const row = screen.getByRole("button", { name: "Auto Run" });
+  expect(row).not.toHaveClass("nav-new");
+  expect(row.querySelector("[data-sparkle]")).toBeNull();
+});
+
+test("under reduced motion the ring stays and no sparkle is drawn", () => {
+  const was = window.matchMedia;
+  window.matchMedia = ((q: string) => ({
+    matches: q.includes("prefers-reduced-motion"),
+    media: q,
+    addEventListener() {},
+    removeEventListener() {},
+  })) as unknown as typeof window.matchMedia;
+  try {
+    markAutoRun();
+    render(<Sidebar section="manual" onSelect={() => {}} />);
+    const row = screen.getByRole("button", { name: "Auto Run (new)" });
+    expect(row).toHaveClass("nav-new");
+    expect(row.querySelector("[data-sparkle]")).toBeNull();
+  } finally {
+    window.matchMedia = was;
+  }
 });

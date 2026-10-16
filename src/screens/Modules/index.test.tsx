@@ -2,11 +2,14 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { resetModulesStore, setModulesForTest, type Module } from "../../lib/modules";
+import { isNewNav, resetNewNavForTest } from "../../lib/newNav";
 import Modules from "./index";
 
 afterEach(() => {
   clearMocks();
   resetModulesStore();
+  localStorage.clear();
+  resetNewNavForTest();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -188,4 +191,36 @@ test("the core's name and line are read out", () => {
   show([]);
   expect(screen.getByText("Core").closest("[aria-hidden]")).toBeNull();
   expect(screen.getByText("Test cases, suites, runs and the board").closest("[aria-hidden]")).toBeNull();
+});
+
+// A person's own switch-on marks the sidebar row it reveals; switching it
+// off again takes the mark away.
+test("switching a module on here marks its sidebar row, and off clears it", async () => {
+  let answer: Module[] = ["db_access", "auto_run"];
+  mockIPC((cmd) => (cmd === "modules_set" ? answer : undefined));
+  show(["db_access"]);
+  fireEvent.click(sw(/^Auto Run/));
+  await waitFor(() => expect(isNewNav("autorun")).toBe(true));
+  expect(isNewNav("ai")).toBe(false);
+
+  answer = ["db_access"];
+  fireEvent.click(sw(/^Auto Run/));
+  await waitFor(() => expect(isNewNav("autorun")).toBe(false));
+});
+
+test("Database Access and Writing Style mark AI Bridge, where their cards go", async () => {
+  mockIPC((cmd) => (cmd === "modules_set" ? ["writing_style"] : undefined));
+  show([]);
+  fireEvent.click(sw(/^Writing Style/));
+  await waitFor(() => expect(isNewNav("ai")).toBe(true));
+});
+
+test("a refused switch marks nothing", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "modules_set") throw "no";
+  });
+  show(["db_access"]);
+  fireEvent.click(sw(/^Auto Run/));
+  expect(await screen.findByRole("alert")).toBeInTheDocument();
+  expect(isNewNav("autorun")).toBe(false);
 });

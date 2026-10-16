@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { IconBack } from "../../lib/actionIcons";
-import { setModule, useModules, useModulesHydrated, type Module } from "../../lib/modules";
+import { realModulesSnapshot, setModule, useModules, useModulesHydrated, type Module } from "../../lib/modules";
+import { noteModuleSwitch } from "../../lib/newNav";
 import ModuleTree from "./ModuleTree";
 import { MODULE_INFO, infoOf, switchOffWarning } from "./modulesCopy";
 
@@ -31,7 +32,11 @@ export default function Modules({ onBack }: { onBack: () => void }) {
     setError(null);
     setBusy(m);
     try {
+      const before = realModulesSnapshot();
       await setModule(m, next);
+      // A person's own switch: mark in the sidebar what it revealed, or
+      // take the mark away from what it hid.
+      noteModuleSwitch(before, realModulesSnapshot());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

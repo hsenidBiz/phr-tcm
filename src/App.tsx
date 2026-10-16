@@ -73,7 +73,15 @@ import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { WORK_ITEMS, shortcutOrder, type Section, type WorkSection } from "./components/Sidebar";
 import { hydrateExtras } from "./lib/extras";
-import { hydrateModules, sectionShown, shouldLeaveHidden, useModules, useModulesHydrated } from "./lib/modules";
+import {
+  hydrateModules,
+  realModulesSnapshot,
+  sectionShown,
+  shouldLeaveHidden,
+  useModules,
+  useModulesHydrated,
+} from "./lib/modules";
+import { clearNewNav, pruneNewNav } from "./lib/newNav";
 import TitleBar from "./components/TitleBar";
 import UiTour from "./tour/UiTour";
 import { installTourBackend, restoreTourBackend } from "./tour/tourBackend";
@@ -440,6 +448,21 @@ export default function App() {
     if (tourOpen) return;
     savePrefs({ org, project, section, pbi, workMode });
   }, [org, project, section, pbi, workMode, tourOpen]);
+
+  // A sidebar row marked "new" (lib/newNav) is done with once its screen
+  // is open, however it was reached: a click, Ctrl+number, the palette, a
+  // redirect. Not while the tour drives the tabs - its stops are not the
+  // person's own visit.
+  useEffect(() => {
+    if (tourOpen || workMode || !sectionShown(section, modules)) return;
+    clearNewNav(section);
+  }, [section, workMode, tourOpen, modules]);
+
+  // Marks only ever come from a person's own switch-on; this only ever
+  // takes away the ones whose module is no longer on.
+  useEffect(() => {
+    if (modulesHydrated) pruneNewNav(realModulesSnapshot());
+  }, [modules, modulesHydrated]);
 
   // Changing scope drops the case selection too. It is a list of work item
   // ids handed over from Search Suites, and ids mean nothing in a different
