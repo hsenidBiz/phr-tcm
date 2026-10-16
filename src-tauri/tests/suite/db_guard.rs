@@ -635,3 +635,78 @@ fn a_long_object_body_is_allowed_up_to_its_own_limit() {
     assert!(refusal(&select).contains("20000"), "{}", refusal(&select));
     assert!(!refusal(&select).contains("200000"), "{}", refusal(&select));
 }
+
+// ------------------------------------------------------- escaped name ends
+
+/// Inside `[...]` the server reads `]]` as one `]`, and inside `"..."` it
+/// reads `""` as one `"`: the name goes on. A guard that ended the name at
+/// the first `]` saw a stray `]` and then a string literal - one that was
+/// really live code, hidden from every check.
+#[test]
+fn a_bracketed_or_quoted_name_ends_where_the_server_ends_it() {
+    for sql in [
+        "SELECT 1 AS [a]]'] DROP TABLE t --'\n",
+        "SELECT 1 AS \"a\"\"'\" DROP TABLE t --'\n",
+    ] {
+        let why = refused_everywhere(sql);
+        assert!(why.contains("DROP"), "{sql:?} was refused as {why:?}");
+    }
+    // A name that really holds a `]` or a `"` is still just a name.
+    assert_eq!(classify("SELECT [a]]b] FROM t"), Verdict::Read);
+    assert_eq!(classify("SELECT \"a\"\"b\" FROM t"), Verdict::Read);
+    assert_eq!(classify("EXEC [dbo].[p]]x] 1"), Verdict::Write);
+    assert_eq!(classify("CREATE PROCEDURE [dbo].[p]]x] AS SELECT [a]]b] FROM t"), Verdict::ObjectChange);
+}
+
+#[test]
+fn an_escaped_bracket_cannot_hide_code_in_a_procedure_body() {
+    for (hidden, named) in [
+        ("DROP TABLE t", "DROP"),
+        ("EXEC xp_cmdshell 'dir'", "xp_cmdshell"),
+        ("SELECT * FROM otherdb.dbo.t", "otherdb.dbo.t"),
+    ] {
+        for name in ["[a]]']", "\"a\"\"'\""] {
+            let sql = format!("CREATE PROCEDURE dbo.p AS SELECT 1 AS {name} {hidden} --'\n");
+            let why = refused_everywhere(&sql);
+            assert!(why.contains(named), "{sql:?} was refused as {why:?}, expected {named}");
+        }
+    }
+}
+
+/// The EXEC shape reads its procedure name with the same lexer as the rest
+/// of the guard, so a comment marker inside a bracketed name is part of the
+/// name and what follows it is still code - and refused, because it is not
+/// an argument.
+#[test]
+fn exec_reads_a_bracketed_name_the_way_the_server_does() {
+    for sql in [
+        "EXEC [p--] DROP TABLE t SELECT 1 AS [\n]",
+        "EXEC [p]]--] DROP TABLE t SELECT 1 AS [\n]",
+        "EXEC [p]]--] DROP TABLE t --]\n",
+        "EXEC \"p--\" DROP TABLE t SELECT 1 AS [\n]",
+    ] {
+        let why = refused_everywhere(sql);
+        assert!(!why.is_empty(), "{sql:?}");
+    }
+}
+
+/// `T.c.value(...)` is the usual way to shred XML, and a three-part call can
+/// equally be `otherdb.dbo.fn(...)` - so it stays refused, with a sentence
+/// that says how to write the XML method instead.
+#[test]
+fn a_three_part_call_says_how_to_write_an_xml_method() {
+    let sql = "CREATE PROCEDURE dbo.p @x XML AS SELECT T.c.value('.', 'INT') FROM @x.nodes('/a') AS T(c)";
+    let why = refused_everywhere(sql);
+    assert!(
+        why.contains(
+            "`T.c.value(` reads as a three-part name, which could reach another database. If this is an XML method on a column, write it as `(T.c).value(...)`."
+        ),
+        "{why}"
+    );
+    // Without the call it is the ordinary three-part sentence.
+    let why = refused_everywhere("CREATE PROCEDURE dbo.p AS SELECT * FROM otherdb.dbo.t");
+    assert!(!why.contains("XML method"), "{why}");
+
+    let fixed = "CREATE PROCEDURE dbo.p @x XML AS SELECT (T.c).value('.', 'INT') FROM @x.nodes('/a') AS T(c)";
+    assert_eq!(classify(fixed), Verdict::ObjectChange);
+}

@@ -273,9 +273,12 @@ pub fn classify(sql: &str) -> Verdict {
     // EXEC/EXECUTE gets its own classifier, on a copy of `sql` that keeps a
     // bracketed or double-quoted name's real text - `body` above blanks it,
     // which is right for a keyword scan but useless for reading a procedure
-    // NAME, the one thing this shape actually has to read.
+    // NAME, the one thing this shape actually has to read. The copy lexes
+    // names exactly as `body` does: a `--` or `'` inside `[...]` is part of
+    // the name, so the code after it is still read - and, not being an
+    // argument, refused (`EXEC [p--] DROP TABLE t ...`).
     if head == "EXEC" || head == "EXECUTE" {
-        let kept = strip_comments_keep_identifiers(sql);
+        let kept = strip_comments_keep_names(sql);
         let kept_body = kept.trim().trim_start_matches(|c: char| c == ';' || c.is_whitespace());
         return classify_exec(kept_body, &head);
     }
@@ -633,6 +636,22 @@ fn classify_object(sql: &str, rest: &str) -> Verdict {
         return refused("the procedure, view or function's name could not be read: <name> or <schema>.<name>".to_string());
     };
     for name in dotted_names(kept_rest) {
+        if name.parts.len() > 2 && name.called {
+            // `T.c.value(...)` - XML shredding - looks exactly like
+            // `otherdb.dbo.fn(...)`, so it stays refused, with the way to
+            // write the XML method instead.
+            let n = match name.parts.len() {
+                3 => "three",
+                4 => "four",
+                _ => "many",
+            };
+            return refused(format!(
+                "`{}(` reads as a {n}-part name, which could reach another database. If this is an XML method on a column, write it as `({}).{}(...)`.",
+                shorten(&name.text),
+                shorten(&name.head),
+                shorten(&name.last)
+            ));
+        }
         if name.parts.len() > 2 {
             return refused(format!(
                 "{} names another database or server: in a procedure, view or function a name has at most two parts (<schema>.<name>) - {BODY_RULE}",
@@ -736,6 +755,11 @@ fn word_before(text: &str) -> String {
 struct DottedName {
     text: String,
     parts: Vec<String>,
+    /// As written, everything before the last dot, and the last part.
+    head: String,
+    last: String,
+    /// Whether a `(` follows it: a function or method call.
+    called: bool,
 }
 
 /// Can `c` start a name part: a letter, `_`, a variable's `@`, a temp
@@ -751,9 +775,8 @@ fn continues_part(c: char) -> bool {
 }
 
 /// One name part starting at `chars[i]`: a bracketed or double-quoted name
-/// (closed at its first closing character, the same place
-/// `strip_comments_and_literals` closes it) or a plain one. Returns the part
-/// without its brackets and where it ends.
+/// (closed where `skip_quoted` closes it, so `[a]]b]` is the one part `a]b`)
+/// or a plain one. Returns the part without its brackets and where it ends.
 fn read_part(chars: &[char], i: usize) -> Option<(String, usize)> {
     let close = match chars.get(i)? {
         '[' => ']',
@@ -764,8 +787,21 @@ fn read_part(chars: &[char], i: usize) -> Option<(String, usize)> {
         }
         _ => return None,
     };
-    let end = (i + 1..chars.len()).find(|&j| chars[j] == close).unwrap_or(chars.len());
-    Some((chars[i + 1..end].iter().collect(), (end + 1).min(chars.len())))
+    let mut part = String::new();
+    let mut j = i + 1;
+    while j < chars.len() {
+        if chars[j] == close {
+            if chars.get(j + 1) == Some(&close) {
+                part.push(close);
+                j += 2;
+                continue;
+            }
+            return Some((part, j + 1));
+        }
+        part.push(chars[j]);
+        j += 1;
+    }
+    Some((part, chars.len()))
 }
 
 /// Every dotted name in `text`, which has been through
@@ -797,6 +833,7 @@ fn dotted_names(text: &str) -> Vec<DottedName> {
         }
         let mut parts = Vec::new();
         let mut j = i;
+        let mut last_dot = None;
         if c == '.' {
             parts.push(String::new());
         } else {
@@ -812,15 +849,18 @@ fn dotted_names(text: &str) -> Vec<DottedName> {
             if chars.get(k) != Some(&'.') {
                 break;
             }
+            let dot = k;
             let k = skip_ws(k + 1);
             if chars.get(k) == Some(&'.') {
                 parts.push(String::new());
+                last_dot = Some(dot);
                 j = k;
                 continue;
             }
             match read_part(&chars, k) {
                 Some((part, next)) => {
                     parts.push(part);
+                    last_dot = Some(dot);
                     j = next;
                 }
                 None => {
@@ -829,7 +869,13 @@ fn dotted_names(text: &str) -> Vec<DottedName> {
                 }
             }
         }
-        out.push(DottedName { text: chars[i..j].iter().collect::<String>().trim().to_string(), parts });
+        let text_of = |from: usize, to: usize| chars[from..to.max(from)].iter().collect::<String>().trim().to_string();
+        let (head, last) = match last_dot {
+            Some(dot) => (text_of(i, dot), text_of(dot + 1, j)),
+            None => (String::new(), text_of(i, j)),
+        };
+        let called = chars.get(skip_ws(j)) == Some(&'(');
+        out.push(DottedName { text: text_of(i, j), parts, head, last, called });
         i = j.max(i + 1);
     }
     out
@@ -914,93 +960,17 @@ fn strip_comments_and_literals(sql: &str) -> String {
                 out.push('\'');
             }
             // A bracketed or double-quoted identifier is a name, never a
-            // verb, and may legally contain a quote or a comment marker.
-            '[' => {
-                out.push_str("[]");
-                for c in chars.by_ref() {
-                    if c == ']' {
-                        break;
-                    }
-                }
+            // verb, and may legally contain a quote or a comment marker. It
+            // ends where the server ends it: `]]` inside brackets and `""`
+            // inside quotes are the closing character escaped, not the end.
+            // Ending at the first one let `[a]]'] DROP TABLE t --'` read as
+            // a name, a stray `]` and a string, with the DROP hidden inside.
+            '[' | '"' => {
+                let close = if c == '[' { ']' } else { '"' };
+                out.push(c);
+                out.push(close);
+                skip_quoted(&mut chars, close, |_| {});
             }
-            '"' => {
-                out.push_str("\"\"");
-                for c in chars.by_ref() {
-                    if c == '"' {
-                        break;
-                    }
-                }
-            }
-            other => out.push(other),
-        }
-    }
-    out
-}
-
-/// Like `strip_comments_and_literals`, but a bracketed or double-quoted
-/// name keeps its real text instead of being blanked to `[]`/`""`. Classifying
-/// an EXEC statement means reading the actual procedure name - `sp_help` and
-/// `DeleteEverything` have to look different - so the one place that costs
-/// anything is here, not in the keyword scan the rest of the guard runs on
-/// `body`, which never needs to know what a name actually says.
-///
-/// A string literal is still blanked: its content is a VALUE, not a name,
-/// and `EXEC dbo.p 'DROP TABLE t'` must read the same as `EXEC dbo.p 1`.
-fn strip_comments_keep_identifiers(sql: &str) -> String {
-    let mut out = String::with_capacity(sql.len());
-    let mut chars = sql.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '-' if chars.peek() == Some(&'-') => {
-                for c in chars.by_ref() {
-                    if c == '\n' {
-                        out.push('\n');
-                        break;
-                    }
-                }
-                out.push(' ');
-            }
-            '/' if chars.peek() == Some(&'*') => {
-                chars.next();
-                let mut depth = 1usize;
-                let mut prev = '\0';
-                for c in chars.by_ref() {
-                    if prev == '/' && c == '*' {
-                        depth += 1;
-                        prev = '\0';
-                        continue;
-                    }
-                    if prev == '*' && c == '/' {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
-                        prev = '\0';
-                        continue;
-                    }
-                    if c == '\n' {
-                        out.push('\n');
-                    }
-                    prev = c;
-                }
-                out.push(' ');
-            }
-            '\'' => {
-                out.push('\'');
-                while let Some(c) = chars.next() {
-                    if c == '\'' {
-                        if chars.peek() == Some(&'\'') {
-                            chars.next();
-                            continue;
-                        }
-                        break;
-                    }
-                }
-                out.push('\'');
-            }
-            // Unlike `strip_comments_and_literals`, brackets and double
-            // quotes are not special here - their contents fall through to
-            // `other` below and are kept exactly as written.
             other => out.push(other),
         }
     }
@@ -1008,11 +978,16 @@ fn strip_comments_keep_identifiers(sql: &str) -> String {
 }
 
 /// Like `strip_comments_and_literals`, but a bracketed or double-quoted name
-/// keeps its brackets and its text, closed at the same character
-/// `strip_comments_and_literals` closes it - so the two never disagree about
-/// where code is, and a `'` or `--` inside a name cannot hide the code after
-/// it from the name checks in `classify_object`, as it could in
-/// `strip_comments_keep_identifiers`.
+/// keeps its brackets and its real text instead of being blanked to
+/// `[]`/`""`, closed at the same character (`skip_quoted`) - so the two never
+/// disagree about where code is, and a `'` or `--` inside a name cannot hide
+/// the code after it. Reading a NAME needs this - `sp_help` and
+/// `DeleteEverything`, `[xp_cmdshell]` and `[otherdb].[dbo].[t]`, have to
+/// look like what they are - so `classify_exec` and the name checks in
+/// `classify_object` read this copy, while every keyword scan reads `body`.
+///
+/// A string literal is still blanked: its content is a VALUE, not a name,
+/// and `EXEC dbo.p 'DROP TABLE t'` must read the same as `EXEC dbo.p 1`.
 fn strip_comments_keep_names(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len());
     let mut chars = sql.chars().peekable();
@@ -1068,17 +1043,48 @@ fn strip_comments_keep_names(sql: &str) -> String {
             '[' | '"' => {
                 let close = if c == '[' { ']' } else { '"' };
                 out.push(c);
-                for c in chars.by_ref() {
-                    out.push(c);
-                    if c == close {
-                        break;
-                    }
-                }
+                skip_quoted(&mut chars, close, |c| out.push(c));
             }
             other => out.push(other),
         }
     }
     out
+}
+
+/// Consumes a bracketed or double-quoted name after its opening character,
+/// up to and including its closing one - read the way the server reads it,
+/// where the closing character doubled (`]]`, `""`) is that character
+/// escaped and the name goes on. Every character consumed, the closing one
+/// and both of an escaped pair included, is handed to `keep`.
+fn skip_quoted(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, close: char, mut keep: impl FnMut(char)) {
+    while let Some(c) = chars.next() {
+        keep(c);
+        if c == close {
+            if chars.peek() == Some(&close) {
+                keep(close);
+                chars.next();
+                continue;
+            }
+            break;
+        }
+    }
+}
+
+/// Where the bracketed or double-quoted name that `s` starts inside ends:
+/// the byte index of its closing character, `close`, read the way
+/// `skip_quoted` reads it. None if it never closes.
+fn closing_at(s: &str, close: char) -> Option<usize> {
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if c == close {
+            if chars.peek().map(|&(_, n)| n) == Some(close) {
+                chars.next();
+                continue;
+            }
+            return Some(i);
+        }
+    }
+    None
 }
 
 /// The system procedures a person only ever reads schema information with -
@@ -1100,11 +1106,11 @@ const LOOKUP_PROCEDURES: &[&str] = &[
 /// whatever comes after it in the statement.
 fn parse_name_part(s: &str) -> Option<(&str, &str)> {
     if let Some(inner) = s.strip_prefix('[') {
-        let end = inner.find(']')?;
+        let end = closing_at(inner, ']')?;
         return Some((&inner[..end], &inner[end + 1..]));
     }
     if let Some(inner) = s.strip_prefix('"') {
-        let end = inner.find('"')?;
+        let end = closing_at(inner, '"')?;
         return Some((&inner[..end], &inner[end + 1..]));
     }
     let mut end = 0usize;
@@ -1162,7 +1168,7 @@ fn strip_word_ci<'a>(s: &'a str, word: &str) -> Option<&'a str> {
 }
 
 /// One value out of the accepted grammar: a number, a string literal
-/// (already blanked to `''`/`N''` by `strip_comments_keep_identifiers`), an
+/// (already blanked to `''`/`N''` by `strip_comments_keep_names`), an
 /// `@variable`, or `NULL`/`DEFAULT`. Returns what is left after it.
 fn parse_exec_value(s: &str) -> Option<&str> {
     let r = s.trim_start();
@@ -1292,7 +1298,7 @@ fn finish_exec_args(rest: &str, verdict: Verdict, head: &str) -> Verdict {
 
 /// Classifies a statement whose leading word is EXEC or EXECUTE against the
 /// one shape the owner approved: `EXEC[UTE] [@rc =] <procname> [args]`.
-/// `kept` is `sql` run through `strip_comments_keep_identifiers`, trimmed
+/// `kept` is `sql` run through `strip_comments_keep_names`, trimmed
 /// the same way `body` is in `classify` - comments gone, a string literal
 /// blanked to its quotes, a bracketed or quoted name kept exactly as
 /// written.
