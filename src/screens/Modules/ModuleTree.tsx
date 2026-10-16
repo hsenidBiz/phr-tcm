@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ComponentType } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import ElectricLogo from "../../components/ElectricLogo";
 import {
   IconModuleApiTemplates,
   IconModuleAutoRun,
@@ -71,6 +72,11 @@ const SHAKE_MS = 400;
 const DRAIN_MS = 600;
 const DRAIN_STEP_MS = 450;
 
+/** The most pixels the electric layer draws a frame. The board is 800x750
+ * (600k px) at 1x; this renders it a little under that and lets the browser
+ * scale it up, which a soft glow hides, to go easier on a software renderer. */
+const ELECTRIC_PIXEL_BUDGET = 400_000;
+
 /** How far down the tree a module hangs: Core's children are 1. */
 function depthOf(m: Module): number {
   let depth = 1;
@@ -98,6 +104,58 @@ function pathFor(m: Module, height: Partial<Record<Module, number>>): string {
   const to = AT[m];
   const mid = (from.y + to.y) / 2;
   return `M${from.x},${from.y} C${from.x},${mid} ${to.x},${mid} ${to.x},${to.y}`;
+}
+
+/**
+ * The picture the electric layer traces: the paths of `mods` as plain strokes
+ * on a canvas the size of the board, so a point of it is the same point of
+ * the board (the layer maps the whole picture onto the board, see `fitTo`).
+ * Only its alpha is read, so the stroke colour never shows.
+ */
+function electricSrc(mods: readonly Module[], height: Partial<Record<Module, number>>): string {
+  const paths = mods
+    .map((m) => `<path d="${pathFor(m, height)}" fill="none" stroke="white" stroke-width="5" stroke-linecap="round"/>`)
+    .join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${BOARD.w}" height="${BOARD.h}" viewBox="0 0 ${BOARD.w} ${BOARD.h}">${paths}</svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+type ElectricColors = { color: string; glowColor: string; theme: "dark" | "light" };
+
+/** The electricity's colours, from the theme's own tokens, kept current as the
+ * theme or accent changes (both are attributes on <html>). On a dark theme
+ * the strand's core is the lighter accent (on-accent is near black there);
+ * on a light one it is on-accent, drawn over the accent glow. */
+function readElectricColors(): ElectricColors {
+  const root = document.documentElement;
+  const css = getComputedStyle(root);
+  const token = (name: string) => css.getPropertyValue(name).trim();
+  const dark = root.classList.contains("dark");
+  return {
+    glowColor: token("--color-accent"),
+    color: token(dark ? "--color-accent-hover" : "--color-on-accent"),
+    theme: dark ? "dark" : "light",
+  };
+}
+
+function useElectricColors(): ElectricColors {
+  const [colors, setColors] = useState(readElectricColors);
+  useEffect(() => {
+    if (typeof MutationObserver === "undefined") return;
+    const update = () => {
+      const next = readElectricColors();
+      setColors((prev) =>
+        prev.color === next.color && prev.glowColor === next.glowColor && prev.theme === next.theme ? prev : next,
+      );
+    };
+    const mo = new MutationObserver(update);
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "data-theme", "data-accent", "style"],
+    });
+    return () => mo.disconnect();
+  }, []);
+  return colors;
 }
 
 /** Each card's height, kept current as text wraps or the font changes. */
@@ -220,6 +278,14 @@ export default function ModuleTree({
   const { lit, running, flashing, draining } = useLit(modules, hydrated);
   const { height, refFor } = useHeights();
   const { frame, scale } = useFit();
+  const electricColors = useElectricColors();
+  // The electricity runs along every path that is lit and not draining; the
+  // picture changes only when that set (or a card's height) does, and the
+  // layer morphs from the old picture to the new one.
+  const electric = useMemo(() => {
+    const mods = MODULE_INFO.map((i) => i.module).filter((m) => lit.has(m) && !draining.has(m));
+    return mods.length > 0 ? electricSrc(mods, height) : null;
+  }, [lit, draining, height]);
   const [shaking, setShaking] = useState<Module | null>(null);
   const shakeTimer = useRef<number>(0);
   useEffect(() => () => window.clearTimeout(shakeTimer.current), []);
@@ -257,13 +323,6 @@ export default function ModuleTree({
                   data-edge-line={m}
                   className={cn("mod-edge", lit.has(m) && !draining.has(m) && "mod-edge-lit")}
                 />
-                {/* Power flowing down a lit path, from the core (or the
-                    parent) into the module: one train of sparks. Paths run
-                    parent to child, so the sparks travel the way the power
-                    does. */}
-                {lit.has(m) && !draining.has(m) && (
-                  <path d={pathFor(m, height)} pathLength={1} data-current={m} className="mod-current" />
-                )}
                 {/* Switched off: the glow empties from the module back up to
                     its parent, after the modules below it have emptied. */}
                 {draining.has(m) && (
@@ -285,6 +344,35 @@ export default function ModuleTree({
               </g>
             ))}
           </svg>
+
+          {/* The power in the lit paths: one WebGL layer for the whole board,
+              tuned to hug the line: the strands' sway scales with the board
+              (up to about 9 board units per 0.1 of `bend`), so `bend` stays near 0,
+              over the paths and under the cards, sized in board units like
+              everything else. Nothing lit, or reduced motion: no layer, and
+              a lit path is just its steady glow. */}
+          {electric && !reducedMotion() && (
+            <div aria-hidden="true" data-electric className="pointer-events-none absolute inset-0">
+              <ElectricLogo
+                src={electric}
+                color={electricColors.color}
+                glowColor={electricColors.glowColor}
+                theme={electricColors.theme}
+                fitTo="image"
+                scale={1}
+                interactive={false}
+                maxDpr={1}
+                pixelBudget={ELECTRIC_PIXEL_BUDGET}
+                strands={2}
+                arcs={0.5}
+                speed={2}
+                glow={1}
+                crackle={1.2}
+                bend={0.05}
+                thickness={1.2}
+              />
+            </div>
+          )}
 
           <div className="absolute z-10 -translate-x-1/2 -translate-y-1/2" style={{ left: CORE_AT.x, top: CORE_AT.y }}>
             <PowerCore />
