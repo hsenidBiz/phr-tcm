@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.1",
+    date: "2026-10-16",
+    items: [
+      "New Modules page, opened from Settings: switch on only the parts of the app you need, laid out as a tree where a module comes on once the one it needs is on. Database Access, Writing Style, Auto Run, API Templates and Playwright are modules; test case management is always there. It replaces the Enable Advanced Features switch. Updating keeps everything you use today, and switching a module off only hides it: nothing is deleted.",
+      "The Playwright tab follows your repo's folders at any depth: the Overview, the Runner's test tree, Export to Playwright and the Finish in the repo prompt all work with features nested however the repo arranges them.",
+      "When an action in an Auto Run step fails, the rest of that step is skipped instead of each later action waiting out its own timeout, so a failed step no longer holds a run up for minutes. The skipped actions show as not run.",
+      "Export to Playwright and Sync no longer refuse a case whose script has no Runs as: they use the account the case ran as on its newest passing run. A script's own Runs as still wins.",
+      "The Playwright tab fills the window: the Runner's test list and output grow to the bottom, and both columns end on the same line.",
+    ],
+  },
+  {
     version: "2.2.1-beta.2",
     date: "2026-10-15",
     items: [
