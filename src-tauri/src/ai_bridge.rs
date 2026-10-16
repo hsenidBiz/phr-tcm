@@ -416,7 +416,9 @@ pub async fn route(
         ("POST", "/crystal-preview") => crystal_preview().await,
         // Runs the report's stored procedure on the chosen database, so it
         // is gated like a database write besides (`crystal_preview_live`).
-        ("POST", "/crystal-preview-live") => crystal_preview_live(ctx, body).await,
+        ("POST", "/crystal-preview-live") => {
+            crystal_preview_live(ctx, body, &crate::modules::current(), rpt_core::preview::preview_live_report).await
+        }
         ("GET", "/crystal-guide") => crystal_guide(),
         // The proxy asks for this before listing tools and before every
         // call, so a toggle in the app takes effect on the assistant's next
@@ -6343,12 +6345,23 @@ fn chosen_database_name(ctx: &BridgeContext) -> String {
 /// then `crystal::preview_live` checks the procedure and the parameters.
 /// The bundle blocks on a runtime of its own, so the call runs on a
 /// blocking thread (`crystal_blocking`), never on this one.
-async fn crystal_preview_live(ctx: &BridgeContext, body: &str) -> (u16, String) {
+///
+/// `on` is the modules that are on and `fetch` the bundle's
+/// fetch-and-render (`preview_live_report`); both are parameters so a test
+/// can show that a refused call never reaches the fetch.
+pub async fn crystal_preview_live(
+    ctx: &BridgeContext,
+    body: &str,
+    on: &std::collections::BTreeSet<crate::modules::Module>,
+    fetch: impl FnOnce(&rpt_core::rpt_reader::Rpt, &rpt_core::LiveDb) -> Result<rpt_core::PreviewOutput, String>
+        + Send
+        + 'static,
+) -> (u16, String) {
     let params = match crystal_args(body).and_then(|args| crystal_params(&args)) {
         Ok(params) => params,
         Err(refused) => return refused,
     };
-    if let Err(refused) = live_preview_gate(&crate::modules::current(), ctx.db_writes) {
+    if let Err(refused) = live_preview_gate(on, ctx.db_writes) {
         return refused;
     }
     let conn = match crate::db::query::connection(ctx.db_secrets.as_deref(), ctx.db_id.as_deref()) {
@@ -6359,7 +6372,7 @@ async fn crystal_preview_live(ctx: &BridgeContext, body: &str) -> (u16, String) 
         return (400, crate::db::READ_ONLY_SENTENCE.to_string());
     }
     let name = chosen_database_name(ctx);
-    let done = crystal_blocking(move || crate::crystal::preview_live(&conn, &name, params)).await;
+    let done = crystal_blocking(move || crate::crystal::preview_live_with(&conn, &name, params, fetch)).await;
     crystal_answer(done.and_then(|info| serde_json::to_value(info).map_err(|e| (500, e.to_string()))))
 }
 

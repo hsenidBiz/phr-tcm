@@ -395,17 +395,13 @@ fn a_live_preview_is_kept_like_a_saved_one_and_names_its_connection() {
     assert!(none.is_err() && !fetched.get(), "{none:?}");
 
     crystal::open(&path).unwrap();
-    let info = crystal::preview_live_with(
-        &login,
-        "Dev - dev login",
-        vec![("a_note".into(), "anything".into())],
-        |_: &Rpt, db: &LiveDb| {
-            // The bundle is handed the login as an ADO string, and the params as given.
-            assert_eq!(db.connection_string, SECRET_CONNECTION);
-            assert_eq!(db.params, vec![("a_note".to_string(), "anything".to_string())]);
-            Ok(PreviewOutput { pdf: b"%PDF-live".to_vec(), page_count: 3, diagnostics: vec!["a note".into()] })
-        },
-    )
+    let given = fitting_values(&path);
+    let info = crystal::preview_live_with(&login, "Dev - dev login", given.clone(), |_: &Rpt, db: &LiveDb| {
+        // The bundle is handed the login as an ADO string, and the params as given.
+        assert_eq!(db.connection_string, SECRET_CONNECTION);
+        assert_eq!(db.params, given);
+        Ok(PreviewOutput { pdf: b"%PDF-live".to_vec(), page_count: 3, diagnostics: vec!["a note".into()] })
+    })
     .unwrap();
     assert_eq!(info.live.as_deref(), Some("Dev - dev login"));
     assert_eq!(
@@ -420,22 +416,32 @@ fn a_live_preview_is_kept_like_a_saved_one_and_names_its_connection() {
     crystal::close();
 }
 
+/// Every log line this process has written lately, for checking that none
+/// carries the login or the server.
+fn logged() -> Vec<String> {
+    v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect()
+}
+
 #[test]
 fn a_live_preview_never_answers_with_the_host_or_the_password() {
     let _lock = serial::crystal();
+    let _log = serial::log_tail();
     let dir = tempfile::tempdir().unwrap();
     let path = copy_sample(dir.path(), SAMPLE);
     crystal::open(&path).unwrap();
     let login = secret_login("x_devlogin");
 
     // A driver that echoed everything it was given, in another case too.
-    let why = crystal::preview_live_with(&login, "Dev - dev login", vec![], |_: &Rpt, db: &LiveDb| {
+    let fetched = std::cell::Cell::new(0);
+    let why = crystal::preview_live_with(&login, "Dev - dev login", fitting_values(&path), |_: &Rpt, db: &LiveDb| {
+        fetched.set(fetched.get() + 1);
         Err(format!(
             "cannot connect to SECRET-HOST/hrm: login failed for x_devlogin (pw-secret) using {}",
             db.connection_string
         ))
     })
     .unwrap_err();
+    assert_eq!(fetched.get(), 1, "the fetch ran: {why}");
     assert!(!leaks(&why) && !why.contains(SECRET_CONNECTION), "{why}");
     assert!(why.contains(SAMPLE) && why.contains("Dev - dev login"), "{why}");
     let (stored, pdf) = crystal::last_pdf().unwrap();
@@ -443,12 +449,45 @@ fn a_live_preview_never_answers_with_the_host_or_the_password() {
     assert!(stored.diagnostics.iter().all(|d| !leaks(d)), "{stored:?}");
     assert_eq!(stored.live.as_deref(), Some("Dev - dev login"));
 
+    // The server's own name in its error (tiberius: `'...' on server NAME
+    // executing ...`) is not the host the login gives, and an address may
+    // stand in for either. None of it reaches the answer, the stored
+    // diagnostics or the log - on a failure, or in a successful render's notes.
+    let machine = "SQLBOX-07\\PROD";
+    let server_said = format!(
+        "Token error: 'Could not find stored procedure 'usp_perf_goal_align_sheet'.' on server {machine} executing  on line 1 (code: 2812, state: 62, class: 16); reached through 10.56.3.16,1433 and [fe80::1ff:fe23:4567:890a] and ::1"
+    );
+    let redirect = "Server requested a connection to an alternative address: `sqlbox-07.corp.local:1433`";
+    let seen = |text: &str| {
+        let lower = text.to_ascii_lowercase();
+        ["sqlbox-07", "10.56.3.16", "fe80::1ff", "::1", "corp.local"].iter().any(|s| lower.contains(s)) || leaks(text)
+    };
+    let why = crystal::preview_live_with(&login, "Dev - dev login", fitting_values(&path), |_: &Rpt, _: &LiveDb| {
+        Err(format!("{server_said}; {redirect}"))
+    })
+    .unwrap_err();
+    assert!(!seen(&why), "{why}");
+    assert!(
+        why.contains("Could not find stored procedure") && why.contains("code: 2812"),
+        "the message itself stays: {why}"
+    );
+    assert!(crystal::last_pdf().unwrap().0.diagnostics.iter().all(|d| !seen(d)));
+    let notes = crystal::preview_live_with(&login, "Dev - dev login", fitting_values(&path), |_: &Rpt, _: &LiveDb| {
+        Ok(PreviewOutput { pdf: b"%PDF-live".to_vec(), page_count: 1, diagnostics: vec![server_said.clone()] })
+    })
+    .unwrap();
+    assert!(notes.diagnostics.iter().all(|d| !seen(d)), "{notes:?}");
+    assert!(crystal::last_pdf().unwrap().0.diagnostics.iter().all(|d| !seen(d)));
+    let log = logged();
+    assert!(log.iter().any(|l| l.contains("live data")), "the outcomes are logged");
+    assert!(log.iter().all(|l| !seen(l)), "{log:?}");
+
     // A login with a separator in it is refused before the bundle sees it:
     // `;Server=` inside a password would point the string at another host.
     let mut sly = secret_login("x_devlogin");
     sly.password = "pw-secret;Server=elsewhere".into();
     let fetched = std::cell::Cell::new(false);
-    let why = crystal::preview_live_with(&sly, "Dev - dev login", vec![], |_: &Rpt, _: &LiveDb| {
+    let why = crystal::preview_live_with(&sly, "Dev - dev login", fitting_values(&path), |_: &Rpt, _: &LiveDb| {
         fetched.set(true);
         Err("unreachable".into())
     })
@@ -461,7 +500,7 @@ fn a_live_preview_never_answers_with_the_host_or_the_password() {
     let why = crystal::preview_live_with(
         &login,
         "Dev - dev login",
-        vec![(param.clone(), "not-a-value".into())],
+        with_value(fitting_values(&path), &param, "not-a-value"),
         |_: &Rpt, _: &LiveDb| {
             fetched.set(true);
             Err("unreachable".into())
@@ -470,6 +509,103 @@ fn a_live_preview_never_answers_with_the_host_or_the_password() {
     .unwrap_err();
     assert!(!fetched.get(), "{why}");
     assert!(why.contains(&param) && !leaks(&why), "{why}");
+    crystal::close();
+}
+
+/// A report that reads a view rather than running a procedure is refused
+/// before anything is fetched, naming what it reads.
+#[test]
+fn a_report_on_a_view_never_reaches_the_fetch() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let on_a_view = std::fs::read_dir(SAMPLES)
+        .unwrap()
+        .flatten()
+        .find(|s| crystal::live_target(rpt_core::open(&s.path().to_string_lossy()).unwrap().report(), "hrm").is_err())
+        .expect("one sample reads a view");
+    let path = copy_sample(dir.path(), &on_a_view.file_name().to_string_lossy());
+    crystal::open(&path).unwrap();
+    let fetched = std::cell::Cell::new(false);
+    // Every parameter given, so the procedure check is the only thing that stops it.
+    let given = fitting_values(&path);
+    assert_eq!(crystal::check_live_params(&rpt_core::open(&path).unwrap().report().clone(), &given), Ok(()));
+    let why = crystal::preview_live_with(&secret_login("x_devlogin"), "Dev - dev login", given, |_: &Rpt, _: &LiveDb| {
+        fetched.set(true);
+        Ok(PreviewOutput { pdf: b"%PDF".to_vec(), page_count: 1, diagnostics: vec![] })
+    })
+    .unwrap_err();
+    assert!(!fetched.get(), "{why}");
+    assert!(why.contains("table "), "{why}");
+    assert_eq!(crystal::last_pdf().unwrap().0.live, None, "the saved-data preview is still the one kept");
+    crystal::close();
+}
+
+/// A name the report does not have is refused - a misspelling would run
+/// the procedure with NULL for the real one - and so is leaving out one the
+/// report needs. Names match in any case, with or without the `@`.
+#[test]
+fn live_parameters_are_checked_by_name_before_connecting() {
+    use rpt_core::rpt_reader::model::FieldKindData;
+    let sample_path = Path::new(SAMPLES).join(SAMPLE).to_string_lossy().into_owned();
+    let sample = rpt_core::open(&sample_path).unwrap();
+    let given = fitting_values(&sample_path);
+    assert_eq!(crystal::check_live_params(sample.report(), &given), Ok(()));
+    let (name, _) = given[0].clone();
+    let bare = name.trim_start_matches('@').to_string();
+
+    let mut stranger = given.clone();
+    stranger.push(("a_note".into(), "x".into()));
+    let why = crystal::check_live_params(sample.report(), &stranger).unwrap_err();
+    assert!(why.contains("a_note") && why.contains(&name), "names the stranger and the real ones: {why}");
+    for spelt in [bare.to_uppercase(), format!("@{}", bare.to_uppercase())] {
+        let mut renamed = given.clone();
+        renamed[0].0 = spelt.clone();
+        assert_eq!(crystal::check_live_params(sample.report(), &renamed), Ok(()), "{spelt}");
+    }
+
+    // Every parameter made one the report needs: not optional, never
+    // empty, nothing saved.
+    let mut strict = sample.report().clone();
+    let mut needed = Vec::new();
+    for f in &mut strict.data_definition.field_definitions {
+        if let FieldKindData::Parameter(p) = &mut f.kind {
+            if p.report_name.is_none() {
+                (p.optional_prompt, p.allow_null_value, p.has_current_value) = (false, false, false);
+                needed.push(f.name.trim_start_matches(['{', '?']).trim_end_matches('}').to_string());
+            }
+        }
+    }
+    assert!(!needed.is_empty());
+    let why = crystal::check_live_params(&strict, &[]).unwrap_err();
+    for n in &needed {
+        assert!(why.contains(n.as_str()), "{n} is named: {why}");
+    }
+    let all: Vec<(String, String)> = needed.iter().map(|n| (n.clone(), "1".to_string())).collect();
+    assert_eq!(crystal::check_live_params(&strict, &all), Ok(()));
+    // Leaving out only one names only that one.
+    let why = crystal::check_live_params(&strict, &all[1..]).unwrap_err();
+    assert_eq!(why, format!("the report needs a value for {}: give it in params", needed[0]));
+
+    // Through the preview: refused, and nothing fetched.
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    crystal::open(&copy_sample(dir.path(), SAMPLE)).unwrap();
+    let fetched = std::cell::Cell::new(false);
+    let why = crystal::preview_live_with(
+        &secret_login("x_devlogin"),
+        "Dev - dev login",
+        {
+            let mut misspelt = fitting_values(&sample_path);
+            misspelt.push(("perfomance_cycle".into(), "1".into()));
+            misspelt
+        },
+        |_: &Rpt, _: &LiveDb| {
+            fetched.set(true);
+            Err("unreachable".into())
+        },
+    )
+    .unwrap_err();
+    assert!(!fetched.get() && why.contains("perfomance_cycle"), "{why}");
     crystal::close();
 }
 
@@ -486,4 +622,37 @@ pub fn typed_parameter(path: &str) -> String {
         .map(|(f, _)| f.name.trim_start_matches(['{', '?']).trim_end_matches('}').to_string())
         .expect("the sample declares a parameter that is not text");
     name
+}
+
+/// Every parameter of the report at `path` (the report's own, not a
+/// subreport's) with a value that fits its kind - what a live preview of
+/// it needs at the least.
+pub fn fitting_values(path: &str) -> Vec<(String, String)> {
+    use rpt_core::rpt_reader::model::ParameterValueKind as K;
+    let rpt = rpt_core::open(path).unwrap();
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (f, p) in rpt.report().data_definition.parameter_fields() {
+        let name = f.name.trim_start_matches(['{', '?']).trim_end_matches('}').to_string();
+        if p.report_name.is_some() || out.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        let value = match p.value_kind {
+            K::NumberParameter | K::CurrencyParameter => "42",
+            K::BooleanParameter => "true",
+            K::DateParameter => "2026-01-31",
+            K::TimeParameter => "10:30:00",
+            K::DateTimeParameter => "2026-01-31T10:30:00",
+            _ => "text",
+        };
+        out.push((name, value.to_string()));
+    }
+    assert!(!out.is_empty(), "the sample declares parameters");
+    out
+}
+
+/// `values` with `name`'s value set to `value`.
+pub fn with_value(mut values: Vec<(String, String)>, name: &str, value: &str) -> Vec<(String, String)> {
+    let slot = values.iter_mut().find(|(n, _)| n == name).expect("the parameter is among the values");
+    slot.1 = value.to_string();
+    values
 }

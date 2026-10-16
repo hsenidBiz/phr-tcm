@@ -16,7 +16,7 @@ mod compare;
 mod guide;
 mod live;
 
-pub use live::{live_target, live_target_of, preview_live, preview_live_with};
+pub use live::{check_live_params, live_target, live_target_of, preview_live, preview_live_with};
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};

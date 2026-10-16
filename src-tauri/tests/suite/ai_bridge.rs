@@ -4310,7 +4310,8 @@ mod crystal_routes {
         use v2_lib::db::credentials::{add_custom, WithList};
         use v2_lib::db::{DbCredentialsForm, MemoryStore};
         // A list of its own for each context, so each can add the same name.
-        let own = dir.join(format!("{user}-{writes}"));
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let own = dir.join(format!("db-{}", NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
         std::fs::create_dir_all(&own).unwrap();
         let store = WithList { store: MemoryStore::default(), list: own.join("databases.json") };
         let form = DbCredentialsForm {
@@ -4328,6 +4329,11 @@ mod crystal_routes {
             db_writes: writes,
             ..ctx()
         }
+    }
+
+    /// `values` as the tool's `params` object.
+    fn params_object(values: &[(String, String)]) -> Value {
+        Value::Object(values.iter().map(|(n, v)| (n.clone(), Value::String(v.clone()))).collect())
     }
 
     async fn live(c: &super::BridgeContext, body: Value) -> (u16, String) {
@@ -4359,7 +4365,12 @@ mod crystal_routes {
         // it before a connection is made.
         let param = crate::crystal_reports::typed_parameter(&path);
         let dev = live_ctx(dir.path(), "x_devlogin", true);
-        let (status, said) = live(&dev, json!({ "params": { param.clone(): "not-a-value" } })).await;
+        let unfit = crate::crystal_reports::with_value(
+            crate::crystal_reports::fitting_values(&path),
+            &param,
+            "not-a-value",
+        );
+        let (status, said) = live(&dev, json!({ "params": params_object(&unfit) })).await;
         assert_eq!(status, 400, "{said}");
         assert!(said.contains(&param) && !crate::crystal_reports::leaks(&said), "{said}");
         let (status, said) = live(&dev, json!({ "params": "performance_cycle_id=1" })).await;
@@ -4368,6 +4379,55 @@ mod crystal_routes {
 
         let now = v2_lib::crystal::last_pdf().unwrap().0;
         assert_eq!((now.live, now.page_count), (None, opened.page_count), "nothing was fetched");
+        v2_lib::crystal::close();
+    }
+
+    /// Every door the route checks is shut in turn, with a stand-in for the
+    /// bundle's fetch counting its calls: none reaches it. With them all
+    /// open, it is reached once and the answer names the connection by its
+    /// label, never its host.
+    #[tokio::test]
+    async fn a_refused_live_preview_never_reaches_the_fetch() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use v2_lib::ai_bridge::crystal_preview_live;
+        let _lock = crate::serial::crystal();
+        let dir = tempfile::tempdir().unwrap();
+        let path = copy_sample(dir.path());
+        json_of(&post("/crystal-open", json!({ "path": path })).await);
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counting = |calls: &Arc<AtomicUsize>| {
+            let calls = calls.clone();
+            move |_: &rpt_core::rpt_reader::Rpt, _: &rpt_core::LiveDb| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(rpt_core::PreviewOutput { pdf: b"%PDF-live".to_vec(), page_count: 2, diagnostics: vec![] })
+            }
+        };
+        let all: std::collections::BTreeSet<Module> = Module::ALL.into_iter().collect();
+        let no_db: std::collections::BTreeSet<Module> = [Module::CrystalReports].into_iter().collect();
+        let dev = live_ctx(dir.path(), "x_devlogin", true);
+        let refusals = [
+            (live_ctx(dir.path(), "x_devlogin", false), no_db.clone(), 404),
+            (live_ctx(dir.path(), "x_devlogin", false), all.clone(), 400),
+            (live_ctx(dir.path(), "reader", true), all.clone(), 400),
+            (super::BridgeContext { db_writes: true, ..ctx() }, all.clone(), 409),
+        ];
+        for (c, on, status) in refusals {
+            let (got, said) = crystal_preview_live(&c, "{}", &on, counting(&calls)).await;
+            assert_eq!(got, status, "{said}");
+            assert_eq!(calls.load(Ordering::SeqCst), 0, "a refused call reached the fetch: {said}");
+        }
+        // Database Access off refuses even the Dev login with writes on.
+        let (got, said) = crystal_preview_live(&dev, "{}", &no_db, counting(&calls)).await;
+        assert_eq!((got, calls.load(Ordering::SeqCst)), (404, 0), "{said}");
+
+        let body = json!({ "params": params_object(&crate::crystal_reports::fitting_values(&path)) }).to_string();
+        let (status, said) = crystal_preview_live(&dev, &body, &all, counting(&calls)).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "{said}");
+        let info = json_of(&(status, said.clone()));
+        assert_eq!((info["live"].as_str(), info["page_count"].as_u64()), (Some("Reports dev"), Some(2)), "{said}");
+        assert!(!crate::crystal_reports::leaks(&said), "{said}");
         v2_lib::crystal::close();
     }
 

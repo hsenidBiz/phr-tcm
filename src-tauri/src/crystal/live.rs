@@ -138,10 +138,72 @@ fn replace_any_case(text: &str, needle: &str, with: &str) -> String {
     out
 }
 
-/// `text` with nothing of the login left in it: the whole connection
-/// string, any `Password=` the bundle's own redaction catches, the
-/// password, and the host - as given and without its `,port` or
-/// `\instance` - wherever they appear.
+/// `text` with every `<marker><name><end>` cut down to `<marker><end>`,
+/// matching `marker` in any case; with no `end` after it, the name runs to
+/// the next space. How a server's own name is taken out of a driver
+/// message whatever it is called.
+fn drop_named(text: &str, marker: &str, end: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let mut from = 0;
+    while let Some(at) = lower[from..].find(marker) {
+        let name_at = from + at + marker.len();
+        out.push_str(&text[from..from + at]);
+        let name_len = match lower[name_at..].find(end) {
+            Some(len) => len,
+            None => lower[name_at..].find(char::is_whitespace).unwrap_or(lower.len() - name_at),
+        };
+        from = name_at + name_len;
+    }
+    out.push_str(&text[from..]);
+    out
+}
+
+/// `text` with every IPv4 or IPv6 address (with or without a port)
+/// replaced by `(address)`.
+fn drop_addresses(text: &str) -> String {
+    let in_run = |c: char| c.is_ascii_hexdigit() || c == '.' || c == ':';
+    let is_address = |run: &str| {
+        let core = run.trim_matches(['.', ':']);
+        let with_port = core
+            .rsplit_once(':')
+            .filter(|(_, port)| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()));
+        core.parse::<std::net::IpAddr>().is_ok()
+            || with_port.is_some_and(|(head, _)| head.parse::<std::net::Ipv4Addr>().is_ok())
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(in_run) {
+        out.push_str(&rest[..start]);
+        let len = rest[start..].find(|c: char| !in_run(c)).unwrap_or(rest.len() - start);
+        let run = &rest[start..start + len];
+        if run.parse::<std::net::IpAddr>().is_ok() {
+            // `::1` and the like begin with what would otherwise be trimmed.
+            out.push_str("(address)");
+        } else if is_address(run) {
+            // Keep a sentence's own full stop or colon around it.
+            let lead = run.len() - run.trim_start_matches(['.', ':']).len();
+            let tail = run.len() - run.trim_end_matches(['.', ':']).len();
+            out.push_str(&run[..lead]);
+            out.push_str("(address)");
+            out.push_str(&run[run.len() - tail..]);
+        } else {
+            out.push_str(run);
+        }
+        rest = &rest[start + len..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `text` with nothing of the login or the server left in it: the whole
+/// connection string, any `Password=` the bundle's own redaction catches,
+/// the password, the host - as given and without its `,port` or
+/// `\instance` - and every server name the driver adds of its own. A
+/// server's error names the server by its own name (`'...' on server NAME
+/// executing ...`), which need not be the host the login gives, and a
+/// redirect names an address; both are cut out whatever they say, and any
+/// IP address left is replaced.
 fn scrub(text: &str, conn: &Connection, connection_string: &str) -> String {
     let mut out = replace_any_case(text, connection_string, "(the connection string)");
     out = rpt_db_mssql::redact_connection(&out);
@@ -151,7 +213,53 @@ fn scrub(text: &str, conn: &Connection, connection_string: &str) -> String {
             out = replace_any_case(&out, secret, with);
         }
     }
-    out
+    out = drop_named(&out, " on server ", " executing");
+    out = drop_named(&out, "alternative address: `", "`");
+    drop_addresses(&out)
+}
+
+/// A parameter name as a person writes it: `@name`, without the
+/// `{?...}` a formula wraps it in.
+fn shown(name: &str) -> &str {
+    name.trim_start_matches('{').trim_start_matches('?').trim_end_matches('}')
+}
+
+/// The parameter values given for a live preview of `report`, checked
+/// before anything connects: every name must be one of the report's
+/// parameters (matched like the bundle matches them: in any case, with or
+/// without the `@`), and every parameter the report needs a value for -
+/// not optional, not allowed to be empty, and with no value saved in the
+/// report - must be given. Each refusal names the parameters.
+pub fn check_live_params(report: &Report, params: &[(String, String)]) -> Result<(), String> {
+    let key = rpt_db_mssql::param_key;
+    let fields: Vec<_> = report.data_definition.parameter_fields().collect();
+    // The procedure's own parameters are names the bundle binds too.
+    let declared = fields.iter().map(|(f, _)| shown(&f.name)).chain(
+        report.database.tables.iter().flat_map(|t| t.parameters.iter().map(|p| p.name.as_str())),
+    );
+    let mut known: Vec<&str> = Vec::new();
+    for name in declared {
+        let k = key(name);
+        if !k.is_empty() && !k.starts_with("return_value") && !known.iter().any(|n| key(n) == k) {
+            known.push(name);
+        }
+    }
+    let unknown: Vec<&str> =
+        params.iter().map(|(n, _)| n.as_str()).filter(|n| !known.iter().any(|k| key(k) == key(n))).collect();
+    if !unknown.is_empty() {
+        let has = if known.is_empty() { "none".to_string() } else { known.join(", ") };
+        return Err(format!("this report has no parameter named {} (its parameters: {has})", unknown.join(", ")));
+    }
+    let missing: Vec<&str> = fields
+        .iter()
+        .filter(|(_, p)| p.report_name.is_none() && !p.optional_prompt && !p.allow_null_value && !p.has_current_value)
+        .map(|(f, _)| shown(&f.name))
+        .filter(|n| !params.iter().any(|(given, _)| key(given) == key(n)))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!("the report needs a value for {}: give it in params", missing.join(", ")));
+    }
+    Ok(())
 }
 
 /// Render the open report from its stored procedure, run on `conn`, and
@@ -181,8 +289,10 @@ pub fn preview_live_with(
     let name = file_name(&open.path);
     let refused = |why: String| format!("{name} cannot be previewed with live data: {why}.");
     live_target(open.rpt.report(), &conn.database).map_err(refused)?;
-    // A value that does not fit its parameter is refused here, before any
-    // connection; the bundle coerces the same pairs again itself.
+    // A misspelt or missing parameter, or a value that does not fit its
+    // kind, is refused here, before any connection: the bundle would run
+    // the procedure with NULL for it. It coerces the same pairs again itself.
+    check_live_params(open.rpt.report(), &params).map_err(refused)?;
     rpt_core::coerce_params(open.rpt.report(), &params).map_err(refused)?;
     let db = LiveDb { connection_string: connection_string(conn).map_err(refused)?, params };
 
