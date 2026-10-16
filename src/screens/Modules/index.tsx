@@ -51,7 +51,7 @@ export default function Modules({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <div className="max-w-4xl space-y-4">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <Button size="sm" variant="outline" onClick={onBack}>
           <IconBack aria-hidden />
@@ -59,7 +59,7 @@ export default function Modules({ onBack }: { onBack: () => void }) {
         </Button>
         <h2 className="text-base font-semibold text-text">Modules</h2>
       </div>
-      <p className="text-sm text-muted">
+      <p className="max-w-4xl text-sm text-muted">
         Switch on the parts of the app you need. A module needs the one above it, and switching one off switches off
         those below it. Nothing is deleted.
       </p>
