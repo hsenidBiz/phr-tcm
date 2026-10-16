@@ -85,7 +85,7 @@ export const CASE_ITEMS: Item<Section>[] = [
   { id: "run", label: "Run Tests", icon: GlyphRun, tone: "nav-ico nav-ico-run" },
   // A radar sweep, not a second play button: Run Tests owns the play
   // glyph, and the rail has to stay scannable at 16px.
-  { id: "autorun", label: "Auto Run", icon: GlyphAutoRun, tone: "nav-ico nav-ico-autorun", note: "In Dev" },
+  { id: "autorun", label: "Auto Run", icon: GlyphAutoRun, tone: "nav-ico nav-ico-autorun" },
   // Beside Auto Run, whose scripts it exports, but left out of the Ctrl+N
   // order (NO_SHORTCUT) so every tab below keeps its number. The theatre
   // masks are Playwright's own picture.

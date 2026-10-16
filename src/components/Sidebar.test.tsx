@@ -39,16 +39,13 @@ test("a badge count lands on its item and reaches the accessible name", () => {
   expect(screen.getByText("3")).toBeInTheDocument();
 });
 
-/// Auto Run is still being built, and its row says so with an "In Dev"
-/// pill after the label. The row keeps its plain name, so every shortcut,
-/// tour stop and test that finds it by "Auto Run" still does.
-test("Auto Run carries an In Dev pill, and no other row does", () => {
+/// Auto Run is no longer marked as in development: no row carries a
+/// status pill.
+test("no sidebar row carries an In Dev pill", () => {
   setModulesForTest(ALL_MODULES);
   render(<Sidebar section="manual" onSelect={() => {}} />);
-  const autoRun = screen.getByRole("button", { name: "Auto Run" });
-  expect(autoRun).toHaveTextContent("In Dev");
-  expect(screen.getAllByText("In Dev")).toHaveLength(1);
-  expect(screen.getByRole("button", { name: "Run Tests" })).not.toHaveTextContent("In Dev");
+  expect(screen.getByRole("button", { name: "Auto Run" })).not.toHaveTextContent("In Dev");
+  expect(screen.queryByText("In Dev")).not.toBeInTheDocument();
 });
 
 /// Each module's rows appear when it is switched on and go again when it is

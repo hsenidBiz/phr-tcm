@@ -436,8 +436,7 @@ test("Ctrl+6 jumps to Auto Run, Ctrl+7 to Search Suites, Ctrl+8 to Suite Managem
 
   fireEvent.keyDown(window, { key: "6", ctrlKey: true });
   expect(await screen.findByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
-  // No In Development pill beside the heading: Auto Run is still being
-  // built, but it says so only with the "In Dev" note on its sidebar row.
+  // No In Development pill beside the heading.
   expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "7", ctrlKey: true });
