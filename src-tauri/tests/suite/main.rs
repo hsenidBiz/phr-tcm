@@ -123,6 +123,7 @@ mod db_batch;
 mod db_credentials;
 mod db_credentials_commands;
 mod db_guard;
+mod db_query;
 mod db_schema;
 mod db_sqlcmd;
 mod deletion;

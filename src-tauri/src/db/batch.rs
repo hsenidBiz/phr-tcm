@@ -31,6 +31,13 @@ pub const MARK: &str = "tcm-batch";
 /// refused, so nothing but the wrapper ever sets them.
 const RESERVED_PREFIX: &str = "@tcm_";
 
+/// Why a procedure, view or function cannot be one statement of a batch.
+/// `CREATE PROCEDURE`, `VIEW` and `FUNCTION` must each be the only
+/// statement in what sqlcmd sends, and the batch's wrapper is more. A
+/// single `sql` with `dry_run` is a batch of one, so it says that too.
+pub const OBJECT_ON_ITS_OWN: &str =
+    "send a procedure, view or function on its own, in \"sql\" without dry_run - one per call, never in a batch";
+
 /// One statement in a batch, and how many rows it must affect for the
 /// batch to go on. None means any number is fine.
 #[derive(Debug, Clone, PartialEq)]
@@ -66,9 +73,18 @@ pub fn validate(statements: &[BatchStatement], access: Access) -> Result<Verdict
     let mut writes = false;
     for (i, s) in statements.iter().enumerate() {
         let n = i + 1;
+        // Asked before the connection is: in a batch the answer is the
+        // same on every connection, and it is not the module sentence the
+        // dev login would otherwise hear.
+        if guard::classify(&s.sql) == Verdict::ObjectChange {
+            return Err(format!("statement {n}: {OBJECT_ON_ITS_OWN}"));
+        }
         match guard::allowed(&s.sql, access) {
             Ok(Verdict::Write) => writes = true,
-            Ok(_) => {}
+            Ok(Verdict::Read) => {}
+            // An object change was refused just above; this arm only keeps
+            // a batch from ever passing one on if that check moves.
+            Ok(_) => return Err(format!("statement {n}: {OBJECT_ON_ITS_OWN}")),
             Err(why) => return Err(format!("statement {n}: {why}")),
         }
         if !guard::lexically_closed(&s.sql) {
