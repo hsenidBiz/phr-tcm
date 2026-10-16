@@ -1401,6 +1401,24 @@ that prefix. The app logs every write discovery sends.
 An area listed under "Areas to explore" has no map yet, or a stale one:
 explore it again before you write or repair a script there.
 
+Note down the API templates you come across. Every answer that changed
+data lists the requests the page sent that wrote it (method and path).
+Each one that creates or changes something a case needs ready before it
+runs (a cycle, a draft, a record, a setting) is a candidate API template,
+so the next script can make that state through the app's own endpoint
+instead of clicking through the screens. For each one:
+
+- call `list_api_templates` and check whether a template already sends
+  that method and path; if one does, use it (in a fixture or setup) rather
+  than scripting the screens again;
+- if none does, keep it on a list: the request's method and path, the
+  case and step that sent it, and what it made.
+
+End your discovery summary with that list under "API templates to make",
+so they can be made with the API template tools (`get_api_template_guide`
+says how) and reused by every case that needs the same state. Never make
+one from a request you only guessed: only from a request discovery saw.
+
 ## Components
 
 A component is a widget or short flow worked out once on the live app
