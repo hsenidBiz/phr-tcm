@@ -204,6 +204,10 @@ pub fn db_no_ask_from(reply: &Result<(u16, String), String>) -> bool {
 /// person has switched on running database changes without being asked.
 pub const DB_NO_ASK: &str = " The person has allowed database changes without confirmation: do not stop to ask before running INSERT, UPDATE, DELETE or a procedure through this tool - run the batch with dry_run first, read the row counts, then run it for real, and tell them what changed afterwards.";
 
+/// `preview_report_live`'s own tail for the same switch: it has no batch
+/// and no dry run, so `DB_NO_ASK`'s advice means nothing there.
+pub const PREVIEW_LIVE_NO_ASK: &str = " The person has allowed database changes without confirmation, so this runs the report's stored procedure without a prompt: check the parameter values first, since the procedure runs with exactly those, and tell them what ran afterwards.";
+
 fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>) {
     tool_policy_from(call("GET", "/tools", ""))
 }
@@ -718,7 +722,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "db_query",
-            "description": "Run one SQL statement on the chosen company database through sqlcmd and read the result (200 rows at most). SELECT runs on every connection, and so does EXEC of a look-up system procedure (sp_help, sp_helptext, sp_helpindex, sp_columns, sp_tables, sp_stored_procedures, sp_pkeys, sp_fkeys). INSERT, UPDATE, DELETE, and EXEC of a named stored procedure run only when the person has switched writes on in the AI Bridge tab and the connection is the Dev - dev login one. Never dynamic SQL (EXEC('...'), EXEC(@variable), sp_executesql), never any other sp_ or xp_ procedure, and never DROP, ALTER or CREATE. Use it to verify what a test case expects against real data, or to set up test data on the dev database. To change more than one thing, send `statements` instead of `sql`: they run as ONE transaction that the app wraps for you - all of them are saved or none is. Give each write an `expect_rows` and the batch stops and rolls back the moment a statement affects a different number of rows. Run it with dry_run: true first - everything runs, each statement's row count comes back, and it is all rolled back - then send the same statements without dry_run to save them. Never write BEGIN, COMMIT, ROLLBACK, DECLARE or THROW yourself: every statement is checked on its own, exactly like `sql`, and those are refused.",
+            "description": "Run one SQL statement on the chosen company database through sqlcmd and read the result (200 rows at most). SELECT runs on every connection, and so does EXEC of a look-up system procedure (sp_help, sp_helptext, sp_helpindex, sp_columns, sp_tables, sp_stored_procedures, sp_pkeys, sp_fkeys). INSERT, UPDATE, DELETE, and EXEC of a named stored procedure run only when the person has switched writes on in the AI Bridge tab and the connection is the Dev - dev login one. Never dynamic SQL (EXEC('...'), EXEC(@variable), sp_executesql), never any other sp_ or xp_ procedure, and never DROP. CREATE, ALTER and CREATE OR ALTER are refused too, except on the Dev - dev login with Crystal Reports and Database Access on and writes switched on: there it may create or alter one procedure, view or function per call (still never DROP). The bridge refuses a request over 64 KiB, so a procedure longer than that has to be split or run by hand. Use it to verify what a test case expects against real data, or to set up test data on the dev database. To change more than one thing, send `statements` instead of `sql`: they run as ONE transaction that the app wraps for you - all of them are saved or none is. Give each write an `expect_rows` and the batch stops and rolls back the moment a statement affects a different number of rows. Run it with dry_run: true first - everything runs, each statement's row count comes back, and it is all rolled back - then send the same statements without dry_run to save them. Never write BEGIN, COMMIT, ROLLBACK, DECLARE or THROW yourself: every statement is checked on its own, exactly like `sql`, and those are refused.",
             "inputSchema": schema(serde_json::json!({
                 "sql": { "type": "string", "description": "ONE statement, with no GO separator and no second statement after a semicolon. Send this or `statements`, not both." },
                 "statements": {
@@ -735,6 +739,71 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 },
                 "dry_run": { "type": "boolean", "description": "Run everything, report each statement's row count, then roll it all back so nothing is saved" },
             }), &[]),
+        },
+        {
+            "name": "open_report",
+            "description": "Open a Crystal Reports .rpt file and read it: you get the report as an IR (format crpt-ir/1), a JSON tree of its areas, sections and objects, each with an id and its position, size, font and text. Take ids from the latest IR a report tool returned: an edit can change them. One report is open at a time; opening another replaces it, and every other report tool works on the open one. Read get_report_guide before your first edit for the units, the edit ops, the layout plan and the limits. The path must be the full path to a .rpt file on this machine.",
+            "inputSchema": schema(serde_json::json!({
+                "path": { "type": "string", "description": "The full path to the .rpt file" },
+            }), &["path"]),
+        },
+        {
+            "name": "read_report",
+            "description": "Read the open report again, or only part of it: one section by name, or one object by its IR id or designer name. The ids in the answer are the ones edit_report takes. Narrowing saves reading a large report whole; with no arguments you get all of it. Open a report first with open_report; get_report_guide describes the IR.",
+            "inputSchema": schema(serde_json::json!({
+                "section": { "type": "string", "description": "A section's name, e.g. \"Details\": only that section and its objects" },
+                "object": { "type": "string", "description": "An object's IR id or designer name: only that object" },
+            }), &[]),
+        },
+        {
+            "name": "edit_report",
+            "description": "Change the open report with one batch of edits: either `ops` (the native edit ops) or `plan` (a layout plan, which is lowered to ops), never both. Every batch the report accepts is saved over the file at once, before this answers, and the answer is the new IR - git is the undo, so work on a file that is committed. A batch is all or nothing: if any edit is refused nothing is saved, and the answer is the refusal followed by the report as it now stands. Take ids and designer names from the latest IR you were given (this call's answer, open_report or read_report), since an edit can move or renumber objects. The ops, the plan's vocabulary, the units (twips) and what cannot be edited are in get_report_guide: read it before the first edit. Check the result with check_report and preview_report.",
+            "inputSchema": schema(serde_json::json!({
+                "ops": { "type": "array", "description": "Native edit ops, applied in order as one batch. See get_report_guide for each op and its fields.", "items": { "type": "object" } },
+                "plan": { "type": "object", "description": "A layout plan ({ \"planVersion\": 1, \"operations\": [...] }), the other way to describe a batch. See get_report_guide." },
+            }), &[]),
+        },
+        {
+            "name": "compare_reports",
+            "description": "Compare two .rpt files on this machine and list every difference, one line each as `path: a -> b`; an empty list means they match. Use it to see exactly what an edit changed (compare the committed copy with the edited one) or how two versions of a report differ. Neither file needs to be the open report and neither is changed.",
+            "inputSchema": schema(serde_json::json!({
+                "a": { "type": "string", "description": "The full path to the first .rpt file" },
+                "b": { "type": "string", "description": "The full path to the second .rpt file" },
+            }), &["a", "b"]),
+        },
+        {
+            "name": "check_report",
+            "description": "Run the offline load checks on a report: the problems the Crystal Reports engine would refuse it for (errors) and the ones it would only complain about (warnings). With a path it checks that file; with none, the open report. Run it after editing, before the report goes anywhere.",
+            "inputSchema": schema(serde_json::json!({
+                "path": { "type": "string", "description": "The full path to a .rpt file; leave out to check the open report" },
+            }), &[]),
+        },
+        {
+            "name": "new_report",
+            "description": "Create a blank report at a path that has no file yet and open it. It never writes over an existing file: choose another path, or open that one. The title, author and comments fill the report's summary information. Build it up with edit_report; get_report_guide describes how.",
+            "inputSchema": schema(serde_json::json!({
+                "path": { "type": "string", "description": "Where to create it: the full path, ending in .rpt, to a file that does not exist" },
+                "title": { "type": "string", "description": "The report's title" },
+                "author": { "type": "string", "description": "The report's author" },
+                "comments": { "type": "string", "description": "Free-form comments" },
+            }), &["path"]),
+        },
+        {
+            "name": "preview_report",
+            "description": "Draw the open report to a PDF from the data saved in it, and say how many pages that is and what the renderer noted (an object it does not draw, a formula that failed). The person sees the same PDF on the Crystal Reports screen. A page count of 0 means the drawing failed; the notes say why.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
+            "name": "preview_report_live",
+            "description": "Draw the open report with fresh rows instead of the data saved in it: run the report's stored procedure on the database chosen in the AI Bridge tab and render what it returns. Running a procedure counts as a database write, so this works only with Database Access on, writes switched on in the AI Bridge tab and the Dev - dev login connection chosen; anything else is refused with what to change. Only a stored procedure of the connection's own database runs: a report that names another database or a linked server, an sp_ or xp_ procedure, or a SQL command is refused before anything connects. Give the report's parameters in `params`, by name (with or without the @). Only the values passed in `params` are used: the values saved in the report are not, so pass every parameter you want set. A name the report does not have is refused, and so is leaving out a required one (not optional and not allowed empty), even if the report has a value saved for it; any other parameter left out is passed as NULL. The answer is the page count, the renderer's notes and the connection's name, and the person sees the same PDF on the Crystal Reports screen. A page count of 0 means the drawing failed; the notes say why. preview_report draws the saved data and needs no database.",
+            "inputSchema": schema(serde_json::json!({
+                "params": { "type": "object", "description": "The report's parameters, name to value, e.g. { \"performance_cycle_id\": \"42\" }. Dates as YYYY-MM-DD, times as HH:MM:SS, true/false for yes-or-no parameters." },
+            }), &[]),
+        },
+        {
+            "name": "get_report_guide",
+            "description": "How to work with reports through these tools: the IR, the units (twips), every edit op and the layout plan, how objects are named and found, what the renderer draws, and what cannot be done. Read it before your first edit_report.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "optimize_cases",
@@ -811,8 +880,15 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             !disabled.iter().any(|d| d == name)
         })
         .map(|mut t| {
-            if db_no_ask && t["name"] == "db_query" {
-                let said = format!("{}{DB_NO_ASK}", t["description"].as_str().unwrap_or_default());
+            // The live report preview runs a procedure, so the same switch covers
+            // it - with its own sentence, as it has no batch to dry-run.
+            let tail = match t["name"].as_str() {
+                Some("db_query") => Some(DB_NO_ASK),
+                Some("preview_report_live") => Some(PREVIEW_LIVE_NO_ASK),
+                _ => None,
+            };
+            if let Some(tail) = tail.filter(|_| db_no_ask) {
+                let said = format!("{}{tail}", t["description"].as_str().unwrap_or_default());
                 t["description"] = serde_json::Value::String(said);
             }
             t
@@ -1224,6 +1300,17 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // drop one - the same pattern as `check_spec_coverage`.
         "db_lookup" => call("POST", "/db-lookup", &args.to_string()),
         "db_query" => call("POST", "/db-query", &args.to_string()),
+        // The Crystal Reports routes read their fields out of the body, so
+        // the arguments object travels whole, like the database tools'.
+        "open_report" => call("POST", "/crystal-open", &args.to_string()),
+        "read_report" => call("POST", "/crystal-read", &args.to_string()),
+        "edit_report" => call("POST", "/crystal-change", &args.to_string()),
+        "compare_reports" => call("POST", "/crystal-compare", &args.to_string()),
+        "check_report" => call("POST", "/crystal-check", &args.to_string()),
+        "new_report" => call("POST", "/crystal-new", &args.to_string()),
+        "preview_report" => call("POST", "/crystal-preview", &args.to_string()),
+        "preview_report_live" => call("POST", "/crystal-preview-live", &args.to_string()),
+        "get_report_guide" => call("GET", "/crystal-guide", ""),
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");
             let mut params: Vec<String> = vec![];

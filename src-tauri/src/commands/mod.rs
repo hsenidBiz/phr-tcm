@@ -16,6 +16,7 @@ pub mod autorun_setup;
 pub mod board;
 pub mod bugs;
 pub mod cases;
+pub mod crystal;
 pub mod discovery;
 pub mod environments;
 pub mod guide;

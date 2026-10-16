@@ -36,6 +36,7 @@ pub mod backup;
 pub mod cache;
 pub mod capture;
 pub mod commands;
+pub mod crystal;
 pub mod events;
 pub mod extras;
 pub mod modules;
@@ -83,7 +84,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, api_templates, app_settings, auth, autorun, autorun_publish, autorun_record,
-        autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, discovery, environments, guide, misc, modules, prs, pw_export, pw_repo, queue, run_order, runs,
+        autorun_record_signin, autorun_replay, autorun_setup, board, bugs, cases, crystal, discovery, environments, guide, misc, modules, prs, pw_export, pw_repo, queue, run_order, runs,
         test_files, testplan, workspace, writing_style,
     };
     Builder::<tauri::Wry>::new()
@@ -110,6 +111,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::AutorunNetworkWait,
             events::RecordingEvent,
             events::ApiTemplatesChanged,
+            events::CrystalReportChanged,
             events::AutorunScriptsChanged,
             events::AutorunCleanupProgress,
             events::GuideProgress,
@@ -152,6 +154,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             misc::log_ui,
             misc::app_log_dir,
             misc::open_app_log_dir,
+            crystal::crystal_current,
+            crystal::crystal_preview_pdf,
+            crystal::crystal_open_in_designer,
             misc::open_activity_log_dir,
             misc::apply_update,
             misc::watch_assigned_work,

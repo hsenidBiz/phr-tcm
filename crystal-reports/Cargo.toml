@@ -1,0 +1,86 @@
+[workspace]
+resolver = "2"
+members = [
+    "vendor/rpt-model",
+    "vendor/rpt-reader",
+    "vendor/rpt-test-support",
+    "vendor/metafile",
+    "vendor/rpt-format-value",
+    "vendor/rpt-formula",
+    "vendor/rpt-data",
+    "vendor/rpt-pages",
+    "vendor/rpt-text",
+    "vendor/rpt-render-util",
+    "vendor/rpt-render-pdf",
+    "vendor/rpt-layout",
+    "vendor/rpt-render",
+    "rpt-core",
+    "rpt-db-mssql",
+    "rpt-cli",
+    "tauri-commands",
+    "consumer-check",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MPL-2.0"
+authors = ["rpt-rs vendor — see vendor/VENDORED.md"]
+repository = "https://github.com/MrSrsen/rpt-rs"
+readme = "README.md"
+keywords = ["crystal-reports", "rpt"]
+categories = ["parser-implementations"]
+rust-version = "1.92"
+
+[workspace.dependencies]
+rpt-model = { path = "vendor/rpt-model" }
+rpt-reader = { path = "vendor/rpt-reader" }
+rpt-test-support = { path = "vendor/rpt-test-support" }
+metafile = { path = "vendor/metafile" }
+rpt-format-value = { path = "vendor/rpt-format-value" }
+rpt-formula = { path = "vendor/rpt-formula" }
+rpt-data = { path = "vendor/rpt-data" }
+rpt-pages = { path = "vendor/rpt-pages" }
+rpt-text = { path = "vendor/rpt-text", default-features = false }
+rpt-render-util = { path = "vendor/rpt-render-util" }
+rpt-render-pdf = { path = "vendor/rpt-render-pdf" }
+rpt-layout = { path = "vendor/rpt-layout" }
+rpt-render = { path = "vendor/rpt-render" }
+rpt-core = { path = "rpt-core" }
+rpt-db-mssql = { path = "rpt-db-mssql" }
+tauri-commands = { path = "tauri-commands" }
+cfb = "0.14"
+miniz_oxide = "0.9"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Render/data pipeline third-party deps (VENDORED #10). Hoisted so a version can't drift into two
+# compiled copies (fontdb especially: one version across the pdf and text crates) — the same pins
+# the upstream workspace uses. Per-crate feature sets stay at the leaf via `name = { workspace = true, ... }`.
+fontdb = "0.23"
+ttf-parser = "0.25"
+cosmic-text = "0.19"
+krilla = { version = "0.8.2", default-features = false }
+harfrust = "0.5"
+similar = "3"
+
+# The vendored rpt-rs crates inherit their lints from the workspace (`[lints] workspace = true`);
+# this table is the upstream one, kept so the vendored sources compile unchanged. The project's own
+# crates do not opt into workspace lints.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+missing_docs = "deny"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+
+[profile.release]
+# Keep the upstream rpt-rs release tuning: default optimization, but fail loudly on integer
+# overflow even in release — the decoders lean on checked arithmetic invariants.
+overflow-checks = true

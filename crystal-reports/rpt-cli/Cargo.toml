@@ -1,0 +1,17 @@
+[package]
+name = "rpt-cli"
+description = "rpt2json / rpt-edit / rpt-diff / rpt-roundtrip — the rpt-core tooling CLI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "rpt-tools"
+path = "src/main.rs"
+
+[dependencies]
+rpt-core = { workspace = true }
+rpt-reader = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -403,3 +403,388 @@ fn a_colon_that_is_not_a_line_leading_sqlcmd_command_is_ordinary_sql() {
     assert_eq!(classify("SELECT CAST(x AS time)"), Verdict::Read);
     assert_eq!(classify("SELECT a::b"), Verdict::Read);
 }
+
+// ------------------------------------------- procedures, views and functions
+
+/// `sql` refused, with its sentence. Unlike `refusal`, the dev login with
+/// the Crystal Reports module on must refuse it too - these are the
+/// statements that allowance must never open.
+fn refused_everywhere(sql: &str) -> String {
+    let why = refusal(sql);
+    for access in [Access::ReadOnly, Access::DevWrites, Access::DevObjects] {
+        assert!(allowed(sql, access).is_err(), "{sql:?} passed on {access:?}");
+    }
+    why
+}
+
+#[test]
+fn an_object_statement_is_recognised() {
+    for sql in [
+        "CREATE PROCEDURE dbo.p AS SELECT 1",
+        "ALTER PROC p",
+        "CREATE OR ALTER VIEW v AS SELECT a, b FROM dbo.t",
+        "ALTER FUNCTION f() RETURNS INT AS BEGIN RETURN 1 END",
+        "create or alter procedure [dbo].[Leave Report] @From DATE AS SELECT 1",
+        "-- what it is for\nCREATE PROC \"dbo\".\"p\" AS SELECT 1",
+        "\u{feff}CREATE FUNCTION dbo.f (@a INT) RETURNS TABLE AS RETURN (SELECT @a AS a)",
+        "CREATE VIEW dbo.v WITH SCHEMABINDING AS SELECT e.id FROM dbo.Employee AS e",
+    ] {
+        assert_eq!(classify(sql), Verdict::ObjectChange, "{sql:?}");
+    }
+}
+
+#[test]
+fn a_body_may_hold_ordinary_t_sql_and_dynamic_sql() {
+    let sql = "CREATE OR ALTER PROCEDURE dbo.rpt_Leave
+    @From DATE,
+    @To DATE = NULL,
+    @Count INT OUTPUT
+WITH RECOMPILE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @sql NVARCHAR(MAX), @i INT = 0, @name NVARCHAR(100), @x XML = N'<a/>';
+    DECLARE @t TABLE (id INT);
+    IF @To IS NULL
+        SET @To = GETDATE();
+    ELSE
+        SET @To = DATEADD(DAY, 1, @To);
+    WHILE @i < 3
+    BEGIN
+        SET @i = @i + 1;
+    END
+    IF OBJECT_ID('tempdb..#leave') IS NOT NULL DROP TABLE #leave;
+    CREATE TABLE #leave (id INT, name NVARCHAR(100));
+    ALTER TABLE #leave ADD note NVARCHAR(50) NULL;
+    INSERT INTO #leave (id, name) SELECT e.id, e.name FROM dbo.Employee AS e WHERE e.joined >= @From;
+    SELECT id INTO #ids FROM #leave;
+    INSERT INTO @t (id) SELECT c.value('.', 'INT') FROM @x.nodes('/a') AS n(c);
+    SELECT STUFF((SELECT ',' + name FROM #leave FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 1, '');
+    BEGIN TRAN;
+    UPDATE dbo.ReportRun SET LastRun = GETDATE() OUTPUT inserted.id INTO @t WHERE Name = 'leave';
+    COMMIT TRAN;
+    BEGIN TRY
+        EXEC dbo.other @a = 1;
+        EXEC @i = dbo.other2 @a = @i OUTPUT;
+        EXECUTE [dbo].[other3] 5, N'x';
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRAN;
+        THROW;
+    END CATCH
+    DECLARE c CURSOR LOCAL FAST_FORWARD FOR SELECT name FROM #leave;
+    OPEN c;
+    FETCH NEXT FROM c INTO @name;
+    WHILE @@FETCH_STATUS = 0 FETCH NEXT FROM c INTO @name;
+    CLOSE c;
+    DEALLOCATE c;
+    SET @sql = N'SELECT * FROM dbo.Employee WHERE id = @id';
+    EXEC sp_executesql @sql, N'@id INT', @id = 1;
+    EXEC(@sql);
+    EXECUTE (@sql);
+    SELECT SYSDATETIMEOFFSET() AT TIME ZONE 'UTC';
+    TRUNCATE TABLE #leave;
+    DROP TABLE IF EXISTS #ids;
+    DROP TABLE #leave, #other;
+    SELECT @Count = COUNT(*) FROM dbo.Employee;
+    RETURN 0;
+END";
+    assert_eq!(classify(sql), Verdict::ObjectChange, "{:?}", classify(sql));
+    // A word that only appears in a string or a comment is data, in a body
+    // as everywhere else.
+    let quoted = "CREATE PROCEDURE dbo.p AS SELECT 'DROP TABLE t; EXEC xp_cmdshell' /* GRANT ALL */ AS s -- KILL 1\n";
+    assert_eq!(classify(quoted), Verdict::ObjectChange);
+}
+
+#[test]
+fn a_body_refuses_what_reaches_outside() {
+    for (stmt, named) in [
+        ("EXEC xp_cmdshell 'dir'", "xp_cmdshell"),
+        ("EXEC [xp_cmdshell] 'dir'", "xp_cmdshell"),
+        ("EXEC sys.xp_regread 'x'", "xp_regread"),
+        ("EXEC sp_configure 'show advanced options', 1", "sp_configure"),
+        ("EXEC sp_OACreate 'x', @o OUT", "sp_OACreate"),
+        ("SELECT * FROM OPENROWSET('SQLNCLI', 'x', 'SELECT 1')", "OPENROWSET"),
+        ("SELECT * FROM OPENQUERY(remote, 'SELECT 1')", "OPENQUERY"),
+        ("SELECT * FROM OPENDATASOURCE('SQLNCLI', 'x').d.s.t", "OPENDATASOURCE"),
+        ("SELECT * FROM otherdb.dbo.t", "otherdb.dbo.t"),
+        ("SELECT * FROM srv.db.dbo.t", "srv.db.dbo.t"),
+        ("SELECT * FROM [otherdb].[dbo].[t]", "[otherdb].[dbo].[t]"),
+        ("SELECT * FROM otherdb..t", "otherdb..t"),
+        ("EXEC master.dbo.xp_cmdshell 'dir'", "master.dbo.xp_cmdshell"),
+        ("SELECT * FROM otherdb . dbo . t", "otherdb . dbo . t"),
+        // A comment marker or a quote inside a bracketed name is part of the
+        // name: it cannot hide the code after it from the name checks.
+        ("SELECT [a--] FROM otherdb.dbo.t", "otherdb.dbo.t"),
+        ("SELECT [x'] FROM otherdb.dbo.t WHERE [y'] = 1", "otherdb.dbo.t"),
+        ("GRANT SELECT ON dbo.t TO x", "GRANT"),
+        ("REVOKE SELECT ON dbo.t FROM x", "REVOKE"),
+        ("DENY SELECT ON dbo.t TO x", "DENY"),
+        ("BACKUP DATABASE d TO DISK = 'x'", "BACKUP"),
+        ("RESTORE DATABASE d FROM DISK = 'x'", "RESTORE"),
+        ("KILL 52", "KILL"),
+        ("SHUTDOWN", "SHUTDOWN"),
+        ("RECONFIGURE", "RECONFIGURE"),
+        ("DBCC CHECKDB", "DBCC"),
+        ("EXECUTE AS USER = 'dbo'", "EXECUTE AS"),
+        ("EXEC AS LOGIN = 'sa'", "EXECUTE AS"),
+        ("EXEC ('SELECT 1') AS USER = 'dbo'", "EXECUTE AS"),
+        ("SETUSER 'dbo'", "SETUSER"),
+        ("REVERT", "REVERT"),
+        ("DROP TABLE t", "DROP"),
+        ("DROP TABLE #t, dbo.real", "DROP"),
+        ("DROP TABLE IF EXISTS dbo.real", "DROP"),
+        ("DROP PROCEDURE dbo.q", "DROP"),
+        ("TRUNCATE TABLE t", "TRUNCATE"),
+        ("CREATE TABLE dbo.Real (id INT)", "CREATE"),
+        ("ALTER TABLE dbo.Real ADD c INT", "ALTER"),
+        ("CREATE INDEX ix ON #t (id)", "CREATE"),
+        ("SELECT * INTO dbo.Copy FROM dbo.t", "INTO"),
+        ("EXEC ('SELECT 1') AT [Remote]", "AT"),
+        ("USE master", "USE"),
+        ("DISABLE TRIGGER ALL ON dbo.t", "DISABLE"),
+        ("BULK INSERT dbo.t FROM 'c:\\x.csv'", "BULK"),
+    ] {
+        let sql = format!("CREATE PROCEDURE dbo.p AS BEGIN SELECT 1; {stmt}; END");
+        let why = refused_everywhere(&sql);
+        assert!(
+            why.to_lowercase().contains(&named.to_lowercase()),
+            "{stmt:?} was refused as {why:?}, expected {named}"
+        );
+    }
+    // In the header too: a procedure that runs as somebody else.
+    let why = refused_everywhere("CREATE PROCEDURE dbo.p WITH EXECUTE AS OWNER AS SELECT 1");
+    assert!(why.contains("EXECUTE AS"), "{why}");
+    let why = refused_everywhere("CREATE PROCEDURE [p--] AS SELECT * FROM otherdb.dbo.t");
+    assert!(why.contains("otherdb.dbo.t"), "{why}");
+}
+
+#[test]
+fn only_these_objects_may_be_made() {
+    for sql in [
+        "CREATE TABLE t (c INT)",
+        "ALTER TABLE t ADD c INT",
+        "CREATE TRIGGER tr ON dbo.t AFTER INSERT AS SELECT 1",
+        "CREATE INDEX ix ON dbo.t (c)",
+        "CREATE SCHEMA s",
+        "CREATE LOGIN x WITH PASSWORD = 'p'",
+        "CREATE USER x",
+        "CREATE SYNONYM s FOR dbo.t",
+        "ALTER DATABASE d SET RECOVERY SIMPLE",
+        "DROP PROCEDURE dbo.p",
+        "DROP VIEW v",
+        "CREATE PROCEDURE otherdb.dbo.p AS SELECT 1",
+        "CREATE PROCEDURE srv.otherdb.dbo.p AS SELECT 1",
+        "ALTER VIEW [otherdb].[dbo].[v] AS SELECT 1",
+        "CREATE PROCEDURE #p AS SELECT 1",
+        // Two objects in one statement.
+        "CREATE PROCEDURE dbo.p AS SELECT 1 CREATE PROCEDURE dbo.q AS SELECT 2",
+        "CREATE OR ALTER VIEW v AS SELECT 1 ALTER VIEW w AS SELECT 2",
+        // A batch separator, and sqlcmd's own commands, as everywhere.
+        "CREATE VIEW v AS SELECT 1\nGO\nCREATE VIEW w AS SELECT 2",
+        "CREATE PROCEDURE dbo.p AS SELECT 1\nGO",
+        "CREATE PROCEDURE dbo.p AS SELECT 1\n:r c:\\x.sql",
+        "CREATE PROCEDURE dbo.p AS SELECT 1\n!! whoami",
+        "CREATE PROCEDURE dbo.p AS SELECT '$(PATH)'",
+        // Not the leading statement.
+        "SELECT 1; CREATE PROCEDURE dbo.p AS SELECT 1",
+        "(CREATE PROCEDURE dbo.p AS SELECT 1)",
+    ] {
+        let why = refused_everywhere(sql);
+        assert!(!why.is_empty(), "{sql:?}");
+    }
+}
+
+#[test]
+fn object_changes_need_the_dev_login_and_the_module() {
+    use v2_lib::db::guard::OBJECTS_NEED_MODULE;
+    assert_eq!(
+        OBJECTS_NEED_MODULE,
+        "creating or altering procedures, views and functions needs the Crystal Reports module switched on in Modules"
+    );
+    let sql = "CREATE OR ALTER PROCEDURE dbo.p AS SELECT 1";
+    assert_eq!(allowed(sql, Access::ReadOnly).unwrap_err(), READ_ONLY_SENTENCE);
+    assert_eq!(allowed(sql, Access::DevWrites).unwrap_err(), OBJECTS_NEED_MODULE);
+    assert_eq!(allowed(sql, Access::DevObjects), Ok(Verdict::ObjectChange));
+
+    // The allowance adds to the dev login's writes; it takes nothing away
+    // and opens nothing else.
+    assert_eq!(allowed("SELECT 1", Access::DevObjects), Ok(Verdict::Read));
+    assert_eq!(allowed("DELETE FROM t WHERE id = 1", Access::DevObjects), Ok(Verdict::Write));
+    assert_eq!(allowed("EXEC dbo.GetLeave @EmpId = 5", Access::DevObjects), Ok(Verdict::Write));
+    assert!(allowed("DROP TABLE t", Access::DevObjects).unwrap_err().contains("DROP"));
+    assert!(allowed("CREATE TABLE t (c INT)", Access::DevObjects).unwrap_err().contains("CREATE"));
+}
+
+#[test]
+fn a_long_object_body_is_allowed_up_to_its_own_limit() {
+    use v2_lib::db::guard::MAX_OBJECT_SQL_CHARS;
+    assert_eq!(MAX_OBJECT_SQL_CHARS, 200_000);
+    let head = "CREATE PROCEDURE dbo.p AS\n";
+    let line = "SELECT 1 AS n;\n";
+    let long = format!("{head}{}", line.repeat((150_000 - head.len()) / line.len()));
+    assert!(long.chars().count() > 140_000 && long.chars().count() <= 150_000);
+    assert_eq!(classify(&long), Verdict::ObjectChange);
+
+    let over = format!("{head}{}", "1".repeat(MAX_OBJECT_SQL_CHARS + 1 - head.len()));
+    assert_eq!(over.chars().count(), MAX_OBJECT_SQL_CHARS + 1);
+    assert!(refusal(&over).contains("200000"), "{}", refusal(&over));
+
+    // Anything else keeps the old limit and the old sentence.
+    let select = format!("SELECT {}", "1".repeat(100_000));
+    assert!(refusal(&select).contains("20000"), "{}", refusal(&select));
+    assert!(!refusal(&select).contains("200000"), "{}", refusal(&select));
+}
+
+// ------------------------------------------------------- escaped name ends
+
+/// Inside `[...]` the server reads `]]` as one `]`, and inside `"..."` it
+/// reads `""` as one `"`: the name goes on. A guard that ended the name at
+/// the first `]` saw a stray `]` and then a string literal - one that was
+/// really live code, hidden from every check.
+#[test]
+fn a_bracketed_or_quoted_name_ends_where_the_server_ends_it() {
+    for sql in [
+        "SELECT 1 AS [a]]'] DROP TABLE t --'\n",
+        "SELECT 1 AS \"a\"\"'\" DROP TABLE t --'\n",
+    ] {
+        let why = refused_everywhere(sql);
+        assert!(why.contains("DROP"), "{sql:?} was refused as {why:?}");
+    }
+    // A name that really holds a `]` or a `"` is still just a name.
+    assert_eq!(classify("SELECT [a]]b] FROM t"), Verdict::Read);
+    assert_eq!(classify("SELECT \"a\"\"b\" FROM t"), Verdict::Read);
+    assert_eq!(classify("EXEC [dbo].[p]]x] 1"), Verdict::Write);
+    assert_eq!(classify("CREATE PROCEDURE [dbo].[p]]x] AS SELECT [a]]b] FROM t"), Verdict::ObjectChange);
+}
+
+#[test]
+fn an_escaped_bracket_cannot_hide_code_in_a_procedure_body() {
+    for (hidden, named) in [
+        ("DROP TABLE t", "DROP"),
+        ("EXEC xp_cmdshell 'dir'", "xp_cmdshell"),
+        ("SELECT * FROM otherdb.dbo.t", "otherdb.dbo.t"),
+    ] {
+        for name in ["[a]]']", "\"a\"\"'\""] {
+            let sql = format!("CREATE PROCEDURE dbo.p AS SELECT 1 AS {name} {hidden} --'\n");
+            let why = refused_everywhere(&sql);
+            assert!(why.contains(named), "{sql:?} was refused as {why:?}, expected {named}");
+        }
+    }
+}
+
+/// The EXEC shape reads its procedure name with the same lexer as the rest
+/// of the guard, so a comment marker inside a bracketed name is part of the
+/// name and what follows it is still code - and refused, because it is not
+/// an argument.
+#[test]
+fn exec_reads_a_bracketed_name_the_way_the_server_does() {
+    for sql in [
+        "EXEC [p--] DROP TABLE t SELECT 1 AS [\n]",
+        "EXEC [p]]--] DROP TABLE t SELECT 1 AS [\n]",
+        "EXEC [p]]--] DROP TABLE t --]\n",
+        "EXEC \"p--\" DROP TABLE t SELECT 1 AS [\n]",
+    ] {
+        let why = refused_everywhere(sql);
+        assert!(!why.is_empty(), "{sql:?}");
+    }
+}
+
+/// `T.c.value(...)` is the usual way to shred XML, and a three-part call can
+/// equally be `otherdb.dbo.fn(...)` - so it stays refused, with a sentence
+/// that says how to write the XML method instead.
+#[test]
+fn a_three_part_call_says_how_to_write_an_xml_method() {
+    let sql = "CREATE PROCEDURE dbo.p @x XML AS SELECT T.c.value('.', 'INT') FROM @x.nodes('/a') AS T(c)";
+    let why = refused_everywhere(sql);
+    assert!(
+        why.contains(
+            "`T.c.value(` reads as a three-part name, which could reach another database. If this is an XML method on a column, write it as `(T.c).value(...)`."
+        ),
+        "{why}"
+    );
+    // Without the call it is the ordinary three-part sentence.
+    let why = refused_everywhere("CREATE PROCEDURE dbo.p AS SELECT * FROM otherdb.dbo.t");
+    assert!(!why.contains("XML method"), "{why}");
+
+    let fixed = "CREATE PROCEDURE dbo.p @x XML AS SELECT (T.c).value('.', 'INT') FROM @x.nodes('/a') AS T(c)";
+    assert_eq!(classify(fixed), Verdict::ObjectChange);
+}
+
+/// A carriage return with no line feed after it is the one line break the
+/// guard and the server could disagree about - whether it ends a `--`
+/// comment - so it is refused outright, on every route, before anything is
+/// stripped: `--x\rDROP TABLE t` hides the DROP if the guard ends the
+/// comment only at `\n` and the server ends it at `\r`, and
+/// `--x\r'\nDROP TABLE t --'` hides it the other way round.
+#[test]
+fn a_carriage_return_on_its_own_is_refused() {
+    const SENTENCE: &str = "a carriage return on its own is not accepted: end lines with \\r\\n or \\n";
+    for sql in [
+        "SELECT 1 --x\rDROP TABLE t",
+        "SELECT 1 --x\r'\nDROP TABLE t --'",
+        "SELECT 1 -- note\r",
+        "SELECT 1\rFROM t",
+        "CREATE PROCEDURE dbo.p AS SELECT 1 --x\rDROP TABLE t",
+        "CREATE PROCEDURE dbo.p AS SELECT 1 --x\r'\nDROP TABLE t --'",
+        "CREATE PROCEDURE dbo.p AS BEGIN SELECT 1 --x\rDROP TABLE dbo.t\nEND",
+        "EXEC dbo.p --x\rDROP TABLE t",
+        "INSERT INTO dbo.t (a) VALUES (1) --x\r'\nDROP TABLE t --'",
+    ] {
+        assert_eq!(refused_everywhere(sql), SENTENCE, "{sql:?}");
+    }
+    // `\r\n` and `\n` line breaks behave exactly as before.
+    assert_eq!(classify("SELECT 1\r\nFROM t"), Verdict::Read);
+    assert_eq!(classify("SELECT 1\nFROM t"), Verdict::Read);
+    assert_eq!(classify("SELECT a --DROP TABLE t\r\nFROM dbo.t"), Verdict::Read);
+    assert_eq!(classify("SELECT a --DROP TABLE t\nFROM dbo.t"), Verdict::Read);
+    assert_eq!(classify("CREATE PROCEDURE dbo.p AS --DROP TABLE t\r\nSELECT 1"), Verdict::ObjectChange);
+    assert_eq!(classify("CREATE PROCEDURE dbo.p AS --DROP TABLE t\nSELECT 1"), Verdict::ObjectChange);
+    for sql in ["SELECT 1 --x\r\nDROP TABLE t", "SELECT 1 --x\nDROP TABLE t"] {
+        let why = refused_everywhere(sql);
+        assert!(why.contains("DROP"), "{sql:?}: {why}");
+    }
+}
+
+/// SQL Server looks an `sp_` name up in master before this database, so an
+/// object of ours named `sp_...` or `xp_...` is refused at its header,
+/// bracketed or not, whatever its case.
+#[test]
+fn an_object_named_sp_or_xp_is_refused() {
+    for sql in [
+        "CREATE PROCEDURE sp_foo AS SELECT 1",
+        "ALTER PROC dbo.[sp_x] AS SELECT 1",
+        "CREATE VIEW xp_v AS SELECT 1 AS a",
+        "CREATE OR ALTER FUNCTION [dbo].[SP_f]() RETURNS INT AS BEGIN RETURN 1 END",
+        "create procedure \"Xp_q\" AS SELECT 1",
+    ] {
+        let why = refused_everywhere(sql);
+        assert!(why.contains("named sp_... or xp_..."), "{sql:?}: {why}");
+        assert!(why.contains("master"), "{sql:?}: {why}");
+    }
+    for sql in [
+        "CREATE PROCEDURE dbo.usp_x AS SELECT 1",
+        "CREATE PROCEDURE dbo.spx_report AS SELECT 1",
+        "CREATE VIEW [sp].[v] AS SELECT 1 AS a",
+    ] {
+        assert_eq!(classify(sql), Verdict::ObjectChange, "{sql:?}");
+    }
+}
+
+/// A temp table may be bracketed or quoted in `SELECT ... INTO`: it is still
+/// a temp table. A real table stays refused, bracketed or not.
+#[test]
+fn select_into_a_bracketed_temp_table_passes_in_a_body() {
+    let sql = "CREATE PROCEDURE dbo.p AS BEGIN
+    SELECT 1 AS a INTO [#t];
+    SELECT 1 AS a INTO [##t];
+    SELECT 1 AS a INTO \"#q\";
+    SELECT 1 AS a INTO#u;
+END";
+    assert_eq!(classify(sql), Verdict::ObjectChange, "{:?}", classify(sql));
+    for into in ["dbo.x", "[dbo].[x]", "[x]", "\"x\"", "[#t].[x]"] {
+        let sql = format!("CREATE PROCEDURE dbo.p AS SELECT 1 AS a INTO {into}");
+        let why = refused_everywhere(&sql);
+        assert!(why.contains("SELECT ... INTO makes a table"), "{sql:?}: {why}");
+    }
+}

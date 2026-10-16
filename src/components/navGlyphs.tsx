@@ -7,7 +7,7 @@ import { cn } from "../lib/cn";
  * button leaves its box. A lucide icon is one opaque <svg>, so all it can do
  * is move as a whole - which read as the picture warping. These draw the
  * same geometry as the lucide icon they replace (Pen Line, File Up, Rotate
- * Ccw, Eye, Square Play, Radar, Folder Tree, List Ordered, Bot, Braces, Drama, and Work
+ * Ccw, Eye, Square Play, Radar, Folder Tree, List Ordered, Bot, Braces, Drama, File Chart Column, and Work
  * Manager's Git Pull Request, Square Kanban, File Plus Corner, and the context
  * bar's Bell; lucide is ISC), split
  * into the parts the animation needs, plus a few pieces that only show
@@ -192,6 +192,21 @@ export function GlyphPlaywright(p: GlyphProps) {
         <path d="M22 5c0 9-4 12-6 12s-6-3-6-12c0-2 2-3 6-3s6 1 6 3" />
         <path d="M17.4 9.9c-.8.8-2 .8-2.8 0" />
       </g>
+    </Glyph>
+  );
+}
+
+/** Crystal Reports: lucide's File Chart Column, a report page with three
+ *  bars. On hover the bars grow up from the page's foot one after another;
+ *  at rest it is exactly lucide's icon. */
+export function GlyphCrystalReports(p: GlyphProps) {
+  return (
+    <Glyph kind="crystal-reports" {...p}>
+      <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+      <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+      <path className="ng-bar ng-bar-1" d="M8 18v-1" />
+      <path className="ng-bar ng-bar-2" d="M12 18v-6" />
+      <path className="ng-bar ng-bar-3" d="M16 18v-3" />
     </Glyph>
   );
 }

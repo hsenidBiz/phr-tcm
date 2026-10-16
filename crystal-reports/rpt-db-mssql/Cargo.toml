@@ -1,0 +1,21 @@
+[package]
+name = "rpt-db-mssql"
+description = "Live Microsoft SQL Server RowSource for the rpt render pipeline (stored-procedure reports, TDS via tiberius)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rpt-model = { workspace = true, features = ["serde"] }
+rpt-data = { workspace = true }
+rpt-formula = { workspace = true }
+tiberius = { version = "0.12", features = ["chrono", "rust_decimal"] }
+tokio = { version = "1", features = ["rt", "net", "time"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+thiserror = { workspace = true }
+rust_decimal = "1.43"
+
+[dev-dependencies]
+rpt-reader = { workspace = true, features = ["serde"] }

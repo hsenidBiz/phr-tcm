@@ -149,6 +149,20 @@ export const commands = {
 	 *  calling the plugin directly was refused, and the button did nothing.
 	 */
 	openAppLogDir: () => typedError<null, string>(__TAURI_INVOKE("open_app_log_dir")),
+	/**  The report TCM has open and how it last drew; `None` when none is open. */
+	crystalCurrent: () => typedError<{
+	/**  The last render: its path, pages, notes and where its data came from. */
+	preview: PreviewInfo,
+	/**
+	 *  Whether the file is gone from disk, so the screen says so instead of
+	 *  showing a preview of something that no longer exists.
+	 */
+	missing: boolean,
+} | null, string>(__TAURI_INVOKE("crystal_current")),
+	/**  The open report's last PDF, base64 encoded with no data-URL prefix. */
+	crystalPreviewPdf: () => typedError<string | null, string>(__TAURI_INVOKE("crystal_preview_pdf")),
+	/**  Open the report's file in the program Windows has for .rpt files. */
+	crystalOpenInDesigner: () => typedError<null, string>(__TAURI_INVOKE("crystal_open_in_designer")),
 	/**
 	 *  Open the activity folder - the full DB (and, later, API) statement
 	 *  trail `activity_log` writes, kept apart from the app log's own daily
@@ -1509,6 +1523,7 @@ export const events = {
 	autorunScriptsChanged: makeEvent<AutorunScriptsChanged>("autorun-scripts-changed"),
 	autorunSessionChanged: makeEvent<AutorunSessionChanged>("autorun-session-changed"),
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
+	crystalReportChanged: makeEvent<CrystalReportChanged>("crystal-report-changed"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
 	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
 	guideProgress: makeEvent<GuideProgress>("guide-progress"),
@@ -3088,6 +3103,27 @@ export type Creates = {
 };
 
 /**
+ *  Emitted when the report the Crystal Reports screen shows may have
+ *  changed: an assistant opened, edited or created one, or drew a new
+ *  preview. The screen reads the open report again; `path` is the report
+ *  that is open now, `None` if none is.
+ */
+export type CrystalReportChanged = {
+	path: string | null,
+};
+
+/**  The report TCM has open, as the screen shows it. */
+export type CurrentReport = {
+	/**  The last render: its path, pages, notes and where its data came from. */
+	preview: PreviewInfo,
+	/**
+	 *  Whether the file is gone from disk, so the screen says so instead of
+	 *  showing a preview of something that no longer exists.
+	 */
+	missing: boolean,
+};
+
+/**
  *  What the edit form sends back. `password: None` (or blank) keeps the
  *  password already in force, so the form never needs to be shown it.
  */
@@ -3965,7 +4001,7 @@ export type Mention = {
 
 export type Method = "GET" | "POST";
 
-export type Module = "db_access" | "writing_style" | "auto_run" | "api_templates" | "playwright";
+export type Module = "db_access" | "writing_style" | "auto_run" | "api_templates" | "playwright" | "crystal_reports";
 
 export type ModuleRecordResult = {
 	saved: boolean,
@@ -4486,6 +4522,27 @@ export type PreviewCase = {
 	 *  one without a script has nothing to export.
 	 */
 	has_script: boolean,
+};
+
+/**  What a render of the open report produced, without the PDF itself. */
+export type PreviewInfo = {
+	/**  The report's path. */
+	path: string,
+	/**
+	 *  Pages in the PDF; 0 when the render failed. (A `u32`, not the
+	 *  bundle's `usize`: specta refuses 64-bit numbers across IPC.)
+	 */
+	page_count: number,
+	/**
+	 *  The renderer's notes - an object it does not draw, a formula that
+	 *  failed - or why the render failed.
+	 */
+	diagnostics: string[],
+	/**
+	 *  The connection a live-data render used, by name; `None` for a
+	 *  render from the data saved in the report.
+	 */
+	live: string | null,
 };
 
 export type Project = {

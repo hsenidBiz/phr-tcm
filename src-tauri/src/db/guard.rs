@@ -24,11 +24,34 @@
 //! the server. `classify` refuses all of that on the ORIGINAL text, the
 //! same way it reads `GO`, and `sqlcmd::sqlcmd_args` also runs sqlcmd with
 //! `-x` so `$(name)` has two layers that do not depend on each other.
+//!
+//! One allowance on top of all that, for the Crystal Reports module (owner
+//! decision, 2026-10-16): `CREATE`, `ALTER` or `CREATE OR ALTER` of ONE
+//! `PROCEDURE`, `VIEW` or `FUNCTION`, named `name` or `schema.name` in the
+//! connection's own database, is a `Verdict::ObjectChange` - allowed only on
+//! `Access::DevObjects`, the dev login with that module on. Its body runs
+//! later, so it is checked too, by its own rule (`classify_object`), because
+//! a body is many statements: ordinary T-SQL, temp tables, transactions and
+//! dynamic SQL pass; anything that reaches outside the database, changes a
+//! permission or drops anything but a temp table does not. The sqlcmd
+//! client-command, `GO` and `$(name)` refusals above apply to it unchanged.
 
 /// The longest statement the tools will look at. Anything bigger is far
 /// more likely to be a paste accident than a question about the database,
 /// and the guard has to read every character of it.
 pub const MAX_SQL_CHARS: usize = 20_000;
+
+/// The longest procedure, view or function the tools will create or alter.
+/// A report procedure is far longer than any question about data, and it
+/// reaches sqlcmd in a file (see `sqlcmd::run_sql`), so the command line's
+/// own length limit does not bind it.
+pub const MAX_OBJECT_SQL_CHARS: usize = 200_000;
+
+/// What the dev login hears when it sends a procedure, view or function
+/// while the Crystal Reports module is off: the module is the one thing
+/// the person can act on.
+pub const OBJECTS_NEED_MODULE: &str =
+    "creating or altering procedures, views and functions needs the Crystal Reports module switched on in Modules";
 
 /// The one sentence a write on a read-only connection comes back with. It
 /// names the connection to switch to and where to switch it, because that
@@ -40,6 +63,12 @@ pub const READ_ONLY_SENTENCE: &str = "this connection is read only: INSERT/UPDAT
 pub enum Access {
     ReadOnly,
     DevWrites,
+    /// The dev login with the Crystal Reports and Database Access modules
+    /// on: everything `DevWrites` may do, and creating or altering a
+    /// procedure, view or function besides. `access_for`/`access_for_user`
+    /// never answer it - `db::query::access_with` does, where the modules
+    /// are read.
+    DevObjects,
 }
 
 /// What one statement turned out to be.
@@ -47,6 +76,9 @@ pub enum Access {
 pub enum Verdict {
     Read,
     Write,
+    /// `CREATE`/`ALTER`/`CREATE OR ALTER` of one procedure, view or
+    /// function whose body passed `classify_object`.
+    ObjectChange,
     Refused(String),
 }
 
@@ -157,10 +189,21 @@ fn user_id_of(connection_string: &str) -> Option<String> {
 /// are stripped before the first keyword is read, so a word that only
 /// appears inside them counts as data and not as a verb.
 pub fn classify(sql: &str) -> Verdict {
-    if sql.chars().count() > MAX_SQL_CHARS {
-        return refused(format!(
-            "the statement is longer than {MAX_SQL_CHARS} characters: send a smaller one"
-        ));
+    let length = sql.chars().count();
+    if length > MAX_SQL_CHARS {
+        // Only a procedure, view or function may be longer, up to its own
+        // limit; everything else keeps the old one and the old sentence.
+        let stripped = strip_comments_and_literals(sql);
+        if !matches!(object_header(trim_body(&stripped)), Header::Object { .. }) {
+            return refused(format!(
+                "the statement is longer than {MAX_SQL_CHARS} characters: send a smaller one"
+            ));
+        }
+        if length > MAX_OBJECT_SQL_CHARS {
+            return refused(format!(
+                "the procedure, view or function is longer than {MAX_OBJECT_SQL_CHARS} characters: send a smaller one"
+            ));
+        }
     }
     // GO is read off the ORIGINAL text: it is a batch separator sqlcmd acts
     // on itself, so it would split one "statement" into several. Only the
@@ -202,13 +245,31 @@ pub fn classify(sql: &str) -> Verdict {
             "\"$(\" is not allowed here: sqlcmd would read it as a variable".to_string(),
         );
     }
+    // A carriage return with no line feed after it is the one line break the
+    // guard and the server could disagree about: if the server ends a `--`
+    // comment there and the guard does not (or the other way round), code
+    // one of them reads as a comment runs - `SELECT 1 --x\r'\nDROP TABLE t
+    // --'`. Refusing it here, on the ORIGINAL text and on every route in
+    // (`allowed`, `db::batch` and the object path all start with `classify`),
+    // is safe whichever way the server reads it. `\r\n` and `\n` are fine.
+    if sql.match_indices('\r').any(|(at, _)| !sql[at + 1..].starts_with('\n')) {
+        return refused(LONE_CARRIAGE_RETURN.to_string());
+    }
 
     let stripped = strip_comments_and_literals(sql);
     // A leading semicolon is how `;WITH` is written, and it is pasted along
     // with the CTE often enough to be worth not calling a second statement.
-    let body = stripped.trim().trim_start_matches(|c: char| c == ';' || c.is_whitespace());
+    let body = trim_body(&stripped);
     if body.is_empty() {
         return refused("the statement is empty".to_string());
+    }
+    // A procedure, view or function is many statements by nature, so it is
+    // judged by its own rule before the one-statement checks below - which
+    // would refuse every body at its first semicolon.
+    match object_header(body) {
+        Header::Object { rest } => return classify_object(sql, rest),
+        Header::Refused(why) => return refused(why),
+        Header::NotObject => {}
     }
     if let Some(at) = body.find(';') {
         if !body[at + 1..].trim().is_empty() {
@@ -222,9 +283,12 @@ pub fn classify(sql: &str) -> Verdict {
     // EXEC/EXECUTE gets its own classifier, on a copy of `sql` that keeps a
     // bracketed or double-quoted name's real text - `body` above blanks it,
     // which is right for a keyword scan but useless for reading a procedure
-    // NAME, the one thing this shape actually has to read.
+    // NAME, the one thing this shape actually has to read. The copy lexes
+    // names exactly as `body` does: a `--` or `'` inside `[...]` is part of
+    // the name, so the code after it is still read - and, not being an
+    // argument, refused (`EXEC [p--] DROP TABLE t ...`).
     if head == "EXEC" || head == "EXECUTE" {
-        let kept = strip_comments_keep_identifiers(sql);
+        let kept = strip_comments_keep_names(sql);
         let kept_body = kept.trim().trim_start_matches(|c: char| c == ';' || c.is_whitespace());
         return classify_exec(kept_body, &head);
     }
@@ -374,16 +438,512 @@ pub fn lexically_closed(sql: &str) -> bool {
 }
 
 /// The gate itself. `Read` always passes; `Write` passes only on the dev
-/// login; a refusal is a refusal on every connection.
+/// login; `ObjectChange` only on the dev login with the Crystal Reports
+/// module on; a refusal is a refusal on every connection.
 pub fn allowed(sql: &str, access: Access) -> Result<Verdict, String> {
     match classify(sql) {
         Verdict::Read => Ok(Verdict::Read),
         Verdict::Write => match access {
-            Access::DevWrites => Ok(Verdict::Write),
+            Access::DevWrites | Access::DevObjects => Ok(Verdict::Write),
+            Access::ReadOnly => Err(READ_ONLY_SENTENCE.to_string()),
+        },
+        Verdict::ObjectChange => match access {
+            Access::DevObjects => Ok(Verdict::ObjectChange),
+            Access::DevWrites => Err(OBJECTS_NEED_MODULE.to_string()),
             Access::ReadOnly => Err(READ_ONLY_SENTENCE.to_string()),
         },
         Verdict::Refused(why) => Err(why),
     }
+}
+
+/// The stripped statement from its first word: past whitespace and the
+/// leading semicolon of a pasted `;WITH`.
+fn trim_body(stripped: &str) -> &str {
+    stripped.trim().trim_start_matches(|c: char| c == ';' || c.is_whitespace())
+}
+
+/// What the start of a statement says about it being a procedure, view or
+/// function.
+enum Header<'a> {
+    /// Anything else - classified the ordinary way.
+    NotObject,
+    /// One of the three, named `name` or `schema.name`; `rest` is all of the
+    /// statement after the name.
+    Object { rest: &'a str },
+    /// One of the three, but not a name this allowance accepts.
+    Refused(String),
+}
+
+/// Reads `CREATE`, `ALTER` or `CREATE OR ALTER`, then `PROC`/`PROCEDURE`,
+/// `VIEW` or `FUNCTION`, then the name, off the front of `body` - a
+/// statement already through `strip_comments_and_literals` or
+/// `strip_comments_keep_names` and `trim_body`. It must be the very first
+/// thing: `(CREATE PROCEDURE ...)` or anything after a semicolon is not
+/// one, and is refused the ordinary way.
+fn object_header(body: &str) -> Header<'_> {
+    let s = body.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    let after_verb = if let Some(r) = strip_word_ci(s, "CREATE") {
+        let r = r.trim_start();
+        match strip_word_ci(r, "OR") {
+            Some(r) => match strip_word_ci(r.trim_start(), "ALTER") {
+                Some(r) => r,
+                None => return Header::NotObject,
+            },
+            None => r,
+        }
+    } else if let Some(r) = strip_word_ci(s, "ALTER") {
+        r
+    } else {
+        return Header::NotObject;
+    };
+    let r = after_verb.trim_start();
+    let Some(r) = ["PROCEDURE", "PROC", "VIEW", "FUNCTION"].iter().find_map(|kind| strip_word_ci(r, kind)) else {
+        return Header::NotObject;
+    };
+    match parse_proc_name(r.trim_start()) {
+        // SQL Server looks an `sp_` name up in master before this database,
+        // and `xp_` is the extended procedures' prefix: an object of ours
+        // named either way is one the body checks never see run. The name is
+        // read bracketed or not; on the stripped copy a bracketed one is
+        // blank, so `classify_object` asks again on the copy that keeps it.
+        Some((ProcName::One(name) | ProcName::Two(_, name), _))
+            if ["sp_", "xp_"].iter().any(|p| name.trim().to_ascii_lowercase().starts_with(p)) =>
+        {
+            Header::Refused(
+                "procedures, views and functions named sp_... or xp_... are not created or altered here (SQL Server looks for those names in master first): name it something else, e.g. usp_..."
+                    .to_string(),
+            )
+        }
+        Some((ProcName::One(_) | ProcName::Two(..), rest)) => Header::Object { rest },
+        Some((ProcName::TooManyParts, _)) => Header::Refused(
+            "a procedure, view or function may only be made in this connection's own database: name it <name> or <schema>.<name>"
+                .to_string(),
+        ),
+        None => Header::Refused(
+            "a procedure, view or function needs a name: <name> or <schema>.<name>, straight after PROCEDURE, VIEW or FUNCTION"
+                .to_string(),
+        ),
+    }
+}
+
+/// Words refused anywhere in a procedure, view or function body, outside a
+/// string or a comment. Each reaches outside this database, changes who may
+/// do what, or acts on the server itself - none belongs in a report.
+const BODY_REFUSED_WORDS: &[&str] = &[
+    "GRANT",
+    "REVOKE",
+    "DENY",
+    "BACKUP",
+    "RESTORE",
+    "KILL",
+    "SHUTDOWN",
+    "RECONFIGURE",
+    "DBCC",
+    "CHECKPOINT",
+    "SETUSER",
+    "REVERT",
+    "OPENROWSET",
+    "OPENQUERY",
+    "OPENDATASOURCE",
+    // BULK INSERT reads a file off the server's own disk.
+    "BULK",
+    "WRITETEXT",
+    "UPDATETEXT",
+];
+
+/// The `sp_` procedures a body may call. `sp_executesql` is dynamic SQL,
+/// which the owner allowed on the dev database (2026-10-16): existing report
+/// procedures use it. The rest only read schema information, parse XML or
+/// take an application lock. Every other `sp_` procedure - `sp_configure`,
+/// `sp_OACreate`, `sp_addrolemember`, `sp_rename` - is refused.
+const BODY_SYSTEM_PROCEDURES: &[&str] = &[
+    "sp_executesql",
+    "sp_xml_preparedocument",
+    "sp_xml_removedocument",
+    "sp_getapplock",
+    "sp_releaseapplock",
+];
+
+/// What a procedure, view or function body may do, said after every body
+/// refusal so the sentence also says what to send instead.
+const BODY_RULE: &str =
+    "a procedure, view or function may read, write, use temp tables, table variables, cursors, transactions and dynamic SQL, and call procedures in this database - nothing that reaches outside it";
+
+/// Classifies a procedure, view or function whose header `object_header`
+/// accepted. `rest` is the stripped statement after the name - the header's
+/// options and the body - and `sql` the original text.
+///
+/// The body is checked on two copies of the text. Words are read where
+/// comments, literals and quoted names are blanked, so `[Grant]` is a
+/// column and `'DROP TABLE t'` is data. Names are read where quoted and
+/// bracketed names keep their text (`strip_comments_keep_names`), because
+/// `[xp_cmdshell]` and `[otherdb].[dbo].[t]` have to look like what they
+/// are. What is inside a string - dynamic SQL included - cannot be
+/// inspected; the owner accepted that on the dev database.
+fn classify_object(sql: &str, rest: &str) -> Verdict {
+    // The header again, on the copy that keeps a bracketed name's text: the
+    // stripped one blanks `[sp_x]` to `[]`, which only this copy can refuse.
+    let kept = strip_comments_keep_names(sql);
+    let kept_rest = match object_header(trim_body(&kept)) {
+        Header::Object { rest } => rest,
+        Header::Refused(why) => return refused(why),
+        Header::NotObject => {
+            return refused(
+                "the procedure, view or function's name could not be read: <name> or <schema>.<name>".to_string(),
+            );
+        }
+    };
+    let upper = rest.to_uppercase();
+
+    for word in BODY_REFUSED_WORDS {
+        if has_word(&upper, word) {
+            return refused(format!("{word} is not allowed in a procedure, view or function: {BODY_RULE}"));
+        }
+    }
+    // EXECUTE AS, in the header's WITH or in the body, and the `AS USER` /
+    // `AS LOGIN =` that follows `EXEC ('...')` to switch context the same way.
+    let runs_as_someone_else = ["EXEC", "EXECUTE"]
+        .iter()
+        .any(|verb| after_each(&upper, verb).into_iter().any(|after| leading_word(after) == "AS"))
+        || after_each(&upper, "AS").into_iter().any(|after| match leading_word(after).as_str() {
+            "USER" => true,
+            "LOGIN" => strip_word_ci(after.trim_start(), "LOGIN").is_some_and(|r| r.trim_start().starts_with('=')),
+            _ => false,
+        });
+    if runs_as_someone_else {
+        return refused(format!(
+            "EXECUTE AS is not allowed in a procedure, view or function: it runs as somebody else - {BODY_RULE}"
+        ));
+    }
+    for word in ["DROP", "TRUNCATE"] {
+        if after_each(&upper, word).into_iter().any(|after| !names_temp_tables(after, word == "DROP")) {
+            return refused(format!(
+                "{word} is not allowed in a procedure, view or function except {word} TABLE of a temp table (#name): {BODY_RULE}"
+            ));
+        }
+    }
+    for word in ["CREATE", "ALTER"] {
+        if after_each(&upper, word).into_iter().any(|after| !names_temp_table(after)) {
+            return refused(format!(
+                "{word} inside a procedure, view or function may only be {word} TABLE of a temp table (#name): send one procedure, view or function per statement"
+            ));
+        }
+    }
+    // `SELECT ... INTO dbo.x` makes a table. INTO that follows INSERT or
+    // MERGE, or fills a temp table or a variable (`INTO #t`, `FETCH ... INTO
+    // @x`, `OUTPUT ... INTO @t`), does not. A temp table may be bracketed
+    // (`INTO [#t]`, `INTO [##t]`), which `upper` blanks to `[]`, so this
+    // reads a copy where a bracketed temp name keeps its `#` - and only a
+    // whole name: `[#t].[x]` is a table in a schema, not a temp table.
+    let marked = temp_names_marked(kept_rest).to_uppercase();
+    let makes_a_table = occurrences(&marked, "INTO").into_iter().any(|(start, end)| {
+        let before = word_before(&marked[..start]);
+        let next = marked[end..].trim_start();
+        let bracketed_temp = (next.starts_with("[#]") || next.starts_with("\"#\""))
+            && !next[3..].trim_start().starts_with('.');
+        !(before == "INSERT"
+            || before == "MERGE"
+            || next.starts_with('#')
+            || bracketed_temp
+            || next.starts_with('@'))
+    });
+    if makes_a_table {
+        return refused(format!(
+            "SELECT ... INTO makes a table: in a procedure, view or function INTO may only fill a temp table (#name) or a table variable - {BODY_RULE}"
+        ));
+    }
+    if words_after(&upper, "USE").iter().any(|next| next != "HINT" && next != "PLAN") {
+        return refused(format!("USE is not allowed in a procedure, view or function: {BODY_RULE}"));
+    }
+    // `EXEC (...) AT server` runs on a linked server. `AT TIME ZONE` is an
+    // expression.
+    if words_after(&upper, "AT").iter().any(|next| next != "TIME") {
+        return refused(format!(
+            "AT (running a statement on a linked server) is not allowed in a procedure, view or function: {BODY_RULE}"
+        ));
+    }
+    for word in ["ENABLE", "DISABLE"] {
+        if words_after(&upper, word).iter().any(|next| next == "TRIGGER") {
+            return refused(format!("{word} TRIGGER is not allowed in a procedure, view or function: {BODY_RULE}"));
+        }
+    }
+    // Service Broker can carry a message to another database or server.
+    if words_after(&upper, "SEND").iter().any(|next| next == "ON")
+        || words_after(&upper, "BEGIN").iter().any(|next| next == "DIALOG" || next == "CONVERSATION")
+    {
+        return refused(format!(
+            "Service Broker (SEND, BEGIN DIALOG) is not allowed in a procedure, view or function: {BODY_RULE}"
+        ));
+    }
+
+    for name in dotted_names(kept_rest) {
+        if name.parts.len() > 2 && name.called {
+            // `T.c.value(...)` - XML shredding - looks exactly like
+            // `otherdb.dbo.fn(...)`, so it stays refused, with the way to
+            // write the XML method instead.
+            let n = match name.parts.len() {
+                3 => "three",
+                4 => "four",
+                _ => "many",
+            };
+            return refused(format!(
+                "`{}(` reads as a {n}-part name, which could reach another database. If this is an XML method on a column, write it as `({}).{}(...)`.",
+                shorten(&name.text),
+                shorten(&name.head),
+                shorten(&name.last)
+            ));
+        }
+        if name.parts.len() > 2 {
+            return refused(format!(
+                "{} names another database or server: in a procedure, view or function a name has at most two parts (<schema>.<name>) - {BODY_RULE}",
+                shorten(&name.text)
+            ));
+        }
+        for part in &name.parts {
+            let lower = part.trim().to_ascii_lowercase();
+            if lower.starts_with("xp_") {
+                return refused(format!(
+                    "{} is not allowed in a procedure, view or function: no xp_ procedure may be called",
+                    shorten(part.trim())
+                ));
+            }
+            let approved = BODY_SYSTEM_PROCEDURES.contains(&lower.as_str()) || LOOKUP_PROCEDURES.contains(&lower.as_str());
+            if lower.starts_with("sp_") && !approved {
+                return refused(format!(
+                    "{} is not allowed in a procedure, view or function: the system procedures it may call are {}, {} and the look-up ones (sp_help and its neighbours)",
+                    shorten(part.trim()),
+                    BODY_SYSTEM_PROCEDURES[..BODY_SYSTEM_PROCEDURES.len() - 1].join(", "),
+                    BODY_SYSTEM_PROCEDURES[BODY_SYSTEM_PROCEDURES.len() - 1]
+                ));
+            }
+        }
+    }
+    Verdict::ObjectChange
+}
+
+/// Whether `after` - what follows a DROP or TRUNCATE - is `TABLE` and temp
+/// tables only: `TABLE #a`, and for DROP `TABLE IF EXISTS #a, #b`.
+fn names_temp_tables(after: &str, drop: bool) -> bool {
+    let Some(r) = strip_word_ci(after.trim_start(), "TABLE") else {
+        return false;
+    };
+    let mut r = r.trim_start();
+    if drop {
+        if let Some(past_if) = strip_word_ci(r, "IF") {
+            let Some(past_exists) = strip_word_ci(past_if.trim_start(), "EXISTS") else {
+                return false;
+            };
+            r = past_exists.trim_start();
+        }
+    }
+    loop {
+        let Some(name) = r.strip_prefix('#') else {
+            return false;
+        };
+        let len: usize = name.chars().take_while(|c| is_name_char(*c)).map(|c| c.len_utf8()).sum();
+        let next = name[len..].trim_start();
+        match next.strip_prefix(',') {
+            Some(more) if drop => r = more.trim_start(),
+            Some(_) => return false,
+            None => return true,
+        }
+    }
+}
+
+/// `kept` - text through `strip_comments_keep_names` - with every bracketed
+/// or double-quoted name blanked the way `strip_comments_and_literals`
+/// blanks it (`[]`, `""`), except that a temp table's name keeps its `#`:
+/// `[#t]` and `[##t]` read `[#]`. Closed where `skip_quoted` closes it, so
+/// it agrees with both copies about where code is.
+fn temp_names_marked(kept: &str) -> String {
+    let mut out = String::with_capacity(kept.len());
+    let mut chars = kept.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '[' || c == '"' {
+            let close = if c == '[' { ']' } else { '"' };
+            out.push(c);
+            if chars.peek() == Some(&'#') {
+                out.push('#');
+            }
+            out.push(close);
+            skip_quoted(&mut chars, close, |_| {});
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Whether `after` - what follows a CREATE or ALTER inside a body - is
+/// `TABLE #name`.
+fn names_temp_table(after: &str) -> bool {
+    strip_word_ci(after.trim_start(), "TABLE").is_some_and(|r| r.trim_start().starts_with('#'))
+}
+
+/// The start and end of each whole-word occurrence of `word` in `upper`,
+/// with the same notion of a whole word as `has_word`.
+fn occurrences(upper: &str, word: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut from = 0usize;
+    while let Some(at) = upper[from..].find(word) {
+        let start = from + at;
+        let end = start + word.len();
+        let before = upper[..start].chars().next_back();
+        let after = upper[end..].chars().next();
+        if !before.is_some_and(is_name_char) && !after.is_some_and(is_name_char) {
+            out.push((start, end));
+        }
+        from = end;
+        if from >= upper.len() {
+            break;
+        }
+    }
+    out
+}
+
+/// What follows each whole-word occurrence of `word` in `upper`.
+fn after_each<'a>(upper: &'a str, word: &str) -> Vec<&'a str> {
+    occurrences(upper, word).into_iter().map(|(_, end)| &upper[end..]).collect()
+}
+
+/// The last name in `text`, past trailing whitespace: the word in front of
+/// the one being looked at.
+fn word_before(text: &str) -> String {
+    let trimmed = text.trim_end();
+    let len: usize = trimmed.chars().rev().take_while(|c| is_name_char(*c)).map(|c| c.len_utf8()).sum();
+    trimmed[trimmed.len() - len..].to_string()
+}
+
+/// One dotted name in a body - `t`, `dbo.t`, `[db].[dbo].[t]`, `db..t` - as
+/// written, and its parts (a bracketed part without its brackets, an empty
+/// part where two dots meet).
+struct DottedName {
+    text: String,
+    parts: Vec<String>,
+    /// As written, everything before the last dot, and the last part.
+    head: String,
+    last: String,
+    /// Whether a `(` follows it: a function or method call.
+    called: bool,
+}
+
+/// Can `c` start a name part: a letter, `_`, a variable's `@`, a temp
+/// table's `#`, or the `$` of `$PARTITION`. Digits cannot, so `1.5` is a
+/// number and not a name.
+fn starts_part(c: char) -> bool {
+    c.is_alphabetic() || matches!(c, '_' | '@' | '#' | '$')
+}
+
+/// Can `c` continue a name part.
+fn continues_part(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '@' | '#' | '$')
+}
+
+/// One name part starting at `chars[i]`: a bracketed or double-quoted name
+/// (closed where `skip_quoted` closes it, so `[a]]b]` is the one part `a]b`)
+/// or a plain one. Returns the part without its brackets and where it ends.
+fn read_part(chars: &[char], i: usize) -> Option<(String, usize)> {
+    let close = match chars.get(i)? {
+        '[' => ']',
+        '"' => '"',
+        c if starts_part(*c) => {
+            let end = (i..chars.len()).find(|&j| !continues_part(chars[j])).unwrap_or(chars.len());
+            return Some((chars[i..end].iter().collect(), end));
+        }
+        _ => return None,
+    };
+    let mut part = String::new();
+    let mut j = i + 1;
+    while j < chars.len() {
+        if chars[j] == close {
+            if chars.get(j + 1) == Some(&close) {
+                part.push(close);
+                j += 2;
+                continue;
+            }
+            return Some((part, j + 1));
+        }
+        part.push(chars[j]);
+        j += 1;
+    }
+    Some((part, chars.len()))
+}
+
+/// Every dotted name in `text`, which has been through
+/// `strip_comments_keep_names`. A name can start with a dot (`..t`, or the
+/// `.value(...)` called on a bracketed expression), and whitespace may sit
+/// on either side of a dot, as T-SQL allows.
+fn dotted_names(text: &str) -> Vec<DottedName> {
+    let chars: Vec<char> = text.chars().collect();
+    let skip_ws = |mut k: usize| {
+        while k < chars.len() && chars[k].is_whitespace() {
+            k += 1;
+        }
+        k
+    };
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let prev_continues = i > 0 && continues_part(chars[i - 1]);
+        let starts = match c {
+            '[' | '"' | '.' => true,
+            c => starts_part(c) && !prev_continues,
+        };
+        // A dot straight after a name's last character, or a number's, is
+        // part of that name or number, never the start of a new one.
+        if !starts || (c == '.' && prev_continues) {
+            i += 1;
+            continue;
+        }
+        let mut parts = Vec::new();
+        let mut j = i;
+        let mut last_dot = None;
+        if c == '.' {
+            parts.push(String::new());
+        } else {
+            let Some((part, next)) = read_part(&chars, i) else {
+                i += 1;
+                continue;
+            };
+            parts.push(part);
+            j = next;
+        }
+        loop {
+            let k = skip_ws(j);
+            if chars.get(k) != Some(&'.') {
+                break;
+            }
+            let dot = k;
+            let k = skip_ws(k + 1);
+            if chars.get(k) == Some(&'.') {
+                parts.push(String::new());
+                last_dot = Some(dot);
+                j = k;
+                continue;
+            }
+            match read_part(&chars, k) {
+                Some((part, next)) => {
+                    parts.push(part);
+                    last_dot = Some(dot);
+                    j = next;
+                }
+                None => {
+                    j = k;
+                    break;
+                }
+            }
+        }
+        let text_of = |from: usize, to: usize| chars[from..to.max(from)].iter().collect::<String>().trim().to_string();
+        let (head, last) = match last_dot {
+            Some(dot) => (text_of(i, dot), text_of(dot + 1, j)),
+            None => (String::new(), text_of(i, j)),
+        };
+        let called = chars.get(skip_ws(j)) == Some(&'(');
+        out.push(DottedName { text: text_of(i, j), parts, head, last, called });
+        i = j.max(i + 1);
+    }
+    out
 }
 
 /// The original text cut at every character any sqlcmd build could take
@@ -403,6 +963,9 @@ fn sqlcmd_lines(sql: &str) -> impl Iterator<Item = &str> {
 pub const USE_STATEMENTS: &str =
     "send each statement as its own entry in \"statements\" instead - they run in order as one transaction";
 
+/// Why a statement with a carriage return on its own is refused.
+const LONE_CARRIAGE_RETURN: &str = "a carriage return on its own is not accepted: end lines with \\r\\n or \\n";
+
 fn refused(why: String) -> Verdict {
     Verdict::Refused(why)
 }
@@ -415,10 +978,15 @@ fn strip_comments_and_literals(sql: &str) -> String {
     let mut chars = sql.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
+            // A `--` comment ends at a line feed OR a carriage return, as it
+            // does on the server (and in `lexically_closed`): ending it only
+            // at `\n` read `SELECT 1 --x\rDROP TABLE t` as one SELECT, while
+            // the server runs the DROP. The break is kept, as `\n` always
+            // was, so the line structure survives.
             '-' if chars.peek() == Some(&'-') => {
                 for c in chars.by_ref() {
-                    if c == '\n' {
-                        out.push('\n');
+                    if c == '\n' || c == '\r' {
+                        out.push(c);
                         break;
                     }
                 }
@@ -465,22 +1033,16 @@ fn strip_comments_and_literals(sql: &str) -> String {
                 out.push('\'');
             }
             // A bracketed or double-quoted identifier is a name, never a
-            // verb, and may legally contain a quote or a comment marker.
-            '[' => {
-                out.push_str("[]");
-                for c in chars.by_ref() {
-                    if c == ']' {
-                        break;
-                    }
-                }
-            }
-            '"' => {
-                out.push_str("\"\"");
-                for c in chars.by_ref() {
-                    if c == '"' {
-                        break;
-                    }
-                }
+            // verb, and may legally contain a quote or a comment marker. It
+            // ends where the server ends it: `]]` inside brackets and `""`
+            // inside quotes are the closing character escaped, not the end.
+            // Ending at the first one let `[a]]'] DROP TABLE t --'` read as
+            // a name, a stray `]` and a string, with the DROP hidden inside.
+            '[' | '"' => {
+                let close = if c == '[' { ']' } else { '"' };
+                out.push(c);
+                out.push(close);
+                skip_quoted(&mut chars, close, |_| {});
             }
             other => out.push(other),
         }
@@ -488,24 +1050,27 @@ fn strip_comments_and_literals(sql: &str) -> String {
     out
 }
 
-/// Like `strip_comments_and_literals`, but a bracketed or double-quoted
-/// name keeps its real text instead of being blanked to `[]`/`""`. Classifying
-/// an EXEC statement means reading the actual procedure name - `sp_help` and
-/// `DeleteEverything` have to look different - so the one place that costs
-/// anything is here, not in the keyword scan the rest of the guard runs on
-/// `body`, which never needs to know what a name actually says.
+/// Like `strip_comments_and_literals`, but a bracketed or double-quoted name
+/// keeps its brackets and its real text instead of being blanked to
+/// `[]`/`""`, closed at the same character (`skip_quoted`) - so the two never
+/// disagree about where code is, and a `'` or `--` inside a name cannot hide
+/// the code after it. Reading a NAME needs this - `sp_help` and
+/// `DeleteEverything`, `[xp_cmdshell]` and `[otherdb].[dbo].[t]`, have to
+/// look like what they are - so `classify_exec` and the name checks in
+/// `classify_object` read this copy, while every keyword scan reads `body`.
 ///
 /// A string literal is still blanked: its content is a VALUE, not a name,
 /// and `EXEC dbo.p 'DROP TABLE t'` must read the same as `EXEC dbo.p 1`.
-fn strip_comments_keep_identifiers(sql: &str) -> String {
+fn strip_comments_keep_names(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len());
     let mut chars = sql.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
+            // Ends where `strip_comments_and_literals` ends it: `\n` or `\r`.
             '-' if chars.peek() == Some(&'-') => {
                 for c in chars.by_ref() {
-                    if c == '\n' {
-                        out.push('\n');
+                    if c == '\n' || c == '\r' {
+                        out.push(c);
                         break;
                     }
                 }
@@ -549,13 +1114,51 @@ fn strip_comments_keep_identifiers(sql: &str) -> String {
                 }
                 out.push('\'');
             }
-            // Unlike `strip_comments_and_literals`, brackets and double
-            // quotes are not special here - their contents fall through to
-            // `other` below and are kept exactly as written.
+            '[' | '"' => {
+                let close = if c == '[' { ']' } else { '"' };
+                out.push(c);
+                skip_quoted(&mut chars, close, |c| out.push(c));
+            }
             other => out.push(other),
         }
     }
     out
+}
+
+/// Consumes a bracketed or double-quoted name after its opening character,
+/// up to and including its closing one - read the way the server reads it,
+/// where the closing character doubled (`]]`, `""`) is that character
+/// escaped and the name goes on. Every character consumed, the closing one
+/// and both of an escaped pair included, is handed to `keep`.
+fn skip_quoted(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, close: char, mut keep: impl FnMut(char)) {
+    while let Some(c) = chars.next() {
+        keep(c);
+        if c == close {
+            if chars.peek() == Some(&close) {
+                keep(close);
+                chars.next();
+                continue;
+            }
+            break;
+        }
+    }
+}
+
+/// Where the bracketed or double-quoted name that `s` starts inside ends:
+/// the byte index of its closing character, `close`, read the way
+/// `skip_quoted` reads it. None if it never closes.
+fn closing_at(s: &str, close: char) -> Option<usize> {
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if c == close {
+            if chars.peek().map(|&(_, n)| n) == Some(close) {
+                chars.next();
+                continue;
+            }
+            return Some(i);
+        }
+    }
+    None
 }
 
 /// The system procedures a person only ever reads schema information with -
@@ -577,11 +1180,11 @@ const LOOKUP_PROCEDURES: &[&str] = &[
 /// whatever comes after it in the statement.
 fn parse_name_part(s: &str) -> Option<(&str, &str)> {
     if let Some(inner) = s.strip_prefix('[') {
-        let end = inner.find(']')?;
+        let end = closing_at(inner, ']')?;
         return Some((&inner[..end], &inner[end + 1..]));
     }
     if let Some(inner) = s.strip_prefix('"') {
-        let end = inner.find('"')?;
+        let end = closing_at(inner, '"')?;
         return Some((&inner[..end], &inner[end + 1..]));
     }
     let mut end = 0usize;
@@ -639,7 +1242,7 @@ fn strip_word_ci<'a>(s: &'a str, word: &str) -> Option<&'a str> {
 }
 
 /// One value out of the accepted grammar: a number, a string literal
-/// (already blanked to `''`/`N''` by `strip_comments_keep_identifiers`), an
+/// (already blanked to `''`/`N''` by `strip_comments_keep_names`), an
 /// `@variable`, or `NULL`/`DEFAULT`. Returns what is left after it.
 fn parse_exec_value(s: &str) -> Option<&str> {
     let r = s.trim_start();
@@ -769,7 +1372,7 @@ fn finish_exec_args(rest: &str, verdict: Verdict, head: &str) -> Verdict {
 
 /// Classifies a statement whose leading word is EXEC or EXECUTE against the
 /// one shape the owner approved: `EXEC[UTE] [@rc =] <procname> [args]`.
-/// `kept` is `sql` run through `strip_comments_keep_identifiers`, trimmed
+/// `kept` is `sql` run through `strip_comments_keep_names`, trimmed
 /// the same way `body` is in `classify` - comments gone, a string literal
 /// blanked to its quotes, a bracketed or quoted name kept exactly as
 /// written.

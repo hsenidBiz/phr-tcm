@@ -145,6 +145,8 @@ const AutoRun = lazy(() => import("./screens/AutoRun"));
 const ApiTemplates = lazy(() => import("./screens/ApiTemplates"));
 // The team's Playwright repo, offered exactly where Auto Run is.
 const Playwright = lazy(() => import("./screens/Playwright"));
+// The report an assistant is working on, previewed; Rust refuses its commands while the module is off.
+const CrystalReports = lazy(() => import("./screens/CrystalReports"));
 const Settings = lazy(() => import("./screens/Settings"));
 const Suites = lazy(() => import("./screens/Suites"));
 const ManageCases = lazy(() => import("./screens/ManageCases"));
@@ -199,6 +201,7 @@ const TITLES: Record<Section, string> = {
   ai: "AI Bridge",
   apitemplates: "API Templates",
   playwright: "Playwright",
+  "crystal-reports": "Crystal Reports",
   settings: "Settings",
 };
 
@@ -1344,7 +1347,7 @@ export default function App() {
               // key={section} remounts the wrapper on tab switch, so every
               // screen fades up briefly (120ms) instead of snapping in.
               // 120ms fade chosen for snappiness (user request 2026-08-22).
-              <div key={section} className={section === "playwright" ? "t-screen-in flex min-h-0 flex-1 flex-col" : "t-screen-in"}>
+              <div key={section} className={section === "playwright" || section === "crystal-reports" ? "t-screen-in flex min-h-0 flex-1 flex-col" : "t-screen-in"}>
                 <div className="mb-4 flex items-center gap-2">
                   <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
                   {section === "ai" && <BridgeStatusBadge />}
@@ -1415,6 +1418,7 @@ export default function App() {
                   <ApiTemplates org={org} project={project} onOpenAiBridge={() => goToSection("ai")} />
                 )}
                 {modules.has("playwright") && section === "playwright" && <Playwright org={org} project={project} />}
+                {modules.has("crystal_reports") && section === "crystal-reports" && <CrystalReports />}
                 {section === "settings" && <Settings org={org} project={project} />}
               </div>
             )}

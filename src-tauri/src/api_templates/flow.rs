@@ -328,7 +328,7 @@ pub fn substitute_check(check: &str, subject: &Subject, value: &Value) -> Result
 
     match classify(&out) {
         Verdict::Read => Ok(out),
-        Verdict::Write => Err("the check is not a read".to_string()),
+        Verdict::Write | Verdict::ObjectChange => Err("the check is not a read".to_string()),
         Verdict::Refused(why) => Err(why),
     }
 }

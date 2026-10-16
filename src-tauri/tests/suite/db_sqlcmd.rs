@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use v2_lib::db::{
-    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, sqlcmd_env, sqlcmd_path, Connection,
+    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, sqlcmd_env, sqlcmd_file_args, sqlcmd_path, Connection,
     Output, Runner, CHAR_CAP, CUT_AT, LOGIN_TIMEOUT_SECS, NOT_INSTALLED, PASSWORD_ENV, ROW_CAP,
     SQLCMD_OVERRIDE, TIMEOUT_SECS,
 };
@@ -555,4 +555,93 @@ async fn a_value_at_the_cut_length_is_said_out_loud() {
     let (text, _) =
         run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT wide FROM t").await.unwrap();
     assert!(!text.contains("256 characters"), "{text}");
+}
+
+// ------------------------------------------- procedures, views and functions
+
+/// A stand-in that reads the file sqlcmd was handed in `-i` WHILE it runs -
+/// the only moment the file exists - and answers with `status`.
+struct ReadsTheFile {
+    status: i32,
+    seen: Mutex<Vec<(Vec<String>, Option<String>)>>,
+}
+
+impl Runner for ReadsTheFile {
+    async fn run(
+        &self,
+        _exe: &Path,
+        args: &[String],
+        _env: &[(String, String)],
+        _timeout: Duration,
+    ) -> Result<Output, String> {
+        let contents = args
+            .iter()
+            .position(|a| a == "-i")
+            .and_then(|at| args.get(at + 1))
+            .and_then(|path| std::fs::read(path).ok())
+            .map(|bytes| String::from_utf8(bytes).expect("the file is UTF-8"));
+        self.seen.lock().unwrap().push((args.to_vec(), contents));
+        let stderr = if self.status == 0 { String::new() } else { "Msg 102, Incorrect syntax".to_string() };
+        Ok(Output { status: self.status, stdout: String::new(), stderr })
+    }
+}
+
+/// An object statement travels in a file, not on the command line: a body
+/// can be ten times the longest command line Windows takes. Everything else
+/// about the call - the flags, the password in the environment - is the
+/// same as for a single statement.
+#[tokio::test]
+async fn a_long_object_body_goes_through_a_file() {
+    // Reads the process-wide module choice: the dev login only makes
+    // objects with Crystal Reports and Database Access on, which a
+    // development build (this test binary) has before setup.
+    let _m = crate::serial::modules();
+    let head = "CREATE OR ALTER PROCEDURE dbo.rpt_Long AS\n-- é ü 中\n";
+    let line = "SELECT 1 AS n;\n";
+    let sql = format!("{head}{}", line.repeat(150_000 / line.len()));
+    assert!(sql.chars().count() > 140_000);
+
+    let c = dev_login_preset();
+    let path = std::env::temp_dir().join("example.sql");
+    let args = sqlcmd_file_args(&c, &path);
+    assert_eq!(value_after(&args, "-i"), path.to_string_lossy());
+    assert!(!args.iter().any(|a| a == "-Q"), "{args:?}");
+    for flag in ["-S", "-d", "-U", "-C", "-b", "-x", "-f", "-l", "-t", "-W", "-s", "-i"] {
+        assert_eq!(args.iter().filter(|a| a.as_str() == flag).count(), 1, "{flag} in {args:?}");
+    }
+    assert_eq!(value_after(&args, "-f"), "65001");
+    // QUOTED_IDENTIFIER on, as a procedure written anywhere else is made.
+    assert_eq!(args.iter().filter(|a| a.as_str() == "-I").count(), 1, "{args:?}");
+    assert!(!args.iter().any(|a| a.contains(&c.password)), "{args:?}");
+
+    for status in [0, 1] {
+        let fake = ReadsTheFile { status, seen: Mutex::new(Vec::new()) };
+        let answer = run_sql(&fake, Path::new("sqlcmd.exe"), &c, &sql).await;
+        assert_eq!(answer.is_ok(), status == 0, "{answer:?}");
+        let seen = fake.seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1);
+        let (args, contents) = &seen[0];
+        assert!(!args.iter().any(|a| a == "-Q"), "{args:?}");
+        assert!(!args.iter().any(|a| a.contains("rpt_Long")), "the statement is on the command line");
+        // The file held exactly the statement, as UTF-8, while sqlcmd ran.
+        assert_eq!(contents.as_deref(), Some(sql.as_str()));
+        // In a folder of the app's own under the system temp folder...
+        let file = PathBuf::from(value_after(args, "-i"));
+        assert!(file.starts_with(std::env::temp_dir()), "{}", file.display());
+        assert!(file.to_string_lossy().to_lowercase().contains("tcm"), "{}", file.display());
+        // ...and gone once the run is over, however it ended.
+        assert!(!file.exists(), "{} was left behind (status {status})", file.display());
+    }
+    assert_eq!(sqlcmd_env(&c), vec![(PASSWORD_ENV.to_string(), c.password.clone())]);
+}
+
+/// The read-only login never gets that far: `run_sql` asks the guard itself.
+#[tokio::test]
+async fn an_object_statement_never_reaches_sqlcmd_on_the_read_only_login() {
+    let fake = FakeRunner::answering("");
+    let said = run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "CREATE PROCEDURE dbo.p AS SELECT 1")
+        .await
+        .unwrap_err();
+    assert_eq!(said, v2_lib::db::READ_ONLY_SENTENCE);
+    assert!(fake.calls().is_empty());
 }

@@ -222,6 +222,52 @@ export const MCP_TOOLS: McpToolInfo[] = [
     label: "Run a statement",
     summary: "Run one SQL statement, or several as one all-or-nothing transaction, on the chosen connection and read the result.",
   },
+  {
+    name: "open_report",
+    label: "Open a report",
+    summary: "Open a Crystal Reports .rpt file and read it as a tree of areas, sections and objects.",
+  },
+  {
+    name: "read_report",
+    label: "Read the open report",
+    summary: "Read the open report again, or only one section or object of it.",
+  },
+  {
+    name: "edit_report",
+    label: "Edit the open report",
+    summary: "Apply one batch of edits, or a layout plan, and save it over the file.",
+  },
+  {
+    name: "compare_reports",
+    label: "Compare two reports",
+    summary: "List every difference between two .rpt files.",
+  },
+  {
+    name: "check_report",
+    label: "Check a report",
+    summary: "Run the offline load checks on a report: what the engine would refuse, and what it would only warn about.",
+  },
+  {
+    name: "new_report",
+    label: "Create a blank report",
+    summary: "Create a blank .rpt at a path with no file yet, and open it.",
+  },
+  {
+    name: "preview_report",
+    label: "Preview the open report",
+    summary: "Draw the open report to a PDF from its saved data, with the page count and the renderer's notes.",
+  },
+  {
+    name: "preview_report_live",
+    label: "Preview with live data",
+    summary:
+      "Draw the open report from fresh rows: run its stored procedure on the chosen database. Needs writes switched on and the Dev login.",
+  },
+  {
+    name: "get_report_guide",
+    label: "Report guide",
+    summary: "The units, the edit ops, the layout plan and the limits for working with reports.",
+  },
   { name: "validate_cases", label: "Check a draft", summary: "Check a draft with the app's real importer." },
   { name: "get_tags", label: "Project tags", summary: "Tag names this project already uses." },
   { name: "optimize_cases", label: "Build the run sheet", summary: "Reorganise a draft into a tester-ready run sheet." },
@@ -243,7 +289,7 @@ export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_
   "validate_cases", "optimize_cases", "merge_case_files"] as const;
 
 /** The tools of each module, mirroring `ai_tools.rs`'s `AUTORUN_TOOLS`,
- * `API_TEMPLATE_TOOLS` and `DB_TOOLS` (a test reads the Rust consts and
+ * `API_TEMPLATE_TOOLS`, `DB_TOOLS` and `CRYSTAL_TOOLS` (a test reads the Rust consts and
  * compares). A tool whose module is off is absent entirely - not listed, no
  * switch, no skill file - and Rust refuses a direct call. */
 export const AUTORUN_TOOLS = [
@@ -290,12 +336,25 @@ export const API_TEMPLATE_TOOLS = [
 
 export const DB_TOOLS = ["db_lookup", "db_query"] as const;
 
+export const CRYSTAL_TOOLS = [
+  "open_report",
+  "read_report",
+  "edit_report",
+  "compare_reports",
+  "check_report",
+  "new_report",
+  "preview_report",
+  "preview_report_live",
+  "get_report_guide",
+] as const;
+
 /** The module a tool belongs to; null for a tool that is part of Core.
  * Mirrors `ai_tools.rs`'s `module_of_tool`. */
 export function moduleOfTool(name: string): Module | null {
   if ((AUTORUN_TOOLS as readonly string[]).includes(name)) return "auto_run";
   if ((API_TEMPLATE_TOOLS as readonly string[]).includes(name)) return "api_templates";
   if ((DB_TOOLS as readonly string[]).includes(name)) return "db_access";
+  if ((CRYSTAL_TOOLS as readonly string[]).includes(name)) return "crystal_reports";
   return null;
 }
 
@@ -404,6 +463,21 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // and deleting is a SEPARATE switch, on the Database Read Access card - it
   // is a different decision, and it is off until someone makes it.
   ["db_lookup", "db_query"],
+  // Working on a report is one job: open it, read it, change it, check it,
+  // see it, and the guide that says how. An edit tool without the guide, or
+  // a preview with nothing to open, is half a job. Offered only while the
+  // Crystal Reports module is on.
+  [
+    "open_report",
+    "read_report",
+    "edit_report",
+    "compare_reports",
+    "check_report",
+    "new_report",
+    "preview_report",
+    "preview_report_live",
+    "get_report_guide",
+  ],
 ];
 
 /** The one human name and summary a pair shows, keyed by its first member. */
@@ -426,6 +500,11 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
   db_lookup: {
     label: "Database Read Access",
     summary: "Look up tables and run SELECT on the connection chosen below.",
+  },
+  open_report: {
+    label: "Crystal Reports",
+    summary:
+      "Open, read, edit, compare, check and preview Crystal Reports .rpt files, and create blank ones. An accepted edit is saved over the file at once.",
   },
 };
 

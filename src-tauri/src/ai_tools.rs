@@ -196,6 +196,24 @@ pub const API_TEMPLATE_TOOLS: &[&str] = &[
 /// it; whether they are there at all, by the module.
 pub const DB_TOOLS: &[&str] = &["db_lookup", "db_query"];
 
+/// The Crystal Reports tools: the Crystal Reports module's. They work on
+/// the one report TCM has open (`crystal`), and an accepted edit is saved
+/// over the file at once; where the module is off they are not present at
+/// all, like every module's tools. `preview_report_live` runs the report's
+/// stored procedure, so the bridge also wants Database Access on, writes
+/// switched on and the Dev login for it.
+pub const CRYSTAL_TOOLS: &[&str] = &[
+    "open_report",
+    "read_report",
+    "edit_report",
+    "compare_reports",
+    "check_report",
+    "new_report",
+    "preview_report",
+    "preview_report_live",
+    "get_report_guide",
+];
+
 /// The module a tool belongs to; `None` for a tool that is part of Core.
 /// One function, read by `tools/list`, the call-time refusal, the skill
 /// writer and the `--mcp` proxy, so no path can disagree with another
@@ -208,6 +226,8 @@ pub fn module_of_tool(name: &str) -> Option<crate::modules::Module> {
         Some(Module::ApiTemplates)
     } else if DB_TOOLS.contains(&name) {
         Some(Module::DbAccess)
+    } else if CRYSTAL_TOOLS.contains(&name) {
+        Some(Module::CrystalReports)
     } else {
         None
     }
@@ -215,7 +235,7 @@ pub fn module_of_tool(name: &str) -> Option<crate::modules::Module> {
 
 /// Every tool that belongs to a module, in the order above.
 pub fn module_tools() -> impl Iterator<Item = &'static str> {
-    AUTORUN_TOOLS.iter().chain(API_TEMPLATE_TOOLS).chain(DB_TOOLS).copied()
+    AUTORUN_TOOLS.iter().chain(API_TEMPLATE_TOOLS).chain(DB_TOOLS).chain(CRYSTAL_TOOLS).copied()
 }
 
 /// Whether this process is a development build: `cargo test` and
@@ -1072,6 +1092,33 @@ pub fn set_claude_allow(settings: &str, rule: &str, on: bool) -> Result<Option<S
 /// Cursor's allowlist entry that lets our `db_query` run without asking:
 /// `server:tool`, one tool of one server.
 pub const CURSOR_DB_QUERY_ENTRY: &str = "tcm:db_query";
+
+/// What "Run database changes without asking" lets run unasked in Claude
+/// Code: `db_query`, and `preview_report_live`, which runs a report's
+/// stored procedure and is approved like any other procedure call. One
+/// switch, so the entries go in and come out together.
+pub const CLAUDE_DB_RULES: &[&str] = &[CLAUDE_DB_QUERY_RULE, "mcp__tcm__preview_report_live"];
+
+/// `CLAUDE_DB_RULES` as Cursor's allowlist entries.
+pub const CURSOR_DB_ENTRIES: &[&str] = &[CURSOR_DB_QUERY_ENTRY, "tcm:preview_report_live"];
+
+/// `merge` (`set_claude_allow` / `set_cursor_allow`) for each of `entries`
+/// in turn: the text with every one of them in (`on`) or out, or `None`
+/// when none of them changed it - so an unchanged file is never rewritten.
+pub fn merge_all(
+    text: &str,
+    entries: &[&str],
+    on: bool,
+    merge: fn(&str, &str, bool) -> Result<Option<String>, String>,
+) -> Result<Option<String>, String> {
+    let mut changed: Option<String> = None;
+    for entry in entries {
+        if let Some(next) = merge(changed.as_deref().unwrap_or(text), entry, on)? {
+            changed = Some(next);
+        }
+    }
+    Ok(changed)
+}
 
 /// `entry` as it read under the server's old name, when it is one of ours.
 fn legacy_cursor_entry(entry: &str) -> Option<String> {

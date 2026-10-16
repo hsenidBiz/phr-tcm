@@ -1,0 +1,34 @@
+[package]
+name = "rpt-render"
+description = "End-to-end render orchestrator: a decoded rpt Report + its data → paginated Page IR, ready for any output backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rpt-reader = { workspace = true, features = ["serde"] }
+rpt-formula = { workspace = true }
+rpt-data = { workspace = true }
+rpt-layout = { workspace = true }
+rpt-pages = { workspace = true }
+rpt-render-pdf = { workspace = true }
+rpt-text = { workspace = true, features = ["cosmic"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# VENDORED #10: `rpt-db-postgres` (and its tests/postgres_fixtures.rs) is pruned — the vendor set
+# renders from saved data only and does not carry any DB crate. The remaining baselines exercise
+# the same pipeline against `rpt-test-support` fixtures and saved-data reports.
+rpt-test-support = { workspace = true }
+# Serializes the document-scoped half of the Page IR into the page-ir baselines.
+serde_json = { workspace = true }
+similar = { workspace = true }
+
+[lints]
+workspace = true

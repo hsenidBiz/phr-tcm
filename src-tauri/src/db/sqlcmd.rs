@@ -3,8 +3,10 @@
 //! One process, spawned directly with a separate string per argument -
 //! never a shell, so the password is never a token anything could
 //! re-parse. The statement travels in `-Q`, so a multi-line SELECT stays
-//! one batch. Everything that leaves this module - a failure, and the rows
-//! themselves - has been through `hide_password` first.
+//! one batch - except a procedure, view or function, which travels in a
+//! temporary file handed to `-i` (see `run_sql`). Everything that leaves
+//! this module - a failure, and the rows themselves - has been through
+//! `hide_password` first.
 //!
 //! The password is NOT an argument. An argument can be read out of the
 //! process list (`tasklist /v`, Process Explorer, `wmic process`) for as
@@ -293,6 +295,28 @@ impl Runner for RealRunner {
 /// `-h`, for the same reason. The password is not here at all - see
 /// `sqlcmd_env`.
 pub fn sqlcmd_args(c: &Connection, sql: &str) -> Vec<String> {
+    let mut args = connection_args(c);
+    args.extend(["-Q".into(), sql.to_string()]);
+    args
+}
+
+/// The argument list for a statement sqlcmd reads from the file at `path`
+/// with `-i` instead of `-Q`: everything else exactly as `sqlcmd_args`.
+/// Used for a procedure, view or function, whose body can be far longer
+/// than the longest command line Windows will start a process with.
+///
+/// `-I` turns QUOTED_IDENTIFIER on, which go-sqlcmd always does and the
+/// ODBC tools' sqlcmd 15 does not: a procedure keeps the setting it was
+/// created with, and one created with it off fails at run time on the XML
+/// methods (`.value()`, `.nodes()`) report procedures use.
+pub fn sqlcmd_file_args(c: &Connection, path: &Path) -> Vec<String> {
+    let mut args = connection_args(c);
+    args.extend(["-I".into(), "-i".into(), path.to_string_lossy().into_owned()]);
+    args
+}
+
+/// Every argument but the statement: the connection, and how sqlcmd runs.
+fn connection_args(c: &Connection) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-S".into(),
         c.server.clone(),
@@ -316,10 +340,46 @@ pub fn sqlcmd_args(c: &Connection, sql: &str) -> Vec<String> {
         "-W".into(),
         "-s".into(),
         "\t".into(),
-        "-Q".into(),
-        sql.to_string(),
     ]);
     args
+}
+
+/// The folder, under the system's temporary folder, that a statement sent
+/// with `-i` is written into for the length of one run.
+pub const SQL_FILE_FOLDER: &str = "tcm-sqlcmd";
+
+/// A statement written out for sqlcmd's `-i`, deleted when this is dropped -
+/// so whichever way the run ends, an error included, the file does not
+/// outlive it. Its name is random; its contents are never logged.
+struct SqlFile {
+    path: PathBuf,
+}
+
+impl SqlFile {
+    /// Writes `sql` as UTF-8, which is what `-f 65001` tells sqlcmd to read.
+    fn write(sql: &str) -> Result<SqlFile, String> {
+        use std::io::Write;
+        let failed = |e: std::io::Error| {
+            crate::applog::warn(format!("db: could not write a statement to a temporary file: {e}"));
+            "the statement could not be written to a temporary file for sqlcmd - see Settings → Logs".to_string()
+        };
+        let dir = std::env::temp_dir().join(SQL_FILE_FOLDER);
+        std::fs::create_dir_all(&dir).map_err(failed)?;
+        let name: String = rand::random::<[u8; 16]>().iter().map(|b| format!("{b:02x}")).collect();
+        let path = dir.join(format!("{name}.sql"));
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(failed)?;
+        // From here on the file exists, so it is owned before anything else
+        // can fail: a failed write drops `written`, which deletes it.
+        let written = SqlFile { path };
+        file.write_all(sql.as_bytes()).and_then(|()| file.flush()).map_err(failed)?;
+        Ok(written)
+    }
+}
+
+impl Drop for SqlFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 /// The child process's environment: the password, where sqlcmd looks for it
@@ -356,13 +416,20 @@ pub async fn run_sql<R: Runner>(
     c: &Connection,
     sql: &str,
 ) -> Result<(String, bool), String> {
-    guard::allowed(sql, guard::access_for_user(&c.user))?;
+    let verdict = guard::allowed(sql, super::query::access_of(c))?;
 
-    let args = sqlcmd_args(c, sql);
-    let out = r
-        .run(exe, &args, &sqlcmd_env(c), Duration::from_secs(TIMEOUT_SECS))
-        .await
-        .map_err(|e| hide_password(&e, &c.password))?;
+    // A procedure, view or function goes in a file: its body can be ten
+    // times the longest command line. sqlcmd reads the same client commands
+    // in a file as in `-Q` - GO, `:r`, `!!`, `$(name)` - and the guard has
+    // refused every one of them in this statement already.
+    let file = if verdict == guard::Verdict::ObjectChange { Some(SqlFile::write(sql)?) } else { None };
+    let args = match &file {
+        Some(file) => sqlcmd_file_args(c, &file.path),
+        None => sqlcmd_args(c, sql),
+    };
+    let out = r.run(exe, &args, &sqlcmd_env(c), Duration::from_secs(TIMEOUT_SECS)).await;
+    drop(file);
+    let out = out.map_err(|e| hide_password(&e, &c.password))?;
 
     if out.status != 0 {
         // sqlcmd puts server errors on stdout unless asked otherwise, so
@@ -415,7 +482,7 @@ pub async fn run_batch<R: Runner>(
     dry_run: bool,
 ) -> Result<BatchRun, String> {
     use super::batch;
-    batch::validate(statements, guard::access_for_user(&c.user))?;
+    batch::validate(statements, super::query::access_of(c))?;
     let (sql, starts) = batch::compose(statements, dry_run);
 
     let args = sqlcmd_args(c, &sql);

@@ -6,6 +6,7 @@ import {
   GlyphAutoRun,
   GlyphBoard,
   GlyphCreate,
+  GlyphCrystalReports,
   GlyphImport,
   GlyphManage,
   GlyphManual,
@@ -57,6 +58,7 @@ export type Section =
   | "ai"
   | "apitemplates"
   | "playwright"
+  | "crystal-reports"
   | "settings";
 export type WorkSection = "prs" | "board" | "create";
 
@@ -97,14 +99,17 @@ export const CASE_ITEMS: Item<Section>[] = [
   // Last, so every tab above keeps its Ctrl+number; it has none of its
   // own (see sectionShortcut). Braces, for the JSON a template is.
   { id: "apitemplates", label: "API Templates", icon: GlyphApiTemplates, tone: "nav-ico nav-ico-apitemplates" },
+  // After API Templates and outside the Ctrl+N order (NO_SHORTCUT), so no
+  // number moves. A report page with its bars: the preview is the screen.
+  { id: "crystal-reports", label: "Crystal Reports", icon: GlyphCrystalReports, tone: "nav-ico nav-ico-crystal-reports" },
 ];
 
 /** Rows shown in the rail but left out of the Ctrl+N order, so the tabs
  * after them keep their numbers. */
-const NO_SHORTCUT: ReadonlySet<Section> = new Set<Section>(["playwright"]);
+const NO_SHORTCUT: ReadonlySet<Section> = new Set<Section>(["playwright", "crystal-reports"]);
 
-/** The rows the rail shows: CASE_ITEMS, with Auto Run, API Templates and Playwright
- * only while their module is on (lib/modules, `sectionModule`). A function,
+/** The rows the rail shows: CASE_ITEMS, with Auto Run, API Templates, Playwright and Crystal
+ * Reports only while their module is on (lib/modules, `sectionModule`). A function,
  * not a constant: the answer can change while the app runs. Ctrl+1..N and the palette's "mod+N" hints are both
  * read off this list, so a number can never open one screen and be
  * labelled as another. */

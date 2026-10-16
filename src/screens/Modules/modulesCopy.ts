@@ -47,6 +47,13 @@ export const MODULE_INFO: readonly ModuleInfo[] = [
     description:
       "Export passing Auto Run scripts into the team's Playwright repo, run its tests, manage its test accounts and keep exported cases in sync.",
   },
+  {
+    module: "crystal_reports",
+    name: "Crystal Reports",
+    parent: null,
+    description:
+      "Lets your AI assistant open, format and preview Crystal Reports files, and change the stored procedures behind them on the Dev login.",
+  },
 ];
 
 export const CORE_NAME = "Core";

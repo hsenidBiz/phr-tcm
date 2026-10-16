@@ -86,6 +86,7 @@ test("each section belongs to its module", () => {
   expect(sectionModule("autorun")).toBe("auto_run");
   expect(sectionModule("apitemplates")).toBe("api_templates");
   expect(sectionModule("playwright")).toBe("playwright");
+  expect(sectionModule("crystal-reports")).toBe("crystal_reports");
   expect(sectionModule("manual")).toBeNull();
   expect(sectionModule("settings")).toBeNull();
 });
@@ -95,6 +96,8 @@ test("a section hides with its module and no other", () => {
   expect(sectionShown("autorun", some)).toBe(true);
   expect(sectionShown("apitemplates", some)).toBe(false);
   expect(sectionShown("playwright", some)).toBe(false);
+  expect(sectionShown("crystal-reports", some)).toBe(false);
+  expect(sectionShown("crystal-reports", new Set(["crystal_reports"] as const))).toBe(true);
   expect(sectionShown("ai", new Set())).toBe(true);
 });
 
@@ -108,8 +111,8 @@ test("the redirect waits for hydration before it fires", () => {
   expect(shouldLeaveHidden("manual", false, true)).toBe(false);
 });
 
-test("the redirect leaves API Templates and Playwright too, once hydration settles", () => {
-  for (const s of ["apitemplates", "playwright"]) {
+test("the redirect leaves API Templates, Playwright and Crystal Reports too, once hydration settles", () => {
+  for (const s of ["apitemplates", "playwright", "crystal-reports"]) {
     expect(shouldLeaveHidden(s, false, true)).toBe(true);
     expect(shouldLeaveHidden(s, false, false)).toBe(false);
     expect(shouldLeaveHidden(s, true, true)).toBe(false);

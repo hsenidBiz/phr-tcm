@@ -1,0 +1,22 @@
+[package]
+name = "rpt-core"
+description = "Open a Crystal Reports .rpt, project it to a JSON IR, apply typed edits, save"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rpt-reader = { workspace = true, features = ["serde"] }
+rpt-render = { workspace = true }
+rpt-pages = { workspace = true }
+rpt-db-mssql = { workspace = true }
+rpt-formula = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+cfb = { workspace = true }
+miniz_oxide = { workspace = true }
+
+[dev-dependencies]
+rpt-test-support = { workspace = true }
+sha2 = "0.10"

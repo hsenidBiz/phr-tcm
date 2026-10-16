@@ -97,6 +97,11 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # Auto Run's expect_download reads a downloaded PDF's text page by page
 # (MIT, over lopdf) - see autorun/downloads.rs. Read only.
 pdf-extract = "0.12.1"
+# The Crystal Reports module: the .rpt reader/renderer and its SQL Server data
+# source, built from the vendored copy in crystal-reports/ (never edited here;
+# see docs/crystal-reports-copy.md).
+rpt-core = { path = "../crystal-reports/rpt-core" }
+rpt-db-mssql = { path = "../crystal-reports/rpt-db-mssql" }
 
 # One window only. Desktop-only because the mechanism it uses (a named
 # object the first process owns) has no meaning on mobile - see run().

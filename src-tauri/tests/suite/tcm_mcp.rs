@@ -147,6 +147,15 @@ fn tools_list_names_every_tool() {
             "retire_app_quirk",
             "db_lookup",
             "db_query",
+            "open_report",
+            "read_report",
+            "edit_report",
+            "compare_reports",
+            "check_report",
+            "new_report",
+            "preview_report",
+            "preview_report_live",
+            "get_report_guide",
             "optimize_cases",
             "transform_cases",
             "validate_cases",
@@ -729,7 +738,7 @@ fn an_ordinary_tool_gets_the_switched_off_sentence_whatever_is_on() {
 }
 
 use std::collections::BTreeSet;
-use v2_lib::ai_tools::{API_TEMPLATE_TOOLS as API_TOOLS, AUTORUN_TOOLS, DB_TOOLS};
+use v2_lib::ai_tools::{API_TEMPLATE_TOOLS as API_TOOLS, AUTORUN_TOOLS, CRYSTAL_TOOLS, DB_TOOLS};
 use v2_lib::mcp::tool_policy_from;
 
 /// The proxy is its own process and cannot read the app's modules; the
@@ -739,7 +748,7 @@ use v2_lib::mcp::tool_policy_from;
 fn the_proxy_takes_the_modules_from_the_app() {
     let (off, on) = tool_policy_from(Ok((
         200,
-        r#"{"disabled":["search_wiki"],"modules":["db_access","writing_style","auto_run","api_templates","playwright"]}"#.into(),
+        r#"{"disabled":["search_wiki"],"modules":["db_access","writing_style","auto_run","api_templates","playwright","crystal_reports"]}"#.into(),
     )));
     assert_eq!(on, Module::ALL.into_iter().collect());
     assert_eq!(off, vec!["search_wiki"]);
@@ -747,8 +756,9 @@ fn the_proxy_takes_the_modules_from_the_app() {
     let (off, on) =
         tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","auto_run","a_module_from_later"]}"#.into())));
     assert_eq!(on, [Module::DbAccess, Module::AutoRun].into_iter().collect(), "an unknown name is ignored");
-    let expected: Vec<String> = API_TOOLS.iter().map(|s| s.to_string()).collect();
-    assert_eq!(off, expected, "API Templates off: exactly its tools");
+    // Crystal Reports is not named either, so its tools are off with them.
+    let expected: Vec<String> = API_TOOLS.iter().chain(CRYSTAL_TOOLS).map(|s| s.to_string()).collect();
+    assert_eq!(off, expected, "API Templates and Crystal Reports off: exactly their tools");
 }
 
 /// The answer is mended like a stored choice: a module whose parent is
@@ -773,6 +783,7 @@ fn an_older_absent_or_confused_app_offers_no_module_tools() {
     let mut module_tools: Vec<String> = AUTORUN_TOOLS.iter().map(|s| s.to_string()).collect();
     module_tools.extend(API_TOOLS.iter().map(|s| s.to_string()));
     module_tools.extend(DB_TOOLS.iter().map(|s| s.to_string()));
+    module_tools.extend(CRYSTAL_TOOLS.iter().map(|s| s.to_string()));
     let replies: Vec<Result<(u16, String), String>> = vec![
         Ok((200, r#"{"disabled":[],"modules":[]}"#.to_string())),
         Ok((200, r#"{"disabled":[],"autorun":true}"#.to_string())),
@@ -804,11 +815,16 @@ fn each_module_off_removes_its_tools_from_the_list_and_refuses_them() {
         let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
         v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect()
     };
-    let all = names_for(r#"["db_access","writing_style","auto_run","api_templates","playwright"]"#);
+    let all = names_for(r#"["db_access","writing_style","auto_run","api_templates","playwright","crystal_reports"]"#);
     for (module, on_list, tools) in [
-        ("api_templates", r#"["db_access","writing_style","auto_run","playwright"]"#, API_TOOLS),
-        ("auto_run", r#"["db_access","writing_style"]"#, AUTORUN_TOOLS),
-        ("db_access", r#"["writing_style"]"#, DB_TOOLS),
+        ("api_templates", r#"["db_access","writing_style","auto_run","playwright","crystal_reports"]"#, API_TOOLS),
+        ("auto_run", r#"["db_access","writing_style","crystal_reports"]"#, AUTORUN_TOOLS),
+        ("db_access", r#"["writing_style","crystal_reports"]"#, DB_TOOLS),
+        (
+            "crystal_reports",
+            r#"["db_access","writing_style","auto_run","api_templates","playwright"]"#,
+            CRYSTAL_TOOLS,
+        ),
     ] {
         let names = names_for(on_list);
         for t in tools {
@@ -837,7 +853,7 @@ fn each_module_off_removes_its_tools_from_the_list_and_refuses_them() {
         }
     }
     // Writing Style and Playwright have no tools: switching them off leaves the list as it is.
-    assert_eq!(names_for(r#"["db_access","auto_run","api_templates"]"#), all);
+    assert_eq!(names_for(r#"["db_access","auto_run","api_templates","crystal_reports"]"#), all);
 }
 
 /// The proxy asks `/tools` on every tools/list and every tools/call, so a
@@ -898,8 +914,69 @@ fn db_query_says_not_to_ask_only_when_the_app_says_so() {
         let plain = db_query_description(reply);
         assert!(!plain.contains("without confirmation"), "{reply}: {plain}");
     }
-    // Only db_query carries it.
     assert!(!v2_lib::mcp::DB_NO_ASK.is_empty());
+}
+
+/// The live report preview runs the report's stored procedure, so it is
+/// approved like db_query: a "do not ask" line on an explicit yes, and no
+/// other tool carries one. Its line is its own - it has no batch and no
+/// dry run, so db_query's advice would mean nothing there.
+#[test]
+fn the_live_preview_says_not_to_ask_only_when_the_app_says_so() {
+    let descriptions = |tools_reply: &'static str| -> Vec<(String, String)> {
+        let call = move |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+            if path == "/tools" {
+                return Ok((200, tools_reply.into()));
+            }
+            Ok((200, "{}".into()))
+        };
+        let resp =
+            handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        v["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| (t["name"].as_str().unwrap().to_string(), t["description"].as_str().unwrap().to_string()))
+            .collect()
+    };
+    let asked = descriptions(r#"{"disabled":[],"db_no_ask":true}"#);
+    let carrying: Vec<&str> =
+        asked.iter().filter(|(_, d)| d.ends_with(v2_lib::mcp::DB_NO_ASK)).map(|(n, _)| n.as_str()).collect();
+    assert_eq!(carrying, ["db_query"]);
+    let carrying: Vec<&str> = asked
+        .iter()
+        .filter(|(_, d)| d.ends_with(v2_lib::mcp::PREVIEW_LIVE_NO_ASK))
+        .map(|(n, _)| n.as_str())
+        .collect();
+    assert_eq!(carrying, ["preview_report_live"]);
+    let live = &asked.iter().find(|(n, _)| n == "preview_report_live").unwrap().1;
+    assert!(!live.contains("dry_run"), "{live}");
+    assert!(v2_lib::mcp::PREVIEW_LIVE_NO_ASK.contains("without confirmation"));
+    assert!(v2_lib::mcp::PREVIEW_LIVE_NO_ASK.contains("parameter"));
+    let plain = descriptions(r#"{"disabled":[],"db_no_ask":false}"#);
+    assert!(plain.iter().all(|(_, d)| !d.contains("without confirmation")), "{plain:?}");
+}
+
+/// db_query's description says what the Dev login may now create and
+/// alter, what is still never allowed, and how large a request may be.
+#[test]
+fn db_query_describes_the_object_allowance_and_the_size_cap() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &stub(200, "")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let text = v["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "db_query")
+        .and_then(|t| t["description"].as_str())
+        .unwrap()
+        .to_string();
+    for needed in ["CREATE OR ALTER", "procedure, view or function", "Crystal Reports", "never DROP", "64 KiB"] {
+        assert!(text.contains(needed), "db_query's description does not say {needed:?}: {text}");
+    }
+    assert!(!text.contains("never DROP, ALTER or CREATE"), "{text}");
+    assert!(!text.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }
 
 #[test]
@@ -1762,4 +1839,80 @@ fn the_network_wait_tool_is_an_auto_run_read_of_its_own_route() {
     // Read only: the description says nothing can end the wait.
     let list = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
     assert!(list.contains("nothing you call can"), "{list}");
+}
+
+/// The Crystal Reports tools forward to their bridge routes: the arguments
+/// travel whole as the body, and the guide is the one GET.
+#[test]
+fn the_crystal_tools_reach_their_routes() {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".to_string()))
+    };
+    for (tool, args, method, path) in [
+        ("open_report", serde_json::json!({ "path": "C:/r/a.rpt" }), "POST", "/crystal-open"),
+        ("read_report", serde_json::json!({ "section": "Details" }), "POST", "/crystal-read"),
+        ("edit_report", serde_json::json!({ "ops": [] }), "POST", "/crystal-change"),
+        ("compare_reports", serde_json::json!({ "a": "a.rpt", "b": "b.rpt" }), "POST", "/crystal-compare"),
+        ("check_report", serde_json::json!({}), "POST", "/crystal-check"),
+        ("new_report", serde_json::json!({ "path": "C:/r/n.rpt", "title": "T" }), "POST", "/crystal-new"),
+        ("preview_report", serde_json::json!({}), "POST", "/crystal-preview"),
+        (
+            "preview_report_live",
+            serde_json::json!({ "params": { "performance_cycle_id": "42" } }),
+            "POST",
+            "/crystal-preview-live",
+        ),
+        ("get_report_guide", serde_json::json!({}), "GET", "/crystal-guide"),
+    ] {
+        calls.borrow_mut().clear();
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+            "params": { "name": tool, "arguments": args },
+        });
+        let resp = handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        assert_ne!(v["result"]["isError"], true, "{tool}: {v}");
+        let recorded = calls.borrow();
+        let last = recorded.last().unwrap();
+        assert_eq!((last.0.as_str(), last.1.as_str()), (method, path), "{tool}");
+        if method == "POST" {
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&last.2).unwrap(), args, "{tool}");
+        } else {
+            assert_eq!(last.2, "", "{tool}");
+        }
+    }
+}
+
+/// Each Crystal Reports tool is described for the assistant: the required
+/// arguments are the brief's, the long-form detail lives in the guide, and
+/// edit_report says what saving means and where ids come from.
+#[test]
+fn the_crystal_tool_descriptions_guide_the_assistant() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &stub(200, "")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let find = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("{name} is listed"));
+    let required = |name: &str| -> Vec<String> {
+        find(name)["inputSchema"]["required"].as_array().unwrap().iter().map(|r| r.as_str().unwrap().into()).collect()
+    };
+    assert_eq!(required("open_report"), ["path"]);
+    assert_eq!(required("compare_reports"), ["a", "b"]);
+    assert_eq!(required("new_report"), ["path"]);
+    assert!(required("edit_report").is_empty());
+    for name in CRYSTAL_TOOLS {
+        let text = find(name)["description"].as_str().unwrap();
+        assert!(!text.contains('\u{2014}'), "{name}: no em dashes in text an assistant reads");
+    }
+    for name in ["open_report", "read_report", "edit_report", "new_report"] {
+        let text = find(name)["description"].as_str().unwrap();
+        assert!(text.contains("get_report_guide"), "{name} points at the guide: {text}");
+    }
+    let edit = find("edit_report")["description"].as_str().unwrap();
+    assert!(edit.contains("saved over the file"), "{edit}");
+    assert!(edit.contains("git"), "{edit}");
+    assert!(edit.contains("latest"), "{edit}");
+    assert_eq!(find("edit_report")["inputSchema"]["properties"]["ops"]["type"], "array");
+    assert_eq!(find("edit_report")["inputSchema"]["properties"]["plan"]["type"], "object");
 }

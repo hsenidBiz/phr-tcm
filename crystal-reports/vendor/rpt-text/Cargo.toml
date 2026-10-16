@@ -1,0 +1,32 @@
+[package]
+name = "rpt-text"
+description = "Font-accurate text layout for rpt-rs: a cosmic-text-backed TextLayout (real hmtx advances + Unicode/CJK line-breaking + bidi + font fallback) plus a configurable FontProvider (OS fonts + local override dirs)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+
+[features]
+# The cosmic-text shaping stack (CosmicLayout + FontProvider), on by default. Disable it
+# (`default-features = false`) to get only the fontdb-based `FontDb` face resolver — what the physical
+# render backends need, without pulling cosmic-text.
+default = ["cosmic"]
+cosmic = ["dep:cosmic-text"]
+
+[dependencies]
+# Always compiled: the shared face-resolution policy (FontDb) is fontdb-only.
+fontdb = { workspace = true }
+# Per-glyph cmap coverage lookup (does this face have a glyph for codepoint c?) driving the
+# symbol-fallback segmentation. Version matches the one already in the graph via fontdb.
+ttf-parser = { workspace = true }
+rpt-pages = { workspace = true }
+# The cosmic-text shaping stack; it implements the `TextLayout` trait from rpt-pages — only under `cosmic`.
+cosmic-text = { workspace = true, optional = true }
+
+[lints]
+workspace = true

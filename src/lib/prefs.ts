@@ -30,6 +30,7 @@ const SECTIONS: Section[] = [
   "ai",
   "apitemplates",
   "playwright",
+  "crystal-reports",
   "settings",
 ];
 

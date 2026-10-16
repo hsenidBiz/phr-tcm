@@ -6,6 +6,7 @@ import {
   IconModuleDatabase,
   IconModulePlaywright,
   IconModuleWritingStyle,
+  IconReport,
 } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import type { Module } from "../../lib/modules";
@@ -25,6 +26,9 @@ const AT: Record<Module, { x: number; y: number }> = {
   auto_run: { x: 230, y: 375 },
   api_templates: { x: 150, y: 565 },
   playwright: { x: 450, y: 565 },
+  // The right column under Writing Style, a little below Auto Run's row so its
+  // path has room to sweep across (see `pathFor`); clear of Playwright below.
+  crystal_reports: { x: 590, y: 395 },
 };
 
 /** The board grows to fill its area (and shrinks a little before it
@@ -60,6 +64,7 @@ const ICON: Record<Module, ComponentType<{ className?: string; "aria-hidden"?: b
   auto_run: IconModuleAutoRun,
   api_templates: IconModuleApiTemplates,
   playwright: IconModulePlaywright,
+  crystal_reports: IconReport,
 };
 
 /** How long the light takes to run a path, and when the card lights. */
@@ -109,6 +114,17 @@ function pathFor(m: Module, height: Partial<Record<Module, number>>): string {
     ? { x: AT[parent].x, y: AT[parent].y + (height[parent] ?? HEIGHT_GUESS) }
     : { x: CORE_AT.x, y: CORE_AT.tail };
   const to = AT[m];
+  // A child of Core that hangs below the first row (Crystal Reports) first
+  // drops straight down the gap between the first row's cards, so the path
+  // never runs behind one, and only then sweeps across to its own card.
+  if (!parent) {
+    const firstRow = MODULE_INFO.filter((i) => !i.parent && AT[i.module].y < to.y);
+    if (firstRow.length > 0) {
+      const clear = Math.max(...firstRow.map((i) => AT[i.module].y + (height[i.module] ?? HEIGHT_GUESS))) + 12;
+      const mid = (clear + to.y) / 2;
+      return `M${from.x},${from.y} L${from.x},${clear} C${from.x},${mid} ${to.x},${mid} ${to.x},${to.y}`;
+    }
+  }
   const mid = (from.y + to.y) / 2;
   return `M${from.x},${from.y} C${from.x},${mid} ${to.x},${mid} ${to.x},${to.y}`;
 }

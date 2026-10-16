@@ -85,6 +85,23 @@ test("Auto Run, API Templates and Playwright follow their own modules, live", as
   expect(shouldLeaveHidden("playwright", false, true)).toBe(true);
 });
 
+/// Crystal Reports hangs off Core on its own: its row follows its module
+/// alone, and takes no Ctrl number so no other tab's moves.
+test("the Crystal Reports row follows its own module and takes no Ctrl number", () => {
+  mockIPC((cmd) => (cmd === "modules_set" ? [] : null));
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  expect(screen.queryByRole("button", { name: "Crystal Reports" })).not.toBeInTheDocument();
+
+  act(() => setModulesForTest(["crystal_reports"]));
+  expect(screen.getByRole("button", { name: "Crystal Reports" })).toBeInTheDocument();
+  expect(shortcutOrder()).not.toContain("crystal-reports");
+  expect(sectionShortcut("crystal-reports")).toBeUndefined();
+  expect(sectionShortcut("ai")).toBe("mod+8");
+
+  act(() => setModulesForTest([]));
+  expect(screen.queryByRole("button", { name: "Crystal Reports" })).not.toBeInTheDocument();
+});
+
 /// Capture mode (the screenshot script) reports every module on: the help
 /// site documents Auto Run, API Templates and Playwright. Off, the rail
 /// follows the modules.

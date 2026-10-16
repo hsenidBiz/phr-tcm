@@ -1,0 +1,37 @@
+[package]
+name = "rpt-render-pdf"
+description = "PDF output backend for the rpt-pages Page IR — a font-subsetting krilla writer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rpt-model = { workspace = true }
+rpt-pages = { workspace = true }
+rpt-render-util = { workspace = true }
+thiserror = { workspace = true }
+# `simple-text` is deliberately absent: it exists only to provide `Surface::draw_text`, the
+# single-face/no-BIDI convenience shim this backend does not use, and it is krilla's only reason to
+# pull a shaper. Without it krilla places the glyphs we shape (`draw_glyphs`) and shapes nothing.
+krilla = { workspace = true, default-features = false, features = ["raster-images"] }
+# Shaping every run ourselves, per single-face segment, so font fallback (⚠ etc.) and the per-word
+# pen of a justified line both work off advances we can see.
+harfrust = { workspace = true }
+fontdb = { workspace = true }
+# Shared face resolution (FontSpec → OS face); `default-features = false` takes only the fontdb-based
+# resolver, not the cosmic-text shaping stack.
+rpt-text = { workspace = true, default-features = false }
+
+[dev-dependencies]
+# `rpt_test_support::pdf` inflates this backend's /FlateDecode content streams, which is what the
+# op-level tests assert against.
+rpt-test-support = { workspace = true }
+
+[lints]
+workspace = true

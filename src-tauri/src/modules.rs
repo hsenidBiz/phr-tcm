@@ -1,9 +1,9 @@
-//! Modules: five optional areas arranged as a tech tree, chosen per machine.
+//! Modules: six optional areas arranged as a tech tree, chosen per machine.
 //!
 //! Core (test cases, suites, runs and the board) is always on and is not a
 //! module. Database Access and Writing Style hang off Core; Auto Run hangs
-//! off Database Access; API Templates and Playwright hang off Auto Run. A
-//! module can be on only if its parent is on, and switching one off switches
+//! off Database Access; API Templates and Playwright hang off Auto Run;
+//! Crystal Reports hangs off Core on its own. A module can be on only if its parent is on, and switching one off switches
 //! everything under it off. Off hides, never deletes.
 //!
 //! Stored in `modules.json` in the app data dir, written atomically like
@@ -26,21 +26,23 @@ pub enum Module {
     AutoRun,
     ApiTemplates,
     Playwright,
+    CrystalReports,
 }
 
 impl Module {
-    pub const ALL: [Module; 5] = [
+    pub const ALL: [Module; 6] = [
         Module::DbAccess,
         Module::WritingStyle,
         Module::AutoRun,
         Module::ApiTemplates,
         Module::Playwright,
+        Module::CrystalReports,
     ];
 
     /// The module this one needs; `None` means it hangs off Core.
     pub fn parent(self) -> Option<Module> {
         match self {
-            Module::DbAccess | Module::WritingStyle => None,
+            Module::DbAccess | Module::WritingStyle | Module::CrystalReports => None,
             Module::AutoRun => Some(Module::DbAccess),
             Module::ApiTemplates | Module::Playwright => Some(Module::AutoRun),
         }
@@ -53,11 +55,12 @@ impl Module {
             Module::AutoRun => "Auto Run",
             Module::ApiTemplates => "API Templates",
             Module::Playwright => "Playwright",
+            Module::CrystalReports => "Crystal Reports",
         }
     }
 
     /// The stored and wire name: `db_access`, `writing_style`, `auto_run`,
-    /// `api_templates`, `playwright` - what serde writes, spelled out so a
+    /// `api_templates`, `playwright`, `crystal_reports` - what serde writes, spelled out so a
     /// URL or a log line needs no serialiser.
     pub fn key(self) -> &'static str {
         match self {
@@ -66,6 +69,7 @@ impl Module {
             Module::AutoRun => "auto_run",
             Module::ApiTemplates => "api_templates",
             Module::Playwright => "playwright",
+            Module::CrystalReports => "crystal_reports",
         }
     }
 
@@ -98,7 +102,8 @@ impl Module {
 /// What a first-time choice holds. A development build gets everything; an
 /// existing install keeps what it used (Database Access and Writing Style,
 /// plus the Auto Run family if Advanced Features or the extras were on); a
-/// fresh install starts with nothing.
+/// fresh install starts with nothing. Crystal Reports is new, so no old flag
+/// switches it on: only a development build starts with it.
 pub fn initial(existing_install: bool, advanced: bool, unlocked: bool, dev: bool) -> BTreeSet<Module> {
     if dev {
         return Module::ALL.into_iter().collect();

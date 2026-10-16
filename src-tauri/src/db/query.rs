@@ -13,13 +13,15 @@
 //! there is no path to the process that skips the gate, whatever this
 //! file does.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Instant;
 
 use serde_json::json;
 
 use crate::activity_log::{self, Kind};
-use super::guard::{self, Verdict};
+use crate::modules::Module;
+use super::guard::{self, Access, Verdict};
 use super::{schema, sqlcmd};
 use sqlcmd::{Connection, Runner};
 
@@ -42,6 +44,26 @@ pub const NO_LOGIN_SAVED: &str =
 pub const WRITES_OFF: &str =
     "create, update and delete are switched off - turn them on under Database Read Access on the AI Bridge tab";
 
+/// What a connection signed in as `user` may do while the modules in `on`
+/// are switched on. The dev login makes procedures, views and functions
+/// (`Access::DevObjects`) only with Crystal Reports AND Database Access on;
+/// otherwise it is what `guard::access_for_user` says. The one place the
+/// modules decide anything about the database - `access_of` asks it, and
+/// so does `sqlcmd::run_sql` through it.
+pub fn access_with(user: &str, on: &BTreeSet<Module>) -> Access {
+    match guard::access_for_user(user) {
+        Access::DevWrites if on.contains(&Module::CrystalReports) && on.contains(&Module::DbAccess) => {
+            Access::DevObjects
+        }
+        other => other,
+    }
+}
+
+/// `access_with` for `c`'s user and the modules on in this process now.
+pub fn access_of(c: &Connection) -> Access {
+    access_with(&c.user, &crate::modules::current())
+}
+
 /// The connection the database `id` stands for, resolved from `store` now
 /// (a login saved a moment ago is the one used), and a sqlcmd to run it
 /// with. Each refusal is a sentence a person can act on: nothing chosen
@@ -52,6 +74,15 @@ pub fn ready(
     store: Option<&dyn super::SecretStore>,
     id: Option<&str>,
 ) -> Result<(Connection, std::path::PathBuf), String> {
+    let connection = connection(store, id)?;
+    let exe = sqlcmd::sqlcmd_path().ok_or_else(|| sqlcmd::NOT_INSTALLED.to_string())?;
+    Ok((connection, exe))
+}
+
+/// `ready` without the sqlcmd: the connection alone, for a caller that
+/// signs in through something else (the Crystal Reports live preview, whose
+/// data source connects itself). The same refusals, minus "no sqlcmd".
+pub fn connection(store: Option<&dyn super::SecretStore>, id: Option<&str>) -> Result<Connection, String> {
     let nothing_chosen = || NO_CONNECTION.to_string();
     let store = store.ok_or_else(nothing_chosen)?;
     let id = id
@@ -64,10 +95,8 @@ pub fn ready(
     let chosen = super::credentials::resolve(store, id)?.ok_or_else(|| NO_LOGIN_SAVED.to_string())?;
     // The error names the missing key and nothing else - the rest of that
     // string is a credential, and this sentence is shown to a person.
-    let connection = sqlcmd::parse_connection(&chosen)
-        .map_err(|why| format!("{why} - choose a connection under Database Read Access on the AI Bridge tab"))?;
-    let exe = sqlcmd::sqlcmd_path().ok_or_else(|| sqlcmd::NOT_INSTALLED.to_string())?;
-    Ok((connection, exe))
+    sqlcmd::parse_connection(&chosen)
+        .map_err(|why| format!("{why} - choose a connection under Database Read Access on the AI Bridge tab"))
 }
 
 /// Tables a lookup returns when the call does not say.
@@ -133,7 +162,9 @@ pub fn rows_affected(stdout: &str) -> Option<i64> {
 /// The two write doors are both checked here, and both have to be open:
 /// the person switched create/update/delete on in the app, AND the chosen
 /// connection is one whose user may write. Either one shut is a 400 that
-/// names which.
+/// names which. A procedure, view or function has the same two doors, and
+/// the connection's door is narrower: the dev login with the Crystal
+/// Reports module on (`access_with`).
 pub async fn run_query<R: Runner>(
     r: &R,
     exe: &Path,
@@ -142,26 +173,28 @@ pub async fn run_query<R: Runner>(
     sql: &str,
 ) -> Result<String, (u16, String)> {
     let verdict = guard::classify(sql);
-    match &verdict {
-        Verdict::Refused(why) => {
-            record_refusal(c, why, sql);
-            return Err((400, why.clone()));
-        }
-        Verdict::Write => {
-            if !writes_on {
-                record_refusal(c, WRITES_OFF, sql);
-                return Err((400, WRITES_OFF.to_string()));
-            }
-            if guard::access_for_user(&c.user) != guard::Access::DevWrites {
-                record_refusal(c, guard::READ_ONLY_SENTENCE, sql);
-                return Err((400, guard::READ_ONLY_SENTENCE.to_string()));
-            }
-        }
-        Verdict::Read => {}
+    let access = access_of(c);
+    let shut = match &verdict {
+        Verdict::Refused(why) => Some(why.clone()),
+        Verdict::Write | Verdict::ObjectChange if !writes_on => Some(WRITES_OFF.to_string()),
+        Verdict::Write if access == Access::ReadOnly => Some(guard::READ_ONLY_SENTENCE.to_string()),
+        Verdict::ObjectChange => match access {
+            Access::DevObjects => None,
+            Access::DevWrites => Some(guard::OBJECTS_NEED_MODULE.to_string()),
+            Access::ReadOnly => Some(guard::READ_ONLY_SENTENCE.to_string()),
+        },
+        Verdict::Write | Verdict::Read => None,
+    };
+    if let Some(why) = shut {
+        record_refusal(c, &why, sql);
+        return Err((400, why));
     }
 
-    let (verdict_str, kind_title) =
-        if matches!(verdict, Verdict::Write) { ("write", "Write") } else { ("read", "Read") };
+    let (verdict_str, kind_title) = match verdict {
+        Verdict::Write => ("write", "Write"),
+        Verdict::ObjectChange => ("object", "Object change"),
+        _ => ("read", "Read"),
+    };
     let conn = conn_label(c);
 
     // Recorded after the process returns, not before: the full statement
@@ -228,7 +261,7 @@ pub async fn run_batch_query<R: Runner>(
     };
     // Classified with write access first, so the answer can tell "this
     // statement is refused everywhere" apart from the two write doors.
-    let verdict = match batch::validate(statements, guard::Access::DevWrites) {
+    let verdict = match batch::validate(statements, Access::DevWrites) {
         Ok(v) => v,
         Err(why) => {
             record_refusal(c, &why, &joined());
@@ -240,7 +273,7 @@ pub async fn run_batch_query<R: Runner>(
             record_refusal(c, WRITES_OFF, &joined());
             return Err((400, WRITES_OFF.to_string()));
         }
-        if guard::access_for_user(&c.user) != guard::Access::DevWrites {
+        if access_of(c) == Access::ReadOnly {
             record_refusal(c, guard::READ_ONLY_SENTENCE, &joined());
             return Err((400, guard::READ_ONLY_SENTENCE.to_string()));
         }

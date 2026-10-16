@@ -536,7 +536,9 @@ fn the_repo_commands_land_under_the_repos_dot_claude() {
 }
 
 use std::collections::BTreeSet;
-use v2_lib::ai_tools::{effective_disabled_for, module_of_tool, API_TEMPLATE_TOOLS, AUTORUN_TOOLS, CORE_TOOLS, DB_TOOLS};
+use v2_lib::ai_tools::{
+    effective_disabled_for, module_of_tool, API_TEMPLATE_TOOLS, AUTORUN_TOOLS, CORE_TOOLS, CRYSTAL_TOOLS, DB_TOOLS,
+};
 use v2_lib::modules::{apply, Module};
 
 fn mods(ms: &[Module]) -> BTreeSet<Module> {
@@ -601,6 +603,20 @@ fn each_tool_belongs_to_its_module() {
         ]
     );
     assert_eq!(DB_TOOLS, ["db_lookup", "db_query"]);
+    assert_eq!(
+        CRYSTAL_TOOLS,
+        [
+            "open_report",
+            "read_report",
+            "edit_report",
+            "compare_reports",
+            "check_report",
+            "new_report",
+            "preview_report",
+            "preview_report_live",
+            "get_report_guide"
+        ]
+    );
     for t in AUTORUN_TOOLS {
         assert_eq!(module_of_tool(t), Some(Module::AutoRun), "{t}");
     }
@@ -609,6 +625,9 @@ fn each_tool_belongs_to_its_module() {
     }
     for t in DB_TOOLS {
         assert_eq!(module_of_tool(t), Some(Module::DbAccess), "{t}");
+    }
+    for t in CRYSTAL_TOOLS {
+        assert_eq!(module_of_tool(t), Some(Module::CrystalReports), "{t}");
     }
     for t in CORE_TOOLS.iter().chain(&["search_wiki", "search_pbis", "get_tags"]) {
         assert_eq!(module_of_tool(t), None, "{t}");
@@ -626,6 +645,7 @@ fn each_module_off_disables_exactly_its_tools() {
         (Module::AutoRun, AUTORUN_TOOLS),
         (Module::ApiTemplates, API_TEMPLATE_TOOLS),
         (Module::DbAccess, DB_TOOLS),
+        (Module::CrystalReports, CRYSTAL_TOOLS),
     ] {
         // Only `m` off - a state the tree forbids for DbAccess and AutoRun,
         // used here to show each module removes its own tools and no other.
@@ -652,12 +672,12 @@ fn each_module_off_disables_exactly_its_tools() {
 #[test]
 fn database_access_off_takes_the_auto_run_family_tools_with_it() {
     let on = apply(&all_mods(), Module::DbAccess, false).unwrap();
-    assert_eq!(on, mods(&[Module::WritingStyle]));
+    assert_eq!(on, mods(&[Module::WritingStyle, Module::CrystalReports]));
     let off = effective_disabled_for(&[], &on);
     let mut expected = strings(AUTORUN_TOOLS);
     expected.extend(strings(API_TEMPLATE_TOOLS));
     expected.extend(strings(DB_TOOLS));
-    assert_eq!(off, expected);
+    assert_eq!(off, expected, "Crystal Reports hangs off Core, so its tools stay");
 }
 
 /// The core set can never be switched off - whatever the frontend's list
@@ -686,6 +706,7 @@ fn the_effective_disabled_set_follows_the_modules_and_protects_the_core() {
     let mut module_tools = strings(AUTORUN_TOOLS);
     module_tools.extend(strings(API_TEMPLATE_TOOLS));
     module_tools.extend(strings(DB_TOOLS));
+    module_tools.extend(strings(CRYSTAL_TOOLS));
     assert_eq!(effective_disabled_for(&[], &none), module_tools);
     assert_eq!(
         effective_disabled_for(&["optimize_cases".into(), "merge_case_files".into()], &none),
@@ -1246,6 +1267,41 @@ fn the_cursor_entry_goes_in_and_out_of_its_allowlist() {
     assert_eq!(v["mcpAllowlist"], serde_json::json!(["github:list_issues"]));
     let emptied = set_cursor_allow(r#"{"mcpAllowlist":["tcm:db_query"]}"#, ENTRY, false).unwrap().unwrap();
     assert_eq!(serde_json::from_str::<serde_json::Value>(&emptied).unwrap(), serde_json::json!({}));
+}
+
+/// A live report preview runs the report's stored procedure, so "Run
+/// database changes without asking" lets it run unasked with db_query -
+/// both entries go in together and come out together, in each tool's file.
+#[test]
+fn auto_approve_covers_the_live_preview_too() {
+    use v2_lib::ai_tools::{merge_all, set_claude_allow, set_cursor_allow, CLAUDE_DB_RULES, CURSOR_DB_ENTRIES};
+    assert_eq!(CLAUDE_DB_RULES, ["mcp__tcm__db_query", "mcp__tcm__preview_report_live"]);
+    assert_eq!(CURSOR_DB_ENTRIES, ["tcm:db_query", "tcm:preview_report_live"]);
+
+    let allow = |text: &str| serde_json::from_str::<serde_json::Value>(text).unwrap()["permissions"]["allow"].clone();
+    let theirs = r#"{"permissions":{"allow":["Bash(git status)"]}}"#;
+    let on = merge_all(theirs, CLAUDE_DB_RULES, true, set_claude_allow).unwrap().expect("a change");
+    assert_eq!(allow(&on), serde_json::json!(["Bash(git status)", "mcp__tcm__db_query", "mcp__tcm__preview_report_live"]));
+    assert_eq!(merge_all(&on, CLAUDE_DB_RULES, true, set_claude_allow).unwrap(), None, "already on");
+    // A file switched on by an earlier release, with db_query alone, gains the other.
+    let older = r#"{"permissions":{"allow":["mcp__tcm__db_query"]}}"#;
+    let caught_up = merge_all(older, CLAUDE_DB_RULES, true, set_claude_allow).unwrap().unwrap();
+    assert_eq!(allow(&caught_up), serde_json::json!(["mcp__tcm__db_query", "mcp__tcm__preview_report_live"]));
+    // Off takes both out, and only them.
+    let off = merge_all(&on, CLAUDE_DB_RULES, false, set_claude_allow).unwrap().unwrap();
+    assert_eq!(allow(&off), serde_json::json!(["Bash(git status)"]));
+    let one_left = r#"{"permissions":{"allow":["mcp__tcm__preview_report_live","Read(*)"]}}"#;
+    let off = merge_all(one_left, CLAUDE_DB_RULES, false, set_claude_allow).unwrap().unwrap();
+    assert_eq!(allow(&off), serde_json::json!(["Read(*)"]));
+    assert_eq!(merge_all(r#"{"permissions":{"allow":[]}}"#, CLAUDE_DB_RULES, false, set_claude_allow).unwrap(), None);
+
+    let list = |text: &str| serde_json::from_str::<serde_json::Value>(text).unwrap()["mcpAllowlist"].clone();
+    let on = merge_all(r#"{"mcpAllowlist":["github:list_issues"]}"#, CURSOR_DB_ENTRIES, true, set_cursor_allow)
+        .unwrap()
+        .unwrap();
+    assert_eq!(list(&on), serde_json::json!(["github:list_issues", "tcm:db_query", "tcm:preview_report_live"]));
+    let off = merge_all(&on, CURSOR_DB_ENTRIES, false, set_cursor_allow).unwrap().unwrap();
+    assert_eq!(list(&off), serde_json::json!(["github:list_issues"]));
 }
 
 // ------------------------------------------- the server's old name, `tcm-testcases`

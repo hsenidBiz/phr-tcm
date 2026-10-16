@@ -6,6 +6,7 @@ import {
   API_TEMPLATE_TOOLS,
   AUTORUN_TOOLS,
   CORE_TOOLS,
+  CRYSTAL_TOOLS,
   DB_TOOLS,
   dbReadAccessOn,
   disabledToolsSnapshot,
@@ -128,9 +129,11 @@ test("the core and per-module tool lists match the Rust side", () => {
   expect(extractList("AUTORUN_TOOLS")).toEqual([...AUTORUN_TOOLS]);
   expect(extractList("API_TEMPLATE_TOOLS")).toEqual([...API_TEMPLATE_TOOLS]);
   expect(extractList("DB_TOOLS")).toEqual([...DB_TOOLS]);
+  expect(extractList("CRYSTAL_TOOLS")).toEqual([...CRYSTAL_TOOLS]);
   for (const name of extractList("AUTORUN_TOOLS")) expect(moduleOfTool(name)).toBe("auto_run");
   for (const name of extractList("API_TEMPLATE_TOOLS")) expect(moduleOfTool(name)).toBe("api_templates");
   for (const name of extractList("DB_TOOLS")) expect(moduleOfTool(name)).toBe("db_access");
+  for (const name of extractList("CRYSTAL_TOOLS")) expect(moduleOfTool(name)).toBe("crystal_reports");
   for (const name of extractList("CORE_TOOLS")) expect(moduleOfTool(name)).toBeNull();
 });
 
@@ -198,13 +201,14 @@ test("validate, optimise and merge are always on and not listed", () => {
 /// With every module on, the Auto Run pair is one of the rows too. The
 /// suite pair takes one switch, like the wiki pair: a reader that can never
 /// be handed a suite id is no choice at all.
-test("only the switchable tools are left, as eight rows with every module on", () => {
+test("only the switchable tools are left, as nine rows with every module on", () => {
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_results",
     "get_autorun_guide+save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+start_autorun_discovery+discover_autorun_action+discover_autorun_actions+save_autorun_area+end_autorun_discovery+release_autorun_browser+save_autorun_component+remove_autorun_component+get_autorun_failures+record_autorun_quirk+retire_autorun_quirk+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+list_test_files+get_autorun_network_wait",
     "get_api_template_guide+list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+save_api_fixture+run_api_fixture+list_api_fixtures+record_app_quirk+retire_app_quirk",
     "db_lookup+db_query",
+    "open_report+read_report+edit_report+compare_reports+check_report+new_report+preview_report+preview_report_live+get_report_guide",
     "get_tags",
     "search_pbis",
     "search_wiki+get_wiki_page",
@@ -309,6 +313,42 @@ test("the API templates row carries all eleven tools and switches them together"
   localStorage.clear();
 });
 
+/// Working on a report is one job - open it, read it, change it, check it,
+/// see it - so its nine tools are one row with one switch, offered while
+/// Crystal Reports is on.
+test("the Crystal Reports row carries all nine tools and follows its module", () => {
+  const row = visibleRows().find((r) => r.label === "Crystal Reports");
+  expect(row, "the Crystal Reports row exists").toBeTruthy();
+  expect(row!.names).toEqual([
+    "open_report",
+    "read_report",
+    "edit_report",
+    "compare_reports",
+    "check_report",
+    "new_report",
+    "preview_report",
+    "preview_report_live",
+    "get_report_guide",
+  ]);
+  for (const name of row!.names) {
+    expect(CRYSTAL_TOOLS as readonly string[]).toContain(name);
+    expect(moduleOfTool(name)).toBe("crystal_reports");
+  }
+
+  const off = toggleRow([], row!.names);
+  expect([...off].sort()).toEqual([...row!.names].sort());
+  expect(toggleRow(off, row!.names)).toEqual([]);
+
+  // A list naming one half completes toward OFF, like every other group.
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["edit_report"]));
+  expect([...loadDisabledTools()].sort()).toEqual([...row!.names].sort());
+  localStorage.clear();
+
+  setModulesForTest(["db_access", "writing_style", "auto_run", "api_templates", "playwright"]);
+  expect(visibleRows().some((r) => r.label === "Crystal Reports")).toBe(false);
+  for (const name of CRYSTAL_TOOLS) expect(toolOffered(name)).toBe(false);
+});
+
 /// A module that is off takes its tools with it: the row disappears
 /// entirely and a list saved while the module was on cannot carry its names
 /// into requests, where they would be meaningless.
@@ -344,6 +384,7 @@ test("a tool's module is the mirror of Rust's module_of_tool", () => {
   expect(moduleOfTool("save_autorun_script")).toBe("auto_run");
   expect(moduleOfTool("run_api_template")).toBe("api_templates");
   expect(moduleOfTool("db_query")).toBe("db_access");
+  expect(moduleOfTool("edit_report")).toBe("crystal_reports");
   expect(moduleOfTool("get_tags")).toBeNull();
   expect(moduleOfTool("get_test_cases")).toBeNull();
 });

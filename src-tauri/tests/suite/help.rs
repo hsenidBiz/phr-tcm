@@ -52,7 +52,7 @@ fn the_guide_address_names_the_modules_that_are_on() {
     let off = guide_address(index, &mods(&[])).expect("a file URL");
     assert!(
         on.starts_with("file:///")
-            && on.contains("/help/index.html?modules=db_access,writing_style,auto_run,api_templates,playwright"),
+            && on.contains("/help/index.html?modules=db_access,writing_style,auto_run,api_templates,playwright,crystal_reports"),
         "{on}"
     );
     let some = guide_address(index, &mods(&[Module::AutoRun, Module::DbAccess])).expect("a file URL");
@@ -61,7 +61,7 @@ fn the_guide_address_names_the_modules_that_are_on() {
     // carries the old flag, so a guide downloaded under an earlier version
     // still shows its Auto Run pages. Nothing else carries it.
     assert!(
-        on.ends_with("?modules=db_access,writing_style,auto_run,api_templates,playwright&advanced=1"),
+        on.ends_with("?modules=db_access,writing_style,auto_run,api_templates,playwright,crystal_reports&advanced=1"),
         "{on}"
     );
     assert!(some.ends_with("?modules=db_access,auto_run&advanced=1"), "{some}");

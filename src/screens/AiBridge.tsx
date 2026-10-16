@@ -1084,6 +1084,17 @@ export default function AiBridge() {
               by default. Off, template work stays something you drive by hand.
             </li>
           )}
+          {toolShown("open_report") && (
+            <li>
+              <span className="font-medium text-text">Crystal Reports</span>: everything an
+              assistant needs to work on a report file. It opens a .rpt and reads it as
+              a tree of areas, sections and objects, applies a batch of edits, compares
+              two reports, runs the offline load checks, draws a preview, creates a
+              blank report, and reads the guide to the edit vocabulary. Every edit it
+              makes is saved over the file at once, so keep the report in git to undo
+              one. Off, report work stays something you drive by hand.
+            </li>
+          )}
         </ul>
         <p className="text-sm text-muted">
           Recommended flow: ask the AI to read the writing guide and some
