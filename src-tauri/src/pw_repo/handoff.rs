@@ -19,8 +19,7 @@
 //! declares one.
 //!
 //! The prompt is fixed text plus values checked here only: the case ids,
-//! `<seg>` folders (`layout::valid_name`), file stems matching
-//! `^[a-z0-9][a-z0-9-]*$`, raw spec
+//! `<seg>` folders and file stems (`layout::valid_name`), raw spec
 //! names from `index.json`, and user keys from the clone's `users.json`.
 //! The app only builds this text; it never starts Claude Code or anything
 //! else for it. Read only.
@@ -50,12 +49,19 @@ pub struct HandoffCard {
     pub already: Vec<String>,
 }
 
-/// Whether `name` is a file stem the prompt may carry: `^[a-z0-9][a-z0-9-]*$`.
-/// (Folders are checked by `layout::valid_name`.)
+/// Whether `name` is a file stem the prompt may carry: the same rule as a
+/// folder (`layout::valid_name`), since a test-case file is named for its feature.
 pub fn valid_name(name: &str) -> bool {
-    let mut bytes = name.bytes();
-    matches!(bytes.next(), Some(b) if b.is_ascii_lowercase() || b.is_ascii_digit())
-        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    layout::valid_name(name)
+}
+
+/// `--spec`'s value as the command takes it: quoted when it has a space.
+fn spec_arg(stem: &str) -> String {
+    if stem.contains(' ') {
+        format!("\"{stem}\"")
+    } else {
+        stem.to_string()
+    }
 }
 
 /// The `navigation.json` key of a feature: the last two folders of `seg`.
@@ -139,7 +145,8 @@ pub fn prompt(p: &PromptInput) -> String {
     );
     out.push("Do not fetch the tickets and do not run git.".to_string());
     out.push(format!(
-        "Put {them} in `suites/{seg}/specs/{stem}.spec.ts` with --spec {stem} (it creates the spec or appends to it; the --spec contract)."
+        "Put {them} in `suites/{seg}/specs/{stem}.spec.ts` with --spec {} (it creates the spec or appends to it; the --spec contract).",
+        spec_arg(stem)
     ));
     out.push("The tests are independent (no --chain).".to_string());
     out.push("Stop and report on any stop-and-report condition the command defines.".to_string());
@@ -232,7 +239,7 @@ fn check(repo: &ClonedRepo, found: &presence::Presence, record: &ExportRecord, w
         }
     };
     let (seg, stem) = seg_of(&section).ok_or_else(|| {
-        format!("Case {id}'s test-case file is not suites/<folders>/<feature>/test-cases/<name>.md with names in lower-case letters, digits and hyphens.")
+        format!("Case {id}'s test-case file is not suites/<folders>/<feature>/test-cases/<name>.md with folder and file names the app can use (no _ or . at the start, and none of / \\ < > : \" | ? * ` ').")
     })?;
     let in_specs = found
         .places(id)

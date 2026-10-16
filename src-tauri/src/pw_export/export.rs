@@ -398,13 +398,24 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
     if !routed && bare_return_to_area(&script) {
         return fail(pc, runner::NO_AREA_IN_RUN.into());
     }
-    let placement = placed(&ctx.map, &area_name).cloned();
-    let Some(placement) = placement else {
-        return fail(pc, format!("area \"{area_name}\" is not placed yet - choose where it goes in the clone"));
+    // The case's own folder, when it has one, else its area's.
+    let placement = match ctx.map.cases.get(&id) {
+        Some(own) => {
+            if let Err(e) = own.validate() {
+                return fail(pc, format!("this case's own folder is not valid: {e}"));
+            }
+            own.clone()
+        }
+        None => {
+            let Some(placement) = placed(&ctx.map, &area_name).cloned() else {
+                return fail(pc, format!("area \"{area_name}\" is not placed yet - choose where it goes in the clone"));
+            };
+            if let Err(e) = placement.validate() {
+                return fail(pc, format!("area \"{area_name}\" has a placement that is not valid: {e}"));
+            }
+            placement
+        }
     };
-    if let Err(e) = placement.validate() {
-        return fail(pc, format!("area \"{area_name}\" has a placement that is not valid: {e}"));
-    }
     pc.seg = Some(placement.seg().to_string());
 
     // Account.

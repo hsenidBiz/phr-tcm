@@ -702,6 +702,40 @@ fn a_case_placed_in_a_grouped_feature_goes_to_its_folder() {
     assert!(!fx.exists("suites/sl/admin/performance/competencies"));
 }
 
+const OWN: &str = "suites/sl/admin/performance/definition-wizard/DW-competencies/test-cases/DW-competencies.md";
+
+#[test]
+fn a_case_with_its_own_folder_goes_there_and_the_rest_of_its_area_does_not() {
+    let fx = Fx::new();
+    let mut map = v2_lib::pw_export::mapping::load(fx.root.path(), ORG, PROJECT).unwrap();
+    map.cases.insert(81, Placement { path: "sl/admin/performance/definition-wizard/DW-competencies".into() });
+    save(fx.root.path(), ORG, PROJECT, &map).unwrap();
+    fx.good(80, "Area case");
+    fx.good(81, "Own folder case");
+
+    assert_eq!(preview_of(&fx, 81).seg.as_deref(), Some("sl/admin/performance/definition-wizard/DW-competencies"));
+    assert_eq!(preview_of(&fx, 80).seg.as_deref(), Some("sl/admin/performance/proficiency-levels"));
+    let r = export(&fx, &[80, 81], &docs(&[(80, "Area case"), (81, "Own folder case")])).unwrap();
+    assert!(r.files.contains(&OWN.to_string()), "{:?}", r.files);
+    assert!(r.files.contains(&MD_REL.to_string()), "{:?}", r.files);
+    assert!(fx.read_clone(OWN).contains("## 81 "));
+    assert!(!fx.read_clone(OWN).contains("## 80 "));
+    assert!(fx.read_clone(MD_REL).contains("## 80 "));
+
+    // A case's own folder is used even when its area is not placed at all,
+    // and one that is not valid says so for the case.
+    fx.click_script(82, "Unplaced area", "admin", "Unplaced");
+    fx.run("r82", "5", 82, "Passed");
+    assert!(!preview_of(&fx, 82).exportable);
+    map.cases.insert(82, Placement { path: "sl/admin/up".into() });
+    map.cases.insert(80, Placement { path: "sl/_x".into() });
+    save(fx.root.path(), ORG, PROJECT, &map).unwrap();
+    assert!(preview_of(&fx, 82).exportable);
+    let bad = preview_of(&fx, 80);
+    assert!(!bad.exportable);
+    assert!(bad.reason.unwrap_or_default().starts_with("this case's own folder is not valid"));
+}
+
 #[test]
 fn a_grouped_feature_without_its_navigation_entry_is_reported() {
     let fx = Fx::new();

@@ -16,6 +16,10 @@
 // Each case says whether the repo already has it (pw_repo::presence): a new
 // case is ticked, one in the repo is not and is skipped. Ticking one sends it
 // as chosen to replace; the write refuses a case the repo has otherwise.
+//
+// A case goes to its area's folder unless it is given its own: its row shows
+// where it goes, and Own folder lets one case of an area sit apart from the
+// rest. Own folders are saved with the other mappings.
 
 import { useCallback, useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -34,7 +38,7 @@ import { Input } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import { Select } from "../../components/ui/select";
 import { MODAL_LARGE } from "../AutoRun/modalWidths";
-import { IconBrowse, IconCancel, IconConfirm, IconCopy, IconExport } from "../../lib/actionIcons";
+import { IconBrowse, IconCancel, IconConfirm, IconCopy, IconEdit, IconExport, IconUndo } from "../../lib/actionIcons";
 import { copyText } from "../../lib/clipboard";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrapStr } from "../../lib/ipc";
@@ -86,6 +90,8 @@ export default function PlaywrightExportDialog({
    */
   const [areas, setAreas] = useState<Record<string, Placement> | null>(null);
   const [users, setUsers] = useState<Record<string, string> | null>(null);
+  /** Cases given their own folder: case id to the path as typed. */
+  const [own, setOwn] = useState<Record<number, string>>({});
   /** New exportable cases the person unticked; every other new one is ticked. */
   const [unticked, setUnticked] = useState<Set<number>>(new Set());
   /** Exportable cases the repo has that the person ticked to replace. */
@@ -114,6 +120,7 @@ export default function PlaywrightExportDialog({
     if (reseed) {
       setAreas({ ...(p.suggested ?? {}), ...(p.map.areas ?? {}) });
       setUsers({ ...(p.map.accounts?.[p.environment] ?? {}) });
+      setOwn(Object.fromEntries(Object.entries(p.map.cases ?? {}).map(([id, pl]) => [Number(id), pl?.path ?? ""])));
     }
   }, [org, project, caseIds, modules]);
 
@@ -159,9 +166,10 @@ export default function PlaywrightExportDialog({
 
   const saveMappings = () =>
     attempt(async () => {
-      if (!preview || invalid.size > 0) return;
+      if (!preview || invalid.size > 0 || invalidOwn.size > 0) return;
       const map: ExportMap = {
         areas: draftAreas,
+        cases: draftCases,
         accounts: { ...(preview.map.accounts ?? {}), [preview.environment]: draftUsers },
       };
       await unwrapStr(commands.pwExportSaveMap(org, project, map));
@@ -182,8 +190,22 @@ export default function PlaywrightExportDialog({
     else if (p.path.trim() || name in savedAreas) invalid.add(name);
   }
   const draftUsers = Object.fromEntries(Object.entries(users ?? {}).filter(([, v]) => v));
+  // Own folders the same way: one blanked is invalid until it is given a
+  // path or handed back to its area.
+  const savedCases = preview?.map.cases ?? {};
+  const invalidOwn = new Set<number>();
+  const draftCases: Record<number, Placement> = {};
+  for (const [id, raw] of Object.entries(own)) {
+    const typed = raw.trim().replace(/[\s/]+$/, "");
+    if (typed) draftCases[Number(id)] = { path: typed };
+    else invalidOwn.add(Number(id));
+  }
+  const pathsOf = (m: Record<string, Placement | undefined>) =>
+    JSON.stringify(Object.entries(m).map(([k, v]) => [k, v?.path ?? ""]).sort());
   const unsaved =
     invalid.size > 0 ||
+    invalidOwn.size > 0 ||
+    pathsOf(draftCases) !== pathsOf(savedCases) ||
     JSON.stringify(Object.entries(draftAreas).sort()) !== JSON.stringify(Object.entries(savedAreas).sort()) ||
     JSON.stringify(Object.entries(draftUsers).sort()) !== JSON.stringify(Object.entries(savedUsers).sort());
 
@@ -246,6 +268,66 @@ export default function PlaywrightExportDialog({
     else groups.push([name, [c]]);
   }
 
+  /** Where the case goes, and the control that gives it (or takes back) its own folder. */
+  const folderLine = (c: PreviewCase) => {
+    if (c.excluded) return null;
+    const id = c.case_id;
+    if (!(id in own)) {
+      return (
+        <div className="ml-[6.75rem] flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-faint" title={c.seg ?? undefined}>
+            {c.seg ?? "No folder yet"}
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={`Give #${id} its own folder`}
+            title="Send this case to a different folder from the rest of its area"
+            disabled={busy}
+            onClick={() => setOwn((cur) => ({ ...cur, [id]: c.seg ?? "" }))}
+          >
+            <IconEdit aria-hidden />
+            Own folder
+          </Button>
+        </div>
+      );
+    }
+    return (
+      <div className="ml-[6.75rem] space-y-1">
+        <div className="flex items-center gap-2">
+          <Input
+            aria-label={`Folder for #${id}`}
+            placeholder="sl/admin/performance/feature"
+            list={listId}
+            spellCheck={false}
+            className="min-w-0 flex-1 py-1.5 font-mono text-xs"
+            value={own[id]}
+            onChange={(e) => setOwn((cur) => ({ ...cur, [id]: e.target.value }))}
+          />
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={`Use the area's folder for #${id}`}
+            title="Send this case where the rest of its area goes"
+            disabled={busy}
+            onClick={() =>
+              setOwn((cur) => {
+                const next = { ...cur };
+                delete next[id];
+                return next;
+              })
+            }
+          >
+            <IconUndo aria-hidden />
+            Area's folder
+          </Button>
+        </div>
+        {invalidOwn.has(id) && <p className="text-xs text-danger">needs a folder path</p>}
+        {isNewFolder(own[id]) && <p className="text-xs text-warning">A new folder will be created.</p>}
+      </div>
+    );
+  };
+
   const caseRow = (c: PreviewCase) => {
     const head = (
       <>
@@ -279,12 +361,15 @@ export default function PlaywrightExportDialog({
     );
     if (c.exportable) {
       return (
-        <label key={c.case_id} className="flex cursor-pointer items-start gap-3 px-3 py-2 hover:bg-surface-2/60">
-          <span className="pt-0.5">
-            <Checkbox checked={isTicked(c)} ariaLabel={`#${c.case_id} ${c.title}`} onCheckedChange={(on) => setTick(c, on)} />
-          </span>
-          {head}
-        </label>
+        <div key={c.case_id} className="space-y-1 px-3 py-2 hover:bg-surface-2/60">
+          <label className="flex cursor-pointer items-start gap-3">
+            <span className="pt-0.5">
+              <Checkbox checked={isTicked(c)} ariaLabel={`#${c.case_id} ${c.title}`} onCheckedChange={(on) => setTick(c, on)} />
+            </span>
+            {head}
+          </label>
+          {folderLine(c)}
+        </div>
       );
     }
     return (
@@ -300,6 +385,7 @@ export default function PlaywrightExportDialog({
           </span>
           {head}
         </div>
+        {folderLine(c)}
         {c.add_user_command && (
           <div className="ml-[6.75rem] flex items-center gap-2">
             <code className="min-w-0 flex-1 truncate rounded-md border border-border bg-bg px-2 py-1 font-mono text-xs text-text" title={c.add_user_command}>
@@ -407,6 +493,7 @@ export default function PlaywrightExportDialog({
               >
                 <div className="space-y-0.5 border-b border-border px-3 py-2">
                   <Hint>{SKIP_NOTE}</Hint>
+                  <Hint>Each case goes to its area's folder. Own folder sends one case somewhere else.</Hint>
                   {noScript > 0 && (
                     <Hint className="text-faint">{`${noScript} ${noScript === 1 ? "case without a script is" : "cases without a script are"} not shown.`}</Hint>
                   )}
@@ -427,7 +514,7 @@ export default function PlaywrightExportDialog({
                 actions={
                   <>
                     {unsaved && <span className="text-xs text-warning">Save the mappings first</span>}
-                    <Button size="sm" variant="outline" disabled={busy || invalid.size > 0} onClick={() => void saveMappings()}>
+                    <Button size="sm" variant="outline" disabled={busy || invalid.size > 0 || invalidOwn.size > 0} onClick={() => void saveMappings()}>
                       <IconConfirm aria-hidden />
                       Save mappings
                     </Button>

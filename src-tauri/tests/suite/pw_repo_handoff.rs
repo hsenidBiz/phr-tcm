@@ -284,32 +284,36 @@ fn a_raw_spec_name_from_index_json_must_be_plain() {
 }
 
 #[test]
-fn every_seg_part_and_the_file_stem_must_be_a_plain_name() {
+fn every_seg_part_and_the_file_stem_must_be_a_usable_name() {
+    let refused = "Case 9300's test-case file is not suites/<folders>/<feature>/test-cases/<name>.md with folder and file names the app can use (no _ or . at the start, and none of / \\ < > : \" | ? * ` ').";
     for md in [
-        "suites/sl/admin/My Module/feature/test-cases/feature.md",
         "suites/sl/admin/mod`x/feature/test-cases/feature.md",
-        // A folder name no other path shares, so a case-blind file system keeps its capital.
-        "suites/sl/self/Module/feature/test-cases/feature.md",
-        "suites/sl/admin/module/feature/test-cases/Feature Cases.md",
         "suites/sl/admin/module/feat`ure/test-cases/feature.md",
+        "suites/sl/admin/module/feature/test-cases/it's.md",
+        // Too shallow: one folder.
+        "suites/x/test-cases/feature.md",
     ] {
         let c = clone();
         index_add(&c.root, 9300, "bad-seg.spec.ts");
         put(&c.root, md, "## 9300 Bad\n");
         let e = cards_at(&c.root, &record(&[9300]), &none(), &none(), &[9300]).unwrap_err();
-        assert!(e.contains("names in lower-case letters, digits and hyphens"), "{md}: {e}");
+        assert_eq!(e, refused, "{md}");
     }
-    // Too shallow (one folder) or a folder name layout::valid_name refuses.
-    for md in ["suites/x/test-cases/feature.md", "suites/sl/a--b/test-cases/feature.md"] {
+}
+
+#[test]
+fn capitals_and_spaces_are_carried_and_a_spaced_spec_is_quoted() {
+    // A folder name no other path shares, so a case-blind file system keeps its capital.
+    for (md, seg, stem, arg) in [
+        ("suites/sl/self/DW-competencies/test-cases/DW-competencies.md", "sl/self/DW-competencies", "DW-competencies", "--spec DW-competencies "),
+        ("suites/sl/admin/My Module/test-cases/Feature Cases.md", "sl/admin/My Module", "Feature Cases", "--spec \"Feature Cases\" "),
+    ] {
         let c = clone();
-        index_add(&c.root, 9301, "shallow.spec.ts");
-        put(&c.root, md, "## 9301 Shallow\n");
-        let e = cards_at(&c.root, &record(&[9301]), &none(), &none(), &[9301]).unwrap_err();
-        assert_eq!(
-            e,
-            "Case 9301's test-case file is not suites/<folders>/<feature>/test-cases/<name>.md with names in lower-case letters, digits and hyphens.",
-            "{md}"
-        );
+        index_add(&c.root, 9302, "spaced.spec.ts");
+        put(&c.root, md, "## 9302 Spaced\n");
+        let cards = cards_at(&c.root, &record(&[9302]), &none(), &none(), &[9302]).unwrap();
+        assert_eq!((cards[0].seg.as_str(), cards[0].stem.as_str()), (seg, stem), "{md}");
+        assert!(cards[0].prompt.contains(&format!("`suites/{seg}/specs/{stem}.spec.ts` with {arg}")), "{}", cards[0].prompt);
     }
 }
 
@@ -369,10 +373,10 @@ fn the_spec_user_and_the_name_rule() {
     );
     assert_eq!(declared_user_key("  test.use({userKey:\"K\"});").as_deref(), Some("K"));
     assert_eq!(declared_user_key("test.use({ viewport: null });\n// userKey: 'no'"), None);
-    for ok in ["pc-cycle-setup", "a", "9", "sl"] {
+    for ok in ["pc-cycle-setup", "a", "9", "sl", "A", "a_b", "a.b", "a b", "DW-competencies"] {
         assert!(valid_name(ok), "{ok}");
     }
-    for bad in ["", "-a", "A", "a_b", "a.b", "a b", "a`b", "a\nb"] {
+    for bad in ["", "_a", ".a", "a`b", "a'b", "a\nb", "a/b", "con"] {
         assert!(!valid_name(bad), "{bad:?}");
     }
 }

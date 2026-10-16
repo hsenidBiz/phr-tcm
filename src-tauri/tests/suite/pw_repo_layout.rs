@@ -42,11 +42,14 @@ fn the_first_folder_names_the_project() {
 }
 
 #[test]
-fn folder_names_are_kebab_case_and_some_are_skipped() {
-    assert!(layout::valid_name("rating-methods") && layout::valid_name("a1"));
-    for bad in ["", "-a", "a-", "a--b", "A", "a_b", "a b"] {
-        assert!(!layout::valid_name(bad), "{bad}");
+fn any_ordinary_folder_name_is_valid_and_some_are_skipped() {
+    for ok in ["rating-methods", "a1", "DW-competencies", "a_b", "a b", "a--b", "-a", "v1.2", "Con-figs"] {
+        assert!(layout::valid_name(ok), "{ok}");
     }
+    for bad in ["", ".", "..", "_x", ".git", "node_modules", " a", "a ", "a.", "a/b", "a\\b", "a:b", "a*", "a?", "a|b", "a<b", "a\"b", "a`b", "a'b", "a\nb", "con", "NUL", "com1.txt", "lpt9"] {
+        assert!(!layout::valid_name(bad), "{bad:?}");
+    }
+    assert_eq!(layout::name_problem("a:b").unwrap(), "\"a:b\" has :, which a folder name cannot have");
     assert!(layout::skipped("_generated") && layout::skipped(".git") && layout::skipped("node_modules"));
     assert!(!layout::skipped("sl"));
 }

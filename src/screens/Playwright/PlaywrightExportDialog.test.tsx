@@ -161,6 +161,7 @@ test("saving_a_mapping_sends_the_map", async () => {
     project: "Web",
     map: {
       areas: { "Definition Wizard": { path: "sl/self/pm/wizard" } },
+      cases: {},
       accounts: { other: { x: "Y" }, env1: { "hr.admin": "REPO_EMP" } },
     },
   });
@@ -378,7 +379,7 @@ test("a case the repo excludes is unticked, cannot be ticked and is never sent",
 });
 
 test("a refused path shows its sentence and nothing is lost", async () => {
-  const sentence = 'The folder "Sl" must be lowercase letters, digits and hyphens, not starting or ending with a hyphen.';
+  const sentence = `Area "Definition Wizard": The path "sl/_x" cannot be used: "_x" starts with _ or . (or is node_modules), so the repo's tree never reads it.`;
   mount({
     pw_export_save_map: () => {
       throw sentence;
@@ -386,10 +387,10 @@ test("a refused path shows its sentence and nothing is lost", async () => {
   });
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
   const folder = screen.getByLabelText("Folder for Definition Wizard");
-  fireEvent.change(folder, { target: { value: "Sl/admin/x" } });
+  fireEvent.change(folder, { target: { value: "sl/_x" } });
   fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
-  expect(await screen.findByText(/must be lowercase letters, digits and hyphens/)).toBeInTheDocument();
-  expect(folder).toHaveValue("Sl/admin/x");
+  expect(await screen.findByText(/the repo's tree never reads it/)).toBeInTheDocument();
+  expect(folder).toHaveValue("sl/_x");
 });
 
 test("an area placed outside the clone's features says a new folder will be created", async () => {
@@ -402,4 +403,39 @@ test("an area placed outside the clone's features says a new folder will be crea
   // An existing feature's path, even with a trailing slash, needs no note.
   fireEvent.change(folder, { target: { value: "sl/admin/performance/rating-methods/" } });
   expect(screen.queryByText("A new folder will be created.")).not.toBeInTheDocument();
+});
+
+test("one case can be given its own folder, saved with the mappings, and handed back to its area", async () => {
+  const saved = { cases: { 10: { path: "sl/admin/performance/definition-wizard/DW-competencies" } } };
+  const { calls } = mount();
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  // Where it goes now: its area's folder, from the preview.
+  expect(screen.getByText("sl/admin/pm/wizard")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Give #10 its own folder" }));
+  const own = screen.getByLabelText("Folder for #10");
+  expect(own).toHaveValue("sl/admin/pm/wizard");
+  // Not saved yet: Export waits for the mappings.
+  fireEvent.change(own, { target: { value: saved.cases[10].path } });
+  expect(screen.getByRole("button", { name: EXPORT })).toBeDisabled();
+  expect(screen.getByText("A new folder will be created.")).toBeInTheDocument();
+  // A blanked own folder blocks the save until it has a path.
+  fireEvent.change(own, { target: { value: "  " } });
+  expect(screen.getByText("needs a folder path")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save mappings" })).toBeDisabled();
+  // Handed back: the input goes and the case follows its area again.
+  fireEvent.click(screen.getByRole("button", { name: "Use the area's folder for #10" }));
+  expect(screen.queryByLabelText("Folder for #10")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: EXPORT })).toBeEnabled();
+  // Given again and saved: the trailing slash is trimmed.
+  fireEvent.click(screen.getByRole("button", { name: "Give #10 its own folder" }));
+  fireEvent.change(screen.getByLabelText("Folder for #10"), { target: { value: `${saved.cases[10].path}/` } });
+  fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_save_map")).toHaveLength(1));
+  expect(calls.find((c) => c.cmd === "pw_export_save_map")!.args.map).toMatchObject(saved);
+});
+
+test("a saved own folder is shown for editing when the dialog opens", async () => {
+  mount({}, { ...PREVIEW, map: { ...PREVIEW.map, cases: { 10: { path: "sl/x/Own Folder" } } } });
+  expect(await screen.findByLabelText("Folder for #10")).toHaveValue("sl/x/Own Folder");
+  expect(screen.queryByText("Save the mappings to export.")).not.toBeInTheDocument();
 });

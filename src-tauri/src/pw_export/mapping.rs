@@ -40,6 +40,10 @@ impl<'de> Deserialize<'de> for Placement {
 pub struct ExportMap {
     #[serde(default)]
     pub areas: BTreeMap<String, Placement>,
+    /// Cases placed apart from the rest of their area: case id to its own
+    /// folder. A case not listed goes where its area does.
+    #[serde(default)]
+    pub cases: BTreeMap<i32, Placement>,
     #[serde(default)]
     pub accounts: BTreeMap<String, BTreeMap<String, String>>,
 }
@@ -57,10 +61,8 @@ impl Placement {
             ));
         }
         for f in folders {
-            if !crate::pw_repo::layout::valid_name(f) {
-                return Err(format!(
-                    "The folder \"{f}\" must be lowercase letters, digits and hyphens, not starting or ending with a hyphen."
-                ));
+            if let Some(why) = crate::pw_repo::layout::name_problem(f) {
+                return Err(format!("The path \"{}\" cannot be used: {why}.", self.path));
             }
         }
         Ok(())

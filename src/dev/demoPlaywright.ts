@@ -195,7 +195,12 @@ function exportPreview(caseIds: number[]): Preview {
     accounts: ["hr.admin", "perf.supervisor"],
     map: exportMap,
     suggested: { "Goal Setting": { path: "sl/admin/performance/goal-setting" } },
-    cases: ids.map((case_id, i) => ({ ...EXPORT_CASES[i % EXPORT_CASES.length], case_id })),
+    // A case given its own folder goes there, as the real preview says.
+    cases: ids.map((case_id, i) => {
+      const c = { ...EXPORT_CASES[i % EXPORT_CASES.length], case_id };
+      const own = exportMap.cases?.[case_id]?.path;
+      return own && c.seg ? { ...c, seg: own } : c;
+    }),
   };
 }
 
