@@ -711,27 +711,39 @@ fn a_three_part_call_says_how_to_write_an_xml_method() {
     assert_eq!(classify(fixed), Verdict::ObjectChange);
 }
 
-/// The server ends a `--` comment at a carriage return as well as a line
-/// feed. Ending it only at `\n` read `--x\rDROP TABLE t` as one comment, so
-/// the DROP passed as part of a SELECT - and hid from a body's checks.
+/// A carriage return with no line feed after it is the one line break the
+/// guard and the server could disagree about - whether it ends a `--`
+/// comment - so it is refused outright, on every route, before anything is
+/// stripped: `--x\rDROP TABLE t` hides the DROP if the guard ends the
+/// comment only at `\n` and the server ends it at `\r`, and
+/// `--x\r'\nDROP TABLE t --'` hides it the other way round.
 #[test]
-fn a_line_comment_ends_at_a_carriage_return_too() {
+fn a_carriage_return_on_its_own_is_refused() {
+    const SENTENCE: &str = "a carriage return on its own is not accepted: end lines with \\r\\n or \\n";
     for sql in [
         "SELECT 1 --x\rDROP TABLE t",
+        "SELECT 1 --x\r'\nDROP TABLE t --'",
+        "SELECT 1 -- note\r",
+        "SELECT 1\rFROM t",
         "CREATE PROCEDURE dbo.p AS SELECT 1 --x\rDROP TABLE t",
+        "CREATE PROCEDURE dbo.p AS SELECT 1 --x\r'\nDROP TABLE t --'",
         "CREATE PROCEDURE dbo.p AS BEGIN SELECT 1 --x\rDROP TABLE dbo.t\nEND",
+        "EXEC dbo.p --x\rDROP TABLE t",
+        "INSERT INTO dbo.t (a) VALUES (1) --x\r'\nDROP TABLE t --'",
     ] {
+        assert_eq!(refused_everywhere(sql), SENTENCE, "{sql:?}");
+    }
+    // `\r\n` and `\n` line breaks behave exactly as before.
+    assert_eq!(classify("SELECT 1\r\nFROM t"), Verdict::Read);
+    assert_eq!(classify("SELECT 1\nFROM t"), Verdict::Read);
+    assert_eq!(classify("SELECT a --DROP TABLE t\r\nFROM dbo.t"), Verdict::Read);
+    assert_eq!(classify("SELECT a --DROP TABLE t\nFROM dbo.t"), Verdict::Read);
+    assert_eq!(classify("CREATE PROCEDURE dbo.p AS --DROP TABLE t\r\nSELECT 1"), Verdict::ObjectChange);
+    assert_eq!(classify("CREATE PROCEDURE dbo.p AS --DROP TABLE t\nSELECT 1"), Verdict::ObjectChange);
+    for sql in ["SELECT 1 --x\r\nDROP TABLE t", "SELECT 1 --x\nDROP TABLE t"] {
         let why = refused_everywhere(sql);
         assert!(why.contains("DROP"), "{sql:?}: {why}");
     }
-    // An EXEC reads its own copy, which must end the comment there too.
-    assert!(!refused_everywhere("EXEC dbo.p --x\rDROP TABLE t").is_empty());
-    // A Windows line break (`\r\n`) behaves as it always did.
-    assert_eq!(classify("SELECT a --DROP TABLE t\r\nFROM dbo.t"), Verdict::Read);
-    assert_eq!(classify("SELECT 1 -- note\r"), Verdict::Read);
-    assert_eq!(classify("CREATE PROCEDURE dbo.p AS --DROP TABLE t\r\nSELECT 1"), Verdict::ObjectChange);
-    let why = refused_everywhere("SELECT 1 --x\r\nDROP TABLE t");
-    assert!(why.contains("DROP"), "{why}");
 }
 
 /// SQL Server looks an `sp_` name up in master before this database, so an

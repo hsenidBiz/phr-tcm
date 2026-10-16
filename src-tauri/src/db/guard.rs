@@ -245,6 +245,16 @@ pub fn classify(sql: &str) -> Verdict {
             "\"$(\" is not allowed here: sqlcmd would read it as a variable".to_string(),
         );
     }
+    // A carriage return with no line feed after it is the one line break the
+    // guard and the server could disagree about: if the server ends a `--`
+    // comment there and the guard does not (or the other way round), code
+    // one of them reads as a comment runs - `SELECT 1 --x\r'\nDROP TABLE t
+    // --'`. Refusing it here, on the ORIGINAL text and on every route in
+    // (`allowed`, `db::batch` and the object path all start with `classify`),
+    // is safe whichever way the server reads it. `\r\n` and `\n` are fine.
+    if sql.match_indices('\r').any(|(at, _)| !sql[at + 1..].starts_with('\n')) {
+        return refused(LONE_CARRIAGE_RETURN.to_string());
+    }
 
     let stripped = strip_comments_and_literals(sql);
     // A leading semicolon is how `;WITH` is written, and it is pasted along
@@ -952,6 +962,9 @@ fn sqlcmd_lines(sql: &str) -> impl Iterator<Item = &str> {
 /// seen 2026-09-28 with two SELECTs joined by a semicolon in `sql`.
 pub const USE_STATEMENTS: &str =
     "send each statement as its own entry in \"statements\" instead - they run in order as one transaction";
+
+/// Why a statement with a carriage return on its own is refused.
+const LONE_CARRIAGE_RETURN: &str = "a carriage return on its own is not accepted: end lines with \\r\\n or \\n";
 
 fn refused(why: String) -> Verdict {
     Verdict::Refused(why)
