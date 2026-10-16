@@ -117,6 +117,7 @@ mod cache;
 mod case_priority;
 mod comment_images;
 mod components;
+mod crystal_bundle;
 mod db_batch;
 mod db_credentials;
 mod db_credentials_commands;

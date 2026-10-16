@@ -55,3 +55,7 @@ Thumbs.db
 
 # Local git worktrees (superpowers)
 .worktrees/
+
+# The vendored Crystal Reports copy is built by path from src-tauri; its own
+# build output must never be committed.
+crystal-reports/target/

@@ -1,0 +1,496 @@
+//! Bar chart: one riser per category, from the baseline up to the group's summary value,
+//! over the shared Num+Ord axis frame.
+
+#[cfg(test)]
+use super::common::AxisTitles;
+use super::common::{
+    category_label, chart_frame, fmt_val, value_frac, value_label, ChartCtx, LABEL, PALETTE,
+};
+use rpt_model::{ChartArrangement, Rect, Twips};
+use rpt_pages::{DrawOp, ObjectRef, RectOp};
+
+/// Build the draw-ops for a bar chart of `series` (category label → value) inside `rect` (twips).
+/// `title` is drawn centered at the top when non-empty. `show_labels` gates the per-bar data-value
+/// labels (the report's decoded "show value" flag). Returns an empty vec if `series` is empty
+/// (the caller then keeps the placeholder + diagnostic).
+pub(crate) fn bar_chart(cx: &ChartCtx, series: &[(String, f64)]) -> Vec<DrawOp> {
+    if series.is_empty() {
+        return Vec::new();
+    }
+    let &ChartCtx {
+        style,
+        rect,
+        title,
+        axis_titles,
+        show_labels,
+        ..
+    } = cx;
+    let src = || cx.src();
+    let mut ops: Vec<DrawOp> = Vec::new();
+    let f = chart_frame(style, &mut ops, rect, title, axis_titles, series, &src);
+
+    // Bars: one riser per category, from the baseline up to the value.
+    let bar_w = (f.slot * 3 / 5).max(15);
+    let stride = f.cats.stride;
+    for (i, (label, val)) in series.iter().enumerate() {
+        let i = i as i32;
+        let h = (value_frac(*val, f.max_val) * f.plot_h as f64) as i32;
+        let bx = f.plot_left + i * f.slot + (f.slot - bar_w) / 2;
+        let by = f.plot_bottom - h;
+        ops.push(DrawOp::Rect(RectOp {
+            bounds: Rect {
+                left: Twips(bx),
+                top: Twips(by),
+                width: Twips(bar_w),
+                height: Twips(h.max(1)),
+            },
+            fill: Some(PALETTE[i as usize % PALETTE.len()].into()),
+            stroke: None,
+            corner_radius: Twips(0),
+            source: src(),
+        }));
+        // Value label just above the bar top, gated on "show value".
+        if show_labels {
+            ops.push(value_label(
+                style,
+                bx + bar_w / 2,
+                (by - 230).max(f.plot_top()),
+                &fmt_val(*val),
+                LABEL,
+                &src,
+            ));
+        }
+        if (i as usize).is_multiple_of(stride) {
+            ops.push(category_label(style, &f, i, label, &src));
+        }
+    }
+
+    ops
+}
+
+/// Build the draw-ops for a multi-series bar chart: `categories` are the X-axis category labels,
+/// `series_names` name each data series (for the caller's legend), and `values[cat][series]` is the
+/// value of each series in each category. `arrangement` selects how the series share a category slot:
+///
+/// - [`Clustered`](ChartArrangement::Clustered): the series are drawn side-by-side within the slot.
+/// - [`Stacked`](ChartArrangement::Stacked): the series are accumulated bottom-to-top; the value axis
+///   spans `0..max(Σ series)`.
+/// - [`Percent`](ChartArrangement::Percent): stacked then normalized so every category fills 0..100%.
+///
+/// Each series is colored by its index in the shared palette (so the legend the caller composes from
+/// `series_names` matches). `show_labels` gates the per-riser data-value labels. Returns an empty vec
+/// if there are no categories or no series.
+pub(crate) fn bar_chart_multi(
+    cx: &ChartCtx,
+    categories: &[String],
+    series_names: &[String],
+    values: &[Vec<f64>],
+    arrangement: ChartArrangement,
+) -> Vec<DrawOp> {
+    let n_series = series_names.len();
+    if categories.is_empty() || n_series == 0 {
+        return Vec::new();
+    }
+    let &ChartCtx {
+        style,
+        rect,
+        title,
+        axis_titles,
+        show_labels,
+        ..
+    } = cx;
+    let src = || cx.src();
+    let mut ops: Vec<DrawOp> = Vec::new();
+
+    // The value-axis scale depends on the arrangement: the tallest single riser (clustered), the
+    // tallest stacked total (stacked), or a fixed 0..100 (percent). Build one representative value per
+    // category so the shared frame reserves `categories.len()` slots and scales to the right maximum.
+    let frame_series: Vec<(String, f64)> = categories
+        .iter()
+        .enumerate()
+        .map(|(ci, c)| {
+            let v = match arrangement {
+                ChartArrangement::Clustered => {
+                    values[ci].iter().copied().fold(0.0_f64, |m, v| m.max(v))
+                }
+                ChartArrangement::Stacked => values[ci].iter().map(|v| v.max(0.0)).sum(),
+                ChartArrangement::Percent => 100.0,
+            };
+            (c.clone(), v)
+        })
+        .collect();
+    let f = chart_frame(
+        style,
+        &mut ops,
+        rect,
+        title,
+        axis_titles,
+        &frame_series,
+        &src,
+    );
+
+    let n = n_series as i32;
+    for (ci, cat) in categories.iter().enumerate() {
+        let i = ci as i32;
+        let slot_left = f.plot_left + i * f.slot;
+        match arrangement {
+            ChartArrangement::Clustered => {
+                // Split the slot into `n_series` side-by-side sub-bars, centred in the slot.
+                let group_w = (f.slot * 3 / 5).max(n * 8);
+                let sub_w = (group_w / n).max(8);
+                let group_left = slot_left + (f.slot - sub_w * n) / 2;
+                for (s, val) in values[ci].iter().enumerate() {
+                    let h = (value_frac(*val, f.max_val) * f.plot_h as f64) as i32;
+                    let bx = group_left + s as i32 * sub_w;
+                    let by = f.plot_bottom - h;
+                    ops.push(riser(bx, by, sub_w, h, s, &src));
+                    if show_labels {
+                        ops.push(value_label(
+                            style,
+                            bx + sub_w / 2,
+                            (by - 230).max(f.plot_top()),
+                            &fmt_val(*val),
+                            LABEL,
+                            &src,
+                        ));
+                    }
+                }
+            }
+            ChartArrangement::Stacked | ChartArrangement::Percent => {
+                // One riser accumulated bottom-to-top; percent normalizes each category to its own sum.
+                let bar_w = (f.slot * 3 / 5).max(15);
+                let bx = slot_left + (f.slot - bar_w) / 2;
+                let total: f64 = values[ci].iter().map(|v| v.max(0.0)).sum();
+                let mut acc_h = 0;
+                for (s, val) in values[ci].iter().enumerate() {
+                    let scaled = match arrangement {
+                        ChartArrangement::Percent if total > 0.0 => val.max(0.0) / total * 100.0,
+                        ChartArrangement::Percent => 0.0,
+                        _ => val.max(0.0),
+                    };
+                    let h = (value_frac(scaled, f.max_val) * f.plot_h as f64) as i32;
+                    let by = f.plot_bottom - acc_h - h;
+                    ops.push(riser(bx, by, bar_w, h, s, &src));
+                    if show_labels && h > 200 {
+                        ops.push(value_label(
+                            style,
+                            bx + bar_w / 2,
+                            by + (h - 200) / 2,
+                            &fmt_val(*val),
+                            LABEL,
+                            &src,
+                        ));
+                    }
+                    acc_h += h;
+                }
+            }
+        }
+        if ci.is_multiple_of(f.cats.stride) {
+            ops.push(category_label(style, &f, i, cat, &src));
+        }
+    }
+
+    ops
+}
+
+/// A single riser rectangle at `(x, y)` of width `w` and height `h` (clamped ≥ 1), filled with the
+/// palette color for series index `s`.
+fn riser(x: i32, y: i32, w: i32, h: i32, s: usize, src: &dyn Fn() -> Option<ObjectRef>) -> DrawOp {
+    DrawOp::Rect(RectOp {
+        bounds: Rect {
+            left: Twips(x),
+            top: Twips(y),
+            width: Twips(w),
+            height: Twips(h.max(1)),
+        },
+        fill: Some(PALETTE[s % PALETTE.len()].into()),
+        stroke: None,
+        corner_radius: Twips(0),
+        source: src(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_series_yields_no_ops() {
+        let r = Rect {
+            left: Twips(0),
+            top: Twips(0),
+            width: Twips(3000),
+            height: Twips(2000),
+        };
+        assert!(bar_chart(&ChartCtx::test(r, "T", AxisTitles::default(), true), &[]).is_empty());
+    }
+
+    /// Extreme / misconfigured axis-chart inputs must not panic and must keep every emitted rect
+    /// within the plot: a thousand categories (sub-twip slots), an all-zero / negative-only / all-equal
+    /// series (degenerate value scale), and NaN/Inf/extreme-magnitude values.
+    #[test]
+    fn extreme_axis_inputs_do_not_panic() {
+        let r = Rect {
+            left: Twips(100),
+            top: Twips(100),
+            width: Twips(6000),
+            height: Twips(4000),
+        };
+        let run = |series: &[(String, f64)]| {
+            let ops = bar_chart(&ChartCtx::test(r, "T", AxisTitles::default(), true), series);
+            // Every rect is finite (i32) and within a sane multiple of the chart rect — no runaway
+            // geometry from a NaN/Inf/extreme value.
+            for op in &ops {
+                if let DrawOp::Rect(rc) = op {
+                    assert!(rc.bounds.width.0.abs() < 10 * r.width.0, "bounded width");
+                    assert!(rc.bounds.height.0.abs() < 10 * r.height.0, "bounded height");
+                }
+            }
+        };
+        // High cardinality: 1000 categories → sub-twip slots, must stay drawable.
+        let many: Vec<(String, f64)> = (0..1000)
+            .map(|i| (format!("c{i}"), (i % 7) as f64))
+            .collect();
+        run(&many);
+        // All-zero, negative-only, all-equal, and non-finite / extreme magnitudes.
+        run(&[("a".into(), 0.0), ("b".into(), 0.0)]);
+        run(&[("a".into(), -5.0), ("b".into(), -9.0)]);
+        run(&[("a".into(), 7.0), ("b".into(), 7.0)]);
+        run(&[
+            ("nan".into(), f64::NAN),
+            ("inf".into(), f64::INFINITY),
+            ("big".into(), 1e18),
+            ("ok".into(), 3.0),
+        ]);
+        // A single point.
+        run(&[("only".into(), 4.0)]);
+    }
+
+    #[test]
+    fn draws_bars_axes_and_labels() {
+        let r = Rect {
+            left: Twips(100),
+            top: Twips(100),
+            width: Twips(6000),
+            height: Twips(4000),
+        };
+        // Values chosen off the nice-number tick boundaries (0/10/20/30) so the value-label
+        // assertion below can't be satisfied by an axis tick label of the same text.
+        let series = vec![
+            ("Canada".into(), 12.0),
+            ("USA".into(), 27.0),
+            ("Mexico".into(), 6.0),
+        ];
+        let ops = bar_chart(
+            &ChartCtx::test(r, "Cities", AxisTitles::default(), true),
+            &series,
+        );
+        let bars = ops.iter().filter(|o| matches!(o, DrawOp::Rect(_))).count();
+        let lines = ops.iter().filter(|o| matches!(o, DrawOp::Line(_))).count();
+        let text_of = |o: &DrawOp| match o {
+            DrawOp::Text(t) => Some(t.text.clone()),
+            _ => None,
+        };
+        let texts: Vec<String> = ops.iter().filter_map(text_of).collect();
+        assert_eq!(bars, 3, "one rect per bar");
+        // 2 axes + one gridline per value-axis tick (nice-number scale).
+        assert!(lines > 2, "axes + gridlines, got {lines}");
+        // title + a tick label per division + 3 category labels + 3 data-value labels.
+        assert!(
+            texts.len() >= 3 + 2,
+            "title + tick + categories, got {texts:?}"
+        );
+        // Each bar is annotated with its value.
+        for v in ["12", "27", "6"] {
+            assert!(
+                texts.contains(&v.to_string()),
+                "value label {v} in {texts:?}"
+            );
+        }
+        // The tallest bar (USA=27) reaches nearest the top (smallest `top`).
+        let tops: Vec<i32> = ops
+            .iter()
+            .filter_map(|o| match o {
+                DrawOp::Rect(rr) => Some(rr.bounds.top.0),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            tops[1] < tops[0] && tops[1] < tops[2],
+            "USA bar is tallest: {tops:?}"
+        );
+    }
+
+    /// With "show value" off, the bars, axes, and category labels still draw, but no per-bar
+    /// data-value label is emitted (the value texts are gone; the category texts remain).
+    #[test]
+    fn show_labels_false_omits_value_labels() {
+        let r = Rect {
+            left: Twips(100),
+            top: Twips(100),
+            width: Twips(6000),
+            height: Twips(4000),
+        };
+        // Fractional values so a data label could never be mistaken for a whole-number tick label.
+        let series = vec![
+            ("Canada".into(), 12.5),
+            ("USA".into(), 27.5),
+            ("Mexico".into(), 6.5),
+        ];
+        let ops = bar_chart(
+            &ChartCtx::test(r, "Cities", AxisTitles::default(), false),
+            &series,
+        );
+        let bars = ops.iter().filter(|o| matches!(o, DrawOp::Rect(_))).count();
+        let lines = ops.iter().filter(|o| matches!(o, DrawOp::Line(_))).count();
+        let texts: Vec<String> = ops
+            .iter()
+            .filter_map(|o| match o {
+                DrawOp::Text(t) => Some(t.text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bars, 3, "bars still drawn without labels");
+        assert!(lines > 2, "axes + gridlines still drawn, got {lines}");
+        // Category labels remain; the off-tick data values (12.5/27.5/6.5) are gone.
+        for c in ["Canada", "USA", "Mexico"] {
+            assert!(texts.contains(&c.to_string()), "category {c} in {texts:?}");
+        }
+        for v in ["12.5", "27.5", "6.5"] {
+            assert!(
+                !texts.contains(&v.to_string()),
+                "value label {v} must be omitted: {texts:?}"
+            );
+        }
+    }
+
+    fn multi_rect() -> Rect {
+        Rect {
+            left: Twips(100),
+            top: Twips(100),
+            width: Twips(8000),
+            height: Twips(5000),
+        }
+    }
+
+    /// The riser rectangles in emit order (the frame emits axes/gridlines as lines and labels as text,
+    /// so every `Rect` op is a riser). Order is category-major, series-minor.
+    fn risers(ops: &[DrawOp]) -> Vec<(i32, i32, i32, i32)> {
+        ops.iter()
+            .filter_map(|o| match o {
+                DrawOp::Rect(r) => Some((
+                    r.bounds.left.0,
+                    r.bounds.top.0,
+                    r.bounds.width.0,
+                    r.bounds.height.0,
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Clustered: `n_series · n_categories` risers, drawn side-by-side within each category slot
+    /// (non-overlapping, left-to-right by series).
+    #[test]
+    fn clustered_places_series_side_by_side() {
+        let categories = vec!["Q1".to_string(), "Q2".to_string()];
+        let names = vec!["A".to_string(), "B".to_string()];
+        let values = vec![vec![10.0, 20.0], vec![30.0, 5.0]];
+        let ops = bar_chart_multi(
+            &ChartCtx::test(multi_rect(), "T", AxisTitles::default(), false),
+            &categories,
+            &names,
+            &values,
+            ChartArrangement::Clustered,
+        );
+        let rs = risers(&ops);
+        assert_eq!(rs.len(), 4, "n_series·n_cat risers");
+        // Category 0 = rs[0..2]: the two sub-bars sit side-by-side without overlapping.
+        let (l0, _, w0, _) = rs[0];
+        let (l1, ..) = rs[1];
+        assert!(l0 < l1, "series B is right of series A within the slot");
+        assert!(l0 + w0 <= l1, "clustered sub-bars do not overlap");
+        // The taller value (B=20) is the taller riser within category 0.
+        assert!(rs[1].3 > rs[0].3, "B (20) taller than A (10)");
+    }
+
+    /// Stacked: within a category the risers accumulate bottom-to-top — each series' bottom edge sits
+    /// on the previous series' top edge.
+    #[test]
+    fn stacked_accumulates_bottom_to_top() {
+        let categories = vec!["Q1".to_string(), "Q2".to_string()];
+        let names = vec!["A".to_string(), "B".to_string()];
+        let values = vec![vec![10.0, 20.0], vec![30.0, 5.0]];
+        let ops = bar_chart_multi(
+            &ChartCtx::test(multi_rect(), "T", AxisTitles::default(), false),
+            &categories,
+            &names,
+            &values,
+            ChartArrangement::Stacked,
+        );
+        let rs = risers(&ops);
+        assert_eq!(rs.len(), 4, "n_series·n_cat risers");
+        // Per category, series 1 stacks on series 0: bottom(series1) == top(series0).
+        for cat in 0..2 {
+            let (_, t0, _, _) = rs[cat * 2];
+            let (bx0, ..) = rs[cat * 2];
+            let (bx1, t1, _, h1) = rs[cat * 2 + 1];
+            assert_eq!(bx0, bx1, "stacked series share the same x");
+            assert_eq!(t1 + h1, t0, "series 1 sits on top of series 0");
+        }
+    }
+
+    /// Percent: every category is normalized to 100%, so two categories with different totals produce
+    /// stacks of the same total height.
+    #[test]
+    fn percent_normalizes_each_category_to_full_height() {
+        let categories = vec!["Q1".to_string(), "Q2".to_string()];
+        let names = vec!["A".to_string(), "B".to_string()];
+        // Totals differ (20 vs 120) but both must fill the plot to 100%.
+        let values = vec![vec![10.0, 10.0], vec![30.0, 90.0]];
+        let ops = bar_chart_multi(
+            &ChartCtx::test(multi_rect(), "T", AxisTitles::default(), false),
+            &categories,
+            &names,
+            &values,
+            ChartArrangement::Percent,
+        );
+        let rs = risers(&ops);
+        assert_eq!(rs.len(), 4, "n_series·n_cat risers");
+        let stack_h = |cat: usize| rs[cat * 2].3 + rs[cat * 2 + 1].3;
+        // Both categories fill the same total height despite differing raw totals (±rounding).
+        assert!(
+            (stack_h(0) - stack_h(1)).abs() <= 2,
+            "percent stacks fill equally: {} vs {}",
+            stack_h(0),
+            stack_h(1)
+        );
+        // Category 0 (10/10) splits evenly; category 1 (30/90) is 1:3.
+        assert!(
+            (rs[0].3 - rs[1].3).abs() <= 2,
+            "even split for equal values"
+        );
+        assert!(rs[3].3 > rs[2].3 * 2, "90 riser dominates the 30 riser");
+    }
+
+    /// Multi-series with an empty category or series list yields no ops.
+    #[test]
+    fn multi_empty_yields_no_ops() {
+        assert!(bar_chart_multi(
+            &ChartCtx::test(multi_rect(), "T", AxisTitles::default(), false),
+            &[],
+            &["A".to_string()],
+            &[],
+            ChartArrangement::Clustered,
+        )
+        .is_empty());
+        assert!(bar_chart_multi(
+            &ChartCtx::test(multi_rect(), "T", AxisTitles::default(), false),
+            &["Q1".to_string()],
+            &[],
+            &[vec![]],
+            ChartArrangement::Clustered,
+        )
+        .is_empty());
+    }
+}

@@ -1,0 +1,12 @@
+[package]
+name = "consumer-check"
+description = "Simulates the receiving application: depends on rpt-core/tauri-commands by path, drives the full flow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rpt-core = { workspace = true }
+tauri-commands = { workspace = true }
+serde_json = { workspace = true }
