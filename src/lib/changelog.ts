@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.4",
+    date: "2026-10-17",
+    items: [
+      "New Crystal Reports module (Modules): your AI assistant can open, format, compare, check and create Crystal Reports files, show them as a PDF on the new Crystal Reports screen, and open them in Crystal Reports for a final look.",
+      "With Crystal Reports and Database Access switched on, the Dev login connection can create and alter stored procedures, views and functions, and preview a report with live data from its stored procedure.",
+      "The database tools now refuse a few more ways of hiding a second statement inside a query.",
+      "Auto Run waits for the page's loading indicator to go before each action, so the first case of a run no longer fails while the app is still starting up.",
+      "Auto Run scripts can reset a list on every run, removing what an earlier run left while keeping the rows you name.",
+    ],
+  },
+  {
     version: "2.2.3-beta.3",
     date: "2026-10-16",
     items: [
