@@ -1103,6 +1103,29 @@ table {
     62%, 100% { opacity: 0; transform: translateY(0); }
   }
 
+  /* Playwright: the two masks take a bow - the front one tips one way and
+     the back one the other, then both settle; the front mask blinks at the
+     top of the bow. */
+  .group:hover .ng-playwright .ng-mask-front { animation: ng-mask-front 1.1s ease-in-out; transform-origin: 16px 17px; }
+  .group:hover .ng-playwright .ng-mask-back { animation: ng-mask-back 1.1s ease-in-out; transform-origin: 9px 21px; }
+  .group:hover .ng-playwright .ng-mask-eye { animation: ng-mask-blink 1.1s steps(1, end); }
+  @keyframes ng-mask-front {
+    0%, 100% { transform: rotate(0deg); }
+    30% { transform: rotate(12deg); }
+    55% { transform: rotate(-6deg); }
+    78% { transform: rotate(3deg); }
+  }
+  @keyframes ng-mask-back {
+    0%, 100% { transform: rotate(0deg); }
+    30% { transform: rotate(-10deg); }
+    55% { transform: rotate(5deg); }
+    78% { transform: rotate(-2deg); }
+  }
+  @keyframes ng-mask-blink {
+    0%, 28%, 40%, 100% { opacity: 1; }
+    30% { opacity: 0; }
+  }
+
   /* Update Test Cases: the line runs off along itself into the arrowhead,
      which goes with it, then draws back in from the start, and the head
      snaps on as the line reaches it. */
@@ -1492,6 +1515,14 @@ table {
   background: var(--color-accent);
   color: var(--color-on-accent);
   box-shadow: 0 0 22px var(--color-accent-soft);
+}
+/* A halo of the board's colour hugging each letter, so a ring passing under
+   the core's words is hidden right behind them and nowhere else. */
+.mod-core-text {
+  text-shadow:
+    0 0 2px var(--color-bg),
+    0 0 2px var(--color-bg),
+    0 0 4px var(--color-bg);
 }
 .mod-core-ring {
   position: absolute;
