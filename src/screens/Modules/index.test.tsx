@@ -243,10 +243,11 @@ test("switching off drains the power back up the path, the deepest first", async
   expect(drain("playwright")?.style.animationDelay).toBe("0ms");
   expect(drain("auto_run")?.style.animationDelay).toBe("450ms");
   expect(drain("db_access")).toBeNull();
-  // A draining path carries no sparks, and its card stays lit until it has emptied.
+  // A draining path carries no sparks, and its card has lost power at once.
   expect(document.querySelector('[data-current="auto_run"]')).toBeNull();
   const card = (m: Module) => document.querySelector(`[data-module="${m}"]`)!;
-  expect(card("auto_run")).toHaveAttribute("data-lit", "true");
+  expect(card("auto_run")).toHaveAttribute("data-lit", "false");
+  expect(card("playwright")).toHaveAttribute("data-lit", "false");
   await act(async () => {
     vi.advanceTimersByTime(1100);
   });
@@ -262,4 +263,20 @@ test("with reduced motion a switch-off goes dark at once", () => {
   act(() => setModulesForTest(["db_access"]));
   expect(document.querySelector("[data-draining]")).toBeNull();
   expect(document.querySelector('[data-module="auto_run"]')).toHaveAttribute("data-lit", "false");
+});
+
+test("switching off while it lights up stops the light-up and only drains", async () => {
+  vi.useFakeTimers();
+  show(["db_access", "auto_run"]);
+  act(() => setModulesForTest(["db_access", "auto_run", "playwright"]));
+  expect(document.querySelector('[data-edge="playwright"]')).toHaveAttribute("data-running", "true");
+  act(() => setModulesForTest(["db_access", "auto_run"]));
+  expect(document.querySelector('[data-edge="playwright"]')).toHaveAttribute("data-running", "false");
+  expect(document.querySelector('[data-draining="playwright"]')).not.toBeNull();
+  await act(async () => {
+    vi.advanceTimersByTime(1500);
+  });
+  // The light-up's own timers must not light it again after it went off.
+  expect(document.querySelector('[data-module="playwright"]')).toHaveAttribute("data-lit", "false");
+  expect(document.querySelector('[data-draining="playwright"]')).toBeNull();
 });

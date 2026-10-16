@@ -169,15 +169,18 @@ function useLit(modules: ReadonlySet<Module>, hydrated: boolean) {
         timers.current.push(
           window.setTimeout(() => {
             if (seen.current.has(m)) return;
-            setLit((l) => new Set([...l].filter((x) => x !== m)));
             setDraining((d) => new Map([...d].filter(([x]) => x !== m)));
           }, start + DRAIN_MS),
         );
       }
+      // A module switched off while it was still lighting up stops at once:
+      // its light-up pulse and flash would otherwise run over the drain.
+      setRunning((r) => new Set([...r].filter((m) => !removed.includes(m))));
+      setFlashing((f) => new Set([...f].filter((m) => !removed.includes(m))));
     }
-    // Everything else follows at once; a switched-off module stays lit
-    // until its drain reaches the parent.
-    setLit(new Set([...[...modules].filter((m) => !added.includes(m)), ...removed]));
+    // Everything else follows at once. A switched-off card has lost its
+    // power, so it greys straight away; only its path drains.
+    setLit(new Set([...modules].filter((m) => !added.includes(m))));
     if (added.length === 0) return;
     setRunning((r) => new Set([...r, ...added]));
     const t1 = window.setTimeout(() => {
