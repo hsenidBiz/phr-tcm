@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.2",
+    date: "2026-10-16",
+    items: [
+      "The Modules page fills the window and comes alive: power flows from the core along every module that is on, a newly switched-on module lights up its path, and switching one off drains the power back up its path while its card goes dark at once.",
+      "When you switch a module on, its tab in the sidebar is highlighted with a glowing border and a few sparkles until you open it.",
+      "With Database Access off, the AI Bridge screen no longer leaves an empty middle column.",
+      "The Auto Run tab in the sidebar no longer says In Dev, and the Playwright icon now moves when you point at it, like the others.",
+      "When your assistant explores the app for Auto Run, it now notes the API templates it comes across, so the test data they make can be reused instead of set up through the screens again.",
+    ],
+  },
+  {
     version: "2.2.1",
     date: "2026-10-16",
     items: [
