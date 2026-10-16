@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.1",
+    date: "2026-10-16",
+    items: [
+      "In Auto Run, the test case search now takes several cases at once: separate ids or words with commas, for example 135592, 135601.",
+    ],
+  },
+  {
     version: "2.2.2",
     date: "2026-10-16",
     items: [
