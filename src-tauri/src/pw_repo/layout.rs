@@ -14,14 +14,47 @@ pub const SHARED: &str = "common-components";
 /// The folders that make their parent a feature.
 pub const CONTENT_DIRS: [&str; 4] = ["specs", "test-cases", "pages", "data"];
 
-/// Whether `s` is a valid folder name: lowercase letters, digits and
-/// hyphens, not starting or ending with a hyphen and with no `--`.
+/// Characters a folder or file name never has: Windows refuses all but the
+/// backtick and quote, which would break the Finish in the repo prompt.
+const REFUSED: [char; 11] = ['/', '\\', '<', '>', ':', '"', '|', '?', '*', '`', '\''];
+
+/// Names Windows reserves for devices, with or without an extension.
+const DEVICES: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2",
+    "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// Why `s` cannot be a folder (or file stem) the app writes into the repo
+/// and names in a prompt, or `None` when it can. Any name the repo itself
+/// could hold is fine - capitals, digits, `_`, `.`, spaces - except one
+/// the tree never reads (`skipped`) or that Windows refuses or alters.
+pub fn name_problem(s: &str) -> Option<String> {
+    if s.is_empty() {
+        return Some("a folder name is empty".into());
+    }
+    if s == "." || s == ".." {
+        return Some(format!("\"{s}\" is not a folder name"));
+    }
+    if skipped(s) {
+        return Some(format!("\"{s}\" starts with _ or . (or is node_modules), so the repo's tree never reads it"));
+    }
+    if s.starts_with(' ') || s.ends_with(' ') || s.ends_with('.') {
+        return Some(format!("\"{s}\" starts or ends with a space, or ends with a dot, which Windows drops"));
+    }
+    if let Some(c) = s.chars().find(|c| REFUSED.contains(c) || c.is_control()) {
+        let shown = if c.is_control() { "a control character".to_string() } else { format!("{c}") };
+        return Some(format!("\"{s}\" has {shown}, which a folder name cannot have"));
+    }
+    let base = s.split('.').next().unwrap_or(s).trim_end().to_ascii_lowercase();
+    if DEVICES.contains(&base.as_str()) {
+        return Some(format!("\"{s}\" is a name Windows reserves"));
+    }
+    None
+}
+
+/// Whether `s` is a valid folder name (`name_problem` has nothing to say).
 pub fn valid_name(s: &str) -> bool {
-    !s.is_empty()
-        && !s.starts_with('-')
-        && !s.ends_with('-')
-        && !s.contains("--")
-        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    name_problem(s).is_none()
 }
 
 /// Whether a folder of this name is never part of the tree.

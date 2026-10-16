@@ -54,13 +54,18 @@ fn a_typed_path_is_trimmed_or_refused() {
         placement("sl").validate().unwrap_err(),
         "The path \"sl\" needs at least a country and a feature folder, such as sl/admin/performance/rating-methods."
     );
-    let bad = "The folder \"Sl\" must be lowercase letters, digits and hyphens, not starting or ending with a hyphen.";
-    assert_eq!(placement("Sl/admin/x").validate().unwrap_err(), bad);
+    // Any folder name the repo itself could hold.
+    for ok in ["Sl/admin/x", "sl/admin/performance/definition-wizard/DW-competencies", "sl/admin/a--b", "sl/My Module/x_y"] {
+        assert!(placement(ok).validate().is_ok(), "{ok}");
+    }
+    assert_eq!(placement("sl//x").validate().unwrap_err(), "The path \"sl//x\" cannot be used: a folder name is empty.");
     assert_eq!(
-        placement("sl//x").validate().unwrap_err(),
-        "The folder \"\" must be lowercase letters, digits and hyphens, not starting or ending with a hyphen."
+        placement("sl/_generated/x").validate().unwrap_err(),
+        "The path \"sl/_generated/x\" cannot be used: \"_generated\" starts with _ or . (or is node_modules), so the repo's tree never reads it."
     );
-    assert!(placement("sl/admin/a--b").validate().is_err());
+    for bad in ["sl/../x", "sl/a:b", "sl/con", "sl/x.", "sl/a`b"] {
+        assert!(placement(bad).validate().is_err(), "{bad}");
+    }
     let p = placement("sl/admin/performance/definition-wizard/competencies");
     assert_eq!(p.seg(), "sl/admin/performance/definition-wizard/competencies");
     assert_eq!(p.feature(), "competencies");

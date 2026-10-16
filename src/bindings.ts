@@ -3360,6 +3360,11 @@ export type Expect = {
  */
 export type ExportMap = {
 	areas?: { [key in string]: Placement },
+	/**
+	 *  Cases placed apart from the rest of their area: case id to its own
+	 *  folder. A case not listed goes where its area does.
+	 */
+	cases?: { [key in number]: Placement },
 	accounts?: { [key in string]: { [key in string]: string } },
 };
 

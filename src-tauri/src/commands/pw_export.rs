@@ -50,6 +50,9 @@ pub fn pw_export_save_map(
     for (area, placement) in &map.areas {
         placement.validate().map_err(|e| format!("Area \"{area}\": {e}"))?;
     }
+    for (id, placement) in &map.cases {
+        placement.validate().map_err(|e| format!("Case {id}: {e}"))?;
+    }
     let root = super::autorun::root(&app)?;
     mapping::save(&root, &organization, &project, &map)
 }
