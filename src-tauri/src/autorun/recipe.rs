@@ -259,7 +259,9 @@ fn check(action: &Action) -> Result<(), String> {
     }
     // Ending the session undoes the sign-in itself, and going to a case's
     // area means a case: neither has a place in how every case signs in.
-    if let Some(k @ ("expire_session" | "return_to_area")) = kind.as_deref() {
+    // Resetting a list to a known state is a case's own setup, never part
+    // of how every case signs in.
+    if let Some(k @ ("expire_session" | "return_to_area" | "repeat_while_visible")) = kind.as_deref() {
         return Err(format!("a sign-in recipe cannot contain {k} - it belongs in a case script"));
     }
     // A dialog a step expects is a case's check; a sign-in's dialogs are

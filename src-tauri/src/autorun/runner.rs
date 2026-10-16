@@ -869,6 +869,11 @@ async fn run_expanded<D: Driver>(
                 blocked = stop;
                 outcome
             }
+            Action::RepeatWhileVisible { .. } => {
+                let (outcome, stop) = repeat_while_visible(d, &here, action, &area, areas, timing).await;
+                blocked = stop;
+                outcome
+            }
             other => {
                 let (outcome, stop) = plain(d, &here, other, timing).await;
                 blocked = stop;
@@ -1148,6 +1153,117 @@ async fn when_visible<D: Driver>(
         }
     }
     (ActionOutcome::passed(format!("{target} showed: {}", said.join("; "))), None)
+}
+
+/// A `repeat_while_visible`: pass after pass, one look (no waiting) for its
+/// selector's matches; the first whose row reads no protected text has its
+/// row marked (`repeat::mark`) and the `then` actions run, a row-scoped
+/// locator inside that row only. Ends, passed, when no unprotected match is
+/// left; fails when `then` fails (said after what that pass did), when a
+/// match it must judge sits in no row, or when `max` passes left some. One
+/// outcome for the whole loop, saying how many passes ran and what it kept.
+async fn repeat_while_visible<D: Driver>(
+    d: &mut D,
+    here: &Here<'_>,
+    action: &Action,
+    area: &AreaRoute<'_>,
+    areas: Option<&NamedAreas>,
+    timing: &Timing,
+) -> (ActionOutcome, Option<&'static str>) {
+    use crate::browser::repeat::{self, ROW_RULE};
+    if let Err(why) = action.validate() {
+        return (ActionOutcome::failed(format!("{CANNOT_RUN}{why}")), None);
+    }
+    let Action::RepeatWhileVisible { selector, max, except, then } = action else {
+        return (ActionOutcome::failed(format!("{CANNOT_RUN}this is not a repeat_while_visible")), None);
+    };
+    let max = max.unwrap_or(1);
+    let target = selector.describe();
+    let scoped = then.iter().any(|a| a.targets().into_iter().any(repeat::is_row_scoped));
+    let mut passes: u32 = 0;
+    loop {
+        let found = match repeat::look(d, selector, except).await {
+            Ok(found) => found,
+            Err(e) if e.is_transient() => Vec::new(),
+            Err(e) => return (crate::browser::actions::harness(e), None),
+        };
+        let mut kept: Vec<String> = Vec::new();
+        for k in found.iter().filter_map(|m| m.kept.clone()) {
+            if !kept.contains(&k) {
+                kept.push(k);
+            }
+        }
+        let open: Vec<&repeat::Match> = found.iter().filter(|m| m.kept.is_none()).collect();
+        let Some(next) = open.first() else {
+            let said = passes_said(passes);
+            let kept_said = kept_said(&kept);
+            return (ActionOutcome::passed(format!("{target}: {said}, none left{kept_said}")), None);
+        };
+        if (!except.is_empty() || scoped) && !next.row {
+            let why = format!(
+                "{target}: a match is not inside a list row ({ROW_RULE}), so the pass cannot tell which row it works on - point selector at something inside each row"
+            );
+            return (ActionOutcome::failed(why), None);
+        }
+        if passes >= max {
+            let n = open.len();
+            let rows = if n == 1 { "row" } else { "rows" };
+            let kept_said = kept_said(&kept);
+            return (
+                ActionOutcome::failed(format!("{target}: still {n} {rows} after max {max} passes{kept_said}")),
+                None,
+            );
+        }
+        let next = (*next).clone();
+        let marked = match repeat::mark(d, &next).await {
+            Ok(m) => m,
+            Err(e) => return (crate::browser::actions::harness(e), None),
+        };
+        passes += 1;
+        let mut said: Vec<String> = Vec::with_capacity(then.len());
+        for step in then {
+            let (out, stop) = match step {
+                Action::ReturnToArea { .. } => return_to_area(d, step, area, areas, here.step, timing).await,
+                _ => plain(d, here, step, timing).await,
+            };
+            said.push(out.detail);
+            if !out.ok {
+                repeat::unmark(d).await;
+                let mut failed = ActionOutcome::failed(format!("{target}, pass {passes}: {}", said.join("; ")));
+                failed.harness = out.harness;
+                return (failed, stop);
+            }
+        }
+        // The page may take a moment to drop the row the pass worked on:
+        // the next look waits for that, up to the expect wait, so the same
+        // row is not taken twice while it goes.
+        if marked {
+            let until = Instant::now() + Duration::from_millis(timing.expect_ms.min(ROW_GONE_WAIT_MS));
+            while matches!(repeat::row_still_there(d).await, Ok(true)) && Instant::now() < until {
+                d.idle(Duration::from_millis(timing.poll_ms)).await;
+            }
+        }
+        repeat::unmark(d).await;
+    }
+}
+
+/// The longest a `repeat_while_visible` pass waits for its row to go.
+pub const ROW_GONE_WAIT_MS: u64 = 5_000;
+
+fn passes_said(n: u32) -> String {
+    if n == 1 {
+        "ran 1 pass".to_string()
+    } else {
+        format!("ran {n} passes")
+    }
+}
+
+fn kept_said(kept: &[String]) -> String {
+    if kept.is_empty() {
+        String::new()
+    } else {
+        format!("; kept {} protected ({})", kept.len(), kept.join(", "))
+    }
 }
 
 /// A `return_to_area`, on its own or inside a `when_visible`'s `then`: a

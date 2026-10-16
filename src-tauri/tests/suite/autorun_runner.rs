@@ -1045,6 +1045,7 @@ fn every_action_kind_says_whether_it_changes_the_page() {
         (json!({ "kind": "upload", "selector": css, "file": "f.txt" }), true),
         (json!({ "kind": "api_request", "path": "/api/x" }), true),
         (json!({ "kind": "when_visible", "selector": css, "then": [] }), true),
+        (json!({ "kind": "repeat_while_visible", "selector": css, "max": 2, "then": [] }), true),
         (json!({ "kind": "reload" }), true),
         (json!({ "kind": "expire_session" }), true),
         (json!({ "kind": "return_to_area" }), true),

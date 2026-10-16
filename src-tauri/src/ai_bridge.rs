@@ -2408,6 +2408,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::UseComponent { .. }
         | Action::ExpectNoRow { .. }
         | Action::WhenVisible { .. }
+        | Action::RepeatWhileVisible { .. }
         | Action::Navigate { .. }
         | Action::CheckText { .. }
         | Action::CheckUrl { .. }
@@ -2846,7 +2847,8 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. }
         | Action::Upload { selector, .. }
-        | Action::WhenVisible { selector, .. } => selector.describe(),
+        | Action::WhenVisible { selector, .. }
+        | Action::RepeatWhileVisible { selector, .. } => selector.describe(),
     };
     let target = if what.is_empty() { String::new() } else { format!(" {what}") };
     format!("{kind}{target}")

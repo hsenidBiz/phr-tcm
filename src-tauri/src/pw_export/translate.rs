@@ -101,7 +101,7 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
             check_target(from)?;
             check_target(to)
         }
-        Action::WhenVisible { selector, then, .. } => {
+        Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
             check_target(selector)?;
             then.iter().try_for_each(|a| check_action(a, origins))
         }
@@ -240,7 +240,7 @@ fn one_line(s: &str) -> String {
 fn every_action(input: &RawSpecInput) -> Vec<Action> {
     fn walk(a: &Action, out: &mut Vec<Action>) {
         out.push(a.clone());
-        if let Action::WhenVisible { then, .. } = a {
+        if let Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } = a {
             then.iter().for_each(|t| walk(t, out));
         }
     }
@@ -619,10 +619,82 @@ impl Em<'_> {
                     self.line(indent, &format!("const dl{sc}_{i} = cur.waitForEvent('download', {{ timeout: {ms} }});"));
                     self.settle(indent, &format!("dl{sc}_{i}"));
                 }
-                Action::WhenVisible { then, .. } => self.arm(then, indent, n),
+                Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => self.arm(then, indent, n),
                 _ => {}
             }
         }
+    }
+
+    /// A `repeat_while_visible` as the same bounded loop: each pass reads
+    /// the visible matches once, sets aside the ones whose row (the app's
+    /// own `repeat::ROW_OF_JS`) reads a protected text (`repeat::KEPT_OF_JS`),
+    /// marks the first other one's row with `data-autorun-row` and runs the
+    /// `then` actions, whose row-scoped locators resolve inside it. It ends
+    /// when none is left and throws once `max` passes left some.
+    fn repeat(&mut self, selector: &Target, max: Option<u32>, except: &[String], then: &[Action], indent: usize) -> Res<()> {
+        use crate::browser::repeat::{KEPT_OF_JS, ROW_OF_JS, ROW_SCOPE};
+        let Some(max) = max else {
+            return no("repeat_while_visible without max cannot be exported");
+        };
+        let except_js = serde_json::to_string(except).map_err(|e| Untranslatable(e.to_string()))?;
+        let all = locator("cur", &visible_only(selector));
+        self.line(indent, "{");
+        let i = indent + 2;
+        self.line(i, &format!("const except = {except_js};"));
+        self.line(i, &format!("const pick = () => {all}.evaluateAll((els, except) => {{"));
+        let mut js = |name: &str, body: &str| {
+            let mut lines = body.lines();
+            if let Some(first) = lines.next() {
+                self.line(i + 2, &format!("const {name} = {first}"));
+            }
+            for l in lines {
+                self.line(i + 2, l);
+            }
+        };
+        js("rowOf", &format!("{ROW_OF_JS};"));
+        js("keptOf", &format!("{KEPT_OF_JS};"));
+        for l in [
+            "for (const d of document.querySelectorAll('[data-autorun-row]')) d.removeAttribute('data-autorun-row');",
+            "let left = 0;",
+            "let first = null;",
+            "for (const e of els) {",
+            "  const row = rowOf(e);",
+            "  if (except.length && !row) throw new Error('a match is not inside a list row');",
+            "  if (row && except.length && keptOf(row, except) !== null) continue;",
+            "  left++;",
+            "  if (!first) first = row;",
+            "}",
+            "if (first) first.setAttribute('data-autorun-row', '');",
+            "return left;",
+        ] {
+            self.line(i + 2, l);
+        }
+        self.line(i, "}, except);");
+        self.line(i, "for (let pass = 0; ; pass++) {");
+        self.line(i + 2, "const left = await pick();");
+        self.line(i + 2, "if (left === 0) break;");
+        self.line(
+            i + 2,
+            &format!("if (pass >= {max}) throw new Error('still ' + left + ' rows after max {max} passes');"),
+        );
+        for a in then {
+            self.action(a, i + 2)?;
+        }
+        self.line(
+            i + 2,
+            &format!(
+                "await expect({}).toHaveCount(0, {{ timeout: {} }}).catch(() => {{}});",
+                locator("cur", &Target::Legacy(ROW_SCOPE.to_string())),
+                crate::autorun::runner::ROW_GONE_WAIT_MS
+            ),
+        );
+        self.line(i, "}");
+        self.line(
+            i,
+            "await cur.evaluate(() => document.querySelectorAll('[data-autorun-row]').forEach(e => e.removeAttribute('data-autorun-row')));",
+        );
+        self.line(indent, "}");
+        Ok(())
     }
 
     fn action(&mut self, a: &Action, indent: usize) -> Res<()> {
@@ -743,6 +815,7 @@ impl Em<'_> {
                 }
                 self.line(indent, "}");
             }
+            Action::RepeatWhileVisible { selector, max, except, then } => self.repeat(selector, *max, except, then, indent)?,
             Action::ExpectResponse { status, json, .. } => {
                 let i = self.cnt.resp;
                 self.cnt.resp += 1;

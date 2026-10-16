@@ -36,6 +36,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_response",
     "api_request",
     "when_visible",
+    "repeat_while_visible",
     "expect_download",
     "expect_tab",
     "open_tab",
@@ -233,6 +234,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json` and `timeout_ms` are optional
 - `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
 - `{ "kind": "when_visible", "selector": ..., "within_ms": 2000, "then": [ ... ] }` - if something that may or may not appear shows up, do the actions in `then`; otherwise carry on (see "Dismissing what may not show up")
+- `{ "kind": "repeat_while_visible", "selector": ..., "max": 20, "except": [ ... ], "then": [ ... ] }` - reset a list to a known state: while the selector shows a match whose row holds none of the `except` texts, run `then` on that row, at most `max` times (see "Resetting a list to a known state")
 - `{ "kind": "reload" }` - reload the page, as F5 does, and wait for it to load (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "return_to_area" }` - go back to the case's area by its recorded menu path, as a run does before step 1; with `"area": "..."`, go to that recorded area instead (see "Refreshing, sessions and the keyboard")
 - `{ "kind": "expire_session" }` - end the session: drop the site's cookies, so its next request arrives with no session
@@ -459,6 +461,63 @@ For anything NOT on that list, guard the click with `when_visible`:
   that same locator, against what was seen in every area of the project,
   not only the script's: a banner seen on the sign-in page counts. It
   still needs one seen matching exactly one element.
+
+## Resetting a list to a known state
+
+A case that adds rows must be able to run again: a goal group it created
+last time is still there, and a second "Add" fails or adds a duplicate.
+Reset the list first with `repeat_while_visible`, which deletes every
+leftover row while never touching the baseline rows other modules' data
+depends on. Never repeat a `when_visible` several times for this.
+
+    { "kind": "repeat_while_visible", "selector": { "css": ".goal-group .delete" }, "max": 20,
+      "except": ["Customer Focus", "Operational Excellence"],
+      "then": [
+        { "kind": "click", "selector": [ { "css": "[data-autorun-row]" }, { "css": ".delete" } ] },
+        { "kind": "click", "selector": [ { "role": "dialog", "name": "Confirm" }, { "role": "button", "name": "Yes" } ] }
+      ] }
+
+- Each pass looks ONCE, without waiting, for the visible matches of
+  `selector` - usually the delete icon each row has. No match left that
+  is not protected: the loop ends and the step carries on.
+- A match's ROW is the nearest `tr`, `[role=row]` or `li` holding it (the
+  match itself counts); failing that, the nearest element above it with
+  a `data-*-id` attribute (`data-id`, `data-goal-id`). A row is PROTECTED
+  when it, or anything inside it, reads exactly one of the `except` texts
+  (its text, or a field's value), ignoring case and extra spaces:
+  "Customer Focus" protects "customer  focus", never "Customer Focus 2".
+- The pass works on the FIRST unprotected match. Its row is marked
+  `data-autorun-row` while `then` runs, and a `then` locator that starts
+  with `{ "css": "[data-autorun-row]" }` is found inside that row only - so
+  the click lands on the row being processed, never on a fresh first
+  match, and a protected row is never acted on even when it is first in
+  the list. Locators that do not start with it (the confirm dialog's Yes)
+  are found across the page as usual.
+- With `except`, at least one `then` action must start in the row, and no
+  `then` action may name the loop's own selector across the whole page:
+  both are refused at save. A match that sits in no row then fails the
+  action - point `selector` at something inside each row.
+- `max` is required, 1 to 200: the hard cap. Unprotected matches still
+  there after `max` passes fail the action, and the step stops:
+  "still 3 rows after max 20 passes". Pick a `max` well above the leftovers you
+  expect, not 200 by habit.
+- After each pass the run waits (up to 5 seconds) for the row it worked on
+  to go before it looks again, so a slow delete is not clicked twice.
+- `then` holds plain actions only, as a `when_visible`'s does: no checks,
+  no `when_visible` or another loop, no `sign_in`, `use_component`, tab
+  action or `expire_session`. A `then` action that fails fails the step.
+- The step's outcome says how many passes ran and what it kept: "ran 3
+  passes, none left; kept 2 protected (Customer Focus, Operational
+  Excellence)".
+- A save checks `selector` (it may have been seen matching several, one
+  per row) and every `then` locator against what was seen. A row-scoped
+  locator is checked without its `[data-autorun-row]` link, and may have
+  been seen matching several too.
+- The selector must be a locator object; a selector string takes only one
+  match and is refused. The mark is set in the row's own document, so a
+  list inside a frame cannot be scoped this way.
+- Never reset a list a case does not own. A list other cases read is
+  shared state (see "Shared state a case changes").
 
 ## Checking the API
 

@@ -28,7 +28,7 @@ function allActions(script: CaseScript): Action[] {
   const walk = (list: readonly Action[]) => {
     for (const a of list) {
       out.push(a);
-      if (a.kind === "when_visible") walk(a.then);
+      if (a.kind === "when_visible" || a.kind === "repeat_while_visible") walk(a.then);
     }
   };
   for (const step of script.steps) walk(step.actions);

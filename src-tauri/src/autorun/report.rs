@@ -115,6 +115,16 @@ pub fn action_words(action: &Action) -> String {
             let what: Vec<String> = then.iter().map(action_words).collect();
             format!("if {} shows up, {}", selector.describe(), what.join(", then "))
         }
+        Action::RepeatWhileVisible { selector, max, except, then } => {
+            let what: Vec<String> = then.iter().map(action_words).collect();
+            let keep = if except.is_empty() { String::new() } else { format!(" (keeping {})", except.join(", ")) };
+            format!(
+                "while {} shows{keep}, {} - at most {} times",
+                selector.describe(),
+                what.join(", then "),
+                max.unwrap_or(0)
+            )
+        }
         Action::UseComponent { component, .. } => format!("run the component \"{}\"", component.trim()),
         Action::Reload => "reload the page".to_string(),
         Action::ExpireSession => "end the session".to_string(),

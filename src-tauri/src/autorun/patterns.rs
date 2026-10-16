@@ -403,7 +403,8 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. }
         | Action::Upload { selector, .. }
-        | Action::WhenVisible { selector, .. } => Some(selector.describe()),
+        | Action::WhenVisible { selector, .. }
+        | Action::RepeatWhileVisible { selector, .. } => Some(selector.describe()),
         // Each acts on the page as a whole; a key is pressed on whatever
         // has the focus.
         Action::UseComponent { component, .. } => Some(format!("the component \"{}\"", component.trim())),

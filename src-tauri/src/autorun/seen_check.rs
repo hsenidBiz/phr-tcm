@@ -316,7 +316,10 @@ pub fn wants(kind: &str, many: bool, everywhere: bool) -> String {
 /// kind will not compile until it is classified here.
 pub fn takes_many(action: &Action) -> bool {
     match action {
-        Action::ExpectHidden { .. } | Action::ExpectCount { .. } | Action::WaitFor { .. } => true,
+        // A loop's selector matches every row it works through.
+        Action::ExpectHidden { .. } | Action::ExpectCount { .. } | Action::WaitFor { .. } | Action::RepeatWhileVisible { .. } => {
+            true
+        }
         Action::Click { .. }
         | Action::Fill { .. }
         | Action::Upload { .. }
@@ -1630,9 +1633,25 @@ pub fn uses_components(script: &CaseScript) -> bool {
 /// selector only, as `each` lists its guarded actions after it.
 fn own_targets(action: &Action) -> Vec<&Target> {
     match action {
-        Action::WhenVisible { selector, .. } => vec![selector],
+        Action::WhenVisible { selector, .. } | Action::RepeatWhileVisible { selector, .. } => vec![selector],
         _ => action.targets(),
     }
+}
+
+/// The locator a save checks for `target`, used by `action` inside the
+/// top-level `top`, and whether it may have been seen matching several:
+/// as written, except inside a `repeat_while_visible`'s `then`, where one
+/// that starts in the pass's row (`repeat::ROW_SCOPE`) is checked without
+/// that link - the row is the loop's own, never on the map - and may have
+/// been seen matching several, one per row. `None` for one that names the
+/// row itself, which the loop's selector already stands for.
+fn as_checked(top: &Action, action: &Action, target: &Target) -> Option<(Target, bool)> {
+    use crate::browser::repeat::{is_row_scoped, within_row};
+    let in_loop = matches!(top, Action::RepeatWhileVisible { .. }) && !std::ptr::eq(top, action);
+    if in_loop && is_row_scoped(target) {
+        return within_row(target).map(|t| (t, true));
+    }
+    Some((target.clone(), false))
 }
 
 /// A locator a component's inputs went into, as it runs: the links an
@@ -1788,14 +1807,17 @@ fn scan(
                 // went into.
                 let mut named: Vec<InputLocator> = own_targets(action)
                     .into_iter()
-                    .map(|t| InputLocator {
-                        target: t.clone(),
-                        links: t.links(),
-                        check: is_check(action),
-                        many: takes_many(action),
-                        typed_before: Vec::new(),
-                        kind: action.kind(),
-                        everywhere: guards(top, t),
+                    .filter_map(|t| {
+                        let (checked, in_row) = as_checked(top, action, t)?;
+                        Some(InputLocator {
+                            links: checked.links(),
+                            target: checked,
+                            check: is_check(action),
+                            many: in_row || takes_many(action),
+                            typed_before: Vec::new(),
+                            kind: action.kind(),
+                            everywhere: guards(top, t),
+                        })
                     })
                     .collect();
                 if let Action::UseComponent { component, inputs } = action {
@@ -1976,10 +1998,12 @@ fn component_unseen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) 
             }
             let dates: Vec<Date> = typed.iter().filter_map(|v| parse_date(v)).collect();
             let own = Own { typed: &typed, case_text: &[], check: is_check(a), files: &[], sizes: &[], dates: &dates };
-            for t in own_targets(a) {
+            for written in own_targets(a) {
+                let Some((checked, in_row)) = as_checked(action, a, written) else { continue };
+                let t = &checked;
                 let chain = t.links();
                 let links: Vec<LocatorStep> = chain.iter().filter(|l| !input_link(l)).cloned().collect();
-                let many = takes_many(a);
+                let many = in_row || takes_many(a);
                 let banner = guards(action, t);
                 let seen = if banner {
                     &*everywhere.get_or_insert_with(|| SeenBoth::new(map, &every_area(map)))
