@@ -67,10 +67,14 @@ export {
   // The opposite of IconCollapseAll: every folded group or lane opens.
   ChevronsUpDown as IconExpandAll,
   // A map's view (the API Templates flow maps): closer, further away, and
-  // back to the whole map in view.
+  // back to the whole map in view. The zoom pair also sizes the Crystal
+  // Reports page view.
   ZoomIn as IconZoomIn,
   ZoomOut as IconZoomOut,
   Maximize as IconResetView,
+  // Sizing a report's pages to the width of their view (Crystal Reports):
+  // an arrow to each side, since what it fits is the width.
+  MoveHorizontal as IconFitWidth,
   ArrowRightLeft as IconMoveToPbi,
   Eraser as IconClear,
   Trash2 as IconRemove,
@@ -109,7 +113,8 @@ export {
   // unattended run. One glyph per direction, named for the result.
   ChevronRight as IconShowSteps,
   ChevronDown as IconHideSteps,
-  // The same pair on an Auto Run case card: its script, steps and files.
+  // The same pair on an Auto Run case card: its script, steps and files -
+  // and on the Crystal Reports notes, for the fields and the other notes.
   ChevronRight as IconShowDetails,
   ChevronDown as IconHideDetails,
   // Returning to the case running now after scrolling the list away.

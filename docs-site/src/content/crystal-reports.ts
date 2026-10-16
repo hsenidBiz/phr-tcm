@@ -3,7 +3,8 @@
 // it is working on. The assistant's side is on the AI Bridge; this page is
 // the module, what the assistant can do, and the preview screen.
 //
-// Words come from screens/CrystalReports/index.tsx, the module card in
+// Words come from screens/CrystalReports (index.tsx, its notes in
+// notes.ts and PreviewNotes.tsx, its page view in PageView.tsx), the module card in
 // screens/Modules and the assistant's tool list (src-tauri/src/mcp.rs).
 // The screen has no shots yet: it needs an open report, which the capture's
 // sample data does not have, so it is described in tips and how-tos only.
@@ -23,9 +24,12 @@ export const crystalReports: Screen = {
   controls: [],
   tips: [
     "The screen shows one report at a time, the one your assistant has open. With none open it says **No report open. Ask your AI assistant to open one.**",
-    "The top of the screen shows the file name and, under it, the folder. Point at them to see the full path. Beside them it says where the pages came from: **Saved data** when they were drawn from the data stored in the report, or **Live data from** and the name of the database when they were drawn from fresh rows, and how many pages there are.",
+    "The card at the top shows the file name and, under it, the folder. Point at them to see the full path. Beside the name a label says where the pages came from: **Saved data** when they were drawn from the data stored in the report, or **Live data from** and the name of the database when they were drawn from fresh rows, then how many pages there are. **Open in Crystal Reports** is at the card's right.",
+    "The pages are drawn in the app, one sheet under another, and scroll inside the page view, which fills the rest of the window. They start at **Fit width**, sized to the width of the view, and stay fitted when you resize the window. The small bar above the pages zooms out and in, shows the zoom, has **Fit width** and **100%** (the page at its printed size), and says how many pages there are.",
     "The preview refreshes by itself whenever the assistant opens, changes or creates a report, or draws a new preview. You do not need to press anything.",
-    "Notes from the drawing, such as an object it does not draw, are listed under the header. If the pages could not be drawn at all, the screen says **The preview could not be drawn.** and lists why instead of showing a page.",
+    "Notes from the drawing sit in a card under the header, in plain words. When the report reads fields the preview had no data for, it says how many, such as **2 fields have no data in this preview.**, and why: a report that holds no saved rows needs a live preview on the Dev login to fill them, and a live preview whose results did not include them says so. **Show fields** lists their names, with the name the report uses beside each.",
+    "A symbol the report's font cannot draw, such as a tick or a cross, is drawn from another font, and the notes say which symbols were. Anything else the drawing noted, such as an object it does not draw, is under **Other notes**; press it to see them.",
+    "If the pages could not be drawn at all, the screen says **The preview could not be drawn.** instead of showing a page, and **Other notes** opens by itself to say why.",
     "**Open in Crystal Reports** opens the file in the program Windows has for .rpt files. If Windows has none, the screen says so; install Crystal Reports, or open the file from it. If the file has been moved or deleted since the assistant opened it, the screen says **The report file is no longer there.** instead of showing a preview.",
     "Every change the assistant makes is saved over the file at once, and TCM keeps no undo. The reports are meant to live in a git repository, and git is the undo: review the changes there before you commit them.",
     "Change a report from one place at a time. If you also edit the file in Crystal Reports, tell the assistant to open it again before it changes anything more.",
