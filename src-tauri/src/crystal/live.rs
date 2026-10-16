@@ -5,9 +5,13 @@
 //! the Dev login); this file decides what runs. Only a stored procedure
 //! runs, and only one of the connection's own database - checked on the
 //! report before anything connects (`live_target`). The login becomes the
-//! bundle's ADO connection string here, right before the call, and is
-//! dropped after it; no answer, stored diagnostic or log line carries the
-//! host, the password or the string (`scrub`).
+//! bundle's ADO connection string here, right before the call, and never
+//! leaves Rust: no answer, stored diagnostic or log line carries the host,
+//! the password or the string (`scrub`). The string itself is dropped after
+//! the call, but it is not the last of the login: the bundle
+//! (`rpt_db_mssql::connect_cached`) keeps the open, signed-in connection in
+//! its own process-wide cache, keyed by a hash of the settings (password
+//! included), for as long as the app runs.
 
 use rpt_core::rpt_reader::model::Report;
 use rpt_core::rpt_reader::Rpt;

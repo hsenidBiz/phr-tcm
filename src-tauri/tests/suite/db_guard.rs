@@ -710,3 +710,69 @@ fn a_three_part_call_says_how_to_write_an_xml_method() {
     let fixed = "CREATE PROCEDURE dbo.p @x XML AS SELECT (T.c).value('.', 'INT') FROM @x.nodes('/a') AS T(c)";
     assert_eq!(classify(fixed), Verdict::ObjectChange);
 }
+
+/// The server ends a `--` comment at a carriage return as well as a line
+/// feed. Ending it only at `\n` read `--x\rDROP TABLE t` as one comment, so
+/// the DROP passed as part of a SELECT - and hid from a body's checks.
+#[test]
+fn a_line_comment_ends_at_a_carriage_return_too() {
+    for sql in [
+        "SELECT 1 --x\rDROP TABLE t",
+        "CREATE PROCEDURE dbo.p AS SELECT 1 --x\rDROP TABLE t",
+        "CREATE PROCEDURE dbo.p AS BEGIN SELECT 1 --x\rDROP TABLE dbo.t\nEND",
+    ] {
+        let why = refused_everywhere(sql);
+        assert!(why.contains("DROP"), "{sql:?}: {why}");
+    }
+    // An EXEC reads its own copy, which must end the comment there too.
+    assert!(!refused_everywhere("EXEC dbo.p --x\rDROP TABLE t").is_empty());
+    // A Windows line break (`\r\n`) behaves as it always did.
+    assert_eq!(classify("SELECT a --DROP TABLE t\r\nFROM dbo.t"), Verdict::Read);
+    assert_eq!(classify("SELECT 1 -- note\r"), Verdict::Read);
+    assert_eq!(classify("CREATE PROCEDURE dbo.p AS --DROP TABLE t\r\nSELECT 1"), Verdict::ObjectChange);
+    let why = refused_everywhere("SELECT 1 --x\r\nDROP TABLE t");
+    assert!(why.contains("DROP"), "{why}");
+}
+
+/// SQL Server looks an `sp_` name up in master before this database, so an
+/// object of ours named `sp_...` or `xp_...` is refused at its header,
+/// bracketed or not, whatever its case.
+#[test]
+fn an_object_named_sp_or_xp_is_refused() {
+    for sql in [
+        "CREATE PROCEDURE sp_foo AS SELECT 1",
+        "ALTER PROC dbo.[sp_x] AS SELECT 1",
+        "CREATE VIEW xp_v AS SELECT 1 AS a",
+        "CREATE OR ALTER FUNCTION [dbo].[SP_f]() RETURNS INT AS BEGIN RETURN 1 END",
+        "create procedure \"Xp_q\" AS SELECT 1",
+    ] {
+        let why = refused_everywhere(sql);
+        assert!(why.contains("named sp_... or xp_..."), "{sql:?}: {why}");
+        assert!(why.contains("master"), "{sql:?}: {why}");
+    }
+    for sql in [
+        "CREATE PROCEDURE dbo.usp_x AS SELECT 1",
+        "CREATE PROCEDURE dbo.spx_report AS SELECT 1",
+        "CREATE VIEW [sp].[v] AS SELECT 1 AS a",
+    ] {
+        assert_eq!(classify(sql), Verdict::ObjectChange, "{sql:?}");
+    }
+}
+
+/// A temp table may be bracketed or quoted in `SELECT ... INTO`: it is still
+/// a temp table. A real table stays refused, bracketed or not.
+#[test]
+fn select_into_a_bracketed_temp_table_passes_in_a_body() {
+    let sql = "CREATE PROCEDURE dbo.p AS BEGIN
+    SELECT 1 AS a INTO [#t];
+    SELECT 1 AS a INTO [##t];
+    SELECT 1 AS a INTO \"#q\";
+    SELECT 1 AS a INTO#u;
+END";
+    assert_eq!(classify(sql), Verdict::ObjectChange, "{:?}", classify(sql));
+    for into in ["dbo.x", "[dbo].[x]", "[x]", "\"x\"", "[#t].[x]"] {
+        let sql = format!("CREATE PROCEDURE dbo.p AS SELECT 1 AS a INTO {into}");
+        let why = refused_everywhere(&sql);
+        assert!(why.contains("SELECT ... INTO makes a table"), "{sql:?}: {why}");
+    }
+}

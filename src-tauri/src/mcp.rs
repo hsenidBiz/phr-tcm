@@ -200,10 +200,13 @@ pub fn db_no_ask_from(reply: &Result<(u16, String), String>) -> bool {
     }
 }
 
-/// Said to the assistant, at the end of `db_query`'s and
-/// `preview_report_live`'s descriptions, while the person has switched on
-/// running database changes without being asked.
+/// Said to the assistant, at the end of `db_query`'s description, while the
+/// person has switched on running database changes without being asked.
 pub const DB_NO_ASK: &str = " The person has allowed database changes without confirmation: do not stop to ask before running INSERT, UPDATE, DELETE or a procedure through this tool - run the batch with dry_run first, read the row counts, then run it for real, and tell them what changed afterwards.";
+
+/// `preview_report_live`'s own tail for the same switch: it has no batch
+/// and no dry run, so `DB_NO_ASK`'s advice means nothing there.
+pub const PREVIEW_LIVE_NO_ASK: &str = " The person has allowed database changes without confirmation, so this runs the report's stored procedure without a prompt: check the parameter values first, since the procedure runs with exactly those, and tell them what ran afterwards.";
 
 fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>) {
     tool_policy_from(call("GET", "/tools", ""))
@@ -739,7 +742,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "open_report",
-            "description": "Open a Crystal Reports .rpt file and read it: you get the report as an IR (format crpt-ir/1), a JSON tree of its areas, sections and objects, each with a stable id and its position, size, font and text. One report is open at a time; opening another replaces it, and every other report tool works on the open one. Read get_report_guide before your first edit for the units, the edit ops, the layout plan and the limits. The path must be the full path to a .rpt file on this machine.",
+            "description": "Open a Crystal Reports .rpt file and read it: you get the report as an IR (format crpt-ir/1), a JSON tree of its areas, sections and objects, each with an id and its position, size, font and text. Take ids from the latest IR a report tool returned: an edit can change them. One report is open at a time; opening another replaces it, and every other report tool works on the open one. Read get_report_guide before your first edit for the units, the edit ops, the layout plan and the limits. The path must be the full path to a .rpt file on this machine.",
             "inputSchema": schema(serde_json::json!({
                 "path": { "type": "string", "description": "The full path to the .rpt file" },
             }), &["path"]),
@@ -877,9 +880,15 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             !disabled.iter().any(|d| d == name)
         })
         .map(|mut t| {
-            // The live report preview runs a procedure, so the same switch covers it.
-            if db_no_ask && (t["name"] == "db_query" || t["name"] == "preview_report_live") {
-                let said = format!("{}{DB_NO_ASK}", t["description"].as_str().unwrap_or_default());
+            // The live report preview runs a procedure, so the same switch covers
+            // it - with its own sentence, as it has no batch to dry-run.
+            let tail = match t["name"].as_str() {
+                Some("db_query") => Some(DB_NO_ASK),
+                Some("preview_report_live") => Some(PREVIEW_LIVE_NO_ASK),
+                _ => None,
+            };
+            if let Some(tail) = tail.filter(|_| db_no_ask) {
+                let said = format!("{}{tail}", t["description"].as_str().unwrap_or_default());
                 t["description"] = serde_json::Value::String(said);
             }
             t

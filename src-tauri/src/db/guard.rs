@@ -491,6 +491,19 @@ fn object_header(body: &str) -> Header<'_> {
         return Header::NotObject;
     };
     match parse_proc_name(r.trim_start()) {
+        // SQL Server looks an `sp_` name up in master before this database,
+        // and `xp_` is the extended procedures' prefix: an object of ours
+        // named either way is one the body checks never see run. The name is
+        // read bracketed or not; on the stripped copy a bracketed one is
+        // blank, so `classify_object` asks again on the copy that keeps it.
+        Some((ProcName::One(name) | ProcName::Two(_, name), _))
+            if ["sp_", "xp_"].iter().any(|p| name.trim().to_ascii_lowercase().starts_with(p)) =>
+        {
+            Header::Refused(
+                "procedures, views and functions named sp_... or xp_... are not created or altered here (SQL Server looks for those names in master first): name it something else, e.g. usp_..."
+                    .to_string(),
+            )
+        }
         Some((ProcName::One(_) | ProcName::Two(..), rest)) => Header::Object { rest },
         Some((ProcName::TooManyParts, _)) => Header::Refused(
             "a procedure, view or function may only be made in this connection's own database: name it <name> or <schema>.<name>"
@@ -558,6 +571,18 @@ const BODY_RULE: &str =
 /// are. What is inside a string - dynamic SQL included - cannot be
 /// inspected; the owner accepted that on the dev database.
 fn classify_object(sql: &str, rest: &str) -> Verdict {
+    // The header again, on the copy that keeps a bracketed name's text: the
+    // stripped one blanks `[sp_x]` to `[]`, which only this copy can refuse.
+    let kept = strip_comments_keep_names(sql);
+    let kept_rest = match object_header(trim_body(&kept)) {
+        Header::Object { rest } => rest,
+        Header::Refused(why) => return refused(why),
+        Header::NotObject => {
+            return refused(
+                "the procedure, view or function's name could not be read: <name> or <schema>.<name>".to_string(),
+            );
+        }
+    };
     let upper = rest.to_uppercase();
 
     for word in BODY_REFUSED_WORDS {
@@ -596,11 +621,21 @@ fn classify_object(sql: &str, rest: &str) -> Verdict {
     }
     // `SELECT ... INTO dbo.x` makes a table. INTO that follows INSERT or
     // MERGE, or fills a temp table or a variable (`INTO #t`, `FETCH ... INTO
-    // @x`, `OUTPUT ... INTO @t`), does not.
-    let makes_a_table = occurrences(&upper, "INTO").into_iter().any(|(start, end)| {
-        let before = word_before(&upper[..start]);
-        let next = upper[end..].trim_start();
-        !(before == "INSERT" || before == "MERGE" || next.starts_with('#') || next.starts_with('@'))
+    // @x`, `OUTPUT ... INTO @t`), does not. A temp table may be bracketed
+    // (`INTO [#t]`, `INTO [##t]`), which `upper` blanks to `[]`, so this
+    // reads a copy where a bracketed temp name keeps its `#` - and only a
+    // whole name: `[#t].[x]` is a table in a schema, not a temp table.
+    let marked = temp_names_marked(kept_rest).to_uppercase();
+    let makes_a_table = occurrences(&marked, "INTO").into_iter().any(|(start, end)| {
+        let before = word_before(&marked[..start]);
+        let next = marked[end..].trim_start();
+        let bracketed_temp = (next.starts_with("[#]") || next.starts_with("\"#\""))
+            && !next[3..].trim_start().starts_with('.');
+        !(before == "INSERT"
+            || before == "MERGE"
+            || next.starts_with('#')
+            || bracketed_temp
+            || next.starts_with('@'))
     });
     if makes_a_table {
         return refused(format!(
@@ -631,10 +666,6 @@ fn classify_object(sql: &str, rest: &str) -> Verdict {
         ));
     }
 
-    let kept = strip_comments_keep_names(sql);
-    let Header::Object { rest: kept_rest } = object_header(trim_body(&kept)) else {
-        return refused("the procedure, view or function's name could not be read: <name> or <schema>.<name>".to_string());
-    };
     for name in dotted_names(kept_rest) {
         if name.parts.len() > 2 && name.called {
             // `T.c.value(...)` - XML shredding - looks exactly like
@@ -707,6 +738,30 @@ fn names_temp_tables(after: &str, drop: bool) -> bool {
             None => return true,
         }
     }
+}
+
+/// `kept` - text through `strip_comments_keep_names` - with every bracketed
+/// or double-quoted name blanked the way `strip_comments_and_literals`
+/// blanks it (`[]`, `""`), except that a temp table's name keeps its `#`:
+/// `[#t]` and `[##t]` read `[#]`. Closed where `skip_quoted` closes it, so
+/// it agrees with both copies about where code is.
+fn temp_names_marked(kept: &str) -> String {
+    let mut out = String::with_capacity(kept.len());
+    let mut chars = kept.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '[' || c == '"' {
+            let close = if c == '[' { ']' } else { '"' };
+            out.push(c);
+            if chars.peek() == Some(&'#') {
+                out.push('#');
+            }
+            out.push(close);
+            skip_quoted(&mut chars, close, |_| {});
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Whether `after` - what follows a CREATE or ALTER inside a body - is
@@ -910,10 +965,15 @@ fn strip_comments_and_literals(sql: &str) -> String {
     let mut chars = sql.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
+            // A `--` comment ends at a line feed OR a carriage return, as it
+            // does on the server (and in `lexically_closed`): ending it only
+            // at `\n` read `SELECT 1 --x\rDROP TABLE t` as one SELECT, while
+            // the server runs the DROP. The break is kept, as `\n` always
+            // was, so the line structure survives.
             '-' if chars.peek() == Some(&'-') => {
                 for c in chars.by_ref() {
-                    if c == '\n' {
-                        out.push('\n');
+                    if c == '\n' || c == '\r' {
+                        out.push(c);
                         break;
                     }
                 }
@@ -993,10 +1053,11 @@ fn strip_comments_keep_names(sql: &str) -> String {
     let mut chars = sql.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
+            // Ends where `strip_comments_and_literals` ends it: `\n` or `\r`.
             '-' if chars.peek() == Some(&'-') => {
                 for c in chars.by_ref() {
-                    if c == '\n' {
-                        out.push('\n');
+                    if c == '\n' || c == '\r' {
+                        out.push(c);
                         break;
                     }
                 }

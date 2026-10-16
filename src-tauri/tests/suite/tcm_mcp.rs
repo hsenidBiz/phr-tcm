@@ -918,8 +918,9 @@ fn db_query_says_not_to_ask_only_when_the_app_says_so() {
 }
 
 /// The live report preview runs the report's stored procedure, so it is
-/// approved like db_query: the same "do not ask" line on an explicit yes,
-/// and no other tool carries it.
+/// approved like db_query: a "do not ask" line on an explicit yes, and no
+/// other tool carries one. Its line is its own - it has no batch and no
+/// dry run, so db_query's advice would mean nothing there.
 #[test]
 fn the_live_preview_says_not_to_ask_only_when_the_app_says_so() {
     let descriptions = |tools_reply: &'static str| -> Vec<(String, String)> {
@@ -942,7 +943,17 @@ fn the_live_preview_says_not_to_ask_only_when_the_app_says_so() {
     let asked = descriptions(r#"{"disabled":[],"db_no_ask":true}"#);
     let carrying: Vec<&str> =
         asked.iter().filter(|(_, d)| d.ends_with(v2_lib::mcp::DB_NO_ASK)).map(|(n, _)| n.as_str()).collect();
-    assert_eq!(carrying, ["db_query", "preview_report_live"]);
+    assert_eq!(carrying, ["db_query"]);
+    let carrying: Vec<&str> = asked
+        .iter()
+        .filter(|(_, d)| d.ends_with(v2_lib::mcp::PREVIEW_LIVE_NO_ASK))
+        .map(|(n, _)| n.as_str())
+        .collect();
+    assert_eq!(carrying, ["preview_report_live"]);
+    let live = &asked.iter().find(|(n, _)| n == "preview_report_live").unwrap().1;
+    assert!(!live.contains("dry_run"), "{live}");
+    assert!(v2_lib::mcp::PREVIEW_LIVE_NO_ASK.contains("without confirmation"));
+    assert!(v2_lib::mcp::PREVIEW_LIVE_NO_ASK.contains("parameter"));
     let plain = descriptions(r#"{"disabled":[],"db_no_ask":false}"#);
     assert!(plain.iter().all(|(_, d)| !d.contains("without confirmation")), "{plain:?}");
 }

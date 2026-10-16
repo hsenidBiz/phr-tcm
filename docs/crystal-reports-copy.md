@@ -26,6 +26,21 @@ The copy is refreshed only on the owner's word, by copying again from the
 source folder. No file inside `crystal-reports/` is ever edited here - a fix
 belongs in the source folder and arrives with the next refresh.
 
+## Refresh checklist
+
+Before a refreshed copy ships, check each line below against the new code.
+
+- **Subreports are not fetched live.** The vendored `preview_live_report`
+  (`crystal-reports/rpt-core/src/preview.rs`, where it builds
+  `RenderOptions`) never passes `RenderOptions.scope`, so only the main
+  report's data is fetched from the database and subreports render from
+  their saved data. TCM's check (`live_target` in
+  `src-tauri/src/crystal/live.rs`) looks only at the main report's first
+  plan, which today covers everything that runs. If a refreshed copy wires
+  `scope`, `MssqlScope::rows_for` would run a subreport's procedure or SQL
+  command with no check at all: TCM's check must then cover every
+  subreport before the refresh ships.
+
 ## Licence
 
 The vendored crates are MPL-2.0. The licence text is
