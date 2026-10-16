@@ -229,7 +229,7 @@ test("power flows only down the paths of modules that are on", () => {
   show(["db_access", "auto_run"]);
   const flowing = [...document.querySelectorAll("[data-current]")].map((p) => p.getAttribute("data-current"));
   expect(flowing.sort()).toEqual(["auto_run", "db_access"]);
-  // Each lit path carries two trains of sparks, and they are decoration only.
-  expect(document.querySelectorAll("path.mod-current")).toHaveLength(4);
+  // Each lit path carries one train of sparks, and it is decoration only.
+  expect(document.querySelectorAll("path.mod-current")).toHaveLength(2);
   expect(document.querySelector("svg.mod-edges")).toHaveAttribute("aria-hidden", "true");
 });
