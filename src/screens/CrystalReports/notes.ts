@@ -27,9 +27,11 @@ export interface PreviewNotes {
 }
 
 // A database field is `{Table.field}` (the table part may itself hold
-// dots). `{@formula}` and `{?parameter}` are not fields, and an unknown
-// function has no braces at all - those stay in the other notes.
-const FIELD = /^formula error: unknown name: (\{[^{}@?][^{}]*\.[^{}]*\})/;
+// dots). The evaluator writes an unknown formula or parameter without its
+// sigil (`{Year}`, not `{@Year}` or `{?Year}`), so it has no dot and is not
+// a field; an unknown function has no braces at all. Both stay in the
+// other notes.
+const FIELD = /^formula error: unknown name: (\{[^{}]*\.[^{}]*\})/;
 const GLYPHS = /^font '.*?' lacks glyph\(s\) '(.+?)' \(U\+/;
 
 /** `{Command.emp_display_number}` as "Emp display number". */

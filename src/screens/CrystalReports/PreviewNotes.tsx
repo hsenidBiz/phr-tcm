@@ -46,16 +46,15 @@ export function PreviewNotes({
           <Toggle open={fieldsOpen} controls={fieldsId} onClick={() => setFieldsOpen((o) => !o)}>
             {fieldsOpen ? "Hide fields" : "Show fields"}
           </Toggle>
-          {fieldsOpen && (
-            <ul id={fieldsId} className="max-h-40 space-y-0.5 overflow-y-auto pl-1 text-xs">
-              {fields.map((f) => (
-                <li key={f.raw} title={f.raw} className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="text-text">{f.name}</span>
-                  <span className="font-mono text-[11px] text-faint">{f.raw}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+          {/* Hidden rather than removed, so the toggle's aria-controls always names it. */}
+          <ul id={fieldsId} hidden={!fieldsOpen} className="max-h-40 space-y-0.5 overflow-y-auto pl-1 text-xs">
+            {fields.map((f) => (
+              <li key={f.raw} title={f.raw} className="flex flex-wrap items-baseline gap-x-2">
+                <span className="text-text">{f.name}</span>
+                <span className="font-mono text-[11px] text-faint">{f.raw}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {glyphs.length > 0 && <p className="text-xs text-muted">{symbolsNote(glyphs)}</p>}
@@ -64,13 +63,11 @@ export function PreviewNotes({
           <Toggle open={otherOpen} controls={otherId} onClick={() => setOtherChoice(!otherOpen)}>
             {`Other notes (${other.length})`}
           </Toggle>
-          {otherOpen && (
-            <ul id={otherId} className="max-h-40 list-disc space-y-0.5 overflow-y-auto pl-5 text-xs text-muted">
-              {other.map((line, i) => (
-                <li key={i}>{line}</li>
-              ))}
-            </ul>
-          )}
+          <ul id={otherId} hidden={!otherOpen} className="max-h-40 list-disc space-y-0.5 overflow-y-auto pl-5 text-xs text-muted">
+            {other.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
         </div>
       )}
     </section>

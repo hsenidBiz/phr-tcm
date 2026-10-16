@@ -166,3 +166,24 @@ test("every line of both runner licences is reproduced in the notices file", () 
     for (const line of lines) expect(notices).toContain(line);
   }
 });
+
+// pdf.js (the Crystal Reports page view) is Apache-2.0. Vite's minifier
+// drops its licence header from the built chunk, so the notices file is
+// where the app carries it: the version that ships, the copyright line its
+// own files carry, and every line of the licence.
+test("pdf.js: its version, its copyright and every line of its licence ship in the notices", () => {
+  const notices = readFileSync(join(ROOT, "public/THIRD-PARTY-NOTICES.txt"), "utf8");
+  const pkg = join(ROOT, "node_modules/pdfjs-dist");
+  const { version } = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8"));
+  expect(notices).toContain(`pdfjs-dist ${version}`);
+  const header = readFileSync(join(pkg, "build/pdf.worker.min.mjs"), "utf8").slice(0, 2000);
+  const copyright = header.match(/Copyright \d{4} Mozilla Foundation/)?.[0];
+  expect(copyright).toBeTruthy();
+  expect(notices).toContain(copyright!);
+  const lines = readFileSync(join(pkg, "LICENSE"), "utf8")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  expect(lines.length).toBeGreaterThan(100);
+  for (const line of lines) expect(notices).toContain(line);
+});

@@ -52,7 +52,9 @@ describe("classifyNotes", () => {
   test("anything else is kept as it came, in order", () => {
     const other = [
       "formula error: unknown name: NoSuchFn (Formula @Total)",
-      "formula error: unknown name: {?Year} (Field1)",
+      // An unknown formula or parameter name is written without its @ or ?
+      // sigil - no dot, so it is not a field.
+      "formula error: unknown name: {Year} (Field1)",
       "formula error: divide by zero (Formula @Ratio)",
       "unsupported in formula: CrossTab",
       "The preview of Goals.rpt could not be drawn: no pages.",

@@ -25,10 +25,9 @@ type View =
   | { kind: "error"; message: string }
   | {
       kind: "report";
-      /** Which read this is, so a late failure from an older PDF is not pinned on this one. */
-      read: number;
       report: CurrentReport;
-      /** The PDF's bytes, or null when there is nothing to draw. */
+      /** The PDF's bytes, or null when there is nothing to draw. Each read
+       *  makes new bytes, so they also say which read a failure belongs to. */
       pdf: Uint8Array | null;
       /** Why pdf.js could not open or draw the PDF, once it has said so. */
       drawError: string | null;
@@ -76,7 +75,7 @@ export default function CrystalReports() {
       // A failed render is an empty PDF with its reason in the notes; a file
       // that is gone has nothing worth drawing either.
       const drawable = pdf && report.preview.page_count > 0 && !report.missing;
-      setView({ kind: "report", read: mine, report, pdf: drawable ? pdfBytes(pdf) : null, drawError: null });
+      setView({ kind: "report", report, pdf: drawable ? pdfBytes(pdf) : null, drawError: null });
     } catch (e) {
       if (mine !== newest.current) return;
       setView({ kind: "error", message: message(e) });
@@ -92,8 +91,11 @@ export default function CrystalReports() {
     };
   }, [load]);
 
-  const drawFailed = useCallback((read: number, why: string) => {
-    setView((v) => (v?.kind === "report" && v.read === read ? { ...v, drawError: why } : v));
+  // Only a failure of the PDF on screen counts: an older document can still
+  // fail after a newer one replaced it (pdf.js rejects its drawing once it
+  // is destroyed), and that must not hide the new one.
+  const drawFailed = useCallback((pdf: Uint8Array, why: string) => {
+    setView((v) => (v?.kind === "report" && v.pdf === pdf ? { ...v, drawError: why } : v));
   }, []);
 
   const openInDesigner = async () => {
@@ -122,7 +124,6 @@ export default function CrystalReports() {
   const { name, folder } = splitPath(preview.path);
   const drawn = view.pdf !== null && view.drawError === null;
   const notes = view.drawError ? [...preview.diagnostics, view.drawError] : preview.diagnostics;
-  const read = view.read;
   return (
     <section aria-label="Report" className="flex min-h-0 flex-1 flex-col gap-3 pb-6">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3">
@@ -165,7 +166,7 @@ export default function CrystalReports() {
       {!missing && !drawn && <p className="text-sm text-text">{NOT_DRAWN}</p>}
       {!missing && <PreviewNotes lines={notes} live={preview.live} otherOpenAtFirst={!drawn} />}
       {!missing && drawn && view.pdf && (
-        <PageView pdf={view.pdf} pageCount={preview.page_count} onFailed={(why) => drawFailed(read, why)} />
+        <PageView pdf={view.pdf} pageCount={preview.page_count} onFailed={drawFailed} />
       )}
     </section>
   );
