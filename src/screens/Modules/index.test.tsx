@@ -8,7 +8,7 @@ import Modules from "./index";
 // WebGL never runs in jsdom: a stand-in records what the board asks the
 // electric layer to draw. (The real component's own guard is tested beside it.)
 vi.mock("../../components/ElectricLogo", () => ({
-  default: (p: { src: string; color: string; glowColor: string; theme: string; interactive: boolean; fitTo: string }) => (
+  default: (p: { src: string; color: string; glowColor: string; theme: string; interactive: boolean; fitTo: string; raster: number }) => (
     <div
       data-testid="electric"
       data-src={p.src}
@@ -17,6 +17,7 @@ vi.mock("../../components/ElectricLogo", () => ({
       data-theme-mode={p.theme}
       data-interactive={String(p.interactive)}
       data-fit={p.fitTo}
+      data-raster={p.raster}
     />
   ),
 }));
@@ -272,6 +273,8 @@ test("power flows only down the paths of modules that are on", () => {
   expect(layer).toHaveClass("pointer-events-none", "absolute", "inset-0");
   expect(screen.getByTestId("electric")).toHaveAttribute("data-interactive", "false");
   expect(screen.getByTestId("electric")).toHaveAttribute("data-fit", "image");
+  // Traced at the board's widest on-screen size, so curves stay smooth.
+  expect(screen.getByTestId("electric")).toHaveAttribute("data-raster", "1440");
   expect(document.querySelector("svg.mod-edges")).toHaveAttribute("aria-hidden", "true");
 });
 

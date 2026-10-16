@@ -72,10 +72,17 @@ const SHAKE_MS = 400;
 const DRAIN_MS = 600;
 const DRAIN_STEP_MS = 450;
 
-/** The most pixels the electric layer draws a frame. The board is 800x750
- * (600k px) at 1x; this renders it a little under that and lets the browser
- * scale it up, which a soft glow hides, to go easier on a software renderer. */
-const ELECTRIC_PIXEL_BUDGET = 400_000;
+/** The most pixels the electric layer draws a frame. The canvas renders at
+ * its real on-screen size (the board is 800x750 units, shown at up to 1.8x),
+ * so a large board is about 1.9M px at 1x; this caps it a little under that,
+ * to go easier on a software renderer. */
+const ELECTRIC_PIXEL_BUDGET = 1_600_000;
+/** How finely the board picture is traced (its long side, px): the board's
+ * widest on-screen size (800 x 1.8), so curves stay smooth when it is scaled
+ * up. A multiple of 16, so the 800x750 board rasterises to whole pixels both
+ * ways (1440x1350) and maps back onto the board exactly. A trace at this size
+ * takes some 70ms, once per change of the lit set. */
+const ELECTRIC_RASTER = 1440;
 
 /** How far down the tree a module hangs: Core's children are 1. */
 function depthOf(m: Module): number {
@@ -361,8 +368,10 @@ export default function ModuleTree({
                 fitTo="image"
                 scale={1}
                 interactive={false}
-                maxDpr={1}
+                maxDpr={2}
+                resolutionScale={scale}
                 pixelBudget={ELECTRIC_PIXEL_BUDGET}
+                raster={ELECTRIC_RASTER}
                 strands={2}
                 arcs={0.5}
                 speed={2}

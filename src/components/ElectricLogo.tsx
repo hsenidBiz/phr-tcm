@@ -7,7 +7,9 @@
  * `src` are required (no built-in colours or bolt, so the theme supplies
  * every colour); renderer creation is guarded, so a missing WebGL2 (jsdom, a
  * blocked GPU) renders nothing instead of throwing; `maxDpr` and
- * `pixelBudget` cap the canvas resolution; and `fitTo="image"` maps the whole
+ * `pixelBudget` cap the canvas resolution, `resolutionScale` raises it for a
+ * container that is scaled up by a CSS transform, and `raster` sets how
+ * finely the image is traced; and `fitTo="image"` maps the whole
  * source image onto the container instead of fitting the traced shape's
  * bounding box, so a picture holding part of a larger drawing stays aligned
  * with it. Rendering uses ogl (Unlicense).
@@ -164,11 +166,11 @@ const sampleField = (shape: TracedShape, x: number, y: number) => {
   return top + (bottom - top) * ty + Math.hypot(x - cx, y - cy);
 };
 
-const traceShape = (image: HTMLImageElement): TracedShape | null => {
+const traceShape = (image: HTMLImageElement, raster = RASTER): TracedShape | null => {
   const iw = image.naturalWidth || image.width;
   const ih = image.naturalHeight || image.height;
   if (!iw || !ih) return null;
-  const fit = RASTER / Math.max(iw, ih);
+  const fit = raster / Math.max(iw, ih);
   const w = Math.max(2, Math.round(iw * fit));
   const h = Math.max(2, Math.round(ih * fit));
   const canvas = document.createElement("canvas");
@@ -701,6 +703,12 @@ export interface ElectricLogoProps {
   maxDpr?: number;
   /** The most canvas pixels drawn per frame; the resolution drops to fit. */
   pixelBudget?: number;
+  /** How much a CSS transform scales the container up on screen: the canvas
+   * renders that much finer, so it is not stretched (still within the budget). */
+  resolutionScale?: number;
+  /** The long side, in px, the image is traced at. Finer gives smoother
+   * curves; each trace costs more (it runs whenever `src` changes). */
+  raster?: number;
   /** What `scale` fits into the container: the traced shape, or the whole image. */
   fitTo?: "shape" | "image";
   onRender?: (canvas: HTMLCanvasElement) => void;
@@ -738,6 +746,8 @@ const ElectricLogo = ({
   theme = "dark",
   maxDpr = 1,
   pixelBudget = PIXEL_BUDGET,
+  resolutionScale = 1,
+  raster = RASTER,
   fitTo = "shape",
   onRender,
   className = "",
@@ -746,6 +756,7 @@ const ElectricLogo = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<Settings | null>(null);
   const shapeRef = useRef<TracedShape | null>(null);
+  const resizeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     settingsRef.current = {
@@ -768,10 +779,18 @@ const ElectricLogo = ({
       theme,
       maxDpr,
       pixelBudget,
+      resolutionScale,
+      raster,
       fitTo,
       onRender,
     };
   });
+
+  // A change of resolution reaches the canvas at once; a CSS transform
+  // changing the on-screen size fires no ResizeObserver.
+  useEffect(() => {
+    resizeRef.current?.();
+  }, [maxDpr, pixelBudget, resolutionScale]);
 
   useEffect(() => {
     let alive = true;
@@ -782,7 +801,7 @@ const ElectricLogo = ({
       if (!alive) return;
       let traced: TracedShape | null = null;
       try {
-        traced = traceShape(image);
+        traced = traceShape(image, raster);
       } catch {
         traced = null;
       }
@@ -793,7 +812,7 @@ const ElectricLogo = ({
       alive = false;
       image.onload = null;
     };
-  }, [src]);
+  }, [src, raster]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -803,7 +822,7 @@ const ElectricLogo = ({
     let renderer: Renderer;
     try {
       renderer = new Renderer({
-        dpr: Math.min(window.devicePixelRatio || 1, 2, Math.max(0.1, maxDpr)),
+        dpr: Math.min(window.devicePixelRatio || 1, 2, Math.max(0.1, maxDpr)) * Math.max(0.1, resolutionScale),
         alpha: true,
         premultipliedAlpha: true,
         antialias: false,
@@ -936,9 +955,8 @@ const ElectricLogo = ({
       width = Math.max(1, container.clientWidth);
       height = Math.max(1, container.clientHeight);
       renderer.dpr = Math.min(
-        window.devicePixelRatio || 1,
-        2,
-        Math.max(0.1, s?.maxDpr ?? maxDpr),
+        Math.min(window.devicePixelRatio || 1, 2, Math.max(0.1, s?.maxDpr ?? maxDpr)) *
+          Math.max(0.1, s?.resolutionScale ?? resolutionScale),
         Math.sqrt((s?.pixelBudget ?? pixelBudget) / (width * height)),
       );
       renderer.setSize(width, height);
@@ -1134,10 +1152,12 @@ const ElectricLogo = ({
     });
     intersectionObserver.observe(container);
 
+    resizeRef.current = resize;
     resize();
     start();
 
     return () => {
+      resizeRef.current = null;
       visible = false;
       cancelAnimationFrame(raf);
       resizeObserver.disconnect();

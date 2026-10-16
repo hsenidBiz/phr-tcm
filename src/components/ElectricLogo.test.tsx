@@ -1,16 +1,21 @@
 import { render } from "@testing-library/react";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import ElectricLogo, { place } from "./ElectricLogo";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// The Modules board: an 800x750 picture, rasterised by the trace at 560x525
-// (its longer side is 560), drawn into an 800x750 container.
+// The Modules board: an 800x750 picture, drawn into an 800x750 container and
+// rasterised by the trace at 560x525 (the default long side, 560) or, as the
+// board does, at 1440x1350.
 const BOARD = { w: 800, h: 750 };
-const RASTER = { w: 560, h: 525 };
-const k = RASTER.w / BOARD.w;
+let RASTER = { w: 560, h: 525 };
+let k = RASTER.w / BOARD.w;
+beforeEach(() => {
+  RASTER = { w: 560, h: 525 };
+  k = RASTER.w / BOARD.w;
+});
 
 /** A traced shape as traceShape builds it: the part of the raster that holds
  * the drawing (from `left`,`top`, `w` by `h`), padded by a quarter of its
@@ -44,8 +49,16 @@ const POINTS = [
   [800, 750],
 ];
 
-test("fitTo image maps every point of the picture onto the same board point, whatever part is drawn", () => {
-  for (const shape of [traced(0, 0, 560, 525), traced(161, 116, 92, 21), traced(105, 262, 60, 134), traced(300, 200, 7, 180)]) {
+test.each([
+  [560, 525],
+  [1440, 1350],
+])("fitTo image maps every point of a %ix%i trace onto the same board point, whatever part is drawn", (w, h) => {
+  RASTER = { w, h };
+  k = w / BOARD.w;
+  const f = w / 560;
+  const part = (l: number, t: number, pw: number, ph: number) =>
+    traced(Math.round(l * f), Math.round(t * f), Math.round(pw * f), Math.round(ph * f));
+  for (const shape of [part(0, 0, 560, 525), part(161, 116, 92, 21), part(105, 262, 60, 134), part(300, 200, 7, 180)]) {
     for (const [bx, by] of POINTS) {
       const at = onScreen(shape, "image", bx, by);
       expect(at.x).toBeCloseTo(bx, 6);
