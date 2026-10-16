@@ -22,12 +22,13 @@ const PARENT: Record<Module, Module | null> = {
   auto_run: "db_access",
   api_templates: "auto_run",
   playwright: "auto_run",
+  crystal_reports: null,
 };
 const below = (x: Module): Module[] => [x, ...MODULES.filter((c) => PARENT[c] === x).flatMap(below)];
 
 describe("the address", () => {
   test("?modules= names the modules that are on; unknown names are ignored", () => {
-    expect([...modulesFrom("?modules=db_access,writing_style,auto_run,api_templates,playwright")]).toEqual([...MODULES]);
+    expect([...modulesFrom("?modules=db_access,writing_style,auto_run,api_templates,playwright,crystal_reports")]).toEqual([...MODULES]);
     expect([...modulesFrom("?modules=db_access,auto_run")]).toEqual(["db_access", "auto_run"]);
     expect([...modulesFrom("?x=2&modules=db_access,nonsense")]).toEqual(["db_access"]);
   });
@@ -62,8 +63,8 @@ describe("the lists cannot go stale", () => {
     }
   });
 
-  test("the five modules are covered", () => {
-    expect(MODULES).toEqual(["db_access", "writing_style", "auto_run", "api_templates", "playwright"]);
+  test("the six modules are covered", () => {
+    expect(MODULES).toEqual(["db_access", "writing_style", "auto_run", "api_templates", "playwright", "crystal_reports"]);
     expect(Object.keys(MODULE_SCREENS).sort()).toEqual(["api_templates", "auto_run", "playwright"]);
     expect(MODULE_SCREENS.auto_run).toEqual(["auto-run"]);
     expect(MODULE_SCREENS.api_templates).toEqual(["api-templates"]);
@@ -176,7 +177,7 @@ describe("the Modules section and the old switch", () => {
       expect(section, line).toContain(line);
     }
     const descriptions = [...copy.matchAll(/^\s+"((?:[^"\\]|\\.)+)",?$/gm)].map((m) => m[1]);
-    expect(descriptions.length).toBe(5);
+    expect(descriptions.length).toBe(6);
     for (const d of descriptions) expect(section, d).toContain(d);
   });
 });

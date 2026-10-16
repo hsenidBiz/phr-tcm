@@ -37,6 +37,8 @@ export function moduleNavItem(m: Module): Section {
       return "apitemplates";
     case "playwright":
       return "playwright";
+    case "crystal_reports":
+      return "crystal-reports";
   }
 }
 

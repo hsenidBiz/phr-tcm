@@ -1517,7 +1517,7 @@ test("Modules opens the modules page from Settings, and Back to Settings returns
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
   fireEvent.click(screen.getByRole("button", { name: "Modules" }));
-  expect(await screen.findAllByRole("switch")).toHaveLength(5);
+  expect(await screen.findAllByRole("switch")).toHaveLength(6);
   expect(screen.queryByRole("heading", { name: "Appearance" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /Back to Settings/ }));
   expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();

@@ -3877,7 +3877,7 @@ export type Mention = {
 
 export type Method = "GET" | "POST";
 
-export type Module = "db_access" | "writing_style" | "auto_run" | "api_templates" | "playwright";
+export type Module = "db_access" | "writing_style" | "auto_run" | "api_templates" | "playwright" | "crystal_reports";
 
 export type ModuleRecordResult = {
 	saved: boolean,

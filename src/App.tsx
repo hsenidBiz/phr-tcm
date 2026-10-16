@@ -199,6 +199,7 @@ const TITLES: Record<Section, string> = {
   ai: "AI Bridge",
   apitemplates: "API Templates",
   playwright: "Playwright",
+  "crystal-reports": "Crystal Reports",
   settings: "Settings",
 };
 

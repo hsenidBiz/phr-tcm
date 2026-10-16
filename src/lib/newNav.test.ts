@@ -30,6 +30,7 @@ test("each module marks the row it reveals", () => {
   expect(moduleNavItem("auto_run")).toBe("autorun");
   expect(moduleNavItem("api_templates")).toBe("apitemplates");
   expect(moduleNavItem("playwright")).toBe("playwright");
+  expect(moduleNavItem("crystal_reports")).toBe("crystal-reports");
 });
 
 test("switching a module on marks its row, and only that row", () => {

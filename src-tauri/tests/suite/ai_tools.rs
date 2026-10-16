@@ -652,7 +652,7 @@ fn each_module_off_disables_exactly_its_tools() {
 #[test]
 fn database_access_off_takes_the_auto_run_family_tools_with_it() {
     let on = apply(&all_mods(), Module::DbAccess, false).unwrap();
-    assert_eq!(on, mods(&[Module::WritingStyle]));
+    assert_eq!(on, mods(&[Module::WritingStyle, Module::CrystalReports]));
     let off = effective_disabled_for(&[], &on);
     let mut expected = strings(AUTORUN_TOOLS);
     expected.extend(strings(API_TEMPLATE_TOOLS));

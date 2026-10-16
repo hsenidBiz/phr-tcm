@@ -1154,7 +1154,8 @@ pub fn every_file(root: &std::path::Path) -> std::collections::BTreeMap<std::pat
 
 /// The module keys a development app with every module on reports in its
 /// `/tools` answer.
-pub const ALL_MODULES: [&str; 5] = ["db_access", "writing_style", "auto_run", "api_templates", "playwright"];
+pub const ALL_MODULES: [&str; 6] =
+    ["db_access", "writing_style", "auto_run", "api_templates", "playwright", "crystal_reports"];
 
 /// A `/tools` answer from a development app with every module on and
 /// nothing switched off.

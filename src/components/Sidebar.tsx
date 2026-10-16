@@ -57,6 +57,7 @@ export type Section =
   | "ai"
   | "apitemplates"
   | "playwright"
+  | "crystal-reports"
   | "settings";
 export type WorkSection = "prs" | "board" | "create";
 

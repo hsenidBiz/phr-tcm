@@ -55,9 +55,13 @@ function show(on: Module[], onBack = vi.fn()) {
 
 const sw = (name: RegExp | string) => screen.getByRole("switch", { name });
 
-test("lists the five modules with their statuses", () => {
+test("lists the six modules with their statuses", () => {
   show(["db_access"]);
-  expect(screen.getAllByRole("switch")).toHaveLength(5);
+  expect(screen.getAllByRole("switch")).toHaveLength(6);
+  // Crystal Reports hangs off Core, so it is never locked.
+  expect(sw(/^Crystal Reports/)).toHaveAccessibleName("Crystal Reports Off · click to switch on");
+  expect(sw(/^Crystal Reports/)).not.toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByText(/Lets your AI assistant open, format and preview Crystal Reports files/)).toBeInTheDocument();
   expect(sw(/^Database Access/)).toHaveAttribute("aria-checked", "true");
   expect(sw(/^Database Access/)).toHaveAccessibleName(/On/);
   expect(sw(/^Writing Style/)).toHaveAttribute("aria-checked", "false");
@@ -200,6 +204,35 @@ test("a path runs from the parent card's bottom edge to the child card's top edg
   // Behind a see-through locked card, a centre-to-centre line showed through it.
   expect(ends("playwright")).toEqual({ fromY: top("auto_run") + 120, toY: top("playwright") });
   expect(ends("auto_run")).toEqual({ fromY: top("db_access") + 120, toY: top("auto_run") });
+  vi.restoreAllMocks();
+});
+
+test("no two cards overlap, and Crystal Reports' path drops through the gap between the first row's cards", () => {
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(140);
+  show(["crystal_reports"]);
+  const rect = (m: Module) => {
+    const el = document.querySelector<HTMLElement>(`[data-module="${m}"]`)!;
+    const left = parseFloat(el.style.left) - 140;
+    return { m, left, right: left + 280, top: parseFloat(el.style.top), bottom: parseFloat(el.style.top) + 140 };
+  };
+  const cards = (["db_access", "writing_style", "auto_run", "api_templates", "playwright", "crystal_reports"] as Module[]).map(rect);
+  for (const a of cards) {
+    expect(a.left, a.m).toBeGreaterThanOrEqual(0);
+    expect(a.right, a.m).toBeLessThanOrEqual(800);
+    expect(a.bottom, a.m).toBeLessThanOrEqual(750);
+    for (const b of cards) {
+      if (a.m >= b.m) continue;
+      const apart = a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top;
+      expect(apart, `${a.m} / ${b.m}`).toBe(true);
+    }
+  }
+  // Down the middle, clear of both first-row cards, then across to its own card.
+  const d = document.querySelector(`[data-edge-line="crystal_reports"]`)!.getAttribute("d")!;
+  const drop = d.match(/^M400,\d+ L400,(\d+) /);
+  expect(drop, d).not.toBeNull();
+  expect(Number(drop![1])).toBeGreaterThanOrEqual(rect("writing_style").bottom);
+  expect(Number(drop![1])).toBeLessThan(rect("crystal_reports").top);
+  expect(d.endsWith(`${rect("crystal_reports").left + 140},${rect("crystal_reports").top}`)).toBe(true);
   vi.restoreAllMocks();
 });
 

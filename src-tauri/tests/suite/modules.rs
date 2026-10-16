@@ -14,9 +14,12 @@ fn the_tree_has_the_designed_parents() {
     assert_eq!(Module::AutoRun.parent(), Some(Module::DbAccess));
     assert_eq!(Module::ApiTemplates.parent(), Some(Module::AutoRun));
     assert_eq!(Module::Playwright.parent(), Some(Module::AutoRun));
+    assert_eq!(Module::CrystalReports.parent(), None);
     assert_eq!(Module::DbAccess.below(), vec![Module::AutoRun, Module::ApiTemplates, Module::Playwright]);
     assert_eq!(Module::AutoRun.children(), vec![Module::ApiTemplates, Module::Playwright]);
     assert_eq!(Module::ApiTemplates.name(), "API Templates");
+    assert_eq!(Module::CrystalReports.name(), "Crystal Reports");
+    assert_eq!(Module::ALL.last(), Some(&Module::CrystalReports));
 }
 
 #[test]
@@ -30,7 +33,7 @@ fn a_locked_module_cannot_be_switched_on() {
 fn switching_a_parent_off_switches_everything_below_it_off() {
     let all: BTreeSet<Module> = Module::ALL.into_iter().collect();
     let next = apply(&all, Module::DbAccess, false).unwrap();
-    assert_eq!(next, set(&[Module::WritingStyle]));
+    assert_eq!(next, set(&[Module::WritingStyle, Module::CrystalReports]));
 }
 
 #[test]
@@ -45,9 +48,19 @@ fn an_existing_install_keeps_database_access_and_writing_style() {
 
 #[test]
 fn an_advanced_or_unlocked_install_keeps_auto_run_api_templates_and_playwright() {
-    let all: BTreeSet<Module> = Module::ALL.into_iter().collect();
+    let all: BTreeSet<Module> = set(&[Module::DbAccess, Module::WritingStyle, Module::AutoRun, Module::ApiTemplates, Module::Playwright]);
     assert_eq!(initial(true, true, false, false), all);
     assert_eq!(initial(true, false, true, false), all);
+}
+
+/// Crystal Reports is new: no install gets it from an old flag, so it is on
+/// only in a development build until a person switches it on themselves.
+#[test]
+fn crystal_reports_starts_off_everywhere_but_a_development_build() {
+    for (existing, advanced, unlocked) in [(false, false, false), (true, false, false), (true, true, false), (true, false, true), (true, true, true)] {
+        assert!(!initial(existing, advanced, unlocked, false).contains(&Module::CrystalReports), "{existing} {advanced} {unlocked}");
+    }
+    assert!(initial(false, false, false, true).contains(&Module::CrystalReports));
 }
 
 #[test]
@@ -61,7 +74,7 @@ fn an_unreadable_file_on_an_existing_install_is_rebuilt_from_the_old_flags() {
     let d = tempfile::tempdir().unwrap();
     std::fs::write(d.path().join("extras.json"), r#"{"advanced":true}"#).unwrap();
     std::fs::write(d.path().join("modules.json"), "not json").unwrap();
-    let all: BTreeSet<Module> = Module::ALL.into_iter().collect();
+    let all = set(&[Module::DbAccess, Module::WritingStyle, Module::AutoRun, Module::ApiTemplates, Module::Playwright]);
     assert_eq!(load_or_create(d.path(), false), all);
     // and it was saved, so the next read is the file
     assert_eq!(load_or_create(d.path(), false), all);
@@ -167,7 +180,7 @@ fn a_set_that_saves_changes_the_state_and_the_file() {
     let d = tempfile::tempdir().unwrap();
     let mut state: BTreeSet<Module> = Module::ALL.into_iter().collect();
     let next = v2_lib::modules::set_in(&mut state, d.path(), Module::AutoRun, false).unwrap();
-    assert_eq!(next, set(&[Module::DbAccess, Module::WritingStyle]));
+    assert_eq!(next, set(&[Module::DbAccess, Module::WritingStyle, Module::CrystalReports]));
     assert_eq!(state, next);
     assert_eq!(load_or_create(d.path(), false), next);
     // Locked: refused, nothing changed.
@@ -190,7 +203,7 @@ fn before_setup_a_development_build_reads_everything_on() {
 #[test]
 fn each_module_has_its_stored_name() {
     let keys: Vec<&str> = Module::ALL.iter().map(|m| m.key()).collect();
-    assert_eq!(keys, ["db_access", "writing_style", "auto_run", "api_templates", "playwright"]);
+    assert_eq!(keys, ["db_access", "writing_style", "auto_run", "api_templates", "playwright", "crystal_reports"]);
     for m in Module::ALL {
         assert_eq!(Module::from_key(m.key()), Some(m));
         assert_eq!(serde_json::to_value(m).unwrap(), serde_json::json!(m.key()), "serde agrees");
@@ -207,6 +220,7 @@ fn the_refusal_names_the_module() {
         (Module::AutoRun, "Auto Run is switched off in Modules"),
         (Module::ApiTemplates, "API Templates is switched off in Modules"),
         (Module::Playwright, "Playwright is switched off in Modules"),
+        (Module::CrystalReports, "Crystal Reports is switched off in Modules"),
     ] {
         assert_eq!(m.off_sentence(), said);
         assert_eq!(v2_lib::modules::require(m, false).unwrap_err(), said);
@@ -351,8 +365,8 @@ mod commands {
         let all: Vec<Module> = Module::ALL.to_vec();
         let mut st = set(&all);
         let now = modules_set_with(&mut st, d.path(), Module::DbAccess, false, false, false, false).unwrap();
-        assert_eq!(now, vec![Module::WritingStyle]);
-        assert_eq!(st, set(&[Module::WritingStyle]));
+        assert_eq!(now, vec![Module::WritingStyle, Module::CrystalReports]);
+        assert_eq!(st, set(&[Module::WritingStyle, Module::CrystalReports]));
     }
 
     #[test]

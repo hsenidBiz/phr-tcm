@@ -13,7 +13,14 @@ import { isCaptureMode } from "../dev/capture";
 
 export type { Module };
 
-export const ALL_MODULES: readonly Module[] = ["db_access", "writing_style", "auto_run", "api_templates", "playwright"];
+export const ALL_MODULES: readonly Module[] = [
+  "db_access",
+  "writing_style",
+  "auto_run",
+  "api_templates",
+  "playwright",
+  "crystal_reports",
+];
 
 const ALL: ReadonlySet<Module> = new Set(ALL_MODULES);
 const NONE: ReadonlySet<Module> = new Set();
@@ -125,6 +132,8 @@ export function sectionModule(section: string): Module | null {
       return "api_templates";
     case "playwright":
       return "playwright";
+    case "crystal-reports":
+      return "crystal_reports";
     default:
       return null;
   }

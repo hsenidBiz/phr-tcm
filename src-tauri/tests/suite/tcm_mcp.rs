@@ -739,7 +739,7 @@ use v2_lib::mcp::tool_policy_from;
 fn the_proxy_takes_the_modules_from_the_app() {
     let (off, on) = tool_policy_from(Ok((
         200,
-        r#"{"disabled":["search_wiki"],"modules":["db_access","writing_style","auto_run","api_templates","playwright"]}"#.into(),
+        r#"{"disabled":["search_wiki"],"modules":["db_access","writing_style","auto_run","api_templates","playwright","crystal_reports"]}"#.into(),
     )));
     assert_eq!(on, Module::ALL.into_iter().collect());
     assert_eq!(off, vec!["search_wiki"]);
