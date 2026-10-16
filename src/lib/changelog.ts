@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.2",
+    date: "2026-10-16",
+    items: [
+      "Export to Playwright accepts any folder name the repo can hold, such as DW-competencies, instead of only lower-case names with hyphens.",
+      "In Export to Playwright, one case can go to its own folder apart from the rest of its area: press Own folder beside it.",
+    ],
+  },
+  {
     version: "2.2.3-beta.1",
     date: "2026-10-16",
     items: [
