@@ -4431,6 +4431,84 @@ mod crystal_routes {
         v2_lib::crystal::close();
     }
 
+    /// What the screen is told, in order: the open report's path after each
+    /// answer that changed what it shows. The sink is a process-wide
+    /// `OnceLock`, so every test that reads it installs this same recorder and
+    /// clears the list under the crystal lock it holds.
+    fn told() -> &'static std::sync::Mutex<Vec<Option<String>>> {
+        static TOLD: std::sync::Mutex<Vec<Option<String>>> = std::sync::Mutex::new(Vec::new());
+        v2_lib::ai_bridge::set_crystal_sink(Box::new(|path| TOLD.lock().unwrap().push(path)));
+        TOLD.lock().unwrap().clear();
+        &TOLD
+    }
+
+    /// An open, a change (even one the bundle refuses, which re-reads the
+    /// file), a new report and a preview, saved or live, each tell the
+    /// screen; a call that was refused before it changed anything does not.
+    #[tokio::test]
+    async fn the_screen_is_told_when_the_report_it_shows_changes() {
+        use v2_lib::ai_bridge::crystal_preview_live;
+        let _lock = crate::serial::crystal();
+        let told = told();
+        let dir = tempfile::tempdir().unwrap();
+        let path = copy_sample(dir.path());
+        let heard = |n: usize| {
+            let said = told.lock().unwrap();
+            assert_eq!(said.len(), n, "{said:?}");
+            said.last().cloned().flatten()
+        };
+
+        let gone = dir.path().join("Gone.rpt").to_string_lossy().into_owned();
+        assert_eq!(post("/crystal-open", json!({ "path": gone })).await.0, 400);
+        assert_eq!(heard(0), None, "a refused open changes nothing");
+
+        let ir = json_of(&post("/crystal-open", json!({ "path": path })).await);
+        assert_eq!(heard(1).as_deref(), Some(path.as_str()));
+
+        let (status, _) = post(
+            "/crystal-change",
+            json!({ "ops": [{ "op": "set_text", "object": { "name": "no-such" }, "text": "x" }] }),
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert_eq!(heard(2).as_deref(), Some(path.as_str()), "a refusal re-reads the file, so the screen reads it again");
+
+        let target = ir["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["kind"] == "Text" && o["text"]["editable"] == true && !o["name"].as_str().unwrap_or("").is_empty())
+            .expect("a text object")["name"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let edit = json!({ "ops": [{ "op": "set_text", "object": { "name": target }, "text": "Edited" }] });
+        json_of(&post("/crystal-change", edit).await);
+        assert_eq!(heard(3).as_deref(), Some(path.as_str()));
+
+        json_of(&post("/crystal-preview", json!({})).await);
+        assert_eq!(heard(4).as_deref(), Some(path.as_str()));
+
+        // A live preview refused at a door changes nothing; one that is drawn tells the screen.
+        let all: std::collections::BTreeSet<Module> = Module::ALL.into_iter().collect();
+        let stand_in = |_: &rpt_core::rpt_reader::Rpt, _: &rpt_core::LiveDb| {
+            Ok(rpt_core::PreviewOutput { pdf: b"%PDF-live".to_vec(), page_count: 2, diagnostics: vec![] })
+        };
+        let (status, _) = crystal_preview_live(&live_ctx(dir.path(), "reader", true), "{}", &all, stand_in).await;
+        assert_eq!(status, 400);
+        assert_eq!(heard(4).as_deref(), Some(path.as_str()), "a refused live preview told no one");
+        let body = json!({ "params": params_object(&crate::crystal_reports::fitting_values(&path)) }).to_string();
+        let (status, said) =
+            crystal_preview_live(&live_ctx(dir.path(), "x_devlogin", true), &body, &all, stand_in).await;
+        assert_eq!(status, 200, "{said}");
+        assert_eq!(heard(5).as_deref(), Some(path.as_str()));
+
+        let fresh = dir.path().join("Fresh.rpt");
+        json_of(&post("/crystal-new", json!({ "path": fresh })).await);
+        assert_eq!(heard(6).as_deref(), Some(fresh.to_string_lossy().as_ref()));
+        v2_lib::crystal::close();
+    }
+
     /// Database Access off refuses the live preview with that module's
     /// sentence even while Crystal Reports is on; writes off says so.
     #[test]

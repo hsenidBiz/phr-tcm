@@ -127,6 +127,24 @@ fn templates_changed(id: &str) {
     }
 }
 
+/// Where the Crystal Reports routes say the report on the screen may have
+/// changed, so it reads the open report again. Handed the open report's
+/// path (`None` when none is). A process-wide sink for the same reason as
+/// `INTAKE_SINK`; `None` in a test that never installs one.
+type CrystalSink = Box<dyn Fn(Option<String>) + Send + Sync>;
+static CRYSTAL_SINK: std::sync::OnceLock<CrystalSink> = std::sync::OnceLock::new();
+
+/// Called once by the app when the bridge starts. Later calls are ignored.
+pub fn set_crystal_sink(f: CrystalSink) {
+    let _ = CRYSTAL_SINK.set(f);
+}
+
+fn crystal_changed() {
+    if let Some(f) = CRYSTAL_SINK.get() {
+        f(crate::crystal::current_path());
+    }
+}
+
 type WatchSource = Box<dyn Fn() -> Vec<String> + Send + Sync>;
 static WATCH_SOURCE: std::sync::OnceLock<WatchSource> = std::sync::OnceLock::new();
 
@@ -6203,7 +6221,12 @@ async fn crystal_open(body: &str) -> (u16, String) {
         Ok(path) => path,
         Err(refused) => return refused,
     };
-    crystal_answer(crystal_blocking(move || crate::crystal::open(&path)).await)
+    let done = crystal_blocking(move || crate::crystal::open(&path)).await;
+    // A refused open leaves the old report open; only a new one changes the screen.
+    if done.is_ok() {
+        crystal_changed();
+    }
+    crystal_answer(done)
 }
 
 async fn crystal_read(body: &str) -> (u16, String) {
@@ -6237,6 +6260,8 @@ async fn crystal_change(body: &str) -> (u16, String) {
         })
     })
     .await;
+    // A refused batch tells the screen too: the report is re-read from disk.
+    crystal_changed();
     crystal_answer(done)
 }
 
@@ -6277,11 +6302,17 @@ async fn crystal_new(body: &str) -> (u16, String) {
         comments: crystal_text(&args, "comments"),
         ..Default::default()
     };
-    crystal_answer(crystal_blocking(move || crate::crystal::new_report(&path, opts)).await)
+    let done = crystal_blocking(move || crate::crystal::new_report(&path, opts)).await;
+    if done.is_ok() {
+        crystal_changed();
+    }
+    crystal_answer(done)
 }
 
 async fn crystal_preview() -> (u16, String) {
     let done = crystal_blocking(crate::crystal::preview_saved).await;
+    // A render that failed is kept as the preview too, so the screen shows why.
+    crystal_changed();
     crystal_answer(done.and_then(|info| serde_json::to_value(info).map_err(|e| (500, e.to_string()))))
 }
 
@@ -6373,6 +6404,9 @@ pub async fn crystal_preview_live(
     }
     let name = chosen_database_name(ctx);
     let done = crystal_blocking(move || crate::crystal::preview_live_with(&conn, &name, params, fetch)).await;
+    // Past the doors a failed draw is kept as the preview (as with the saved one); a refusal is
+    // only a re-read.
+    crystal_changed();
     crystal_answer(done.and_then(|info| serde_json::to_value(info).map_err(|e| (500, e.to_string()))))
 }
 

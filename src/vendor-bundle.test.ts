@@ -108,14 +108,18 @@ test("every file the page and its stylesheet ask for is in the bundle", () => {
   expect(refs.filter((r) => !existsSync(join(RUNNER, r)))).toEqual([]);
 });
 
-test("the app's CSP lets the window frame its own pages and nothing else", () => {
+// The Crystal Reports screen shows a report's PDF in an iframe from a blob:
+// object URL, which Chromium does not treat as 'self'. Nothing remote may be
+// framed.
+test("the app's CSP lets the window frame its own pages and a blob: PDF, and nothing else", () => {
   const conf = JSON.parse(readFileSync(join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
   for (const policy of [conf.app.security.csp, conf.app.security.devCsp] as string[]) {
     const frame = policy
       .split(";")
       .map((d) => d.trim())
       .find((d) => d.startsWith("frame-src"));
-    expect(frame).toBe("frame-src 'self'");
+    expect(frame).toBe("frame-src 'self' blob:");
+    expect(frame).not.toMatch(/https?:/);
   }
 });
 

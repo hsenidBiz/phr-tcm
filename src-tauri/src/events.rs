@@ -256,6 +256,15 @@ pub struct ApiTemplatesChanged {
     pub id: String,
 }
 
+/// Emitted when the report the Crystal Reports screen shows may have
+/// changed: an assistant opened, edited or created one, or drew a new
+/// preview. The screen reads the open report again; `path` is the report
+/// that is open now, `None` if none is.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct CrystalReportChanged {
+    pub path: Option<String>,
+}
+
 /// Emitted whenever Auto Run scripts on disk change: saved, edited,
 /// repaired, marked, cleared or deleted, by the person, the assistant or a
 /// replay. `case_ids` are the cases whose script changed; the Auto Run

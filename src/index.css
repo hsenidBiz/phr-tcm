@@ -1126,6 +1126,16 @@ table {
     30% { opacity: 0; }
   }
 
+  /* Crystal Reports: the three bars grow up from the page's foot, left to
+     right, and settle at their resting heights. */
+  .group:hover .ng-crystal-reports .ng-bar { animation: ng-bar-grow 0.9s ease-out; transform-origin: 0 18px; }
+  .group:hover .ng-crystal-reports .ng-bar-2 { animation-delay: 0.1s; }
+  .group:hover .ng-crystal-reports .ng-bar-3 { animation-delay: 0.2s; }
+  @keyframes ng-bar-grow {
+    0% { transform: scaleY(0.1); }
+    100% { transform: scaleY(1); }
+  }
+
   /* Update Test Cases: the line runs off along itself into the arrowhead,
      which goes with it, then draws back in from the start, and the head
      snaps on as the line reaches it. */

@@ -681,3 +681,93 @@ pub fn with_value(mut values: Vec<(String, String)>, name: &str, value: &str) ->
     slot.1 = value.to_string();
     values
 }
+
+/// The three commands the Crystal Reports screen calls, through their
+/// testable halves (`current_with`, `preview_pdf_with`, `open_in_designer_with`:
+/// whether the module is on, and the opener, are handed in).
+mod the_screen {
+    use super::*;
+    use base64::Engine;
+    use v2_lib::commands::crystal as screen;
+    use v2_lib::modules::Module;
+
+    const NO_PROGRAM: &str =
+        "Windows has no program set to open .rpt files. Install Crystal Reports, or open the file from it.";
+
+    #[test]
+    fn the_screen_commands_are_refused_while_the_module_is_off() {
+        let _lock = serial::crystal();
+        let dir = tempfile::tempdir().unwrap();
+        crystal::open(&copy_sample(dir.path(), SAMPLE)).unwrap();
+        let off = Module::CrystalReports.off_sentence();
+
+        assert_eq!(screen::current_with(false).unwrap_err(), off);
+        assert_eq!(screen::preview_pdf_with(false).unwrap_err(), off);
+        let opener = |_: &str| -> Result<(), String> { panic!("a refused call opened the designer") };
+        assert_eq!(screen::open_in_designer_with(false, opener).unwrap_err(), off);
+        crystal::close();
+    }
+
+    #[test]
+    fn with_nothing_open_the_screen_has_nothing_to_show() {
+        let _lock = serial::crystal();
+        crystal::close();
+        assert!(screen::current_with(true).unwrap().is_none());
+        assert!(screen::preview_pdf_with(true).unwrap().is_none());
+        let opener = |_: &str| -> Result<(), String> { panic!("nothing is open") };
+        let said = screen::open_in_designer_with(true, opener).unwrap_err();
+        assert!(said.contains("No report is open"), "{said}");
+    }
+
+    #[test]
+    fn the_screen_reads_the_open_report_and_its_pdf() {
+        let _lock = serial::crystal();
+        let dir = tempfile::tempdir().unwrap();
+        let path = copy_sample(dir.path(), SAMPLE);
+        crystal::open(&path).unwrap();
+
+        let shown = screen::current_with(true).unwrap().expect("a report is open");
+        assert_eq!(shown.preview.path, path);
+        assert!(shown.preview.page_count > 0 && !shown.missing, "{shown:?}");
+        let b64 = screen::preview_pdf_with(true).unwrap().expect("the open report has a PDF");
+        let pdf = base64::engine::general_purpose::STANDARD.decode(b64).expect("plain base64, no data-URL prefix");
+        assert!(pdf.starts_with(b"%PDF"));
+        assert_eq!(pdf, crystal::last_pdf().unwrap().1);
+        crystal::close();
+    }
+
+    #[test]
+    fn a_report_whose_file_is_gone_is_marked_missing_and_will_not_open() {
+        let _lock = serial::crystal();
+        let dir = tempfile::tempdir().unwrap();
+        let path = copy_sample(dir.path(), SAMPLE);
+        crystal::open(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        let shown = screen::current_with(true).unwrap().expect("TCM still has it open");
+        assert!(shown.missing, "{shown:?}");
+        let opener = |_: &str| -> Result<(), String> { panic!("the file is gone") };
+        assert_eq!(screen::open_in_designer_with(true, opener).unwrap_err(), "The report file is no longer there.");
+        crystal::close();
+    }
+
+    #[test]
+    fn opening_hands_the_path_over_and_a_failed_open_shows_no_raw_reason() {
+        let _lock = serial::crystal();
+        let dir = tempfile::tempdir().unwrap();
+        let path = copy_sample(dir.path(), SAMPLE);
+        crystal::open(&path).unwrap();
+
+        let mut given = None;
+        screen::open_in_designer_with(true, |p: &str| {
+            given = Some(p.to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(given.as_deref(), Some(path.as_str()));
+
+        let said = screen::open_in_designer_with(true, |_: &str| Err("os error 1155 at the path".to_string()));
+        assert_eq!(said.unwrap_err(), NO_PROGRAM);
+        crystal::close();
+    }
+}

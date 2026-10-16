@@ -39,6 +39,7 @@ export const MODULE_SCREENS: Partial<Record<Module, readonly string[]>> = {
   auto_run: ["auto-run"],
   [API_TEMPLATES]: ["api-templates"],
   playwright: ["playwright"],
+  crystal_reports: ["crystal-reports"],
 };
 
 /** Per module, per screen, the groups (cards) shown only while it is on. */
