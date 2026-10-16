@@ -1,34 +1,49 @@
-// The Crystal Reports tab: the PDF preview of the report an AI assistant is
-// working on, with a button that opens the file in Crystal Reports itself.
+// The Crystal Reports tab: the report an AI assistant is working on - a
+// header card (its file, where its data came from, its pages, and a button
+// that opens it in Crystal Reports), its notes in plain words, and its
+// pages drawn in the app by pdf.js.
 //
 // The assistant changes the report through the AI Bridge; this screen only
 // looks. Rust tells it when the report changed (`crystalReportChanged`), and
-// it reads the open report and its last PDF again. The PDF crosses the IPC
-// boundary as base64 and is shown from a blob: URL, which is let go when the
-// next one replaces it and when the screen goes (the CSP allows blob: frames).
+// it reads the open report and its last PDF again; the newest read wins.
+// The PDF crosses the IPC boundary as base64 and is handed to pdf.js as
+// bytes - no blob: URL and no frame (see ./PageView).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { commands, events, type CurrentReport } from "../../bindings";
+import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { IconOpenInBrowser } from "../../lib/actionIcons";
+import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
+import { PageView } from "./PageView";
+import { PreviewNotes } from "./PreviewNotes";
 
 /** What the screen is showing. `null` until the first read comes back. */
 type View =
   | { kind: "empty" }
   | { kind: "error"; message: string }
-  | { kind: "report"; report: CurrentReport; url: string | null };
+  | {
+      kind: "report";
+      /** Which read this is, so a late failure from an older PDF is not pinned on this one. */
+      read: number;
+      report: CurrentReport;
+      /** The PDF's bytes, or null when there is nothing to draw. */
+      pdf: Uint8Array | null;
+      /** Why pdf.js could not open or draw the PDF, once it has said so. */
+      drawError: string | null;
+    };
 
 const NOTHING_OPEN = "No report open. Ask your AI assistant to open one.";
 const FILE_GONE = "The report file is no longer there.";
 const NOT_DRAWN = "The preview could not be drawn.";
 
-/** The PDF in `base64` (no data-URL prefix) as a Blob the iframe can load. */
-function pdfBlob(base64: string): Blob {
+/** The PDF in `base64` (no data-URL prefix) as bytes. */
+function pdfBytes(base64: string): Uint8Array {
   const text = atob(base64);
   const bytes = new Uint8Array(text.length);
   for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i);
-  return new Blob([bytes], { type: "application/pdf" });
+  return bytes;
 }
 
 /** A report path as its file name and the folder it is in (either separator). */
@@ -38,20 +53,15 @@ function splitPath(path: string): { name: string; folder: string } {
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const pagesLabel = (n: number) => (n === 1 ? "1 page" : `${n} pages`);
 
 export default function CrystalReports() {
   const [view, setView] = useState<View | null>(null);
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
-  // The blob: URL the iframe is showing, and which read is the newest, so a
-  // slow read that comes back after a newer one cannot put an old PDF back.
-  const urlRef = useRef<string | null>(null);
+  // Which read is the newest, so a slow read that comes back after a newer
+  // one cannot put an old PDF back.
   const newest = useRef(0);
-
-  const releaseUrl = useCallback(() => {
-    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-    urlRef.current = null;
-  }, []);
 
   const load = useCallback(async () => {
     const mine = ++newest.current;
@@ -59,23 +69,19 @@ export default function CrystalReports() {
       const report = await unwrapStr(commands.crystalCurrent());
       const pdf = report ? await unwrapStr(commands.crystalPreviewPdf()) : null;
       if (mine !== newest.current) return;
-      releaseUrl();
       if (!report) {
         setView({ kind: "empty" });
         return;
       }
       // A failed render is an empty PDF with its reason in the notes; a file
       // that is gone has nothing worth drawing either.
-      if (pdf && report.preview.page_count > 0 && !report.missing) {
-        urlRef.current = URL.createObjectURL(pdfBlob(pdf));
-      }
-      setView({ kind: "report", report, url: urlRef.current });
+      const drawable = pdf && report.preview.page_count > 0 && !report.missing;
+      setView({ kind: "report", read: mine, report, pdf: drawable ? pdfBytes(pdf) : null, drawError: null });
     } catch (e) {
       if (mine !== newest.current) return;
-      releaseUrl();
       setView({ kind: "error", message: message(e) });
     }
-  }, [releaseUrl]);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -83,9 +89,12 @@ export default function CrystalReports() {
     return () => {
       newest.current++;
       un.then((f) => f()).catch(() => {});
-      releaseUrl();
     };
-  }, [load, releaseUrl]);
+  }, [load]);
+
+  const drawFailed = useCallback((read: number, why: string) => {
+    setView((v) => (v?.kind === "report" && v.read === read ? { ...v, drawError: why } : v));
+  }, []);
 
   const openInDesigner = async () => {
     setOpening(true);
@@ -111,23 +120,32 @@ export default function CrystalReports() {
 
   const { preview, missing } = view.report;
   const { name, folder } = splitPath(preview.path);
-  const drawn = view.url !== null;
+  const drawn = view.pdf !== null && view.drawError === null;
+  const notes = view.drawError ? [...preview.diagnostics, view.drawError] : preview.diagnostics;
+  const read = view.read;
   return (
-    <section aria-label="Report" className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <div className="min-w-0" title={preview.path}>
-            <div className="truncate text-sm font-medium text-text">{name}</div>
-            {folder && <div className="truncate text-xs text-muted">{folder}</div>}
+    <section aria-label="Report" className="flex min-h-0 flex-1 flex-col gap-3 pb-6">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3">
+        <div className="min-w-0 flex-1" title={preview.path}>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="truncate text-sm font-semibold text-text">{name}</span>
+            {!missing && (
+              <>
+                <Badge
+                  className={cn(
+                    "whitespace-nowrap text-[11px] font-medium",
+                    preview.live ? "bg-info/15 text-info" : "bg-surface-2 text-muted",
+                  )}
+                >
+                  {preview.live ? `Live data from ${preview.live}` : "Saved data"}
+                </Badge>
+                {preview.page_count > 0 && (
+                  <span className="whitespace-nowrap text-xs text-muted">{pagesLabel(preview.page_count)}</span>
+                )}
+              </>
+            )}
           </div>
-          {!missing && (
-            <div className="flex flex-wrap gap-x-3 text-xs text-muted">
-              <span>{preview.live ? `Live data from ${preview.live}` : "Saved data"}</span>
-              {preview.page_count > 0 && (
-                <span>{preview.page_count === 1 ? "1 page" : `${preview.page_count} pages`}</span>
-              )}
-            </div>
-          )}
+          {folder && <div className="truncate text-xs text-muted">{folder}</div>}
         </div>
         {!missing && (
           <div className="flex flex-col items-end gap-1">
@@ -142,22 +160,12 @@ export default function CrystalReports() {
             )}
           </div>
         )}
-      </div>
+      </header>
       {missing && <p className="text-sm text-danger">{FILE_GONE}</p>}
       {!missing && !drawn && <p className="text-sm text-text">{NOT_DRAWN}</p>}
-      {!missing && preview.diagnostics.length > 0 && (
-        <ul aria-label="Preview notes" className="list-disc space-y-0.5 pl-5 text-xs text-muted">
-          {preview.diagnostics.map((line, i) => (
-            <li key={i}>{line}</li>
-          ))}
-        </ul>
-      )}
-      {drawn && (
-        <iframe
-          title="Report preview"
-          src={view.url ?? undefined}
-          className="min-h-[480px] w-full flex-1 rounded-lg border border-border bg-surface"
-        />
+      {!missing && <PreviewNotes lines={notes} live={preview.live} otherOpenAtFirst={!drawn} />}
+      {!missing && drawn && view.pdf && (
+        <PageView pdf={view.pdf} pageCount={preview.page_count} onFailed={(why) => drawFailed(read, why)} />
       )}
     </section>
   );

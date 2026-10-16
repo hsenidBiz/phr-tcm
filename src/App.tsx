@@ -1272,13 +1272,18 @@ export default function App() {
               must not add a second scrollbar around the board. */}
           <main
             className={
-              signedIn && (workMode || (modules.has("playwright") && section === "playwright"))
+              signedIn &&
+              (workMode ||
+                (modules.has("playwright") && section === "playwright") ||
+                (modules.has("crystal_reports") && section === "crystal-reports"))
                 ? // No bottom padding in work mode: the board's columns own
                   // the full height, and a padded strip under them read as a
                   // gap at the bottom of the screen - boards run flush to the
                   // edge, the way every kanban surface does. The Playwright
                   // tab is laid out the same way: its runner's panels fill
-                  // the window and scroll inside themselves.
+                  // the window and scroll inside themselves. So is Crystal
+                  // Reports: its pages fill what is left of the window and
+                  // scroll inside their own view.
                   "flex min-h-0 flex-1 flex-col overflow-hidden px-6 pt-6"
                 : // Room under the last thing on every screen, so what floats
                   // at the bottom - the sticky Collapse all at the left, the

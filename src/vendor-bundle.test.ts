@@ -108,18 +108,31 @@ test("every file the page and its stylesheet ask for is in the bundle", () => {
   expect(refs.filter((r) => !existsSync(join(RUNNER, r)))).toEqual([]);
 });
 
-// The Crystal Reports screen shows a report's PDF in an iframe from a blob:
-// object URL, which Chromium does not treat as 'self'. Nothing remote may be
-// framed.
-test("the app's CSP lets the window frame its own pages and a blob: PDF, and nothing else", () => {
+// The window frames only its own pages. The Crystal Reports screen used to
+// frame a blob: PDF; it now draws the pages itself with pdf.js, so blob:
+// frames are gone again and nothing remote may be framed.
+test("the app's CSP lets the window frame its own pages and nothing else", () => {
   const conf = JSON.parse(readFileSync(join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
   for (const policy of [conf.app.security.csp, conf.app.security.devCsp] as string[]) {
     const frame = policy
       .split(";")
       .map((d) => d.trim())
       .find((d) => d.startsWith("frame-src"));
-    expect(frame).toBe("frame-src 'self' blob:");
-    expect(frame).not.toMatch(/https?:/);
+    expect(frame).toBe("frame-src 'self'");
+  }
+});
+
+// pdf.js runs its parser in a worker the app serves from its own origin.
+// No worker-src is written, so workers fall back to script-src: the worker
+// must stay 'self'-only - never a blob: or remote worker, and never eval.
+test("the app's CSP runs scripts and workers from the app itself only", () => {
+  const conf = JSON.parse(readFileSync(join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
+  for (const policy of [conf.app.security.csp, conf.app.security.devCsp] as string[]) {
+    const directives = policy.split(";").map((d) => d.trim());
+    expect(directives.find((d) => d.startsWith("script-src"))).toBe("script-src 'self'");
+    expect(directives.find((d) => d.startsWith("worker-src"))).toBeUndefined();
+    expect(directives.find((d) => d.startsWith("child-src"))).toBeUndefined();
+    expect(directives.find((d) => d.startsWith("default-src"))).toBe("default-src 'self'");
   }
 });
 
