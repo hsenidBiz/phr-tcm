@@ -1040,6 +1040,24 @@ test("the search finds a case by its id, with or without #, and by its title in 
   expect(visibleTitles()).toEqual(["Reports - delta", "Reports - echo"]);
 });
 
+test("several searches separated by commas show every case that matches any of them", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+
+  // Ids in a list are exact cases, with or without #, in any spacing.
+  typeSearch("1, #4");
+  expect(visibleTitles()).toEqual(["Login - alpha", "Reports - delta"]);
+  typeSearch("1,4,");
+  expect(visibleTitles()).toEqual(["Login - alpha", "Reports - delta"]);
+  // Words and ids mix.
+  typeSearch("charlie, 5");
+  expect(visibleTitles()).toEqual(["Login - charlie", "Reports - echo"]);
+  // A lone comma or empty parts filter nothing out.
+  typeSearch(" , ");
+  expect(visibleTitles()).toHaveLength(6);
+});
+
 test("the search narrows the list together with the result filters, grouped or not", async () => {
   mockFilterList();
   renderScreen();
