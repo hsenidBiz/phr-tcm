@@ -300,6 +300,17 @@ export function playwrightPatches(real: { getAppSettings: () => Promise<AppSetti
       return ok({ ...(await real.getAppSettings()), playwright_clone: demoClone });
     },
     pwRepoStructure: (_clone: string) => ok(STRUCTURE),
+    // New folder: listed as an empty feature, as the real clone would list it.
+    pwRepoCreateFolder: (_clone: string, path: string) => {
+      const p = path.trim().replace(/[\s/]+$/, "");
+      const folders = p.split("/");
+      if (folders.length < 2 || folders.some((f) => !f)) return Promise.resolve({ status: "error" as const, error: `The path "${p}" needs at least a country and a feature folder, such as sl/admin/performance/rating-methods.` });
+      if (STRUCTURE.features.some((f) => f.path.join("/") === p)) return Promise.resolve({ status: "error" as const, error: `"${p}" is already a feature folder.` });
+      STRUCTURE.features = [...STRUCTURE.features, { path: folders, navigation_key: folders.slice(-2).join("/"), spec_count: 0, case_count: 0, case_ids: [] }].sort((a, b) =>
+        a.path.join("/").localeCompare(b.path.join("/")),
+      );
+      return ok({ path: p, files: ["test-cases", "specs"].map((c) => `suites/${p}/${c}/.gitkeep`) });
+    },
     pwRepoRunning: () => ok(null),
     pwRepoStop: (run: number) => {
       void events.pwDone.emit({ run, code: null });

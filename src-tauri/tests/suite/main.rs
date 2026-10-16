@@ -152,6 +152,7 @@ mod pw_export_write;
 mod pw_export_ts;
 mod pw_repo_handoff;
 mod pw_repo_layout;
+mod pw_repo_new_folder;
 mod pw_repo_presence;
 mod pw_repo_process;
 mod pw_repo_runner;

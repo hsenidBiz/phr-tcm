@@ -1294,6 +1294,12 @@ export const commands = {
 	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], replace: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, replace, moduleRef, preconditionsRef })),
 	/**  What the clone at `clone` holds, and the health line. Read only. */
 	pwRepoStructure: (clone: string) => typedError<RepoStructure, string>(__TAURI_INVOKE("pw_repo_structure", { clone })),
+	/**
+	 *  Makes the feature folder `path` (under `suites/`) in the clone, with
+	 *  `test-cases/` and `specs/` kept in git by a `.gitkeep` each. Writes
+	 *  nothing when it refuses (`new_folder::create_feature`).
+	 */
+	pwRepoCreateFolder: (clone: string, path: string) => typedError<NewFolder, string>(__TAURI_INVOKE("pw_repo_create_folder", { clone, path })),
 	/**  End run `run` and every process it started. A run already over is fine. */
 	pwRepoStop: (run: number) => typedError<null, string>(__TAURI_INVOKE("pw_repo_stop", { run })),
 	/**  The repo command going now, if any. */
@@ -3924,6 +3930,14 @@ export type NetworkPauseRecord = {
 	/**  Milliseconds. A `u32` (specta refuses a 64-bit number across IPC). */
 	waited_ms?: number,
 	outcome?: string,
+};
+
+/**  What `create_feature` wrote. */
+export type NewFolder = {
+	/**  The feature's path under `suites/`, as it was made. */
+	path: string,
+	/**  The files written, relative to the clone, forward slashes. */
+	files: string[],
 };
 
 /**

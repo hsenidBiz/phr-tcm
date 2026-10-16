@@ -62,6 +62,18 @@ pub fn pw_repo_structure(clone: String) -> Result<RepoStructure, String> {
     structure::structure_for(true, &clone.to_string_lossy(), structure::node_found())
 }
 
+/// Makes the feature folder `path` (under `suites/`) in the clone, with
+/// `test-cases/` and `specs/` kept in git by a `.gitkeep` each. Writes
+/// nothing when it refuses (`new_folder::create_feature`).
+#[tauri::command(async)]
+#[specta::specta]
+pub fn pw_repo_create_folder(clone: String, path: String) -> Result<crate::pw_repo::new_folder::NewFolder, String> {
+    let _t = crate::pw_repo::timed("pw_repo_create_folder");
+    let clone = chosen(&clone)?;
+    crate::pw_export::clone::open(&clone)?;
+    crate::pw_repo::new_folder::create_feature(&clone, &path)
+}
+
 /// The repo command going now: its run id, how it is named, and whether it
 /// is a short command (a listing, a dry count, an accounts command) rather
 /// than a test run.

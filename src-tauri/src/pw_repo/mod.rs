@@ -20,6 +20,9 @@
 //! `handoff` builds the prompt that finishes exported cases in the repo
 //! (`/gen-test` steps 4, 5, 6 and 7); the app only copies it.
 //!
+//! `new_folder` makes a feature folder in the clone (New folder): the one
+//! write here outside an export, Sync or an accounts command.
+//!
 //! `presence` finds which ADO ids the clone already has, and where: what
 //! Export skips by default and what Sync's Add new leaves alone.
 //!
@@ -28,6 +31,7 @@
 
 pub mod handoff;
 pub mod layout;
+pub mod new_folder;
 pub mod presence;
 pub mod process;
 pub mod runner;
