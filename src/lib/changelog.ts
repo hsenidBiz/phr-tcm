@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.3",
+    date: "2026-10-16",
+    items: [
+      "The Playwright tab's Overview and the Export to Playwright window have a New folder button: it makes a feature folder in your clone, ready for specs and test cases and kept in git when you commit.",
+    ],
+  },
+  {
     version: "2.2.3-beta.2",
     date: "2026-10-16",
     items: [
