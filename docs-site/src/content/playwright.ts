@@ -29,6 +29,7 @@ export const playwright: Screen = {
     "A missing qa-options.json is only a warning: runs use the repo's default options. The app reads that file and never writes it.",
     "The rest of the tab is split into four tabs: **Overview**, **Runner**, **Accounts** and **Sync**. The tab opens on the one you chose last.",
     "**Overview** sums up the clone: its features, specs, test cases, raw specs, accounts and navigation entries, then a table lists each feature by its folder and feature name with its specs and test cases. The folder is wherever the feature sits under the repo's suites folder, at any depth.",
+    "**New folder** makes a feature folder in the clone: type its path under suites, such as sl/admin/performance/new-feature, and press **Create**. It gets test-cases and specs folders, each with a .gitkeep so git keeps them when you commit, and it is listed and offered as an export destination straight away. A folder that is already there, or that differs from one there only in capitals, is refused. The same button is in the export window, under **Areas**.",
     "Only one repo command runs at a time. While a run, a listing or an account change is going, the buttons that would start another are greyed out.",
   ],
   howTo: [

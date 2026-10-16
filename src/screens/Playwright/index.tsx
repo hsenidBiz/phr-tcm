@@ -21,6 +21,7 @@ import {
 } from "../../lib/playwrightExport";
 import Accounts, { ACCOUNTS_KEY } from "./Accounts";
 import HealthLine, { HEALTH_TEXT, WARNING_ONLY } from "./HealthLine";
+import NewFolder from "./NewFolder";
 import { Hint, STRUCTURE_KEY, Stat, SubTabs, type TabSpec } from "./parts";
 import PlaywrightExportDialog from "./PlaywrightExportDialog";
 import Runner, { REPORTS_KEY, TESTS_KEY } from "./Runner";
@@ -35,7 +36,7 @@ type Tab = "overview" | "runner" | "accounts" | "sync";
  * opens where the person left it. */
 let lastTab: Tab = "overview";
 
-function Overview({ s }: { s: RepoStructure }) {
+function Overview({ s, clone, onCreated }: { s: RepoStructure; clone: string; onCreated: () => void }) {
   const specs = s.features.reduce((n, f) => n + f.spec_count, 0);
   const cases = s.features.reduce((n, f) => n + f.case_count, 0);
   const th = "px-3 py-2 text-left text-xs font-medium text-muted";
@@ -53,6 +54,7 @@ function Overview({ s }: { s: RepoStructure }) {
           label={s.navigation_keys.length === 1 ? "navigation entry" : "navigation entries"}
         />
       </div>
+      <NewFolder clone={clone} paths={s.features.map((f) => f.path.join("/"))} disabled={s.health.includes("NotTheRepo")} onCreated={onCreated} />
       {s.features.length === 0 ? (
         <Hint>No features under suites yet.</Hint>
       ) : (
@@ -156,7 +158,7 @@ export default function Playwright({ org, project }: { org: string; project: str
   // Nothing can run without the clone's node_modules and Node: the health
   // badges say so, and the Runner and Accounts show why instead.
   const runnable = usable && !s.health.includes("NoNodeModules") && !s.health.includes("NoNode");
-  /** The clone was written here (an account change, a Sync write): what it
+  /** The clone was written here (an account change, a Sync write, a new folder): what it
    * holds, and its tests, are read again. */
   const changed = () => {
     void qc.invalidateQueries({ queryKey: [STRUCTURE_KEY, clone] });
@@ -189,7 +191,7 @@ export default function Playwright({ org, project }: { org: string; project: str
     { id: "sync", label: "Sync" },
   ];
   const panels: Record<Tab, ReactNode> = {
-    overview: s && <Overview s={s} />,
+    overview: s && <Overview s={s} clone={clone} onCreated={changed} />,
     runner: runnable ? <Runner key={clone} clone={clone} onBusy={onRunnerBusy} /> : s && <Blocked area="Runner" issues={s.health} />,
     accounts: runnable ? (
       <Accounts key={clone} clone={clone} onChanged={changed} onBusy={onAccountsBusy} />

@@ -43,6 +43,7 @@ import { copyText } from "../../lib/clipboard";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrapStr } from "../../lib/ipc";
 import FinishInRepo from "./FinishInRepo";
+import NewFolder from "./NewFolder";
 import { Card, Hint, STRUCTURE_KEY, Stat, StatusBadge } from "./parts";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -525,6 +526,9 @@ export default function PlaywrightExportDialog({
                 <section className="space-y-2">
                   <h4 className="text-xs font-medium text-text">Areas</h4>
                   <Hint>Where each area's specs go in the clone: the feature's folder under suites/, such as sl/admin/performance/rating-methods.</Hint>
+                  {preview.clone_ok && (
+                    <NewFolder clone={clone} paths={featurePaths} disabled={busy} onCreated={() => void structure.refetch()} />
+                  )}
                   {preview.areas.length === 0 && <Hint>No areas yet.</Hint>}
                   <datalist id={listId}>
                     {featurePaths.map((p) => (
