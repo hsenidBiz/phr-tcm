@@ -233,3 +233,33 @@ test("power flows only down the paths of modules that are on", () => {
   expect(document.querySelectorAll("path.mod-current")).toHaveLength(2);
   expect(document.querySelector("svg.mod-edges")).toHaveAttribute("aria-hidden", "true");
 });
+
+test("switching off drains the power back up the path, the deepest first", async () => {
+  vi.useFakeTimers();
+  show(["db_access", "auto_run", "playwright"]);
+  act(() => setModulesForTest(["db_access"]));
+  const drain = (m: Module) => document.querySelector<SVGPathElement>(`[data-draining="${m}"]`);
+  // Playwright hangs below Auto Run, so its path empties first.
+  expect(drain("playwright")?.style.animationDelay).toBe("0ms");
+  expect(drain("auto_run")?.style.animationDelay).toBe("450ms");
+  expect(drain("db_access")).toBeNull();
+  // A draining path carries no sparks, and its card stays lit until it has emptied.
+  expect(document.querySelector('[data-current="auto_run"]')).toBeNull();
+  const card = (m: Module) => document.querySelector(`[data-module="${m}"]`)!;
+  expect(card("auto_run")).toHaveAttribute("data-lit", "true");
+  await act(async () => {
+    vi.advanceTimersByTime(1100);
+  });
+  expect(drain("auto_run")).toBeNull();
+  expect(drain("playwright")).toBeNull();
+  expect(card("auto_run")).toHaveAttribute("data-lit", "false");
+  expect(card("db_access")).toHaveAttribute("data-lit", "true");
+});
+
+test("with reduced motion a switch-off goes dark at once", () => {
+  vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("reduce"), media: q, addEventListener() {}, removeEventListener() {} }));
+  show(["db_access", "auto_run"]);
+  act(() => setModulesForTest(["db_access"]));
+  expect(document.querySelector("[data-draining]")).toBeNull();
+  expect(document.querySelector('[data-module="auto_run"]')).toHaveAttribute("data-lit", "false");
+});

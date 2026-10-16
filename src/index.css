@@ -1498,6 +1498,17 @@ table {
   filter: drop-shadow(0 0 3px var(--color-accent)) drop-shadow(0 0 6px var(--color-accent));
   opacity: 0;
 }
+/* A switched-off path emptying: the lit stroke shrinks from the module end
+   back to the parent (path length is 1, so offset 0 is full and 1 is gone).
+   Under reduced motion no drain is drawn at all. */
+.mod-drain {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 3;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 0;
+  filter: drop-shadow(0 0 5px var(--color-accent));
+}
 .mod-pulse {
   fill: none;
   stroke: var(--color-text);
@@ -1550,6 +1561,14 @@ table {
     animation:
       mod-current 1.3s linear infinite,
       mod-crackle 0.9s steps(1, end) infinite;
+  }
+  .mod-drain {
+    animation: mod-drain 0.6s ease-in both;
+  }
+  @keyframes mod-drain {
+    from { stroke-dashoffset: 0; opacity: 1; }
+    85% { opacity: 1; }
+    to { stroke-dashoffset: 1; opacity: 0; }
   }
   /* Sparks move one dash cycle per loop, so the train flows without a jump. */
   @keyframes mod-current {

@@ -66,6 +66,17 @@ const RUN_MS = 700;
 const LIGHT_MS = 450;
 const FLASH_MS = 600;
 const SHAKE_MS = 400;
+/** How long a switched-off path takes to empty, and how far apart each
+ * level of a chain starts (the deepest first). Matches .mod-drain. */
+const DRAIN_MS = 600;
+const DRAIN_STEP_MS = 450;
+
+/** How far down the tree a module hangs: Core's children are 1. */
+function depthOf(m: Module): number {
+  let depth = 1;
+  for (let p = infoOf(m).parent; p; p = infoOf(p).parent) depth++;
+  return depth;
+}
 
 function reducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -127,6 +138,9 @@ function useLit(modules: ReadonlySet<Module>, hydrated: boolean) {
   const [lit, setLit] = useState<ReadonlySet<Module>>(() => new Set(modules));
   const [running, setRunning] = useState<ReadonlySet<Module>>(new Set());
   const [flashing, setFlashing] = useState<ReadonlySet<Module>>(new Set());
+  /** Modules just switched off, and when (ms from now) their power starts
+   * draining back up the path: the deepest drain first. */
+  const [draining, setDraining] = useState<ReadonlyMap<Module, number>>(new Map());
   const seen = useRef<ReadonlySet<Module>>(new Set(modules));
   const wasHydrated = useRef(false);
   const timers = useRef<number[]>([]);
@@ -137,12 +151,34 @@ function useLit(modules: ReadonlySet<Module>, hydrated: boolean) {
     const prev = seen.current;
     seen.current = modules;
     const added = [...modules].filter((m) => !prev.has(m));
-    if (!hydrated || first || added.length === 0 || reducedMotion()) {
+    const removed = [...prev].filter((m) => !modules.has(m));
+    if (!hydrated || first || (added.length === 0 && removed.length === 0) || reducedMotion()) {
       setLit(new Set(modules));
+      setDraining(new Map());
       return;
     }
-    // Everything not newly on follows at once (a switch-off dims straight away).
-    setLit(new Set([...modules].filter((m) => !added.includes(m))));
+    // A module back on before its drain finished stops draining.
+    setDraining((d) => new Map([...d].filter(([m]) => !added.includes(m))));
+    if (removed.length > 0) {
+      // Each switched-off path empties from the module back to its parent;
+      // a chain empties from the bottom up, so the deepest goes first.
+      const deepest = Math.max(...removed.map(depthOf));
+      const starts = new Map(removed.map((m) => [m, (deepest - depthOf(m)) * DRAIN_STEP_MS] as const));
+      setDraining((d) => new Map([...d, ...starts]));
+      for (const [m, start] of starts) {
+        timers.current.push(
+          window.setTimeout(() => {
+            if (seen.current.has(m)) return;
+            setLit((l) => new Set([...l].filter((x) => x !== m)));
+            setDraining((d) => new Map([...d].filter(([x]) => x !== m)));
+          }, start + DRAIN_MS),
+        );
+      }
+    }
+    // Everything else follows at once; a switched-off module stays lit
+    // until its drain reaches the parent.
+    setLit(new Set([...[...modules].filter((m) => !added.includes(m)), ...removed]));
+    if (added.length === 0) return;
     setRunning((r) => new Set([...r, ...added]));
     const t1 = window.setTimeout(() => {
       setLit((l) => new Set([...l, ...added].filter((m) => seen.current.has(m))));
@@ -162,7 +198,7 @@ function useLit(modules: ReadonlySet<Module>, hydrated: boolean) {
     },
     [],
   );
-  return { lit, running, flashing };
+  return { lit, running, flashing, draining };
 }
 
 export default function ModuleTree({
@@ -178,7 +214,7 @@ export default function ModuleTree({
   /** Ask to switch `m` on or off. A locked module never reaches this. */
   onToggle: (m: Module, next: boolean) => void;
 }) {
-  const { lit, running, flashing } = useLit(modules, hydrated);
+  const { lit, running, flashing, draining } = useLit(modules, hydrated);
   const { height, refFor } = useHeights();
   const { frame, scale } = useFit();
   const [shaking, setShaking] = useState<Module | null>(null);
@@ -216,14 +252,25 @@ export default function ModuleTree({
                 <path
                   d={pathFor(m, height)}
                   data-edge-line={m}
-                  className={cn("mod-edge", lit.has(m) && "mod-edge-lit")}
+                  className={cn("mod-edge", lit.has(m) && !draining.has(m) && "mod-edge-lit")}
                 />
                 {/* Power flowing down a lit path, from the core (or the
                     parent) into the module: one train of sparks. Paths run
                     parent to child, so the sparks travel the way the power
                     does. */}
-                {lit.has(m) && (
+                {lit.has(m) && !draining.has(m) && (
                   <path d={pathFor(m, height)} pathLength={1} data-current={m} className="mod-current" />
+                )}
+                {/* Switched off: the glow empties from the module back up to
+                    its parent, after the modules below it have emptied. */}
+                {draining.has(m) && (
+                  <path
+                    d={pathFor(m, height)}
+                    pathLength={1}
+                    data-draining={m}
+                    className="mod-drain"
+                    style={{ animationDelay: `${draining.get(m)}ms` }}
+                  />
                 )}
                 <path
                   d={pathFor(m, height)}
