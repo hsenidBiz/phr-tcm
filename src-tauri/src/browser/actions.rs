@@ -167,6 +167,24 @@ pub enum Action {
         within_ms: Option<u32>,
         then: Vec<Action>,
     },
+    /// Reset a list to a known state: while `selector` shows a match whose
+    /// row (`repeat::ROW_RULE`) reads none of the `except` texts, the first
+    /// such row is marked and `then` runs once more - at most `max` passes
+    /// (1 to `REPEAT_MAX`, required). Each pass looks once, without
+    /// waiting. A `then` locator that starts with `{ "css":
+    /// "[data-autorun-row]" }` (`repeat::ROW_SCOPE`) is resolved inside the
+    /// marked row, so a protected row is never the one acted on. Matches
+    /// that are all protected end the loop; unprotected ones still there
+    /// after `max` passes fail it. `then` holds plain actions only, as a
+    /// `when_visible`'s does. Carried out by the runner.
+    RepeatWhileVisible {
+        selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<u32>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        except: Vec<String>,
+        then: Vec<Action>,
+    },
     /// Reload the page, as a person pressing F5 would, and wait for it to
     /// load again. Where it lands is the application's business: a page
     /// that sends a reload elsewhere (PeoplesHR's wizard goes back to the
@@ -717,7 +735,11 @@ fn check_guarded(then: &[Action]) -> Result<(), String> {
         // to the home page, walking back to the area before the step goes on.
         if matches!(
             a,
-            Action::ExpireSession | Action::OpenTab { .. } | Action::SwitchTab { .. } | Action::CloseTab { .. }
+            Action::ExpireSession
+                | Action::OpenTab { .. }
+                | Action::SwitchTab { .. }
+                | Action::CloseTab { .. }
+                | Action::RepeatWhileVisible { .. }
         ) {
             return Err(format!(
                 "when_visible \"then\" cannot hold {} - write it as an action of its own",
@@ -731,6 +753,80 @@ fn check_guarded(then: &[Action]) -> Result<(), String> {
             ));
         }
         a.validate().map_err(|e| format!("when_visible then {}: {e}", i + 1))?;
+    }
+    Ok(())
+}
+
+/// The most passes a `repeat_while_visible` may make.
+pub const REPEAT_MAX: u32 = 200;
+
+/// A `repeat_while_visible` inside another one's `then`.
+pub const NESTED_REPEAT: &str = "repeat_while_visible \"then\" cannot hold another repeat_while_visible";
+
+/// Every rule a `repeat_while_visible` is held to, as written: `max` given
+/// and in range, a selector that can list its matches, protected texts that
+/// say something, and a `then` of plain actions that - when rows are
+/// protected - acts inside the row the pass works on and never on the
+/// loop's own selector across the whole page.
+fn check_repeat(selector: &Target, max: Option<u32>, except: &[String], then: &[Action]) -> Result<(), String> {
+    use super::repeat::{is_row_scoped, ROW_SCOPE};
+    match max {
+        None => return Err(format!("repeat_while_visible needs max - the most passes it may make, 1 to {REPEAT_MAX}")),
+        Some(n) if n == 0 || n > REPEAT_MAX => {
+            return Err(format!("repeat_while_visible max is 1 to {REPEAT_MAX}, not {n}"))
+        }
+        _ => {}
+    }
+    if selector.is_legacy() {
+        return Err("repeat_while_visible needs a locator object for selector, not a selector string".to_string());
+    }
+    selector.validate()?;
+    if let Some(i) = except.iter().position(|e| e.trim().is_empty()) {
+        return Err(format!("repeat_while_visible except {} is empty - give the protected text", i + 1));
+    }
+    if then.is_empty() {
+        return Err("repeat_while_visible has nothing in \"then\" - say what to do on each pass".to_string());
+    }
+    for (i, a) in then.iter().enumerate() {
+        if matches!(a, Action::RepeatWhileVisible { .. }) {
+            return Err(NESTED_REPEAT.to_string());
+        }
+        if matches!(
+            a,
+            Action::WhenVisible { .. }
+                | Action::SignIn { .. }
+                | Action::UseComponent { .. }
+                | Action::ExpireSession
+                | Action::OpenTab { .. }
+                | Action::SwitchTab { .. }
+                | Action::CloseTab { .. }
+        ) {
+            return Err(format!(
+                "repeat_while_visible \"then\" cannot hold {} - write it as an action of its own",
+                a.kind()
+            ));
+        }
+        if a.is_check() {
+            return Err(format!(
+                "repeat_while_visible \"then\" cannot hold {} - a pass tidies up and checks nothing, so put the check after the loop",
+                a.kind()
+            ));
+        }
+        a.validate().map_err(|e| format!("repeat_while_visible then {}: {e}", i + 1))?;
+    }
+    if !except.is_empty() {
+        let rule = format!("start its locator with {{ \"css\": \"{ROW_SCOPE}\" }}");
+        if let Some(i) = then.iter().position(|a| a.targets().contains(&selector)) {
+            return Err(format!(
+                "repeat_while_visible then {} points at the loop's own selector across the whole page, which can be a protected row - {rule}",
+                i + 1
+            ));
+        }
+        if !then.iter().any(|a| a.targets().into_iter().any(is_row_scoped)) {
+            return Err(format!(
+                "repeat_while_visible with except needs a then action on the row it is working on - {rule}"
+            ));
+        }
     }
     Ok(())
 }
@@ -1077,6 +1173,7 @@ impl Action {
                 selector.validate()?;
                 check_guarded(then)
             }
+            Action::RepeatWhileVisible { selector, max, except, then } => check_repeat(selector, *max, except, then),
             Action::Reload | Action::ExpireSession | Action::ReturnToArea { .. } => Ok(()),
             Action::PressKey { key, times } => keys::check(key, *times),
             Action::ExpectRow { table, cells, exact, .. } | Action::ExpectNoRow { table, cells, exact, .. } => {
@@ -1211,7 +1308,9 @@ impl Action {
     /// that has to see an action wherever in a step it is written.
     pub fn each(&self) -> Vec<&Action> {
         match self {
-            Action::WhenVisible { then, .. } => std::iter::once(self).chain(then.iter()).collect(),
+            Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => {
+                std::iter::once(self).chain(then.iter()).collect()
+            }
             _ => vec![self],
         }
     }
@@ -1236,7 +1335,7 @@ impl Action {
             | Action::ExpectChecked { selector, .. }
             | Action::Upload { selector, .. }
             | Action::ExpectFocused { selector, .. } => vec![selector],
-            Action::WhenVisible { selector, then, .. } => {
+            Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter().flat_map(Action::targets)).collect()
             }
             Action::Drag { from, to, .. } => vec![from, to],
@@ -1283,7 +1382,7 @@ impl Action {
             | Action::ExpectChecked { selector, .. }
             | Action::Upload { selector, .. }
             | Action::ExpectFocused { selector, .. } => vec![selector],
-            Action::WhenVisible { selector, then, .. } => {
+            Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter_mut().flat_map(Action::targets_mut)).collect()
             }
             Action::Drag { from, to, .. } => vec![from, to],
@@ -1725,6 +1824,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::ApiRequest { .. } => ActionOutcome::failed("api_request is carried out by the runner"),
         // Its `then` may hold an `upload`, which only the runner can place.
         Action::WhenVisible { .. } => ActionOutcome::failed("when_visible is carried out by the runner"),
+        Action::RepeatWhileVisible { .. } => ActionOutcome::failed("repeat_while_visible is carried out by the runner"),
         Action::UseComponent { .. } => ActionOutcome::failed("components are expanded before they run"),
         Action::Reload => reload(d, timing).await,
         Action::ExpireSession => expire_session(d).await,

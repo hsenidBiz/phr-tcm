@@ -447,6 +447,15 @@ function describeKnown(a: Action): Sentence {
     }
     case "when_visible":
       return [words("If "), ...describeTarget(a.selector), words(` appears within ${seconds(optNum(a.within_ms) ?? 2000)} s:`)];
+    case "repeat_while_visible": {
+      const except = Array.isArray(a.except) ? a.except.map(str) : [];
+      const keep = except.length > 0 ? `, except rows reading ${except.map((e) => `"${e}"`).join(", ")}` : "";
+      return [
+        words("While "),
+        ...describeTarget(a.selector),
+        words(` shows${keep}, at most ${num(a.max)} times:`),
+      ];
+    }
     case "use_component":
       return [words(`Run the component "${str(a.component)}"`)];
     case "reload":

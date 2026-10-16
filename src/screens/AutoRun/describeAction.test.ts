@@ -297,6 +297,22 @@ describe("when_visible", () => {
   });
 });
 
+describe("repeat_while_visible", () => {
+  test("its heading names the loop, its cap and what it keeps, and its own actions stay its own", () => {
+    const a: Action = {
+      kind: "repeat_while_visible",
+      selector: { role: "button", name: "Delete" },
+      max: 20,
+      except: ["Customer Focus", "Operational Excellence"],
+      then: [{ kind: "click", selector: [{ css: "[data-autorun-row]" }, { role: "button", name: "Delete" }] }],
+    };
+    expect(say(a)).toBe(
+      'While the "Delete" button shows, except rows reading "Customer Focus", "Operational Excellence", at most 20 times:',
+    );
+    expect(a.kind === "repeat_while_visible" && a.then.length).toBe(1);
+  });
+});
+
 describe("addresses are paths only", () => {
   test("no host, no query string, no fragment", () => {
     expect(pathOnly("https://hr.example.test:8443/a/b?x=1#y")).toBe("/a/b");
