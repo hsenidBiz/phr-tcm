@@ -296,6 +296,20 @@ whitespace collapsed, and case matters.
 
 Never add a fixed pause. There is no action for one, on purpose.
 
+**Loading pages are waited for by the runner.** The project's sign-in
+recipe lists its loading indicators under `wait_while_shown` - for
+PeoplesHR, the full-page spinner (`#ehrmLoader`), which can stay up for
+20-60 seconds on a cold start. Right before every click, fill, check,
+`wait_for` or guard, the runner looks once, without waiting; while a
+listed indicator is visible it waits for it to go (up to 90 seconds, or
+the entry's `max_ms`), and only then does the action start its own
+timeout. A wait of over a second is noted on the step ("waited 12.3 s for
+page loader"); a page still loading at the limit fails the action with
+"the page was still loading (page loader) after 90 s". This happens in
+runs, tries, discoveries and replays alike. So scripts need NO long
+first-step waits: keep each `timeout_ms` to what the action itself needs
+once the page has loaded, and never raise one to cover the spinner.
+
 ## Refreshing, sessions and the keyboard
 
 **A refresh.** `reload` reloads the page and waits for it to load; its

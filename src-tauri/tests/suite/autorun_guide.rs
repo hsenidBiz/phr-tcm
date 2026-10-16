@@ -596,6 +596,16 @@ fn the_guide_says_listed_popups_need_no_guard() {
     }
 }
 
+/// The runner waits out the recipe's listed loading indicators, so the
+/// guide must tell an assistant not to lengthen first-step waits for them.
+#[test]
+fn the_guide_says_listed_loaders_need_no_long_waits() {
+    let g = autorun_guide();
+    for term in ["wait_while_shown", "#ehrmLoader", "NO long", "first-step waits", "the page was still loading", "max_ms"] {
+        assert!(g.contains(term), "the guide never says {term:?}");
+    }
+}
+
 /// Spec 9: "anywhere on the page" now includes same-origin frames, and the
 /// guide says which frames are not read.
 #[test]
