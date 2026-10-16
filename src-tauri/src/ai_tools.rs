@@ -196,6 +196,21 @@ pub const API_TEMPLATE_TOOLS: &[&str] = &[
 /// it; whether they are there at all, by the module.
 pub const DB_TOOLS: &[&str] = &["db_lookup", "db_query"];
 
+/// The Crystal Reports tools: the Crystal Reports module's. They work on
+/// the one report TCM has open (`crystal`), and an accepted edit is saved
+/// over the file at once; where the module is off they are not present at
+/// all, like every module's tools.
+pub const CRYSTAL_TOOLS: &[&str] = &[
+    "open_report",
+    "read_report",
+    "edit_report",
+    "compare_reports",
+    "check_report",
+    "new_report",
+    "preview_report",
+    "get_report_guide",
+];
+
 /// The module a tool belongs to; `None` for a tool that is part of Core.
 /// One function, read by `tools/list`, the call-time refusal, the skill
 /// writer and the `--mcp` proxy, so no path can disagree with another
@@ -208,6 +223,8 @@ pub fn module_of_tool(name: &str) -> Option<crate::modules::Module> {
         Some(Module::ApiTemplates)
     } else if DB_TOOLS.contains(&name) {
         Some(Module::DbAccess)
+    } else if CRYSTAL_TOOLS.contains(&name) {
+        Some(Module::CrystalReports)
     } else {
         None
     }
@@ -215,7 +232,7 @@ pub fn module_of_tool(name: &str) -> Option<crate::modules::Module> {
 
 /// Every tool that belongs to a module, in the order above.
 pub fn module_tools() -> impl Iterator<Item = &'static str> {
-    AUTORUN_TOOLS.iter().chain(API_TEMPLATE_TOOLS).chain(DB_TOOLS).copied()
+    AUTORUN_TOOLS.iter().chain(API_TEMPLATE_TOOLS).chain(DB_TOOLS).chain(CRYSTAL_TOOLS).copied()
 }
 
 /// Whether this process is a development build: `cargo test` and

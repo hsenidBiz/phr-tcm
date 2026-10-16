@@ -4115,3 +4115,190 @@ fn patch_steps_merge_into_the_saved_script() {
     assert!(refused(serde_json::json!({ "case_id": 7, "patch_steps": [{ "step": 1 }] })).contains("no \"actions\""));
     assert!(refused(serde_json::json!({ "patch_steps": [{ "step": 1, "actions": [] }] })).contains("needs its \"case_id\""));
 }
+
+/// The Crystal Reports routes: gated by path with the module, answered 200
+/// with JSON or 400 with a sentence, against copies of the vendored samples.
+mod crystal_routes {
+    use super::{ctx, route};
+    use serde_json::{json, Value};
+    use v2_lib::ai_bridge::{module_guard_for, smells_like_a_write};
+    use v2_lib::modules::Module;
+
+    const SAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../crystal-reports/Sample Report");
+    const SAMPLE: &str = "PMSV10_GoalAlignCascade.rpt";
+
+    const PATHS: [&str; 7] = [
+        "/crystal-open",
+        "/crystal-read",
+        "/crystal-change",
+        "/crystal-compare",
+        "/crystal-check",
+        "/crystal-new",
+        "/crystal-preview",
+    ];
+
+    /// A copy of the sample inside `dir`, as a path string.
+    fn copy_sample(dir: &std::path::Path) -> String {
+        let to = dir.join(SAMPLE);
+        std::fs::copy(std::path::Path::new(SAMPLES).join(SAMPLE), &to).expect("the sample copies");
+        to.to_string_lossy().into_owned()
+    }
+
+    async fn post(path: &str, body: Value) -> (u16, String) {
+        route(&ctx(), None, "POST", path, &body.to_string(), "1.0.0").await
+    }
+
+    fn json_of(answer: &(u16, String)) -> Value {
+        assert_eq!(answer.0, 200, "{}", answer.1);
+        serde_json::from_str(&answer.1).expect("a 200 from a crystal route is JSON")
+    }
+
+    #[test]
+    fn the_crystal_routes_are_404_while_the_module_is_off() {
+        let mut off: std::collections::BTreeSet<Module> = Module::ALL.into_iter().collect();
+        off.remove(&Module::CrystalReports);
+        for path in PATHS.iter().chain(&["/crystal-guide"]) {
+            let (status, body) = module_guard_for(path, &off).unwrap_or_else(|| panic!("{path} was not refused"));
+            assert_eq!(status, 404, "{path}");
+            assert_eq!(body, "Crystal Reports is switched off in Modules", "{path}");
+            assert!(module_guard_for(path, &Module::ALL.into_iter().collect()).is_none(), "{path}");
+        }
+        // The module hangs off Core: nothing else being off refuses it.
+        let only_crystal: std::collections::BTreeSet<Module> = [Module::CrystalReports].into_iter().collect();
+        assert!(module_guard_for("/crystal-open", &only_crystal).is_none());
+    }
+
+    #[test]
+    fn no_crystal_route_smells_like_a_write() {
+        for path in PATHS.iter().chain(&["/crystal-guide", "/crystal-preview-live"]) {
+            assert!(!smells_like_a_write("POST", path), "{path}");
+            assert!(!smells_like_a_write("GET", path), "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_routes_open_read_edit_check_compare_and_preview_a_report() {
+        let _lock = crate::serial::crystal();
+        let dir = tempfile::tempdir().unwrap();
+        let path = copy_sample(dir.path());
+
+        let ir = json_of(&post("/crystal-open", json!({ "path": path })).await);
+        assert_eq!(ir["format"], "crpt-ir/1");
+        let all = json_of(&post("/crystal-read", json!({})).await);
+        assert_eq!(all["objects"].as_array().unwrap().len(), ir["objects"].as_array().unwrap().len());
+
+        let target = ir["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["kind"] == "Text" && o["text"]["editable"] == true && !o["name"].as_str().unwrap_or("").is_empty())
+            .expect("a text object")["name"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let one = json_of(&post("/crystal-read", json!({ "object": target })).await);
+        assert_eq!(one["objects"].as_array().unwrap().len(), 1);
+
+        let original = dir.path().join("original.rpt");
+        std::fs::copy(&path, &original).unwrap();
+        let edited = json_of(
+            &post(
+                "/crystal-change",
+                json!({ "ops": [{ "op": "set_text", "object": { "name": target }, "text": "Edited over HTTP" }] }),
+            )
+            .await,
+        );
+        assert!(edited.to_string().contains("Edited over HTTP"));
+
+        let diff = json_of(&post("/crystal-compare", json!({ "a": original, "b": path })).await);
+        assert!(diff.as_array().unwrap().iter().any(|l| l.as_str().unwrap().contains("Edited over HTTP")), "{diff}");
+        let same = json_of(&post("/crystal-compare", json!({ "a": path, "b": path })).await);
+        assert!(same.as_array().unwrap().is_empty(), "{same}");
+
+        let checks = json_of(&post("/crystal-check", json!({})).await);
+        assert!(checks["errors"].is_array() && checks["warnings"].is_array(), "{checks}");
+        let by_path = json_of(&post("/crystal-check", json!({ "path": path })).await);
+        assert!(by_path["errors"].is_array());
+
+        let preview = json_of(&post("/crystal-preview", json!({})).await);
+        assert_eq!(preview["path"], path.as_str());
+        assert!(preview["page_count"].as_u64().unwrap() >= 1, "{preview}");
+
+        let (status, guide) = route(&ctx(), None, "GET", "/crystal-guide", "", "1.0.0").await;
+        assert_eq!(status, 200);
+        assert_eq!(guide, v2_lib::crystal::guide());
+        v2_lib::crystal::close();
+    }
+
+    #[tokio::test]
+    async fn a_new_report_is_created_and_an_existing_file_is_refused() {
+        let _lock = crate::serial::crystal();
+        let dir = tempfile::tempdir().unwrap();
+        let existing = copy_sample(dir.path());
+        let (status, why) = post("/crystal-new", json!({ "path": existing })).await;
+        assert_eq!((status, why.contains(SAMPLE)), (400, true), "{why}");
+
+        let fresh = dir.path().join("Fresh.rpt");
+        let ir = json_of(
+            &post("/crystal-new", json!({ "path": fresh, "title": "From the bridge", "author": "A", "comments": "C" }))
+                .await,
+        );
+        assert_eq!(ir["summary"]["title"], "From the bridge");
+        assert!(fresh.is_file());
+        v2_lib::crystal::close();
+    }
+
+    #[tokio::test]
+    async fn a_refused_edit_answers_400_with_the_sentence_and_the_current_ir() {
+        let _lock = crate::serial::crystal();
+        let dir = tempfile::tempdir().unwrap();
+        let path = copy_sample(dir.path());
+        let ir = json_of(&post("/crystal-open", json!({ "path": path })).await);
+        let before = std::fs::read(&path).unwrap();
+
+        let (status, body) = post(
+            "/crystal-change",
+            json!({ "ops": [{ "op": "set_text", "object": { "name": "no-such" }, "text": "x" }] }),
+        )
+        .await;
+        assert_eq!(status, 400, "{body}");
+        let (sentence, fresh) = body.split_once("\n\n{").map(|(s, j)| (s, format!("{{{j}"))).expect("a blank line, then the IR");
+        assert!(!sentence.is_empty());
+        let fresh: Value = serde_json::from_str(&fresh).expect("the IR follows the sentence as JSON");
+        assert_eq!(fresh, v2_lib::crystal::read(&Default::default()).unwrap());
+        assert_eq!(fresh["objects"], ir["objects"], "the file did not change, so neither did the IR");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+
+        // No report open: a plain sentence, with no IR to append.
+        v2_lib::crystal::close();
+        let (status, body) = post(
+            "/crystal-change",
+            json!({ "ops": [{ "op": "set_text", "object": { "name": "x" }, "text": "x" }] }),
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert!(body.contains("open_report"), "{body}");
+        assert!(!body.contains('{'), "{body}");
+    }
+
+    #[tokio::test]
+    async fn bad_bodies_are_400_sentences() {
+        let _lock = crate::serial::crystal();
+        v2_lib::crystal::close();
+        for (path, body) in [
+            ("/crystal-open", "not json"),
+            ("/crystal-open", "{}"),
+            ("/crystal-compare", r#"{"a":"x.rpt"}"#),
+            ("/crystal-new", "{}"),
+            ("/crystal-change", "[1]"),
+        ] {
+            let (status, why) = route(&ctx(), None, "POST", path, body, "1.0.0").await;
+            assert_eq!(status, 400, "{path} {body}: {why}");
+            assert!(!why.is_empty(), "{path} {body}");
+        }
+        // An empty body means "no arguments" where every argument is optional.
+        let (status, why) = route(&ctx(), None, "POST", "/crystal-read", "", "1.0.0").await;
+        assert_eq!(status, 400, "nothing is open, so the refusal is the open_report sentence");
+        assert!(why.contains("open_report"), "{why}");
+    }
+}

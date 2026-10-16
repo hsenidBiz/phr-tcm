@@ -961,16 +961,31 @@ test("the tool list offers only the switchable tools, by their human names", asy
   expect(within(toolSection).queryByText("Check a draft")).not.toBeInTheDocument();
   expect(within(toolSection).queryByText("Merge slice files")).not.toBeInTheDocument();
   expect(screen.queryByText("always on")).not.toBeInTheDocument();
-  // Eight rows in this development build: the wiki search and its page
+  // Nine rows in this development build: the wiki search and its page
   // reader share one switch, so do the suite search and its case reader,
-  // the two database tools, the seven Auto Run tools and the six API
-  // template tools.
+  // the two database tools, the Auto Run tools, the API template tools and
+  // the Crystal Reports tools.
   expect(screen.getByLabelText("Project tags")).toBeInTheDocument();
   expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
   expect(screen.getByLabelText("Test Suites")).toBeInTheDocument();
   expect(screen.getByLabelText("Auto Run scripts")).toBeInTheDocument();
   expect(screen.getByLabelText("API templates")).toBeInTheDocument();
-  expect(within(toolSection).getByText("8 of 8 on")).toBeInTheDocument();
+  expect(screen.getByLabelText("Crystal Reports")).toBeInTheDocument();
+  expect(within(toolSection).getByText("9 of 9 on")).toBeInTheDocument();
+});
+
+test("the breakdown names the Crystal Reports tools only while that module is on", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+  await screen.findByText("Tools an assistant may use");
+  const entry = [...document.querySelectorAll("li")].find((li) => li.textContent?.startsWith("Crystal Reports:"));
+  expect(entry, "the breakdown has a Crystal Reports entry").toBeTruthy();
+  expect(entry!.textContent).toMatch(/saved over the file at once/);
 });
 
 test("the API templates breakdown says the assistant maps a module's stages and checks the order before a run", async () => {

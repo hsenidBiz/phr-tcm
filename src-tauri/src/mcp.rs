@@ -737,6 +737,64 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &[]),
         },
         {
+            "name": "open_report",
+            "description": "Open a Crystal Reports .rpt file and read it: you get the report as an IR (format crpt-ir/1), a JSON tree of its areas, sections and objects, each with a stable id and its position, size, font and text. One report is open at a time; opening another replaces it, and every other report tool works on the open one. Read get_report_guide before your first edit for the units, the edit ops, the layout plan and the limits. The path must be the full path to a .rpt file on this machine.",
+            "inputSchema": schema(serde_json::json!({
+                "path": { "type": "string", "description": "The full path to the .rpt file" },
+            }), &["path"]),
+        },
+        {
+            "name": "read_report",
+            "description": "Read the open report again, or only part of it: one section by name, or one object by its IR id or designer name. The ids in the answer are the ones edit_report takes. Narrowing saves reading a large report whole; with no arguments you get all of it. Open a report first with open_report; get_report_guide describes the IR.",
+            "inputSchema": schema(serde_json::json!({
+                "section": { "type": "string", "description": "A section's name, e.g. \"Details\": only that section and its objects" },
+                "object": { "type": "string", "description": "An object's IR id or designer name: only that object" },
+            }), &[]),
+        },
+        {
+            "name": "edit_report",
+            "description": "Change the open report with one batch of edits: either `ops` (the native edit ops) or `plan` (a layout plan, which is lowered to ops), never both. Every batch the report accepts is saved over the file at once, before this answers, and the answer is the new IR - git is the undo, so work on a file that is committed. A batch is all or nothing: if any edit is refused nothing is saved, and the answer is the refusal followed by the report as it now stands. Take ids and designer names from the latest IR you were given (this call's answer, open_report or read_report), since an edit can move or renumber objects. The ops, the plan's vocabulary, the units (twips) and what cannot be edited are in get_report_guide: read it before the first edit. Check the result with check_report and preview_report.",
+            "inputSchema": schema(serde_json::json!({
+                "ops": { "type": "array", "description": "Native edit ops, applied in order as one batch. See get_report_guide for each op and its fields.", "items": { "type": "object" } },
+                "plan": { "type": "object", "description": "A layout plan ({ \"planVersion\": 1, \"operations\": [...] }), the other way to describe a batch. See get_report_guide." },
+            }), &[]),
+        },
+        {
+            "name": "compare_reports",
+            "description": "Compare two .rpt files on this machine and list every difference, one line each as `path: a -> b`; an empty list means they match. Use it to see exactly what an edit changed (compare the committed copy with the edited one) or how two versions of a report differ. Neither file needs to be the open report and neither is changed.",
+            "inputSchema": schema(serde_json::json!({
+                "a": { "type": "string", "description": "The full path to the first .rpt file" },
+                "b": { "type": "string", "description": "The full path to the second .rpt file" },
+            }), &["a", "b"]),
+        },
+        {
+            "name": "check_report",
+            "description": "Run the offline load checks on a report: the problems the Crystal Reports engine would refuse it for (errors) and the ones it would only complain about (warnings). With a path it checks that file; with none, the open report. Run it after editing, before the report goes anywhere.",
+            "inputSchema": schema(serde_json::json!({
+                "path": { "type": "string", "description": "The full path to a .rpt file; leave out to check the open report" },
+            }), &[]),
+        },
+        {
+            "name": "new_report",
+            "description": "Create a blank report at a path that has no file yet and open it. It never writes over an existing file: choose another path, or open that one. The title, author and comments fill the report's summary information. Build it up with edit_report; get_report_guide describes how.",
+            "inputSchema": schema(serde_json::json!({
+                "path": { "type": "string", "description": "Where to create it: the full path, ending in .rpt, to a file that does not exist" },
+                "title": { "type": "string", "description": "The report's title" },
+                "author": { "type": "string", "description": "The report's author" },
+                "comments": { "type": "string", "description": "Free-form comments" },
+            }), &["path"]),
+        },
+        {
+            "name": "preview_report",
+            "description": "Draw the open report to a PDF from the data saved in it, and say how many pages that is and what the renderer noted (an object it does not draw, a formula that failed). The person sees the same PDF on the Crystal Reports screen. A page count of 0 means the drawing failed; the notes say why.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
+            "name": "get_report_guide",
+            "description": "How to work with reports through these tools: the IR, the units (twips), every edit op and the layout plan, how objects are named and found, what the renderer draws, and what cannot be done. Read it before your first edit_report.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
             "name": "optimize_cases",
             "description": "Run with dry_run: true FIRST and read expected_rewritten before committing - it lists every expected result this would shorten, before and after. Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Every case comes back stamped with BOTH orders - spec_order (the order you wrote, following the document) and tester_order (the grouped run sequence) - so keep those fields as returned; the app flips between the two readings. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it. For large drafts pass `path` (a local file) instead of inlining the JSON, and `in_place: true` to write the result back to that file and get only the report - NEVER shard a draft to fit it inline: tester_order is one sequence across the whole set, and per-shard orderings cannot be stitched together. An in-place write keeps the file's other fields (`specs`, `comments`); without in_place the response carries the file's `specs` for you to write back. Only .md files and Azure DevOps wiki links stay in `specs`: any other entry is dropped and named in import_warnings.",
             "inputSchema": schema(serde_json::json!({
@@ -1224,6 +1282,16 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // drop one - the same pattern as `check_spec_coverage`.
         "db_lookup" => call("POST", "/db-lookup", &args.to_string()),
         "db_query" => call("POST", "/db-query", &args.to_string()),
+        // The Crystal Reports routes read their fields out of the body, so
+        // the arguments object travels whole, like the database tools'.
+        "open_report" => call("POST", "/crystal-open", &args.to_string()),
+        "read_report" => call("POST", "/crystal-read", &args.to_string()),
+        "edit_report" => call("POST", "/crystal-change", &args.to_string()),
+        "compare_reports" => call("POST", "/crystal-compare", &args.to_string()),
+        "check_report" => call("POST", "/crystal-check", &args.to_string()),
+        "new_report" => call("POST", "/crystal-new", &args.to_string()),
+        "preview_report" => call("POST", "/crystal-preview", &args.to_string()),
+        "get_report_guide" => call("GET", "/crystal-guide", ""),
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");
             let mut params: Vec<String> = vec![];
