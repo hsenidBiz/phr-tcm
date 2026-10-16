@@ -224,3 +224,12 @@ test("a refused switch marks nothing", async () => {
   expect(await screen.findByRole("alert")).toBeInTheDocument();
   expect(isNewNav("autorun")).toBe(false);
 });
+
+test("power flows only down the paths of modules that are on", () => {
+  show(["db_access", "auto_run"]);
+  const flowing = [...document.querySelectorAll("[data-current]")].map((p) => p.getAttribute("data-current"));
+  expect(flowing.sort()).toEqual(["auto_run", "db_access"]);
+  // Each lit path carries two trains of sparks, and they are decoration only.
+  expect(document.querySelectorAll("path.mod-current")).toHaveLength(4);
+  expect(document.querySelector("svg.mod-edges")).toHaveAttribute("aria-hidden", "true");
+});

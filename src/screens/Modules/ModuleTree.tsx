@@ -218,6 +218,16 @@ export default function ModuleTree({
                   data-edge-line={m}
                   className={cn("mod-edge", lit.has(m) && "mod-edge-lit")}
                 />
+                {/* Power flowing down a lit path, from the core (or the
+                    parent) into the module: two trains of sparks, the
+                    second a beat behind. Paths run parent to child, so the
+                    sparks travel the way the power does. */}
+                {lit.has(m) && (
+                  <>
+                    <path d={pathFor(m, height)} pathLength={1} data-current={m} className="mod-current" />
+                    <path d={pathFor(m, height)} pathLength={1} className="mod-current mod-current-late" />
+                  </>
+                )}
                 <path
                   d={pathFor(m, height)}
                   pathLength={1}
