@@ -11,10 +11,10 @@ use tauri::State;
 
 use crate::ai_tools::{
     atomic_write, command_dir, command_files_in, config_carries, config_for, detect_in, is_installed,
-    legacy_command_path, merge_entry, migrate_claude_permissions, migrate_cursor_permissions,
+    legacy_command_path, merge_all, merge_entry, migrate_claude_permissions, migrate_cursor_permissions,
     project_command_dir,
     remove_entry, remove_legacy_command, set_claude_allow, set_cursor_allow, superseded_by,
-    tcm_server, DetectedTool, McpServer, ToolSpec, CLAUDE_DB_QUERY_RULE, CURSOR_DB_QUERY_ENTRY,
+    tcm_server, DetectedTool, McpServer, ToolSpec, CLAUDE_DB_RULES, CURSOR_DB_ENTRIES,
     COMMAND_MARKER, LEGACY_DB_SERVER, MANAGED_SERVERS, TCM_SERVER, TOOL_SPECS,
 };
 use crate::db::credentials::{self, DbCredentialsForm, DbDatabase, DbSecrets};
@@ -146,7 +146,9 @@ struct AllowFile {
     project: fn(&str) -> PathBuf,
     user: fn() -> PathBuf,
     merge: fn(&str, &str, bool) -> Result<Option<String>, String>,
-    entry: &'static str,
+    /// Every entry the switch writes: `db_query`'s and the live report
+    /// preview's (`ai_tools::CLAUDE_DB_RULES` / `CURSOR_DB_ENTRIES`).
+    entries: &'static [&'static str],
     /// Carries the server's old-name entries in this file over to its
     /// current name (`ai_tools::migrate_*_permissions`).
     migrate: fn(&str) -> Result<Option<String>, String>,
@@ -155,22 +157,22 @@ struct AllowFile {
 /// Claude Code: `settings.local.json` in the repository, which Claude Code
 /// keeps out of source control - letting a tool run unasked is this
 /// person's choice, not the repository's - and the user settings for a
-/// machine-wide registration. One `permissions.allow` rule.
+/// machine-wide registration. `permissions.allow` rules.
 const CLAUDE_ALLOW: AllowFile = AllowFile {
     project: |root| PathBuf::from(root).join(".claude").join("settings.local.json"),
     user: || PathBuf::from(home_dir()).join(".claude").join("settings.json"),
     merge: set_claude_allow,
-    entry: CLAUDE_DB_QUERY_RULE,
+    entries: CLAUDE_DB_RULES,
     migrate: migrate_claude_permissions,
 };
 
 /// Cursor: `permissions.json` beside its `mcp.json`, in the repository or
-/// the home folder. One `mcpAllowlist` entry.
+/// the home folder. `mcpAllowlist` entries.
 const CURSOR_ALLOW: AllowFile = AllowFile {
     project: |root| PathBuf::from(root).join(".cursor").join("permissions.json"),
     user: || PathBuf::from(home_dir()).join(".cursor").join("permissions.json"),
     merge: set_cursor_allow,
-    entry: CURSOR_DB_QUERY_ENTRY,
+    entries: CURSOR_DB_ENTRIES,
     migrate: migrate_cursor_permissions,
 };
 
@@ -191,13 +193,13 @@ fn allow_file(id: &str) -> Option<&'static AllowFile> {
 fn allow_note(id: &str, name: &str) -> String {
     match id {
         "cursor" => "Cursor only uses this outside its ask-every-time run mode - check Cursor Settings > Agents".to_string(),
-        "claude-desktop" => "Claude Desktop keeps this in its own window: when it asks about db_query, choose Always allow".to_string(),
-        "vscode" => "VS Code keeps this in its own window: when it asks about db_query, choose to always allow it (or use Chat: Manage Tool Approval)".to_string(),
-        _ => format!("{name} keeps this in its own settings: allow the {TCM_SERVER} db_query tool there"),
+        "claude-desktop" => "Claude Desktop keeps this in its own window: when it asks about db_query or preview_report_live, choose Always allow".to_string(),
+        "vscode" => "VS Code keeps this in its own window: when it asks about db_query or preview_report_live, choose to always allow it (or use Chat: Manage Tool Approval)".to_string(),
+        _ => format!("{name} keeps this in its own settings: allow the {TCM_SERVER} db_query and preview_report_live tools there"),
     }
 }
 
-/// Put the entry into (or take it out of) one file. A missing file is
+/// Put the entries into (or take them out of) one file. A missing file is
 /// created only to switch ON; switching off leaves a missing file missing.
 fn write_allow(file: &AllowFile, path: &std::path::Path, on: bool) -> Result<(), String> {
     let existing = match std::fs::read_to_string(path) {
@@ -210,7 +212,8 @@ fn write_allow(file: &AllowFile, path: &std::path::Path, on: bool) -> Result<(),
         }
         Err(e) => return Err(format!("could not read {}: {e}", path.display())),
     };
-    let Some(updated) = (file.merge)(&existing, file.entry, on).map_err(|e| format!("{}: {e}", path.display()))?
+    let Some(updated) =
+        merge_all(&existing, file.entries, on, file.merge).map_err(|e| format!("{}: {e}", path.display()))?
     else {
         return Ok(());
     };

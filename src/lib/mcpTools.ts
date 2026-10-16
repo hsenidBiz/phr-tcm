@@ -258,6 +258,12 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Draw the open report to a PDF from its saved data, with the page count and the renderer's notes.",
   },
   {
+    name: "preview_report_live",
+    label: "Preview with live data",
+    summary:
+      "Draw the open report from fresh rows: run its stored procedure on the chosen database. Needs writes switched on and the Dev login.",
+  },
+  {
     name: "get_report_guide",
     label: "Report guide",
     summary: "The units, the edit ops, the layout plan and the limits for working with reports.",
@@ -338,6 +344,7 @@ export const CRYSTAL_TOOLS = [
   "check_report",
   "new_report",
   "preview_report",
+  "preview_report_live",
   "get_report_guide",
 ] as const;
 
@@ -468,6 +475,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "check_report",
     "new_report",
     "preview_report",
+    "preview_report_live",
     "get_report_guide",
   ],
 ];

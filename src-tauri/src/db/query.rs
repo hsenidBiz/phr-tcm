@@ -74,6 +74,15 @@ pub fn ready(
     store: Option<&dyn super::SecretStore>,
     id: Option<&str>,
 ) -> Result<(Connection, std::path::PathBuf), String> {
+    let connection = connection(store, id)?;
+    let exe = sqlcmd::sqlcmd_path().ok_or_else(|| sqlcmd::NOT_INSTALLED.to_string())?;
+    Ok((connection, exe))
+}
+
+/// `ready` without the sqlcmd: the connection alone, for a caller that
+/// signs in through something else (the Crystal Reports live preview, whose
+/// data source connects itself). The same refusals, minus "no sqlcmd".
+pub fn connection(store: Option<&dyn super::SecretStore>, id: Option<&str>) -> Result<Connection, String> {
     let nothing_chosen = || NO_CONNECTION.to_string();
     let store = store.ok_or_else(nothing_chosen)?;
     let id = id
@@ -86,10 +95,8 @@ pub fn ready(
     let chosen = super::credentials::resolve(store, id)?.ok_or_else(|| NO_LOGIN_SAVED.to_string())?;
     // The error names the missing key and nothing else - the rest of that
     // string is a credential, and this sentence is shown to a person.
-    let connection = sqlcmd::parse_connection(&chosen)
-        .map_err(|why| format!("{why} - choose a connection under Database Read Access on the AI Bridge tab"))?;
-    let exe = sqlcmd::sqlcmd_path().ok_or_else(|| sqlcmd::NOT_INSTALLED.to_string())?;
-    Ok((connection, exe))
+    sqlcmd::parse_connection(&chosen)
+        .map_err(|why| format!("{why} - choose a connection under Database Read Access on the AI Bridge tab"))
 }
 
 /// Tables a lookup returns when the call does not say.

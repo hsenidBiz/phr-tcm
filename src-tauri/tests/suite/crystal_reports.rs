@@ -285,3 +285,205 @@ fn the_guide_names_every_tool_and_the_units() {
         assert!(guide.contains(term), "the guide mentions {term}");
     }
 }
+
+// ---- live data ------------------------------------------------------------
+//
+// Nothing here reaches a server: the procedure check is pure, and every
+// render is handed a stand-in for the bundle's fetch (`preview_live_with`).
+
+use rpt_core::rpt_reader::Rpt;
+use rpt_core::{LiveDb, PreviewOutput};
+use rpt_db_mssql::TableFetch;
+use v2_lib::db::Connection;
+
+fn procedure(name: &str) -> TableFetch {
+    TableFetch::StoredProcedure { rpc_name: name.to_string(), binds: Vec::new() }
+}
+
+/// A login whose host and password are distinctive, so an answer that
+/// carried either is easy to catch.
+pub fn secret_login(user: &str) -> Connection {
+    Connection {
+        server: "secret-host".into(),
+        database: "hrm".into(),
+        user: user.into(),
+        password: "pw-secret".into(),
+        trust_cert: false,
+    }
+}
+
+const SECRET_CONNECTION: &str =
+    "Server=secret-host;Database=hrm;User Id=x_devlogin;Password=pw-secret;TrustServerCertificate=False";
+
+/// Whether `text` carries the host, the password or any part of the
+/// connection string, in any case.
+pub fn leaks(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("secret-host") || lower.contains("pw-secret") || lower.contains("password=")
+}
+
+#[test]
+fn a_report_naming_another_database_is_refused_before_connecting() {
+    use crystal::live_target_of as target;
+    // The report's own procedure, plain or with its schema.
+    assert_eq!(target(&[procedure("usp_perf_goal_align_sheet")], "hrm").unwrap(), "usp_perf_goal_align_sheet");
+    assert_eq!(target(&[procedure("dbo.usp_x")], "hrm").unwrap(), "dbo.usp_x");
+    // This database by name: the qualifier is dropped, in any case.
+    assert_eq!(target(&[procedure("HRM.dbo.usp_x")], "hrm").unwrap(), "dbo.usp_x");
+    assert_eq!(target(&[procedure("hrm..usp_x")], "HRM").unwrap(), "usp_x");
+
+    // Another database, a linked server, a system or extended procedure.
+    let other = target(&[procedure("otherdb.dbo.usp_x")], "hrm").unwrap_err();
+    assert!(other.contains("otherdb"), "{other}");
+    let linked = target(&[procedure("srv.hrm.dbo.usp_x")], "hrm").unwrap_err();
+    assert!(linked.contains("srv.hrm.dbo.usp_x"), "{linked}");
+    for name in ["xp_x", "dbo.sp_who", "hrm.dbo.XP_cmdshell"] {
+        assert!(target(&[procedure(name)], "hrm").is_err(), "{name} was let through");
+    }
+    // Anything that is not a plain name: the bundle brackets the name it
+    // runs, so a bracket or a separator in it could end the name early.
+    for name in ["usp_x]; DROP TABLE t; --", "[dbo].[usp_x]", "usp x", "", "dbo.", "usp_x;DROP", "a.b.c.d.e"] {
+        assert!(target(&[procedure(name)], "hrm").is_err(), "{name:?} was let through");
+    }
+
+    // A SQL command is never run, and an unfetchable table is named.
+    assert_eq!(
+        target(&[TableFetch::Command { sql: "SELECT 1".into() }], "hrm").unwrap_err(),
+        "this report runs a SQL command, not a stored procedure: live preview only runs stored procedures"
+    );
+    let plain =
+        TableFetch::NotSupported { table: "Orders".into(), reason: "plain joined tables are not generated".into() };
+    let why = target(&[plain.clone()], "hrm").unwrap_err();
+    assert!(why.contains("Orders") && why.contains("plain joined tables are not generated"), "{why}");
+    assert!(target(&[], "hrm").is_err());
+    // The bundle runs the first table it can fetch, so that is the one checked.
+    assert_eq!(target(&[plain, procedure("usp_y")], "hrm").unwrap(), "usp_y");
+    assert!(target(&[procedure("usp_y"), procedure("otherdb.dbo.usp_z")], "hrm").is_ok());
+
+    // The samples: a report on a stored procedure names it, and one read
+    // straight from a view and a table is refused, naming them.
+    let mut procedures = 0;
+    for sample in std::fs::read_dir(SAMPLES).unwrap().flatten() {
+        let rpt = rpt_core::open(&sample.path().to_string_lossy()).unwrap();
+        match crystal::live_target(rpt.report(), "hrm") {
+            Ok(name) => {
+                assert!(name.starts_with("usp_"), "{}: {name}", sample.path().display());
+                procedures += 1;
+            }
+            Err(why) => assert!(why.contains("table "), "{}: {why}", sample.path().display()),
+        }
+    }
+    assert!(procedures > 0, "no sample runs a stored procedure");
+    let sample = rpt_core::open(&Path::new(SAMPLES).join(SAMPLE).to_string_lossy()).unwrap();
+    assert_eq!(crystal::live_target(sample.report(), "hrm").unwrap(), "usp_perf_goal_align_sheet");
+}
+
+#[test]
+fn a_live_preview_is_kept_like_a_saved_one_and_names_its_connection() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let path = copy_sample(dir.path(), SAMPLE);
+    let login = secret_login("x_devlogin");
+
+    // Nothing open: refused before anything is fetched.
+    crystal::close();
+    let fetched = std::cell::Cell::new(false);
+    let none = crystal::preview_live_with(&login, "Dev - dev login", vec![], |_: &Rpt, _: &LiveDb| {
+        fetched.set(true);
+        Err("unreachable".to_string())
+    });
+    assert!(none.is_err() && !fetched.get(), "{none:?}");
+
+    crystal::open(&path).unwrap();
+    let info = crystal::preview_live_with(
+        &login,
+        "Dev - dev login",
+        vec![("a_note".into(), "anything".into())],
+        |_: &Rpt, db: &LiveDb| {
+            // The bundle is handed the login as an ADO string, and the params as given.
+            assert_eq!(db.connection_string, SECRET_CONNECTION);
+            assert_eq!(db.params, vec![("a_note".to_string(), "anything".to_string())]);
+            Ok(PreviewOutput { pdf: b"%PDF-live".to_vec(), page_count: 3, diagnostics: vec!["a note".into()] })
+        },
+    )
+    .unwrap();
+    assert_eq!(info.live.as_deref(), Some("Dev - dev login"));
+    assert_eq!(
+        (info.path.as_str(), info.page_count, info.diagnostics.clone()),
+        (path.as_str(), 3, vec!["a note".to_string()])
+    );
+    let (stored, pdf) = crystal::last_pdf().unwrap();
+    assert_eq!((stored.live.as_deref(), pdf.as_slice()), (Some("Dev - dev login"), b"%PDF-live".as_slice()));
+
+    // A saved-data preview afterwards is marked as such again.
+    assert_eq!(crystal::preview_saved().unwrap().live, None);
+    crystal::close();
+}
+
+#[test]
+fn a_live_preview_never_answers_with_the_host_or_the_password() {
+    let _lock = serial::crystal();
+    let dir = tempfile::tempdir().unwrap();
+    let path = copy_sample(dir.path(), SAMPLE);
+    crystal::open(&path).unwrap();
+    let login = secret_login("x_devlogin");
+
+    // A driver that echoed everything it was given, in another case too.
+    let why = crystal::preview_live_with(&login, "Dev - dev login", vec![], |_: &Rpt, db: &LiveDb| {
+        Err(format!(
+            "cannot connect to SECRET-HOST/hrm: login failed for x_devlogin (pw-secret) using {}",
+            db.connection_string
+        ))
+    })
+    .unwrap_err();
+    assert!(!leaks(&why) && !why.contains(SECRET_CONNECTION), "{why}");
+    assert!(why.contains(SAMPLE) && why.contains("Dev - dev login"), "{why}");
+    let (stored, pdf) = crystal::last_pdf().unwrap();
+    assert!(pdf.is_empty() && stored.page_count == 0, "a failed render is kept as the failure");
+    assert!(stored.diagnostics.iter().all(|d| !leaks(d)), "{stored:?}");
+    assert_eq!(stored.live.as_deref(), Some("Dev - dev login"));
+
+    // A login with a separator in it is refused before the bundle sees it:
+    // `;Server=` inside a password would point the string at another host.
+    let mut sly = secret_login("x_devlogin");
+    sly.password = "pw-secret;Server=elsewhere".into();
+    let fetched = std::cell::Cell::new(false);
+    let why = crystal::preview_live_with(&sly, "Dev - dev login", vec![], |_: &Rpt, _: &LiveDb| {
+        fetched.set(true);
+        Err("unreachable".into())
+    })
+    .unwrap_err();
+    assert!(!fetched.get() && !leaks(&why) && !why.contains("elsewhere"), "{why}");
+
+    // A parameter that does not fit its declared kind is refused before
+    // anything is fetched, naming the parameter.
+    let param = typed_parameter(&path);
+    let why = crystal::preview_live_with(
+        &login,
+        "Dev - dev login",
+        vec![(param.clone(), "not-a-value".into())],
+        |_: &Rpt, _: &LiveDb| {
+            fetched.set(true);
+            Err("unreachable".into())
+        },
+    )
+    .unwrap_err();
+    assert!(!fetched.get(), "{why}");
+    assert!(why.contains(&param) && !leaks(&why), "{why}");
+    crystal::close();
+}
+
+/// A parameter of the report at `path` whose declared kind is not text, so
+/// a value can fail to fit it, by the name a caller would give it.
+pub fn typed_parameter(path: &str) -> String {
+    use rpt_core::rpt_reader::model::ParameterValueKind;
+    let rpt = rpt_core::open(path).unwrap();
+    let name = rpt
+        .report()
+        .data_definition
+        .parameter_fields()
+        .find(|(_, p)| p.value_kind != ParameterValueKind::StringParameter)
+        .map(|(f, _)| f.name.trim_start_matches(['{', '?']).trim_end_matches('}').to_string())
+        .expect("the sample declares a parameter that is not text");
+    name
+}

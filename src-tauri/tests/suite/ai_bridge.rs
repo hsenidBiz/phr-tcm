@@ -4127,7 +4127,7 @@ mod crystal_routes {
     const SAMPLES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../crystal-reports/Sample Report");
     const SAMPLE: &str = "PMSV10_GoalAlignCascade.rpt";
 
-    const PATHS: [&str; 7] = [
+    const PATHS: [&str; 8] = [
         "/crystal-open",
         "/crystal-read",
         "/crystal-change",
@@ -4135,6 +4135,7 @@ mod crystal_routes {
         "/crystal-check",
         "/crystal-new",
         "/crystal-preview",
+        "/crystal-preview-live",
     ];
 
     /// A copy of the sample inside `dir`, as a path string.
@@ -4300,5 +4301,86 @@ mod crystal_routes {
         let (status, why) = route(&ctx(), None, "POST", "/crystal-read", "", "1.0.0").await;
         assert_eq!(status, 400, "nothing is open, so the refusal is the open_report sentence");
         assert!(why.contains("open_report"), "{why}");
+    }
+
+    /// A context whose chosen database is one of the person's own, named
+    /// "Reports dev", signing in as `user` on a host and with a password
+    /// nobody could mistake for anything else.
+    fn live_ctx(dir: &std::path::Path, user: &str, writes: bool) -> super::BridgeContext {
+        use v2_lib::db::credentials::{add_custom, WithList};
+        use v2_lib::db::{DbCredentialsForm, MemoryStore};
+        // A list of its own for each context, so each can add the same name.
+        let own = dir.join(format!("{user}-{writes}"));
+        std::fs::create_dir_all(&own).unwrap();
+        let store = WithList { store: MemoryStore::default(), list: own.join("databases.json") };
+        let form = DbCredentialsForm {
+            server: "secret-host".into(),
+            port: None,
+            database: "hrm".into(),
+            user: user.into(),
+            password: Some("pw-secret".into()),
+            trust_cert: false,
+        };
+        let id = add_custom(&store, "Reports dev", &form).unwrap().id;
+        super::BridgeContext {
+            db_id: Some(id),
+            db_secrets: Some(std::sync::Arc::new(store)),
+            db_writes: writes,
+            ..ctx()
+        }
+    }
+
+    async fn live(c: &super::BridgeContext, body: Value) -> (u16, String) {
+        route(c, None, "POST", "/crystal-preview-live", &body.to_string(), "1.0.0").await
+    }
+
+    /// A live preview runs the report's stored procedure, so it is gated
+    /// like a database write: writes switched on AND the Dev login. Each
+    /// refusal comes before anything is fetched - the preview is still the
+    /// saved-data one opening drew - and none names the host or password.
+    #[tokio::test]
+    async fn live_preview_needs_the_dev_login_and_writes() {
+        use v2_lib::db::query::{NO_CONNECTION, WRITES_OFF};
+        use v2_lib::db::READ_ONLY_SENTENCE;
+        let _lock = crate::serial::crystal();
+        let dir = tempfile::tempdir().unwrap();
+        let path = copy_sample(dir.path());
+        json_of(&post("/crystal-open", json!({ "path": path })).await);
+        let opened = v2_lib::crystal::last_pdf().unwrap().0;
+
+        let (status, said) = live(&live_ctx(dir.path(), "x_devlogin", false), json!({})).await;
+        assert_eq!((status, said.as_str()), (400, WRITES_OFF));
+        let (status, said) = live(&live_ctx(dir.path(), "reader", true), json!({})).await;
+        assert_eq!((status, said.as_str()), (400, READ_ONLY_SENTENCE));
+        let (status, said) = live(&super::BridgeContext { db_writes: true, ..ctx() }, json!({})).await;
+        assert_eq!((status, said.as_str()), (409, NO_CONNECTION));
+
+        // Allowed so far, but a parameter that does not fit its kind stops
+        // it before a connection is made.
+        let param = crate::crystal_reports::typed_parameter(&path);
+        let dev = live_ctx(dir.path(), "x_devlogin", true);
+        let (status, said) = live(&dev, json!({ "params": { param.clone(): "not-a-value" } })).await;
+        assert_eq!(status, 400, "{said}");
+        assert!(said.contains(&param) && !crate::crystal_reports::leaks(&said), "{said}");
+        let (status, said) = live(&dev, json!({ "params": "performance_cycle_id=1" })).await;
+        assert_eq!(status, 400, "{said}");
+        assert!(said.contains("params"), "{said}");
+
+        let now = v2_lib::crystal::last_pdf().unwrap().0;
+        assert_eq!((now.live, now.page_count), (None, opened.page_count), "nothing was fetched");
+        v2_lib::crystal::close();
+    }
+
+    /// Database Access off refuses the live preview with that module's
+    /// sentence even while Crystal Reports is on; writes off says so.
+    #[test]
+    fn live_preview_needs_database_access_and_writes_on() {
+        use v2_lib::ai_bridge::live_preview_gate;
+        use v2_lib::db::query::WRITES_OFF;
+        let all: std::collections::BTreeSet<Module> = Module::ALL.into_iter().collect();
+        let only_crystal: std::collections::BTreeSet<Module> = [Module::CrystalReports].into_iter().collect();
+        assert_eq!(live_preview_gate(&only_crystal, true), Err((404, "Database Access is switched off in Modules".into())));
+        assert_eq!(live_preview_gate(&all, false), Err((400, WRITES_OFF.to_string())));
+        assert_eq!(live_preview_gate(&all, true), Ok(()));
     }
 }

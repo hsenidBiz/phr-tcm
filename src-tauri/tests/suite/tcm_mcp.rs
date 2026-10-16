@@ -154,6 +154,7 @@ fn tools_list_names_every_tool() {
             "check_report",
             "new_report",
             "preview_report",
+            "preview_report_live",
             "get_report_guide",
             "optimize_cases",
             "transform_cases",
@@ -913,8 +914,58 @@ fn db_query_says_not_to_ask_only_when_the_app_says_so() {
         let plain = db_query_description(reply);
         assert!(!plain.contains("without confirmation"), "{reply}: {plain}");
     }
-    // Only db_query carries it.
     assert!(!v2_lib::mcp::DB_NO_ASK.is_empty());
+}
+
+/// The live report preview runs the report's stored procedure, so it is
+/// approved like db_query: the same "do not ask" line on an explicit yes,
+/// and no other tool carries it.
+#[test]
+fn the_live_preview_says_not_to_ask_only_when_the_app_says_so() {
+    let descriptions = |tools_reply: &'static str| -> Vec<(String, String)> {
+        let call = move |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+            if path == "/tools" {
+                return Ok((200, tools_reply.into()));
+            }
+            Ok((200, "{}".into()))
+        };
+        let resp =
+            handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        v["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| (t["name"].as_str().unwrap().to_string(), t["description"].as_str().unwrap().to_string()))
+            .collect()
+    };
+    let asked = descriptions(r#"{"disabled":[],"db_no_ask":true}"#);
+    let carrying: Vec<&str> =
+        asked.iter().filter(|(_, d)| d.ends_with(v2_lib::mcp::DB_NO_ASK)).map(|(n, _)| n.as_str()).collect();
+    assert_eq!(carrying, ["db_query", "preview_report_live"]);
+    let plain = descriptions(r#"{"disabled":[],"db_no_ask":false}"#);
+    assert!(plain.iter().all(|(_, d)| !d.contains("without confirmation")), "{plain:?}");
+}
+
+/// db_query's description says what the Dev login may now create and
+/// alter, what is still never allowed, and how large a request may be.
+#[test]
+fn db_query_describes_the_object_allowance_and_the_size_cap() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &stub(200, "")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let text = v["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "db_query")
+        .and_then(|t| t["description"].as_str())
+        .unwrap()
+        .to_string();
+    for needed in ["CREATE OR ALTER", "procedure, view or function", "Crystal Reports", "never DROP", "64 KiB"] {
+        assert!(text.contains(needed), "db_query's description does not say {needed:?}: {text}");
+    }
+    assert!(!text.contains("never DROP, ALTER or CREATE"), "{text}");
+    assert!(!text.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }
 
 #[test]
@@ -1796,6 +1847,12 @@ fn the_crystal_tools_reach_their_routes() {
         ("check_report", serde_json::json!({}), "POST", "/crystal-check"),
         ("new_report", serde_json::json!({ "path": "C:/r/n.rpt", "title": "T" }), "POST", "/crystal-new"),
         ("preview_report", serde_json::json!({}), "POST", "/crystal-preview"),
+        (
+            "preview_report_live",
+            serde_json::json!({ "params": { "performance_cycle_id": "42" } }),
+            "POST",
+            "/crystal-preview-live",
+        ),
         ("get_report_guide", serde_json::json!({}), "GET", "/crystal-guide"),
     ] {
         calls.borrow_mut().clear();

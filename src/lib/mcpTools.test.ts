@@ -208,7 +208,7 @@ test("only the switchable tools are left, as nine rows with every module on", ()
     "get_autorun_guide+save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+start_autorun_discovery+discover_autorun_action+discover_autorun_actions+save_autorun_area+end_autorun_discovery+release_autorun_browser+save_autorun_component+remove_autorun_component+get_autorun_failures+record_autorun_quirk+retire_autorun_quirk+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+list_test_files+get_autorun_network_wait",
     "get_api_template_guide+list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+save_api_fixture+run_api_fixture+list_api_fixtures+record_app_quirk+retire_app_quirk",
     "db_lookup+db_query",
-    "open_report+read_report+edit_report+compare_reports+check_report+new_report+preview_report+get_report_guide",
+    "open_report+read_report+edit_report+compare_reports+check_report+new_report+preview_report+preview_report_live+get_report_guide",
     "get_tags",
     "search_pbis",
     "search_wiki+get_wiki_page",
@@ -314,9 +314,9 @@ test("the API templates row carries all eleven tools and switches them together"
 });
 
 /// Working on a report is one job - open it, read it, change it, check it,
-/// see it - so its eight tools are one row with one switch, offered while
+/// see it - so its nine tools are one row with one switch, offered while
 /// Crystal Reports is on.
-test("the Crystal Reports row carries all eight tools and follows its module", () => {
+test("the Crystal Reports row carries all nine tools and follows its module", () => {
   const row = visibleRows().find((r) => r.label === "Crystal Reports");
   expect(row, "the Crystal Reports row exists").toBeTruthy();
   expect(row!.names).toEqual([
@@ -327,6 +327,7 @@ test("the Crystal Reports row carries all eight tools and follows its module", (
     "check_report",
     "new_report",
     "preview_report",
+    "preview_report_live",
     "get_report_guide",
   ]);
   for (const name of row!.names) {

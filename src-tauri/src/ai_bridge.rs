@@ -414,6 +414,9 @@ pub async fn route(
         ("POST", "/crystal-check") => crystal_check(body).await,
         ("POST", "/crystal-new") => crystal_new(body).await,
         ("POST", "/crystal-preview") => crystal_preview().await,
+        // Runs the report's stored procedure on the chosen database, so it
+        // is gated like a database write besides (`crystal_preview_live`).
+        ("POST", "/crystal-preview-live") => crystal_preview_live(ctx, body).await,
         ("GET", "/crystal-guide") => crystal_guide(),
         // The proxy asks for this before listing tools and before every
         // call, so a toggle in the app takes effect on the assistant's next
@@ -6277,6 +6280,86 @@ async fn crystal_new(body: &str) -> (u16, String) {
 
 async fn crystal_preview() -> (u16, String) {
     let done = crystal_blocking(crate::crystal::preview_saved).await;
+    crystal_answer(done.and_then(|info| serde_json::to_value(info).map_err(|e| (500, e.to_string()))))
+}
+
+/// The two doors of a live preview that need no connection to check:
+/// Database Access on (the route's own guard is Crystal Reports'), and the
+/// person's switch for database writes - running a report's stored
+/// procedure is a procedure call, which TCM treats as a write. `on` is
+/// explicit so both are testable.
+pub fn live_preview_gate(
+    on: &std::collections::BTreeSet<crate::modules::Module>,
+    writes_on: bool,
+) -> Result<(), (u16, String)> {
+    use crate::modules::Module;
+    if !on.contains(&Module::DbAccess) {
+        return Err((404, Module::DbAccess.off_sentence()));
+    }
+    if !writes_on {
+        return Err((400, crate::db::query::WRITES_OFF.to_string()));
+    }
+    Ok(())
+}
+
+/// The report's parameters out of `params` (name to value). A number or a
+/// true/false is taken as its text, which the bundle reads against the
+/// parameter's declared kind.
+fn crystal_params(args: &serde_json::Value) -> Result<Vec<(String, String)>, (u16, String)> {
+    use serde_json::Value;
+    match args.get("params") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Object(map)) => map
+            .iter()
+            .map(|(name, value)| match value {
+                Value::String(text) => Ok((name.clone(), text.clone())),
+                Value::Number(n) => Ok((name.clone(), n.to_string())),
+                Value::Bool(b) => Ok((name.clone(), b.to_string())),
+                _ => Err((400, format!("params.{name} must be text, a number or true/false."))),
+            })
+            .collect(),
+        Some(_) => Err((
+            400,
+            "\"params\" must be an object of parameter name to value, e.g. { \"performance_cycle_id\": \"42\" }."
+                .to_string(),
+        )),
+    }
+}
+
+/// The chosen database by the name the AI Bridge tab shows it under -
+/// what a live preview says it came from, never the host.
+fn chosen_database_name(ctx: &BridgeContext) -> String {
+    ctx.db_secrets
+        .as_deref()
+        .zip(ctx.db_id.as_deref())
+        .and_then(|(store, id)| crate::db::credentials::databases(store).into_iter().find(|d| d.id == id.trim()))
+        .map(|d| d.label)
+        .unwrap_or_else(|| "the chosen database".to_string())
+}
+
+/// Draw the open report with fresh rows from its stored procedure. Every
+/// door is checked before anything connects: Database Access and writes
+/// (`live_preview_gate`), a chosen connection, and the Dev login on it;
+/// then `crystal::preview_live` checks the procedure and the parameters.
+/// The bundle blocks on a runtime of its own, so the call runs on a
+/// blocking thread (`crystal_blocking`), never on this one.
+async fn crystal_preview_live(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    let params = match crystal_args(body).and_then(|args| crystal_params(&args)) {
+        Ok(params) => params,
+        Err(refused) => return refused,
+    };
+    if let Err(refused) = live_preview_gate(&crate::modules::current(), ctx.db_writes) {
+        return refused;
+    }
+    let conn = match crate::db::query::connection(ctx.db_secrets.as_deref(), ctx.db_id.as_deref()) {
+        Ok(conn) => conn,
+        Err(why) => return (409, why),
+    };
+    if crate::db::access_for_user(&conn.user) == crate::db::Access::ReadOnly {
+        return (400, crate::db::READ_ONLY_SENTENCE.to_string());
+    }
+    let name = chosen_database_name(ctx);
+    let done = crystal_blocking(move || crate::crystal::preview_live(&conn, &name, params)).await;
     crystal_answer(done.and_then(|info| serde_json::to_value(info).map_err(|e| (500, e.to_string()))))
 }
 

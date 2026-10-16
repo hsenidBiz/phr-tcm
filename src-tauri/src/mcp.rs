@@ -200,8 +200,9 @@ pub fn db_no_ask_from(reply: &Result<(u16, String), String>) -> bool {
     }
 }
 
-/// Said to the assistant, at the end of `db_query`'s description, while the
-/// person has switched on running database changes without being asked.
+/// Said to the assistant, at the end of `db_query`'s and
+/// `preview_report_live`'s descriptions, while the person has switched on
+/// running database changes without being asked.
 pub const DB_NO_ASK: &str = " The person has allowed database changes without confirmation: do not stop to ask before running INSERT, UPDATE, DELETE or a procedure through this tool - run the batch with dry_run first, read the row counts, then run it for real, and tell them what changed afterwards.";
 
 fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>) {
@@ -718,7 +719,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "db_query",
-            "description": "Run one SQL statement on the chosen company database through sqlcmd and read the result (200 rows at most). SELECT runs on every connection, and so does EXEC of a look-up system procedure (sp_help, sp_helptext, sp_helpindex, sp_columns, sp_tables, sp_stored_procedures, sp_pkeys, sp_fkeys). INSERT, UPDATE, DELETE, and EXEC of a named stored procedure run only when the person has switched writes on in the AI Bridge tab and the connection is the Dev - dev login one. Never dynamic SQL (EXEC('...'), EXEC(@variable), sp_executesql), never any other sp_ or xp_ procedure, and never DROP, ALTER or CREATE. Use it to verify what a test case expects against real data, or to set up test data on the dev database. To change more than one thing, send `statements` instead of `sql`: they run as ONE transaction that the app wraps for you - all of them are saved or none is. Give each write an `expect_rows` and the batch stops and rolls back the moment a statement affects a different number of rows. Run it with dry_run: true first - everything runs, each statement's row count comes back, and it is all rolled back - then send the same statements without dry_run to save them. Never write BEGIN, COMMIT, ROLLBACK, DECLARE or THROW yourself: every statement is checked on its own, exactly like `sql`, and those are refused.",
+            "description": "Run one SQL statement on the chosen company database through sqlcmd and read the result (200 rows at most). SELECT runs on every connection, and so does EXEC of a look-up system procedure (sp_help, sp_helptext, sp_helpindex, sp_columns, sp_tables, sp_stored_procedures, sp_pkeys, sp_fkeys). INSERT, UPDATE, DELETE, and EXEC of a named stored procedure run only when the person has switched writes on in the AI Bridge tab and the connection is the Dev - dev login one. Never dynamic SQL (EXEC('...'), EXEC(@variable), sp_executesql), never any other sp_ or xp_ procedure, and never DROP. CREATE, ALTER and CREATE OR ALTER are refused too, except on the Dev - dev login with Crystal Reports and Database Access on and writes switched on: there it may create or alter one procedure, view or function per call (still never DROP). The bridge refuses a request over 64 KiB, so a procedure longer than that has to be split or run by hand. Use it to verify what a test case expects against real data, or to set up test data on the dev database. To change more than one thing, send `statements` instead of `sql`: they run as ONE transaction that the app wraps for you - all of them are saved or none is. Give each write an `expect_rows` and the batch stops and rolls back the moment a statement affects a different number of rows. Run it with dry_run: true first - everything runs, each statement's row count comes back, and it is all rolled back - then send the same statements without dry_run to save them. Never write BEGIN, COMMIT, ROLLBACK, DECLARE or THROW yourself: every statement is checked on its own, exactly like `sql`, and those are refused.",
             "inputSchema": schema(serde_json::json!({
                 "sql": { "type": "string", "description": "ONE statement, with no GO separator and no second statement after a semicolon. Send this or `statements`, not both." },
                 "statements": {
@@ -788,6 +789,13 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "name": "preview_report",
             "description": "Draw the open report to a PDF from the data saved in it, and say how many pages that is and what the renderer noted (an object it does not draw, a formula that failed). The person sees the same PDF on the Crystal Reports screen. A page count of 0 means the drawing failed; the notes say why.",
             "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
+            "name": "preview_report_live",
+            "description": "Draw the open report with fresh rows instead of the data saved in it: run the report's stored procedure on the database chosen in the AI Bridge tab and render what it returns. Running a procedure counts as a database write, so this works only with Database Access on, writes switched on in the AI Bridge tab and the Dev - dev login connection chosen; anything else is refused with what to change. Only a stored procedure of the connection's own database runs: a report that names another database or a linked server, an sp_ or xp_ procedure, or a SQL command is refused before anything connects. Give the report's parameters in `params`, by name (with or without the @); a parameter left out takes the value saved in the report, or NULL when it has none. The answer is the page count, the renderer's notes and the connection's name, and the person sees the same PDF on the Crystal Reports screen. A page count of 0 means the drawing failed; the notes say why. preview_report draws the saved data and needs no database.",
+            "inputSchema": schema(serde_json::json!({
+                "params": { "type": "object", "description": "The report's parameters, name to value, e.g. { \"performance_cycle_id\": \"42\" }. Dates as YYYY-MM-DD, times as HH:MM:SS, true/false for yes-or-no parameters." },
+            }), &[]),
         },
         {
             "name": "get_report_guide",
@@ -869,7 +877,8 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             !disabled.iter().any(|d| d == name)
         })
         .map(|mut t| {
-            if db_no_ask && t["name"] == "db_query" {
+            // The live report preview runs a procedure, so the same switch covers it.
+            if db_no_ask && (t["name"] == "db_query" || t["name"] == "preview_report_live") {
                 let said = format!("{}{DB_NO_ASK}", t["description"].as_str().unwrap_or_default());
                 t["description"] = serde_json::Value::String(said);
             }
@@ -1291,6 +1300,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "check_report" => call("POST", "/crystal-check", &args.to_string()),
         "new_report" => call("POST", "/crystal-new", &args.to_string()),
         "preview_report" => call("POST", "/crystal-preview", &args.to_string()),
+        "preview_report_live" => call("POST", "/crystal-preview-live", &args.to_string()),
         "get_report_guide" => call("GET", "/crystal-guide", ""),
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");

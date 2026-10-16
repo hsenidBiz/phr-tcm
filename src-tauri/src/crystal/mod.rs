@@ -9,10 +9,14 @@
 //! the undo (owner, 2026-10-16). A batch the bundle refuses saves nothing.
 //!
 //! Every answer that fails is a plain sentence naming the file, for the
-//! assistant to read out or act on.
+//! assistant to read out or act on. A render from fresh database rows is
+//! `live`'s, and is kept here exactly like a render from the saved data.
 
 mod compare;
 mod guide;
+mod live;
+
+pub use live::{live_target, live_target_of, preview_live, preview_live_with};
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};

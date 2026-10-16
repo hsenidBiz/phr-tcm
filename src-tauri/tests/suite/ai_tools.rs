@@ -613,6 +613,7 @@ fn each_tool_belongs_to_its_module() {
             "check_report",
             "new_report",
             "preview_report",
+            "preview_report_live",
             "get_report_guide"
         ]
     );
@@ -1266,6 +1267,41 @@ fn the_cursor_entry_goes_in_and_out_of_its_allowlist() {
     assert_eq!(v["mcpAllowlist"], serde_json::json!(["github:list_issues"]));
     let emptied = set_cursor_allow(r#"{"mcpAllowlist":["tcm:db_query"]}"#, ENTRY, false).unwrap().unwrap();
     assert_eq!(serde_json::from_str::<serde_json::Value>(&emptied).unwrap(), serde_json::json!({}));
+}
+
+/// A live report preview runs the report's stored procedure, so "Run
+/// database changes without asking" lets it run unasked with db_query -
+/// both entries go in together and come out together, in each tool's file.
+#[test]
+fn auto_approve_covers_the_live_preview_too() {
+    use v2_lib::ai_tools::{merge_all, set_claude_allow, set_cursor_allow, CLAUDE_DB_RULES, CURSOR_DB_ENTRIES};
+    assert_eq!(CLAUDE_DB_RULES, ["mcp__tcm__db_query", "mcp__tcm__preview_report_live"]);
+    assert_eq!(CURSOR_DB_ENTRIES, ["tcm:db_query", "tcm:preview_report_live"]);
+
+    let allow = |text: &str| serde_json::from_str::<serde_json::Value>(text).unwrap()["permissions"]["allow"].clone();
+    let theirs = r#"{"permissions":{"allow":["Bash(git status)"]}}"#;
+    let on = merge_all(theirs, CLAUDE_DB_RULES, true, set_claude_allow).unwrap().expect("a change");
+    assert_eq!(allow(&on), serde_json::json!(["Bash(git status)", "mcp__tcm__db_query", "mcp__tcm__preview_report_live"]));
+    assert_eq!(merge_all(&on, CLAUDE_DB_RULES, true, set_claude_allow).unwrap(), None, "already on");
+    // A file switched on by an earlier release, with db_query alone, gains the other.
+    let older = r#"{"permissions":{"allow":["mcp__tcm__db_query"]}}"#;
+    let caught_up = merge_all(older, CLAUDE_DB_RULES, true, set_claude_allow).unwrap().unwrap();
+    assert_eq!(allow(&caught_up), serde_json::json!(["mcp__tcm__db_query", "mcp__tcm__preview_report_live"]));
+    // Off takes both out, and only them.
+    let off = merge_all(&on, CLAUDE_DB_RULES, false, set_claude_allow).unwrap().unwrap();
+    assert_eq!(allow(&off), serde_json::json!(["Bash(git status)"]));
+    let one_left = r#"{"permissions":{"allow":["mcp__tcm__preview_report_live","Read(*)"]}}"#;
+    let off = merge_all(one_left, CLAUDE_DB_RULES, false, set_claude_allow).unwrap().unwrap();
+    assert_eq!(allow(&off), serde_json::json!(["Read(*)"]));
+    assert_eq!(merge_all(r#"{"permissions":{"allow":[]}}"#, CLAUDE_DB_RULES, false, set_claude_allow).unwrap(), None);
+
+    let list = |text: &str| serde_json::from_str::<serde_json::Value>(text).unwrap()["mcpAllowlist"].clone();
+    let on = merge_all(r#"{"mcpAllowlist":["github:list_issues"]}"#, CURSOR_DB_ENTRIES, true, set_cursor_allow)
+        .unwrap()
+        .unwrap();
+    assert_eq!(list(&on), serde_json::json!(["github:list_issues", "tcm:db_query", "tcm:preview_report_live"]));
+    let off = merge_all(&on, CURSOR_DB_ENTRIES, false, set_cursor_allow).unwrap().unwrap();
+    assert_eq!(list(&off), serde_json::json!(["github:list_issues"]));
 }
 
 // ------------------------------------------- the server's old name, `tcm-testcases`
