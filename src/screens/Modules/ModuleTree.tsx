@@ -293,6 +293,14 @@ export default function ModuleTree({
     const mods = MODULE_INFO.map((i) => i.module).filter((m) => lit.has(m) && !draining.has(m));
     return mods.length > 0 ? electricSrc(mods, height) : null;
   }, [lit, draining, height]);
+  // When the last lit path switches off, the layer stays for the drain,
+  // still showing the paths it last traced, and fades out with it; it goes
+  // once the drain is over. A path lit again meanwhile fades it back in.
+  const lastElectric = useRef<string | null>(null);
+  if (electric) lastElectric.current = electric;
+  const fading = !electric && draining.size > 0 && lastElectric.current !== null;
+  const electricSrcShown = electric ?? (fading ? lastElectric.current : null);
+  const fadeMs = Math.max(0, ...draining.values()) + DRAIN_MS;
   const [shaking, setShaking] = useState<Module | null>(null);
   const shakeTimer = useRef<number>(0);
   useEffect(() => () => window.clearTimeout(shakeTimer.current), []);
@@ -358,10 +366,16 @@ export default function ModuleTree({
               over the paths and under the cards, sized in board units like
               everything else. Nothing lit, or reduced motion: no layer, and
               a lit path is just its steady glow. */}
-          {electric && !reducedMotion() && (
-            <div aria-hidden="true" data-electric className="pointer-events-none absolute inset-0">
+          {electricSrcShown && !reducedMotion() && (
+            <div
+              aria-hidden="true"
+              data-electric
+              data-fading={fading}
+              className="pointer-events-none absolute inset-0"
+              style={{ opacity: fading ? 0 : 1, transition: `opacity ${fadeMs}ms ease-in` }}
+            >
               <ElectricLogo
-                src={electric}
+                src={electricSrcShown}
                 color={electricColors.color}
                 glowColor={electricColors.glowColor}
                 theme={electricColors.theme}

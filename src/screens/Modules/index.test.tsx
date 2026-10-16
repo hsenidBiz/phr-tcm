@@ -297,6 +297,25 @@ test("the electric layer follows a module switching on", async () => {
   expect(electricPaths()).toEqual(edges(["db_access", "auto_run"]));
 });
 
+test("switching the last module off fades the electric layer out over its drain", async () => {
+  vi.useFakeTimers();
+  show(["db_access"]);
+  const layer = () => document.querySelector<HTMLElement>("[data-electric]");
+  expect(layer()).toHaveAttribute("data-fading", "false");
+  expect(layer()!.style.opacity).toBe("1");
+  act(() => setModulesForTest([]));
+  // Still there for the drain, still tracing what was lit, fading as it empties.
+  expect(layer()).toHaveAttribute("data-fading", "true");
+  expect(layer()!.style.opacity).toBe("0");
+  expect(layer()!.style.transition).toBe("opacity 600ms ease-in");
+  expect(electricPaths()).toEqual(edges(["db_access"]));
+  await act(async () => {
+    vi.advanceTimersByTime(650);
+  });
+  expect(layer()).toBeNull();
+  expect(screen.queryByTestId("electric")).toBeNull();
+});
+
 test("with reduced motion there is no electric layer", () => {
   vi.stubGlobal("matchMedia", (q: string) => ({ matches: q.includes("reduce"), media: q, addEventListener() {}, removeEventListener() {} }));
   show(["db_access", "auto_run"]);
