@@ -165,3 +165,10 @@ pub fn modules() -> MutexGuard<'static, ()> {
     static L: Mutex<()> = Mutex::new(());
     hold(&L)
 }
+
+/// The one open Crystal Reports report (`crystal`'s state): opening one
+/// replaces whatever another test had open, mid-test.
+pub fn crystal() -> MutexGuard<'static, ()> {
+    static L: Mutex<()> = Mutex::new(());
+    hold(&L)
+}

@@ -36,6 +36,7 @@ pub mod backup;
 pub mod cache;
 pub mod capture;
 pub mod commands;
+pub mod crystal;
 pub mod events;
 pub mod extras;
 pub mod modules;
