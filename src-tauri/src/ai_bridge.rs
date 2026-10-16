@@ -139,9 +139,14 @@ pub fn set_crystal_sink(f: CrystalSink) {
     let _ = CRYSTAL_SINK.set(f);
 }
 
-fn crystal_changed() {
+/// Tell the screen. The open report's path is read on a blocking thread:
+/// the report's lock can be held for a long time by a render or a live
+/// fetch, and waiting on it must not stall an async worker.
+async fn crystal_changed() {
     if let Some(f) = CRYSTAL_SINK.get() {
-        f(crate::crystal::current_path());
+        // A thread that panicked has no path to give; the screen reads the report itself.
+        let path = tokio::task::spawn_blocking(crate::crystal::current_path).await.unwrap_or(None);
+        f(path);
     }
 }
 
@@ -6224,7 +6229,7 @@ async fn crystal_open(body: &str) -> (u16, String) {
     let done = crystal_blocking(move || crate::crystal::open(&path)).await;
     // A refused open leaves the old report open; only a new one changes the screen.
     if done.is_ok() {
-        crystal_changed();
+        crystal_changed().await;
     }
     crystal_answer(done)
 }
@@ -6261,7 +6266,7 @@ async fn crystal_change(body: &str) -> (u16, String) {
     })
     .await;
     // A refused batch tells the screen too: the report is re-read from disk.
-    crystal_changed();
+    crystal_changed().await;
     crystal_answer(done)
 }
 
@@ -6304,7 +6309,7 @@ async fn crystal_new(body: &str) -> (u16, String) {
     };
     let done = crystal_blocking(move || crate::crystal::new_report(&path, opts)).await;
     if done.is_ok() {
-        crystal_changed();
+        crystal_changed().await;
     }
     crystal_answer(done)
 }
@@ -6312,7 +6317,7 @@ async fn crystal_new(body: &str) -> (u16, String) {
 async fn crystal_preview() -> (u16, String) {
     let done = crystal_blocking(crate::crystal::preview_saved).await;
     // A render that failed is kept as the preview too, so the screen shows why.
-    crystal_changed();
+    crystal_changed().await;
     crystal_answer(done.and_then(|info| serde_json::to_value(info).map_err(|e| (500, e.to_string()))))
 }
 
@@ -6406,7 +6411,7 @@ pub async fn crystal_preview_live(
     let done = crystal_blocking(move || crate::crystal::preview_live_with(&conn, &name, params, fetch)).await;
     // Past the doors a failed draw is kept as the preview (as with the saved one); a refusal is
     // only a re-read.
-    crystal_changed();
+    crystal_changed().await;
     crystal_answer(done.and_then(|info| serde_json::to_value(info).map_err(|e| (500, e.to_string()))))
 }
 
