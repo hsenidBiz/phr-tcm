@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.5",
+    date: "2026-10-17",
+    items: [
+      "The Crystal Reports screen draws the report's pages itself, with its own zoom, Fit width and 100%, and fills the screen.",
+      "Preview notes are now plain: fields with no data, symbols drawn with a fallback font, and anything else under Other notes.",
+    ],
+  },
+  {
     version: "2.2.3-beta.4",
     date: "2026-10-17",
     items: [
