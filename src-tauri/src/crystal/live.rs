@@ -228,8 +228,10 @@ fn shown(name: &str) -> &str {
 /// before anything connects: every name must be one of the report's
 /// parameters (matched like the bundle matches them: in any case, with or
 /// without the `@`), and every parameter the report needs a value for -
-/// not optional, not allowed to be empty, and with no value saved in the
-/// report - must be given. Each refusal names the parameters.
+/// not optional and not allowed to be empty - must be given. A value saved
+/// in the report does not count: the bundle binds only the values passed
+/// here and NULL for the rest, never a saved one. Each refusal names the
+/// parameters.
 pub fn check_live_params(report: &Report, params: &[(String, String)]) -> Result<(), String> {
     let key = rpt_db_mssql::param_key;
     let fields: Vec<_> = report.data_definition.parameter_fields().collect();
@@ -252,7 +254,7 @@ pub fn check_live_params(report: &Report, params: &[(String, String)]) -> Result
     }
     let missing: Vec<&str> = fields
         .iter()
-        .filter(|(_, p)| p.report_name.is_none() && !p.optional_prompt && !p.allow_null_value && !p.has_current_value)
+        .filter(|(_, p)| p.report_name.is_none() && !p.optional_prompt && !p.allow_null_value)
         .map(|(f, _)| shown(&f.name))
         .filter(|n| !params.iter().any(|(given, _)| key(given) == key(n)))
         .collect();

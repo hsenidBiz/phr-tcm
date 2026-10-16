@@ -586,6 +586,31 @@ fn live_parameters_are_checked_by_name_before_connecting() {
     let why = crystal::check_live_params(&strict, &all[1..]).unwrap_err();
     assert_eq!(why, format!("the report needs a value for {}: give it in params", needed[0]));
 
+    // A value saved in the report does not stand in for a required one:
+    // the bundle never binds it, so the procedure would run with NULL.
+    let mut saved = strict.clone();
+    for f in &mut saved.data_definition.field_definitions {
+        if let FieldKindData::Parameter(p) = &mut f.kind {
+            if p.report_name.is_none() {
+                p.has_current_value = true;
+                p.current_values = p.default_values.clone();
+            }
+        }
+    }
+    let why = crystal::check_live_params(&saved, &all[1..]).unwrap_err();
+    assert_eq!(why, format!("the report needs a value for {}: give it in params", needed[0]));
+    assert_eq!(crystal::check_live_params(&saved, &all), Ok(()));
+    // An optional one, or one allowed empty, may be left out.
+    for (optional, nullable) in [(true, false), (false, true)] {
+        let mut lenient = strict.clone();
+        for f in &mut lenient.data_definition.field_definitions {
+            if let FieldKindData::Parameter(p) = &mut f.kind {
+                (p.optional_prompt, p.allow_null_value) = (optional, nullable);
+            }
+        }
+        assert_eq!(crystal::check_live_params(&lenient, &[]), Ok(()), "optional {optional}, nullable {nullable}");
+    }
+
     // Through the preview: refused, and nothing fetched.
     let _lock = serial::crystal();
     let dir = tempfile::tempdir().unwrap();
