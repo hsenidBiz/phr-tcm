@@ -3295,32 +3295,6 @@
       }
     }
   },
-  "settings-modules": {
-    "size": {
-      "w": 1440,
-      "h": 900
-    },
-    "controls": {
-      "allow-machine-wide": {
-        "x": 695,
-        "y": 764,
-        "w": 32,
-        "h": 18
-      },
-      "open-modules": {
-        "x": 695,
-        "y": 655,
-        "w": 32,
-        "h": 18
-      },
-      "request-rate": {
-        "x": 536,
-        "y": 559,
-        "w": 72,
-        "h": 24
-      }
-    }
-  },
   "settings-logs": {
     "size": {
       "w": 1440,
@@ -3406,6 +3380,32 @@
         "y": 327,
         "w": 80,
         "h": 72
+      }
+    }
+  },
+  "settings-modules": {
+    "size": {
+      "w": 1440,
+      "h": 900
+    },
+    "controls": {
+      "allow-machine-wide": {
+        "x": 695,
+        "y": 764,
+        "w": 32,
+        "h": 18
+      },
+      "open-modules": {
+        "x": 634,
+        "y": 649,
+        "w": 94,
+        "h": 29
+      },
+      "request-rate": {
+        "x": 536,
+        "y": 559,
+        "w": 72,
+        "h": 24
       }
     }
   },
