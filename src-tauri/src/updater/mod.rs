@@ -476,6 +476,8 @@ fn try_source(
     if let Some(dir) = data_dir {
         note_attempt(dir, &version);
     }
+    // The restart below may end this process without the exit event.
+    crate::cache::flush();
     // The package is on disk now, so a failure here is not something the
     // next source could fix - but it is still reported as one failure among
     // the sources rather than specially, because the caller's job is only to

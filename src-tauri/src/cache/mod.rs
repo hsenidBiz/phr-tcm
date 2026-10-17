@@ -24,7 +24,9 @@ pub mod keys;
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -49,17 +51,45 @@ struct Disk {
 struct Inner {
     disk: Disk,
     session: HashMap<String, (Instant, Box<dyn Any + Send>)>,
-    /// Bumped on every change that is written, so writes that finish out of
-    /// order never put an older state on disk over a newer one.
+    /// Bumped on every snapshot taken for the disk, so writes that finish
+    /// out of order never put an older state on disk over a newer one.
     generation: u64,
 }
 
-pub struct Store {
+/// How long the writer waits after the first change before saving, so a
+/// burst of changes (a sweep caching dozens of suites) is one write.
+const WRITE_WINDOW: Duration = Duration::from_millis(300);
+
+#[derive(Default)]
+struct Wake {
+    /// A change has not been written yet.
+    dirty: bool,
+    /// The store is being dropped: write what is pending, then stop.
+    closed: bool,
+}
+
+/// What the store and its writer thread share.
+struct Shared {
     file: Option<PathBuf>,
     inner: Mutex<Inner>,
     /// The generation last written to disk. Also serialises the writes
     /// themselves (one `.tmp` file), without holding the data lock.
     written: Mutex<u64>,
+    /// Successful writes of the file, for tests and diagnostics.
+    writes: AtomicU64,
+    wake: Mutex<Wake>,
+    cv: Condvar,
+}
+
+/// Changes land in memory at once; the file is written behind them by one
+/// thread per on-disk store, at most once per `WRITE_WINDOW`, so no caller
+/// waits on the disk. A sign-in claim and `clear` are written before they
+/// return - a wipe must not wait - and so is anything pending when the
+/// store is dropped or `flush` is called (the app does at exit). A crash
+/// can lose the last window of changes: it is a cache, they refetch.
+pub struct Store {
+    shared: Arc<Shared>,
+    writer: Option<JoinHandle<()>>,
 }
 
 pub fn now_ms() -> u64 {
@@ -121,52 +151,15 @@ fn evict_pw_lists(entries: &mut HashMap<String, Entry>, just_put: &str) {
     }
 }
 
-impl Store {
-    /// Open the cache in `dir`, or memory-only with `None`. A corrupt or
-    /// absent file simply starts empty - never an error.
-    pub fn open(dir: Option<&Path>) -> Store {
-        let store = Store {
-            file: dir.map(|d| d.join(FILE)),
-            inner: Mutex::new(Inner::default()),
-            written: Mutex::new(0),
-        };
-        let Some(dir) = dir else { return store };
-        if let Some(disk) = read_json::<Disk>(&dir.join(FILE)) {
-            store.lock().disk = disk;
-            // A restored backup can drop the legacy files beside an
-            // already-existing cache.json (restoring onto a machine that
-            // has since migrated). Fold anything not already present in so
-            // it is not silently left on disk, unread, forever - but never
-            // overwrite a current entry with a stale one.
-            if let Some(legacy_disk) = legacy::read(dir) {
-                let snap = {
-                    let mut inner = store.lock();
-                    for (key, entry) in legacy_disk.entries {
-                        inner.disk.entries.entry(key).or_insert(entry);
-                    }
-                    store.snapshot(&mut inner)
-                };
-                if store.write(snap) {
-                    legacy::remove(dir);
-                }
-            }
-        } else if let Some(disk) = legacy::read(dir) {
-            let snap = {
-                let mut inner = store.lock();
-                inner.disk = disk;
-                store.snapshot(&mut inner)
-            };
-            if store.write(snap) {
-                legacy::remove(dir);
-            }
-        }
-        store
-    }
-
+impl Shared {
     fn lock(&self) -> MutexGuard<'_, Inner> {
         // A panic elsewhere while holding the lock must not take the cache
         // down with it: the map is still structurally sound.
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn wake(&self) -> MutexGuard<'_, Wake> {
+        self.wake.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The disk half, serialised under the data lock, with its generation.
@@ -197,7 +190,145 @@ impl Store {
             return false;
         }
         *written = generation;
+        self.writes.fetch_add(1, Ordering::Relaxed);
         true
+    }
+
+    /// Snapshot the current state and write it now.
+    fn write_now(&self) -> bool {
+        let snap = self.snapshot(&mut self.lock());
+        self.write(snap)
+    }
+
+    /// Note a change for the writer thread. The caller must not hold the
+    /// data lock (the writer takes it to snapshot).
+    fn schedule(&self) {
+        if self.file.is_none() {
+            return;
+        }
+        self.wake().dirty = true;
+        self.cv.notify_one();
+    }
+
+    /// Write now if a change is pending.
+    fn flush(&self) {
+        let pending = std::mem::take(&mut self.wake().dirty);
+        if pending {
+            self.write_now();
+        }
+    }
+
+    /// The writer thread: wait for a change, let the window collect any
+    /// that follow, write once. Stops after writing what is pending once
+    /// the store is closed.
+    fn run_writer(&self) {
+        let mut wake = self.wake();
+        loop {
+            while !wake.dirty && !wake.closed {
+                wake = self.cv.wait(wake).unwrap_or_else(PoisonError::into_inner);
+            }
+            if !wake.dirty {
+                return; // closed, nothing pending
+            }
+            // Collect the burst; a close cuts the wait short.
+            wake = self
+                .cv
+                .wait_timeout_while(wake, WRITE_WINDOW, |w| !w.closed)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+            if !wake.dirty {
+                continue; // a `flush` wrote it during the window
+            }
+            // Cleared BEFORE the snapshot: a change after this point marks
+            // the store dirty again and gets a write of its own.
+            wake.dirty = false;
+            drop(wake);
+            self.write_now();
+            wake = self.wake();
+        }
+    }
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        let Some(writer) = self.writer.take() else { return };
+        self.shared.wake().closed = true;
+        self.shared.cv.notify_one();
+        let _ = writer.join();
+        // The writer exits only with nothing pending, unless it panicked.
+        self.shared.flush();
+    }
+}
+
+impl Store {
+    /// Open the cache in `dir`, or memory-only with `None`. A corrupt or
+    /// absent file simply starts empty - never an error.
+    pub fn open(dir: Option<&Path>) -> Store {
+        let shared = Arc::new(Shared {
+            file: dir.map(|d| d.join(FILE)),
+            inner: Mutex::new(Inner::default()),
+            written: Mutex::new(0),
+            writes: AtomicU64::new(0),
+            wake: Mutex::new(Wake::default()),
+            cv: Condvar::new(),
+        });
+        let Some(dir) = dir else { return Store { shared, writer: None } };
+        if let Some(disk) = read_json::<Disk>(&dir.join(FILE)) {
+            shared.lock().disk = disk;
+            // A restored backup can drop the legacy files beside an
+            // already-existing cache.json (restoring onto a machine that
+            // has since migrated). Fold anything not already present in so
+            // it is not silently left on disk, unread, forever - but never
+            // overwrite a current entry with a stale one.
+            if let Some(legacy_disk) = legacy::read(dir) {
+                {
+                    let mut inner = shared.lock();
+                    for (key, entry) in legacy_disk.entries {
+                        inner.disk.entries.entry(key).or_insert(entry);
+                    }
+                }
+                if shared.write_now() {
+                    legacy::remove(dir);
+                }
+            }
+        } else if let Some(disk) = legacy::read(dir) {
+            shared.lock().disk = disk;
+            if shared.write_now() {
+                legacy::remove(dir);
+            }
+        }
+        let for_writer = Arc::clone(&shared);
+        let writer = std::thread::Builder::new()
+            .name("tcm-cache-writer".into())
+            .spawn(move || for_writer.run_writer())
+            .ok();
+        Store { shared, writer }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Inner> {
+        self.shared.lock()
+    }
+
+    /// Note a change: written behind the caller by the writer thread, or
+    /// right here when the thread could not be started.
+    fn changed(&self) {
+        if self.writer.is_some() {
+            self.shared.schedule();
+        } else {
+            self.shared.write_now();
+        }
+    }
+
+    /// Write any pending change now. The app calls this at exit; a dropped
+    /// store does it itself.
+    pub fn flush(&self) {
+        self.shared.flush();
+    }
+
+    /// How many times the file has been written since this store opened.
+    /// For tests and diagnostics.
+    pub fn disk_writes(&self) -> u64 {
+        self.shared.writes.load(Ordering::Relaxed)
     }
 
     /// Whatever is cached, however old.
@@ -228,15 +359,14 @@ impl Store {
     /// its TTL run out, without a clock of its own anywhere.
     pub fn put_at<T: Serialize>(&self, key: &str, value: &T, at_ms: u64) {
         let Ok(value) = serde_json::to_value(value) else { return };
-        let snap = {
+        {
             let mut inner = self.lock();
             let now = now_ms();
             inner.disk.entries.insert(key.to_string(), Entry { value, at_ms });
             evict_wiki_pages(&mut inner.disk.entries, now);
             evict_pw_lists(&mut inner.disk.entries, key);
-            self.snapshot(&mut inner)
-        };
-        self.write(snap);
+        }
+        self.changed();
     }
 
     /// Change a cached value in place. `f` returns whether it changed
@@ -248,7 +378,7 @@ impl Store {
     /// this cache (directly or through the free functions below), or it
     /// will deadlock on itself.
     pub fn update<T: Serialize + DeserializeOwned>(&self, key: &str, f: impl FnOnce(&mut T) -> bool) {
-        let snap = {
+        {
             let mut inner = self.lock();
             let Some(entry) = inner.disk.entries.get_mut(key) else { return };
             let Ok(mut value) = serde_json::from_value::<T>(entry.value.clone()) else { return };
@@ -257,22 +387,20 @@ impl Store {
             }
             let Ok(json) = serde_json::to_value(&value) else { return };
             entry.value = json;
-            self.snapshot(&mut inner)
-        };
-        self.write(snap);
+        }
+        self.changed();
     }
 
     /// Drop one key from both tiers.
     pub fn forget(&self, key: &str) {
-        let snap = {
+        {
             let mut inner = self.lock();
             inner.session.remove(key);
             if inner.disk.entries.remove(key).is_none() {
                 return;
             }
-            self.snapshot(&mut inner)
-        };
-        self.write(snap);
+        }
+        self.changed();
     }
 
     /// A session value younger than `ttl`, as it was stored.
@@ -314,9 +442,8 @@ impl Store {
             inner.disk.entries.clear();
             inner.session.clear();
             inner.disk.owner = Some(UNNAMED_OWNER.to_string());
-            let snap = self.snapshot(&mut inner);
             drop(inner);
-            self.write(snap);
+            self.write_through();
             return;
         };
         let tag = owner_tag(account);
@@ -331,20 +458,25 @@ impl Store {
             None => {}
         }
         inner.disk.owner = Some(tag);
-        let snap = self.snapshot(&mut inner);
         drop(inner);
-        self.write(snap);
+        self.write_through();
     }
 
     /// Drop every entry in both tiers (the owner is kept).
     pub fn clear(&self) {
-        let snap = {
+        {
             let mut inner = self.lock();
             inner.disk.entries.clear();
             inner.session.clear();
-            self.snapshot(&mut inner)
-        };
-        self.write(snap);
+        }
+        self.write_through();
+    }
+
+    /// Write now, not behind the caller: for the wipes, which must be on
+    /// disk before anyone can act on them. Anything pending goes with it.
+    fn write_through(&self) {
+        self.shared.wake().dirty = false;
+        self.shared.write_now();
     }
 }
 
@@ -458,4 +590,12 @@ pub fn claim_for(account: Option<&str>) {
 
 pub fn clear() {
     global().clear()
+}
+
+/// Write any pending change now: the app calls this as it exits, since the
+/// global store is never dropped.
+pub fn flush() {
+    if let Some(store) = GLOBAL.get() {
+        store.flush();
+    }
 }

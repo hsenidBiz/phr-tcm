@@ -645,6 +645,8 @@ pub fn run() {
                 // so its file is saved as stopped before the app goes.
                 commands::autorun_replay::stop_paused_run_on_exit();
                 close_autorun_on_exit();
+                // The cache writes behind its callers; save what is pending.
+                cache::flush();
             }
         });
 }

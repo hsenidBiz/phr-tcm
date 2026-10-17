@@ -57,13 +57,88 @@ fn values_survive_a_restart() {
     assert_eq!(Store::open(Some(&dir)).get::<u32>("k"), Some(42));
 }
 
+/// Changes land in memory at once and reach the file behind the caller,
+/// without a flush or a drop.
+#[test]
+fn a_change_reaches_the_file_on_its_own() {
+    let dir = temp_dir("behind");
+    let store = Store::open(Some(&dir));
+    store.put("k", &"written-behind");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let raw = std::fs::read_to_string(dir.join("cache.json")).unwrap_or_default();
+        if raw.contains("written-behind") {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the writer never wrote the change");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(store.disk_writes(), 1);
+}
+
+/// Every change used to rewrite the whole file on the caller's thread. A
+/// burst - a sweep caching dozens of suites - is now one write.
+#[test]
+fn a_burst_of_changes_is_written_once() {
+    let dir = temp_dir("burst");
+    let store = Store::open(Some(&dir));
+    for i in 0..100u32 {
+        store.put(&format!("k{i}"), &i);
+    }
+    store.flush();
+    // One write, or two if this machine stalled for a whole window mid-burst.
+    assert!(store.disk_writes() <= 2, "{} writes for one burst", store.disk_writes());
+    assert_eq!(Store::open(Some(&dir)).get::<u32>("k99"), Some(99));
+}
+
+#[test]
+fn a_dropped_store_writes_what_is_pending() {
+    let dir = temp_dir("drop");
+    {
+        let store = Store::open(Some(&dir));
+        store.put("a", &1u8);
+        store.put("b", &2u8);
+    }
+    let reopened = Store::open(Some(&dir));
+    assert_eq!(reopened.get::<u8>("a"), Some(1));
+    assert_eq!(reopened.get::<u8>("b"), Some(2));
+}
+
+/// A wipe must be on disk before anyone acts on it - including entries
+/// still waiting for the writer, which must not land afterwards.
+#[test]
+fn a_sign_in_wipe_is_on_disk_when_the_claim_returns() {
+    let dir = temp_dir("wipe-now");
+    let store = Store::open(Some(&dir));
+    store.claim_for(Some("first@example.com"));
+    store.put("theirs", &"secret-plan");
+    store.claim_for(Some("second@example.com"));
+    let raw = std::fs::read_to_string(dir.join("cache.json")).unwrap();
+    assert!(!raw.contains("secret-plan"), "{raw}");
+    std::thread::sleep(Duration::from_millis(600)); // past the write window
+    let raw = std::fs::read_to_string(dir.join("cache.json")).unwrap();
+    assert!(!raw.contains("secret-plan"), "{raw}");
+}
+
+#[test]
+fn a_memory_only_store_never_writes() {
+    let store = Store::open(None);
+    store.put("k", &1u8);
+    store.flush();
+    assert_eq!(store.disk_writes(), 0);
+    assert_eq!(store.get::<u8>("k"), Some(1));
+}
+
 #[test]
 fn forget_removes_a_value_from_memory_and_disk() {
     let dir = temp_dir("forget");
     let store = Store::open(Some(&dir));
     store.put("k", &1u8);
+    store.flush();
+    assert_eq!(Store::open(Some(&dir)).get::<u8>("k"), Some(1));
     store.forget("k");
     assert!(store.get::<u8>("k").is_none());
+    store.flush();
     assert!(Store::open(Some(&dir)).get::<u8>("k").is_none());
 }
 
@@ -91,6 +166,7 @@ fn update_changes_the_value_but_not_its_age_and_never_seeds_a_cold_key() {
     });
     assert_eq!(store.get::<Vec<String>>("k").unwrap(), vec!["a", "b"]);
     assert!(store.fresh::<Vec<String>>("k", 60_000).is_none(), "still aged from 1970");
+    store.flush();
     assert_eq!(Store::open(Some(&dir)).get::<Vec<String>>("k").unwrap(), vec!["a", "b"]);
 }
 
@@ -133,6 +209,7 @@ fn signing_in_as_someone_else_drops_the_previous_accounts_cache() {
 
     // The owner is remembered across a restart...
     store.put("k", &1u8);
+    store.flush();
     let reopened = Store::open(Some(&dir));
     reopened.claim_for(Some("second@example.com"));
     assert_eq!(reopened.get::<u8>("k"), Some(1));
@@ -499,6 +576,7 @@ fn wiki_pages_are_evicted_after_a_week_and_capped_at_fifty() {
         assert!(store.get::<String>(&page(i)).is_some(), "page {i} is among the newest 50 and stays");
     }
     assert_eq!(store.get::<Vec<String>>("tags:o|p").unwrap(), vec!["t"], "other keys are never evicted");
+    store.flush();
     let reopened = Store::open(Some(&dir));
     assert!(reopened.get::<String>(&page(0)).is_none() && reopened.get::<String>(&page(1000)).is_some(), "the file agrees");
 }
