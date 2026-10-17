@@ -21,6 +21,7 @@ export default function Combobox({
   loading = false,
   details,
   pins,
+  seedQuery = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -48,12 +49,17 @@ export default function Combobox({
     canPin: (value: string) => boolean;
     onToggle: (value: string) => void;
   };
+  /** Open with the search box holding the current value, so a picked value
+   * (a folder's parent) can be extended by typing instead of retyped. */
+  seedQuery?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  // Row 0 is the typed value when it is offered (see `showCustom`), else the first option.
   const [active, setActive] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -65,8 +71,11 @@ export default function Combobox({
   }, [open]);
 
   useEffect(() => {
-    if (open) inputRef.current?.focus();
-    else setQuery("");
+    if (open) {
+      const box = inputRef.current;
+      box?.focus();
+      box?.setSelectionRange(box.value.length, box.value.length);
+    } else setQuery("");
   }, [open]);
 
   const q = query.trim().toLowerCase();
@@ -84,17 +93,32 @@ export default function Combobox({
     () => (q ? rows.filter((r) => r.label.toLowerCase().includes(q)) : rows),
     [rows, q],
   );
+  // A typed value that is no option's exact text leads the list and is what
+  // Enter takes: typing the start of a longer option must not pick that option.
   const showCustom = allowCustom && query.trim() && !rows.some((r) => r.label.toLowerCase() === q);
+  const lead = showCustom ? 1 : 0;
+  /** Where the highlight starts for a search text: the exact option if there is one. */
+  const startRow = (text: string) => {
+    const t = text.trim().toLowerCase();
+    return Math.max(0, rows.filter((r) => r.label.toLowerCase().includes(t)).findIndex((r) => r.label.toLowerCase() === t));
+  };
   const selectedLabel = rows.find((r) => r.value === value)?.label ?? value;
 
   const commit = (v: string) => {
     onChange(v);
     setOpen(false);
   };
+  // The list's search box is about to go: the keyboard goes back to the
+  // field, not to the page, so a form around it can carry on from there.
+  const closeFromKeyboard = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
 
   return (
     <div ref={ref} className={cn("relative", className)}>
       <button
+        ref={triggerRef}
         type="button"
         role="combobox"
         aria-expanded={open}
@@ -108,7 +132,13 @@ export default function Combobox({
           open && "border-accent",
           triggerClassName,
         )}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          if (!open && seedQuery) {
+            setQuery(value);
+            setActive(startRow(value));
+          }
+          setOpen((o) => !o);
+        }}
       >
         <span className={cn("truncate", value ? "text-text" : "text-faint")}>
           {selectedLabel || placeholder}
@@ -145,10 +175,10 @@ export default function Combobox({
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
-                setActive(0);
+                setActive(startRow(e.target.value));
               }}
               onKeyDown={(e) => {
-                const rows = filtered.length + (showCustom ? 1 : 0);
+                const rows = filtered.length + lead;
                 if (e.key === "ArrowDown") {
                   e.preventDefault();
                   setActive((a) => Math.min(a + 1, rows - 1));
@@ -157,10 +187,15 @@ export default function Combobox({
                   setActive((a) => Math.max(a - 1, 0));
                 } else if (e.key === "Enter") {
                   e.preventDefault();
-                  if (active < filtered.length) commit(filtered[active].value);
-                  else if (showCustom) commit(query.trim());
+                  if (showCustom && active === 0) onChange(query.trim());
+                  else if (active - lead < filtered.length) onChange(filtered[active - lead].value);
+                  else return;
+                  closeFromKeyboard();
                 } else if (e.key === "Escape") {
-                  setOpen(false);
+                  // Closing the list is this key's whole job here: a dialog or
+                  // form around the field is not also closed by it.
+                  e.stopPropagation();
+                  closeFromKeyboard();
                 }
               }}
             />
@@ -170,11 +205,28 @@ export default function Combobox({
             {!loading && filtered.length === 0 && !showCustom && (
               <li className="px-2 py-1.5 text-sm text-muted">No matches</li>
             )}
+            {showCustom && (
+              <li>
+                <button
+                  className={cn(
+                    "w-full rounded px-2 py-1.5 text-left text-sm",
+                    active === 0
+                      ? "bg-accent-soft text-accent"
+                      : "text-text hover:bg-surface-2",
+                  )}
+                  onMouseEnter={() => setActive(0)}
+                  onClick={() => commit(query.trim())}
+                >
+                  Use "{query.trim()}"
+                </button>
+              </li>
+            )}
             {filtered.map((r, i) => {
               const pinnable = Boolean(pins?.canPin(r.value));
               const pinnedRow = isPinned(r.value);
               // The divider under the pinned rows: before the first row
               // that is not pinned, when a pinned one came before it.
+              const row = i + lead;
               const divide = i > 0 && !pinnedRow && isPinned(filtered[i - 1].value);
               return [
                 divide && <li key={`${r.value}-divider`} role="presentation" className="mx-1 my-1 border-t border-border" />,
@@ -186,9 +238,9 @@ export default function Combobox({
                     className={cn(
                       "flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm",
                       pinnable && "pr-8",
-                      i === active ? "bg-accent-soft text-accent" : "text-text hover:bg-surface-2",
+                      row === active ? "bg-accent-soft text-accent" : "text-text hover:bg-surface-2",
                     )}
-                    onMouseEnter={() => setActive(i)}
+                    onMouseEnter={() => setActive(row)}
                     onClick={() => commit(r.value)}
                   >
                     <span className="truncate">{r.label}</span>
@@ -209,12 +261,12 @@ export default function Combobox({
                         "absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center rounded p-1 transition-opacity hover:text-accent focus-visible:opacity-100",
                         pinnedRow
                           ? "text-accent opacity-100"
-                          : cn("text-muted", i === active ? "opacity-100" : "opacity-0 group-hover:opacity-100"),
+                          : cn("text-muted", row === active ? "opacity-100" : "opacity-0 group-hover:opacity-100"),
                       )}
                       // Keep focus in the search box: pinning is a side
                       // trip, and typing should carry on where it was.
                       onMouseDown={(e) => e.preventDefault()}
-                      onMouseEnter={() => setActive(i)}
+                      onMouseEnter={() => setActive(row)}
                       onClick={(e) => {
                         e.stopPropagation();
                         pins.onToggle(r.value);
@@ -226,22 +278,6 @@ export default function Combobox({
                 </li>,
               ];
             })}
-            {showCustom && (
-              <li>
-                <button
-                  className={cn(
-                    "w-full rounded px-2 py-1.5 text-left text-sm",
-                    active === filtered.length
-                      ? "bg-accent-soft text-accent"
-                      : "text-text hover:bg-surface-2",
-                  )}
-                  onMouseEnter={() => setActive(filtered.length)}
-                  onClick={() => commit(query.trim())}
-                >
-                  Use "{query.trim()}"
-                </button>
-              </li>
-            )}
           </ul>
         </div>
       )}

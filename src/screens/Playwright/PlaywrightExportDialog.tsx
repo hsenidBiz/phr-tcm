@@ -19,7 +19,9 @@
 //
 // A case goes to its area's folder unless it is given its own: its row shows
 // where it goes, and Own folder lets one case of an area sit apart from the
-// rest. Own folders are saved with the other mappings.
+// rest. Own folders are saved with the other mappings. When a case's title
+// names one of the clone's folders beside (or inside) its area's, the row
+// suggests it (folderSuggest); taking it only edits the draft.
 
 import { useCallback, useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -34,7 +36,7 @@ import {
 } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
-import { Input } from "../../components/ui/input";
+import Combobox from "../../components/ui/combobox";
 import { Modal } from "../../components/ui/modal";
 import { Select } from "../../components/ui/select";
 import { MODAL_LARGE } from "../AutoRun/modalWidths";
@@ -43,6 +45,7 @@ import { copyText } from "../../lib/clipboard";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrapStr } from "../../lib/ipc";
 import FinishInRepo from "./FinishInRepo";
+import { suggestFolder } from "./folderSuggest";
 import NewFolder from "./NewFolder";
 import { Card, Hint, STRUCTURE_KEY, Stat, StatusBadge } from "./parts";
 
@@ -112,7 +115,6 @@ export default function PlaywrightExportDialog({
     staleTime: Infinity,
   });
   const featurePaths = (structure.data?.features ?? []).map((f) => f.path.join("/"));
-  const listId = useId();
 
   /** Reads the preview again. `reseed` puts the rows back to what is saved. */
   const refresh = useCallback(async (reseed = true) => {
@@ -269,16 +271,63 @@ export default function PlaywrightExportDialog({
     else groups.push([name, [c]]);
   }
 
+  const tidy = (path: string) => path.trim().replace(/[\s/]+$/, "");
+  /**
+   * The folder the case's area holds now: the area's field as edited, not as
+   * saved. The preview names a case's folder (`seg`, the saved one) but not
+   * its area, so the area is the one(s) saved at that folder. Null when that
+   * field is empty; the saved folder when the areas sharing it now differ.
+   */
+  const areaFolderOf = (c: PreviewCase): string | null => {
+    if (!c.seg) return null;
+    const saved = preview?.map.areas ?? {};
+    const drafts = new Set(
+      (preview?.areas ?? []).filter((n) => tidy(saved[n]?.path ?? "") === tidy(c.seg ?? "")).map((n) => tidy(areas?.[n]?.path ?? "")),
+    );
+    if (drafts.size !== 1) return c.seg;
+    return [...drafts][0] || null;
+  };
+  /** The clone's folder a case's title points at, when it has a folder and no folder of its own. */
+  const suggestionFor = (c: PreviewCase): string | null => {
+    const area = c.excluded || !c.has_script || c.case_id in own ? null : areaFolderOf(c);
+    return area ? suggestFolder(c.title, area, featurePaths) : null;
+  };
+  const suggestions = listed.flatMap((c) => {
+    const path = suggestionFor(c);
+    return path ? [[c.case_id, path] as const] : [];
+  });
+  const takeSuggestions = (picked: readonly (readonly [number, string])[]) =>
+    setOwn((cur) => ({ ...cur, ...Object.fromEntries(picked) }));
+
   /** Where the case goes, and the control that gives it (or takes back) its own folder. */
   const folderLine = (c: PreviewCase) => {
     if (c.excluded) return null;
     const id = c.case_id;
     if (!(id in own)) {
+      const suggested = suggestionFor(c);
       return (
         <div className="ml-[6.75rem] flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate font-mono text-xs text-faint" title={c.seg ?? undefined}>
             {c.seg ?? "No folder yet"}
           </span>
+          {suggested && (
+            <>
+              <span className="min-w-0 shrink truncate font-mono text-xs text-accent" title={suggested}>
+                {`Suggested: ${suggested.split("/").pop()}`}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Use the suggested folder for #${id}`}
+                title="Send this case to the suggested folder instead of its area's"
+                disabled={busy}
+                onClick={() => takeSuggestions([[id, suggested]])}
+              >
+                <IconConfirm aria-hidden />
+                Use
+              </Button>
+            </>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -296,14 +345,16 @@ export default function PlaywrightExportDialog({
     return (
       <div className="ml-[6.75rem] space-y-1">
         <div className="flex items-center gap-2">
-          <Input
-            aria-label={`Folder for #${id}`}
+          <Combobox
+            className="min-w-0 flex-1"
+            ariaLabel={`Folder for #${id}`}
             placeholder="sl/admin/performance/feature"
-            list={listId}
-            spellCheck={false}
-            className="min-w-0 flex-1 py-1.5 font-mono text-xs"
+            allowCustom
+            seedQuery
+            options={featurePaths}
+            triggerClassName="py-1.5 font-mono text-xs"
             value={own[id]}
-            onChange={(e) => setOwn((cur) => ({ ...cur, [id]: e.target.value }))}
+            onChange={(v) => setOwn((cur) => ({ ...cur, [id]: v }))}
           />
           <Button
             size="sm"
@@ -491,10 +542,24 @@ export default function PlaywrightExportDialog({
                   </>
                 }
                 aria-label="Cases"
+                // The folder lists open past the card's edge.
+                className="overflow-visible"
               >
                 <div className="space-y-0.5 border-b border-border px-3 py-2">
                   <Hint>{SKIP_NOTE}</Hint>
                   <Hint>Each case goes to its area's folder. Own folder sends one case somewhere else.</Hint>
+                  {suggestions.length > 1 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      title="Send each of these cases to the folder suggested for it"
+                      onClick={() => takeSuggestions(suggestions)}
+                    >
+                      <IconConfirm aria-hidden />
+                      {`Use ${suggestions.length} suggested folders`}
+                    </Button>
+                  )}
                   {noScript > 0 && (
                     <Hint className="text-faint">{`${noScript} ${noScript === 1 ? "case without a script is" : "cases without a script are"} not shown.`}</Hint>
                   )}
@@ -522,6 +587,7 @@ export default function PlaywrightExportDialog({
                   </>
                 }
                 bodyClassName="space-y-4 p-3"
+                className="overflow-visible"
               >
                 <section className="space-y-2">
                   <h4 className="text-xs font-medium text-text">Areas</h4>
@@ -530,25 +596,21 @@ export default function PlaywrightExportDialog({
                     <NewFolder clone={clone} paths={featurePaths} disabled={busy} onCreated={() => void structure.refetch()} />
                   )}
                   {preview.areas.length === 0 && <Hint>No areas yet.</Hint>}
-                  <datalist id={listId}>
-                    {featurePaths.map((p) => (
-                      <option key={p} value={p} />
-                    ))}
-                  </datalist>
                   {preview.areas.map((name) => (
                     <div key={name} className="space-y-1">
                       <div className="flex items-baseline justify-between gap-2">
                         <span className="text-sm text-text">{name}</span>
                         {invalid.has(name) && <span className="text-xs text-danger">needs a folder path</span>}
                       </div>
-                      <Input
-                        aria-label={`Folder for ${name}`}
+                      <Combobox
+                        ariaLabel={`Folder for ${name}`}
                         placeholder="sl/admin/performance/feature"
-                        list={listId}
-                        spellCheck={false}
-                        className="py-1.5 font-mono text-xs"
+                        allowCustom
+                        seedQuery
+                        options={featurePaths}
+                        triggerClassName="py-1.5 font-mono text-xs"
                         value={place(name).path}
-                        onChange={(e) => setPlace(name, { path: e.target.value })}
+                        onChange={(v) => setPlace(name, { path: v })}
                       />
                       {isNewFolder(place(name).path) && <p className="text-xs text-warning">A new folder will be created.</p>}
                     </div>

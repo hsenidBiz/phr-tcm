@@ -3,10 +3,10 @@
 // On the Overview and in Export to Playwright; the caller reads the clone's
 // folders again once one is made, so it is listed and offered at once.
 
-import { useId, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { commands } from "../../bindings";
 import { Button } from "../../components/ui/button";
-import { Input } from "../../components/ui/input";
+import Combobox from "../../components/ui/combobox";
 import { IconAdd, IconCancel, IconConfirm } from "../../lib/actionIcons";
 import { unwrapStr } from "../../lib/ipc";
 
@@ -24,12 +24,19 @@ export default function NewFolder({
   disabled?: boolean;
   onCreated: (path: string) => void;
 }) {
-  const listId = useId();
   const [open, setOpen] = useState(false);
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [made, setMade] = useState("");
+  const field = useRef<HTMLDivElement>(null);
+  // Where the clone's features sit, once each, with the slash a new name follows.
+  const parents = useMemo(() => [...new Set(paths.map((p) => `${p.split("/").slice(0, -1).join("/")}/`))], [paths]);
+
+  // The keyboard starts in the path field, as the plain input it replaces did.
+  useEffect(() => {
+    if (open) field.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+  }, [open]);
 
   const close = () => {
     setOpen(false);
@@ -75,24 +82,35 @@ export default function NewFolder({
   return (
     <div className="space-y-1.5" role="group" aria-label="New folder">
       <div className="flex items-center gap-2">
-        <Input
-          aria-label="New folder path"
-          placeholder="sl/admin/performance/new-feature"
-          list={listId}
-          spellCheck={false}
-          autoFocus
-          className="min-w-0 flex-1 py-1.5 font-mono text-xs"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
+        <div
+          ref={field}
+          className="min-w-0 flex-1"
           onKeyDown={(e) => {
-            if (e.key === "Enter" && path.trim() && !busy) void create();
+            // Only the field itself: its list answers its own Enter and Escape.
+            if ((e.target as HTMLElement).getAttribute("role") !== "combobox") return;
+            if (e.key === "Enter" && path.trim()) {
+              // The path was chosen in the list; Enter on the field makes the folder.
+              e.preventDefault();
+              if (!busy) void create();
+            }
             if (e.key === "Escape") {
               // Only this form: a dialog behind it is not closed.
               e.stopPropagation();
               close();
             }
           }}
-        />
+        >
+          <Combobox
+            ariaLabel="New folder path"
+            placeholder="sl/admin/performance/new-feature"
+            allowCustom
+            seedQuery
+            options={parents}
+            triggerClassName="py-1.5 font-mono text-xs"
+            value={path}
+            onChange={setPath}
+          />
+        </div>
         <Button size="sm" disabled={busy || disabled || !path.trim()} onClick={() => void create()}>
           <IconConfirm aria-hidden />
           Create
@@ -102,11 +120,6 @@ export default function NewFolder({
           Cancel
         </Button>
       </div>
-      <datalist id={listId}>
-        {[...new Set(paths.map((p) => `${p.split("/").slice(0, -1).join("/")}/`))].map((p) => (
-          <option key={p} value={p} />
-        ))}
-      </datalist>
       <p className="text-xs text-muted">The folder's path under suites. It gets test-cases and specs folders, kept in git.</p>
       {error && <p className="text-xs text-danger">{error}</p>}
     </div>
