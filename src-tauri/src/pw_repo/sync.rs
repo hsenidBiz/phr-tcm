@@ -45,9 +45,8 @@ pub struct Parts {
 /// A case's fingerprint: SHA-256 (lowercase hex) of the canonical JSON
 /// (keys sorted all the way down) of exactly what the export reads of it
 /// (`FingerprintInput`). Nothing else counts: saving the script again, its
-/// repair count, when it was saved or its marks (which the export never
-/// reads) change nothing.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// repair count or when it was saved change nothing.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Fingerprint {
     pub hash: String,
     pub parts: Parts,
@@ -58,6 +57,16 @@ pub struct Fingerprint {
     #[serde(skip)]
     pub legacy_hash: String,
 }
+
+/// Equal when the hash and the parts are: `legacy_hash` is never kept, so a
+/// fingerprint read from disk equals a freshly computed one.
+impl PartialEq for Fingerprint {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash && self.parts == other.parts
+    }
+}
+
+impl Eq for Fingerprint {}
 
 /// What the export reads of a case (`export::Fingerprinter` gathers it).
 pub struct FingerprintInput {
@@ -143,12 +152,21 @@ pub struct Exported {
     #[serde(default)]
     pub user_key: String,
     /// The Azure DevOps rows of the Preconditions, Test Data and Cleanup
-    /// tables this export wrote, as the md splice compares them. A later
-    /// export drops an old row equal to one of them: it came from ADO, so
-    /// when ADO no longer has it the repo did not add it. Empty in a record
-    /// from before it was kept, which keeps every unmarked row as before.
-    #[serde(default)]
-    pub ado_rows: Vec<String>,
+    /// tables this export wrote, by table heading, as the md splice compares
+    /// them. A later export drops an old row equal to one of them in the same
+    /// table: it came from ADO, so when ADO no longer has it the repo did not
+    /// add it. Empty in a record from before it was kept, which keeps every
+    /// unmarked row as before.
+    #[serde(default, deserialize_with = "ado_rows_or_none")]
+    pub ado_rows: BTreeMap<String, Vec<String>>,
+}
+
+/// `Exported::ado_rows`, read leniently: anything but a table-to-rows map
+/// (an earlier build kept one flat list) says no rows rather than making the
+/// whole record unreadable.
+fn ado_rows_or_none<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeMap<String, Vec<String>>, D::Error> {
+    let v = Value::deserialize(d)?;
+    Ok(serde_json::from_value(v).unwrap_or_default())
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

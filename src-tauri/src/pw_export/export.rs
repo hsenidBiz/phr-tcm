@@ -16,7 +16,7 @@ use super::handover::{
     ORDER_PROPOSAL,
 };
 use super::mapping::{self, ExportMap, Placement};
-use super::test_case::{self, CaseDoc};
+use super::test_case::{self, AdoRows, CaseDoc};
 use super::translate::{self, RawSpecInput};
 use crate::autorun::nav::{self, NavFile};
 use crate::autorun::quirks::{self, Quirk};
@@ -997,8 +997,8 @@ fn write_inner(
     docs: &BTreeMap<i32, CaseDoc>,
     replace: &[i32],
     pbi_id: Option<i32>,
-    recorded: &BTreeMap<i32, Vec<String>>,
-) -> Result<(ExportResult, Vec<(i32, Vec<String>)>), String> {
+    recorded: &BTreeMap<i32, AdoRows>,
+) -> Result<(ExportResult, Vec<(i32, AdoRows)>), String> {
     let ctx = Ctx::load(root, org, project, clone_path, modules, pbi_id)?;
     let repo = ctx.clone.as_ref().map_err(|e| e.clone())?;
     let found = presence::scan_repo(repo);
@@ -1018,7 +1018,7 @@ fn write_inner(
     let mut raw_files: Vec<Out> = Vec::new();
     let mut cases: Vec<(i32, String)> = Vec::new();
     let mut sections: Vec<(i32, String)> = Vec::new();
-    let mut ado_written: Vec<(i32, Vec<String>)> = Vec::new();
+    let mut ado_written: Vec<(i32, AdoRows)> = Vec::new();
     let mut missing_navigation: Vec<String> = Vec::new();
     let mut chosen: BTreeSet<String> = BTreeSet::new();
     let mut chosen_by: BTreeMap<String, i32> = BTreeMap::new();
@@ -1090,8 +1090,8 @@ fn write_inner(
         let current = md_files.get_mut(&md_rel).expect("inserted above");
         let written = test_case::section(&doc);
         ado_written.push((id, test_case::ado_rows(&written)));
-        let earlier = recorded.get(&id).map(Vec::as_slice).unwrap_or(&[]);
-        *current = test_case::splice_dropping(current, id, &written, earlier);
+        let earlier = recorded.get(&id).cloned().unwrap_or_default();
+        *current = test_case::splice_dropping(current, id, &written, &earlier);
         sections.push((id, md_rel.clone()));
         md_cases.entry(md_rel.clone()).or_default().push((id, &r.script));
 
@@ -1243,7 +1243,7 @@ pub fn write_recorded(
     // The ADO rows each case's last export wrote: the splice drops them from
     // the repo's rows. A record that cannot be read just says none.
     let sync_path = sync::record_path(sync_dir, clone_path, org, project);
-    let recorded: BTreeMap<i32, Vec<String>> = sync::load(&sync_path)
+    let recorded: BTreeMap<i32, AdoRows> = sync::load(&sync_path)
         .unwrap_or_default()
         .cases
         .into_iter()

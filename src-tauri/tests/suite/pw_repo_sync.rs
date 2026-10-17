@@ -247,6 +247,18 @@ fn the_handover_joins_the_fingerprint_only_when_it_says_something() {
     assert!(!none.parts.handover.is_empty(), "an export that handed over nothing still says so");
     // A record from before the part has none, and it is not what "nothing" hashes to.
     assert_eq!(sync::Parts::default().handover, "");
+
+    // The hash an export from before the part took, pinned for this input
+    // (sha256 of the canonical JSON of title, steps, area and account): the
+    // formula must not drift, or every old export would read as changed.
+    const LEGACY: &str = "8ef087babbbb503f2752829d8b906151eb23d340e248658bbb074bd12a2e97b4";
+    assert_eq!(none.hash, LEGACY);
+    assert_eq!(some.legacy_hash, LEGACY);
+
+    // `legacy_hash` is never kept: a fingerprint read back equals the one computed.
+    let read_back: sync::Fingerprint = serde_json::from_str(&serde_json::to_string(&some).unwrap()).unwrap();
+    assert!(read_back.legacy_hash.is_empty());
+    assert_eq!(read_back, some);
 }
 
 #[test]
@@ -284,6 +296,9 @@ fn an_export_from_before_this_change_stays_current() {
     }
 }
 
+/// The heading a section's Preconditions table is recorded under.
+const PRE: &str = "### Preconditions";
+
 #[test]
 fn a_repo_row_stays_and_an_ado_row_that_has_gone_does_not() {
     let sx = Sx::new();
@@ -295,7 +310,7 @@ fn a_repo_row_stays_and_an_ado_row_that_has_gone_does_not() {
     };
     sx.export(&[20], &with("pre\nsecond")).unwrap();
     let recorded = sync::load(&sx.record_path()).unwrap().cases[&20].ado_rows.clone();
-    assert_eq!(recorded, vec!["pre".to_string(), "second".to_string()]);
+    assert_eq!(recorded, BTreeMap::from([(PRE.to_string(), vec!["pre".to_string(), "second".to_string()])]));
 
     // The repo adds a row of its own after the ADO ones.
     let md = sx.fx.read_clone(MD_REL);
@@ -307,7 +322,49 @@ fn a_repo_row_stays_and_an_ado_row_that_has_gone_does_not() {
     let md = sx.fx.read_clone(MD_REL);
     assert!(md.contains("| 1 | pre |\n| 2 | repo row |\n"), "{md}");
     assert!(!md.contains("second"), "{md}");
-    assert_eq!(sync::load(&sx.record_path()).unwrap().cases[&20].ado_rows, vec!["pre".to_string()]);
+    assert_eq!(
+        sync::load(&sx.record_path()).unwrap().cases[&20].ado_rows,
+        BTreeMap::from([(PRE.to_string(), vec!["pre".to_string()])])
+    );
+}
+
+#[test]
+fn a_repo_row_in_another_table_is_not_taken_for_an_ado_row() {
+    let sx = Sx::new();
+    sx.fx.good(20, "Twenty");
+    let with = |pre: &str| {
+        let mut d = docs(&[(20, "Twenty")]);
+        d.get_mut(&20).unwrap().preconditions = pre.into();
+        d
+    };
+    sx.export(&[20], &with("Payroll is unlocked")).unwrap();
+
+    // The repo adds a Cleanup row that says the same words as the ADO precondition.
+    let md = sx.fx.read_clone(MD_REL);
+    let cleanup = "|---|--------|\n";
+    assert_eq!(md.matches(cleanup).count(), 1, "{md}");
+    write(sx.fx.clone.path().join(MD_REL), &md.replace(cleanup, &format!("{cleanup}| 1 | Payroll is unlocked |\n")));
+
+    // ADO drops the precondition. The Cleanup row is the repo's and stays.
+    sx.export(&[20], &with("")).unwrap();
+    let md = sx.fx.read_clone(MD_REL);
+    let (pre, cleanup_part) = md.split_once("### Cleanup").expect("a Cleanup table");
+    assert!(!pre.contains("Payroll is unlocked"), "{md}");
+    assert!(cleanup_part.contains("| 1 | Payroll is unlocked |\n"), "{md}");
+}
+
+#[test]
+fn a_record_kept_by_the_earlier_flat_list_still_reads() {
+    let sx = Sx::new();
+    sx.fx.good(20, "Twenty");
+    sx.export(&[20], &docs(&[(20, "Twenty")])).unwrap();
+    let path = sx.record_path();
+    let mut raw: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    raw["cases"]["20"]["ado_rows"] = json!(["pre"]);
+    fs::write(&path, raw.to_string()).unwrap();
+    let record = sync::load(&path).unwrap();
+    assert!(record.cases[&20].ado_rows.is_empty(), "read as none, not as a corrupt record");
+    assert_eq!(sx.state(20), SyncState::Current);
 }
 
 #[test]
@@ -529,7 +586,7 @@ fn the_record_is_written_atomically() {
         files: vec!["suites/_generated/a.spec.ts".into()],
         module: String::new(),
         user_key: String::new(),
-        ado_rows: vec![],
+        ado_rows: Default::default(),
     };
     sync::record(&path, vec![(1, entry("one"))]).unwrap();
     let good = fs::read(&path).unwrap();

@@ -82,7 +82,7 @@ fn keyed(ids: &[(i32, &str)]) -> ExportRecord {
                 files: vec![],
                 module: String::new(),
                 user_key: key.into(),
-                ado_rows: vec![],
+                ado_rows: Default::default(),
             },
         );
     }

@@ -6,6 +6,7 @@
 //! are not treated specially.
 
 use super::handover::{Handover, ORDER_PROPOSAL};
+use std::collections::BTreeMap;
 
 /// Everything one case section needs.
 #[derive(Clone)]
@@ -459,17 +460,23 @@ fn row_text(line: &str, numbered: bool) -> &str {
 /// back: every row that does not end `FROM_TCM` and is not one of the ADO
 /// rows `section` writes anyway, after the ADO rows and before TCM's own,
 /// renumbered. TCM's old rows are dropped - `section` has today's - and so
-/// is any row equal to one of `from_ado` (the ADO rows an earlier export
-/// wrote, `ado_rows`): it came from Azure DevOps, so when ADO no longer has
-/// it the repo did not add it.
-fn with_repo_rows(section: &str, old: &[&str], from_ado: &[String]) -> String {
+/// is any row equal to one of `from_ado` for the same table (the ADO rows an
+/// earlier export wrote, `ado_rows`): it came from Azure DevOps, so when ADO
+/// no longer has it the repo did not add it.
+fn with_repo_rows(section: &str, old: &[&str], from_ado: &AdoRows) -> String {
     let mut lines: Vec<String> = section.split_inclusive('\n').map(str::to_string).collect();
     for (heading, numbered) in REPO_ROW_TABLES {
         let Some(old_rows) = table_rows(old, heading) else { continue };
+        // Only this table's own ADO rows count: the same words in another
+        // table are the repo's row there.
+        let gone: &[String] = from_ado.get(heading).map(Vec::as_slice).unwrap_or(&[]);
+        // A repo row whose text equals an ADO row of the same table is taken
+        // for that ADO row, so it goes when ADO removes it: the accepted
+        // price of matching on text.
         let kept: Vec<&str> = old[old_rows]
             .iter()
             .map(|l| row_text(l, numbered))
-            .filter(|t| !t.is_empty() && !t.ends_with(FROM_TCM) && !from_ado.iter().any(|a| a == t))
+            .filter(|t| !t.is_empty() && !t.ends_with(FROM_TCM) && !gone.iter().any(|a| a == t))
             .collect();
         let ours: Vec<&str> = lines.iter().map(String::as_str).collect();
         let Some(new_rows) = table_rows(&ours, heading) else { continue };
@@ -491,20 +498,28 @@ fn with_repo_rows(section: &str, old: &[&str], from_ado: &[String]) -> String {
     lines.concat()
 }
 
+/// The Azure DevOps rows of a section's tables, by table heading
+/// (`REPO_ROW_TABLES`), as `with_repo_rows` compares them.
+pub type AdoRows = BTreeMap<String, Vec<String>>;
+
 /// The rows of `section`'s Preconditions, Test Data and Cleanup tables that
-/// came from Azure DevOps (every one not marked `FROM_TCM`), as
-/// `with_repo_rows` compares them: what a Sync record keeps of an export so
-/// that the next one can tell an ADO row that has gone from one the repo added.
-pub fn ado_rows(section: &str) -> Vec<String> {
+/// came from Azure DevOps (every one not marked `FROM_TCM`), under their
+/// table's heading: what a Sync record keeps of an export so that the next
+/// one can tell an ADO row that has gone from one the repo added.
+pub fn ado_rows(section: &str) -> AdoRows {
     let lines: Vec<&str> = section.split_inclusive('\n').collect();
-    let mut out: Vec<String> = Vec::new();
+    let mut out = AdoRows::new();
     for (heading, numbered) in REPO_ROW_TABLES {
         let Some(rows) = table_rows(&lines, heading) else { continue };
+        let mut found: Vec<String> = Vec::new();
         for line in &lines[rows] {
             let t = row_text(line, numbered);
-            if !t.is_empty() && !t.ends_with(FROM_TCM) && !out.iter().any(|o| o == t) {
-                out.push(t.to_string());
+            if !t.is_empty() && !t.ends_with(FROM_TCM) && !found.iter().any(|o| o == t) {
+                found.push(t.to_string());
             }
+        }
+        if !found.is_empty() {
+            out.insert(heading.to_string(), found);
         }
     }
     out
@@ -668,12 +683,13 @@ pub fn has_uses(file: &str, id: i32) -> bool {
 /// every `**Uses:**` line it had (`with_kept_uses`).
 /// The old `**From TCM:**` block is TCM's, so `section`'s replaces it whole.
 pub fn splice(existing: &str, id: i32, section: &str) -> String {
-    splice_dropping(existing, id, section, &[])
+    splice_dropping(existing, id, section, &AdoRows::new())
 }
 
-/// `splice`, except that an old table row equal to one of `from_ado` (the
-/// ADO rows an earlier export wrote, `ado_rows`) is not kept as the repo's.
-pub fn splice_dropping(existing: &str, id: i32, section: &str, from_ado: &[String]) -> String {
+/// `splice`, except that an old table row equal to one of `from_ado` for the
+/// same table (the ADO rows an earlier export wrote, `ado_rows`) is not kept
+/// as the repo's.
+pub fn splice_dropping(existing: &str, id: i32, section: &str, from_ado: &AdoRows) -> String {
     let lines: Vec<&str> = existing.split_inclusive('\n').collect();
     if let Some(start) = lines.iter().position(|l| is_case_heading(l, id)) {
         let end = lines[start + 1..]
