@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.7",
+    date: "2026-10-17",
+    items: [
+      "Export to Playwright suggests a folder for each case from its title, such as the Proficiency Levels folder for a Proficiency Levels case: press Use on the case, or Use suggested folders for all of them.",
+      "The folder fields in Export to Playwright and New folder use the app's own dropdown, and a new folder you type is kept even when it starts like an existing one.",
+    ],
+  },
+  {
     version: "2.2.3-beta.6",
     date: "2026-10-17",
     items: [
