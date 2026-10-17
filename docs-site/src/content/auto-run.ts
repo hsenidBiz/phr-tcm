@@ -247,7 +247,10 @@ export const autoRun: Screen = {
       does:
         "Each case shows its last result beside its title: how it did in the newest run that reached it. " +
         "These buttons show only the cases whose last result was **Passed**, **Failed**, **Blocked** or **Not run**, with how many there are of each. Press more than one to see them together, and press one again to drop it.",
-      tips: ["To run the failed cases again: press **Failed**, then **Select all shown**."],
+      tips: [
+        "To run the failed cases again: press **Failed**, then **Select all shown**.",
+        "While any case is marked as a suspected defect, a **Suspected defects** button sits beside them and shows only those cases. It works together with the result buttons: **Suspected defects** and **Failed** show the marked cases that failed last time.",
+      ],
     },
     {
       id: "more",
