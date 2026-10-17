@@ -72,6 +72,24 @@ test("Enter on the chosen path creates it", async () => {
   expect(sent).toEqual([{ clone: "C:/repo", path: "sl/self/leave/new-leave" }]);
 });
 
+test("an offered parent is extended by typing, not retyped", async () => {
+  const { sent, onCreated } = mount((path) => ({ path, files: [] }));
+  fireEvent.click(screen.getByRole("button", { name: "New folder" }));
+  const field = screen.getByRole("combobox", { name: "New folder path" });
+  fireEvent.click(field);
+  fireEvent.click(screen.getByRole("option", { name: "sl/admin/performance/" }));
+  expect(field).toHaveTextContent("sl/admin/performance/");
+  // Opened again, the search box already holds the parent.
+  fireEvent.click(field);
+  const box = screen.getByPlaceholderText("Search…");
+  expect(box).toHaveValue("sl/admin/performance/");
+  fireEvent.change(box, { target: { value: "sl/admin/performance/new-feature" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  fireEvent.keyDown(field, { key: "Enter" });
+  await waitFor(() => expect(onCreated).toHaveBeenCalledWith("sl/admin/performance/new-feature"));
+  expect(sent).toEqual([{ clone: "C:/repo", path: "sl/admin/performance/new-feature" }]);
+});
+
 test("a refusal is shown and the typed path is kept", async () => {
   const { onCreated } = mount(() => {
     throw '"sl/admin/performance/rating-methods" is already a feature folder.';

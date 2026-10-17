@@ -104,6 +104,7 @@ export default function NewFolder({
             ariaLabel="New folder path"
             placeholder="sl/admin/performance/new-feature"
             allowCustom
+            seedQuery
             options={parents}
             triggerClassName="py-1.5 font-mono text-xs"
             value={path}

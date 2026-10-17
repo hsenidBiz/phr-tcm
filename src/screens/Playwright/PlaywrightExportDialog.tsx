@@ -271,14 +271,26 @@ export default function PlaywrightExportDialog({
     else groups.push([name, [c]]);
   }
 
+  const tidy = (path: string) => path.trim().replace(/[\s/]+$/, "");
   /**
-   * The clone's folder this case's title points at, when it goes to its
-   * area's folder and is exportable or held back only for a folder reason.
+   * The folder the case's area holds now: the area's field as edited, not as
+   * saved. The preview names a case's folder (`seg`, the saved one) but not
+   * its area, so the area is the one(s) saved at that folder. Null when that
+   * field is empty; the saved folder when the areas sharing it now differ.
    */
+  const areaFolderOf = (c: PreviewCase): string | null => {
+    if (!c.seg) return null;
+    const saved = preview?.map.areas ?? {};
+    const drafts = new Set(
+      (preview?.areas ?? []).filter((n) => tidy(saved[n]?.path ?? "") === tidy(c.seg ?? "")).map((n) => tidy(areas?.[n]?.path ?? "")),
+    );
+    if (drafts.size !== 1) return c.seg;
+    return [...drafts][0] || null;
+  };
+  /** The clone's folder a case's title points at, when it has a folder and no folder of its own. */
   const suggestionFor = (c: PreviewCase): string | null => {
-    if (c.excluded || !c.has_script || !c.seg || c.case_id in own) return null;
-    if (!c.exportable && !/\b(?:area|folder)\b/i.test(c.reason ?? "")) return null;
-    return suggestFolder(c.title, c.seg, featurePaths);
+    const area = c.excluded || !c.has_script || c.case_id in own ? null : areaFolderOf(c);
+    return area ? suggestFolder(c.title, area, featurePaths) : null;
   };
   const suggestions = listed.flatMap((c) => {
     const path = suggestionFor(c);
@@ -338,6 +350,7 @@ export default function PlaywrightExportDialog({
             ariaLabel={`Folder for #${id}`}
             placeholder="sl/admin/performance/feature"
             allowCustom
+            seedQuery
             options={featurePaths}
             triggerClassName="py-1.5 font-mono text-xs"
             value={own[id]}
@@ -593,6 +606,7 @@ export default function PlaywrightExportDialog({
                         ariaLabel={`Folder for ${name}`}
                         placeholder="sl/admin/performance/feature"
                         allowCustom
+                        seedQuery
                         options={featurePaths}
                         triggerClassName="py-1.5 font-mono text-xs"
                         value={place(name).path}

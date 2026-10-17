@@ -246,10 +246,17 @@ test("a half-filled or blanked saved area row blocks the save", async () => {
   const saved = { ...PREVIEW, map: { areas: { "Definition Wizard": { path: "sl/admin/pm/wizard" } }, accounts: {} } };
   const { calls } = mount({}, saved);
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
-  clearFolder("Folder for Definition Wizard");
+  // Slashes and spaces alone are no path: the typed text is kept, and it blocks the save.
+  typeFolder("Folder for Definition Wizard", " / ");
+  expect(folderField("Folder for Definition Wizard")).toHaveTextContent("/");
   expect(screen.getByText("needs a folder path")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save mappings" })).toBeDisabled();
   expect(calls.some((c) => c.cmd === "pw_export_save_map")).toBe(false);
+  // Emptied with the field's own clear button, it is the same.
+  typeFolder("Folder for Definition Wizard", "sl/admin/pm/wizard");
+  expect(screen.queryByText("needs a folder path")).not.toBeInTheDocument();
+  clearFolder("Folder for Definition Wizard");
+  expect(screen.getByText("needs a folder path")).toBeInTheDocument();
 });
 
 test("a failed refresh after a write keeps the summary and is shown separately", async () => {
@@ -476,11 +483,13 @@ const row = (case_id: number, title: string, extra: Record<string, unknown> = {}
 const SUGGEST_PREVIEW = {
   ...PREVIEW,
   areas: ["Wizard"],
+  map: { ...PREVIEW.map, areas: { Wizard: { path: AREA_SEG } } },
   cases: [
     row(20, "Rating Methods - delete"),
     row(21, "Proficiency Levels - add a level"),
     row(22, "Wizard landing shows steps"),
-    row(23, "Rating Methods - edit", { exportable: false, reason: "the account kim has no user in the clone" }),
+    // Held back because its area has no folder yet: nothing to suggest beside.
+    row(23, "Rating Methods - edit", { exportable: false, reason: 'area "Wizard" is not placed yet', seg: null }),
   ],
 };
 const SUGGEST_HANDLERS = { pw_repo_structure: () => SUGGEST_STRUCTURE };
@@ -491,7 +500,7 @@ test("a case whose title names one of the clone's folders is offered it, and tak
   const line = use.parentElement as HTMLElement;
   expect(within(line).getByText("Suggested: DW-rating-methods")).toHaveAttribute("title", "sl/admin/performance/DW-rating-methods");
   expect(screen.getByRole("button", { name: "Use the suggested folder for #21" })).toBeInTheDocument();
-  // The area's own folder is no suggestion, and a case blocked for another reason is not offered one.
+  // The area's own folder is no suggestion, and a case with no folder yet has nothing to sit beside.
   expect(screen.queryByRole("button", { name: "Use the suggested folder for #22" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Use the suggested folder for #23" })).not.toBeInTheDocument();
   expect(screen.getAllByText(/^Suggested:/)).toHaveLength(2);
@@ -525,7 +534,7 @@ test("all the suggestions can be taken at once, then saved with the mappings", a
 });
 
 test("a case with its own folder, or one handed back to its area, is offered only what fits", async () => {
-  const saved = { ...SUGGEST_PREVIEW, map: { ...PREVIEW.map, cases: { 20: { path: "sl/admin/performance/DW-preview" } } } };
+  const saved = { ...SUGGEST_PREVIEW, map: { ...SUGGEST_PREVIEW.map, cases: { 20: { path: "sl/admin/performance/DW-preview" } } } };
   mount(SUGGEST_HANDLERS, saved);
   expect(await screen.findByRole("button", { name: "Use the suggested folder for #21" })).toBeInTheDocument();
   // #20 has a folder of its own: nothing is suggested over it.
@@ -533,4 +542,19 @@ test("a case with its own folder, or one handed back to its area, is offered onl
   // Handed back to its area, it is offered the suggestion again.
   fireEvent.click(screen.getByRole("button", { name: "Use the area's folder for #20" }));
   expect(await screen.findByRole("button", { name: "Use the suggested folder for #20" })).toBeInTheDocument();
+});
+
+test("suggestions follow the area's folder as it is being edited, not only as it was saved", async () => {
+  mount(SUGGEST_HANDLERS, SUGGEST_PREVIEW);
+  expect(await screen.findByRole("button", { name: "Use the suggested folder for #20" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Use the suggested folder for #22" })).not.toBeInTheDocument();
+  // The area is moved (unsaved) to the folder #20 was being offered, and away from #22's.
+  typeFolder("Folder for Wizard", "sl/admin/performance/DW-rating-methods");
+  expect(folderField("Folder for Wizard")).toHaveTextContent("sl/admin/performance/DW-rating-methods");
+  expect(screen.queryByRole("button", { name: "Use the suggested folder for #20" })).not.toBeInTheDocument();
+  const use = screen.getByRole("button", { name: "Use the suggested folder for #22" });
+  expect(within(use.parentElement as HTMLElement).getByText("Suggested: DW-wizard-landing")).toBeInTheDocument();
+  // A blanked area folder has nothing to sit beside.
+  clearFolder("Folder for Wizard");
+  expect(screen.queryByText(/^Suggested:/)).not.toBeInTheDocument();
 });
