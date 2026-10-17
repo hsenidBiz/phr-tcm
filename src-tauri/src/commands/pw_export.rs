@@ -103,6 +103,8 @@ pub(crate) async fn read_docs(
                 folder: String::new(),
                 navigation_captured: false,
                 feature_title: String::new(),
+                // Filled in by the export from the script.
+                handover: Default::default(),
             },
         );
     }

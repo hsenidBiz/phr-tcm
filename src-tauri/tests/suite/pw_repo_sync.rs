@@ -519,6 +519,14 @@ fn file_135271(before_cleanup: &str, after_cleanup: &str) -> String {
     )
 }
 
+/// 135271's section as a re-export over `file_135271` writes it: the
+/// repo's two Cleanup rows are kept.
+fn rewritten_135271() -> String {
+    use v2_lib::pw_export::test_case::section;
+    section(&doc_135271())
+        .replace("|---|--------|\n\n", "|---|--------|\n| 1 | Deleted by step 11 |\n| 2 | Log out all actors |\n\n")
+}
+
 #[test]
 fn the_135271_section_is_rewritten_with_the_engineers_block_before_cleanup() {
     use v2_lib::pw_export::test_case::{section, splice};
@@ -552,7 +560,8 @@ fn the_135271_section_is_rewritten_with_the_engineers_block_before_cleanup() {
         "| 2 | Click it a second time. | A warning is shown |\n",
         "\n",
         ENGINEER_135271,
-        "### Cleanup / Postconditions\n\n| # | Action |\n|---|--------|\n\n",
+        // The repo's own Cleanup rows stay: TCM replaces only the rows it marks.
+        "### Cleanup / Postconditions\n\n| # | Action |\n|---|--------|\n| 1 | Deleted by step 11 |\n| 2 | Log out all actors |\n\n",
         "## 135283 \u{2014} Import Excel\n\nkept\n",
     ]
     .concat();
@@ -563,7 +572,7 @@ fn the_135271_section_is_rewritten_with_the_engineers_block_before_cleanup() {
 fn an_engineers_block_after_cleanup_stays_after_it() {
     use v2_lib::pw_export::test_case::{section, splice};
     let out = splice(&file_135271("", ENGINEER_135271), 135271, &section(&doc_135271()));
-    let ours = section(&doc_135271());
+    let ours = rewritten_135271();
     let expected_section = format!("{ours}{ENGINEER_135271}");
     assert!(out.contains(&format!("{expected_section}## 135283 ")), "{out}");
 }
@@ -573,7 +582,7 @@ fn a_floor_inside_a_case_section_is_kept_at_its_end() {
     use v2_lib::pw_export::test_case::{section, splice};
     let floor = "**Assertion floor:** 12 (raw sum 14), set by `npm run spec:floor` on 2026-09-02\n\n";
     let out = splice(&file_135271(ENGINEER_135271, floor), 135271, &section(&doc_135271()));
-    let ours = section(&doc_135271());
+    let ours = rewritten_135271();
     let cleanup = ours.find("### Cleanup").unwrap();
     let expected_section = format!("{}{ENGINEER_135271}{}{floor}", &ours[..cleanup], &ours[cleanup..]);
     assert!(out.contains(&format!("{expected_section}## 135283 ")), "{out}");
@@ -598,7 +607,7 @@ fn a_hash_line_in_an_engineers_note_does_not_end_the_block() {
         "\n",
     );
     let out = splice(&file_135271(block, ""), 135271, &section(&doc_135271()));
-    let ours = section(&doc_135271());
+    let ours = rewritten_135271();
     let cleanup = ours.find("### Cleanup").unwrap();
     let expected_section = format!("{}{block}{}", &ours[..cleanup], &ours[cleanup..]);
     assert!(out.contains(&format!("{expected_section}## 135283 ")), "{out}");

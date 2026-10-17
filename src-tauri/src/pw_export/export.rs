@@ -8,6 +8,7 @@
 //! `auth.setup.ts`, and never runs git, npm or Playwright.
 
 use super::clone::{index_with, open, ClonedRepo};
+use super::handover::{handover_for, HandoverInput};
 use super::mapping::{self, ExportMap, Placement};
 use super::test_case::{self, CaseDoc};
 use super::translate::{self, RawSpecInput};
@@ -180,7 +181,6 @@ struct Ready {
     /// and every shared draft's value put in (`resolved_script`).
     script: CaseScript,
     /// The shared drafts the script reads, for the hand-over's Preconditions.
-    #[allow(dead_code)] // read by the hand-over document, which builds on it
     shared_drafts: Vec<SharedDraft>,
     placement: Placement,
     user_key: String,
@@ -909,6 +909,7 @@ pub fn write_with(
         doc.folder = folders;
         doc.navigation_captured = captured;
         doc.feature_title = feature_title.clone();
+        doc.handover = handover_for(&HandoverInput { script: &r.script, shared_drafts: &r.shared_drafts });
 
         // Several cases of one feature accumulate into one file in memory.
         if !md_files.contains_key(&md_rel) {

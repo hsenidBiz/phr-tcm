@@ -200,6 +200,7 @@ pub(crate) fn doc(id: i32, title: &str) -> CaseDoc {
         folder: String::new(),
         navigation_captured: false,
         feature_title: String::new(),
+        handover: Default::default(),
     }
 }
 
@@ -919,4 +920,21 @@ fn a_leftover_placeholder_is_refused_never_written() {
     assert!(e.contains("{{something.x}}") && e.ends_with("Nothing was written."), "{e}");
     assert_eq!(fx.read_clone("suites/_generated/index.json"), before);
     assert!(!fx.exists(MD_REL));
+}
+
+#[test]
+fn the_section_hands_over_what_tcm_knows() {
+    let fx = Fx::new();
+    fx.shared_draft("f2", Some("Shared FY26 Draft"));
+    fx.fill_case(94, "Look-only on a shared draft", "{{fixture.f2.name}}");
+    let mut s = store::load_script(fx.root.path(), 94).unwrap().unwrap();
+    s.no_save = true;
+    store::save_script(fx.root.path(), &s).unwrap();
+    export(&fx, &[94], &docs(&[(94, "Look-only on a shared draft")])).unwrap();
+    let md = fx.read_clone(MD_REL);
+    assert!(md.contains("**From TCM:**\n\n- Look-only: must not save anything.\n\n### Preconditions\n"), "{md}");
+    assert!(
+        md.contains("| 1 | pre |\n| 2 | shared draft \"Draft f2\", rebuilt by TCM fixture `f2` (from TCM) |\n"),
+        "{md}"
+    );
 }

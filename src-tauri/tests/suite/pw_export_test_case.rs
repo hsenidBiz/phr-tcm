@@ -1,5 +1,6 @@
 //! Playwright export: the per-feature test-case markdown.
 
+use v2_lib::pw_export::handover::Handover;
 use v2_lib::pw_export::test_case::{new_file, section, splice, CaseDoc};
 
 fn doc(id: i32, title: &str) -> CaseDoc {
@@ -20,6 +21,7 @@ fn doc(id: i32, title: &str) -> CaseDoc {
         folder: "sl/admin/x".into(),
         navigation_captured: true,
         feature_title: "Competencies".into(),
+        handover: Handover::default(),
     }
 }
 
@@ -88,4 +90,112 @@ fn nothing_written_matches_a_stray_id_heading() {
     assert_eq!(hits.len(), 1, "{hits:?}");
     assert!(hits[0].starts_with("## 9 "));
     assert!(s.contains("````text\nFeat ## 17 x ``` y\n````\n"));
+}
+
+/// `doc(7, ..)` handing over `pre`, `cleanup` and `facts`.
+fn handed(pre: &[&str], cleanup: &[&str], facts: &[&str]) -> CaseDoc {
+    let own = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let mut d = doc(7, "My case");
+    d.handover = Handover { preconditions: own(pre), cleanup: own(cleanup), from_tcm: own(facts), ..Handover::default() };
+    d
+}
+
+#[test]
+fn the_from_tcm_block_sits_after_navigation_and_is_omitted_when_empty() {
+    let s = section(&handed(&[], &[], &["Look-only: must not save anything.", "step 2 appears to save data (\"Save\")"]));
+    assert!(
+        s.contains(concat!(
+            "**Navigation:** captured in src/navigation.json.\n\n",
+            "**From TCM:**\n\n",
+            "- Look-only: must not save anything.\n",
+            "- step 2 appears to save data (\"Save\")\n",
+            "\n### Preconditions\n",
+        )),
+        "{s}"
+    );
+    assert_eq!(s.matches("**From TCM:**").count(), 1);
+    let none = section(&handed(&["requires: x unchanged"], &[], &[]));
+    assert!(!none.contains("From TCM:"), "{none}");
+    assert!(none.contains("**Navigation:** captured in src/navigation.json.\n\n### Preconditions\n"), "{none}");
+}
+
+#[test]
+fn tcm_rows_end_with_from_tcm_and_follow_the_ado_rows() {
+    let s = section(&handed(
+        &["requires: x unchanged", "requires: Approval = ON"],
+        &["step 3 deletes \"A\" it created"],
+        &[],
+    ));
+    assert!(
+        s.contains(concat!(
+            "| # | Condition |\n|---|-----------|\n",
+            "| 1 | Logged in |\n",
+            "| 2 | Data exists |\n",
+            "| 3 | requires: x unchanged (from TCM) |\n",
+            "| 4 | requires: Approval = ON (from TCM) |\n",
+            "\n### Test Data",
+        )),
+        "{s}"
+    );
+    assert!(s.ends_with("| # | Action |\n|---|--------|\n| 1 | step 3 deletes \"A\" it created (from TCM) |\n\n"), "{s}");
+}
+
+#[test]
+fn a_re_export_keeps_every_row_the_repo_added() {
+    let first = section(&handed(&["old tcm"], &["old cleanup"], &["old fact"]));
+    let engineer =
+        "**Added by engineer (not from ADO):**\n\n| # | Step | Expected |\n|---|------|----------|\n| 11 | Delete it | Gone |\n\n";
+    // What the repo did to it: a Preconditions row step 4 found, a Cleanup
+    // row, and an engineer's step before Cleanup. The file is CRLF now.
+    let repo = first
+        .replace(
+            "| 3 | old tcm (from TCM) |\n",
+            "| 3 | old tcm (from TCM) |\n| 4 | Goal group \\| X exists (found by step 4) |\n",
+        )
+        .replace("| 1 | old cleanup (from TCM) |\n", "| 1 | old cleanup (from TCM) |\n| 2 | Log out all actors |\n")
+        .replace("### Cleanup", &format!("{engineer}### Cleanup"))
+        .replace('\n', "\r\n");
+    let file = format!("# Set\r\n\r\n{repo}## 8 \u{2014} Eight\r\n\r\nkept\r\n");
+
+    let again = section(&handed(&["new tcm"], &[], &["new fact"]));
+    let out = splice(&file, 7, &again);
+    let want = again
+        .replace(
+            "| 3 | new tcm (from TCM) |\n",
+            "| 3 | Goal group \\| X exists (found by step 4) |\n| 4 | new tcm (from TCM) |\n",
+        )
+        .replace("| # | Action |\n|---|--------|\n", "| # | Action |\n|---|--------|\n| 1 | Log out all actors |\n")
+        .replace("### Cleanup", &format!("{}### Cleanup", engineer.replace('\n', "\r\n")));
+    assert_eq!(out, format!("# Set\r\n\r\n{want}## 8 \u{2014} Eight\r\n\r\nkept\r\n"));
+    for gone in ["old tcm", "old cleanup", "old fact"] {
+        assert!(!out.contains(gone), "{gone}: {out}");
+    }
+    // A second re-export changes nothing: the kept rows are not doubled.
+    assert_eq!(splice(&out, 7, &again), out);
+}
+
+#[test]
+fn a_re_export_keeps_the_repos_test_data_rows_whole() {
+    let header = "|------|--------------|--------|---------------------|-------|\n";
+    let row = "| Group name | QA Group \\| 7 | step 2 | Listed | made by the test |\n";
+    let first = section(&doc(7, "My case"));
+    let file = first.replacen(header, &format!("{header}{row}"), 1);
+    let out = splice(&file, 7, &section(&doc(7, "My case")));
+    assert_eq!(out, file);
+}
+
+#[test]
+fn a_pipe_in_a_value_stays_in_its_cell() {
+    let mut d = handed(&["a | b\nc"], &["x|y\r\nz"], &["p\nq | r"]);
+    d.title = "One | two\nthree".into();
+    let s = section(&d);
+    assert!(s.contains("| 3 | a \\| b c (from TCM) |\n"), "{s}");
+    assert!(s.contains("| 1 | x\\|y z (from TCM) |\n"), "{s}");
+    assert!(s.contains("\n- p q | r\n"), "{s}");
+    assert!(s.contains("| Title | One \\| two<br>three |\n"), "{s}");
+    // Every table row is one line holding only its own cells.
+    for line in s.lines().filter(|l| l.starts_with('|')) {
+        let bars = line.replace("\\|", "").matches('|').count();
+        assert!([3, 4, 6].contains(&bars), "{line}");
+    }
 }
