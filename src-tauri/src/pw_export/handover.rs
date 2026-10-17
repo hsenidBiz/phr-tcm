@@ -15,6 +15,7 @@ use crate::autorun::quirks::day_of;
 use crate::autorun::CaseScript;
 use crate::browser::actions::Action;
 use crate::browser::locator::{LocatorStep, Target};
+use std::collections::BTreeMap;
 
 /// What one case hands over. Each list holds plain text; the md writer
 /// (`test_case::section`) escapes it and marks the rows " (from TCM)".
@@ -26,6 +27,9 @@ pub struct Handover {
     pub cleanup: Vec<String>,
     /// The bullet lines of the `**From TCM:**` block.
     pub from_tcm: Vec<String>,
+    /// The repo's common components the case uses: folder names under
+    /// `suites/common-components/`, one `**Uses:**` line each
+    /// (`uses_for`). Regenerated on every export.
     pub uses: Vec<String>,
     pub warnings: Vec<String>,
 }
@@ -212,6 +216,21 @@ fn created_then_deleted(script: &CaseScript) -> Vec<(i32, String)> {
                     }
                 }
             }
+        }
+    }
+    out
+}
+
+/// The repo common components for the TCM components a case uses, in the
+/// order it meets them, each once: what the person mapped them to
+/// (`ExportMap.components`). A component that is not mapped, or is mapped to
+/// a blank or to something that is no folder name, says nothing.
+pub fn uses_for(used: &[String], mapped: &BTreeMap<String, String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in used {
+        let Some(repo) = mapped.get(name).map(|r| r.trim()) else { continue };
+        if crate::pw_repo::layout::valid_name(repo) && !out.iter().any(|o| o == repo) {
+            out.push(repo.to_string());
         }
     }
     out

@@ -180,6 +180,7 @@ test("saving_a_mapping_sends_the_map", async () => {
     map: {
       areas: { "Definition Wizard": { path: "sl/self/pm/wizard" } },
       cases: {},
+      components: {},
       accounts: { other: { x: "Y" }, env1: { "hr.admin": "REPO_EMP" } },
     },
   });
@@ -558,4 +559,87 @@ test("suggestions follow the area's folder as it is being edited, not only as it
   // A blanked area folder has nothing to sit beside.
   clearFolder("Folder for Wizard");
   expect(screen.queryByText(/^Suggested:/)).not.toBeInTheDocument();
+});
+
+/** A preview whose cases use two of TCM's components, in a clone with two common components. */
+const WITH_COMPONENTS = {
+  ...PREVIEW,
+  components: ["Employee search", "Pick a date"],
+  common_components: ["date-picker", "employee-search"],
+  map: { areas: {}, accounts: {}, components: { "Pick a date": "date-picker" } },
+};
+
+/** The component fields' picks, as they read now. */
+const componentField = (name: string) => screen.getByRole("combobox", { name: `Common component for ${name}` });
+
+test("a_component_the_cases_use_can_be_mapped_to_a_common_component_and_saved", async () => {
+  const { calls } = mount({}, WITH_COMPONENTS);
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  expect(screen.getByRole("heading", { name: "Components" })).toBeInTheDocument();
+  expect(componentField("Employee search")).toHaveTextContent("Not mapped");
+  expect(componentField("Pick a date")).toHaveTextContent("date-picker");
+  // The app's own list: Not mapped first, then the clone's common components.
+  fireEvent.click(componentField("Employee search"));
+  expect(within(screen.getByRole("listbox")).getAllByRole("option").map((o) => o.textContent)).toEqual([
+    "Not mapped",
+    "date-picker",
+    "employee-search",
+  ]);
+  expect(document.querySelector("datalist")).toBeNull();
+  fireEvent.click(screen.getByRole("option", { name: "employee-search" }));
+  // A pick is a draft until it is saved.
+  expect(screen.getByText("Save the mappings first")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: EXPORT })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
+  await waitFor(() => expect(calls.find((c) => c.cmd === "pw_export_save_map")).toBeTruthy());
+  expect((calls.find((c) => c.cmd === "pw_export_save_map")?.args.map as { components: unknown }).components).toEqual({
+    "Employee search": "employee-search",
+    "Pick a date": "date-picker",
+  });
+});
+
+test("choosing_not_mapped_takes_a_saved_component_mapping_back", async () => {
+  const { calls } = mount({}, WITH_COMPONENTS);
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  fireEvent.click(componentField("Pick a date"));
+  fireEvent.click(screen.getByRole("option", { name: "Not mapped" }));
+  expect(componentField("Pick a date")).toHaveTextContent("Not mapped");
+  fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
+  await waitFor(() => expect(calls.find((c) => c.cmd === "pw_export_save_map")).toBeTruthy());
+  expect((calls.find((c) => c.cmd === "pw_export_save_map")?.args.map as { components: unknown }).components).toEqual({});
+});
+
+test("a_mapping_for_a_component_these_cases_do_not_use_is_kept_when_saving", async () => {
+  const kept = { ...WITH_COMPONENTS, map: { areas: {}, accounts: {}, components: { "Other component": "date-picker" } } };
+  const { calls } = mount({}, kept);
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  expect(screen.queryByRole("combobox", { name: "Common component for Other component" })).not.toBeInTheDocument();
+  fireEvent.click(componentField("Employee search"));
+  fireEvent.click(screen.getByRole("option", { name: "employee-search" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
+  await waitFor(() => expect(calls.find((c) => c.cmd === "pw_export_save_map")).toBeTruthy());
+  expect((calls.find((c) => c.cmd === "pw_export_save_map")?.args.map as { components: unknown }).components).toEqual({
+    "Other component": "date-picker",
+    "Employee search": "employee-search",
+  });
+});
+
+test("a_saved_common_component_the_clone_no_longer_has_is_shown_with_a_hint", async () => {
+  mount({}, { ...WITH_COMPONENTS, common_components: ["employee-search"] });
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  expect(screen.getByText("date-picker is not under suites/common-components in this clone")).toBeInTheDocument();
+  expect(componentField("Pick a date")).toHaveTextContent("date-picker");
+});
+
+test("a_clone_without_common_components_says_so", async () => {
+  mount({}, { ...WITH_COMPONENTS, common_components: [], map: { areas: {}, accounts: {}, components: {} } });
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  expect(screen.getByText("This clone has no common components yet.")).toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: /Common component for/ })).not.toBeInTheDocument();
+});
+
+test("cases_that_use_no_component_show_no_components_section", async () => {
+  mount();
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  expect(screen.queryByRole("heading", { name: "Components" })).not.toBeInTheDocument();
 });

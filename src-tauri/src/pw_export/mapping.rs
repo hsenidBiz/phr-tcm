@@ -35,7 +35,9 @@ impl<'de> Deserialize<'de> for Placement {
 }
 
 /// A project's export choices. `accounts[env_id][tcm_account_key]` is the
-/// clone's user key.
+/// clone's user key; `components[tcm_component_name]` is the folder name of
+/// the repo's common component (`suites/common-components/<name>`) it stands
+/// for. A component not listed is not mapped.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, specta::Type)]
 pub struct ExportMap {
     #[serde(default)]
@@ -46,6 +48,8 @@ pub struct ExportMap {
     pub cases: BTreeMap<i32, Placement>,
     #[serde(default)]
     pub accounts: BTreeMap<String, BTreeMap<String, String>>,
+    #[serde(default)]
+    pub components: BTreeMap<String, String>,
 }
 
 impl Placement {

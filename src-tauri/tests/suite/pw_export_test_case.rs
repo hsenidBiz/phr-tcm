@@ -1,7 +1,9 @@
 //! Playwright export: the per-feature test-case markdown.
 
 use v2_lib::pw_export::handover::{Handover, ORDER_PROPOSAL};
-use v2_lib::pw_export::test_case::{case_ids_in, new_file, section, splice, with_order_block, CaseDoc};
+use v2_lib::pw_export::test_case::{
+    case_ids_in, new_file, section, splice, with_assumed_marker, with_order_block, CaseDoc,
+};
 
 fn doc(id: i32, title: &str) -> CaseDoc {
     CaseDoc {
@@ -64,11 +66,65 @@ fn splice_appends_a_new_case() {
 }
 
 #[test]
-fn a_new_file_header() {
+fn a_new_file_marks_the_user_as_assumed() {
     assert_eq!(
         new_file("Competencies", "competencies", "AutomationSL.pm.general"),
-        "# Test Case Set: Competencies\n\nCovers the ADO test cases below. Each `##` section is one `test()` in\n`specs/competencies.spec.ts`; the ids here are what the linter's\n`assertion-count` rule resolves to raw counterparts via\n`suites/_generated/index.json`.\n\n**User:** AutomationSL.pm.general  <!-- from-tcm -->\n\n"
+        "# Test Case Set: Competencies\n\nCovers the ADO test cases below. Each `##` section is one `test()` in\n`specs/competencies.spec.ts`; the ids here are what the linter's\n`assertion-count` rule resolves to raw counterparts via\n`suites/_generated/index.json`.\n\n**User:** AutomationSL.pm.general  <!-- assumed -->\n\n"
     );
+}
+
+#[test]
+fn an_old_from_tcm_marker_becomes_assumed() {
+    let old = "# T\n\n**User:** u  <!-- from-tcm -->\n\nHand note <!-- from-tcm -->.\n\n## 1 \u{2014} A\n**User:** x  <!-- from-tcm -->\n";
+    let want = "# T\n\n**User:** u  <!-- assumed -->\n\nHand note <!-- from-tcm -->.\n\n## 1 \u{2014} A\n**User:** x  <!-- from-tcm -->\n";
+    // Only the header's User line; a section's text and other lines are left alone.
+    assert_eq!(with_assumed_marker(old), want);
+    // Already assumed, or another marker the repo chose: untouched, byte for byte.
+    for same in [
+        "# T\n\n**User:** u  <!-- assumed -->\n\n## 1 \u{2014} A\n",
+        "# T\n\n**User:** u  <!-- from-ticket -->\n\n",
+        "# T\n\n**User:** u  <!-- from-tcm: odd -->\n\n",
+        "# T\n\n**User:** u\n\n",
+        "",
+    ] {
+        assert_eq!(with_assumed_marker(same), same);
+    }
+    // Spacing around the comment and CRLF line endings are kept.
+    assert_eq!(
+        with_assumed_marker("# T\r\n\r\n**User:** u <!-- from-tcm -->  \r\n\r\n## 1 \u{2014} A\r\n"),
+        "# T\r\n\r\n**User:** u <!-- assumed -->  \r\n\r\n## 1 \u{2014} A\r\n"
+    );
+    // No trailing newline.
+    assert_eq!(with_assumed_marker("**User:** u  <!-- from-tcm -->"), "**User:** u  <!-- assumed -->");
+}
+
+#[test]
+fn a_mapped_component_writes_a_uses_line() {
+    let mut d = doc(7, "My case");
+    d.handover = Handover { uses: vec!["employee-search".into(), "date-picker".into()], ..Handover::default() };
+    let out = section(&d);
+    assert!(
+        out.contains(
+            "**Navigation:** captured in src/navigation.json.\n\n**Uses:** common-components/employee-search\n**Uses:** common-components/date-picker\n\n### Preconditions"
+        ),
+        "{out}"
+    );
+    // Before the From TCM block, which keeps its own paragraph.
+    d.handover.from_tcm = vec!["step 1 appears to save data (\"Save\")".into()];
+    let out = section(&d);
+    assert!(out.contains("date-picker\n\n**From TCM:**\n\n- step 1"), "{out}");
+    // A re-export regenerates them: the old lines go, today's come.
+    let mut again = doc(7, "My case");
+    again.handover.uses = vec!["date-picker".into()];
+    let spliced = splice(&format!("# T\n\n{}", section(&d)), 7, &section(&again));
+    assert_eq!(spliced.matches("**Uses:**").count(), 1, "{spliced}");
+    assert!(spliced.contains("**Uses:** common-components/date-picker\n"), "{spliced}");
+}
+
+#[test]
+fn an_unmapped_component_writes_none() {
+    let out = section(&doc(7, "My case"));
+    assert!(!out.contains("**Uses:**"), "{out}");
 }
 
 #[test]
@@ -209,7 +265,7 @@ fn lines(list: &[&str]) -> Vec<String> {
 fn the_order_block_goes_right_after_the_user_line_of_a_new_file() {
     let head = new_file("Competencies", "competencies", "AutomationSL.pm.general");
     let out = with_order_block(&head, &lines(&["run 1 before 2", "run 2 alone and last: it publishes"]));
-    let user = "**User:** AutomationSL.pm.general  <!-- from-tcm -->\n\n";
+    let user = "**User:** AutomationSL.pm.general  <!-- assumed -->\n\n";
     let block = format!(
         "<!-- tcm:order -->\n**Order (from TCM):**\n\n- run 1 before 2\n- run 2 alone and last: it publishes\n- {ORDER_PROPOSAL}\n<!-- /tcm:order -->\n\n"
     );

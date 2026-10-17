@@ -1118,7 +1118,7 @@ fn two_cases_in_one_file_keep_their_own_facts() {
     // The header's order block names both, right after the User line.
     let header = &md[..md.find("\n## 101 ").unwrap()];
     assert!(
-        header.contains("<!-- from-tcm -->\n\n<!-- tcm:order -->\n**Order (from TCM):**\n\n"),
+        header.contains("<!-- assumed -->\n\n<!-- tcm:order -->\n**Order (from TCM):**\n\n"),
         "{header}"
     );
     for line in [
@@ -1148,7 +1148,7 @@ fn an_existing_file_gets_the_order_block_after_its_user_line() {
     export(&fx, &[103, 104], &docs(&[(103, "Looks"), (104, "Changes")])).unwrap();
     let md = fx.read_clone(MD_REL);
     assert!(
-        md.starts_with("# Test Case Set: Proficiency Levels\n\n**User:** REPO_KEY  <!-- from-tcm -->\n\n<!-- tcm:order -->\n"),
+        md.starts_with("# Test Case Set: Proficiency Levels\n\n**User:** REPO_KEY  <!-- assumed -->\n\n<!-- tcm:order -->\n"),
         "{md}"
     );
     assert!(md.contains("<!-- /tcm:order -->\n\nRepo notes.\n\n## 103 "), "{md}");
@@ -1190,4 +1190,110 @@ fn no_order_block_for_independent_cases_in_an_export() {
     fx.good(107, "Alone");
     export(&fx, &[107], &docs(&[(107, "Alone")])).unwrap();
     assert!(!fx.read_clone(MD_REL).contains("tcm:order"));
+}
+
+/// Saves TCM component `name` (one click) in the project.
+fn component(fx: &Fx, name: &str) {
+    let c: v2_lib::autorun::components::Component = serde_json::from_value(json!({
+        "name": name, "description": "", "inputs": [],
+        "actions": [{ "kind": "click", "selector": { "css": "#in-component" } }]
+    }))
+    .unwrap();
+    v2_lib::autorun::components::put(fx.root.path(), ORG, PROJECT, c).unwrap();
+}
+
+/// Maps TCM component `tcm` to the repo's common component `repo` (a blank
+/// `repo` is kept as such: the map holds whatever was saved).
+fn map_component(fx: &Fx, tcm: &str, repo: &str) {
+    let mut map = v2_lib::pw_export::mapping::load(fx.root.path(), ORG, PROJECT).unwrap();
+    map.components.insert(tcm.into(), repo.into());
+    save(fx.root.path(), ORG, PROJECT, &map).unwrap();
+}
+
+/// A passing case whose one step uses the TCM components in `names`.
+fn uses_components(fx: &Fx, id: i32, names: &[&str]) {
+    let actions: Vec<_> = names.iter().map(|n| json!({ "kind": "use_component", "component": n })).collect();
+    fx.script(id, "Uses components", "admin", "Definition Wizard", json!(actions));
+    fx.run(&format!("r{id}"), "5", id, "Passed");
+}
+
+#[test]
+fn a_mapped_component_writes_a_uses_line() {
+    let fx = Fx::new();
+    component(&fx, "Employee search");
+    component(&fx, "Pick a date");
+    component(&fx, "Unmapped one");
+    map_component(&fx, "Employee search", "employee-search");
+    map_component(&fx, "Pick a date", "employee-search"); // two TCM components, one repo component
+    uses_components(&fx, 130, &["Employee search", "Pick a date", "Unmapped one", "Employee search"]);
+    export(&fx, &[130], &docs(&[(130, "Uses components")])).unwrap();
+    let md = fx.read_clone(MD_REL);
+    let sec = section_of(&md, 130);
+    // Once, right after Navigation and before anything else of TCM's.
+    assert_eq!(sec.matches("**Uses:**").count(), 1, "{sec}");
+    assert!(
+        sec.contains("**Navigation:** captured in src/navigation.json.\n\n**Uses:** common-components/employee-search\n\n"),
+        "{sec}"
+    );
+    assert!(md.contains("**User:** REPO_KEY  <!-- assumed -->\n"), "{md}");
+    // A re-export reads the map again: unmapped, the line goes.
+    let mut map = v2_lib::pw_export::mapping::load(fx.root.path(), ORG, PROJECT).unwrap();
+    map.components.clear();
+    save(fx.root.path(), ORG, PROJECT, &map).unwrap();
+    export(&fx, &[130], &docs(&[(130, "Uses components")])).unwrap();
+    assert!(!section_of(&fx.read_clone(MD_REL), 130).contains("**Uses:**"));
+}
+
+#[test]
+fn a_component_used_inside_a_when_visible_is_still_mapped() {
+    let fx = Fx::new();
+    component(&fx, "Employee search");
+    map_component(&fx, "Employee search", "employee-search");
+    fx.script(
+        131,
+        "Nested use",
+        "admin",
+        "Definition Wizard",
+        json!([{ "kind": "when_visible", "selector": "#x", "then": [{ "kind": "use_component", "component": "Employee search" }] }]),
+    );
+    fx.run("r131", "5", 131, "Passed");
+    export(&fx, &[131], &docs(&[(131, "Nested use")])).unwrap();
+    assert!(section_of(&fx.read_clone(MD_REL), 131).contains("**Uses:** common-components/employee-search\n"));
+}
+
+#[test]
+fn an_unmapped_component_writes_none() {
+    let fx = Fx::new();
+    component(&fx, "Employee search");
+    uses_components(&fx, 132, &["Employee search"]);
+    export(&fx, &[132], &docs(&[(132, "Uses components")])).unwrap();
+    assert!(!fx.read_clone(MD_REL).contains("**Uses:**"));
+    // A blank value, or a name that is no folder, is not a mapping either.
+    for bad in ["", "  ", "../outside", "a\nb"] {
+        map_component(&fx, "Employee search", bad);
+        export(&fx, &[132], &docs(&[(132, "Uses components")])).unwrap();
+        assert!(!fx.read_clone(MD_REL).contains("**Uses:**"), "{bad:?}");
+    }
+}
+
+#[test]
+fn the_preview_lists_the_components_used_and_the_repos_common_components() {
+    let fx = Fx::new();
+    component(&fx, "Employee search");
+    component(&fx, "Pick a date");
+    uses_components(&fx, 133, &["Pick a date", "Employee search", "Pick a date"]);
+    fx.good(134, "Uses none");
+    let c = fx.clone.path();
+    write(c.join("suites/common-components/README.md"), "# Common\n");
+    write(c.join("suites/common-components/employee-search/pages/employee-search.page.ts"), "");
+    write(c.join("suites/common-components/date-picker/specs/date-picker.spec.ts"), "");
+    write(c.join("suites/common-components/empty-folder/notes.txt"), "");
+    write(c.join("suites/common-components/_hidden/pages/x.page.ts"), "");
+    let p = preview_with(fx.root.path(), ORG, PROJECT, &[133, 134], &fx.clone_path(), &fx.modules.borrow()).unwrap();
+    assert_eq!(p.components, vec!["Pick a date".to_string(), "Employee search".to_string()]);
+    assert_eq!(p.common_components, vec!["date-picker".to_string(), "employee-search".to_string()]);
+    // No clone, no list.
+    let p = preview_with(fx.root.path(), ORG, PROJECT, &[133], "", &fx.modules.borrow()).unwrap();
+    assert!(p.common_components.is_empty());
+    assert_eq!(p.components.len(), 2);
 }

@@ -194,6 +194,8 @@ function exportPreview(caseIds: number[]): Preview {
     areas: ["Leave Types", "Goal Setting"],
     accounts: ["hr.admin", "perf.supervisor"],
     map: exportMap,
+    components: ["Employee search", "Pick a date"],
+    common_components: ["date-picker", "employee-search"],
     suggested: { "Goal Setting": { path: "sl/admin/performance/goal-setting" } },
     // A case given its own folder goes there, as the real preview says.
     cases: ids.map((case_id, i) => {

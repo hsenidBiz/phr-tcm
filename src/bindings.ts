@@ -3459,7 +3459,9 @@ export type Expect = {
 
 /**
  *  A project's export choices. `accounts[env_id][tcm_account_key]` is the
- *  clone's user key.
+ *  clone's user key; `components[tcm_component_name]` is the folder name of
+ *  the repo's common component (`suites/common-components/<name>`) it stands
+ *  for. A component not listed is not mapped.
  */
 export type ExportMap = {
 	areas?: { [key in string]: Placement },
@@ -3469,6 +3471,7 @@ export type ExportMap = {
 	 */
 	cases?: { [key in number]: Placement },
 	accounts?: { [key in string]: { [key in string]: string } },
+	components?: { [key in string]: string },
 };
 
 export type ExportResult = {
@@ -4515,6 +4518,16 @@ export type Preview = {
 	areas: string[],
 	accounts: string[],
 	map: ExportMap,
+	/**
+	 *  The TCM components the listed cases use, each once, in the order they
+	 *  are met: what the dialog's Components section maps (`map.components`).
+	 */
+	components: string[],
+	/**
+	 *  The clone's common components (`pw_repo::layout::common_components`):
+	 *  what a TCM component can be mapped to. Empty without a clone.
+	 */
+	common_components: string[],
 	/**
 	 *  A first guess, from its name (`Placement::suggest`), for each area
 	 *  that one of the listed cases starts in and that is not placed yet;

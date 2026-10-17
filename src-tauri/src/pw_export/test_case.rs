@@ -88,6 +88,12 @@ pub fn section(doc: &CaseDoc) -> String {
             "**Navigation:** not yet captured - capture it in this repo before refactoring.\n\n",
         );
     }
+    if !doc.handover.uses.is_empty() {
+        for name in &doc.handover.uses {
+            o.push_str(&format!("**Uses:** common-components/{}\n", one_line(name).trim()));
+        }
+        o.push('\n');
+    }
     if !doc.handover.from_tcm.is_empty() {
         o.push_str("**From TCM:**\n\n");
         for line in &doc.handover.from_tcm {
@@ -129,10 +135,38 @@ pub fn section(doc: &CaseDoc) -> String {
 
 pub fn new_file(feature_title: &str, stem: &str, user_key: &str) -> String {
     format!(
-        "# Test Case Set: {}\n\nCovers the ADO test cases below. Each `##` section is one `test()` in\n`specs/{stem}.spec.ts`; the ids here are what the linter's\n`assertion-count` rule resolves to raw counterparts via\n`suites/_generated/index.json`.\n\n**User:** {}  <!-- from-tcm -->\n\n",
+        "# Test Case Set: {}\n\nCovers the ADO test cases below. Each `##` section is one `test()` in\n`specs/{stem}.spec.ts`; the ids here are what the linter's\n`assertion-count` rule resolves to raw counterparts via\n`suites/_generated/index.json`.\n\n**User:** {}  {ASSUMED}\n\n",
         one_line(feature_title),
         one_line(user_key),
     )
+}
+
+/// The comment `new_file` marks the user with, and the one an earlier
+/// version of the export used (`with_assumed_marker`).
+const ASSUMED: &str = "<!-- assumed -->";
+const OLD_MARKER: &str = "<!-- from-tcm -->";
+
+/// `file` with the `**User:**` line's old `<!-- from-tcm -->` comment
+/// rewritten to the repo's own `<!-- assumed -->`. Only a header line (above
+/// the first `##`) whose comment is exactly the old one changes - spacing,
+/// line endings and every other line are kept byte for byte.
+pub fn with_assumed_marker(file: &str) -> String {
+    let mut out = String::with_capacity(file.len());
+    let mut in_header = true;
+    for line in file.split_inclusive('\n') {
+        in_header &= !is_h2(line);
+        let body = line.trim_end_matches(['\r', '\n']);
+        let user = in_header && line.trim_start().starts_with("**User:**");
+        match body.trim_end().strip_suffix(OLD_MARKER).filter(|_| user) {
+            Some(before) => {
+                out.push_str(before);
+                out.push_str(ASSUMED);
+                out.push_str(&line[before.len() + OLD_MARKER.len()..]);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
 }
 
 /// Does `line` start a level-2 heading (`##` then whitespace)?

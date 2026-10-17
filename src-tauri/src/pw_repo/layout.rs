@@ -142,6 +142,25 @@ pub fn feature_dirs(suites: &Path) -> Vec<Vec<String>> {
     out
 }
 
+/// The folder names of the repo's common components: the folders directly
+/// under `suites/common-components/` that hold a content folder (a README
+/// beside them, an empty folder, a skipped one or a link is not a component).
+/// Sorted.
+pub fn common_components(suites: &Path) -> Vec<String> {
+    let dir = suites.join(SHARED);
+    let mut out: Vec<String> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir() && !t.is_symlink()))
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .filter(|n| !skipped(n) && CONTENT_DIRS.iter().any(|c| dir.join(n).join(c).is_dir()))
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
 /// For `suites/<path>/test-cases/<name>.md` (relative to the clone, `/`),
 /// the feature path; `None` for anything else.
 pub fn test_case_file(rel: &str) -> Option<Vec<String>> {

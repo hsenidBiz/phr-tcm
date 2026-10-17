@@ -11,7 +11,7 @@
 
 use super::app_quirks::{merge_app_quirks_removing, quirk_entries, retired_tags, APP_QUIRKS_REL};
 use super::clone::{index_with, open, ClonedRepo};
-use super::handover::{baseline_doc, handover_for, order_note, HandoverInput, BASELINE_DOC_REL};
+use super::handover::{baseline_doc, handover_for, order_note, uses_for, HandoverInput, BASELINE_DOC_REL};
 use super::mapping::{self, ExportMap, Placement};
 use super::test_case::{self, CaseDoc};
 use super::translate::{self, RawSpecInput};
@@ -69,6 +69,12 @@ pub struct Preview {
     pub areas: Vec<String>,
     pub accounts: Vec<String>,
     pub map: ExportMap,
+    /// The TCM components the listed cases use, each once, in the order they
+    /// are met: what the dialog's Components section maps (`map.components`).
+    pub components: Vec<String>,
+    /// The clone's common components (`pw_repo::layout::common_components`):
+    /// what a TCM component can be mapped to. Empty without a clone.
+    pub common_components: Vec<String>,
     /// A first guess, from its name (`Placement::suggest`), for each area
     /// that one of the listed cases starts in and that is not placed yet;
     /// the person confirms it by saving.
@@ -197,6 +203,8 @@ struct Ready {
     script: CaseScript,
     /// The shared drafts the script reads, for the hand-over's Preconditions.
     shared_drafts: Vec<SharedDraft>,
+    /// The TCM components the script uses, each once, in the order met.
+    components: Vec<String>,
     placement: Placement,
     user_key: String,
     area_clicks: Vec<Target>,
@@ -316,16 +324,34 @@ fn kebab_name(title: &str, id: i32) -> String {
 /// raw spec is the script as it runs. `Err` is the reason the case cannot
 /// be exported.
 fn load_expanded(root: &Path, org: &str, project: &str, id: i32, runs: &[LocalRun]) -> Result<Option<CaseScript>, String> {
+    Ok(load_expanded_named(root, org, project, id, runs)?.map(|(script, _)| script))
+}
+
+/// `load_expanded`, with the names of the TCM components the script used,
+/// each once, in the order it met them (a use inside a `when_visible` too).
+fn load_expanded_named(
+    root: &Path,
+    org: &str,
+    project: &str,
+    id: i32,
+    runs: &[LocalRun],
+) -> Result<Option<(CaseScript, Vec<String>)>, String> {
     let Some(script) = store::load_script(root, id)? else {
         return Ok(None);
     };
     let mut script = with_run_account(script, runs);
+    let mut names: Vec<String> = Vec::new();
     for step in &mut script.steps {
-        let (expanded, _) = components::expand_step(root, org, project, &step.actions)
+        let (expanded, uses) = components::expand_step(root, org, project, &step.actions)
             .map_err(|(_, why)| format!("step {}: {why}", step.step_number))?;
         step.actions = expanded.into_iter().map(|(a, _)| a).collect();
+        for u in uses {
+            if !names.contains(&u.name) {
+                names.push(u.name);
+            }
+        }
     }
-    Ok(Some(script))
+    Ok(Some((script, names)))
 }
 
 /// Every `{{name}}` still in `script`'s steps' values, in order.
@@ -596,7 +622,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
     }
 
     pc.exportable = true;
-    let ready = Ready { script, shared_drafts, placement, user_key, area_clicks, by_name, origins };
+    let ready = Ready { script, shared_drafts, components: Vec::new(), placement, user_key, area_clicks, by_name, origins };
     (pc, Some(ready))
 }
 
@@ -629,13 +655,22 @@ pub fn preview_with(
     // A guess only for an area one of these cases starts in and that is
     // not placed yet - not for every area the project has recorded.
     let mut suggested: BTreeMap<String, Placement> = BTreeMap::new();
+    let mut components: Vec<String> = Vec::new();
     let features: Vec<Vec<String>> = ctx
         .clone
         .as_ref()
         .map(|c| crate::pw_repo::layout::feature_dirs(&c.root.join("suites")))
         .unwrap_or_default();
     for &id in case_ids {
-        let script = load_expanded(root, org, project, id, &ctx.runs);
+        let named = load_expanded_named(root, org, project, id, &ctx.runs);
+        if let Ok(Some((_, used))) = &named {
+            for n in used {
+                if !components.contains(n) {
+                    components.push(n.clone());
+                }
+            }
+        }
+        let script = named.map(|n| n.map(|(script, _)| script));
         if let Some(Ok((name, _, _))) = script.as_ref().ok().and_then(Option::as_ref).map(|s| route(&ctx, id, s)) {
             if placed(&ctx.map, &name).is_none() && !suggested.keys().any(|k| k.eq_ignore_ascii_case(&name)) {
                 if let Some(p) = Placement::suggest(&name, &features) {
@@ -658,6 +693,12 @@ pub fn preview_with(
         clone_problem: ctx.clone.as_ref().err().cloned(),
         user_keys: ctx.clone.as_ref().map(|c| c.user_keys.clone()).unwrap_or_default(),
         suggested,
+        components,
+        common_components: ctx
+            .clone
+            .as_ref()
+            .map(|c| crate::pw_repo::layout::common_components(&c.root.join("suites")))
+            .unwrap_or_default(),
         areas: placement_keys(&ctx, case_ids),
         accounts: ctx.accounts.iter().map(|(k, _)| k.clone()).collect(),
         map: ctx.map.clone(),
@@ -807,9 +848,13 @@ fn eligible(ctx: &Ctx, root: &Path, org: &str, project: &str, case_ids: &[i32]) 
         if ready.iter().any(|(i, _)| *i == id) {
             continue;
         }
-        let script = load_expanded(root, org, project, id, &ctx.runs);
+        let (script, used) = match load_expanded_named(root, org, project, id, &ctx.runs) {
+            Ok(Some((script, used))) => (Ok(Some(script)), used),
+            Ok(None) => (Ok(None), Vec::new()),
+            Err(why) => (Err(why), Vec::new()),
+        };
         match evaluate(ctx, id, script) {
-            (_, Some(r)) => ready.push((id, r)),
+            (_, Some(r)) => ready.push((id, Ready { components: used, ..r })),
             (pc, None) => {
                 return Err(format!(
                     "case {id} cannot be exported: {}. Nothing was written.",
@@ -944,6 +989,7 @@ pub fn write_with(
             shared_drafts: &r.shared_drafts,
             protected: &ctx.nav.protected,
         });
+        doc.handover.uses = uses_for(&r.components, &ctx.map.components);
 
         // Several cases of one feature accumulate into one file in memory.
         if !md_files.contains_key(&md_rel) {
@@ -1030,7 +1076,7 @@ pub fn write_with(
             })
             .collect();
         let note = order_note(&in_file, ctx.saved_order.as_deref());
-        *content = test_case::with_order_block(content, &note);
+        *content = test_case::with_order_block(&test_case::with_assumed_marker(content), &note);
     }
     let mut outs: Vec<Out> = md_files.into_iter().map(|(rel, content)| Out { rel, content }).collect();
     outs.extend(raw_files);

@@ -94,6 +94,8 @@ export default function PlaywrightExportDialog({
    */
   const [areas, setAreas] = useState<Record<string, Placement> | null>(null);
   const [users, setUsers] = useState<Record<string, string> | null>(null);
+  /** TCM component name to the repo common component it stands for, as being edited. */
+  const [comps, setComps] = useState<Record<string, string> | null>(null);
   /** Cases given their own folder: case id to the path as typed. */
   const [own, setOwn] = useState<Record<number, string>>({});
   /** New exportable cases the person unticked; every other new one is ticked. */
@@ -123,6 +125,7 @@ export default function PlaywrightExportDialog({
     if (reseed) {
       setAreas({ ...(p.suggested ?? {}), ...(p.map.areas ?? {}) });
       setUsers({ ...(p.map.accounts?.[p.environment] ?? {}) });
+      setComps({ ...(p.map.components ?? {}) });
       setOwn(Object.fromEntries(Object.entries(p.map.cases ?? {}).map(([id, pl]) => [Number(id), pl?.path ?? ""])));
     }
   }, [org, project, caseIds, modules]);
@@ -174,6 +177,7 @@ export default function PlaywrightExportDialog({
         areas: draftAreas,
         cases: draftCases,
         accounts: { ...(preview.map.accounts ?? {}), [preview.environment]: draftUsers },
+        components: draftComps,
       };
       await unwrapStr(commands.pwExportSaveMap(org, project, map));
       await refresh();
@@ -193,6 +197,10 @@ export default function PlaywrightExportDialog({
     else if (p.path.trim() || name in savedAreas) invalid.add(name);
   }
   const draftUsers = Object.fromEntries(Object.entries(users ?? {}).filter(([, v]) => v));
+  // Components the same way. The whole saved map is kept, so a mapping for a
+  // component these cases do not use is not lost by saving.
+  const savedComps = preview?.map.components ?? {};
+  const draftComps = Object.fromEntries(Object.entries(comps ?? {}).filter(([, v]) => v));
   // Own folders the same way: one blanked is invalid until it is given a
   // path or handed back to its area.
   const savedCases = preview?.map.cases ?? {};
@@ -210,8 +218,11 @@ export default function PlaywrightExportDialog({
     invalidOwn.size > 0 ||
     pathsOf(draftCases) !== pathsOf(savedCases) ||
     JSON.stringify(Object.entries(draftAreas).sort()) !== JSON.stringify(Object.entries(savedAreas).sort()) ||
-    JSON.stringify(Object.entries(draftUsers).sort()) !== JSON.stringify(Object.entries(savedUsers).sort());
+    JSON.stringify(Object.entries(draftUsers).sort()) !== JSON.stringify(Object.entries(savedUsers).sort()) ||
+    JSON.stringify(Object.entries(draftComps).sort()) !== JSON.stringify(Object.entries(savedComps).sort());
 
+  const usedComponents = preview?.components ?? [];
+  const commonComponents = preview?.common_components ?? [];
   const cases = preview?.cases ?? [];
   const isTicked = (c: PreviewCase) => (c.in_repo ? replacing.has(c.case_id) : !unticked.has(c.case_id));
   const ticked = cases.filter((c) => c.exportable && isTicked(c)).map((c) => c.case_id);
@@ -659,6 +670,44 @@ export default function PlaywrightExportDialog({
                     );
                   })}
                 </section>
+
+                {usedComponents.length > 0 && (
+                  <section className="space-y-2 border-t border-border pt-3">
+                    <h4 className="text-xs font-medium text-text">Components</h4>
+                    <Hint>The clone's common component each of your Auto Run components stands for. A mapped one is written as a Uses line in the case's section.</Hint>
+                    {commonComponents.length === 0 && Object.keys(draftComps).length === 0 && (
+                      <Hint>This clone has no common components yet.</Hint>
+                    )}
+                    {usedComponents
+                      .filter((name) => commonComponents.length > 0 || draftComps[name])
+                      .map((name) => {
+                        const picked = comps?.[name] ?? "";
+                        // A saved pick the clone no longer has: shown, and said, not left blank.
+                        const stale = picked !== "" && !commonComponents.includes(picked);
+                        return (
+                          <div key={name} className="space-y-1">
+                            <div className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] items-center gap-2">
+                              <span className="truncate text-sm text-text" title={name}>
+                                {name}
+                              </span>
+                              <Combobox
+                                ariaLabel={`Common component for ${name}`}
+                                triggerClassName="py-1.5 text-xs"
+                                value={picked}
+                                items={[
+                                  { value: "", label: "Not mapped" },
+                                  ...(stale ? [{ value: picked, label: picked }] : []),
+                                  ...commonComponents.map((c) => ({ value: c, label: c })),
+                                ]}
+                                onChange={(v) => setComps((cur) => ({ ...(cur ?? {}), [name]: v }))}
+                              />
+                            </div>
+                            {stale && <p className="text-xs text-warning">{`${picked} is not under suites/common-components in this clone`}</p>}
+                          </div>
+                        );
+                      })}
+                  </section>
+                )}
               </Card>
             </div>
           </>

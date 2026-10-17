@@ -101,3 +101,20 @@ fn the_clone_path_is_a_setting() {
     let s: AppSettings = serde_json::from_str(old).unwrap();
     assert_eq!(s.playwright_clone, "");
 }
+
+#[test]
+fn the_component_map_round_trips() {
+    let d = tempfile::tempdir().unwrap();
+    let mut map = ExportMap::default();
+    map.components.insert("Employee search".into(), "employee-search".into());
+    map.components.insert("Pick a date".into(), "date-picker".into());
+    save(d.path(), "org", "proj", &map).unwrap();
+    assert_eq!(load(d.path(), "org", "proj").unwrap(), map);
+
+    // A map saved before components existed reads as having none.
+    let file = v2_lib::pw_export::mapping::path(d.path(), "org", "proj");
+    std::fs::write(&file, r#"{"areas":{"A":{"path":"sl/admin/m/a"}}}"#).unwrap();
+    let old = load(d.path(), "org", "proj").unwrap();
+    assert!(old.components.is_empty());
+    assert_eq!(old.areas["A"].path, "sl/admin/m/a");
+}
