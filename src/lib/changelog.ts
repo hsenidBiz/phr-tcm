@@ -27,6 +27,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.9",
+    date: "2026-10-18",
+    items: [
+      "Export to Playwright now hands over what TCM knows about each case: a From TCM part with what the case sets up, creates and cleans up, the common components it uses, Preconditions rows marked (from TCM), the order cases need to run in, and the app quirks TCM has recorded for it.",
+      "Auto Run's Setup panel has a Protected records list: the records your tests must never change or delete. Export to Playwright writes it into the repo so the assistant finishing a spec knows to leave them alone.",
+      "Export to Playwright warns before writing when a case appears to delete records, depends on another case, or leans on a position in a list.",
+      "Exporting again keeps what the repo added: its own Preconditions rows, Uses lines and notes stay where they are.",
+      "Sync shows an exported case as Out of date when what TCM knows about it changes, not only its steps.",
+      "The Finish in the repo prompt points the assistant at the new parts of each case.",
+      "The app is smaller to download and install.",
+      "The Modules screen scrolls with one scrollbar, and the line from Core to Crystal Reports turns smoothly.",
+    ],
+  },
+  {
     version: "2.2.3-beta.8",
     date: "2026-10-17",
     items: [
