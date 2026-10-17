@@ -7,10 +7,13 @@
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use v2_lib::ai_bridge::{route, BridgeContext};
-use v2_lib::commands::ai_bridge::push_context_with;
-use v2_lib::commands::ai_tools::{set_auto_approve_with, AUTO_APPROVE_ENV_MOVED};
-use v2_lib::commands::environments::{list_adopting, move_bridge_to, switch_with};
+use v2_lib::ai_bridge::{route, still_allowed, BridgeContext, API_WRITES_MOVED};
+use v2_lib::ai_tools::CORE_TOOLS;
+use v2_lib::commands::ai_bridge::{hold_writes_while, push_context_with, release_writes};
+use v2_lib::commands::ai_tools::{
+    match_allow_files_with, repair_allow_files, set_auto_approve_with, ToolHome, AUTO_APPROVE_ENV_MOVED,
+};
+use v2_lib::commands::environments::{env_list_with, list_adopting, move_bridge_to, switch_reconciler, switch_with};
 use v2_lib::db::credentials::MemoryStore;
 use v2_lib::environments::*;
 
@@ -223,6 +226,8 @@ fn no_push_or_switch_ever_leaves_writes_on_for_an_environment_that_is_not_active
             let store = MemoryStore::default();
             for i in 0..150 {
                 move_bridge_to(&root, &store, if i % 2 == 0 { &qa } else { &first }, Some(&ctx)).unwrap();
+                // What `switch_with` does once the allow files match.
+                release_writes(&ctx);
             }
         })
     };
@@ -263,7 +268,7 @@ async fn the_switch_reapplies_the_allow_files_after_the_bridge_has_moved() {
             seen.lock().unwrap().push((writes, active_id(&root).unwrap()));
         }
     };
-    let view = switch_with(&root, &store, &qa, Some(&ctx), after).await.unwrap();
+    let (view, _) = switch_with(&root, &store, &qa, Some(&ctx), after).await.unwrap();
     assert_eq!(view.active, qa);
     // Once, with the bridge already on QA and every write off.
     assert_eq!(*seen.lock().unwrap(), vec![(false, qa.clone())]);
@@ -329,4 +334,295 @@ async fn tools_says_no_ask_only_with_the_environments_choice_and_writes_on() {
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["db_no_ask"], expected, "no_ask {no_ask}, writes {writes}");
     }
+}
+
+// ------------------------------------------------- holding writes off
+
+/// A push for the new environment can land while the switch is still
+/// making the allow files match it - a list read for another screen
+/// tells the webview the new environment, and that pushes. Its writes wait
+/// until the allow files say what the new environment says, then apply.
+#[tokio::test]
+async fn a_push_for_the_new_environment_during_the_allow_file_update_waits_for_it() {
+    let _locks = switch_locks();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let store = MemoryStore::default();
+    let (first, qa) = two_envs(&root);
+    let ctx = Arc::new(Mutex::new(BridgeContext::default()));
+    push_context_with(&ctx, Some(&root), pushed(), &first);
+
+    let during = {
+        let (ctx, root, qa) = (Arc::clone(&ctx), root.clone(), qa.clone());
+        move || {
+            push_context_with(&ctx, Some(&root), pushed(), &qa);
+            let c = ctx.lock().unwrap().clone();
+            (c.db_writes, c.api_writes)
+        }
+    };
+    let (_, seen) = switch_with(&root, &store, &qa, Some(&ctx), during).await.unwrap();
+    assert_eq!(seen, Some((false, false)), "held while the allow files were brought in line");
+    let c = ctx.lock().unwrap().clone();
+    assert!(c.db_writes && c.api_writes, "then QA's own push applies: {c:?}");
+}
+
+#[tokio::test]
+async fn the_hold_ends_even_when_the_allow_file_update_fails() {
+    let _locks = switch_locks();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let store = MemoryStore::default();
+    let (_, qa) = two_envs(&root);
+    let ctx = Mutex::new(BridgeContext::default());
+    let (_, seen) = switch_with(&root, &store, &qa, Some(&ctx), || -> () { panic!("the allow file could not be read") })
+        .await
+        .unwrap();
+    assert_eq!(seen, None, "the answer says it did not finish");
+    push_context_with(&ctx, Some(&root), pushed(), &qa);
+    assert!(ctx.lock().unwrap().db_writes, "nothing is held any more");
+}
+
+/// The repair that runs when the bridge starts (and on the first list
+/// after) holds writes the same way: on is restored, never granted.
+#[test]
+fn a_repair_holds_writes_off_and_puts_back_only_what_was_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (first, _) = two_envs(root);
+    let ctx = Mutex::new(BridgeContext::default());
+    push_context_with(&ctx, Some(root), pushed(), &first);
+    let inside = hold_writes_while(Some(&ctx), || ctx.lock().unwrap().db_writes);
+    assert!(!inside);
+    assert!(ctx.lock().unwrap().db_writes, "what was on before comes back");
+
+    let off = Mutex::new(BridgeContext::default());
+    hold_writes_while(Some(&off), || ());
+    assert!(!off.lock().unwrap().db_writes, "and nothing that was off is turned on");
+}
+
+// ------------------------------------------------- tools and database after a switch
+
+fn disabled_by_tools(c: &BridgeContext) -> Vec<String> {
+    c.disabled_tools.clone()
+}
+
+#[tokio::test]
+async fn after_a_switch_every_switchable_tool_is_off_until_the_new_environments_push() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    let (first, qa) = two_envs(root);
+    let ctx = Mutex::new(BridgeContext::default());
+    push_context_with(&ctx, Some(root), pushed(), &first);
+    move_bridge_to(root, &store, &qa, Some(&ctx)).unwrap();
+    release_writes(&ctx);
+
+    let off = disabled_by_tools(&ctx.lock().unwrap());
+    for t in ["get_tags", "db_query", "search_wiki", "run_api_template"] {
+        assert!(off.iter().any(|o| o == t), "{t} is off: {off:?}");
+    }
+    assert!(off.iter().all(|o| !CORE_TOOLS.contains(&o.as_str())), "core tools are never off: {off:?}");
+    let c = ctx.lock().unwrap().clone();
+    let (_, body) = route(&c, None, "GET", "/tools", "", "test").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v["disabled"].as_array().unwrap().iter().any(|t| t == "get_tags"), "{body}");
+
+    // QA's own push brings its own list.
+    push_context_with(&ctx, Some(root), pushed(), &qa);
+    assert!(ctx.lock().unwrap().disabled_tools.is_empty());
+}
+
+#[test]
+fn a_stale_push_keeps_the_contexts_database_and_tools() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let store = MemoryStore::default();
+    let (first, qa) = two_envs(root);
+    let ctx = Mutex::new(BridgeContext::default());
+    move_bridge_to(root, &store, &qa, Some(&ctx)).unwrap();
+    release_writes(&ctx);
+    let before = ctx.lock().unwrap().clone();
+
+    // Default's push, still on its way when the switch landed.
+    let stale = BridgeContext { db_id: Some("dev-login".into()), disabled_tools: vec![], ..pushed() };
+    push_context_with(&ctx, Some(root), stale, &first);
+    let c = ctx.lock().unwrap().clone();
+    assert_eq!(c.db_id.as_deref(), Some("qa-read"), "QA's database stays");
+    assert_eq!(c.disabled_tools, before.disabled_tools, "and the switch's tool list");
+    assert!(!c.db_writes && !c.api_writes);
+    assert_eq!(c.org, "acme", "the rest of the push still applies");
+}
+
+/// Before any environment is the context's own (a webview that does not
+/// know it yet), there is nothing of an environment's to keep: the push's
+/// tool list is taken, its writes are not.
+#[test]
+fn before_any_environment_a_push_brings_its_tools_but_no_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    two_envs(root);
+    let ctx = Mutex::new(BridgeContext::default());
+    let early = BridgeContext { disabled_tools: vec!["get_tags".into()], ..pushed() };
+    push_context_with(&ctx, Some(root), early, "");
+    let c = ctx.lock().unwrap().clone();
+    assert_eq!(c.disabled_tools, vec!["get_tags".to_string()]);
+    assert!(!c.db_writes && !c.api_writes);
+}
+
+// ------------------------------------------------- the allow files
+
+/// A machine where Claude Code is installed, our server registered for the
+/// whole machine, and its settings carrying the database "always allow".
+fn tool_home(settings: &str) -> (tempfile::TempDir, ToolHome) {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(home.path().join(".claude")).unwrap();
+    std::fs::write(home.path().join(".claude.json"), r#"{"mcpServers": {"tcm": {"command": "x", "args": ["--mcp"]}}}"#)
+        .unwrap();
+    std::fs::write(home.path().join(".claude").join("settings.json"), settings).unwrap();
+    let tools = ToolHome {
+        home: home.path().to_string_lossy().to_string(),
+        appdata: home.path().join("appdata").to_string_lossy().to_string(),
+        on_path: |_| false,
+    };
+    (home, tools)
+}
+
+const GRANTED: &str = r#"{"permissions": {"allow": ["mcp__tcm__db_query", "mcp__tcm__preview_report_live"]}}"#;
+
+fn user_settings(home: &tempfile::TempDir) -> String {
+    std::fs::read_to_string(home.path().join(".claude").join("settings.json")).unwrap()
+}
+
+#[test]
+fn the_repair_at_start_takes_out_entries_an_environment_with_no_ask_off_does_not_want() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    two_envs(root);
+    let (home, tools) = tool_home(GRANTED);
+    let ctx = Mutex::new(BridgeContext::default());
+    repair_allow_files(Some(&ctx), root, None, &tools);
+    assert!(!user_settings(&home).contains("db_query"), "{}", user_settings(&home));
+}
+
+#[test]
+fn the_repair_writes_the_entries_an_environment_with_no_ask_on_wants() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (first, _) = two_envs(root);
+    set_db_auto_approve(root, &first, true).unwrap();
+    let (home, tools) = tool_home("{}");
+    repair_allow_files(None, root, None, &tools);
+    assert!(user_settings(&home).contains("mcp__tcm__db_query"), "{}", user_settings(&home));
+}
+
+/// What `env_set_active` runs after the bridge has moved: the old
+/// environment's entries go, and what was done comes back in the answer.
+#[tokio::test]
+async fn the_switch_takes_out_the_old_environments_entries_and_answers_what_it_did() {
+    let _locks = switch_locks();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let store = MemoryStore::default();
+    let (first, qa) = two_envs(&root);
+    set_db_auto_approve(&root, &first, true).unwrap();
+    let (home, tools) = tool_home(GRANTED);
+    let (_, outcomes) = switch_with(&root, &store, &qa, None, switch_reconciler(root.clone(), None, tools)).await.unwrap();
+    assert!(!user_settings(&home).contains("db_query"), "{}", user_settings(&home));
+    let outcomes = outcomes.unwrap();
+    assert!(outcomes.iter().any(|o| o.tool == "Claude Code" && o.applied), "{outcomes:?}");
+}
+
+#[tokio::test]
+async fn a_removal_that_fails_is_in_the_switch_answer() {
+    let _locks = switch_locks();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let store = MemoryStore::default();
+    let (_, qa) = two_envs(&root);
+    let (_home, tools) = tool_home("{ this is not json");
+    let (_, outcomes) = switch_with(&root, &store, &qa, None, switch_reconciler(root.clone(), None, tools)).await.unwrap();
+    let outcomes = outcomes.unwrap();
+    let cc = outcomes.iter().find(|o| o.tool == "Claude Code").expect("Claude Code is named");
+    assert!(!cc.applied, "{cc:?}");
+    assert!(!cc.note.is_empty(), "and says why");
+}
+
+/// Two updates at once - a switch taking entries out while a turn-on writes
+/// them - must end with the files saying what the active environment says.
+/// Each reads the environment and applies under one lock; without it the
+/// slower one, reading first and writing last, wins with a stale answer.
+#[test]
+fn allow_file_updates_happen_one_at_a_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let (first, qa) = two_envs(&root);
+    set_db_auto_approve(&root, &first, true).unwrap();
+    let applied = Arc::new(Mutex::new(Vec::<bool>::new()));
+
+    let slow = {
+        let (root, applied) = (root.clone(), Arc::clone(&applied));
+        std::thread::spawn(move || {
+            match_allow_files_with(&root, |on| {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                applied.lock().unwrap().push(on);
+            })
+        })
+    };
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    // The switch to QA (no-ask off), and its own update.
+    set_active(&root, &qa).unwrap();
+    match_allow_files_with(&root, |on| applied.lock().unwrap().push(on));
+    slow.join().unwrap();
+    let applied = applied.lock().unwrap().clone();
+    assert_eq!(applied.last(), Some(&false), "the last word is QA's: {applied:?}");
+}
+
+// ------------------------------------------------- the old setting
+
+#[test]
+fn listing_the_environments_clears_the_old_machine_wide_setting() {
+    let _settings = crate::serial::app_settings();
+    let dir = std::env::temp_dir().join(format!("tcm-suite-app-settings-{}", std::process::id()));
+    v2_lib::app_settings::init(dir.clone());
+    v2_lib::app_settings::update(|s| s.db_auto_approve = true).unwrap();
+    let envs = tempfile::tempdir().unwrap();
+    let view = env_list_with(envs.path(), &MemoryStore::default(), Some("dev-login")).unwrap();
+    assert!(view.environments[0].db_auto_approve, "it moved to the environment");
+    assert!(!v2_lib::app_settings::current().db_auto_approve, "and is gone from the machine");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// ------------------------------------------------- API templates
+
+/// A template call is judged on the context it arrived with, but runs only
+/// once it holds the run slot - which a switch also takes. Checked again
+/// there: the environment it was allowed for must still be the active one,
+/// and the switch still on.
+#[test]
+fn a_template_run_is_refused_when_the_environment_or_the_switch_moved_while_it_waited() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (first, qa) = two_envs(root);
+    let ctx = Mutex::new(BridgeContext::default());
+    push_context_with(&ctx, Some(root), pushed(), &first);
+    let allowed = ctx.lock().unwrap().clone();
+    assert!(allowed.api_writes);
+
+    assert_eq!(still_allowed(&allowed, Some(&first), Some(&allowed)), Ok(()));
+    assert_eq!(still_allowed(&allowed, Some(&qa), None), Err(API_WRITES_MOVED.to_string()), "switched");
+    let off = BridgeContext { api_writes: false, ..allowed.clone() };
+    assert_eq!(still_allowed(&allowed, Some(&first), Some(&off)), Err(API_WRITES_MOVED.to_string()), "turned off");
+    let mut elsewhere = allowed.clone();
+    elsewhere.gate.env_id = Some(qa.clone());
+    assert_eq!(still_allowed(&allowed, Some(&first), Some(&elsewhere)), Err(API_WRITES_MOVED.to_string()));
+}
+
+#[test]
+fn a_context_with_writes_on_always_names_its_environment() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (first, _) = two_envs(root);
+    let ctx = Mutex::new(BridgeContext::default());
+    push_context_with(&ctx, Some(root), pushed(), &first);
+    assert_eq!(ctx.lock().unwrap().gate.env_id.as_deref(), Some(first.as_str()));
 }

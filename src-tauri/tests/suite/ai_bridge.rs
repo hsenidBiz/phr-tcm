@@ -17,6 +17,7 @@ fn ctx() -> BridgeContext {
         db_writes: false,
         api_writes: false,
         db_no_ask: false,
+        gate: Default::default(),
     }
 }
 
@@ -1755,6 +1756,7 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
         db_writes: false,
         api_writes: false,
         db_no_ask: false,
+        gate: Default::default(),
     };
     let key = v2_lib::cache::keys::tags("cap-org", "CapProj");
     let values: Vec<String> = (0..350).map(|i| format!("tag-{i:03}")).collect();

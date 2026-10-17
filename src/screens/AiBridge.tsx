@@ -235,8 +235,19 @@ export default function AiBridge() {
     if (id === envs.data?.active) return;
     setSwitching(true);
     try {
-      const { view } = await switchEnvironment(id);
+      const { view, allow } = await switchEnvironment(id);
       qc.setQueryData(envKeys.list, view);
+      // Each AI tool's own "always allow" now follows the new environment.
+      // One that could not be updated is named, as the switch below names
+      // them: it may still let an assistant run changes without asking.
+      const now = view.environments.find((e) => e.id === view.active);
+      setNoAskNotes(allow.filter((o) => o.note && (!o.applied || now?.db_auto_approve)));
+      const failed = allow.filter((o) => !o.applied && o.note).map((o) => o.tool);
+      if (failed.length > 0) {
+        toast.error(
+          `Could not update ${failed.join(", ")} to match ${now?.name ?? "this environment"} - see Run changes without asking.`,
+        );
+      }
       // Nothing read for the environment before may be shown - or saved
       // back by the Accounts dialog - in this one.
       void forgetEnvironmentData(qc);

@@ -55,6 +55,72 @@ pub struct BridgeContext {
     /// push and on a switch (`commands::ai_bridge::push_context_with`,
     /// `commands::environments::move_bridge_to`).
     pub db_no_ask: bool,
+    /// Whose context this is and whether its writes are held off - Rust's
+    /// alone, kept across every push (`commands::ai_bridge::push_context_with`).
+    pub gate: SwitchGate,
+}
+
+/// The part of the context only Rust sets: which environment the context's
+/// database, tool list and write switches belong to, and whether writes are
+/// held off while the allow files are brought in line with it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct SwitchGate {
+    /// The environment the context is for: set by a switch
+    /// (`move_bridge_to`) and by a push for the active environment. A
+    /// context with a write on always names one.
+    pub env_id: Option<String>,
+    /// How many switches or repairs are still making each AI tool's own
+    /// "always allow" match the environment. While any is, no write is on.
+    pub holds: u32,
+    /// The write switches a push for this environment asked for while a
+    /// hold was on, put in place when the last hold ends.
+    pub wanted: Option<(bool, bool)>,
+}
+
+/// Said when an API template call was allowed for one environment, or
+/// with the switch on, and by the time it held the run slot that was no
+/// longer so. Nothing ran.
+pub const API_WRITES_MOVED: &str =
+    "the environment or the API templates switch changed while this call waited - nothing was run; call it again";
+
+/// Whether a template call allowed on `snapshot` - the context it arrived
+/// with - may still run now that it holds the run slot (which a switch also
+/// takes, so nothing can move after this). `active` is the active
+/// environment now; `live` is the bridge's context now, when there is one.
+pub fn still_allowed(snapshot: &BridgeContext, active: Option<&str>, live: Option<&BridgeContext>) -> Result<(), String> {
+    let moved = || Err(API_WRITES_MOVED.to_string());
+    if let Some(env) = snapshot.gate.env_id.as_deref() {
+        if active != Some(env) {
+            return moved();
+        }
+    }
+    if let Some(now) = live {
+        if !now.api_writes || now.gate.env_id != snapshot.gate.env_id {
+            return moved();
+        }
+    }
+    Ok(())
+}
+
+/// The bridge the app runs, for `still_allowed`'s look at the context now.
+/// Set by the app when it starts its bridge (never by a test's listener),
+/// held weakly so it never keeps one alive.
+static LIVE: std::sync::Mutex<Option<std::sync::Weak<BridgeState>>> = std::sync::Mutex::new(None);
+
+pub fn set_live_bridge(shared: &SharedBridge) {
+    *LIVE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::downgrade(shared));
+}
+
+fn live_context() -> Option<BridgeContext> {
+    let live = LIVE.lock().unwrap_or_else(|e| e.into_inner()).as_ref()?.upgrade()?;
+    let ctx = live.ctx.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    Some(ctx)
+}
+
+/// `still_allowed` against the active environment and the live context.
+fn assistant_may_still_write(snapshot: &BridgeContext, root: &std::path::Path) -> Result<(), String> {
+    let active = crate::environments::read_active(root).ok().flatten().map(|e| e.id);
+    still_allowed(snapshot, active.as_deref(), live_context().as_ref())
 }
 
 /// Hand-written so the store - and therefore every password in it - cannot
@@ -85,6 +151,7 @@ impl std::fmt::Debug for BridgeContext {
             .field("db_writes", &self.db_writes)
             .field("api_writes", &self.api_writes)
             .field("db_no_ask", &self.db_no_ask)
+            .field("gate", &self.gate)
             .finish()
     }
 }
@@ -1181,6 +1248,11 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
     let Some(_claim) = claim() else {
         return (409, API_TEMPLATE_BUSY.to_string());
     };
+    // Judged on the context it arrived with; looked at again now that no
+    // switch can land (`still_allowed`).
+    if let Err(moved) = assistant_may_still_write(ctx, root) {
+        return (409, moved);
+    }
     if let Err(problems) = preflight(root, &req, existing) {
         return (400, problems.join("\n"));
     }
@@ -1579,7 +1651,8 @@ pub async fn api_fixture_run<B: crate::autorun::replay::Browsers>(
         Err(refused) => return refused,
     };
     let mut browsers = open(which);
-    let report = match run_saved(&mut browsers, &root, &ctx.org, &ctx.project, &id, timing).await {
+    let may_run = || assistant_may_still_write(ctx, &root);
+    let report = match run_saved(&mut browsers, &root, &ctx.org, &ctx.project, &id, timing, may_run).await {
         Ok(r) => r,
         Err(NotRun::Busy) => return (409, API_TEMPLATE_BUSY.to_string()),
         Err(NotRun::Refused(why)) => return (400, why),

@@ -1547,7 +1547,7 @@ function envMocks(envs = [ENV_DEFAULT, ENV_QA, ENV_GONE]) {
     if (cmd === "env_list") return view();
     if (cmd === "env_set_active") {
       state.active = (args as { id: string }).id;
-      return view();
+      return { view: view(), allow: [] };
     }
     if (cmd === "env_save") {
       const env = (args as { env: (typeof envs)[number] }).env;
@@ -1723,7 +1723,7 @@ test("the environments are asked for with the card's choice when it is a known d
   const calls = envMocks([ENV_QA]);
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   await waitFor(() => expect(calls.some((c) => c.cmd === "env_list")).toBe(true));
-  expect(calls.find((c) => c.cmd === "env_list")!.args).toEqual({ currentDb: "qa-read" });
+  expect(calls.find((c) => c.cmd === "env_list")!.args).toEqual({ currentDb: "qa-read", workingDir: "D:\\repo" });
 });
 
 test("a card choice that names no database is never handed to the environments", async () => {
@@ -1731,7 +1731,7 @@ test("a card choice that names no database is never handed to the environments",
   const calls = envMocks([ENV_DEFAULT]);
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   await waitFor(() => expect(calls.some((c) => c.cmd === "env_list")).toBe(true));
-  expect(calls.find((c) => c.cmd === "env_list")!.args).toEqual({ currentDb: null });
+  expect(calls.find((c) => c.cmd === "env_list")!.args).toEqual({ currentDb: null, workingDir: "D:\\repo" });
   expect(calls.some((c) => c.cmd === "env_save")).toBe(false);
 });
 
@@ -1826,6 +1826,35 @@ test("running changes without asking shows the active environment's own choice",
   fireEvent.click(await screen.findByRole("combobox", { name: "Environment" }));
   fireEvent.click(await screen.findByRole("option", { name: "QA" }));
   await waitFor(() => expect(noAsk()).toHaveAttribute("aria-checked", "true"));
+});
+
+/// A switch makes each AI tool's own "always allow" match the new
+/// environment. One it could not update is named, as the switch itself
+/// names them - an assistant could otherwise still be allowed to run
+/// changes unasked.
+test("a switch names an AI tool whose settings could not be updated", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  const calls = envMocks([ENV_DEFAULT, ENV_QA]);
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "db_databases") return DATABASES;
+    if (cmd === "env_list") return { active: ENV_DEFAULT.id, environments: [ENV_DEFAULT, ENV_QA] };
+    if (cmd === "env_set_active")
+      return {
+        view: { active: ENV_QA.id, environments: [ENV_DEFAULT, ENV_QA] },
+        allow: [{ tool: "Claude Code", applied: false, note: "could not read the settings file" }],
+      };
+    return undefined;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  render(<Toaster />);
+
+  fireEvent.click(await screen.findByRole("combobox", { name: "Environment" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA" }));
+  expect(await screen.findByText(/Could not update Claude Code/)).toBeInTheDocument();
+  expect(within(dbCard()).getByText("could not read the settings file")).toBeInTheDocument();
 });
 
 // ------------------------------------------------------- tool explanations

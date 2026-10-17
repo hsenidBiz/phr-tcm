@@ -354,10 +354,10 @@ export const commands = {
 	 *  The environments and which is active. `current_db` is the database the
 	 *  Company database card has chosen now: on first use it becomes Default's.
 	 */
-	envList: (currentDb: string | null) => typedError<EnvListView, string>(__TAURI_INVOKE("env_list", { currentDb })),
+	envList: (currentDb: string | null, workingDir: string | null) => typedError<EnvListView, string>(__TAURI_INVOKE("env_list", { currentDb, workingDir })),
 	envSave: (env: EnvInput) => typedError<EnvListView, string>(__TAURI_INVOKE("env_save", { env })),
 	envRemove: (id: string) => typedError<EnvListView, string>(__TAURI_INVOKE("env_remove", { id })),
-	envSetActive: (id: string, workingDir: string | null) => typedError<EnvListView, string>(__TAURI_INVOKE("env_set_active", { id, workingDir })),
+	envSetActive: (id: string, workingDir: string | null) => typedError<EnvSwitched, string>(__TAURI_INVOKE("env_set_active", { id, workingDir })),
 	envSetDefaultPassword: (id: string, password: string) => typedError<null, string>(__TAURI_INVOKE("env_set_default_password", { id, password })),
 	envClearDefaultPassword: (id: string) => typedError<null, string>(__TAURI_INVOKE("env_clear_default_password", { id })),
 	/**  The assistant's proposed accounts for the active environment. */
@@ -3417,6 +3417,16 @@ export type EnvInput = {
 export type EnvListView = {
 	active: string,
 	environments: EnvView[],
+};
+
+/**
+ *  What a switch answers: the list as Rust now has it, and what was done to
+ *  each AI tool's own "always allow" to make it match the new environment
+ *  (`AutoApproveOutcome`, as the Run changes without asking switch answers).
+ */
+export type EnvSwitched = {
+	view: EnvListView,
+	allow: AutoApproveOutcome[],
 };
 
 /**

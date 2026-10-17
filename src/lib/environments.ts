@@ -9,8 +9,9 @@
 // "default password is set" flag and nothing more.
 
 import { useQuery, type QueryClient } from "@tanstack/react-query";
-import { commands, type EnvInput, type EnvListView, type EnvView } from "../bindings";
+import { commands, type AutoApproveOutcome, type EnvInput, type EnvListView, type EnvView } from "../bindings";
 import { noteEnvironments } from "./activeEnv";
+import { globalAllowedSnapshot, scopeSnapshot } from "./aiScope";
 import { saveSelectedDb, selectedDbSnapshot } from "./dbServer";
 import { logUi } from "./uiLog";
 import { workingDirSnapshot } from "./workingDir";
@@ -83,6 +84,14 @@ export function toInput(env: EnvView): EnvInput {
 
 const EMPTY: EnvListView = { active: "", environments: [] };
 
+/** The repository whose AI tools' settings Rust brings in line with the
+ * active environment - the same rule the Run changes without asking switch
+ * uses: none while AI tools are registered for the whole machine. */
+function aiToolsRepository(): string | null {
+  if (globalAllowedSnapshot() && scopeSnapshot() === "global") return null;
+  return workingDirSnapshot() || null;
+}
+
 /** The environments, creating Default on first use.
  *
  * The Database Read Access card's choice is passed only when it is a database
@@ -97,7 +106,7 @@ export async function loadEnvironments(): Promise<EnvListView> {
   const known = await knownDatabaseIds();
   const card = selectedDbSnapshot();
   const cardChoice = card && known?.includes(card) ? card : null;
-  const res = await commands.envList(cardChoice);
+  const res = await commands.envList(cardChoice, aiToolsRepository());
   if (res.status === "error") throw new Error(res.error);
   let view = res.data ?? EMPTY;
 
@@ -153,17 +162,21 @@ export function useActiveEnvironmentName(): string | null {
  * (a saved custom login removed or reset) still switches; it sets no
  * database, and `dbMissing` says so. `view` is the list as Rust now has it.
  *
- * Rust moves the AI bridge with it: every write off until the new
- * environment's own switches are pushed, and each AI tool's "always allow"
- * made to match the new one before it answers (hence the working
- * repository, whose allow file it may hold). Only then are the switches
- * read for the new environment here - which is what pushes them.
+ * Rust moves the AI bridge with it: every write held off until each AI
+ * tool's "always allow" matches the new environment (hence the working
+ * repository, whose allow file it may hold) and the new environment's own
+ * switches are pushed. `allow` is what was done for each tool, as the Run
+ * changes without asking switch answers it. Only then are the switches read
+ * for the new environment here - which is what pushes them.
  *
  * Throws Rust's refusal (a run in progress, say) as an Error. */
-export async function switchEnvironment(id: string): Promise<{ dbMissing: boolean; view: EnvListView }> {
-  const res = await commands.envSetActive(id, workingDirSnapshot() || null);
+export async function switchEnvironment(
+  id: string,
+): Promise<{ dbMissing: boolean; view: EnvListView; allow: AutoApproveOutcome[] }> {
+  const res = await commands.envSetActive(id, aiToolsRepository());
   if (res.status === "error") throw new Error(res.error);
-  const view = res.data ?? EMPTY;
+  const view = res.data?.view ?? EMPTY;
+  const allow = res.data?.allow ?? [];
   const env = view.environments.find((e) => e.id === view.active);
   let dbMissing = false;
   if (env) {
@@ -176,7 +189,7 @@ export async function switchEnvironment(id: string): Promise<{ dbMissing: boolea
   // Last, so the first push for the new environment already names its
   // database.
   noteEnvironments(view);
-  return { dbMissing, view };
+  return { dbMissing, view, allow };
 }
 
 /** Whether the active environment names a database that is not set up any

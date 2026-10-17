@@ -1630,7 +1630,8 @@ function applyPatches() {
     envSetActive: (id: string) => {
       if (!environments.environments.some((e) => e.id === id)) return err("Demo mode: no such environment");
       environments = { ...environments, active: id };
-      return ok(environments);
+      // No AI tool's real settings are touched in sample data.
+      return ok({ view: environments, allow: [] });
     },
     // Kept on the sample environment; no AI tool's real settings are touched.
     setDbAutoApprove: (envId: string, on: boolean) => {

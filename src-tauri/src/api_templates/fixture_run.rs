@@ -641,7 +641,9 @@ impl std::fmt::Display for NotRun {
 
 /// Runs the saved fixture `id` - Run and Rebuild alike - holding the
 /// one-at-a-time template slot for the whole run, so no other template run
-/// and no environment switch can come between its steps.
+/// and no environment switch can come between its steps. `may_run` is
+/// asked once the slot is held: an assistant's call checks there that what
+/// allowed it still holds (`ai_bridge::still_allowed`).
 pub async fn run_saved<B: Browsers>(
     browsers: &mut B,
     root: &Path,
@@ -649,10 +651,12 @@ pub async fn run_saved<B: Browsers>(
     project: &str,
     id: &str,
     timing: &Timing,
+    may_run: impl FnOnce() -> Result<(), String>,
 ) -> Result<FixtureReport, NotRun> {
     let Some(_claim) = claim() else {
         return Err(NotRun::Busy);
     };
+    may_run().map_err(NotRun::Refused)?;
     let f = fixture_store::load(root, org, project, id)
         .map_err(NotRun::Refused)?
         .ok_or_else(|| NotRun::Refused(no_such_fixture(id)))?;

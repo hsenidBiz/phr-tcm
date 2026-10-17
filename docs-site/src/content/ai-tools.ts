@@ -209,7 +209,7 @@ export const aiBridge: Screen = {
       does:
         "The environment Auto Run and API Templates work in: a site address, the company database below, and its own accounts and saved sign-ins. " +
         "Switching moves the **Database** below with it, and the environment's name shows in the title bar. " +
-        "Each environment also keeps its own **Tools an assistant may use**, **Create, update and delete**, **Run changes without asking** and **API templates** switches, so switching shows - and an assistant gets - the new environment's at once. " +
+        "Each environment also keeps its own **Tools an assistant may use**, **Create, update and delete**, **Run changes without asking** and **API templates** switches. Switching shows the new environment's, and they apply to every call an assistant makes from then on; an assistant's own list of tools refreshes when it next asks for it, or when it is restarted. " +
         "The working repositories, their AI tools switches and the list of databases are the same in every environment.",
     },
     {

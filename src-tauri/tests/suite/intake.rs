@@ -466,6 +466,7 @@ fn ctx() -> BridgeContext {
         db_writes: false,
         api_writes: false,
         db_no_ask: false,
+        gate: Default::default(),
     }
 }
 

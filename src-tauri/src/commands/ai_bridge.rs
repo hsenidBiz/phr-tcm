@@ -41,7 +41,24 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
     if let Some((_, port)) = handle.running.lock().unwrap().as_ref() {
         return Ok(BridgeStatus { port: *port, mcp_exe: mcp_exe_path() });
     }
-    let shared = BridgeState::new(BridgeContext::default(), app.package_info().version.to_string());
+    // Writes start held: each AI tool's own "always allow" is first made to
+    // match the active environment (an app that stopped halfway through a
+    // switch left the last one's), and only then can a push turn one on.
+    let mut first = BridgeContext::default();
+    hold_writes(&mut first);
+    let shared = BridgeState::new(first, app.package_info().version.to_string());
+    crate::ai_bridge::set_live_bridge(&shared);
+    if let Ok(root) = super::autorun::root(&app) {
+        let repairing = Arc::clone(&shared);
+        tauri::async_runtime::spawn_blocking(move || {
+            let tools = super::ai_tools::ToolHome::real();
+            // The hold taken above is this repair's: it ends with it.
+            let _release = HeldWrites(Some(&repairing.ctx));
+            super::ai_tools::log_allow_outcomes(&super::ai_tools::match_allow_files_in(&root, None, &tools));
+        });
+    } else {
+        release_writes(&shared.ctx);
+    }
     let app_for_client = app.clone();
     let factory: crate::ai_bridge::ClientFactory = Arc::new(move || {
         let app = app_for_client.clone();
@@ -153,12 +170,17 @@ pub fn running_bridge(app: &tauri::AppHandle) -> Option<SharedBridge> {
 
 /// Put a push from the webview into the bridge's context, judged against
 /// the active environment under the context's own lock - the lock a switch
-/// holds while it moves the active environment (`move_bridge_to`). The
-/// write switches count only when they are the active environment's
-/// (`env_id`); otherwise - a push that was on its way when a switch landed,
-/// a webview that does not know the environment yet, no environments at
-/// all - every write stays off. "Without asking" is never the webview's to
-/// say: it is the active environment's own, read here.
+/// holds while it moves the active environment (`move_bridge_to`).
+///
+/// A push for the active environment (`env_id`) brings its database, tool
+/// list and write switches - the writes waiting, if a hold is on, until the
+/// allow files match (`release_writes`). Any other push - one that was on
+/// its way when a switch landed, one from a webview that does not know the
+/// environment yet, one with no environments at all - turns no write on and
+/// leaves the context's database and tool list as they are; only before any
+/// environment is the context's own is there none to keep, and then the
+/// push's are taken (writes still off). "Without asking" is never the
+/// webview's to say: it is the active environment's own, read here.
 pub fn push_context_with(
     slot: &std::sync::Mutex<BridgeContext>,
     root: Option<&std::path::Path>,
@@ -174,12 +196,69 @@ pub fn push_context_with(
         }
     });
     let its_own = !env_id.is_empty() && active.as_ref().is_some_and(|e| e.id == env_id);
-    if !its_own {
+    next.gate = ctx.gate.clone();
+    if its_own {
+        next.gate.env_id = Some(env_id.to_string());
+        if next.gate.holds > 0 {
+            next.gate.wanted = Some((next.db_writes, next.api_writes));
+            next.db_writes = false;
+            next.api_writes = false;
+        }
+    } else {
         next.db_writes = false;
         next.api_writes = false;
+        if ctx.gate.env_id.is_some() {
+            next.db_id = ctx.db_id.clone();
+            next.disabled_tools = ctx.disabled_tools.clone();
+        }
     }
     next.db_no_ask = active.is_some_and(|e| e.db_auto_approve);
     *ctx = next;
+}
+
+/// Hold every write off - for a switch or a repair that is making each AI
+/// tool's own "always allow" match the environment. What was on is kept,
+/// to come back when the last hold ends; nothing off is ever turned on.
+pub fn hold_writes(ctx: &mut BridgeContext) {
+    if ctx.gate.holds == 0 && ctx.gate.wanted.is_none() {
+        ctx.gate.wanted = Some((ctx.db_writes, ctx.api_writes));
+    }
+    ctx.gate.holds += 1;
+    ctx.db_writes = false;
+    ctx.api_writes = false;
+}
+
+/// End one hold. When it was the last, the write switches a push for the
+/// context's environment asked for meanwhile (or that were on before) apply.
+pub fn release_writes(slot: &std::sync::Mutex<BridgeContext>) {
+    let mut ctx = slot.lock().unwrap_or_else(|e| e.into_inner());
+    ctx.gate.holds = ctx.gate.holds.saturating_sub(1);
+    if ctx.gate.holds == 0 {
+        if let Some((db, api)) = ctx.gate.wanted.take() {
+            ctx.db_writes = db;
+            ctx.api_writes = api;
+        }
+    }
+}
+
+/// Ends a hold when dropped, so a hold ends however the work under it does.
+pub struct HeldWrites<'a>(pub Option<&'a std::sync::Mutex<BridgeContext>>);
+
+impl Drop for HeldWrites<'_> {
+    fn drop(&mut self) {
+        if let Some(slot) = self.0 {
+            release_writes(slot);
+        }
+    }
+}
+
+/// Run `f` with every write held off.
+pub fn hold_writes_while<T>(bridge: Option<&std::sync::Mutex<BridgeContext>>, f: impl FnOnce() -> T) -> T {
+    if let Some(slot) = bridge {
+        hold_writes(&mut slot.lock().unwrap_or_else(|e| e.into_inner()));
+    }
+    let _release = HeldWrites(bridge);
+    f()
 }
 
 /// The frontend pushes its current org/project + detected field refs so
@@ -219,6 +298,7 @@ pub fn set_bridge_context(
             api_writes: switches.api_writes,
             // Set from the active environment, never from the webview.
             db_no_ask: false,
+            gate: Default::default(),
         };
         push_context_with(&shared.ctx, root.as_deref(), next, &switches.env_id);
     }

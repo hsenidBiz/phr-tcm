@@ -566,9 +566,12 @@ test("the bridge context carries the active environment's switches and names it"
     expect(pushes[pushes.length - 1]?.switches).toEqual({ dbWrites: false, apiWrites: true, envId: A.id }),
   );
 
+  // At once, not after the pause a burst of edits waits for (400ms): Rust
+  // holds every write off from the switch until this push arrives.
   act(() => setActiveEnvId(B.id));
-  await vi.waitFor(() =>
-    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, envId: B.id }),
+  await vi.waitFor(
+    () => expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, envId: B.id }),
+    { timeout: 300 },
   );
 });
 

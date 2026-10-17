@@ -212,6 +212,14 @@ fn tool_policy(call: BridgeCall) -> (Vec<String>, BTreeSet<Module>) {
     tool_policy_from(call("GET", "/tools", ""))
 }
 
+/// Every tool this server offers, by name.
+pub fn all_tool_names() -> Vec<String> {
+    tools_list(vec![], false)["tools"]
+        .as_array()
+        .map(|tools| tools.iter().filter_map(|t| t["name"].as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
 fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
     let ops = crate::transform::SUPPORTED_OPS.join(", ");
     let transform_ops_desc = format!(

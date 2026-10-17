@@ -174,8 +174,46 @@ static ALLOW_FILES: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// the active environment says: written while it runs changes without
 /// asking, taken out while it does not.
 pub fn match_allow_files_to_active(root: &std::path::Path, working_dir: Option<&str>) -> Vec<AutoApproveOutcome> {
+    match_allow_files_in(root, working_dir, &ToolHome::real())
+}
+
+/// `match_allow_files_to_active` for the tools found under `tools`.
+pub fn match_allow_files_in(
+    root: &std::path::Path,
+    working_dir: Option<&str>,
+    tools: &ToolHome,
+) -> Vec<AutoApproveOutcome> {
+    match_allow_files_with(root, |on| apply_db_auto_approve_in(tools, on, working_dir))
+}
+
+/// The active environment's choice read, and `apply` given it, under one
+/// lock: two updates at once can never leave the files saying what the
+/// earlier read said.
+pub fn match_allow_files_with<R>(root: &std::path::Path, apply: impl FnOnce(bool) -> R) -> R {
     let _held = ALLOW_FILES.lock().unwrap_or_else(|e| e.into_inner());
-    apply_db_auto_approve_now(active_auto_approve(root), working_dir)
+    apply(active_auto_approve(root))
+}
+
+/// The repair the app runs when its bridge starts and on the first list of
+/// environments: the allow files made to match the active environment,
+/// with every write held off until they do. A switch the app never
+/// finished would otherwise leave the last environment's entries behind.
+pub fn repair_allow_files(
+    bridge: Option<&std::sync::Mutex<crate::ai_bridge::BridgeContext>>,
+    root: &std::path::Path,
+    working_dir: Option<&str>,
+    tools: &ToolHome,
+) -> Vec<AutoApproveOutcome> {
+    super::ai_bridge::hold_writes_while(bridge, || match_allow_files_in(root, working_dir, tools))
+}
+
+/// Into the log, the tools whose settings could not be set.
+pub fn log_allow_outcomes(outcomes: &[AutoApproveOutcome]) {
+    for o in outcomes {
+        if !o.applied && !o.note.is_empty() {
+            crate::applog::info(format!("auto-approve for {}: {}", o.tool, o.note));
+        }
+    }
 }
 
 /// Switch "Run database changes without asking" on or off for the active
@@ -201,7 +239,7 @@ pub fn set_db_auto_approve(
 /// repository and one for the machine, and how an entry goes in or out.
 struct AllowFile {
     project: fn(&str) -> PathBuf,
-    user: fn() -> PathBuf,
+    user: fn(&str) -> PathBuf,
     merge: fn(&str, &str, bool) -> Result<Option<String>, String>,
     /// Every entry the switch writes: `db_query`'s and the live report
     /// preview's (`ai_tools::CLAUDE_DB_RULES` / `CURSOR_DB_ENTRIES`).
@@ -217,7 +255,7 @@ struct AllowFile {
 /// machine-wide registration. `permissions.allow` rules.
 const CLAUDE_ALLOW: AllowFile = AllowFile {
     project: |root| PathBuf::from(root).join(".claude").join("settings.local.json"),
-    user: || PathBuf::from(home_dir()).join(".claude").join("settings.json"),
+    user: |home| PathBuf::from(home).join(".claude").join("settings.json"),
     merge: set_claude_allow,
     entries: CLAUDE_DB_RULES,
     migrate: migrate_claude_permissions,
@@ -227,7 +265,7 @@ const CLAUDE_ALLOW: AllowFile = AllowFile {
 /// the home folder. `mcpAllowlist` entries.
 const CURSOR_ALLOW: AllowFile = AllowFile {
     project: |root| PathBuf::from(root).join(".cursor").join("permissions.json"),
-    user: || PathBuf::from(home_dir()).join(".cursor").join("permissions.json"),
+    user: |home| PathBuf::from(home).join(".cursor").join("permissions.json"),
     merge: set_cursor_allow,
     entries: CURSOR_DB_ENTRIES,
     migrate: migrate_cursor_permissions,
@@ -291,7 +329,7 @@ fn carry_over_rules(file: &AllowFile, root: Option<&str>) {
     if let Some(r) = root {
         paths.push((file.project)(r));
     }
-    paths.push((file.user)());
+    paths.push((file.user)(&home_dir()));
     for path in paths {
         if let Err(e) = carry_over_rules_in(&path, file.migrate) {
             crate::applog::warn(format!("could not carry the old permission rules over: {e}"));
@@ -325,9 +363,29 @@ pub fn carry_over_rules_in(
 /// nothing the app wrote should outlive the switch. Every other tool that
 /// carries the server is named with what the person has to do.
 pub fn apply_db_auto_approve_now(on: bool, working_dir: Option<&str>) -> Vec<AutoApproveOutcome> {
+    apply_db_auto_approve_in(&ToolHome::real(), on, working_dir)
+}
+
+/// Where the AI tools' settings are read from: this machine's home and
+/// app data folders and PATH, or a test's.
+#[derive(Clone)]
+pub struct ToolHome {
+    pub home: String,
+    pub appdata: String,
+    pub on_path: fn(&str) -> bool,
+}
+
+impl ToolHome {
+    pub fn real() -> ToolHome {
+        ToolHome { home: home_dir(), appdata: appdata_dir(), on_path: is_on_path }
+    }
+}
+
+/// `apply_db_auto_approve_now` for the tools found under `tools`.
+pub fn apply_db_auto_approve_in(tools: &ToolHome, on: bool, working_dir: Option<&str>) -> Vec<AutoApproveOutcome> {
     let root = root_of(working_dir);
     let mut out = Vec::new();
-    for t in detect_in(&home_dir(), &appdata_dir(), &is_on_path, root) {
+    for t in detect_in(&tools.home, &tools.appdata, &tools.on_path, root) {
         let here = t.registered_servers.iter().any(|s| s == TCM_SERVER);
         let global_too = t.global_registered_servers.iter().any(|s| s == TCM_SERVER);
         let Some(file) = allow_file(&t.id) else {
@@ -348,13 +406,13 @@ pub fn apply_db_auto_approve_now(on: bool, working_dir: Option<&str>) -> Vec<Aut
                 }
             }
             if (here && t.scope == "global") || global_too {
-                paths.push((file.user)());
+                paths.push((file.user)(&tools.home));
             }
         } else {
             if let Some(r) = root {
                 paths.push((file.project)(r));
             }
-            paths.push((file.user)());
+            paths.push((file.user)(&tools.home));
         }
         if !t.installed || (on && paths.is_empty()) {
             continue;
