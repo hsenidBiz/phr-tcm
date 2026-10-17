@@ -420,14 +420,13 @@ fn a_card_with_from_tcm_facts_and_order_says_so() {
     let from_tcm = "Read each case's **From TCM:** block before running: it says what the case must not save, \
                     what it appears to write or publish, and the cleanup it relies on.";
     let baseline = "Read docs/tcm-protected-baseline.md and the entries tagged tcm: in docs/app-quirks.md first;";
-    let order = format!(
-        "Order: run 9001 before 9002 (9001 needs a unchanged and 9002 changes it); run 9002 alone and last: it publishes; {}. \
-         Keep publishing and destructive cases out of routine runs.",
-        proposal.trim_end_matches('.')
-    );
-    for sentence in [from_tcm, baseline, &order] {
+    // The proposal line is for the repo owner: the md keeps it, the prompt does not.
+    let order = "Order: run 9001 before 9002 (9001 needs a unchanged and 9002 changes it); run 9002 alone and last: it publishes. \
+                 Keep publishing and destructive cases out of routine runs.";
+    for sentence in [from_tcm, baseline, order] {
         assert!(p.contains(sentence), "{sentence}\n{p}");
     }
+    assert!(!p.contains("Proposed for the repo owner"), "{p}");
     // After the missing-precondition sentence, before the navigation and checkpoint ones, in this order.
     let at = |s: &str| p.find(s).unwrap_or_else(|| panic!("{s}"));
     assert!(at("put suites/_generated/seed.spec.ts back the way it was.") < at(from_tcm));
@@ -467,4 +466,31 @@ fn written_uses_lines_drop_the_checkpoint() {
     put(&c.root, PC_MD, &pc_md(&[], &[(9001, "```\n**Uses:** common-components/login\n```\n\n")]));
     let p = cards_at(&c.root, &record(&[9001]), &none(), &none(), &[9001]).unwrap().remove(0).prompt;
     assert!(p.contains(checkpoint));
+}
+
+#[test]
+fn only_a_line_the_prompt_can_carry_reaches_the_order_sentence() {
+    let c = clone();
+    let long = format!("run 9001 before 9002 ({})", "x".repeat(200));
+    let just_fits = format!("run 9002 alone and last: it {}", "y".repeat(200 - "run 9002 alone and last: it ".len()));
+    assert_eq!(just_fits.chars().count(), 200);
+    put(
+        &c.root,
+        PC_MD,
+        &pc_md(
+            &["run 9001 before 9002 (9001 needs `a` unchanged)", "state 'b' changes it", "needs ../c", &long, &just_fits, "run 9001 first"],
+            &[(9001, ""), (9002, "")],
+        ),
+    );
+    let p = cards_at(&c.root, &record(&[9001, 9002]), &none(), &none(), &[9001, 9002]).unwrap().remove(0).prompt;
+    assert!(
+        p.contains(&format!("Order: {just_fits}; run 9001 first. Keep publishing and destructive cases out of routine runs.")),
+        "{p}"
+    );
+    assert!(!p.contains("needs `a`") && !p.contains("state 'b'") && !p.contains("../c") && !p.contains("xxx"), "{p}");
+
+    // Nothing left to say, or nothing but the proposal: the cases are independent.
+    put(&c.root, PC_MD, &pc_md(&["needs ../c", ORDER_PROPOSAL], &[(9001, ""), (9002, "")]));
+    let p = cards_at(&c.root, &record(&[9001, 9002]), &none(), &none(), &[9001, 9002]).unwrap().remove(0).prompt;
+    assert!(!p.contains("Order: ") && p.contains("The tests are independent (no --chain)."), "{p}");
 }

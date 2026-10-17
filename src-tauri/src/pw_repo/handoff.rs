@@ -25,6 +25,7 @@
 //! else for it. Read only.
 
 use crate::pw_export::clone::ClonedRepo;
+use crate::pw_export::handover::ORDER_PROPOSAL;
 use crate::pw_export::test_case;
 use crate::pw_repo::layout;
 use crate::pw_repo::presence::{self, INDEX_REL};
@@ -189,6 +190,19 @@ pub fn prompt(p: &PromptInput) -> String {
 /// Text the prompt can carry as it is: no backtick, quote, `..` or control character.
 fn carriable(text: &str) -> bool {
     !text.is_empty() && !text.contains("..") && !text.chars().any(|c| c == '`' || c == '\'' || c.is_control())
+}
+
+/// The longest order line the prompt carries; a longer one is dropped, not cut.
+const ORDER_LINE_MAX: usize = 200;
+
+/// The order block's lines the prompt may carry: they hold state names from
+/// scripts and whatever the repo owner typed, so each is held to `carriable`
+/// and a length, and the fixed proposal for the repo owner stays in the file.
+fn checked_order(lines: Vec<String>) -> Vec<String> {
+    lines
+        .into_iter()
+        .filter(|l| l != ORDER_PROPOSAL && l.chars().count() <= ORDER_LINE_MAX && carriable(l))
+        .collect()
 }
 
 /// A raw spec's name from `index.json`: a plain `<name>.spec.ts`, no folder.
@@ -399,7 +413,9 @@ pub fn cards(
                         user_key: &key,
                         navigation_captured: repo.navigation_keys.contains(&nav_key_of(&seg)),
                         has_from_tcm: ids.iter().any(|&id| test_case::has_from_tcm(&md, id)),
-                        order: test_case::order_lines(&md),
+                        order: checked_order(test_case::order_lines(&md)),
+                        // A repo-authored Uses line counts like TCM's: it is a declaration either way, so the
+                        // checkpoint can drop for a case whose other components TCM could not map.
                         uses_written: ids.iter().all(|&id| test_case::has_uses(&md, id)),
                     });
                 }
