@@ -1461,3 +1461,59 @@ fn a_refused_case_with_a_script_still_carries_its_warnings_and_one_without_has_n
     let none = preview_of(&fx, 214);
     assert!(!none.has_script && none.warnings.is_empty());
 }
+
+#[test]
+fn a_loop_warns_only_when_it_appears_to_delete() {
+    let fx = Fx::new();
+    let looped = |button: &str| {
+        json!([{ "step_number": 2, "actions": [{
+            "kind": "repeat_while_visible", "selector": { "role": "row" }, "max": 5,
+            "except": [], "then": [click_named(button)]
+        }] }])
+    };
+    warn_case(&fx, 215, looped("Open"), json!({}));
+    assert!(warnings_of(&fx, &[215], 215).is_empty());
+    warn_case(&fx, 216, looped("Remove"), json!({}));
+    assert_eq!(
+        warnings_of(&fx, &[216], 216),
+        vec!["step 2 appears to delete every matching row (no protected rows listed)".to_string()]
+    );
+    // A delete inside a guard inside the loop counts too.
+    let guarded = json!([{ "step_number": 2, "actions": [{
+        "kind": "repeat_while_visible", "selector": { "role": "row" }, "max": 5, "except": [],
+        "then": [{ "kind": "when_visible", "selector": { "role": "row" }, "then": [click_named("Delete")] }]
+    }] }]);
+    warn_case(&fx, 217, guarded, json!({}));
+    assert_eq!(warnings_of(&fx, &[217], 217).len(), 1);
+}
+
+#[test]
+fn a_css_link_that_takes_the_first_or_nth_child_counts_as_a_position() {
+    let fx = Fx::new();
+    for (i, css) in ["tr:first-child", "li:first-of-type", "tr:nth-child(2)", "tr:NTH-of-type(3)"].iter().enumerate() {
+        let id = 218 + i as i32;
+        let del = json!({ "kind": "click", "selector": [{ "css": css }, { "role": "button", "name": "Delete" }] });
+        warn_case(&fx, id, json!([{ "step_number": 1, "actions": [del] }]), json!({}));
+        assert_eq!(warnings_of(&fx, &[id], id), vec!["step 1 appears to delete a row it did not name".to_string()], "{css}");
+    }
+    // A css link that names no position does not.
+    let named = json!({ "kind": "click", "selector": [{ "css": "tr.selected" }, { "role": "button", "name": "Delete" }] });
+    warn_case(&fx, 230, json!([{ "step_number": 1, "actions": [named] }]), json!({}));
+    assert!(warnings_of(&fx, &[230], 230).is_empty());
+}
+
+#[test]
+fn an_excluded_case_has_no_warnings_but_one_in_the_repo_keeps_them() {
+    let fx = Fx::new();
+    warn_case(&fx, 231, json!([{ "step_number": 1, "actions": [click_named("Publish")] }]), json!({}));
+    warn_case(&fx, 232, json!([{ "step_number": 1, "actions": [click_named("Publish")] }]), json!({}));
+    write(
+        fx.clone.path().join(MD_REL),
+        "# Proficiency Levels\n\n## Excluded 231 \u{2014} Left out\n\nOn purpose.\n\n## 232 \u{2014} In the repo\n\nHere.\n",
+    );
+    let p = preview_with(fx.root.path(), ORG, PROJECT, &[231, 232], &fx.clone_path(), &fx.modules.borrow()).unwrap();
+    let (excluded, present) = (&p.cases[0], &p.cases[1]);
+    assert!(excluded.excluded && excluded.warnings.is_empty(), "{:?}", excluded.warnings);
+    assert!(present.in_repo && !present.excluded, "{present:?}");
+    assert_eq!(present.warnings, vec!["step 1 appears to publish - irreversible".to_string()]);
+}

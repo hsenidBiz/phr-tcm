@@ -305,11 +305,21 @@ fn picks_by_position(target: &Target) -> bool {
     })
 }
 
+/// Whether any of `actions`, a `when_visible` or repeat inside them
+/// included, is a click that appears to delete (`click_effect`'s rule).
+fn deletes_any(actions: &[Action]) -> bool {
+    actions.iter().any(|a| match a {
+        Action::WhenVisible { then, .. } | Action::RepeatWhileVisible { then, .. } => deletes_any(then),
+        _ => matches!(click_effect(a), Some((EffectKind::Delete, _, _))),
+    })
+}
+
 /// What the script alone shows that a person should see before the case is
 /// written, one plain line each, in the order a run meets it, each once:
 /// - a delete-named click (`step_effects`' rule) whose locator picks by
 ///   position, so the row it deletes is not one the case named;
-/// - a `repeat_while_visible` with no `except` list, which deletes every
+/// - a `repeat_while_visible` that appears to delete (its `then` clicks a
+///   delete-named control) with no `except` list, so it deletes every
 ///   matching row;
 /// - a publish (`step_effects`, the one rule).
 pub fn script_warnings(script: &CaseScript) -> Vec<String> {
@@ -321,7 +331,7 @@ pub fn script_warnings(script: &CaseScript) -> Vec<String> {
     };
     for (step, a) in each_action(script) {
         match a {
-            Action::RepeatWhileVisible { except, .. } if except.is_empty() => {
+            Action::RepeatWhileVisible { except, then, .. } if except.is_empty() && deletes_any(then) => {
                 add(format!("step {step} appears to delete every matching row (no protected rows listed)"))
             }
             _ => {

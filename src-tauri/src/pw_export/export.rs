@@ -729,6 +729,8 @@ pub fn preview_with(
         pc.repo_note = found.excluded_note(id).or_else(|| found.note(id));
         if pc.excluded {
             pc.exportable = false;
+            // Never written, so nothing to warn about.
+            pc.warnings.clear();
         }
         cases.push(pc);
     }
