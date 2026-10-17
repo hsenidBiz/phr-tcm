@@ -256,6 +256,19 @@ fn is_cleanup(line: &str) -> bool {
     line.starts_with("### Cleanup")
 }
 
+/// Where the repo's own block that starts at `old[i]` ends (`LocalBlocks`),
+/// or `None` when `old[i]` starts none.
+fn local_block_end(old: &[&str], i: usize) -> Option<usize> {
+    let line = old[i].trim_start();
+    if line.starts_with("**Also:**") || line.starts_with("**Assertion floor:**") {
+        Some(paragraph_from(old, i))
+    } else if line.starts_with("**Added by engineer") {
+        Some(block_from(old, i))
+    } else {
+        None
+    }
+}
+
 fn local_blocks(old: &[&str]) -> LocalBlocks {
     let mut out = LocalBlocks::default();
     let mut past_cleanup = false;
@@ -318,19 +331,35 @@ fn is_uses(line: &str) -> bool {
     line.trim_start().starts_with("**Uses:**")
 }
 
-/// The `**Uses:**` lines of `lines`, outside code fences, as written
+/// The `**Uses:**` lines of `lines`, outside code fences and outside the
+/// repo's own blocks (`local_block_end`, which are put back whole), as written
 /// (line ending dropped).
 fn uses_lines(lines: &[&str]) -> Vec<String> {
     let mut fenced = false;
     let mut out = Vec::new();
-    for l in lines {
+    let mut i = 0;
+    while i < lines.len() {
+        let l = lines[i];
         if is_fence(l) {
             fenced = !fenced;
-        } else if !fenced && is_uses(l) {
-            out.push(l.trim_end_matches(['\r', '\n']).to_string());
+        } else if !fenced {
+            if let Some(end) = local_block_end(lines, i) {
+                i = end;
+                continue;
+            }
+            if is_uses(l) {
+                out.push(l.trim_end_matches(['\r', '\n']).to_string());
+            }
         }
+        i += 1;
     }
     out
+}
+
+/// What names a `**Uses:**` line's component, for telling two apart: the
+/// text after the label, trimmed, in any case (the repo's linter reads them so).
+fn uses_key(line: &str) -> String {
+    line.trim_start().trim_start_matches("**Uses:**").trim().to_ascii_lowercase()
 }
 
 /// `section` with the `**Uses:**` lines the old section already had kept: the
@@ -340,10 +369,11 @@ fn uses_lines(lines: &[&str]) -> Vec<String> {
 fn with_kept_uses(section: &str, old: &[&str]) -> String {
     let lines: Vec<&str> = section.split_inclusive('\n').collect();
     let ours = uses_lines(&lines);
-    let mut merged = uses_lines(old);
-    for l in &ours {
-        if !merged.iter().any(|m| m.trim() == l.trim()) {
-            merged.push(l.clone());
+    // Old ones first, then ours; each once, under the first spelling seen.
+    let mut merged: Vec<String> = Vec::new();
+    for l in uses_lines(old).into_iter().chain(ours.iter().cloned()) {
+        if !merged.iter().any(|m| uses_key(m) == uses_key(&l)) {
+            merged.push(l);
         }
     }
     if merged == ours {

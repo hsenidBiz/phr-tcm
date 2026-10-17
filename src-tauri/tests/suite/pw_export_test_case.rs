@@ -364,3 +364,39 @@ fn a_hand_broken_start_marker_never_costs_the_repo_its_text() {
     // Only the orphan start is left once TCM has nothing to say.
     assert_eq!(thrice.matches("tcm:order").count(), 1, "{thrice}");
 }
+
+#[test]
+fn a_uses_line_in_an_engineer_block_stays_there_and_never_multiplies() {
+    let mut d = doc(7, "My case");
+    d.handover.uses = vec!["employee-search".into()];
+    let engineer = "**Added by engineer (not from ADO):**\n\n**Uses:** common-components/eng-only\n- an extra step\n";
+    let mut file = format!("# T\n\n{}{engineer}", section(&d));
+    let count = |f: &str| f.matches("**Uses:**").count();
+    let mut counts = Vec::new();
+    for _ in 0..4 {
+        file = splice(&file, 7, &section(&d));
+        counts.push(count(&file));
+    }
+    // TCM's own line plus the engineer's: the same after every export.
+    assert_eq!(counts, vec![2, 2, 2, 2], "{file}");
+    assert!(file.contains(&format!("{engineer}")), "{file}");
+    // Mapped to nothing now, the engineer's line still sits only in its block.
+    let none = splice(&file, 7, &section(&doc(7, "My case")));
+    assert_eq!(count(&none), 2, "{none}");
+    assert_eq!(none.matches("common-components/eng-only").count(), 1, "{none}");
+}
+
+#[test]
+fn uses_lines_are_told_apart_without_regard_to_case_and_duplicates_collapse() {
+    let mut d = doc(7, "My case");
+    d.handover.uses = vec!["Employee-Search".into(), "date-picker".into()];
+    let old = format!("# T\n\n{}", section(&d)).replace(
+        "**Uses:** common-components/Employee-Search\n",
+        "**Uses:** common-components/employee-search\n**Uses:**  common-components/EMPLOYEE-SEARCH \n**Uses:** common-components/employee-search\n",
+    );
+    let out = splice(&old, 7, &section(&d));
+    // The first spelling seen is kept, once; the other line stays.
+    assert_eq!(out.matches("**Uses:**").count(), 2, "{out}");
+    assert!(out.contains("**Uses:** common-components/employee-search\n**Uses:** common-components/date-picker\n\n"), "{out}");
+    assert_eq!(splice(&out, 7, &section(&d)), out);
+}
