@@ -31,6 +31,8 @@ pub struct Handover {
     /// `suites/common-components/`, one `**Uses:**` line each
     /// (`uses_for`). Regenerated on every export.
     pub uses: Vec<String>,
+    /// What the script alone shows is risky (`script_warnings`): the export
+    /// dialog lists these before anything is written.
     pub warnings: Vec<String>,
 }
 
@@ -286,7 +288,76 @@ pub fn handover_for(input: &HandoverInput) -> Handover {
         h.cleanup.push(format!("step {step} deletes \"{value}\" it created"));
         h.from_tcm.push(format!("relies on step {step} to put data back"));
     }
+    h.warnings = script_warnings(s);
     h
+}
+
+/// Whether a locator chooses its element by position among several matches
+/// rather than by what it is called: an `nth`, or a css link that takes the
+/// first or the Nth child.
+fn picks_by_position(target: &Target) -> bool {
+    target.links().iter().any(|l| {
+        l.nth.is_some()
+            || l.css.as_deref().is_some_and(|c| {
+                let c = c.to_lowercase();
+                c.contains(":first-child") || c.contains(":first-of-type") || c.contains(":nth-")
+            })
+    })
+}
+
+/// What the script alone shows that a person should see before the case is
+/// written, one plain line each, in the order a run meets it, each once:
+/// - a delete-named click (`step_effects`' rule) whose locator picks by
+///   position, so the row it deletes is not one the case named;
+/// - a `repeat_while_visible` with no `except` list, which deletes every
+///   matching row;
+/// - a publish (`step_effects`, the one rule).
+pub fn script_warnings(script: &CaseScript) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut add = |line: String| {
+        if !out.contains(&line) {
+            out.push(line);
+        }
+    };
+    for (step, a) in each_action(script) {
+        match a {
+            Action::RepeatWhileVisible { except, .. } if except.is_empty() => {
+                add(format!("step {step} appears to delete every matching row (no protected rows listed)"))
+            }
+            _ => {
+                if let Some((kind, _, target)) = click_effect(a) {
+                    match kind {
+                        EffectKind::Delete if picks_by_position(target) => {
+                            add(format!("step {step} appears to delete a row it did not name"))
+                        }
+                        EffectKind::Publish => add(format!("step {step} appears to publish - irreversible")),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The state this case needs unchanged that another of the listed cases
+/// changes, one line each: `needs <item>, which #<case> changes`. `item`
+/// is the spelling the needing case uses; the comparison is the planner's
+/// (`normalise`). A case never conflicts with itself.
+pub fn needs_warnings(id: i32, script: &CaseScript, listed: &[(i32, &CaseScript)]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for need in &script.needs_unchanged {
+        let key = normalise(need);
+        for (other, o) in listed {
+            if *other != id && o.changes.iter().any(|c| normalise(c) == key) {
+                let line = format!("needs {}, which #{other} changes", need.trim());
+                if !out.contains(&line) {
+                    out.push(line);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The one line every order note ends with. The repo has no such tags yet;

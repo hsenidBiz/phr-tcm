@@ -40,7 +40,7 @@ import Combobox from "../../components/ui/combobox";
 import { Modal } from "../../components/ui/modal";
 import { Select } from "../../components/ui/select";
 import { MODAL_LARGE } from "../AutoRun/modalWidths";
-import { IconBrowse, IconCancel, IconConfirm, IconCopy, IconEdit, IconExport, IconUndo } from "../../lib/actionIcons";
+import { IconBrowse, IconCancel, IconConfirm, IconCopy, IconEdit, IconExport, IconUndo, IconWarning } from "../../lib/actionIcons";
 import { copyText } from "../../lib/clipboard";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrapStr } from "../../lib/ipc";
@@ -411,6 +411,13 @@ export default function PlaywrightExportDialog({
           )}
           {c.excluded && c.repo_note && <span className="block text-xs text-muted">{c.repo_note}</span>}
           {!c.exportable && c.reason && <span className="block text-xs text-muted">{c.reason}</span>}
+          {/* Seen before anything is written; none of them stops Export. */}
+          {c.warnings.map((w) => (
+            <span key={w} className="flex items-start gap-1.5 text-xs text-warning">
+              <IconWarning aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+              {w}
+            </span>
+          ))}
         </span>
         <span className="shrink-0 pt-0.5">
           {c.excluded ? (

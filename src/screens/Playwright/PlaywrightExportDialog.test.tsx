@@ -24,8 +24,8 @@ const PREVIEW = {
   map: { areas: {}, accounts: { other: { x: "Y" } } },
   suggested: {},
   cases: [
-    { case_id: 10, title: "Create a cycle", exportable: true, reason: null, seg: "sl/admin/pm/wizard", user_key: "REPO_ADMIN", add_user_command: null, has_script: true },
-    { case_id: 11, title: "Open the report", exportable: false, reason: "its newest run did not pass", seg: null, user_key: null, add_user_command: null, has_script: true },
+    { case_id: 10, title: "Create a cycle", exportable: true, reason: null, seg: "sl/admin/pm/wizard", user_key: "REPO_ADMIN", add_user_command: null, has_script: true, warnings: [] },
+    { case_id: 11, title: "Open the report", exportable: false, reason: "its newest run did not pass", seg: null, user_key: null, add_user_command: null, has_script: true, warnings: [] },
     {
       case_id: 12,
       title: "Approve the plan",
@@ -35,6 +35,7 @@ const PREVIEW = {
       user_key: null,
       add_user_command: "npm run add-user -- kim <password>",
       has_script: true,
+      warnings: [],
     },
     {
       case_id: 15,
@@ -45,6 +46,7 @@ const PREVIEW = {
       user_key: null,
       add_user_command: null,
       has_script: false,
+      warnings: [],
     },
   ],
 };
@@ -322,6 +324,7 @@ const IN_REPO = {
       repo_note: "in wizard.md and specs/wizard.spec.ts",
       from_app: false,
       has_script: true,
+      warnings: [],
     },
     {
       case_id: 14,
@@ -335,6 +338,7 @@ const IN_REPO = {
       repo_note: "in wizard.md and index.json",
       from_app: true,
       has_script: true,
+      warnings: [],
     },
   ],
 };
@@ -388,6 +392,7 @@ test("a case the repo excludes is unticked, cannot be ticked and is never sent",
         from_app: false,
         excluded: true,
         has_script: true,
+        warnings: [],
       },
     ],
   };
@@ -480,6 +485,7 @@ const row = (case_id: number, title: string, extra: Record<string, unknown> = {}
   user_key: "REPO_ADMIN",
   add_user_command: null,
   has_script: true,
+  warnings: [],
   ...extra,
 });
 const SUGGEST_PREVIEW = {
@@ -650,4 +656,32 @@ test("a_saved_blank_component_entry_does_not_make_the_mappings_look_unsaved", as
   expect(componentField("Employee search")).toHaveTextContent("Not mapped");
   expect(screen.queryByText("Save the mappings first")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: EXPORT })).toBeEnabled();
+});
+
+test("a case's warnings show under its row, for exportable and refused cases, and never stop Export", async () => {
+  const warned = {
+    ...PREVIEW,
+    cases: [
+      { ...PREVIEW.cases[0], warnings: ["step 2 appears to publish - irreversible", "not yet passed twice in a row in TCM"] },
+      { ...PREVIEW.cases[1], warnings: ["1 TCM quirk travels with this case"] },
+      PREVIEW.cases[2],
+    ],
+  };
+  const { calls } = mount({ pw_export_write: () => ({ files: [], cases: [], user_keys: [], missing_navigation: [], sections: [], record_error: null, skipped: [] }) }, warned);
+  const ok = await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  const row = ok.closest("label") as HTMLElement;
+  for (const w of ["step 2 appears to publish - irreversible", "not yet passed twice in a row in TCM"]) {
+    const line = within(row).getByText(w);
+    expect(line).toHaveClass("text-warning");
+    // The warning icon is decoration: the sentence is what is read out.
+    expect(line.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  }
+  // A case that cannot go still shows what it carries; one with none shows nothing.
+  expect(screen.getByText("1 TCM quirk travels with this case")).toHaveClass("text-warning");
+  expect(screen.queryAllByText(/appears to|TCM quirk|passed twice/)).toHaveLength(3);
+  // Export is untouched by them.
+  const exportBtn = screen.getByRole("button", { name: "Export (1)" });
+  expect(exportBtn).toBeEnabled();
+  fireEvent.click(exportBtn);
+  await waitFor(() => expect(calls.some((c) => c.cmd === "pw_export_write")).toBe(true));
 });

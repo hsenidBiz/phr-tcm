@@ -4565,6 +4565,12 @@ export type PreviewCase = {
 	 *  one without a script has nothing to export.
 	 */
 	has_script: boolean,
+	/**
+	 *  What the person should see before this case is written, one plain
+	 *  line each. Never a reason to refuse: the case exports (or is refused)
+	 *  on its own terms. Empty when it has no script.
+	 */
+	warnings: string[],
 };
 
 /**  What a render of the open report produced, without the PDF itself. */

@@ -11,7 +11,9 @@
 
 use super::app_quirks::{merge_app_quirks_removing, quirk_entries, retired_tags, APP_QUIRKS_REL};
 use super::clone::{index_with, open, ClonedRepo};
-use super::handover::{baseline_doc, handover_for, order_note, uses_for, HandoverInput, BASELINE_DOC_REL};
+use super::handover::{
+    baseline_doc, handover_for, needs_warnings, order_note, script_warnings, uses_for, HandoverInput, BASELINE_DOC_REL,
+};
 use super::mapping::{self, ExportMap, Placement};
 use super::test_case::{self, CaseDoc};
 use super::translate::{self, RawSpecInput};
@@ -57,6 +59,10 @@ pub struct PreviewCase {
     /// Auto Run has a script for it. The dialog lists only cases that do:
     /// one without a script has nothing to export.
     pub has_script: bool,
+    /// What the person should see before this case is written, one plain
+    /// line each. Never a reason to refuse: the case exports (or is refused)
+    /// on its own terms. Empty when it has no script.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -485,6 +491,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
         from_app: false,
         excluded: false,
         has_script: false,
+        warnings: Vec::new(),
     };
     let fail = |mut pc: PreviewCase, why: String| {
         pc.reason = Some(why);
@@ -638,6 +645,34 @@ pub fn mapped_user_key(root: &Path, org: &str, project: &str, id: i32, runs: &[L
     map.accounts.get(&env_id).and_then(|m| m.get(account)).cloned()
 }
 
+/// The verdicts of the runs that hold case `id`, newest first.
+fn verdicts_of(runs: &[LocalRun], id: i32) -> Vec<&str> {
+    runs.iter().filter_map(|r| r.cases.iter().find(|c| c.case_id == id)).map(|c| c.verdict.trim()).collect()
+}
+
+/// The warnings the preview shows for case `id`, whose script is `script`
+/// and which is listed among `listed`: what its steps appear to do
+/// (`script_warnings`), state it needs that another listed case changes,
+/// the quirks that travel with it (the rule the write uses,
+/// `quirk_entries`), and a verdict history short of two Passed runs in a
+/// row. None of them refuses the case.
+fn warnings_for(ctx: &Ctx, id: i32, script: &CaseScript, listed: &[(i32, &CaseScript)]) -> Vec<String> {
+    let mut out = script_warnings(script);
+    out.extend(needs_warnings(id, script, listed));
+    if let Ok(quirks) = &ctx.quirks {
+        match quirk_entries(quirks, &[id], None).len() {
+            0 => {}
+            1 => out.push("1 TCM quirk travels with this case".to_string()),
+            n => out.push(format!("{n} TCM quirks travel with this case")),
+        }
+    }
+    let verdicts = verdicts_of(&ctx.runs, id);
+    if verdicts.len() < 2 || verdicts[..2].iter().any(|v| *v != "Passed") {
+        out.push("not yet passed twice in a row in TCM".to_string());
+    }
+    out
+}
+
 /// `modules` is each case's Module (case id to value), as the Auto Run
 /// screen's rows have it.
 pub fn preview_with(
@@ -661,8 +696,16 @@ pub fn preview_with(
         .as_ref()
         .map(|c| crate::pw_repo::layout::feature_dirs(&c.root.join("suites")))
         .unwrap_or_default();
-    for &id in case_ids {
-        let named = load_expanded_named(root, org, project, id, &ctx.runs);
+    // Every listed case's script first: one case's warning can name another.
+    let loaded: Vec<_> =
+        case_ids.iter().map(|&id| (id, load_expanded_named(root, org, project, id, &ctx.runs))).collect();
+    let listed: Vec<(i32, &CaseScript)> = loaded
+        .iter()
+        .filter_map(|(id, n)| n.as_ref().ok().and_then(Option::as_ref).map(|(s, _)| (*id, s)))
+        .collect();
+    for (id, named) in &loaded {
+        let id = *id;
+        let named = named.clone();
         if let Ok(Some((_, used))) = &named {
             for n in used {
                 if !components.contains(n) {
@@ -678,7 +721,9 @@ pub fn preview_with(
                 }
             }
         }
+        let warnings = script.as_ref().ok().and_then(Option::as_ref).map(|s| warnings_for(&ctx, id, s, &listed));
         let mut pc = evaluate(&ctx, id, script).0;
+        pc.warnings = warnings.unwrap_or_default();
         pc.in_repo = found.has(id);
         pc.excluded = found.excluded(id);
         pc.repo_note = found.excluded_note(id).or_else(|| found.note(id));

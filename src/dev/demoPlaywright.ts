@@ -154,6 +154,7 @@ const base: CaseTemplate = {
   from_app: false,
   excluded: false,
   has_script: true,
+  warnings: [],
 };
 /** What the Export preview says of each case asked about, in turn. */
 const EXPORT_CASES: CaseTemplate[] = [

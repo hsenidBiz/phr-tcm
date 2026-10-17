@@ -1299,3 +1299,165 @@ fn the_preview_lists_the_components_used_and_the_repos_common_components() {
     assert!(p.common_components.is_empty());
     assert_eq!(p.components.len(), 2);
 }
+
+// ---- warnings shown before writing (they never refuse a case) ----
+
+/// A script whose steps are `steps` (each `[number, actions]`), passed twice.
+fn warn_case(fx: &Fx, id: i32, steps: serde_json::Value, extra: serde_json::Value) {
+    let mut v = json!({
+        "case_id": id, "title": "Warned", "account": "admin", "area": "Definition Wizard", "steps": steps
+    });
+    for (k, val) in extra.as_object().unwrap() {
+        v[k] = val.clone();
+    }
+    store::save_script(fx.root.path(), &serde_json::from_value::<CaseScript>(v).unwrap()).unwrap();
+    fx.run(&format!("w{id}a"), "5", id, "Passed");
+    fx.run(&format!("w{id}b"), "6", id, "Passed");
+}
+
+fn click_named(button: &str) -> serde_json::Value {
+    json!({ "kind": "click", "selector": { "role": "button", "name": button } })
+}
+
+fn warnings_of(fx: &Fx, ids: &[i32], id: i32) -> Vec<String> {
+    preview_with(fx.root.path(), ORG, PROJECT, ids, &fx.clone_path(), &fx.modules.borrow())
+        .unwrap()
+        .cases
+        .into_iter()
+        .find(|c| c.case_id == id)
+        .unwrap()
+        .warnings
+}
+
+#[test]
+fn a_delete_that_picks_a_row_by_position_warns() {
+    let fx = Fx::new();
+    let pick = json!({ "kind": "click", "selector": { "role": "button", "name": "Delete", "nth": 0 } });
+    warn_case(&fx, 200, json!([
+        { "step_number": 1, "actions": [click_named("Delete")] },
+        { "step_number": 2, "actions": [pick, click_named("Save")] }
+    ]), json!({}));
+    assert_eq!(warnings_of(&fx, &[200], 200), vec!["step 2 appears to delete a row it did not name".to_string()]);
+    // A position on something that does not delete says nothing.
+    let save = json!({ "kind": "click", "selector": { "role": "button", "name": "Save", "nth": 1 } });
+    warn_case(&fx, 201, json!([{ "step_number": 1, "actions": [save] }]), json!({}));
+    assert!(warnings_of(&fx, &[201], 201).is_empty());
+}
+
+#[test]
+fn a_loop_with_no_protected_rows_warns_and_one_with_them_does_not() {
+    let fx = Fx::new();
+    let looped = |except: serde_json::Value| {
+        json!([{ "step_number": 3, "actions": [{
+            "kind": "repeat_while_visible", "selector": { "role": "row" }, "max": 5,
+            "except": except, "then": [click_named("Remove")]
+        }] }])
+    };
+    warn_case(&fx, 202, looped(json!([])), json!({}));
+    assert_eq!(
+        warnings_of(&fx, &[202], 202),
+        vec!["step 3 appears to delete every matching row (no protected rows listed)".to_string()]
+    );
+    warn_case(&fx, 203, looped(json!(["Admin"])), json!({}));
+    assert!(warnings_of(&fx, &[203], 203).is_empty());
+}
+
+#[test]
+fn a_publish_warns_once_per_step() {
+    let fx = Fx::new();
+    warn_case(&fx, 204, json!([
+        { "step_number": 1, "actions": [click_named("Publish")] },
+        { "step_number": 4, "actions": [click_named("Save & Publish"), click_named("Publish all")] }
+    ]), json!({}));
+    assert_eq!(
+        warnings_of(&fx, &[204], 204),
+        vec![
+            "step 1 appears to publish - irreversible".to_string(),
+            "step 4 appears to publish - irreversible".to_string()
+        ]
+    );
+}
+
+#[test]
+fn a_case_that_needs_what_another_listed_case_changes_says_so() {
+    let fx = Fx::new();
+    let open = json!([{ "step_number": 1, "actions": [click_named("Open")] }]);
+    warn_case(&fx, 205, open.clone(), json!({ "needs_unchanged": ["Cycle  published"] }));
+    warn_case(&fx, 206, open.clone(), json!({ "changes": ["cycle published"] }));
+    warn_case(&fx, 207, open, json!({ "changes": ["something else"] }));
+    let w = warnings_of(&fx, &[205, 206, 207], 205);
+    assert_eq!(w, vec!["needs Cycle  published, which #206 changes".to_string()]);
+    // The case that changes it is not warned about its own change, and a case
+    // that is not listed changes nothing here.
+    assert!(warnings_of(&fx, &[205, 206, 207], 206).is_empty());
+    assert!(warnings_of(&fx, &[205, 207], 205).is_empty());
+}
+
+#[test]
+fn quirks_that_travel_with_a_case_are_counted_by_the_export_rule() {
+    let fx = Fx::new();
+    warn_case(&fx, 208, json!([{ "step_number": 1, "actions": [click_named("Open")] }]), json!({}));
+    warn_case(&fx, 209, json!([{ "step_number": 1, "actions": [click_named("Open")] }]), json!({}));
+    assert!(warnings_of(&fx, &[208], 208).is_empty());
+    let mk = |id: &str, cases: &[i32]| {
+        let mut q = Quirk::new(&format!("A pop-up {id} covers the grid"), "assistant", "autorun", 1_760_000_000_000);
+        q.id = id.into();
+        q.sources = cases.iter().map(|c| QuirkSource { case_id: *c, steps: vec![1], class: None }).collect();
+        q
+    };
+    let mut retired = mk("q3", &[208]);
+    retired.status = v2_lib::autorun::quirks::STATUS_RETIRED.into();
+    save_quirks(fx.root.path(), ORG, PROJECT, &[mk("q1", &[208, 209]), retired, mk("q4", &[999])]).unwrap();
+    assert_eq!(warnings_of(&fx, &[208, 209], 208), vec!["1 TCM quirk travels with this case".to_string()]);
+    // Another case of the export reads the shared quirk too.
+    assert_eq!(warnings_of(&fx, &[208, 209], 209), vec!["1 TCM quirk travels with this case".to_string()]);
+    save_quirks(fx.root.path(), ORG, PROJECT, &[mk("q1", &[208]), mk("q2", &[208])]).unwrap();
+    assert_eq!(warnings_of(&fx, &[208], 208), vec!["2 TCM quirks travel with this case".to_string()]);
+    // A quirk whose source is not among the listed cases does not travel.
+    assert!(warnings_of(&fx, &[209], 209).is_empty());
+}
+
+#[test]
+fn a_case_not_passed_twice_in_a_row_warns_but_still_exports() {
+    let fx = Fx::new();
+    let open = json!([{ "step_number": 1, "actions": [click_named("Open")] }]);
+    let case = |id: i32| store::save_script(
+        fx.root.path(),
+        &serde_json::from_value::<CaseScript>(json!({
+            "case_id": id, "title": "T", "account": "admin", "area": "Definition Wizard",
+            "steps": open.clone()
+        })).unwrap(),
+    ).unwrap();
+    let note = "not yet passed twice in a row in TCM".to_string();
+    // One run, passed: not twice yet.
+    case(210);
+    fx.run("t210a", "5", 210, "Passed");
+    assert_eq!(warnings_of(&fx, &[210], 210), vec![note.clone()]);
+    assert!(preview_of(&fx, 210).exportable);
+    // The newest two both passed.
+    fx.run("t210b", "6", 210, "Passed");
+    assert!(warnings_of(&fx, &[210], 210).is_empty());
+    // The newest passed, the one before it did not.
+    case(211);
+    fx.run("t211a", "5", 211, "Failed");
+    fx.run("t211b", "6", 211, "Passed");
+    assert_eq!(warnings_of(&fx, &[211], 211), vec![note.clone()]);
+    // Older failures beyond the newest two do not count.
+    case(212);
+    fx.run("t212a", "4", 212, "Failed");
+    fx.run("t212b", "5", 212, "Passed");
+    fx.run("t212c", "6", 212, "Passed");
+    assert!(warnings_of(&fx, &[212], 212).is_empty());
+}
+
+#[test]
+fn a_refused_case_with_a_script_still_carries_its_warnings_and_one_without_has_none() {
+    let fx = Fx::new();
+    warn_case(&fx, 213, json!([{ "step_number": 1, "actions": [click_named("Publish")] }]), json!({}));
+    fx.run("t213c", "7", 213, "Failed");
+    let pc = preview_of(&fx, 213);
+    assert!(!pc.exportable, "the Failed verdict refuses it");
+    assert!(pc.warnings.contains(&"step 1 appears to publish - irreversible".to_string()), "{:?}", pc.warnings);
+    let none = preview_of(&fx, 214);
+    assert!(!none.has_script && none.warnings.is_empty());
+}

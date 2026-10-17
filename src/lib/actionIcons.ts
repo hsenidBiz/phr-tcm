@@ -195,6 +195,9 @@ export {
   FlaskConical as IconTestCases,
   // A small button beside a name that reveals what the thing is for.
   Info as IconAbout,
+  // A line that warns without stopping anything - the export dialog's
+  // per-case warnings: the case still goes, the person just sees this first.
+  TriangleAlert as IconWarning,
   // Showing and hiding a secret on screen (a repo test account's password):
   // an eye, open to show it and struck through to hide it again.
   Eye as IconShowSecret,
