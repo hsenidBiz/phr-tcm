@@ -8,7 +8,9 @@
 //! clicks, so every such line says "appears to".
 
 use super::export::SharedDraft;
+use crate::autorun::marks::normalise;
 use crate::autorun::nav::{ProtectedKind, ProtectedRecord};
+use crate::autorun::plan::{suggest, Marks};
 use crate::autorun::quirks::day_of;
 use crate::autorun::CaseScript;
 use crate::browser::actions::Action;
@@ -266,4 +268,101 @@ pub fn handover_for(input: &HandoverInput) -> Handover {
         h.from_tcm.push(format!("relies on step {step} to put data back"));
     }
     h
+}
+
+/// The one line every order note ends with. The repo has no such tags yet;
+/// this only proposes them, so it is worded as a proposal.
+pub const ORDER_PROPOSAL: &str =
+    "Proposed for the repo owner: tag publishing cases @publishes and destructive ones @destructive and keep them out of routine runs.";
+
+/// Whether the script appears to publish (`step_effects`, the one rule).
+fn publishes(script: &CaseScript) -> bool {
+    step_effects(script).iter().any(|e| e.kind == EffectKind::Publish)
+}
+
+/// What the cases of one test-case file need said about the order they run
+/// in, one plain line each, from the marks in their scripts and the PBI's
+/// saved order (`saved_order`, when there is one):
+/// - a case that needs state unchanged runs before the case that changes it;
+/// - a case that publishes, or changes shared state, runs alone and last;
+/// - the saved TCM order of the cases in this file (two or more);
+/// - a group, in the order TCM would suggest, for cases linked by the first
+///   rule.
+///
+/// Always ends with `ORDER_PROPOSAL`; a note that is only that line says
+/// nothing about these cases. A case listed twice counts once.
+pub fn order_note(cases: &[(i32, &CaseScript)], saved_order: Option<&[i32]>) -> Vec<String> {
+    let mut seen: Vec<i32> = Vec::new();
+    let mut once: Vec<(i32, &CaseScript)> = Vec::new();
+    for &(id, script) in cases {
+        if !seen.contains(&id) {
+            seen.push(id);
+            once.push((id, script));
+        }
+    }
+    let cases = once;
+    let marks: Vec<(i32, Marks)> = cases.iter().map(|(id, s)| (*id, Marks::of(s))).collect();
+    let mut out: Vec<String> = Vec::new();
+
+    // (needer, changer, the state's name as the needer spells it), by file position.
+    let mut edges: Vec<(usize, usize, String)> = Vec::new();
+    for (i, (_, needer)) in marks.iter().enumerate() {
+        for (j, (_, changer)) in marks.iter().enumerate() {
+            let changed: Vec<String> = changer.changes.iter().map(|c| normalise(c)).collect();
+            let shared = needer.needs.iter().find(|n| !normalise(n).is_empty() && changed.contains(&normalise(n)));
+            if let (true, Some(item)) = (i != j, shared) {
+                edges.push((i, j, item.trim().to_string()));
+            }
+        }
+    }
+    for (i, j, item) in &edges {
+        out.push(format!(
+            "run {} before {} ({} needs {item} unchanged and {} changes it)",
+            cases[*i].0, cases[*j].0, cases[*i].0, cases[*j].0
+        ));
+    }
+
+    for (id, script) in &cases {
+        if publishes(script) {
+            out.push(format!("run {id} alone and last: it publishes"));
+        } else if !script.changes.is_empty() {
+            out.push(format!("run {id} alone and last: it changes shared state ({})", script.changes.join(", ")));
+        }
+    }
+
+    if let Some(saved) = saved_order {
+        let here: Vec<String> =
+            saved.iter().filter(|id| seen.contains(id)).map(|id| id.to_string()).collect();
+        if here.len() >= 2 {
+            out.push(format!("saved TCM order: {}", here.join(", ")));
+        }
+    }
+
+    // Cases linked by those edges, whatever the direction, form one group.
+    let mut group_of: Vec<usize> = (0..cases.len()).collect();
+    for (i, j, _) in &edges {
+        let (from, to) = (group_of[*j], group_of[*i]);
+        group_of.iter_mut().filter(|g| **g == from).for_each(|g| *g = to);
+    }
+    let suggested = suggest(&marks);
+    let mut done: Vec<usize> = Vec::new();
+    for first in 0..cases.len() {
+        let g = group_of[first];
+        if done.contains(&g) {
+            continue;
+        }
+        done.push(g);
+        let members: Vec<i32> = suggested
+            .iter()
+            .copied()
+            .filter(|id| cases.iter().position(|(c, _)| c == id).is_some_and(|p| group_of[p] == g))
+            .collect();
+        if members.len() >= 2 {
+            let ids: Vec<String> = members.iter().map(i32::to_string).collect();
+            out.push(format!("suggested group: {} (run together, in this order)", ids.join(", ")));
+        }
+    }
+
+    out.push(ORDER_PROPOSAL.to_string());
+    out
 }

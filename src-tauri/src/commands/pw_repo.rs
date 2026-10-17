@@ -433,7 +433,7 @@ async fn update(
     let modules = modules_for(&cases, &docs, &record);
     let written_to = configured.clone();
     let result = blocking(clone, false, move |_, _| {
-        export::write_recorded(&root, &dir, &org, &project, &cases, &configured, &modules, &docs, &replace)
+        export::write_recorded(&root, &dir, &org, &project, &cases, &configured, &modules, &docs, &replace, None)
     })
     .await?;
     super::pw_export::remember_written(&written_to, &result);

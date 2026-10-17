@@ -5,7 +5,7 @@
 //! every other section exactly as it was. Headings inside fenced code blocks
 //! are not treated specially.
 
-use super::handover::Handover;
+use super::handover::{Handover, ORDER_PROPOSAL};
 
 /// Everything one case section needs.
 #[derive(Clone)]
@@ -369,6 +369,82 @@ fn with_repo_rows(section: &str, old: &[&str]) -> String {
         lines.splice(new_rows, rows);
     }
     lines.concat()
+}
+
+/// The markers around the order block in a file's header: TCM's, rewritten
+/// whole on every export (`with_order_block`).
+pub const ORDER_START: &str = "<!-- tcm:order -->";
+pub const ORDER_END: &str = "<!-- /tcm:order -->";
+
+/// `file` with the order block (`order_note`'s lines) put in the header,
+/// right after the `**User:**` line: the block already there is replaced in
+/// place, and none is written when the lines say nothing but the proposal
+/// (one from an earlier export then goes). Without a `**User:**` line the
+/// block goes before the first `##` heading. Everything else is kept byte
+/// for byte, line endings included.
+pub fn with_order_block(file: &str, note: &[String]) -> String {
+    let all: Vec<&str> = file.split_inclusive('\n').collect();
+    let eol = if all.first().is_some_and(|l| l.ends_with("\r\n")) { "\r\n" } else { "\n" };
+    let header_end = all.iter().position(|l| is_h2(l)).unwrap_or(all.len());
+
+    // The header without its order block(s); `at` is where the first was.
+    let mut kept: Vec<String> = Vec::with_capacity(all.len());
+    let mut at: Option<usize> = None;
+    let mut i = 0;
+    while i < all.len() {
+        let closes = (i < header_end && all[i].trim() == ORDER_START)
+            .then(|| (i + 1..header_end).find(|&j| all[j].trim() == ORDER_END))
+            .flatten();
+        match closes {
+            Some(j) => {
+                at.get_or_insert(kept.len());
+                i = j + 1;
+            }
+            None => {
+                kept.push(all[i].to_string());
+                i += 1;
+            }
+        }
+    }
+
+    let say = note.iter().any(|l| l != ORDER_PROPOSAL);
+    if !say {
+        // A removed block takes the blank line it was set off by.
+        if let Some(at) = at {
+            if at > 0 && at < kept.len() && is_blank(&kept[at - 1]) && is_blank(&kept[at]) {
+                kept.remove(at);
+            }
+        }
+        return kept.concat();
+    }
+    let mut block: Vec<String> = vec![format!("{ORDER_START}{eol}"), format!("**Order (from TCM):**{eol}"), eol.to_string()];
+    block.extend(note.iter().map(|l| format!("- {}{eol}", one_line(l).trim())));
+    block.push(format!("{ORDER_END}{eol}"));
+
+    let h2 = kept.iter().position(|l| is_h2(l)).unwrap_or(kept.len());
+    match at {
+        Some(at) => {
+            kept.splice(at..at, block);
+        }
+        None => match kept[..h2].iter().position(|l| l.trim_start().starts_with("**User:**")) {
+            Some(user) => {
+                if !kept[user].ends_with('\n') {
+                    kept[user].push_str(eol);
+                }
+                block.insert(0, eol.to_string());
+                kept.splice(user + 1..user + 1, block);
+            }
+            None => {
+                // Set off by a blank line on each side.
+                if h2 > 0 && !is_blank(&kept[h2 - 1]) {
+                    block.insert(0, eol.to_string());
+                }
+                block.push(eol.to_string());
+                kept.splice(h2..h2, block);
+            }
+        },
+    }
+    kept.concat()
 }
 
 /// `existing` with case `id`'s section replaced by `section`, or `section`

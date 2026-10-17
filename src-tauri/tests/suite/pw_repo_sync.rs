@@ -34,7 +34,7 @@ impl Sx {
     }
 
     fn export_replacing(&self, ids: &[i32], d: &BTreeMap<i32, CaseDoc>, replace: &[i32]) -> Result<ExportResult, String> {
-        write_recorded(self.root(), self.dir.path(), ORG, PROJECT, ids, &self.fx.clone_path(), &self.fx.modules.borrow(), d, replace)
+        write_recorded(self.root(), self.dir.path(), ORG, PROJECT, ids, &self.fx.clone_path(), &self.fx.modules.borrow(), d, replace, None)
     }
 
     fn rows(&self) -> BTreeMap<i32, SyncRow> {

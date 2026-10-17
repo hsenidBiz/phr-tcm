@@ -199,7 +199,8 @@ test("export_sends_the_ticked_ids_and_shows_the_summary", async () => {
   fireEvent.click(screen.getByRole("button", { name: EXPORT }));
   expect(await screen.findByText("suites/sl/admin/pm/wizard/test-cases/wizard.md")).toBeInTheDocument();
   const write = calls.find((c) => c.cmd === "pw_export_write")!;
-  expect(write.args).toMatchObject({ organization: "acme", project: "Web", caseIds: [10], replace: [] });
+  // The PBI the dialog was opened for, so the written notes can repeat its saved order.
+  expect(write.args).toMatchObject({ organization: "acme", project: "Web", caseIds: [10], replace: [], pbiId: 7 });
   // The same Modules the preview was given, so the write picks the same areas.
   const modules = [[10, "Definition Wizard"], [11, ""], [12, "Performance"], [15, "Performance"]];
   expect(write.args.modules).toEqual(modules);

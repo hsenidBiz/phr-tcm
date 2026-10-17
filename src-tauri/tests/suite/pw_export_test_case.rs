@@ -1,7 +1,7 @@
 //! Playwright export: the per-feature test-case markdown.
 
-use v2_lib::pw_export::handover::Handover;
-use v2_lib::pw_export::test_case::{new_file, section, splice, CaseDoc};
+use v2_lib::pw_export::handover::{Handover, ORDER_PROPOSAL};
+use v2_lib::pw_export::test_case::{new_file, section, splice, with_order_block, CaseDoc};
 
 fn doc(id: i32, title: &str) -> CaseDoc {
     CaseDoc {
@@ -198,4 +198,63 @@ fn a_pipe_in_a_value_stays_in_its_cell() {
         let bars = line.replace("\\|", "").matches('|').count();
         assert!([3, 4, 6].contains(&bars), "{line}");
     }
+}
+
+/// The note lines for some facts, as `order_note` ends them.
+fn lines(list: &[&str]) -> Vec<String> {
+    list.iter().map(|l| l.to_string()).chain([ORDER_PROPOSAL.to_string()]).collect()
+}
+
+#[test]
+fn the_order_block_goes_right_after_the_user_line_of_a_new_file() {
+    let head = new_file("Competencies", "competencies", "AutomationSL.pm.general");
+    let out = with_order_block(&head, &lines(&["run 1 before 2", "run 2 alone and last: it publishes"]));
+    let user = "**User:** AutomationSL.pm.general  <!-- from-tcm -->\n\n";
+    let block = format!(
+        "<!-- tcm:order -->\n**Order (from TCM):**\n\n- run 1 before 2\n- run 2 alone and last: it publishes\n- {ORDER_PROPOSAL}\n<!-- /tcm:order -->\n\n"
+    );
+    assert_eq!(out, head.replace(user, &format!("{user}{block}")));
+}
+
+#[test]
+fn the_order_block_is_inserted_in_an_existing_file_and_replaced_not_duplicated() {
+    let existing = "# T\n\n**User:** u  <!-- from-tcm -->\n\nHand note.\n\n## 1 \u{2014} A\nbody\n";
+    let first = with_order_block(existing, &lines(&["run 1 before 2"]));
+    assert_eq!(first.matches("<!-- tcm:order -->").count(), 1, "{first}");
+    assert!(first.starts_with("# T\n\n**User:** u  <!-- from-tcm -->\n\n<!-- tcm:order -->\n**Order (from TCM):**\n\n- run 1 before 2\n"), "{first}");
+    assert!(first.ends_with("<!-- /tcm:order -->\n\nHand note.\n\n## 1 \u{2014} A\nbody\n"), "{first}");
+    // The same lines again: byte for byte the same. Other lines: replaced.
+    assert_eq!(with_order_block(&first, &lines(&["run 1 before 2"])), first);
+    let second = with_order_block(&first, &lines(&["run 3 alone and last: it publishes"]));
+    assert_eq!(second.matches("<!-- tcm:order -->").count(), 1, "{second}");
+    assert!(second.contains("- run 3 alone and last: it publishes\n") && !second.contains("run 1 before 2"), "{second}");
+    assert!(second.ends_with("Hand note.\n\n## 1 \u{2014} A\nbody\n"), "{second}");
+    // A section spliced in afterwards leaves the block alone.
+    let spliced = splice(&second, 1, &section(&doc(1, "A2")));
+    assert_eq!(spliced.matches("<!-- tcm:order -->").count(), 1);
+}
+
+#[test]
+fn no_order_block_for_independent_cases() {
+    let existing = "# T\n\n**User:** u  <!-- from-tcm -->\n\n## 1 \u{2014} A\nbody\n";
+    // Only the proposal line, or nothing at all: no block, file untouched.
+    assert_eq!(with_order_block(existing, &lines(&[])), existing);
+    assert_eq!(with_order_block(existing, &[]), existing);
+    // A block from an earlier export goes when the cases no longer need one.
+    let with = with_order_block(existing, &lines(&["run 1 before 2"]));
+    assert_eq!(with_order_block(&with, &lines(&[])), existing);
+}
+
+#[test]
+fn the_order_block_keeps_the_files_line_endings_and_finds_a_place_without_a_user_line() {
+    let crlf = "# T\r\n\r\n**User:** u\r\n\r\n## 1 \u{2014} A\r\nbody\r\n";
+    let out = with_order_block(crlf, &lines(&["run 1 before 2"]));
+    assert!(out.starts_with("# T\r\n\r\n**User:** u\r\n\r\n<!-- tcm:order -->\r\n**Order (from TCM):**\r\n\r\n- run 1 before 2\r\n"), "{out:?}");
+    assert!(out.ends_with("<!-- /tcm:order -->\r\n\r\n## 1 \u{2014} A\r\nbody\r\n"), "{out:?}");
+    assert_eq!(with_order_block(&out, &lines(&["run 1 before 2"])), out);
+    // No User line: before the first case heading.
+    let bare = "# T\n\nintro\n\n## 1 \u{2014} A\nbody\n";
+    let out = with_order_block(bare, &lines(&["run 1 before 2"]));
+    assert!(out.starts_with("# T\n\nintro\n\n<!-- tcm:order -->\n"), "{out}");
+    assert!(out.ends_with("<!-- /tcm:order -->\n\n## 1 \u{2014} A\nbody\n"), "{out}");
 }

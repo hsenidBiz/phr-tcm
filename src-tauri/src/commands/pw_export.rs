@@ -122,7 +122,8 @@ pub(crate) fn nothing_written() -> ExportResult {
 /// same the preview was given, so the write picks the same areas the
 /// preview showed. `replace` is the cases the repo already has that the
 /// person ticked to replace on purpose: any other case the repo has refuses
-/// the whole write.
+/// the whole write. `pbi_id` is the PBI the cases are shown under: its saved
+/// Auto Run order goes into each test-case file's order notes.
 #[tauri::command]
 #[specta::specta]
 pub async fn pw_export_write(
@@ -134,6 +135,7 @@ pub async fn pw_export_write(
     replace: Vec<i32>,
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
+    pbi_id: Option<i32>,
 ) -> Result<ExportResult, String> {
     let _t = crate::pw_repo::timed("pw_export_write");
     ensure_offered()?;
@@ -147,7 +149,7 @@ pub async fn pw_export_write(
     let docs = read_docs(&app, &organization, &project, &case_ids, module_ref.as_deref(), preconditions_ref.as_deref()).await?;
     let dir = sync_dir(&app)?;
     let clone = clone_path();
-    let result = export::write_recorded(&root, &dir, &organization, &project, &case_ids, &clone, &modules, &docs, &replace)?;
+    let result = export::write_recorded(&root, &dir, &organization, &project, &case_ids, &clone, &modules, &docs, &replace, pbi_id)?;
     remember_written(&clone, &result);
     Ok(result)
 }

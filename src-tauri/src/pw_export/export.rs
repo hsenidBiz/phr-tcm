@@ -11,7 +11,7 @@
 
 use super::app_quirks::{merge_app_quirks_removing, quirk_entries, retired_tags, APP_QUIRKS_REL};
 use super::clone::{index_with, open, ClonedRepo};
-use super::handover::{baseline_doc, handover_for, HandoverInput, BASELINE_DOC_REL};
+use super::handover::{baseline_doc, handover_for, order_note, HandoverInput, BASELINE_DOC_REL};
 use super::mapping::{self, ExportMap, Placement};
 use super::test_case::{self, CaseDoc};
 use super::translate::{self, RawSpecInput};
@@ -129,15 +129,21 @@ struct Ctx {
     /// `(key, username)` only; a password is never read out of an Account.
     accounts: Vec<(String, String)>,
     runs: Vec<LocalRun>,
+    /// Auto Run's saved order for the PBI being exported, when the caller
+    /// names one and there is one: the order notes repeat it.
+    saved_order: Option<Vec<i32>>,
 }
 
 impl Ctx {
+    /// `pbi_id` is the PBI the cases are exported from, when the caller
+    /// knows it (only a write reads its saved order).
     fn load(
         root: &Path,
         org: &str,
         project: &str,
         clone_path: &str,
         modules: &BTreeMap<i32, String>,
+        pbi_id: Option<i32>,
     ) -> Result<Ctx, String> {
         let env_id = crate::environments::active_id(root)?;
         let accounts = accounts::load_accounts_for(root, &env_id)?
@@ -162,6 +168,7 @@ impl Ctx {
             env_id,
             accounts,
             runs: store::list_runs(root),
+            saved_order: pbi_id.and_then(|pbi| store::load_order(root, pbi)),
         })
     }
 }
@@ -616,7 +623,7 @@ pub fn preview_with(
     modules: &BTreeMap<i32, String>,
 ) -> Result<Preview, String> {
     // A failure here is not the clone's: it is the caller's error.
-    let ctx = Ctx::load(root, org, project, clone_path, modules)?;
+    let ctx = Ctx::load(root, org, project, clone_path, modules, None)?;
     let found = ctx.clone.as_ref().map(presence::scan_repo).unwrap_or_default();
     let mut cases = Vec::new();
     // A guess only for an area one of these cases starts in and that is
@@ -708,7 +715,7 @@ pub fn split_exportable(
     clone_path: &str,
     modules: &BTreeMap<i32, String>,
 ) -> Result<(Vec<i32>, Vec<(i32, String)>), String> {
-    let ctx = Ctx::load(root, org, project, clone_path, modules)?;
+    let ctx = Ctx::load(root, org, project, clone_path, modules, None)?;
     let repo = ctx.clone.as_ref().map_err(|e| e.clone())?;
     let found = presence::scan_repo(repo);
     let (mut ok, mut skipped): (Vec<i32>, Vec<(i32, String)>) = (Vec::new(), Vec::new());
@@ -758,7 +765,7 @@ pub fn add_new_with(
     let mut result = if ok.is_empty() {
         nothing_written()
     } else {
-        write_recorded(root, sync_dir, org, project, &ok, clone_path, modules, docs, &[])?
+        write_recorded(root, sync_dir, org, project, &ok, clone_path, modules, docs, &[], None)?
     };
     result.skipped = skipped;
     Ok(result)
@@ -825,7 +832,7 @@ pub fn ensure_exportable(
     modules: &BTreeMap<i32, String>,
     replace: &[i32],
 ) -> Result<(), String> {
-    let ctx = Ctx::load(root, org, project, clone_path, modules)?;
+    let ctx = Ctx::load(root, org, project, clone_path, modules, None)?;
     let repo = ctx.clone.as_ref().map_err(|e| e.clone())?;
     refuse_present(&presence::scan_repo(repo), case_ids, replace)?;
     eligible(&ctx, root, org, project, case_ids).map(|_| ())
@@ -837,7 +844,9 @@ struct Out {
 }
 
 /// Writes `case_ids`, all or nothing. A case the repo already has is
-/// refused unless it is in `replace` (`refuse_present`).
+/// refused unless it is in `replace` (`refuse_present`). `pbi_id` is the PBI
+/// they are exported from, when known: its saved Auto Run order goes into
+/// each test-case file's order notes.
 #[allow(clippy::too_many_arguments)]
 pub fn write_with(
     root: &Path,
@@ -848,8 +857,9 @@ pub fn write_with(
     modules: &BTreeMap<i32, String>,
     docs: &BTreeMap<i32, CaseDoc>,
     replace: &[i32],
+    pbi_id: Option<i32>,
 ) -> Result<ExportResult, String> {
-    let ctx = Ctx::load(root, org, project, clone_path, modules)?;
+    let ctx = Ctx::load(root, org, project, clone_path, modules, pbi_id)?;
     let repo = ctx.clone.as_ref().map_err(|e| e.clone())?;
     let found = presence::scan_repo(repo);
     refuse_present(&found, case_ids, replace)?;
@@ -863,6 +873,8 @@ pub fn write_with(
     let recipe = ctx.recipe.as_ref().ok_or("no sign-in recipe for this project")?;
 
     let mut md_files: BTreeMap<String, String> = BTreeMap::new();
+    // The scripts exported into each test-case file, for its order notes.
+    let mut md_cases: BTreeMap<String, Vec<(i32, &CaseScript)>> = BTreeMap::new();
     let mut raw_files: Vec<Out> = Vec::new();
     let mut cases: Vec<(i32, String)> = Vec::new();
     let mut sections: Vec<(i32, String)> = Vec::new();
@@ -936,6 +948,7 @@ pub fn write_with(
         let current = md_files.get_mut(&md_rel).expect("inserted above");
         *current = test_case::splice(current, id, &test_case::section(&doc));
         sections.push((id, md_rel.clone()));
+        md_cases.entry(md_rel.clone()).or_default().push((id, &r.script));
 
         // The raw file: the index's own for this id, else a fresh unique name.
         let key = id.to_string();
@@ -989,6 +1002,11 @@ pub fn write_with(
 
     // Order matters for the rename phase: test-case files, then raw specs,
     // then index.json, so the index never points at a file that is missing.
+    // Each file's order notes are about the cases written into it now.
+    for (rel, content) in md_files.iter_mut() {
+        let note = order_note(&md_cases[rel], ctx.saved_order.as_deref());
+        *content = test_case::with_order_block(content, &note);
+    }
     let mut outs: Vec<Out> = md_files.into_iter().map(|(rel, content)| Out { rel, content }).collect();
     outs.extend(raw_files);
     // The protected baseline, whole, before index.json. An empty baseline
@@ -1050,6 +1068,7 @@ pub fn write_recorded(
     modules: &BTreeMap<i32, String>,
     docs: &BTreeMap<i32, CaseDoc>,
     replace: &[i32],
+    pbi_id: Option<i32>,
 ) -> Result<ExportResult, String> {
     // Taken before the write: a script changed while it runs shows as out of date.
     let fingerprints = Fingerprinter::load(root, org, project)?;
@@ -1060,7 +1079,7 @@ pub fn write_recorded(
             saved.insert(id, (s.title, fp));
         }
     }
-    let mut result = write_with(root, org, project, case_ids, clone_path, modules, docs, replace)?;
+    let mut result = write_with(root, org, project, case_ids, clone_path, modules, docs, replace, pbi_id)?;
     let at = crate::applog::iso_stamp();
     let entries: Vec<(i32, sync::Exported)> = result
         .cases

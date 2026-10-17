@@ -212,7 +212,12 @@ pub(crate) fn docs(list: &[(i32, &str)]) -> BTreeMap<i32, CaseDoc> {
 /// A write with every case chosen to replace: what these tests check is the
 /// write itself. The guard on cases the repo has is `pw_repo_presence`'s.
 fn export(fx: &Fx, ids: &[i32], d: &BTreeMap<i32, CaseDoc>) -> Result<ExportResult, String> {
-    write_with(fx.root.path(), ORG, PROJECT, ids, &fx.clone_path(), &fx.modules.borrow(), d, ids)
+    export_from(fx, ids, d, None)
+}
+
+/// `export`, as the cases of PBI `pbi_id` (whose saved order the notes repeat).
+fn export_from(fx: &Fx, ids: &[i32], d: &BTreeMap<i32, CaseDoc>, pbi_id: Option<i32>) -> Result<ExportResult, String> {
+    write_with(fx.root.path(), ORG, PROJECT, ids, &fx.clone_path(), &fx.modules.borrow(), d, ids, pbi_id)
 }
 
 #[test]
@@ -1071,4 +1076,110 @@ fn a_quirk_retired_in_tcm_leaves_the_repo_file_on_the_next_export() {
     let r = export(&fx, &[94], &docs(&[(94, "Retires a quirk")])).unwrap();
     assert!(r.files.iter().any(|f| f == QUIRKS_REL), "{:?}", r.files);
     assert_eq!(fx.read_clone(QUIRKS_REL), REPO_QUIRKS);
+}
+
+/// A passed case in the Definition Wizard whose one step clicks `button`,
+/// with `extra` (marks, look-only) merged into the saved script.
+fn marked_case(fx: &Fx, id: i32, title: &str, button: &str, extra: serde_json::Value) {
+    fx.script(
+        id,
+        title,
+        "admin",
+        "Definition Wizard",
+        json!([{ "kind": "click", "selector": { "role": "button", "name": button } }]),
+    );
+    fx.run(&format!("r{id}"), "5", id, "Passed");
+    let mut v = serde_json::to_value(store::load_script(fx.root.path(), id).unwrap().unwrap()).unwrap();
+    for (k, val) in extra.as_object().unwrap() {
+        v[k] = val.clone();
+    }
+    store::save_script(fx.root.path(), &serde_json::from_value(v).unwrap()).unwrap();
+}
+
+/// The part of the md between the `## <id>` heading and the next one.
+fn section_of<'a>(md: &'a str, id: i32) -> &'a str {
+    let start = md.find(&format!("## {id} ")).unwrap();
+    let rest = &md[start + 3..];
+    &md[start..start + 3 + rest.find("\n## ").map_or(rest.len(), |p| p + 1)]
+}
+
+#[test]
+fn two_cases_in_one_file_keep_their_own_facts() {
+    let fx = Fx::new();
+    // 101 looks only, and needs the cycle unchanged; 102 publishes it.
+    marked_case(&fx, 101, "Looks at the cycle", "Open", json!({ "no_save": true, "needs_unchanged": ["cycle published"] }));
+    marked_case(&fx, 102, "Publishes the cycle", "Publish", json!({ "changes": ["cycle published"] }));
+    let d = docs(&[(101, "Looks at the cycle"), (102, "Publishes the cycle")]);
+    export(&fx, &[101, 102], &d).unwrap();
+    let md = fx.read_clone(MD_REL);
+    let (look, publish) = (section_of(&md, 101), section_of(&md, 102));
+    assert!(look.contains("Look-only: must not save anything.") && !look.contains("appears to publish"), "{look}");
+    assert!(publish.contains("appears to publish") && !publish.contains("Look-only"), "{publish}");
+    // The header's order block names both, right after the User line.
+    let header = &md[..md.find("\n## 101 ").unwrap()];
+    assert!(
+        header.contains("<!-- from-tcm -->\n\n<!-- tcm:order -->\n**Order (from TCM):**\n\n"),
+        "{header}"
+    );
+    for line in [
+        "- run 101 before 102 (101 needs cycle published unchanged and 102 changes it)",
+        "- run 102 alone and last: it publishes",
+        "- suggested group: 101, 102 (run together, in this order)",
+        "- Proposed for the repo owner: tag publishing cases @publishes and destructive ones @destructive",
+    ] {
+        assert!(header.contains(line), "{line}\n{header}");
+    }
+    // Again: the block is replaced, never added to.
+    export(&fx, &[101, 102], &d).unwrap();
+    let again = fx.read_clone(MD_REL);
+    assert_eq!(again.matches("<!-- tcm:order -->").count(), 1, "{again}");
+    assert_eq!(again, md);
+}
+
+#[test]
+fn an_existing_file_gets_the_order_block_after_its_user_line() {
+    let fx = Fx::new();
+    marked_case(&fx, 103, "Looks", "Open", json!({ "needs_unchanged": ["rating scale"] }));
+    marked_case(&fx, 104, "Changes", "Open", json!({ "changes": ["rating scale"] }));
+    write(
+        fx.clone.path().join(MD_REL),
+        "# Test Case Set: Proficiency Levels\n\n**User:** REPO_KEY  <!-- from-tcm -->\n\nRepo notes.\n\n",
+    );
+    export(&fx, &[103, 104], &docs(&[(103, "Looks"), (104, "Changes")])).unwrap();
+    let md = fx.read_clone(MD_REL);
+    assert!(
+        md.starts_with("# Test Case Set: Proficiency Levels\n\n**User:** REPO_KEY  <!-- from-tcm -->\n\n<!-- tcm:order -->\n"),
+        "{md}"
+    );
+    assert!(md.contains("<!-- /tcm:order -->\n\nRepo notes.\n\n## 103 "), "{md}");
+    // Exporting only one of them afterwards says only what that one needs.
+    export(&fx, &[103], &docs(&[(103, "Looks")])).unwrap();
+    let md = fx.read_clone(MD_REL);
+    assert!(!md.contains("tcm:order") && md.contains("Repo notes.\n\n## 103 "), "{md}");
+}
+
+#[test]
+fn the_saved_order_of_the_pbi_reaches_the_notes() {
+    let fx = Fx::new();
+    fx.good(105, "First listed");
+    fx.good(106, "Second listed");
+    let d = docs(&[(105, "First listed"), (106, "Second listed")]);
+    // No PBI, or a PBI with no saved order: two independent cases say nothing.
+    export_from(&fx, &[105, 106], &d, None).unwrap();
+    assert!(!fx.read_clone(MD_REL).contains("tcm:order"));
+    export_from(&fx, &[105, 106], &d, Some(7)).unwrap();
+    assert!(!fx.read_clone(MD_REL).contains("tcm:order"));
+    store::save_order(fx.root.path(), 7, &[106, 99, 105]).unwrap();
+    export_from(&fx, &[105, 106], &d, Some(7)).unwrap();
+    let md = fx.read_clone(MD_REL);
+    assert!(md.contains("- saved TCM order: 106, 105\n"), "{md}");
+    assert!(!md.contains("99"), "{md}");
+}
+
+#[test]
+fn no_order_block_for_independent_cases_in_an_export() {
+    let fx = Fx::new();
+    fx.good(107, "Alone");
+    export(&fx, &[107], &docs(&[(107, "Alone")])).unwrap();
+    assert!(!fx.read_clone(MD_REL).contains("tcm:order"));
 }

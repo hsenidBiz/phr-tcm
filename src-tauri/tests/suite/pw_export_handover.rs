@@ -3,7 +3,9 @@
 use serde_json::json;
 use v2_lib::autorun::CaseScript;
 use v2_lib::pw_export::export::SharedDraft;
-use v2_lib::pw_export::handover::{handover_for, step_effects, EffectKind, Handover, HandoverInput, StepEffect};
+use v2_lib::pw_export::handover::{
+    handover_for, order_note, step_effects, EffectKind, Handover, HandoverInput, StepEffect, ORDER_PROPOSAL,
+};
 
 /// A script of `steps` (each a list of actions), with `extra` merged in.
 fn script(steps: serde_json::Value, extra: serde_json::Value) -> CaseScript {
@@ -235,4 +237,59 @@ fn a_protected_baseline_adds_one_line_after_the_changes() {
     );
     // An empty baseline says nothing.
     assert!(!of(&s).from_tcm.iter().any(|l| l.contains("protected")));
+}
+
+fn case(id: i32, steps: serde_json::Value, extra: serde_json::Value) -> CaseScript {
+    let mut extra = extra;
+    extra["case_id"] = json!(id);
+    script(steps, extra)
+}
+
+fn note(cases: &[&CaseScript], saved: Option<&[i32]>) -> Vec<String> {
+    let list: Vec<(i32, &CaseScript)> = cases.iter().map(|s| (s.case_id, *s)).collect();
+    order_note(&list, saved)
+}
+
+#[test]
+fn order_lines_from_marks_and_saved_order() {
+    // 1 needs the cycle unchanged; 2 changes it; 3 publishes; 4 changes
+    // something nobody needs; 5 and 6 are independent.
+    let one = case(1, json!([[button("Open")]]), json!({ "needs_unchanged": ["Cycle Published"] }));
+    let two = case(2, json!([[button("Open")]]), json!({ "changes": ["cycle  published"] }));
+    let three = case(3, json!([[button("Save & Publish")]]), json!({}));
+    let four = case(4, json!([[button("Open")]]), json!({ "changes": ["rating scale", "weights"] }));
+    let five = case(5, json!([[button("Open")]]), json!({}));
+    let six = case(6, json!([[button("Open")]]), json!({}));
+    assert_eq!(
+        note(&[&one, &two, &three, &four, &five, &six], Some(&[6, 3, 99, 1, 2])),
+        vec![
+            "run 1 before 2 (1 needs Cycle Published unchanged and 2 changes it)".to_string(),
+            "run 2 alone and last: it changes shared state (cycle  published)".to_string(),
+            "run 3 alone and last: it publishes".to_string(),
+            "run 4 alone and last: it changes shared state (rating scale, weights)".to_string(),
+            // Only the cases of this file, in the saved order.
+            "saved TCM order: 6, 3, 1, 2".to_string(),
+            "suggested group: 1, 2 (run together, in this order)".to_string(),
+            ORDER_PROPOSAL.to_string(),
+        ]
+    );
+}
+
+#[test]
+fn a_publisher_that_also_changes_state_is_said_once_as_publishing() {
+    let p = case(8, json!([[button("Publish")]]), json!({ "changes": ["cycle published"] }));
+    assert_eq!(note(&[&p], None), vec!["run 8 alone and last: it publishes".to_string(), ORDER_PROPOSAL.to_string()]);
+}
+
+#[test]
+fn a_chain_is_one_group_in_the_suggested_order() {
+    // 11 needs X unchanged and changes Y; 12 needs Y unchanged and changes Z;
+    // 13 needs Z unchanged. Listed backwards, so the suggestion moves them.
+    let c = case(13, json!([[]]), json!({ "needs_unchanged": ["z"] }));
+    let b = case(12, json!([[]]), json!({ "needs_unchanged": ["y"], "changes": ["z"] }));
+    let a = case(11, json!([[]]), json!({ "needs_unchanged": ["x"], "changes": ["y"] }));
+    let lines = note(&[&c, &b, &a], None);
+    assert!(lines.contains(&"suggested group: 13, 12, 11 (run together, in this order)".to_string()), "{lines:?}");
+    assert!(lines.contains(&"run 13 before 12 (13 needs z unchanged and 12 changes it)".to_string()), "{lines:?}");
+    assert!(lines.contains(&"run 12 before 11 (12 needs y unchanged and 11 changes it)".to_string()), "{lines:?}");
 }

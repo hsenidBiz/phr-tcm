@@ -1316,9 +1316,10 @@ export const commands = {
 	 *  same the preview was given, so the write picks the same areas the
 	 *  preview showed. `replace` is the cases the repo already has that the
 	 *  person ticked to replace on purpose: any other case the repo has refuses
-	 *  the whole write.
+	 *  the whole write. `pbi_id` is the PBI the cases are shown under: its saved
+	 *  Auto Run order goes into each test-case file's order notes.
 	 */
-	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], replace: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, replace, moduleRef, preconditionsRef })),
+	pwExportWrite: (organization: string, project: string, caseIds: number[], modules: ([number, string])[], replace: number[], moduleRef: string | null, preconditionsRef: string | null, pbiId: number | null) => typedError<ExportResult, string>(__TAURI_INVOKE("pw_export_write", { organization, project, caseIds, modules, replace, moduleRef, preconditionsRef, pbiId })),
 	/**  What the clone at `clone` holds, and the health line. Read only. */
 	pwRepoStructure: (clone: string) => typedError<RepoStructure, string>(__TAURI_INVOKE("pw_repo_structure", { clone })),
 	/**

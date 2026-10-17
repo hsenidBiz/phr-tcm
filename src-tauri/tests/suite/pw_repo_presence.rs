@@ -75,7 +75,7 @@ fn the_preview_says_which_cases_the_repo_has_and_where() {
     let fx = Fx::new();
     fx.good(20, "Twenty");
     fx.good(21, "Twenty one");
-    write_with(fx.root.path(), ORG, PROJECT, &[20], &fx.clone_path(), &fx.modules.borrow(), &docs(&[(20, "Twenty")]), &[]).unwrap();
+    write_with(fx.root.path(), ORG, PROJECT, &[20], &fx.clone_path(), &fx.modules.borrow(), &docs(&[(20, "Twenty")]), &[], None).unwrap();
 
     let p = preview_with(fx.root.path(), ORG, PROJECT, &[20, 21], &fx.clone_path(), &fx.modules.borrow()).unwrap();
     let by: BTreeMap<i32, _> = p.cases.iter().map(|c| (c.case_id, c)).collect();
@@ -94,13 +94,13 @@ fn a_write_of_the_default_ticks_skips_what_the_repo_has() {
     let fx = Fx::new();
     fx.good(20, "Twenty");
     fx.good(21, "Twenty one");
-    write_with(fx.root.path(), ORG, PROJECT, &[20], &fx.clone_path(), &fx.modules.borrow(), &docs(&[(20, "Twenty")]), &[]).unwrap();
+    write_with(fx.root.path(), ORG, PROJECT, &[20], &fx.clone_path(), &fx.modules.borrow(), &docs(&[(20, "Twenty")]), &[], None).unwrap();
     fx.good(20, "Twenty, changed");
     let before = snapshot(fx.clone.path());
     let md_before = fx.read_clone(MD_REL);
 
     // The dialog's default: the new case ticked, the one the repo has not.
-    let r = write_with(fx.root.path(), ORG, PROJECT, &[21], &fx.clone_path(), &fx.modules.borrow(), &docs(&[(21, "Twenty one")]), &[]).unwrap();
+    let r = write_with(fx.root.path(), ORG, PROJECT, &[21], &fx.clone_path(), &fx.modules.borrow(), &docs(&[(21, "Twenty one")]), &[], None).unwrap();
     assert_eq!(r.cases.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![21]);
 
     // 20's raw spec is as it was, and its section is still the first thing in the file.
@@ -125,7 +125,7 @@ fn a_case_the_repo_has_is_refused_unless_it_is_chosen_to_replace() {
 
     // Not chosen: the whole write is refused, the new case with it.
     let d = docs(&[(22, "Twenty two"), (23, "Twenty three")]);
-    let err = write_with(fx.root.path(), ORG, PROJECT, &[23, 22], &fx.clone_path(), &fx.modules.borrow(), &d, &[]).unwrap_err();
+    let err = write_with(fx.root.path(), ORG, PROJECT, &[23, 22], &fx.clone_path(), &fx.modules.borrow(), &d, &[], None).unwrap_err();
     assert!(err.contains("case 22 is already in the repo (in proficiency-levels.md)"), "{err}");
     assert!(err.contains("Nothing was written"), "{err}");
     assert!(!err.contains('\u{2014}') && !err.contains('\u{2013}'), "{err}");
@@ -134,11 +134,11 @@ fn a_case_the_repo_has_is_refused_unless_it_is_chosen_to_replace() {
     let early = ensure_exportable(fx.root.path(), ORG, PROJECT, &[22], &fx.clone_path(), &fx.modules.borrow(), &[]).unwrap_err();
     assert_eq!(early, err);
     // Another case chosen is not this one.
-    assert!(write_with(fx.root.path(), ORG, PROJECT, &[22], &fx.clone_path(), &fx.modules.borrow(), &d, &[23]).is_err());
+    assert!(write_with(fx.root.path(), ORG, PROJECT, &[22], &fx.clone_path(), &fx.modules.borrow(), &d, &[23], None).is_err());
     assert_eq!(snapshot(fx.clone.path()), before);
 
     // Chosen on purpose: it is replaced.
-    let r = write_with(fx.root.path(), ORG, PROJECT, &[22], &fx.clone_path(), &fx.modules.borrow(), &d, &[22]).unwrap();
+    let r = write_with(fx.root.path(), ORG, PROJECT, &[22], &fx.clone_path(), &fx.modules.borrow(), &d, &[22], None).unwrap();
     assert_eq!(r.cases.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![22]);
     assert!(!fx.read_clone(MD_REL).contains("Hand written"));
 }
@@ -181,7 +181,7 @@ fn an_excluded_case_is_never_exported_even_when_chosen_to_replace() {
 
     let d = docs(&[(26, "Twenty six")]);
     for replace in [&[][..], &[26][..]] {
-        let err = write_with(fx.root.path(), ORG, PROJECT, &[26], &fx.clone_path(), &fx.modules.borrow(), &d, replace).unwrap_err();
+        let err = write_with(fx.root.path(), ORG, PROJECT, &[26], &fx.clone_path(), &fx.modules.borrow(), &d, replace, None).unwrap_err();
         assert!(err.contains(sentence) && err.contains("Nothing was written"), "{err}");
         let early = ensure_exportable(fx.root.path(), ORG, PROJECT, &[26], &fx.clone_path(), &fx.modules.borrow(), replace).unwrap_err();
         assert_eq!(early, err);

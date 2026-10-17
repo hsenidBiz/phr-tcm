@@ -232,7 +232,16 @@ export default function PlaywrightExportDialog({
     attempt(async () => {
       setRefreshError("");
       const written = await unwrapStr(
-        commands.pwExportWrite(org, project, ticked, modules, replace, prefs.moduleRef ?? null, prefs.preconditionsRef ?? null),
+        commands.pwExportWrite(
+          org,
+          project,
+          ticked,
+          modules,
+          replace,
+          prefs.moduleRef ?? null,
+          prefs.preconditionsRef ?? null,
+          pbiId,
+        ),
       );
       setResult(written);
       // What was just written is in the repo now: skipped by default again.
