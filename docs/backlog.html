@@ -147,6 +147,7 @@
       <li>AI Bridge per environment (2.2.3-beta.8): right after the app starts, the always-allow entry in your project folder's assistant settings is only brought in line with the active environment at the first environment-list read, not at start-up, so a stale entry could be live for a moment. Fix: keep writes held until that first repair has run. Also untested: the switch command calling the allow-file update, and the start-up hold itself (only the pieces they call are tested).</li>
       <li>In the app's dropdowns, pressing the down arrow while the list is empty, then Enter, has nothing to pick (found 2026-10-17, predates the folder pickers).</li>
       <li>Export to Playwright: a case handed back to its area's folder after having its own still has its suggestion worked out from its old folder until the mappings are saved.</li>
+      <li>Cache (2.2.3-beta.10): while the Runner window is open beside the main window, both can save the cache's list of entry ages at the same moment, so an entry may be dropped early and fetched again once. A crash (not a normal close) can lose the last fraction of a second of cache changes; they are fetched again.</li>
     </ul>
   </div>
 
