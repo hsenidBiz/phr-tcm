@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.8",
+    date: "2026-10-17",
+    items: [
+      "The AI Bridge switches now belong to each environment: the tools an assistant may use, Create, update and delete, Run database changes without asking, and API templates. Switching environment switches them too. Your current settings stay with the environment that is active when you update; other environments start with the write switches off.",
+    ],
+  },
+  {
     version: "2.2.3-beta.7",
     date: "2026-10-17",
     items: [
