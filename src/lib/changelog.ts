@@ -27,6 +27,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.10",
+    date: "2026-10-18",
+    items: [
+      "Saving to the app's cache no longer slows the screen down: the app keeps a small list of when each cached item was saved instead of re-reading all of them on every save.",
+      "The app's own cache file is written in the background, once for a burst of changes, instead of on every change. Signing in as someone else still clears it at once, and closing the app or restarting to update saves what is pending.",
+    ],
+  },
+  {
     version: "2.2.3-beta.9",
     date: "2026-10-18",
     items: [
