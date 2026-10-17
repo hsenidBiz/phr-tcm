@@ -1,7 +1,7 @@
 //! Playwright export: the per-feature test-case markdown.
 
 use v2_lib::pw_export::handover::{Handover, ORDER_PROPOSAL};
-use v2_lib::pw_export::test_case::{new_file, section, splice, with_order_block, CaseDoc};
+use v2_lib::pw_export::test_case::{case_ids_in, new_file, section, splice, with_order_block, CaseDoc};
 
 fn doc(id: i32, title: &str) -> CaseDoc {
     CaseDoc {
@@ -257,4 +257,10 @@ fn the_order_block_keeps_the_files_line_endings_and_finds_a_place_without_a_user
     let out = with_order_block(bare, &lines(&["run 1 before 2"]));
     assert!(out.starts_with("# T\n\nintro\n\n<!-- tcm:order -->\n"), "{out}");
     assert!(out.ends_with("<!-- /tcm:order -->\n\n## 1 \u{2014} A\nbody\n"), "{out}");
+}
+
+#[test]
+fn the_case_ids_a_file_holds_come_in_file_order() {
+    let file = "# T\n\n## 12 \u{2014} B\nx\n### 99 not a case\n## 3 \u{2014} A\n## 12 \u{2014} dup\n## 7x no\n## Amendment\n## 5\n";
+    assert_eq!(case_ids_in(file), vec![12, 3, 5]);
 }

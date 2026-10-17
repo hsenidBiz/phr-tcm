@@ -371,6 +371,23 @@ fn with_repo_rows(section: &str, old: &[&str]) -> String {
     lines.concat()
 }
 
+/// The ids of the case sections (`## <id> ...`) the file has, in file
+/// order, each once.
+pub fn case_ids_in(file: &str) -> Vec<i32> {
+    let mut ids: Vec<i32> = Vec::new();
+    for line in file.lines().filter(|l| is_h2(l)) {
+        let rest = line.trim_start_matches('#').trim_start();
+        let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+        let after = &rest[digits..];
+        if let (Ok(id), true) = (rest[..digits].parse::<i32>(), after.is_empty() || after.starts_with(char::is_whitespace)) {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    ids
+}
+
 /// The markers around the order block in a file's header: TCM's, rewritten
 /// whole on every export (`with_order_block`).
 pub const ORDER_START: &str = "<!-- tcm:order -->";

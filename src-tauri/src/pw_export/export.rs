@@ -843,6 +843,16 @@ struct Out {
     content: String,
 }
 
+/// The script of a case already in a test-case file that this export does
+/// not write, as the export reads one: components expanded, shared drafts
+/// put in when they can be (the order notes read only marks and control
+/// names, which a draft's value does not change). `None` when it has no
+/// script or the script cannot be read.
+fn sibling_script(ctx: &Ctx, id: i32) -> Option<CaseScript> {
+    let script = load_expanded(&ctx.root, &ctx.org, &ctx.project, id, &ctx.runs).ok()??;
+    Some(resolved_script(&ctx.root, &ctx.org, &ctx.project, script.clone()).unwrap_or(script))
+}
+
 /// Writes `case_ids`, all or nothing. A case the repo already has is
 /// refused unless it is in `replace` (`refuse_present`). `pbi_id` is the PBI
 /// they are exported from, when known: its saved Auto Run order goes into
@@ -1002,9 +1012,24 @@ pub fn write_with(
 
     // Order matters for the rename phase: test-case files, then raw specs,
     // then index.json, so the index never points at a file that is missing.
-    // Each file's order notes are about the cases written into it now.
+    // Each file's order notes are about every case it holds that TCM has a
+    // script for: the ones written now and the siblings from earlier exports
+    // (read the way an export reads them; one that cannot be read is left out).
     for (rel, content) in md_files.iter_mut() {
-        let note = order_note(&md_cases[rel], ctx.saved_order.as_deref());
+        let written = &md_cases[rel];
+        let siblings: Vec<(i32, CaseScript)> = test_case::case_ids_in(content)
+            .into_iter()
+            .filter(|id| !written.iter().any(|(w, _)| w == id))
+            .filter_map(|id| Some((id, sibling_script(&ctx, id)?)))
+            .collect();
+        let in_file: Vec<(i32, &CaseScript)> = test_case::case_ids_in(content)
+            .into_iter()
+            .filter_map(|id| {
+                let own = written.iter().find(|(w, _)| *w == id).map(|(_, s)| *s);
+                Some((id, own.or_else(|| siblings.iter().find(|(s, _)| *s == id).map(|(_, s)| s))?))
+            })
+            .collect();
+        let note = order_note(&in_file, ctx.saved_order.as_deref());
         *content = test_case::with_order_block(content, &note);
     }
     let mut outs: Vec<Out> = md_files.into_iter().map(|(rel, content)| Out { rel, content }).collect();

@@ -1152,10 +1152,18 @@ fn an_existing_file_gets_the_order_block_after_its_user_line() {
         "{md}"
     );
     assert!(md.contains("<!-- /tcm:order -->\n\nRepo notes.\n\n## 103 "), "{md}");
-    // Exporting only one of them afterwards says only what that one needs.
+    // Exporting only one of them afterwards keeps what the other adds to the notes.
     export(&fx, &[103], &docs(&[(103, "Looks")])).unwrap();
     let md = fx.read_clone(MD_REL);
-    assert!(!md.contains("tcm:order") && md.contains("Repo notes.\n\n## 103 "), "{md}");
+    assert_eq!(md.matches("<!-- tcm:order -->").count(), 1, "{md}");
+    assert!(md.contains("- run 103 before 104 (103 needs rating scale unchanged and 104 changes it)\n"), "{md}");
+    assert!(md.contains("- run 104 alone and last: it changes shared state (rating scale)\n"), "{md}");
+    assert!(md.contains("Repo notes.\n\n## 103 "), "{md}");
+    // A sibling whose script is gone is left out of the notes, not an error.
+    store::delete_script(fx.root.path(), 104, 1).unwrap();
+    export(&fx, &[103], &docs(&[(103, "Looks")])).unwrap();
+    let md = fx.read_clone(MD_REL);
+    assert!(!md.contains("tcm:order") && md.contains("## 104 "), "{md}");
 }
 
 #[test]
