@@ -133,26 +133,29 @@ function pathFor(m: Module, height: Partial<Record<Module, number>>): string {
       const lo = lefts.length > 0 ? Math.max(...lefts) + PATH_CLEAR : -Infinity;
       const hi = rights.length > 0 ? Math.min(...rights) - PATH_CLEAR : Infinity;
       // One smooth curve: it leaves the core straight down, drifts right
-      // inside the gap while the first row is beside it, is level at its
-      // bottom edge, then sweeps across and arrives straight down as before.
-      // (The shape was tuned for the bend to be at least 5x gentler than
-      // the old drop-then-bend; `index.test.tsx` measures it.) Where the
-      // gap is missing or the cards leave too little room under the row
+      // inside the gap while the first row is beside it, is almost level
+      // once it is a clearance below the row's bottom edge (so the sweep
+      // never grazes the corner of the card on the right), then sweeps
+      // across and arrives straight down as before. The shape was tuned for
+      // the bend to be several times gentler than the old drop-then-bend;
+      // `index.test.tsx` measures it and the distance to every card. Where
+      // the gap is missing or the cards leave too little room under the row
       // for the sweep, it falls back to the plain drop and bend.
-      if (lo < from.x && from.x < hi && hi < to.x && to.y - bottom >= 45) {
-        const dyA = bottom - from.y;
+      const join = bottom + PATH_CLEAR;
+      if (lo < from.x && from.x < hi && hi < to.x && to.y - join >= 33) {
+        const dyA = join - from.y;
         const dxB = to.x - hi;
         const r = (v: number) => Math.round(v * 100) / 100;
-        const c1 = { x: from.x, y: r(from.y + 0.75 * dyA) };
-        const k1 = 0.2 * dyA;
-        const k2 = 0.56 * dxB;
-        const c2 = { x: r(hi - k1), y: r(bottom - 0.03 * k1) };
-        const c3 = { x: r(hi + k2), y: r(bottom + 0.03 * k2) };
-        const c4 = { x: to.x, y: r(to.y - 0.285 * dxB) };
+        const c1 = { x: from.x, y: r(from.y + 0.755 * dyA) };
+        const k1 = 0.18 * dyA;
+        const k2 = 0.59 * dxB;
+        const c2 = { x: r(hi - k1), y: r(join - 0.03 * k1) };
+        const c3 = { x: r(hi + k2), y: r(join + 0.03 * k2) };
+        const c4 = { x: to.x, y: r(to.y - 0.27 * dxB) };
         // The second curve leaves where the first ends, along the same
         // (almost level, 3% downhill) direction.
         return (
-          `M${from.x},${from.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${r(hi)},${bottom} ` +
+          `M${from.x},${from.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${r(hi)},${join} ` +
           `C${c3.x},${c3.y} ${c4.x},${c4.y} ${to.x},${to.y}`
         );
       }

@@ -309,7 +309,7 @@ function minRadius(segs: Seg[]): number {
   return min;
 }
 
-for (const cardHeight of [120, 140]) {
+for (const cardHeight of [120, 134, 140, 153]) {
   test(`the turn from Core to Crystal Reports is one smooth curve through the gap (cards ${cardHeight}px tall)`, () => {
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(cardHeight);
     show(["crystal_reports"]);
@@ -323,8 +323,9 @@ for (const cardHeight of [120, 140]) {
     const right = card("writing_style");
     // The first row's cards are 280 wide, centred on their x.
     const MARGIN = 2.5 + 8; // the widest stroke's half width, plus 8
-    const gap = { lo: left.x + 140 + MARGIN, hi: right.x - 140 - MARGIN };
-    const span = { top: Math.min(left.y, right.y), bottom: Math.max(left.y, right.y) + cardHeight };
+    const rects = [left, right].map((c) => ({ l: c.x - 140, r: c.x + 140, t: c.y, b: c.y + cardHeight }));
+    const distance = (p: Pt, k: { l: number; r: number; t: number; b: number }) =>
+      Math.hypot(Math.max(k.l - p.x, 0, p.x - k.r), Math.max(k.t - p.y, 0, p.y - k.b));
 
     const d = document.querySelector(`[data-edge-line="crystal_reports"]`)!.getAttribute("d")!;
     const segs = parsePath(d);
@@ -336,25 +337,33 @@ for (const cardHeight of [120, 140]) {
     expect(segs[segs.length - 1].pts[2].x).toBe(to.x);
     expect(segs[segs.length - 1].pts[2].y).toBeLessThan(to.y);
 
-    // (a) Inside the first row's vertical span it stays in the gap, with room to spare.
-    let inSpan = 0;
-    for (const s of segs) {
+    // (a) Every point of it keeps the stroke's half width plus 8px from each
+    // first-row card (the whole rectangle, corners included), and passes
+    // between them, not round the outside.
+    let nearest = Infinity;
+    for (const seg of segs) {
       for (let i = 0; i <= 2000; i++) {
-        const p = at(s, i / 2000);
-        if (p.y < span.top || p.y > span.bottom) continue;
-        inSpan++;
-        expect(p.x, `x at y=${p.y}`).toBeGreaterThanOrEqual(gap.lo - 1e-6);
-        expect(p.x, `x at y=${p.y}`).toBeLessThanOrEqual(gap.hi + 1e-6);
+        const p = at(seg, i / 2000);
+        for (const k of rects) {
+          const dist = distance(p, k);
+          nearest = Math.min(nearest, dist);
+          expect(dist, `at ${p.x.toFixed(1)},${p.y.toFixed(1)}`).toBeGreaterThanOrEqual(MARGIN - 1e-6);
+        }
+        if (p.y <= rects[0].b) expect(p.x, `x at y=${p.y}`).toBeGreaterThan(rects[0].r);
+        if (p.y <= rects[1].b) expect(p.x, `x at y=${p.y}`).toBeLessThan(rects[1].l);
       }
     }
-    expect(inSpan).toBeGreaterThan(100);
+    expect(nearest).toBeLessThan(MARGIN + 6); // it does use the gap rather than keep far away
 
     // (b) The old path: straight down to just under the row, then a bend with
-    // both control points halfway down to the card. The new one is much gentler.
-    const clear = span.bottom + 12;
+    // both control points halfway down to the card. The new one bends far
+    // more gently: its sharpest turn has a radius over 20px (the old one's is
+    // under 10), and several times the old one's.
+    const clear = Math.max(left.y, right.y) + cardHeight + 12;
     const mid = (clear + to.y) / 2;
     const old = parsePath(`M${core.x},${core.y} L${core.x},${clear} C${core.x},${mid} ${to.x},${mid} ${to.x},${to.y}`);
-    expect(minRadius(segs)).toBeGreaterThanOrEqual(2 * minRadius(old));
+    expect(minRadius(segs)).toBeGreaterThanOrEqual(20);
+    expect(minRadius(segs)).toBeGreaterThanOrEqual(2.5 * minRadius(old));
 
     // It never runs back up, and one curve joins the next without a kink.
     for (const s of segs) for (let i = 0; i < 1000; i++) expect(at(s, (i + 1) / 1000).y).toBeGreaterThanOrEqual(at(s, i / 1000).y - 1e-9);
