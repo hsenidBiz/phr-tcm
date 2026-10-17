@@ -103,6 +103,12 @@ function reducedMotion(): boolean {
 /** A card's height until it has been measured (jsdom never measures). */
 const HEIGHT_GUESS = 140;
 
+/** How far a path keeps from a card it passes: half the widest stroke (the
+ * electric layer's 5px) plus a gap of 8px. */
+const PATH_CLEAR = 2.5 + 8;
+/** The cards are this wide, centred on their `AT` x (the `w-[280px]` below). */
+const CARD_W = 280;
+
 /**
  * A path runs from the parent card's bottom edge to the child card's top
  * edge, never behind a card: a locked card is see-through, and a line drawn
@@ -114,13 +120,43 @@ function pathFor(m: Module, height: Partial<Record<Module, number>>): string {
     ? { x: AT[parent].x, y: AT[parent].y + (height[parent] ?? HEIGHT_GUESS) }
     : { x: CORE_AT.x, y: CORE_AT.tail };
   const to = AT[m];
-  // A child of Core that hangs below the first row (Crystal Reports) first
-  // drops straight down the gap between the first row's cards, so the path
-  // never runs behind one, and only then sweeps across to its own card.
+  // A child of Core that hangs below the first row (Crystal Reports) has to
+  // get past the first row's cards before it can sweep across to its own.
   if (!parent) {
     const firstRow = MODULE_INFO.filter((i) => !i.parent && AT[i.module].y < to.y);
     if (firstRow.length > 0) {
-      const clear = Math.max(...firstRow.map((i) => AT[i.module].y + (height[i.module] ?? HEIGHT_GUESS))) + 12;
+      const bottom = Math.max(...firstRow.map((i) => AT[i.module].y + (height[i.module] ?? HEIGHT_GUESS)));
+      // The gap the path starts in: between the facing edges of the first
+      // row's cards on either side of the core, less the clearance.
+      const lefts = firstRow.filter((i) => AT[i.module].x < from.x).map((i) => AT[i.module].x + CARD_W / 2);
+      const rights = firstRow.filter((i) => AT[i.module].x > from.x).map((i) => AT[i.module].x - CARD_W / 2);
+      const lo = lefts.length > 0 ? Math.max(...lefts) + PATH_CLEAR : -Infinity;
+      const hi = rights.length > 0 ? Math.min(...rights) - PATH_CLEAR : Infinity;
+      // One smooth curve: it leaves the core straight down, drifts right
+      // inside the gap while the first row is beside it, is level at its
+      // bottom edge, then sweeps across and arrives straight down as before.
+      // (The shape was tuned for the bend to be at least 5x gentler than
+      // the old drop-then-bend; `index.test.tsx` measures it.) Where the
+      // gap is missing or the cards leave too little room under the row
+      // for the sweep, it falls back to the plain drop and bend.
+      if (lo < from.x && from.x < hi && hi < to.x && to.y - bottom >= 45) {
+        const dyA = bottom - from.y;
+        const dxB = to.x - hi;
+        const r = (v: number) => Math.round(v * 100) / 100;
+        const c1 = { x: from.x, y: r(from.y + 0.75 * dyA) };
+        const k1 = 0.2 * dyA;
+        const k2 = 0.56 * dxB;
+        const c2 = { x: r(hi - k1), y: r(bottom - 0.03 * k1) };
+        const c3 = { x: r(hi + k2), y: r(bottom + 0.03 * k2) };
+        const c4 = { x: to.x, y: r(to.y - 0.285 * dxB) };
+        // The second curve leaves where the first ends, along the same
+        // (almost level, 3% downhill) direction.
+        return (
+          `M${from.x},${from.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${r(hi)},${bottom} ` +
+          `C${c3.x},${c3.y} ${c4.x},${c4.y} ${to.x},${to.y}`
+        );
+      }
+      const clear = bottom + 12;
       const mid = (clear + to.y) / 2;
       return `M${from.x},${from.y} L${from.x},${clear} C${from.x},${mid} ${to.x},${mid} ${to.x},${to.y}`;
     }
@@ -330,7 +366,8 @@ export default function ModuleTree({
   return (
     <div
       ref={frame}
-      className="h-[calc(100vh-13rem)] min-h-80 overflow-auto rounded-lg border border-border bg-bg"
+      data-board-frame
+      className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-bg"
       style={{ padding: FRAME_PAD }}
     >
       {/* Sized at the scaled size so the frame scrolls only when the board

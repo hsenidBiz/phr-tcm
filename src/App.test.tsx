@@ -1801,3 +1801,29 @@ test("capture mode hides the DEV BUILD panel in a forced dev build; off, it show
   vi.unstubAllEnvs();
   vi.resetModules();
 });
+
+// The Modules page lives inside Settings. Its board scrolls inside its own
+// frame, so while it is open the shell must not scroll as well (two
+// scrollbars); every other Settings page keeps the shell's own scroll.
+test("the Modules page gets the full height with no shell scrollbar, and Back gives the scroll back", async () => {
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks();
+  renderApp();
+  await screen.findByText("a@b.com");
+  fireEvent.click(screen.getByLabelText("Settings"));
+  await screen.findByText("Appearance");
+  const main = screen.getByRole("main");
+  expect(main).toHaveClass("overflow-y-auto");
+  expect(main).not.toHaveClass("overflow-hidden");
+
+  fireEvent.click(screen.getByRole("button", { name: "Modules" }));
+  await screen.findAllByRole("switch");
+  expect(main).toHaveClass("overflow-hidden");
+  expect(main).toHaveClass("flex-col");
+  expect(main).not.toHaveClass("overflow-y-auto");
+
+  fireEvent.click(screen.getByRole("button", { name: /Back to Settings/ }));
+  await screen.findByText("Appearance");
+  expect(main).toHaveClass("overflow-y-auto");
+  expect(main).not.toHaveClass("overflow-hidden");
+});

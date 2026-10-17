@@ -215,6 +215,9 @@ export default function App() {
   const [section, setSection] = useState<Section>(initial.section);
   const modules = useModules();
   const modulesHydrated = useModulesHydrated();
+  // Settings is showing a page that fills the window (Modules) rather than
+  // a page that scrolls inside the shell.
+  const [settingsFill, setSettingsFill] = useState(false);
   // The tour skips the stop for a card whose module is off.
   const tourSteps = useMemo(() => tourStepsFor(modules), [modules]);
   const [org, setOrgRaw] = useState(initial.org);
@@ -1290,7 +1293,9 @@ export default function App() {
               signedIn &&
               (workMode ||
                 (modules.has("playwright") && section === "playwright") ||
-                (modules.has("crystal_reports") && section === "crystal-reports"))
+                (modules.has("crystal_reports") && section === "crystal-reports") ||
+                // Settings' Modules page: its board scrolls inside its own frame.
+                (section === "settings" && settingsFill))
                 ? // No bottom padding in work mode: the board's columns own
                   // the full height, and a padded strip under them read as a
                   // gap at the bottom of the screen - boards run flush to the
@@ -1367,7 +1372,11 @@ export default function App() {
               // key={section} remounts the wrapper on tab switch, so every
               // screen fades up briefly (120ms) instead of snapping in.
               // 120ms fade chosen for snappiness (user request 2026-08-22).
-              <div key={section} className={section === "playwright" || section === "crystal-reports" ? "t-screen-in flex min-h-0 flex-1 flex-col" : "t-screen-in"}>
+              <div key={section} className={
+                section === "playwright" || section === "crystal-reports" || (section === "settings" && settingsFill)
+                  ? "t-screen-in flex min-h-0 flex-1 flex-col"
+                  : "t-screen-in"
+              }>
                 <div className="mb-4 flex items-center gap-2">
                   <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
                   {section === "ai" && <BridgeStatusBadge />}
@@ -1439,7 +1448,7 @@ export default function App() {
                 )}
                 {modules.has("playwright") && section === "playwright" && <Playwright org={org} project={project} />}
                 {modules.has("crystal_reports") && section === "crystal-reports" && <CrystalReports />}
-                {section === "settings" && <Settings org={org} project={project} />}
+                {section === "settings" && <Settings org={org} project={project} onFillChange={setSettingsFill} />}
               </div>
             )}
             </Suspense>

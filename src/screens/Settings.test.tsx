@@ -1522,3 +1522,27 @@ test("Modules opens the modules page from Settings, and Back to Settings returns
   fireEvent.click(screen.getByRole("button", { name: /Back to Settings/ }));
   expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
 });
+
+test("Settings tells its host while the Modules page is open, so the host can give it the full height", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const seen: boolean[] = [];
+  const { unmount } = render(
+    <QueryClientProvider client={qc}>
+      <Settings org="acme" project="Web" onFillChange={(fill) => seen.push(fill)} />
+    </QueryClientProvider>,
+  );
+  expect(seen[seen.length - 1]).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Modules" }));
+  await screen.findAllByRole("switch");
+  expect(seen[seen.length - 1]).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: /Back to Settings/ }));
+  await screen.findByRole("heading", { name: "Appearance" });
+  expect(seen[seen.length - 1]).toBe(false);
+  // Leaving Settings while Modules is open must hand the height back too.
+  fireEvent.click(screen.getByRole("button", { name: "Modules" }));
+  await screen.findAllByRole("switch");
+  expect(seen[seen.length - 1]).toBe(true);
+  unmount();
+  expect(seen[seen.length - 1]).toBe(false);
+});

@@ -56,20 +56,23 @@ export default function Modules({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
+    // Fills the area it is given: the header and notes keep their height and
+    // only the board (which scales to fit) scrolls, and only when it must.
+    // The gap at the bottom keeps its frame off the window edge.
+    <div className="flex min-h-0 flex-1 flex-col gap-4 pb-6">
+      <div className="flex shrink-0 flex-wrap items-center gap-3">
         <Button size="sm" variant="outline" onClick={onBack}>
           <IconBack aria-hidden />
           Back to Settings
         </Button>
         <h2 className="text-base font-semibold text-text">Modules</h2>
       </div>
-      <p className="max-w-4xl text-sm text-muted">
+      <p className="max-w-4xl shrink-0 text-sm text-muted">
         Switch on the parts of the app you need. A module needs the one above it, and switching one off switches off
         those below it. Nothing is deleted.
       </p>
       {error && (
-        <p role="alert" className="rounded-md border border-danger px-3 py-2 text-sm text-danger">
+        <p role="alert" className="shrink-0 rounded-md border border-danger px-3 py-2 text-sm text-danger">
           {error}
         </p>
       )}

@@ -184,6 +184,21 @@ test("with reduced motion the end state shows at once", async () => {
   expect(document.querySelector('[data-edge="writing_style"]')).toHaveAttribute("data-running", "false");
 });
 
+test("the page fills the area it is given, so only the board scrolls", () => {
+  const { container } = show([]);
+  const root = container.firstElementChild as HTMLElement;
+  for (const c of ["flex", "min-h-0", "flex-1", "flex-col", "pb-6"]) expect(root, c).toHaveClass(c);
+  // The header and notes keep their height; the board takes what is left.
+  const frame = document.querySelector<HTMLElement>("[data-board-frame]")!;
+  for (const c of ["min-h-0", "flex-1", "overflow-auto"]) expect(frame, c).toHaveClass(c);
+  // A height worked out from the viewport is what made a second scrollbar.
+  expect(frame.className).not.toMatch(/100vh|calc\(/);
+  expect(frame.className).not.toMatch(/(^|\s)(h-|min-h-80)/);
+  for (const el of [root.querySelector(":scope > div"), root.querySelector(":scope > p")]) {
+    expect(el, "header / note").toHaveClass("shrink-0");
+  }
+});
+
 test("the paths are decorative and Back returns", () => {
   const { onBack } = show([]);
   expect(document.querySelector("svg.mod-edges")).toHaveAttribute("aria-hidden", "true");
@@ -207,7 +222,7 @@ test("a path runs from the parent card's bottom edge to the child card's top edg
   vi.restoreAllMocks();
 });
 
-test("no two cards overlap, and Crystal Reports' path drops through the gap between the first row's cards", () => {
+test("no two cards overlap", () => {
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(140);
   show(["crystal_reports"]);
   const rect = (m: Module) => {
@@ -226,15 +241,158 @@ test("no two cards overlap, and Crystal Reports' path drops through the gap betw
       expect(apart, `${a.m} / ${b.m}`).toBe(true);
     }
   }
-  // Down the middle, clear of both first-row cards, then across to its own card.
+  // It still ends on the top centre of its own card.
   const d = document.querySelector(`[data-edge-line="crystal_reports"]`)!.getAttribute("d")!;
-  const drop = d.match(/^M400,\d+ L400,(\d+) /);
-  expect(drop, d).not.toBeNull();
-  expect(Number(drop![1])).toBeGreaterThanOrEqual(rect("writing_style").bottom);
-  expect(Number(drop![1])).toBeLessThan(rect("crystal_reports").top);
   expect(d.endsWith(`${rect("crystal_reports").left + 140},${rect("crystal_reports").top}`)).toBe(true);
   vi.restoreAllMocks();
 });
+
+// --- the turn from Core to Crystal Reports -------------------------------
+
+type Pt = { x: number; y: number };
+type Seg = { kind: "L" | "C"; pts: Pt[] };
+
+/** The M / L / C commands of a path, as segments (each starts where the last ended). */
+function parsePath(d: string): Seg[] {
+  const toks = d.match(/[MLC]|-?[0-9.]+,-?[0-9.]+/g)!;
+  const segs: Seg[] = [];
+  let cur: Pt = { x: 0, y: 0 };
+  let kind = "M";
+  let args: Pt[] = [];
+  const flush = () => {
+    if (args.length === 0) return;
+    if (kind === "M") cur = args[0];
+    else {
+      segs.push({ kind: kind as "L" | "C", pts: [cur, ...args] });
+      cur = args[args.length - 1];
+    }
+    args = [];
+  };
+  for (const t of toks) {
+    if (/^[MLC]$/.test(t)) {
+      flush();
+      kind = t;
+    } else {
+      const [x, y] = t.split(",").map(Number);
+      args.push({ x, y });
+    }
+  }
+  flush();
+  return segs;
+}
+
+const at = (s: Seg, t: number): Pt => {
+  const p = s.pts;
+  const u = 1 - t;
+  if (s.kind === "L") return { x: p[0].x + (p[1].x - p[0].x) * t, y: p[0].y + (p[1].y - p[0].y) * t };
+  const w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
+  return { x: w[0] * p[0].x + w[1] * p[1].x + w[2] * p[2].x + w[3] * p[3].x, y: w[0] * p[0].y + w[1] * p[1].y + w[2] * p[2].y + w[3] * p[3].y };
+};
+
+/** The smallest radius of curvature along the path (a straight line has none). */
+function minRadius(segs: Seg[]): number {
+  let min = Infinity;
+  for (const s of segs) {
+    if (s.kind === "L") continue;
+    const [p0, p1, p2, p3] = s.pts;
+    for (let i = 0; i <= 1000; i++) {
+      const t = i / 1000;
+      const u = 1 - t;
+      const dx = 3 * u * u * (p1.x - p0.x) + 6 * u * t * (p2.x - p1.x) + 3 * t * t * (p3.x - p2.x);
+      const dy = 3 * u * u * (p1.y - p0.y) + 6 * u * t * (p2.y - p1.y) + 3 * t * t * (p3.y - p2.y);
+      const ddx = 6 * u * (p2.x - 2 * p1.x + p0.x) + 6 * t * (p3.x - 2 * p2.x + p1.x);
+      const ddy = 6 * u * (p2.y - 2 * p1.y + p0.y) + 6 * t * (p3.y - 2 * p2.y + p1.y);
+      const cross = Math.abs(dx * ddy - dy * ddx);
+      if (cross > 1e-9) min = Math.min(min, Math.pow(dx * dx + dy * dy, 1.5) / cross);
+    }
+  }
+  return min;
+}
+
+for (const cardHeight of [120, 140]) {
+  test(`the turn from Core to Crystal Reports is one smooth curve through the gap (cards ${cardHeight}px tall)`, () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(cardHeight);
+    show(["crystal_reports"]);
+    const card = (m: Module) => {
+      const el = document.querySelector<HTMLElement>(`[data-module="${m}"]`)!;
+      return { x: parseFloat(el.style.left), y: parseFloat(el.style.top) };
+    };
+    const core = { x: 400, y: 166 };
+    const to = card("crystal_reports");
+    const left = card("db_access");
+    const right = card("writing_style");
+    // The first row's cards are 280 wide, centred on their x.
+    const MARGIN = 2.5 + 8; // the widest stroke's half width, plus 8
+    const gap = { lo: left.x + 140 + MARGIN, hi: right.x - 140 - MARGIN };
+    const span = { top: Math.min(left.y, right.y), bottom: Math.max(left.y, right.y) + cardHeight };
+
+    const d = document.querySelector(`[data-edge-line="crystal_reports"]`)!.getAttribute("d")!;
+    const segs = parsePath(d);
+
+    // (c) The same two ends as before, and the start leaves straight down.
+    expect(segs[0].pts[0]).toEqual(core);
+    expect(segs[0].pts[1].x).toBe(core.x);
+    expect(segs[segs.length - 1].pts[3]).toEqual(to);
+    expect(segs[segs.length - 1].pts[2].x).toBe(to.x);
+    expect(segs[segs.length - 1].pts[2].y).toBeLessThan(to.y);
+
+    // (a) Inside the first row's vertical span it stays in the gap, with room to spare.
+    let inSpan = 0;
+    for (const s of segs) {
+      for (let i = 0; i <= 2000; i++) {
+        const p = at(s, i / 2000);
+        if (p.y < span.top || p.y > span.bottom) continue;
+        inSpan++;
+        expect(p.x, `x at y=${p.y}`).toBeGreaterThanOrEqual(gap.lo - 1e-6);
+        expect(p.x, `x at y=${p.y}`).toBeLessThanOrEqual(gap.hi + 1e-6);
+      }
+    }
+    expect(inSpan).toBeGreaterThan(100);
+
+    // (b) The old path: straight down to just under the row, then a bend with
+    // both control points halfway down to the card. The new one is much gentler.
+    const clear = span.bottom + 12;
+    const mid = (clear + to.y) / 2;
+    const old = parsePath(`M${core.x},${core.y} L${core.x},${clear} C${core.x},${mid} ${to.x},${mid} ${to.x},${to.y}`);
+    expect(minRadius(segs)).toBeGreaterThanOrEqual(2 * minRadius(old));
+
+    // It never runs back up, and one curve joins the next without a kink.
+    for (const s of segs) for (let i = 0; i < 1000; i++) expect(at(s, (i + 1) / 1000).y).toBeGreaterThanOrEqual(at(s, i / 1000).y - 1e-9);
+    for (let i = 1; i < segs.length; i++) {
+      const a = segs[i - 1].pts;
+      const b = segs[i].pts;
+      const before = { x: a[3].x - a[2].x, y: a[3].y - a[2].y };
+      const after = { x: b[1].x - b[0].x, y: b[1].y - b[0].y };
+      const cos = (before.x * after.x + before.y * after.y) / (Math.hypot(before.x, before.y) * Math.hypot(after.x, after.y));
+      expect(cos).toBeGreaterThan(0.999);
+    }
+    vi.restoreAllMocks();
+  });
+
+  test(`every other module's path is unchanged (cards ${cardHeight}px tall)`, () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(cardHeight);
+    show([]);
+    const card = (m: Module) => {
+      const el = document.querySelector<HTMLElement>(`[data-module="${m}"]`)!;
+      return { x: parseFloat(el.style.left), y: parseFloat(el.style.top) };
+    };
+    const core = { x: 400, y: 166 };
+    const curve = (from: Pt, to: Pt) => {
+      const mid = (from.y + to.y) / 2;
+      return `M${from.x},${from.y} C${from.x},${mid} ${to.x},${mid} ${to.x},${to.y}`;
+    };
+    const below = (m: Module): Pt => ({ x: card(m).x, y: card(m).y + cardHeight });
+    const expected: [Module, string][] = [
+      ["db_access", curve(core, card("db_access"))],
+      ["writing_style", curve(core, card("writing_style"))],
+      ["auto_run", curve(below("db_access"), card("auto_run"))],
+      ["api_templates", curve(below("auto_run"), card("api_templates"))],
+      ["playwright", curve(below("auto_run"), card("playwright"))],
+    ];
+    for (const [m, d] of expected) expect(edges([m])[0], m).toBe(d);
+    vi.restoreAllMocks();
+  });
+}
 
 test("while one change saves, every switch waits", async () => {
   const sets: unknown[] = [];

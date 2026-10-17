@@ -118,7 +118,16 @@ function guideProgressPercent(p: { received: number; total: number } | null): nu
   return Math.min(100, Math.floor((p.received / p.total) * 100));
 }
 
-export default function Settings({ org, project }: { org: string; project: string }) {
+export default function Settings({
+  org,
+  project,
+  onFillChange,
+}: {
+  org: string;
+  project: string;
+  /** Told whether a page that needs the whole height (Modules) is open. */
+  onFillChange?: (fill: boolean) => void;
+}) {
   const qc = useQueryClient();
   // The optional extras (settingsExtras.ts): the listener lives only
   // while this screen is mounted, and shakes this panel.
@@ -127,6 +136,12 @@ export default function Settings({ org, project }: { org: string; project: strin
   const extrasUnlocked = useExtrasUnlocked();
   const [confirmReset, setConfirmReset] = useState(false);
   const [modulesOpen, setModulesOpen] = useState(false);
+  // The Modules board scrolls inside its own frame, so while it is open the
+  // host must not scroll around it too; leaving Settings hands the scroll back.
+  useEffect(() => {
+    onFillChange?.(modulesOpen);
+    return () => onFillChange?.(false);
+  }, [modulesOpen, onFillChange]);
   const [gameOpen, setGameOpen] = useState(false);
   const [breakerOpen, setBreakerOpen] = useState(false);
   useEffect(() => {
