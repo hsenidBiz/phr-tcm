@@ -27,6 +27,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.6",
+    date: "2026-10-17",
+    items: [
+      "Auto Run has a Suspected defects button beside the last-result filters: it shows only the cases marked as a suspected application defect, and works together with the result buttons.",
+    ],
+  },
+  {
     version: "2.2.3-beta.5",
     date: "2026-10-17",
     items: [
