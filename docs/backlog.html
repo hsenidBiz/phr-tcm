@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test Case Manager Backlog</title>
+<style>
+  :root {
+    --bg: #f7f7f9; --surface: #ffffff; --text: #1d1d22; --muted: #5d5d6a;
+    --border: #dcdce3; --accent: #6d4aff; --chip-bg: #efeafe;
+    --design: #b26b00; --design-bg: #fff3dd; --todo: #4a4a57; --todo-bg: #ececf1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141418; --surface: #1d1d23; --text: #ececf1; --muted: #a2a2b0;
+      --border: #33333d; --accent: #a58bff; --chip-bg: #2a2440;
+      --design: #ffc266; --design-bg: #3a2c12; --todo: #c9c9d4; --todo-bg: #2a2a33;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { margin: 0 0 4px; font-size: 26px; }
+  .sub { color: var(--muted); margin: 0 0 28px; }
+  h2 { font-size: 17px; margin: 32px 0 12px; }
+  .item { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+  .head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .num { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .title { font-weight: 600; }
+  .status { margin-left: auto; font-size: 12px; font-weight: 600; padding: 2px 9px;
+    border-radius: 999px; white-space: nowrap; }
+  .designing { color: var(--design); background: var(--design-bg); }
+  .todo { color: var(--todo); background: var(--todo-bg); }
+  .item p { margin: 6px 0 0; color: var(--muted); }
+  ul { margin: 6px 0 0; padding-left: 20px; color: var(--muted); }
+  .done { color: var(--muted); font-size: 14px; }
+  code { background: var(--chip-bg); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Test Case Manager backlog</h1>
+  <p class="sub">Updated 18 October 2026, after 2.2.3-beta.8. Building now: Export to Playwright hand-over (plan docs/superpowers/plans/2026-10-18-pw-export-handoff.md), a smaller release build, and the Modules scroll and curve fixes. What is left is below.</p>
+
+  <h2>Open follow-ups from shipped work</h2>
+  <div class="item">
+    <div class="head"><span class="title">Discovery window during menu mapping</span><span class="status todo">Small follow-up</span></div>
+    <p>The "Not in an area" row fills up during a /tcm:map-menus run and always looks stale.</p>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">How To Use screenshots</span><span class="status todo">Open</span></div>
+    <ul>
+      <li>The Setup panel screenshot shows the old 7 save words (retake needs the dev app).</li>
+      <li>The Playwright page has no screenshots.</li>
+      <li>The Crystal Reports page has no screenshots.</li>
+    </ul>
+  </div>
+  <div class="item"><div class="head"><span class="title">The app starting Claude Code for Finish in the repo (option B)</span><span class="status todo">On hold</span></div><p>The handoff prompt (option A) shipped; the app launching Claude Code itself is on hold.</p></div>
+  <div class="item"><div class="head"><span class="title">One discovery browser per account</span><span class="status todo">Later</span></div><p>So several assistants can explore at once.</p></div>
+
+  <h2>Crystal Reports module (2.2.3-beta.4, 17 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">For your re-implementation (TCM does not patch it)</span><span class="status todo">Your side</span></div>
+    <ul>
+      <li>Live data runs <code>EXEC [&lt;whole name&gt;]</code>, so a procedure stored with a schema or database in front (<code>dbo.MyProc</code>) is not found on the server. The six samples use plain names.</li>
+      <li>Subreport data is never fetched live; only the main report's procedure runs. If a future version passes the live scope to subreports, tell me before I copy it in: TCM's safety check only covers the main report's procedure today.</li>
+      <li>A report's saved parameter values are never bound: an unsupplied parameter is sent as NULL, though the comment in <code>rpt-db-mssql/src/lib.rs</code> says saved values "are consulted first". TCM refuses a live preview when a required parameter is not passed.</li>
+      <li>No compare function in the library; TCM carries a copy of the one in <code>rpt-cli</code>.</li>
+      <li>You plan a raw viewer so the preview no longer goes through a PDF (2026-10-17). When it exists, tell me and TCM's page view switches to it.</li>
+      <li>Placeholders for fields with no data (for example "[Employee Name]") would need a render option on your side.</li>
+      <li>The comment in <code>rpt-core/src/preview.rs</code> (around line 143) says subreports share the live scope; they do not today.</li>
+      <li>Already known limits, passed on to the assistant: text with embedded fields, subreport internals, paper size without a saved printer, password-protected reports.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Decision for you: procedures named sp_...</span><span class="status todo">Waiting on you</span></div>
+    <p>Your own procedures, views and functions named <code>sp_...</code> or <code>xp_...</code> are refused (SQL Server looks for those names in master first), so a report procedure with such a name can't be created, altered or previewed live through TCM. Allow them when written with a non-sys schema (<code>dbo.sp_x</code>)?</p>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Not fully done in TCM</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>A request over 64 KiB is refused by the AI Bridge, so a procedure body over about 60,000 characters can't be sent (the guard itself allows 200,000).</li>
+      <li>XML methods written <code>T.c.value(...)</code> are refused (they read as a three-part name). The refusal suggests <code>(T.c).value(...)</code>, not yet confirmed on SQL Server; <code>c.value(...)</code> is the other candidate.</li>
+      <li>Refused on purpose inside a procedure: <code>CREATE INDEX</code> on a temp table, <code>ALTER TABLE #t DROP COLUMN</code>, <code>OUTPUT ... INTO</code> a real table, <code>WITH EXECUTE AS</code>. SQL text with a carriage return on its own (old Mac line endings) is refused everywhere.</li>
+      <li>A slow render or live fetch holds the open report, so other report calls wait for it (up to about a minute for a live fetch that can't connect).</li>
+      <li>Small polish left from the reviews: Open in Crystal Reports says "no program" for any opener failure; the screen re-fetches the whole PDF on every change; a file deleted while the screen is open is only noticed on the next change; a new report whose write fails can leave a partial file.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Hand checks owed (need your Dev database and Crystal Reports)</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>Create and alter one procedure, one view and one function on the Dev login through the assistant.</li>
+      <li>A live preview of a real report against its procedure (the main sample needs five parameters).</li>
+      <li>Open in Crystal Reports opens the saved file, and an edited file loads in the designer.</li>
+      <li>The page view (2.2.3-beta.5): a real report's pages draw, Fit width / 100% / zoom work, the page area fills the screen and scrolls, and a long report stays responsive (pages are drawn only near the view). In the app's developer tools, a pdf.worker thread should be running with no "fake worker" warning.</li>
+      <li>pdf.js runs without WebAssembly (the app's security settings block it): a report with ICC colour profiles or JPEG 2000 / JBIG2 images would draw with fallback colours or miss those images. Your renderer does not seem to write those.</li>
+      <li>Which XML form works: <code>(T.c).value(...)</code> or <code>c.value(...)</code>.</li>
+      <li>Whether sqlcmd reads <code>RESET</code>/<code>ED</code>/<code>EXIT</code>/<code>QUIT</code> at the start of a line inside a string (predates this work).</li>
+    </ul>
+  </div>
+
+  <h2>To investigate</h2>
+  <div class="item"><div class="head"><span class="title">Edge stall after long role-lookup polling</span><span class="status todo">To investigate</span></div></div>
+
+  <h2>On hold</h2>
+
+  <div class="item">
+    <div class="head"><span class="num">13</span><span class="title">Auto Run: server-side validation checks</span><span class="status todo">On hold</span></div>
+    <p>Checking that the app refuses changed requests. Not something I can design or build.</p>
+  </div>
+
+  <h2>Smaller follow-ups</h2>
+  <div class="item">
+    <div class="head"><span class="title">Small edge cases left from the last reviews</span><span class="status todo">Optional</span></div>
+    <ul>
+      <li>A drag the browser hands over after the last mouse move is lost without a message.</li>
+      <li>Key combinations in a second tab have no test of their own.</li>
+      <li>A page error during a sign-in part-way through a case is not counted.</li>
+      <li>A dialog that opens during sign-in or the trip to the area never fails a step.</li>
+      <li>A PDF's compressed contents can use more memory than its 50 MB size suggests.</li>
+      <li>AI Bridge per environment (2.2.3-beta.8): right after the app starts, the always-allow entry in your project folder's assistant settings is only brought in line with the active environment at the first environment-list read, not at start-up, so a stale entry could be live for a moment. Fix: keep writes held until that first repair has run. Also untested: the switch command calling the allow-file update, and the start-up hold itself (only the pieces they call are tested).</li>
+      <li>In the app's dropdowns, pressing the down arrow while the list is empty, then Enter, has nothing to pick (found 2026-10-17, predates the folder pickers).</li>
+      <li>Export to Playwright: a case handed back to its area's folder after having its own still has its suggestion worked out from its old folder until the mappings are saved.</li>
+    </ul>
+  </div>
+
+  <h2>Hand checks owed (built, not yet tried against a real organisation)</h2>
+  <ul class="done">
+    <li>Betas 16 to 22: export #137561 and #137563 (table checks); Export dialog on the pc-cycle-setup branch shows New / In the repo / Excluded correctly; a run with settings marks pauses Before Batch 1 and 2; a no_save discovery blocks Distribute Evenly; the settle wait on Rating Methods Save &amp; Continue; paste a Finish in the repo prompt into Claude Code in the clone and check the finished spec and lint.</li>
+    <li>Playwright tab, on a real clone: npm -v on team machines (needs npm 8+ for the log fix), then an account Add with a password leaves no new log in %LOCALAPPDATA%\npm-cache\_logs; a password with % ^ &amp; " ! round-trips through Show; Stop during the dry count, mid-run, on quit and on update restart leaves no node or chrome in Task Manager; leave and re-enter the tab during the dry count; change a spec title after listing then Run picked; re-export a case with engineer, Also and floor blocks and git diff the .md and index.json; a clone without node_modules hides Runner and Accounts; open a real HTML report; a Scoop or %APPDATA%\npm Node install.</li>
+    <li>Round C: a watched run of several cases shows one window per case and no about:blank; the Setup panel's lag on a wide window; Auto Run updating while the assistant saves or deletes a script; How To Use with Advanced Features off and on in a release build; a delete refused during a watched run.</li>
+    <li>Round B: a real toggle switch drawn behind its label (click and expect_checked); expect_disabled inside a disabled fieldset; a save refused for a partial name in a click.</li>
+    <li>Round A: a long assistant replay answering "still running" and being picked up; a replay carrying on from the step it stopped at.</li>
+    <li>Faster discovery: write one page's scripts with get_autorun_page reads, the batch tool and dry runs, and count the refused saves.</li>
+    <li>Held browser and sessions: Release Auto Run browser after a browser dies; a "Cookie has been tampered" page signs in fresh once.</li>
+    <li>Edge leak fix: an unattended run of 135592 leaves one tcm-autorun browser, none after Stop or quitting mid-run; a file opened in Excel from the supervised browser survives closing it; read the new log line if the first process ends.</li>
+    <li>Navigation speed: a real unattended run of 3 cases compared with the 2.1.2 phase timings; a trip from a module screen with the menu open; Highlight each action off in a watched run.</li>
+    <li>Template browser reuse: two real API template runs within 2 minutes; the second skips the sign-in.</li>
+    <li>Assistant pitfalls: a refused script save during a live discovery that records the locator from the page; a setup script with #c{{setup.cycle_id}} running against a fresh draft; the date-picker day roles on a real picker.</li>
+    <li>Export to Playwright into a real clone.</li>
+    <li>Menu mapping: one real /tcm:map-menus run of one module, then each area's entry in the Discovery window.</li>
+    <li>Speed: one real unattended run of 3 cases, comparing the phase timings.</li>
+    <li>Queue grouped by area, and selecting cases by clicking.</li>
+    <li>Components: a real date-picker component made during discovery and used by two scripts; a change refused because it would break a script.</li>
+    <li>Discovery: /tcm:discover on one case end to end, a save refused for an unseen locator, Run buttons greying out and coming back, End discovery, the wait when a sign-in has expired.</li>
+    <li>Run in background: a real unattended run sent to the background and reopened from the pill.</li>
+    <li>Fixtures: Run, Rebuild, a failing step.</li>
+    <li>Script setup: approve, change the fixture, "Changed since you approved it".</li>
+    <li>Clean up test-made drafts: a real delete and Stop.</li>
+    <li>Reset points: a run pausing, and closing the app while paused.</li>
+    <li>Replay to a step from Past runs; opening a downloaded file.</li>
+    <li>Several tabs: a real report or print preview opening in a new tab; a second tab on the same record.</li>
+    <li>Readable script view and the wider Auto Run dialogs.</li>
+    <li>New checks against the real app: drag on a real sortable grid, a real confirm dialog, a real grid's row and sort checks, a real PDF download.</li>
+    <li>A script that visits Common Configurator and returns to its own area.</li>
+    <li>Test cases tab and dialogs: layout at 1920 and 1280 pixels, filter colours in light and dark.</li>
+  </ul>
+</main>
+</body>
+</html>
