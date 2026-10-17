@@ -8,6 +8,7 @@
 //! clicks, so every such line says "appears to".
 
 use super::export::SharedDraft;
+use crate::autorun::nav::{ProtectedKind, ProtectedRecord};
 use crate::autorun::quirks::day_of;
 use crate::autorun::CaseScript;
 use crate::browser::actions::Action;
@@ -31,6 +32,35 @@ pub struct HandoverInput<'a> {
     /// The script as the spec is written from it (`export::resolved_script`).
     pub script: &'a CaseScript,
     pub shared_drafts: &'a [SharedDraft],
+    /// The project's protected baseline, which the repo keeps in
+    /// `docs/tcm-protected-baseline.md` (`baseline_doc`).
+    pub protected: &'a [ProtectedRecord],
+}
+
+/// Where the protected baseline lives in the Playwright repo.
+pub const BASELINE_DOC_REL: &str = "docs/tcm-protected-baseline.md";
+
+/// The repo's copy of the protected baseline: TCM-owned, rewritten whole on
+/// every export. One section per kind present, in the kinds' own order,
+/// each record a bullet. `None` for an empty baseline.
+pub fn baseline_doc(protected: &[ProtectedRecord]) -> Option<String> {
+    if protected.is_empty() {
+        return None;
+    }
+    let mut out = String::from(
+        "# Protected baseline (from TCM)\n\nTests must never edit or delete these records. \
+         TCM rewrites this file on every export.\n",
+    );
+    let mut kinds: Vec<ProtectedKind> = protected.iter().map(|r| r.kind).collect();
+    kinds.sort();
+    kinds.dedup();
+    for k in kinds {
+        out.push_str(&format!("\n## {}\n\n", k.label()));
+        for r in protected.iter().filter(|r| r.kind == k) {
+            out.push_str(&format!("- {}\n", r.name));
+        }
+    }
+    Some(out)
 }
 
 /// What a click appears to do, by the name of the control it clicks.
@@ -135,25 +165,43 @@ pub fn step_effects(script: &CaseScript) -> Vec<StepEffect> {
     out
 }
 
+/// Whether a field reads as one that looks records up rather than writes
+/// one: a searchbox, or anything named, labelled or selected with "search"
+/// or "filter" in it, whatever the case.
+fn is_search_field(target: &Target) -> bool {
+    let mentions = |s: &str| {
+        let s = s.to_lowercase();
+        s.contains("search") || s.contains("filter")
+    };
+    target.links().iter().any(|l| {
+        l.role.as_deref() == Some("searchbox")
+            || [&l.name, &l.text, &l.css].into_iter().flatten().any(|v| mentions(v))
+    })
+}
+
 /// The records the case deletes after making them itself: a delete whose
 /// locator names a value the case typed and then saved. A value typed and
 /// never saved (a search) is a record the case found, not one it made.
+/// Only what was typed since the previous click that reads as a write
+/// counts as made by a save, and a search or filter field never does.
 /// One per step, the longest such value.
 fn created_then_deleted(script: &CaseScript) -> Vec<(i32, String)> {
     let mut typed: Vec<String> = Vec::new();
     let mut created: Vec<String> = Vec::new();
     let mut out: Vec<(i32, String)> = Vec::new();
     for (step, a) in each_action(script) {
-        if let Action::Fill { value, .. } = a {
+        if let Action::Fill { selector, value } = a {
             let v = value.trim();
-            if v.chars().count() >= MIN_CREATED_VALUE {
+            if v.chars().count() >= MIN_CREATED_VALUE && !is_search_field(selector) {
                 typed.push(v.to_string());
             }
             continue;
         }
-        match click_effect(a) {
-            Some((EffectKind::Save | EffectKind::Publish, _, _)) => created.append(&mut typed),
-            Some((EffectKind::Delete, _, target)) => {
+        let Some((kind, _, target)) = click_effect(a) else { continue };
+        match kind {
+            EffectKind::Save | EffectKind::Publish => created.append(&mut typed),
+            EffectKind::Delete => {
+                typed.clear();
                 let text = target_text(target).to_lowercase();
                 let found = created.iter().filter(|v| text.contains(&v.to_lowercase())).max_by_key(|v| v.len());
                 if let Some(v) = found {
@@ -162,7 +210,6 @@ fn created_then_deleted(script: &CaseScript) -> Vec<(i32, String)> {
                     }
                 }
             }
-            None => {}
         }
     }
     out
@@ -203,6 +250,9 @@ pub fn handover_for(input: &HandoverInput) -> Handover {
         }
     }
     h.from_tcm.extend(s.changes.iter().map(|c| format!("changes shared state: {c}")));
+    if !input.protected.is_empty() {
+        h.from_tcm.push(format!("must never touch the protected records in {BASELINE_DOC_REL}"));
+    }
     if let Some(d) = &s.suspected_defect {
         h.from_tcm.push(format!(
             "step {} is a known product defect (TCM mark {}): {}",

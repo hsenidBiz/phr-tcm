@@ -513,6 +513,7 @@ let autoRunNav: NavView = {
   ],
   save_words: ["confirm"],
   built_in_save_words: ["save", "update", "delete", "submit", "approve", "publish", "assign", "add", "create", "insert"],
+  protected: [],
 };
 
 let testFiles: TestFile[] = [
@@ -1749,6 +1750,10 @@ function applyPatches() {
     },
     autoRunSetSaveWords: (_o: string, _p: string, words: string[]) => {
       if (Array.isArray(words)) autoRunNav = { ...autoRunNav, save_words: words };
+      return ok(autoRunNav);
+    },
+    autoRunSetProtected: (_o: string, _p: string, records: unknown) => {
+      if (Array.isArray(records)) autoRunNav = { ...autoRunNav, protected: records };
       return ok(autoRunNav);
     },
     autoRunRemoveModulePath: (_o: string, _p: string, area: string) => {

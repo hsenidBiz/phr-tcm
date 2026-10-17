@@ -2926,7 +2926,7 @@ async fn a_replay_to_step_3_leaves_the_page_where_step_2_left_it() {
         "arrived": "/leave", "recorded": "2026-10-05T10:00:00Z"
     }))
     .unwrap();
-    save_nav(root.path(), "acme", "Web", &NavFile { direct_urls: true, modules: vec![area], save_words: vec![] }).unwrap();
+    save_nav(root.path(), "acme", "Web", &NavFile { direct_urls: true, modules: vec![area], save_words: vec![], protected: vec![] }).unwrap();
     let mut script = case_script(
         31,
         Some("kim"),

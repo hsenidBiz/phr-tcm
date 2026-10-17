@@ -47,7 +47,7 @@ fn configurator() -> ModulePath {
 }
 
 fn record(root: &Path, areas: Vec<ModulePath>) {
-    save_nav(root, ORG, PROJECT, &NavFile { direct_urls: false, modules: areas, save_words: vec![] }).unwrap();
+    save_nav(root, ORG, PROJECT, &NavFile { direct_urls: false, modules: areas, save_words: vec![], protected: vec![] }).unwrap();
 }
 
 /// The project with both areas recorded and the menu app's sign-in.
@@ -158,7 +158,7 @@ fn a_return_to_area_inside_a_when_visible_is_resolved_and_validated() {
     // Every name, nested included, once each.
     assert_eq!(named_areas(actions.iter().copied()), vec!["Payroll Setup", "Common Configurator"]);
 
-    let nav_file = NavFile { direct_urls: false, modules: vec![leave(), configurator()], save_words: vec![] };
+    let nav_file = NavFile { direct_urls: false, modules: vec![leave(), configurator()], save_words: vec![], protected: vec![] };
     let why = check_areas(&nav_file, &[s]).unwrap_err();
     assert!(why.contains(&nav::unrecorded_area("Payroll Setup")), "{why}");
 
@@ -378,7 +378,7 @@ const ODD_SPACES: [&str; 4] = ["\u{a0}", "\u{2007}", "\u{202f}", "\t"];
 /// run reads for them.
 #[test]
 fn an_area_name_treats_a_unicode_space_as_a_space() {
-    let nav_file = NavFile { direct_urls: false, modules: vec![leave(), configurator()], save_words: vec![] };
+    let nav_file = NavFile { direct_urls: false, modules: vec![leave(), configurator()], save_words: vec![], protected: vec![] };
     let dir = tempfile::tempdir().unwrap();
     project(dir.path());
     for sp in ODD_SPACES {

@@ -182,6 +182,9 @@ export {
   // save has stopped in its browser (Auto Run's Setup card) - a shield
   // with a bar, since what it edits is what gets stopped.
   ShieldBan as IconSaveWords,
+  // The records a project's tests must never edit or delete (Auto Run's Setup
+  // card) - a shield with a tick, since what it edits is what stays safe.
+  ShieldCheck as IconProtectedRecords,
   // Choosing something on a page by clicking it in the browser - a
   // recorded sign-in's signed-in check.
   MousePointerClick as IconPickOnPage,

@@ -827,6 +827,11 @@ export const commands = {
 	 */
 	autoRunSetSaveWords: (organization: string, project: string, words: string[]) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_set_save_words", { organization, project, words })),
 	/**
+	 *  The project's protected baseline (Setup, Protected records), replaced as
+	 *  a whole list: names trimmed, blank and repeated ones dropped.
+	 */
+	autoRunSetProtected: (organization: string, project: string, records: ProtectedRecord[]) => typedError<NavView, string>(__TAURI_INVOKE("auto_run_set_protected", { organization, project, records })),
+	/**
 	 *  Forget one area, by name. The module's other areas stay. The dialog
 	 *  asks first.
 	 */
@@ -4064,6 +4069,8 @@ export type NavView = {
 	save_words: string[],
 	/**  The built-in ones, shown beside them and never removable. */
 	built_in_save_words: string[],
+	/**  The protected baseline (Setup, Protected records). */
+	protected: ProtectedRecord[],
 };
 
 /**
@@ -4584,6 +4591,18 @@ export type ProposedAccount = {
 	username: string,
 	role: string | null,
 	has_password: boolean,
+};
+
+/**
+ *  What a protected record is. The order here is the order the repo's
+ *  baseline doc lists them in.
+ */
+export type ProtectedKind = "goal_group" | "rating_method" | "proficiency_scale" | "competency_group" | "cycle" | "other";
+
+/**  One record of the protected baseline: what it is, and its name. */
+export type ProtectedRecord = {
+	kind: ProtectedKind,
+	name: string,
 };
 
 export type Proven = Proven_Serialize | Proven_Deserialize;

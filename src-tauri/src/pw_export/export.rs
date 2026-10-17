@@ -8,7 +8,7 @@
 //! `auth.setup.ts`, and never runs git, npm or Playwright.
 
 use super::clone::{index_with, open, ClonedRepo};
-use super::handover::{handover_for, HandoverInput};
+use super::handover::{baseline_doc, handover_for, HandoverInput, BASELINE_DOC_REL};
 use super::mapping::{self, ExportMap, Placement};
 use super::test_case::{self, CaseDoc};
 use super::translate::{self, RawSpecInput};
@@ -909,7 +909,11 @@ pub fn write_with(
         doc.folder = folders;
         doc.navigation_captured = captured;
         doc.feature_title = feature_title.clone();
-        doc.handover = handover_for(&HandoverInput { script: &r.script, shared_drafts: &r.shared_drafts });
+        doc.handover = handover_for(&HandoverInput {
+            script: &r.script,
+            shared_drafts: &r.shared_drafts,
+            protected: &ctx.nav.protected,
+        });
 
         // Several cases of one feature accumulate into one file in memory.
         if !md_files.contains_key(&md_rel) {
@@ -979,6 +983,11 @@ pub fn write_with(
     // then index.json, so the index never points at a file that is missing.
     let mut outs: Vec<Out> = md_files.into_iter().map(|(rel, content)| Out { rel, content }).collect();
     outs.extend(raw_files);
+    // The protected baseline, whole, before index.json. An empty baseline
+    // writes nothing and leaves an earlier export's file alone.
+    if let Some(content) = baseline_doc(&ctx.nav.protected) {
+        outs.push(Out { rel: BASELINE_DOC_REL.into(), content });
+    }
     // index.json only when an entry is new or moved: a re-export of cases
     // it already maps leaves the repo's file as it is, byte for byte.
     let last_id = ready.last().map(|(i, _)| *i);

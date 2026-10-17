@@ -22,7 +22,7 @@ fn script(steps: serde_json::Value, extra: serde_json::Value) -> CaseScript {
 }
 
 fn of(s: &CaseScript) -> Handover {
-    handover_for(&HandoverInput { script: s, shared_drafts: &[] })
+    handover_for(&HandoverInput { script: s, shared_drafts: &[], protected: &[] })
 }
 
 fn button(name: &str) -> serde_json::Value {
@@ -43,7 +43,7 @@ fn preconditions_come_from_the_script() {
         }),
     );
     let drafts = [SharedDraft { fixture: "f2".into(), name: "FY26 Draft".into() }];
-    let h = handover_for(&HandoverInput { script: &s, shared_drafts: &drafts });
+    let h = handover_for(&HandoverInput { script: &s, shared_drafts: &drafts, protected: &[] });
     assert_eq!(
         h.preconditions,
         vec![
@@ -156,4 +156,83 @@ fn a_created_record_deleted_later_is_the_cleanup() {
             "relies on step 3 to put data back",
         ]
     );
+}
+
+#[test]
+fn a_search_typed_before_a_save_is_not_a_record_the_case_created() {
+    let row = |text: &str| {
+        json!({ "kind": "click", "selector": [{ "role": "row", "name": text }, { "role": "button", "name": "Delete" }] })
+    };
+    let fill = |selector: serde_json::Value, value: &str| json!({ "kind": "fill", "selector": selector, "value": value });
+    // Search for a baseline group, create and save another, then delete the baseline row: the
+    // delete is of a record the case found, so there is no cleanup to hand over.
+    let s = script(
+        json!([
+            [fill(json!({ "role": "searchbox", "name": "Find" }), "Baseline Group")],
+            [fill(json!({ "role": "textbox", "name": "Name" }), "New Group X"), button("Save")],
+            [row("Baseline Group")]
+        ]),
+        json!({}),
+    );
+    let h = of(&s);
+    assert!(h.cleanup.is_empty(), "{h:?}");
+    assert!(!h.from_tcm.iter().any(|l| l.starts_with("relies on")), "{h:?}");
+    // The field reads as a search by its name, its css, or a filter, whatever the case.
+    for field in [
+        json!({ "role": "textbox", "name": "Search groups" }),
+        json!({ "role": "textbox", "name": "FILTER by name" }),
+        json!("#search-box"),
+    ] {
+        let s = script(
+            json!([
+                [fill(field, "Baseline Group")],
+                [fill(json!({ "role": "textbox", "name": "Name" }), "New Group X"), button("Save")],
+                [row("Baseline Group")]
+            ]),
+            json!({}),
+        );
+        assert!(of(&s).cleanup.is_empty());
+    }
+    // A record saved stays created through later saves.
+    let s = script(
+        json!([
+            [fill(json!({ "role": "textbox", "name": "Name" }), "Group Y"), button("Save")],
+            [button("Save")],
+            [row("Group Y")]
+        ]),
+        json!({}),
+    );
+    assert_eq!(of(&s).cleanup, vec!["step 3 deletes \"Group Y\" it created"]);
+    let s = script(
+        json!([
+            [fill(json!({ "role": "textbox", "name": "Name" }), "Group Z"), button("Save")],
+            [fill(json!({ "role": "textbox", "name": "Name" }), "Other Q"), button("Delete")],
+            [row("Other Q")]
+        ]),
+        json!({}),
+    );
+    // A value typed before a delete is spent by it: the delete is not a save.
+    assert!(of(&s).cleanup.is_empty(), "{:?}", of(&s));
+}
+
+#[test]
+fn a_protected_baseline_adds_one_line_after_the_changes() {
+    use v2_lib::autorun::nav::{ProtectedKind, ProtectedRecord};
+    let s = script(
+        json!([[button("Open")]]),
+        json!({ "no_save": true, "changes": ["the cycle"], "suspected_defect": { "step_number": 1, "note": "n", "marked_at": "1760828399000" } }),
+    );
+    let protected = [ProtectedRecord { kind: ProtectedKind::Cycle, name: "FY2026".into() }];
+    let h = handover_for(&HandoverInput { script: &s, shared_drafts: &[], protected: &protected });
+    assert_eq!(
+        h.from_tcm,
+        vec![
+            "Look-only: must not save anything.",
+            "changes shared state: the cycle",
+            "must never touch the protected records in docs/tcm-protected-baseline.md",
+            "step 1 is a known product defect (TCM mark 2025-10-18): n",
+        ]
+    );
+    // An empty baseline says nothing.
+    assert!(!of(&s).from_tcm.iter().any(|l| l.contains("protected")));
 }

@@ -51,7 +51,7 @@ fn script(no_save: bool) -> CaseScript {
 
 /// The project, its sign-in, its account, the Leave area and `script`.
 fn project(root: &Path, script: &CaseScript) {
-    save_nav(root, "acme", "Web", &NavFile { direct_urls: false, modules: vec![leave_area()], save_words: vec![] })
+    save_nav(root, "acme", "Web", &NavFile { direct_urls: false, modules: vec![leave_area()], save_words: vec![], protected: vec![] })
         .unwrap();
     save_recipe(root, "acme", "Web", &common_recipe()).unwrap();
     save_accounts(root, &[crate::common::account()]).unwrap();

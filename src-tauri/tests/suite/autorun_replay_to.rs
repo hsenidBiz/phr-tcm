@@ -69,7 +69,7 @@ fn three_steps() -> Value {
 
 /// The project, its sign-in, its account and the Leave area, and `script`.
 fn project(root: &Path, script: &CaseScript) {
-    save_nav(root, "acme", "Web", &NavFile { direct_urls: false, modules: vec![leave_area()], save_words: vec![] })
+    save_nav(root, "acme", "Web", &NavFile { direct_urls: false, modules: vec![leave_area()], save_words: vec![], protected: vec![] })
         .unwrap();
     save_recipe(root, "acme", "Web", &menu_recipe()).unwrap();
     save_accounts(root, &[account()]).unwrap();

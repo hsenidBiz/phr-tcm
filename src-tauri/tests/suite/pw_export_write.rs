@@ -938,3 +938,53 @@ fn the_section_hands_over_what_tcm_knows() {
         "{md}"
     );
 }
+
+const BASELINE_REL: &str = "docs/tcm-protected-baseline.md";
+
+fn protect(fx: &Fx, list: &[(nav::ProtectedKind, &str)]) {
+    let records: Vec<nav::ProtectedRecord> =
+        list.iter().map(|(kind, name)| nav::ProtectedRecord { kind: *kind, name: name.to_string() }).collect();
+    nav::set_protected(fx.root.path(), ORG, PROJECT, &records).unwrap();
+}
+
+#[test]
+fn an_export_writes_the_baseline_doc_and_each_case_points_at_it() {
+    use nav::ProtectedKind::*;
+    let fx = Fx::new();
+    fx.good(95, "Looks at a goal group");
+    protect(&fx, &[(Cycle, "FY2026 (published)"), (GoalGroup, "Customer Focus"), (GoalGroup, "Operational Excellence")]);
+    let r = export(&fx, &[95], &docs(&[(95, "Looks at a goal group")])).unwrap();
+    assert_eq!(
+        fx.read_clone(BASELINE_REL),
+        "# Protected baseline (from TCM)\n\nTests must never edit or delete these records. \
+         TCM rewrites this file on every export.\n\n\
+         ## Goal group\n\n- Customer Focus\n- Operational Excellence\n\n\
+         ## Cycle\n\n- FY2026 (published)\n"
+    );
+    // Written before index.json, so the index is still the last file.
+    let at = |rel: &str| r.files.iter().position(|f| f == rel).unwrap();
+    assert!(at(BASELINE_REL) < at("suites/_generated/index.json"), "{:?}", r.files);
+    let md = fx.read_clone(MD_REL);
+    assert!(
+        md.contains("**From TCM:**\n\n- must never touch the protected records in docs/tcm-protected-baseline.md\n"),
+        "{md}"
+    );
+    // Rewritten whole on the next export.
+    protect(&fx, &[(RatingMethod, "5-Point Scale")]);
+    export(&fx, &[95], &docs(&[(95, "Looks at a goal group")])).unwrap();
+    assert!(fx.read_clone(BASELINE_REL).ends_with("## Rating method\n\n- 5-Point Scale\n"));
+    assert!(!fx.read_clone(BASELINE_REL).contains("Customer Focus"));
+}
+
+#[test]
+fn an_empty_baseline_writes_nothing() {
+    let fx = Fx::new();
+    fx.good(96, "No baseline here");
+    let r = export(&fx, &[96], &docs(&[(96, "No baseline here")])).unwrap();
+    assert!(!fx.exists(BASELINE_REL) && !r.files.iter().any(|f| f == BASELINE_REL), "{:?}", r.files);
+    assert!(!fx.read_clone(MD_REL).contains("protected records"));
+    // A file from an earlier export is left as it is, never deleted.
+    write(fx.clone.path().join(BASELINE_REL), "from before\n");
+    export(&fx, &[96], &docs(&[(96, "No baseline here")])).unwrap();
+    assert_eq!(fx.read_clone(BASELINE_REL), "from before\n");
+}

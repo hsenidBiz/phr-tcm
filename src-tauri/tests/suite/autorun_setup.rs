@@ -722,7 +722,7 @@ async fn a_replay_to_a_step_runs_the_setup_first() {
     let _act = crate::serial::activity_log();
     let mut r = setup_rig(vec![the_cycle()]);
     let root = r.root.path().to_path_buf();
-    save_nav(&root, ORG, PROJECT, &NavFile { direct_urls: false, modules: vec![leave_area()], save_words: vec![] })
+    save_nav(&root, ORG, PROJECT, &NavFile { direct_urls: false, modules: vec![leave_area()], save_words: vec![], protected: vec![] })
         .unwrap();
     let mut sc = script(
         9,
@@ -790,7 +790,7 @@ async fn a_setup_as_the_supervised_browsers_account_runs_and_the_case_signs_in_a
     let _leases = crate::serial::account_leases();
     let mut r = setup_rig(vec![the_cycle()]);
     let root = r.root.path().to_path_buf();
-    save_nav(&root, ORG, PROJECT, &NavFile { direct_urls: false, modules: vec![leave_area()], save_words: vec![] })
+    save_nav(&root, ORG, PROJECT, &NavFile { direct_urls: false, modules: vec![leave_area()], save_words: vec![], protected: vec![] })
         .unwrap();
     let mut as_admin = fixture("own");
     as_admin.account = "admin".into();
@@ -944,7 +944,7 @@ fn nothing_in_the_crate_approves_or_reads_a_setup_approval() {
 /// A case whose setup runs as `admin`, the account the supervised browser
 /// holds, in the Leave area; with `steps` as given.
 fn admin_case(root: &std::path::Path, case_id: i32, steps: Value) -> CaseScript {
-    save_nav(root, ORG, PROJECT, &NavFile { direct_urls: false, modules: vec![leave_area()], save_words: vec![] })
+    save_nav(root, ORG, PROJECT, &NavFile { direct_urls: false, modules: vec![leave_area()], save_words: vec![], protected: vec![] })
         .unwrap();
     let mut as_admin = fixture("own");
     as_admin.account = "admin".into();

@@ -18,7 +18,7 @@ afterEach(() => {
 const BUILT_IN = ["save", "update", "delete", "submit", "approve", "publish", "assign"];
 
 function view(save_words: string[]): NavView {
-  return { direct_urls: true, modules: [], save_words, built_in_save_words: BUILT_IN };
+  return { direct_urls: true, modules: [], save_words, built_in_save_words: BUILT_IN, protected: [] };
 }
 
 /** Mounts the dialog; every save it sends lands in `sent`, answered by

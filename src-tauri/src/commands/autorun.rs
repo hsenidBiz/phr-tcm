@@ -2611,6 +2611,21 @@ pub fn auto_run_set_save_words(
     Ok(crate::autorun::nav::view(&nav))
 }
 
+/// The project's protected baseline (Setup, Protected records), replaced as
+/// a whole list: names trimmed, blank and repeated ones dropped.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_set_protected(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    records: Vec<crate::autorun::nav::ProtectedRecord>,
+) -> Result<crate::autorun::nav::NavView, String> {
+    let nav = crate::autorun::nav::set_protected(&root(&app)?, &organization, &project, &records)?;
+    crate::applog::info(format!("Auto-run: the project has {} protected records", nav.protected.len()));
+    Ok(crate::autorun::nav::view(&nav))
+}
+
 /// "Scripts may open pages by address", saved the moment it is flipped.
 #[tauri::command]
 #[specta::specta]

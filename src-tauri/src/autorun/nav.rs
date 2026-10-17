@@ -99,12 +99,64 @@ pub struct NavFile {
     /// request whose path holds any of them. Kept trimmed and lowercased.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub save_words: Vec<String>,
+    /// The records the project's tests must never edit or delete (its
+    /// protected baseline). Handed to the Playwright repo on export.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub protected: Vec<ProtectedRecord>,
 }
 
 impl Default for NavFile {
     fn default() -> Self {
-        NavFile { direct_urls: true, modules: vec![], save_words: vec![] }
+        NavFile { direct_urls: true, modules: vec![], save_words: vec![], protected: vec![] }
     }
+}
+
+/// One record of the protected baseline: what it is, and its name.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+pub struct ProtectedRecord {
+    pub kind: ProtectedKind,
+    pub name: String,
+}
+
+/// What a protected record is. The order here is the order the repo's
+/// baseline doc lists them in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ProtectedKind {
+    GoalGroup,
+    RatingMethod,
+    ProficiencyScale,
+    CompetencyGroup,
+    Cycle,
+    Other,
+}
+
+impl ProtectedKind {
+    /// The kind as the baseline doc's section heading says it.
+    pub fn label(self) -> &'static str {
+        match self {
+            ProtectedKind::GoalGroup => "Goal group",
+            ProtectedKind::RatingMethod => "Rating method",
+            ProtectedKind::ProficiencyScale => "Proficiency scale",
+            ProtectedKind::CompetencyGroup => "Competency group",
+            ProtectedKind::Cycle => "Cycle",
+            ProtectedKind::Other => "Other",
+        }
+    }
+}
+
+/// A protected list as it is kept: names trimmed, blank names dropped, and
+/// a second record of the same kind and name (ignoring case) dropped.
+pub fn tidy_protected(records: &[ProtectedRecord]) -> Vec<ProtectedRecord> {
+    let mut out: Vec<ProtectedRecord> = Vec::new();
+    for r in records {
+        let name = r.name.trim();
+        if name.is_empty() || out.iter().any(|o| o.kind == r.kind && o.name.to_lowercase() == name.to_lowercase()) {
+            continue;
+        }
+        out.push(ProtectedRecord { kind: r.kind, name: name.to_string() });
+    }
+    out
 }
 
 /// A recorded area as the Areas dialog shows it. Every click is already in
@@ -127,6 +179,8 @@ pub struct NavView {
     pub save_words: Vec<String>,
     /// The built-in ones, shown beside them and never removable.
     pub built_in_save_words: Vec<String>,
+    /// The protected baseline (Setup, Protected records).
+    pub protected: Vec<ProtectedRecord>,
 }
 
 pub fn view(nav: &NavFile) -> NavView {
@@ -144,6 +198,7 @@ pub fn view(nav: &NavFile) -> NavView {
             })
             .collect(),
         save_words: nav.save_words.clone(),
+        protected: nav.protected.clone(),
         built_in_save_words: crate::browser::save_guard::SAVE_WORDS
             .iter()
             .chain(crate::browser::save_guard::WORD_SAVES.iter())
@@ -366,6 +421,14 @@ pub fn set_save_words(root: &Path, org: &str, project: &str, words: &[String]) -
     let words = crate::browser::save_guard::check_words(words)?;
     let mut nav = load_nav(root, org, project)?;
     nav.save_words = words;
+    save_nav(root, org, project, &nav)?;
+    Ok(nav)
+}
+
+/// Replace the project's protected baseline, tidied (`tidy_protected`).
+pub fn set_protected(root: &Path, org: &str, project: &str, records: &[ProtectedRecord]) -> Result<NavFile, String> {
+    let mut nav = load_nav(root, org, project)?;
+    nav.protected = tidy_protected(records);
     save_nav(root, org, project, &nav)?;
     Ok(nav)
 }

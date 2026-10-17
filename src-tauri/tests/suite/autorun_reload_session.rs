@@ -365,7 +365,7 @@ fn script_with_area(case_id: i32, area: Option<&str>) -> CaseScript {
 fn a_watched_run_finds_its_area_from_the_saved_script() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    save_nav(root, "Acme", "PMS", &NavFile { direct_urls: false, modules: vec![wizard_area()], save_words: vec![] }).unwrap();
+    save_nav(root, "Acme", "PMS", &NavFile { direct_urls: false, modules: vec![wizard_area()], save_words: vec![], protected: vec![] }).unwrap();
     save_recipe(root, "Acme", "PMS", &home_recipe()).unwrap();
 
     store::save_script(root, &script_with_area(135523, Some("Definition Wizard"))).unwrap();

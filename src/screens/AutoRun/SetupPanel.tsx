@@ -25,6 +25,7 @@ import {
   IconDiscoveryMap,
   IconHideDetails,
   IconModulePaths,
+  IconProtectedRecords,
   IconRecipe,
   IconRecord,
   IconRelease,
@@ -39,6 +40,7 @@ import AccountsDialog from "./AccountsDialog";
 import AreasDialog from "./AreasDialog";
 import ComponentsDialog, { componentsSummary, useComponents } from "./ComponentsDialog";
 import DiscoveryDialog, { discoverySummary, useDiscoveryMap } from "./DiscoveryDialog";
+import ProtectedRecordsDialog from "./ProtectedRecordsDialog";
 import RecipeEditor from "./RecipeEditor";
 import RecordSignInDialog from "./RecordSignInDialog";
 import SaveWordsDialog, { BUILT_IN_SAVE_WORDS } from "./SaveWordsDialog";
@@ -370,6 +372,7 @@ export default function SetupPanel({
   const [siteOpen, setSiteOpen] = useState(false);
   const [testFilesOpen, setTestFilesOpen] = useState(false);
   const [saveWordsOpen, setSaveWordsOpen] = useState(false);
+  const [protectedOpen, setProtectedOpen] = useState(false);
   // While the assistant's discovery holds the Auto Run browser, End
   // discovery is the person's way out of one the assistant never ended.
   // Nothing is lost by ending it - the map keeps what was seen - so it asks
@@ -781,6 +784,37 @@ export default function SetupPanel({
                   Edit
                 </Button>
               </SetupRow>
+
+              {/* The records its tests must never edit or delete, handed to
+                  the Playwright repo on export. */}
+              <SetupRow
+                label="Protected records"
+                state={
+                  !setupReady ? (
+                    <span className="text-muted">{needsProject}</span>
+                  ) : nav.isError ? (
+                    <span className="text-danger">The protected records could not be read</span>
+                  ) : nav.isPending ? (
+                    <span className="text-muted">Loading…</span>
+                  ) : (nav.data?.protected ?? []).length === 0 ? (
+                    <span className="text-muted">None</span>
+                  ) : (
+                    <span className="text-muted">{plural((nav.data?.protected ?? []).length, "record")}</span>
+                  )
+                }
+              >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label="Edit protected records"
+                  disabled={!setupReady || nav.isPending || nav.isError}
+                  title={needsProject}
+                  onClick={() => setProtectedOpen(true)}
+                >
+                  <IconProtectedRecords aria-hidden />
+                  Edit
+                </Button>
+              </SetupRow>
             </div>
             <p className="text-xs text-muted">
               An assistant&apos;s <span className="id-mono">/tcm:setup</span> command can walk you through this.
@@ -796,6 +830,14 @@ export default function SetupPanel({
       {siteOpen && <SiteAddressDialog org={org} project={project} onClose={() => setSiteOpen(false)} />}
       {saveWordsOpen && (
         <SaveWordsDialog org={org} project={project} view={nav.data ?? null} onClose={() => setSaveWordsOpen(false)} />
+      )}
+      {protectedOpen && (
+        <ProtectedRecordsDialog
+          org={org}
+          project={project}
+          view={nav.data ?? null}
+          onClose={() => setProtectedOpen(false)}
+        />
       )}
       {discoveryOpen && (
         <DiscoveryDialog org={org} project={project} onClose={() => setDiscoveryOpen(false)} />

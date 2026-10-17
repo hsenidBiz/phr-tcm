@@ -205,6 +205,40 @@ fn the_project_words_live_in_its_settings_file_and_its_view_shows_both_lists() {
 }
 
 #[test]
+fn the_baseline_is_kept_per_project_and_tidied() {
+    use v2_lib::autorun::nav::{set_protected, ProtectedKind, ProtectedRecord};
+    let rec = |kind, name: &str| ProtectedRecord { kind, name: name.to_string() };
+    let dir = tempfile::tempdir().unwrap();
+    let nav = set_protected(
+        dir.path(),
+        "acme",
+        "PMS",
+        &[
+            rec(ProtectedKind::GoalGroup, "  Customer Focus "),
+            rec(ProtectedKind::GoalGroup, "customer focus"),
+            rec(ProtectedKind::Cycle, "Customer Focus"),
+            rec(ProtectedKind::Other, "   "),
+        ],
+    )
+    .unwrap();
+    let kept = vec![rec(ProtectedKind::GoalGroup, "Customer Focus"), rec(ProtectedKind::Cycle, "Customer Focus")];
+    assert_eq!(nav.protected, kept);
+    assert_eq!(load_nav(dir.path(), "acme", "PMS").unwrap().protected, kept);
+    assert_eq!(view(&nav).protected, kept);
+    // Another project has its own, and the project's save words are untouched.
+    assert!(load_nav(dir.path(), "acme", "Other").unwrap().protected.is_empty());
+    set_save_words(dir.path(), "acme", "PMS", &words(&["recalc"])).unwrap();
+    assert_eq!(load_nav(dir.path(), "acme", "PMS").unwrap().protected, kept);
+    // Replaced as a whole; an empty list clears it.
+    assert!(set_protected(dir.path(), "acme", "PMS", &[]).unwrap().protected.is_empty());
+    assert_eq!(load_nav(dir.path(), "acme", "PMS").unwrap().save_words, words(&["recalc"]));
+    // The kind is stored as its snake_case name.
+    set_protected(dir.path(), "acme", "PMS", &[rec(ProtectedKind::ProficiencyScale, "Scale")]).unwrap();
+    let text = std::fs::read_to_string(v2_lib::autorun::nav::nav_path(dir.path(), "acme", "PMS")).unwrap();
+    assert!(text.contains("\"proficiency_scale\""), "{text}");
+}
+
+#[test]
 fn a_settings_file_without_save_words_loads_as_before() {
     let dir = tempfile::tempdir().unwrap();
     let path = v2_lib::autorun::nav::nav_path(dir.path(), "acme", "PMS");

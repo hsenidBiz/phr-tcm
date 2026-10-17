@@ -380,7 +380,7 @@ async fn with_addresses_switched_off_a_saved_navigate_fails_with_the_projects_se
         dir.path(),
         "Acme",
         "Web",
-        &v2_lib::autorun::nav::NavFile { direct_urls: false, modules: vec![], save_words: vec![] },
+        &v2_lib::autorun::nav::NavFile { direct_urls: false, modules: vec![], save_words: vec![], protected: vec![] },
     )
     .unwrap();
     let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
@@ -801,7 +801,7 @@ async fn a_tab_action_fails_with_the_spec_sentences() {
 async fn open_tab_is_refused_where_navigate_is() {
     use v2_lib::autorun::nav::{no_address, save_nav, NavFile};
     let dir = tempfile::tempdir().unwrap();
-    save_nav(dir.path(), "Acme", "Web", &NavFile { direct_urls: false, modules: vec![], save_words: vec![] }).unwrap();
+    save_nav(dir.path(), "Acme", "Web", &NavFile { direct_urls: false, modules: vec![], save_words: vec![], protected: vec![] }).unwrap();
     let mut d = yes_page();
     let mut acc: Option<String> = None;
     let s = tab_step(json!([{ "kind": "open_tab", "name": "second", "url": "/hr/home" }]));
