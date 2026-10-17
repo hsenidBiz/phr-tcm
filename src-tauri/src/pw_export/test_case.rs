@@ -313,6 +313,59 @@ fn with_local_blocks(section: &str, old: &[&str]) -> String {
     o
 }
 
+/// A `**Uses:**` line (the repo's own declaration of a shared component).
+fn is_uses(line: &str) -> bool {
+    line.trim_start().starts_with("**Uses:**")
+}
+
+/// The `**Uses:**` lines of `lines`, outside code fences, as written
+/// (line ending dropped).
+fn uses_lines(lines: &[&str]) -> Vec<String> {
+    let mut fenced = false;
+    let mut out = Vec::new();
+    for l in lines {
+        if is_fence(l) {
+            fenced = !fenced;
+        } else if !fenced && is_uses(l) {
+            out.push(l.trim_end_matches(['\r', '\n']).to_string());
+        }
+    }
+    out
+}
+
+/// `section` with the `**Uses:**` lines the old section already had kept: the
+/// old ones first, in their order, then the ones `section` adds, each once.
+/// TCM cannot tell the lines it wrote earlier from the repo's own (the repo's
+/// checkpoint writes them too), so none is ever dropped here.
+fn with_kept_uses(section: &str, old: &[&str]) -> String {
+    let lines: Vec<&str> = section.split_inclusive('\n').collect();
+    let ours = uses_lines(&lines);
+    let mut merged = uses_lines(old);
+    for l in &ours {
+        if !merged.iter().any(|m| m.trim() == l.trim()) {
+            merged.push(l.clone());
+        }
+    }
+    if merged == ours {
+        return section.to_string();
+    }
+    // Where TCM's go: in place of its own block, else after the Navigation paragraph.
+    let first = lines.iter().position(|l| is_uses(l));
+    let at = first.or_else(|| lines.iter().position(|l| l.starts_with("**Navigation:**")).map(|n| n + 2));
+    let Some(at) = at.map(|a| a.min(lines.len())) else { return section.to_string() };
+    let mut o = String::with_capacity(section.len() + 64 * merged.len());
+    o.extend(lines[..at].iter().copied());
+    for l in &merged {
+        o.push_str(l);
+        o.push('\n');
+    }
+    if first.is_none() {
+        o.push('\n');
+    }
+    o.extend(lines[at..].iter().filter(|l| !is_uses(l)).copied());
+    o
+}
+
 /// The tables whose rows the repo may add to, and whether a table's first
 /// column is the row number TCM renumbers (`with_repo_rows`).
 const REPO_ROW_TABLES: [(&str, bool); 3] =
@@ -518,7 +571,8 @@ pub fn with_order_block(file: &str, note: &[String]) -> String {
 /// `existing` with case `id`'s section replaced by `section`, or `section`
 /// appended when the file has none. Everything outside that section is kept
 /// byte for byte, and so are the repo's own blocks inside it
-/// (`local_blocks`) and the rows it added to its tables (`with_repo_rows`).
+/// (`local_blocks`), the rows it added to its tables (`with_repo_rows`) and
+/// every `**Uses:**` line it had (`with_kept_uses`).
 /// The old `**From TCM:**` block is TCM's, so `section`'s replaces it whole.
 pub fn splice(existing: &str, id: i32, section: &str) -> String {
     let lines: Vec<&str> = existing.split_inclusive('\n').collect();
@@ -528,7 +582,7 @@ pub fn splice(existing: &str, id: i32, section: &str) -> String {
             .position(|l| is_h2(l))
             .map_or(lines.len(), |p| start + 1 + p);
         let old = &lines[start..end];
-        let section = with_local_blocks(&with_repo_rows(section, old), old);
+        let section = with_local_blocks(&with_repo_rows(&with_kept_uses(section, old), old), old);
         let mut o = String::with_capacity(existing.len() + section.len());
         o.extend(lines[..start].iter().copied());
         o.push_str(&section);

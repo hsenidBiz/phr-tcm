@@ -113,12 +113,40 @@ fn a_mapped_component_writes_a_uses_line() {
     d.handover.from_tcm = vec!["step 1 appears to save data (\"Save\")".into()];
     let out = section(&d);
     assert!(out.contains("date-picker\n\n**From TCM:**\n\n- step 1"), "{out}");
-    // A re-export regenerates them: the old lines go, today's come.
+    // A re-export keeps every line already there: TCM cannot tell the ones it wrote
+    // from the repo's, so a component dropped from the map leaves its line behind.
     let mut again = doc(7, "My case");
     again.handover.uses = vec!["date-picker".into()];
     let spliced = splice(&format!("# T\n\n{}", section(&d)), 7, &section(&again));
-    assert_eq!(spliced.matches("**Uses:**").count(), 1, "{spliced}");
-    assert!(spliced.contains("**Uses:** common-components/date-picker\n"), "{spliced}");
+    assert_eq!(spliced.matches("**Uses:**").count(), 2, "{spliced}");
+    assert!(
+        spliced.contains("**Uses:** common-components/employee-search\n**Uses:** common-components/date-picker\n\n"),
+        "{spliced}"
+    );
+}
+
+#[test]
+fn a_repo_only_uses_line_survives_a_re_export() {
+    let mut first = doc(7, "My case");
+    first.handover.uses = vec!["employee-search".into()];
+    // The repo's own step-2 checkpoint added a line TCM never mapped.
+    let hand = format!("# T\n\n{}", section(&first)).replace(
+        "**Uses:** common-components/employee-search\n",
+        "**Uses:** common-components/hand-made\n**Uses:** common-components/employee-search\n",
+    );
+    // Nothing mapped now: both stay, once each, where the Uses lines go.
+    let none = splice(&hand, 7, &section(&doc(7, "My case")));
+    assert_eq!(none.matches("**Uses:**").count(), 2, "{none}");
+    assert!(none.contains("captured in src/navigation.json.\n\n**Uses:** common-components/hand-made\n**Uses:** common-components/employee-search\n\n### Preconditions"), "{none}");
+    // A newly mapped component comes after the ones already there; a re-run adds nothing.
+    let mut now = doc(7, "My case");
+    now.handover.uses = vec!["employee-search".into(), "date-picker".into()];
+    let once = splice(&hand, 7, &section(&now));
+    assert!(once.contains("hand-made\n**Uses:** common-components/employee-search\n**Uses:** common-components/date-picker\n\n"), "{once}");
+    assert_eq!(splice(&once, 7, &section(&now)), once);
+    // A section with no Uses line at all is spliced as it was.
+    let plain = format!("# T\n\n{}", section(&doc(7, "My case")));
+    assert_eq!(splice(&plain, 7, &section(&doc(7, "My case"))), plain);
 }
 
 #[test]

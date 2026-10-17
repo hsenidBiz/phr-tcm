@@ -199,7 +199,7 @@ export default function PlaywrightExportDialog({
   const draftUsers = Object.fromEntries(Object.entries(users ?? {}).filter(([, v]) => v));
   // Components the same way. The whole saved map is kept, so a mapping for a
   // component these cases do not use is not lost by saving.
-  const savedComps = preview?.map.components ?? {};
+  const savedComps = Object.fromEntries(Object.entries(preview?.map.components ?? {}).filter(([, v]) => v));
   const draftComps = Object.fromEntries(Object.entries(comps ?? {}).filter(([, v]) => v));
   // Own folders the same way: one blanked is invalid until it is given a
   // path or handed back to its area.

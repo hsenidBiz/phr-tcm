@@ -643,3 +643,11 @@ test("cases_that_use_no_component_show_no_components_section", async () => {
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
   expect(screen.queryByRole("heading", { name: "Components" })).not.toBeInTheDocument();
 });
+
+test("a_saved_blank_component_entry_does_not_make_the_mappings_look_unsaved", async () => {
+  mount({}, { ...WITH_COMPONENTS, map: { areas: {}, accounts: {}, components: { "Pick a date": "date-picker", "Employee search": "" } } });
+  await screen.findByRole("checkbox", { name: /Create a cycle/ });
+  expect(componentField("Employee search")).toHaveTextContent("Not mapped");
+  expect(screen.queryByText("Save the mappings first")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: EXPORT })).toBeEnabled();
+});

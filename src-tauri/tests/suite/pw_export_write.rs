@@ -1236,12 +1236,14 @@ fn a_mapped_component_writes_a_uses_line() {
         "{sec}"
     );
     assert!(md.contains("**User:** REPO_KEY  <!-- assumed -->\n"), "{md}");
-    // A re-export reads the map again: unmapped, the line goes.
+    // A re-export keeps the line even when the component is unmapped now: TCM
+    // cannot tell the lines it wrote from the repo's own.
     let mut map = v2_lib::pw_export::mapping::load(fx.root.path(), ORG, PROJECT).unwrap();
     map.components.clear();
     save(fx.root.path(), ORG, PROJECT, &map).unwrap();
     export(&fx, &[130], &docs(&[(130, "Uses components")])).unwrap();
-    assert!(!section_of(&fx.read_clone(MD_REL), 130).contains("**Uses:**"));
+    let kept = fx.read_clone(MD_REL);
+    assert_eq!(section_of(&kept, 130).matches("**Uses:** common-components/employee-search\n").count(), 1, "{kept}");
 }
 
 #[test]
