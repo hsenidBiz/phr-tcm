@@ -64,13 +64,18 @@ function mockList(
   scripted: number[],
   runs: unknown[] = [],
   onCommand?: (cmd: string, args: unknown) => unknown,
+  /** Scripted cases an assistant marked as a suspected defect. */
+  defects: number[] = [],
 ) {
   mockIPC((cmd, args) => {
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases_full") return cases;
     if (cmd === "auto_run_load_script") {
       const id = (args as { caseId?: number; case_id?: number }).caseId ?? (args as { case_id: number }).case_id;
-      return scripted.includes(id) ? { case_id: id, title: "s", steps: STEPS } : null;
+      if (!scripted.includes(id)) return null;
+      return defects.includes(id)
+        ? { case_id: id, title: "s", steps: STEPS, suspected_defect: { step_number: 1, note: "No lockout message", marked_at: "1" } }
+        : { case_id: id, title: "s", steps: STEPS };
     }
     if (cmd === "auto_run_list_runs") return runs;
     if (cmd === "auto_run_list_accounts") return [];
@@ -769,6 +774,40 @@ test("the Last result row counts every case, and pressing buckets shows only the
   await press("Failed (2)");
   await press("Blocked (1)");
   expect(visibleTitles()).toHaveLength(6);
+});
+
+test("Suspected defect shows only the marked cases, together with the result filters", async () => {
+  mockList(
+    [caseRow(1, "Login - alpha"), caseRow(2, "Login - bravo"), caseRow(3, "Reports - charlie")],
+    [1, 2, 3],
+    [savedRun("a", "1000", [rec(1, "Failed"), rec(2, "Failed"), rec(3, "Passed")])],
+    undefined,
+    [2, 3],
+  );
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  const pill = await screen.findByRole("button", { name: "Suspected defects (2)" });
+  expect(pill).toHaveAttribute("aria-pressed", "false");
+  expect(visibleTitles()).toHaveLength(3);
+
+  fireEvent.click(pill);
+  expect(pill).toHaveAttribute("aria-pressed", "true");
+  expect(visibleTitles()).toEqual(["Login - bravo", "Reports - charlie"]);
+
+  // Both at once: marked AND failed last time.
+  await press("Failed (2)");
+  expect(visibleTitles()).toEqual(["Login - bravo"]);
+
+  fireEvent.click(pill);
+  expect(visibleTitles()).toEqual(["Login - alpha", "Login - bravo"]);
+});
+
+test("no Suspected defect button while no case is marked", async () => {
+  mockFilterList();
+  renderScreen();
+  await screen.findByText("Login - alpha");
+  await lastResultGroup();
+  expect(screen.queryByRole("button", { name: /^Suspected defects/ })).not.toBeInTheDocument();
 });
 
 test("the filter applies when grouped, and a group with nothing to show is hidden", async () => {

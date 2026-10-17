@@ -61,7 +61,7 @@ import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
 import SetupPanel, { useAutoRunSetup } from "./SetupPanel";
 import SetupColumn from "./SetupColumn";
-import { ResultToggleRow } from "./ResultFilterRow";
+import { ResultToggleRow, SuspectedDefectToggle } from "./ResultFilterRow";
 import {
   RESULT_BUCKETS,
   lastRecords,
@@ -415,6 +415,8 @@ export default function AutoRun({
    * here, not in the tab, so it outlasts a trip to another tab and is gone
    * once the screen is left. */
   const [lastFilter, setLastFilter] = useState<ReadonlySet<ResultBucket>>(new Set());
+  /** Only the cases marked as a suspected defect. Kept like the filter above. */
+  const [defectsOnly, setDefectsOnly] = useState(false);
   /** What the search box holds. Lives here for the same reason as the
    * filter, and is not saved. */
   const [search, setSearch] = useState("");
@@ -459,8 +461,12 @@ export default function AutoRun({
   /** The rows the filters and the search let through, by index in `rows`.
    * Everything that acts on "what is shown" (Select all shown, a group's
    * Select all, the selection itself) reads this one list. */
+  const hasDefect = (i: number) => Boolean(scripts[i]?.suspected_defect);
+  const defectCount = rows.filter((_, i) => hasDefect(i)).length;
   const shownIdx = rows.flatMap((c, i) =>
-    (activeFilter.size === 0 || activeFilter.has(lastOf(i))) && matchesSearch(c, search) ? [i] : [],
+    (activeFilter.size === 0 || activeFilter.has(lastOf(i))) && (!defectsOnly || hasDefect(i)) && matchesSearch(c, search)
+      ? [i]
+      : [],
   );
   const shownIds = new Set(shownIdx.map((i) => rows[i].id));
   /** Same title-prefix grouping View Test Cases uses, so a person reading
@@ -778,6 +784,11 @@ export default function AutoRun({
                         disabled={!runsReady}
                       />
                     ))}
+                  {/* Shown while any case is marked, and while pressed so it
+                      can always be let go of. */}
+                  {(defectCount > 0 || defectsOnly) && (
+                    <SuspectedDefectToggle on={defectsOnly} count={defectCount} onToggle={() => setDefectsOnly((v) => !v)} />
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
