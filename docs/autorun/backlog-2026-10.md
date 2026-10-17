@@ -136,6 +136,32 @@ works out the rule, and the next agent hits the same rule again.
     Competencies are both off". Today this only happens when an agent records
     a quirk by hand, and quirks are capped at 40.
 
+## Export to Playwright: hand over what TCM knows (agreed 2026-10-17)
+
+Design: `docs/superpowers/specs/2026-10-17-pw-export-handoff-design.md`. The export adds
+information in the slots the Playwright pipeline already reads; it never overrides the repo.
+
+20. **Preconditions and setups (E1, E2).** Preconditions table rows from the script's
+    preconditions, `needs_unchanged` marks and `needs_state` settings, ending "(from TCM)"; a
+    re-export keeps the repo's own rows. Cases whose script has a setup are refused with a reason
+    (they stay TCM-only). Shared-draft values (`{{fixture.<id>.<output>}}`) are substituted with
+    the fixture's current output, with a row naming the draft and its fixture. Any other
+    placeholder is refused, never written as literal text.
+21. **Safety facts (E3, E10).** A TCM-owned `**From TCM:**` block per case: look-only, what it
+    appears to write/delete, protected records, publishes, cleanup relied on (described, no
+    `afterEach`), known product defects. The "Finish in the repo" prompt carries the summary.
+22. **Protected baseline (E4).** A project setting of `{kind, name}` entries, edited in Auto Run
+    Setup, exported as `docs/tcm-protected-baseline.md`.
+23. **Quirks and page behaviour (E5, E6).** Stored quirks relevant to the exported cases, and the
+    recipe's `close_when_shown` / `wait_while_shown`, appended to the repo's `docs/app-quirks.md`
+    in its own format, tagged `<!-- tcm:q<id> -->`. Validation rules are not exported.
+24. **Run order notes (E7).** Per md file: what must run before what, what must run alone and last;
+    `--chain` as a prose suggestion; `@destructive` / `@publishes` tags proposed to the repo owner.
+25. **Markers (E8, E9).** `**User:**` provenance `assumed` instead of `from-tcm`; `**Uses:**` from a
+    TCM component → common-component mapping.
+26. **Export warnings (E11).** Before writing: unnamed deletes, publishes, state conflicts, not run
+    twice in a row, quirks attached.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
