@@ -169,5 +169,13 @@ debug = 0
 # Drop releases the upload claim "however the loop ends - returned, errored,
 # or unwound", and the panic hook has time to log. With abort every one of
 # those becomes the app closing instantly, mid-upload included.
+#
+# Size: one codegen unit with full LTO lets the linker drop what the crate
+# and its dependencies never call, and `opt-level = "s"` favours smaller
+# code over the last few percent of speed - the app's hot paths wait on the
+# network and the webview, not on Rust. The cost is a slower release build.
 [profile.release]
 strip = true
+lto = true
+codegen-units = 1
+opt-level = "s"
