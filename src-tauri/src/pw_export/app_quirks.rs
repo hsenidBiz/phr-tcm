@@ -54,6 +54,15 @@ fn title_of(text: &str) -> String {
     format!("{}…", cut.trim_end())
 }
 
+/// Milliseconds as seconds: whole when they are, else one decimal.
+fn seconds(ms: u32) -> String {
+    if ms % 1000 == 0 {
+        (ms / 1000).to_string()
+    } else {
+        format!("{:.1}", f64::from(ms) / 1000.0)
+    }
+}
+
 const SYMPTOM: &str = "a step on this page fails without this handling (from TCM)";
 const NOT_PROMOTED: &str = "not yet promoted";
 const CLASS: &str = "app quirk";
@@ -90,7 +99,8 @@ pub fn quirk_entries(quirks: &[Quirk], case_ids: &[i32], recipe: Option<&SignInR
             title: format!("{name} pops up and blocks the page"),
             symptom: SYMPTOM.into(),
             cause: format!(
-                "the {name} can be up over the page's controls, so an action behind it fails                  (TCM's sign-in recipe closes it)"
+                "the {name} can be up over the page's controls, so an action behind it fails \
+                 (TCM's sign-in recipe closes it)"
             ),
             fix: format!(
                 "close it with {} whenever {} is visible",
@@ -109,12 +119,13 @@ pub fn quirk_entries(quirks: &[Quirk], case_ids: &[i32], recipe: Option<&SignInR
             title: format!("{name} loading indicator"),
             symptom: SYMPTOM.into(),
             cause: format!(
-                "while the {name} is up the page is still loading, so an action started then times out                  (TCM's sign-in recipe waits it out)"
+                "while the {name} is up the page is still loading, so an action started then times out \
+                 (TCM's sign-in recipe waits it out)"
             ),
             fix: format!(
                 "wait while {} is visible, up to {} s",
                 one_line(&l.shown.describe()),
-                l.limit_ms() / 1000
+                seconds(l.limit_ms())
             ),
             established: established.clone(),
             permanent: NOT_PROMOTED.into(),
@@ -134,8 +145,15 @@ fn render(e: &TcmQuirkEntry) -> String {
     )
 }
 
+/// An ATX heading line: one to six `#`, then a space.
+fn is_heading(line: &str) -> bool {
+    let hashes = line.chars().take_while(|c| *c == '#').count();
+    (1..=6).contains(&hashes) && line[hashes..].starts_with(' ')
+}
+
 /// Where the entry whose tag is on line `tag_at` ends: the line after its
-/// last non-blank line, before the next rule or heading (a rule or heading
+/// last non-blank line, before the next rule or heading of any level (the
+/// repo may open its next entry with `##` and no rule; a rule or heading
 /// inside a code fence does not end it).
 fn entry_end(lines: &[String], tag_at: usize) -> usize {
     let mut fenced = false;
@@ -144,7 +162,7 @@ fn entry_end(lines: &[String], tag_at: usize) -> usize {
         let t = l.trim();
         if t.starts_with("```") {
             fenced = !fenced;
-        } else if !fenced && (t == "---" || t.starts_with("### ")) {
+        } else if !fenced && (t == "---" || is_heading(t)) {
             end = i;
             break;
         }
@@ -155,12 +173,56 @@ fn entry_end(lines: &[String], tag_at: usize) -> usize {
     end
 }
 
+/// Takes the entry whose tag is on line `tag_at` out, with the rule that
+/// set it off and the blank lines around it, so no doubled rule or run of
+/// blanks is left where it stood.
+fn remove_entry(lines: &mut Vec<String>, tag_at: usize) {
+    let end = entry_end(lines, tag_at);
+    let mut start = if tag_at > 0 && is_heading(lines[tag_at - 1].trim_start()) { tag_at - 1 } else { tag_at };
+    let blank = |l: &String| l.trim().is_empty();
+    let mut k = start;
+    while k > 0 && blank(&lines[k - 1]) {
+        k -= 1;
+    }
+    if k > 0 && lines[k - 1].trim() == "---" {
+        start = k - 1;
+        while start > 0 && blank(&lines[start - 1]) {
+            start -= 1;
+        }
+    }
+    lines.drain(start..end);
+    // Without a rule before it, keep one blank line between its neighbours.
+    while start > 0 && start + 1 < lines.len() && blank(&lines[start]) && blank(&lines[start - 1]) {
+        lines.remove(start);
+    }
+}
+
 /// `existing` (the repo's `docs/app-quirks.md`, if it has one) with
 /// `entries` merged in: an entry whose tag is already there is replaced
 /// where it stands, a new one goes on the end after a `---` rule, and
 /// nothing untagged is touched. `None` when the file would not change -
 /// no entries, or every one already written exactly so.
 pub fn merge_app_quirks(existing: Option<&str>, entries: &[TcmQuirkEntry]) -> Option<String> {
+    merge_app_quirks_removing(existing, entries, &[])
+}
+
+/// The tags of entries TCM wrote for quirks that are RETIRED now and came
+/// out of an exported case: they must leave the repo's file.
+pub fn retired_tags(quirks: &[Quirk], case_ids: &[i32]) -> Vec<String> {
+    quirks
+        .iter()
+        .filter(|q| !q.is_active() && q.sources.iter().any(|s| case_ids.contains(&s.case_id)))
+        .map(|q| format!("tcm:{}", q.id))
+        .collect()
+}
+
+/// `merge_app_quirks`, and first the entries tagged `retired` are taken out
+/// (with the rule that set them off). `None` when nothing changes.
+pub fn merge_app_quirks_removing(
+    existing: Option<&str>,
+    entries: &[TcmQuirkEntry],
+    retired: &[String],
+) -> Option<String> {
     // One entry per tag; the first of two with the same tag wins.
     let mut seen: Vec<&str> = Vec::new();
     let entries: Vec<&TcmQuirkEntry> = entries
@@ -171,16 +233,25 @@ pub fn merge_app_quirks(existing: Option<&str>, entries: &[TcmQuirkEntry]) -> Op
             fresh
         })
         .collect();
-    if entries.is_empty() {
+    if entries.is_empty() && retired.is_empty() {
         return None;
     }
     let base = existing.filter(|s| !s.trim().is_empty());
+    if base.is_none() && entries.is_empty() {
+        return None;
+    }
     let text = base.unwrap_or(NEW_FILE_HEADING);
     let crlf = text.contains("\r\n");
     let own = |s: String| if crlf { s.replace('\n', "\r\n") } else { s };
 
     let mut lines: Vec<String> = text.split('\n').map(String::from).collect();
     let mut appended: Vec<&TcmQuirkEntry> = Vec::new();
+    for tag in retired {
+        let tag = format!("<!-- {tag} -->");
+        while let Some(at) = lines.iter().position(|l| l.trim() == tag) {
+            remove_entry(&mut lines, at);
+        }
+    }
     for e in entries {
         let tag = format!("<!-- {} -->", e.tag);
         let Some(at) = lines.iter().position(|l| l.trim() == tag) else {

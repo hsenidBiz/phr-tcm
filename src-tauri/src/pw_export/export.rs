@@ -9,7 +9,7 @@
 //! It never touches `users.json`, `navigation.json`, `seed.spec.ts` or
 //! `auth.setup.ts`, and never runs git, npm or Playwright.
 
-use super::app_quirks::{merge_app_quirks, quirk_entries, APP_QUIRKS_REL};
+use super::app_quirks::{merge_app_quirks_removing, quirk_entries, retired_tags, APP_QUIRKS_REL};
 use super::clone::{index_with, open, ClonedRepo};
 use super::handover::{baseline_doc, handover_for, HandoverInput, BASELINE_DOC_REL};
 use super::mapping::{self, ExportMap, Placement};
@@ -1008,7 +1008,9 @@ pub fn write_with(
     } else {
         None
     };
-    if let Some(content) = merge_app_quirks(existing_quirks.as_deref(), &entries) {
+    // A quirk retired in TCM since leaves the repo's file too.
+    let retired = retired_tags(quirks, &case_ids);
+    if let Some(content) = merge_app_quirks_removing(existing_quirks.as_deref(), &entries, &retired) {
         outs.push(Out { rel: APP_QUIRKS_REL.into(), content });
     }
     // index.json only when an entry is new or moved: a re-export of cases

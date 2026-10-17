@@ -1051,3 +1051,24 @@ fn the_recipes_popups_reach_app_quirks_even_with_no_quirk() {
     assert!(quirks.contains("### cookie banner pops up and blocks the page\n<!-- tcm:popup:cookie banner -->\n"), "{quirks}");
     assert!(quirks.contains("close it with #cbx whenever #cb is visible"), "{quirks}");
 }
+
+#[test]
+fn a_quirk_retired_in_tcm_leaves_the_repo_file_on_the_next_export() {
+    let fx = Fx::new();
+    fx.good(94, "Retires a quirk");
+    let mut rc = recipe::load_recipe(fx.root.path(), ORG, PROJECT).unwrap().unwrap();
+    rc.close_when_shown.clear();
+    rc.wait_while_shown.clear();
+    recipe::save_recipe(fx.root.path(), ORG, PROJECT, &rc).unwrap();
+    write(fx.clone.path().join(QUIRKS_REL), REPO_QUIRKS);
+    file_quirk(&fx, "qabc123", "The grid pages after fifty rows.", &[94]);
+    export(&fx, &[94], &docs(&[(94, "Retires a quirk")])).unwrap();
+    assert!(fx.read_clone(QUIRKS_REL).contains("<!-- tcm:qabc123 -->"));
+    // Retired by a person in TCM.
+    let mut q = v2_lib::autorun::quirks::load_quirks(fx.root.path(), ORG, PROJECT).unwrap().remove(0);
+    q.status = "retired".into();
+    save_quirks(fx.root.path(), ORG, PROJECT, &[q]).unwrap();
+    let r = export(&fx, &[94], &docs(&[(94, "Retires a quirk")])).unwrap();
+    assert!(r.files.iter().any(|f| f == QUIRKS_REL), "{:?}", r.files);
+    assert_eq!(fx.read_clone(QUIRKS_REL), REPO_QUIRKS);
+}

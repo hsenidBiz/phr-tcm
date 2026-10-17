@@ -5,7 +5,7 @@
 use serde_json::json;
 use v2_lib::autorun::quirks::{Quirk, QuirkSource};
 use v2_lib::autorun::recipe::SignInRecipe;
-use v2_lib::pw_export::app_quirks::{merge_app_quirks, quirk_entries, TcmQuirkEntry};
+use v2_lib::pw_export::app_quirks::{merge_app_quirks, merge_app_quirks_removing, quirk_entries, retired_tags, TcmQuirkEntry};
 
 /// A quirk of 2025-10-09 that came out of `cases`.
 fn quirk(id: &str, text: &str, cases: &[i32]) -> Quirk {
@@ -168,12 +168,13 @@ fn recipe_popups_and_loaders_become_entries() {
         ],
         "wait_while_shown": [
             { "name": "page spinner", "shown": { "css": ".spinner" }, "max_ms": 45000 },
-            { "name": "grid spinner", "shown": { "css": ".grid-spin" } }
+            { "name": "grid spinner", "shown": { "css": ".grid-spin" } },
+            { "name": "quick spinner", "shown": { "css": ".q" }, "max_ms": 500 }
         ]
     }))
     .unwrap();
     let e = quirk_entries(&[], &[1], Some(&recipe));
-    assert_eq!(e.len(), 3, "{e:?}");
+    assert_eq!(e.len(), 4, "{e:?}");
 
     assert_eq!(e[0].tag, "tcm:popup:cookie banner");
     assert_eq!(e[0].title, "cookie banner pops up and blocks the page");
@@ -184,6 +185,18 @@ fn recipe_popups_and_loaders_become_entries() {
     assert_eq!(e[1].fix, "wait while .spinner is visible, up to 45 s");
     // No limit given: the runner's own default.
     assert_eq!(e[2].fix, "wait while .grid-spin is visible, up to 90 s");
+    // Under a second is not "0 s".
+    assert_eq!(e[3].fix, "wait while .q is visible, up to 0.5 s");
+
+    // The cause is one clean sentence: single spaces, nothing lost between its halves.
+    assert_eq!(
+        e[0].cause,
+        "the cookie banner can be up over the page's controls, so an action behind it fails (TCM's sign-in recipe closes it)"
+    );
+    assert_eq!(
+        e[1].cause,
+        "while the page spinner is up the page is still loading, so an action started then times out (TCM's sign-in recipe waits it out)"
+    );
 
     for x in &e {
         assert_eq!(x.symptom, "a step on this page fails without this handling (from TCM)");
@@ -191,7 +204,7 @@ fn recipe_popups_and_loaders_become_entries() {
         assert_eq!(x.class, "app quirk");
     }
     // They travel with any export, whichever cases it holds.
-    assert_eq!(quirk_entries(&[], &[], Some(&recipe)).len(), 3);
+    assert_eq!(quirk_entries(&[], &[], Some(&recipe)).len(), 4);
 }
 
 #[test]
@@ -201,4 +214,85 @@ fn a_crlf_file_stays_crlf() {
     assert!(!out.replace("\r\n", "").contains('\n'), "a bare line feed crept in:\n{out:?}");
     let again = merge_app_quirks(Some(&out), &[with_cause(entry("tcm:q1", "One"), "y")]).unwrap();
     assert!(!again.replace("\r\n", "").contains('\n') && again.contains("**Cause:** y"));
+}
+
+#[test]
+fn a_repo_entry_after_ours_with_no_rule_is_not_swallowed() {
+    let ours = merge_app_quirks(Some(REPO_FILE), &[entry("tcm:q1", "One")]).unwrap();
+    for heading in ["## repo entry", "#### sub-heading", "# top", "### plain repo entry"] {
+        // The repo adds an entry right after ours, with no rule between.
+        let tail = format!("
+{heading}
+
+**Class:** app quirk
+");
+        let later = format!("{ours}{tail}");
+        let out = merge_app_quirks(Some(&later), &[with_cause(entry("tcm:q1", "One"), "changed")]).unwrap();
+        assert!(out.ends_with(&tail), "{heading} was swallowed:
+{out}");
+        assert!(out.contains("**Cause:** changed") && out.starts_with(&ours[..REPO_FILE.len()]), "{out}");
+    }
+}
+
+#[test]
+fn a_heading_inside_a_fence_does_not_end_our_entry() {
+    let ours = merge_app_quirks(Some(REPO_FILE), &[entry("tcm:q1", "One")]).unwrap();
+    let edited = format!("{ours}
+```
+## in a fence
+```
+");
+    let out = merge_app_quirks(Some(&edited), &[with_cause(entry("tcm:q1", "One"), "c2")]).unwrap();
+    assert!(!out.contains("in a fence"), "{out}");
+}
+
+#[test]
+fn two_entries_with_one_tag_are_written_once() {
+    let out = merge_app_quirks(None, &[entry("tcm:q1", "First"), entry("tcm:q1", "Second")]).unwrap();
+    assert_eq!(out.matches("<!-- tcm:q1 -->").count(), 1, "{out}");
+    assert!(out.contains("### First") && !out.contains("### Second"), "{out}");
+}
+
+#[test]
+fn a_retired_quirk_leaves_the_repo_file() {
+    let mut gone = quirk("qgone01", "This one is retired now.", &[1]);
+    gone.status = "retired".into();
+    let mut other_case = quirk("qother1", "Retired, but from a case not exported.", &[7]);
+    other_case.status = "retired".into();
+    let live = quirk("qlive01", "Still true.", &[1]);
+    let quirks = vec![gone, other_case, live];
+    assert_eq!(retired_tags(&quirks, &[1]), vec!["tcm:qgone01".to_string()]);
+
+    // Three TCM entries between repo ones: the retired one is in the middle.
+    let file = merge_app_quirks(
+        Some(REPO_FILE),
+        &[entry("tcm:qgone01", "Gone"), entry("tcm:qother1", "Other"), entry("tcm:qlive01", "Live")],
+    )
+    .unwrap();
+    let out = merge_app_quirks_removing(Some(&file), &[entry("tcm:qlive01", "Live")], &["tcm:qgone01".to_string()]).unwrap();
+    assert!(!out.contains("tcm:qgone01") && !out.contains("### Gone"), "{out}");
+    assert!(out.contains("tcm:qother1") && out.contains("tcm:qlive01") && out.starts_with(REPO_FILE), "{out}");
+    // No doubled rule or run of blank lines where it stood.
+    assert!(!out.contains("---
+
+---") && !out.contains("
+
+
+"), "{out:?}");
+    // Exactly the file TCM would have written without that entry.
+    let expected = merge_app_quirks(
+        Some(REPO_FILE),
+        &[entry("tcm:qother1", "Other"), entry("tcm:qlive01", "Live")],
+    )
+    .unwrap();
+    assert_eq!(out, expected);
+
+    // The first and the last of TCM's entries, too, and then nothing left to remove.
+    let out = merge_app_quirks_removing(Some(&file), &[], &["tcm:qlive01".to_string()]).unwrap();
+    assert!(!out.contains("qlive01") && out.ends_with("**Class:** app quirk
+"), "{out:?}");
+    let all = ["tcm:qgone01", "tcm:qother1", "tcm:qlive01"].map(String::from);
+    assert_eq!(merge_app_quirks_removing(Some(&file), &[], &all).unwrap(), REPO_FILE);
+    assert_eq!(merge_app_quirks_removing(Some(REPO_FILE), &[], &all), None);
+    assert_eq!(merge_app_quirks_removing(None, &[], &all), None);
 }
