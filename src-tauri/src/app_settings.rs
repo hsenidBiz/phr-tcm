@@ -28,9 +28,11 @@ pub struct AppSettings {
     /// A start at sign-in (Start with Windows) stays hidden in the tray
     /// instead of opening the window.
     pub start_minimized: bool,
-    /// AI tools run `db_query` without asking the person first: the app
-    /// writes each registered tool's own "always allow" for it, and tells
-    /// the assistant it need not ask. Off unless turned on.
+    /// What older versions kept for the whole machine: AI tools run
+    /// `db_query` without asking. It belongs to each environment now
+    /// (`environments::Environment::db_auto_approve`); this is read only to
+    /// give it, once, to the environment active at the time (`env_list`),
+    /// and is then cleared. Nothing else reads it.
     pub db_auto_approve: bool,
     /// Stay signed in: the sign-in is kept in Windows Credential Manager
     /// and a launch goes straight in while Microsoft still accepts it

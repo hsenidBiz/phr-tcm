@@ -489,6 +489,7 @@ let environments: EnvListView = {
       test_environment: true,
       test_prefix: "AUTOTEST",
       has_default_password: false,
+      db_auto_approve: false,
     },
     {
       id: "qa",
@@ -499,6 +500,7 @@ let environments: EnvListView = {
       test_environment: true,
       test_prefix: "AUTOTEST",
       has_default_password: false,
+      db_auto_approve: false,
     },
   ],
 };
@@ -1611,6 +1613,8 @@ function applyPatches() {
         ...env,
         test_prefix: env.test_prefix ?? old?.test_prefix ?? "AUTOTEST",
         has_default_password: old?.has_default_password ?? false,
+        // Rust's to change, never a save's.
+        db_auto_approve: old?.db_auto_approve ?? false,
       };
       environments = {
         ...environments,
@@ -1626,7 +1630,17 @@ function applyPatches() {
     envSetActive: (id: string) => {
       if (!environments.environments.some((e) => e.id === id)) return err("Demo mode: no such environment");
       environments = { ...environments, active: id };
-      return ok(environments);
+      // No AI tool's real settings are touched in sample data.
+      return ok({ view: environments, allow: [] });
+    },
+    // Kept on the sample environment; no AI tool's real settings are touched.
+    setDbAutoApprove: (envId: string, on: boolean) => {
+      if (envId !== environments.active) return err("Demo mode: that environment is not the active one");
+      environments = {
+        ...environments,
+        environments: environments.environments.map((e) => (e.id === envId ? { ...e, db_auto_approve: on } : e)),
+      };
+      return ok([]);
     },
     envSetDefaultPassword: () => err("Demo mode: passwords are not kept in sample data"),
     envClearDefaultPassword: () => ok(null),
@@ -1971,6 +1985,13 @@ export const CAPTURE_RESET = [
   "tcm-v2-mcp-disabled",
   "tcm-v2-db-mcp",
   "tcm-v2-db-writes",
+  // The same switches as each environment keeps them, and which one that
+  // is: every boot moves the sample's own over afresh.
+  "tcm-v2-mcp-disabled:",
+  "tcm-v2-db-writes:",
+  "tcm-v2-api-writes:",
+  "tcm-v2-active-env",
+  "tcm-v2-bridge-switches-per-env",
   // The board's view options and the pull request filters.
   "tcm-v2-board-swimlanes",
   "tcm-v2-board-lanes-collapsed:",

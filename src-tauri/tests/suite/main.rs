@@ -98,6 +98,7 @@ mod autorun_wait_while_loading;
 mod autorun_when_visible;
 mod backup;
 mod branchcheck;
+mod bridge_per_env;
 mod browser_actions;
 mod browser_cdp;
 mod browser_downloads;

@@ -110,7 +110,8 @@ pub async fn api_fixture_run(
     let mut browsers =
         crate::commands::autorun_replay::RealBrowsers::new(crate::browser::launch::Browser::Edge, false);
     let timing = crate::commands::autorun_replay::replay_timing(false);
-    fixture_run::run_saved(&mut browsers, &root, &organization, &project, &id, &timing)
+    // The person's own run: nothing to look at again.
+    fixture_run::run_saved(&mut browsers, &root, &organization, &project, &id, &timing, || Ok(()))
         .await
         .map_err(|e| e.to_string())
 }

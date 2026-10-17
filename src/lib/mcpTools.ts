@@ -3,11 +3,16 @@
 // Stored as the DISABLED set, not the enabled one: a new tool added in a
 // later release is then available by default rather than silently missing
 // because it wasn't in someone's saved list.
+//
+// Each environment keeps its own set (activeEnv.ts); everything here reads
+// and writes the ACTIVE environment's.
 
+import { BRIDGE_SWITCH_KEYS, envScopedKey, subscribeActiveEnv } from "./activeEnv";
 import { modulesSnapshot, realModulesSnapshot, subscribeModules, type Module } from "./modules";
 import { isCaptureMode } from "../dev/capture";
 
-const KEY = "tcm-v2-mcp-disabled";
+/** The active environment's stored set. */
+const storageKey = (): string => envScopedKey(BRIDGE_SWITCH_KEYS.tools);
 
 export type McpToolInfo = { name: string; label: string; summary: string };
 
@@ -585,7 +590,7 @@ export function dbReadAccessOn(): boolean {
 
 export function loadDisabledTools(): string[] {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(storageKey());
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -620,7 +625,7 @@ const listeners = new Set<() => void>();
 /** Every name in storage, unfiltered. */
 function storedNames(): string[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(KEY) ?? "[]");
+    const parsed = JSON.parse(localStorage.getItem(storageKey()) ?? "[]");
     return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === "string") : [];
   } catch {
     return [];
@@ -636,8 +641,8 @@ export function saveDisabledTools(names: string[]): void {
   const hidden = storedNames().filter((n) => !isCoreTool(n) && moduleOfTool(n) !== null && !toolOffered(n));
   const all = [...new Set([...names, ...hidden])];
   try {
-    if (all.length === 0) localStorage.removeItem(KEY);
-    else localStorage.setItem(KEY, JSON.stringify(all));
+    if (all.length === 0) localStorage.removeItem(storageKey());
+    else localStorage.setItem(storageKey(), JSON.stringify(all));
   } catch {
     // storage unavailable -> the choice lasts for this session only
   }
@@ -647,20 +652,24 @@ export function saveDisabledTools(names: string[]): void {
 /** Subscription so App can re-push the bridge context the moment a tool is
  * toggled, instead of the change waiting for the next org/project change.
  * Also fires when a module is switched on or off: that changes which saved
- * names count. */
+ * names count - and when the active environment changes, which changes
+ * whose set it is. */
 export function subscribeDisabledTools(cb: () => void): () => void {
   listeners.add(cb);
   const offModules = subscribeModules(cb);
+  const offEnv = subscribeActiveEnv(cb);
   return () => {
     listeners.delete(cb);
     offModules();
+    offEnv();
   };
 }
 
-/** Keyed on the stored list AND which modules are on: the same stored list
- * loads differently either side of a module being switched. */
+/** Keyed on whose set it is, the stored list AND which modules are on: the
+ * same stored list loads differently either side of a module being
+ * switched. */
 function snapshotKeyFor(raw: string): string {
-  return `${[...realModulesSnapshot()].sort().join("+")}:${raw}`;
+  return `${storageKey()}|${[...realModulesSnapshot()].sort().join("+")}:${raw}`;
 }
 
 let snapshot: string[] = loadDisabledTools();
@@ -671,7 +680,7 @@ let snapshotKey = snapshotKeyFor(JSON.stringify(snapshot));
 export function disabledToolsSnapshot(): string[] {
   let raw = "[]";
   try {
-    raw = localStorage.getItem(KEY) ?? "[]";
+    raw = localStorage.getItem(storageKey()) ?? "[]";
   } catch {
     // fall through to the cached value
   }

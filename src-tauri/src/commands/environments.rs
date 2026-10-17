@@ -6,9 +6,11 @@
 //! The default password goes IN through `env_set_default_password` and never
 //! comes back out: a view carries `has_default_password` and nothing more.
 
+use crate::ai_bridge::BridgeContext;
 use crate::db::credentials::{self, DbSecrets, SecretStore};
 use crate::environments::{self, EnvFile, Environment};
 use std::path::Path;
+use std::sync::Mutex;
 use tauri::State;
 
 /// One environment as the webview sees it. There is deliberately no
@@ -23,6 +25,8 @@ pub struct EnvView {
     pub test_environment: bool,
     pub test_prefix: String,
     pub has_default_password: bool,
+    /// "Run database changes without asking", this environment's own.
+    pub db_auto_approve: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
@@ -83,6 +87,7 @@ fn view(store: &dyn SecretStore, file: EnvFile) -> EnvListView {
                 db_id: e.db_id,
                 test_environment: e.test_environment,
                 test_prefix: e.test_prefix,
+                db_auto_approve: e.db_auto_approve,
             })
             .collect(),
     }
@@ -108,6 +113,23 @@ pub fn list_view(root: &Path, store: &dyn SecretStore, current_db: Option<&str>)
     let known = known_db_ids(store);
     let current_db = current_db.map(str::trim).filter(|d| known.iter().any(|k| k == d));
     Ok(view(store, environments::load_or_init(root, current_db)?))
+}
+
+/// `list_view`, after giving older versions' machine-wide "Run database
+/// changes without asking" (`legacy_on`) to the environment active now -
+/// once (`environments::adopt_legacy_auto_approve`). The first list of all
+/// makes Default first, so the setting has somewhere to go.
+pub fn list_adopting(
+    root: &Path,
+    store: &dyn SecretStore,
+    current_db: Option<&str>,
+    legacy_on: bool,
+) -> Result<EnvListView, String> {
+    let first = list_view(root, store, current_db)?;
+    if environments::adopt_legacy_auto_approve(root, legacy_on)? {
+        return list_view(root, store, None);
+    }
+    Ok(first)
 }
 
 /// What every switch refusal starts with; an address change says
@@ -146,6 +168,9 @@ pub async fn save_with(root: &Path, store: &dyn SecretStore, env: EnvInput) -> R
         db_id: env.db_id,
         test_environment: env.test_environment,
         test_prefix,
+        // Not the form's to set: a save keeps what the file holds
+        // (`environments::save_env_with`).
+        db_auto_approve: false,
     };
     let unmarked = before.as_ref().is_some_and(|b| b.test_environment && !env.test_environment);
     let address_moved = before.as_ref().is_some_and(|b| b.start_url.trim() != env.start_url.trim());
@@ -239,6 +264,89 @@ pub fn refuse_switch(supervised_open: bool) -> Result<(), String> {
 }
 
 pub async fn set_active_with(root: &Path, store: &dyn SecretStore, id: &str) -> Result<EnvListView, String> {
+    Ok(switch_with(root, store, id, None, || {}).await?.0)
+}
+
+/// What a switch answers: the list as Rust now has it, and what was done to
+/// each AI tool's own "always allow" to make it match the new environment
+/// (`AutoApproveOutcome`, as the Run changes without asking switch answers).
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct EnvSwitched {
+    pub view: EnvListView,
+    pub allow: Vec<crate::commands::ai_tools::AutoApproveOutcome>,
+}
+
+/// What `env_set_active` runs once the bridge has moved: each AI tool's own
+/// "always allow" for db_query made to match the new active environment -
+/// written when it runs changes without asking, taken out when it does not
+/// - answering what was done for each tool.
+pub fn switch_reconciler(
+    root: std::path::PathBuf,
+    working_dir: Option<String>,
+    tools: crate::commands::ai_tools::ToolHome,
+) -> impl FnOnce() -> Vec<crate::commands::ai_tools::AutoApproveOutcome> + Send + 'static {
+    move || {
+        let outcomes = crate::commands::ai_tools::match_allow_files_in(&root, working_dir.as_deref(), &tools);
+        crate::commands::ai_tools::log_allow_outcomes(&outcomes);
+        outcomes
+    }
+}
+
+/// Make `id` active and move the bridge with it, in one step: the file and
+/// the bridge's context change under the context's lock, which every push
+/// from the webview takes too (`commands::ai_bridge::push_context_with`).
+/// A request is then judged wholly by the environment before or wholly by
+/// the one after - never the new database with the old switches.
+///
+/// The write switches are the webview's, kept per environment, so Rust
+/// cannot know the new environment's: they go OFF here and come back only
+/// with a push for this environment. The database and "without asking" are
+/// the new environment's own at once.
+pub fn move_bridge_to(
+    root: &Path,
+    store: &dyn SecretStore,
+    id: &str,
+    bridge: Option<&Mutex<BridgeContext>>,
+) -> Result<EnvFile, String> {
+    let mut held = bridge.map(|b| b.lock().unwrap_or_else(|e| e.into_inner()));
+    let file = environments::set_active(root, id)?;
+    if let (Some(ctx), Some(env)) = (held.as_deref_mut(), file.environments.iter().find(|e| e.id == file.active)) {
+        // Held until the caller has brought the allow files in line
+        // (`release_writes`, which `switch_with` calls once they are).
+        super::ai_bridge::hold_writes(ctx);
+        // The new environment's switches are the webview's to say, by a
+        // push for it: none is wanted until then.
+        ctx.gate.wanted = None;
+        ctx.gate.env_id = Some(env.id.clone());
+        ctx.db_no_ask = env.db_auto_approve;
+        // As the webview's switch does: a database that is not set up any
+        // more is no database.
+        ctx.db_id = Some(env.db_id.clone()).filter(|d| credentials::is_known(store, d));
+        // Nor is its tool list known: every tool that has a switch is off
+        // until the push for this environment brings its own.
+        ctx.disabled_tools = crate::mcp::all_tool_names()
+            .into_iter()
+            .filter(|t| !crate::ai_tools::CORE_TOOLS.contains(&t.as_str()))
+            .collect();
+    }
+    Ok(file)
+}
+
+/// The switch: refused while something records, runs or holds the
+/// supervised browser, then `move_bridge_to`, then `after` - which the app
+/// uses to make each AI tool's own "always allow" match the new
+/// environment - before the answer goes back. Every write stays held off
+/// from the move until `after` has finished, whether it worked or not, so
+/// even a push for the new environment that lands meanwhile turns none on
+/// before the allow files say what the new environment says. Answers the
+/// list and what `after` answered (None when it did not finish).
+pub async fn switch_with<T: Send + 'static>(
+    root: &Path,
+    store: &dyn SecretStore,
+    id: &str,
+    bridge: Option<&Mutex<BridgeContext>>,
+    after: impl FnOnce() -> T + Send + 'static,
+) -> Result<(EnvListView, Option<T>), String> {
     // Held across the switch, so a supervised browser cannot open halfway
     // through it - the same way Open browser holds it to look for a recording.
     let slot = crate::commands::autorun::supervised().lock().await;
@@ -247,18 +355,22 @@ pub async fn set_active_with(root: &Path, store: &dyn SecretStore, id: &str) -> 
     // that started between the look in `refuse_switch` and the write would
     // otherwise sign in to one environment and finish in another.
     let run_slot = crate::api_templates::runner::claim().ok_or_else(|| SWITCH_TEMPLATE_RUNNING.to_string())?;
-    let file = environments::set_active(root, id)?;
+    let file = move_bridge_to(root, store, id, bridge)?;
+    // The hold `move_bridge_to` took ends when this does, however it ends.
+    let release = super::ai_bridge::HeldWrites(bridge);
     // A browser a template run kept signed in belongs to the environment
     // it signed in to. Closed off the async threads (ending a process waits
     // for it to go), and waited for while the run slot is still taken, so
     // no run in the new environment starts beside it.
     let _ = tauri::async_runtime::spawn_blocking(crate::api_templates::held::close_all).await;
+    let answered = tauri::async_runtime::spawn_blocking(after).await.ok();
+    drop(release);
     drop(run_slot);
     drop(slot);
     if let Some(e) = file.environments.iter().find(|e| e.id == file.active) {
         crate::applog::info(format!("Environments: switched to {}", e.name));
     }
-    Ok(view(store, file))
+    Ok((view(store, file), answered))
 }
 
 pub fn set_default_password_with(root: &Path, store: &dyn SecretStore, id: &str, password: &str) -> Result<(), String> {
@@ -431,8 +543,42 @@ pub fn env_list(
     app: tauri::AppHandle,
     secrets: State<'_, DbSecrets>,
     current_db: Option<String>,
+    working_dir: Option<String>,
 ) -> Result<EnvListView, String> {
-    list_view(&super::autorun::root(&app)?, &*secrets.0, current_db.as_deref())
+    let root = super::autorun::root(&app)?;
+    let view = env_list_with(&root, &*secrets.0, current_db.as_deref())?;
+    // Once a run, with the working repository the bridge's start could not
+    // know: each AI tool's own "always allow" made to match the active
+    // environment, writes held off meanwhile (`repair_allow_files`).
+    static REPAIRED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !REPAIRED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        let bridge = super::ai_bridge::running_bridge(&app);
+        let outcomes = super::ai_tools::repair_allow_files(
+            bridge.as_deref().map(|b| &b.ctx),
+            &root,
+            working_dir.as_deref(),
+            &super::ai_tools::ToolHome::real(),
+        );
+        super::ai_tools::log_allow_outcomes(&outcomes);
+    }
+    Ok(view)
+}
+
+/// The environments, after older versions' machine-wide "Run database
+/// changes without asking" has moved to the active one (`list_adopting`) -
+/// and then cleared, so nothing reads it again.
+pub fn env_list_with(root: &Path, store: &dyn SecretStore, current_db: Option<&str>) -> Result<EnvListView, String> {
+    let legacy = crate::app_settings::current().db_auto_approve;
+    let view = list_adopting(root, store, current_db, legacy)?;
+    if legacy {
+        // It belongs to an environment now (and the file says it has moved,
+        // so it never moves twice). Best-effort: a setting left on is read
+        // by nothing but this.
+        if let Err(e) = crate::app_settings::update(|s| s.db_auto_approve = false) {
+            crate::applog::warn(format!("Environments: the old machine-wide database setting stayed behind: {e}"));
+        }
+    }
+    Ok(view)
 }
 
 #[tauri::command]
@@ -457,8 +603,23 @@ pub async fn env_set_active(
     app: tauri::AppHandle,
     secrets: State<'_, DbSecrets>,
     id: String,
-) -> Result<EnvListView, String> {
-    set_active_with(&super::autorun::root(&app)?, &*secrets.0, &id).await
+    working_dir: Option<String>,
+) -> Result<EnvSwitched, String> {
+    let root = super::autorun::root(&app)?;
+    let bridge = super::ai_bridge::running_bridge(&app);
+    // Each AI tool's own "always allow" for db_query follows the active
+    // environment: written when the new one runs changes without asking,
+    // taken out when it does not. What was done comes back with the list.
+    let after = switch_reconciler(root.clone(), working_dir, super::ai_tools::ToolHome::real());
+    let (view, allow) = switch_with(&root, &*secrets.0, &id, bridge.as_deref().map(|b| &b.ctx), after).await?;
+    let allow = allow.unwrap_or_else(|| {
+        vec![crate::commands::ai_tools::AutoApproveOutcome {
+            tool: "Your AI tools".to_string(),
+            applied: false,
+            note: "their settings could not be brought in line with this environment - see Settings > Logs".to_string(),
+        }]
+    });
+    Ok(EnvSwitched { view, allow })
 }
 
 #[tauri::command]

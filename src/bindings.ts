@@ -354,10 +354,10 @@ export const commands = {
 	 *  The environments and which is active. `current_db` is the database the
 	 *  Company database card has chosen now: on first use it becomes Default's.
 	 */
-	envList: (currentDb: string | null) => typedError<EnvListView, string>(__TAURI_INVOKE("env_list", { currentDb })),
+	envList: (currentDb: string | null, workingDir: string | null) => typedError<EnvListView, string>(__TAURI_INVOKE("env_list", { currentDb, workingDir })),
 	envSave: (env: EnvInput) => typedError<EnvListView, string>(__TAURI_INVOKE("env_save", { env })),
 	envRemove: (id: string) => typedError<EnvListView, string>(__TAURI_INVOKE("env_remove", { id })),
-	envSetActive: (id: string) => typedError<EnvListView, string>(__TAURI_INVOKE("env_set_active", { id })),
+	envSetActive: (id: string, workingDir: string | null) => typedError<EnvSwitched, string>(__TAURI_INVOKE("env_set_active", { id, workingDir })),
 	envSetDefaultPassword: (id: string, password: string) => typedError<null, string>(__TAURI_INVOKE("env_set_default_password", { id, password })),
 	envClearDefaultPassword: (id: string) => typedError<null, string>(__TAURI_INVOKE("env_clear_default_password", { id })),
 	/**  The assistant's proposed accounts for the active environment. */
@@ -1197,12 +1197,13 @@ export const commands = {
 	 */
 	registerAiTool: (id: string, workingDir: string | null, disabledTools: string[], global: boolean) => typedError<null, string>(__TAURI_INVOKE("register_ai_tool", { id, workingDir, disabledTools, global })),
 	/**
-	 *  Switch "Run database changes without asking" on or off: keep the choice,
+	 *  Switch "Run database changes without asking" on or off for the active
+	 *  environment (`env_id`, the one the tab showed it for): keep the choice,
 	 *  then write (or take out) each registered tool's own "always allow" for
 	 *  `db_query`. Answers per tool, so the AI Bridge tab can say which tools
 	 *  were set and which the person still has to set themselves.
 	 */
-	setDbAutoApprove: (on: boolean, workingDir: string | null) => typedError<AutoApproveOutcome[], string>(__TAURI_INVOKE("set_db_auto_approve", { on, workingDir })),
+	setDbAutoApprove: (envId: string, on: boolean, workingDir: string | null) => typedError<AutoApproveOutcome[], string>(__TAURI_INVOKE("set_db_auto_approve", { envId, on, workingDir })),
 	/**
 	 *  Removes a server from the tool's config. No installed-guard: if a
 	 *  config still carries an entry after the tool was uninstalled, removing
@@ -2188,9 +2189,11 @@ export type AppSettings = {
 	 */
 	start_minimized?: boolean,
 	/**
-	 *  AI tools run `db_query` without asking the person first: the app
-	 *  writes each registered tool's own "always allow" for it, and tells
-	 *  the assistant it need not ask. Off unless turned on.
+	 *  What older versions kept for the whole machine: AI tools run
+	 *  `db_query` without asking. It belongs to each environment now
+	 *  (`environments::Environment::db_auto_approve`); this is read only to
+	 *  give it, once, to the environment active at the time (`env_list`),
+	 *  and is then cleared. Nothing else reads it.
 	 */
 	db_auto_approve?: boolean,
 	/**
@@ -2417,6 +2420,13 @@ export type BridgeSwitches = {
 	dbWrites: boolean,
 	/**  Proving and running API templates (see `BridgeContext::api_writes`). */
 	apiWrites: boolean,
+	/**
+	 *  The environment these switches are the webview's for - each keeps
+	 *  its own. Empty while the webview does not know it yet. A push for any
+	 *  environment but the active one turns no write on
+	 *  (`push_context_with`).
+	 */
+	envId?: string,
 };
 
 /**  How the browser runs. */
@@ -3410,6 +3420,16 @@ export type EnvListView = {
 };
 
 /**
+ *  What a switch answers: the list as Rust now has it, and what was done to
+ *  each AI tool's own "always allow" to make it match the new environment
+ *  (`AutoApproveOutcome`, as the Run changes without asking switch answers).
+ */
+export type EnvSwitched = {
+	view: EnvListView,
+	allow: AutoApproveOutcome[],
+};
+
+/**
  *  One environment as the webview sees it. There is deliberately no
  *  password field, not even an empty one.
  */
@@ -3422,6 +3442,8 @@ export type EnvView = {
 	test_environment: boolean,
 	test_prefix: string,
 	has_default_password: boolean,
+	/**  "Run database changes without asking", this environment's own. */
+	db_auto_approve: boolean,
 };
 
 export type Expect = {

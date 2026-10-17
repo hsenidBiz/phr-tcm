@@ -200,6 +200,10 @@ test("in capture mode, the AI Bridge, the board and pull requests start from the
     "tcm-v2-mcp-disabled": '["get_run_results"]',
     "tcm-v2-db-mcp": '{"exe_path":"C:\\\\real\\\\server.exe","db_type":"mssql","schema_filter":""}',
     "tcm-v2-db-writes": "1",
+    // The same switches as an environment of this machine keeps them.
+    "tcm-v2-db-writes:env-real0001": "1",
+    "tcm-v2-mcp-disabled:env-real0001": '["get_tags"]',
+    "tcm-v2-active-env": "env-real0001",
     "tcm-v2-working-dir": "C:\\real\\repo",
     "tcm-v2-board-swimlanes": "on",
     "tcm-v2-board-lanes-collapsed:Contoso/Customer Portal": "[1001]",

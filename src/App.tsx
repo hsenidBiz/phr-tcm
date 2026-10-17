@@ -13,7 +13,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import { toast } from "./lib/toast";
-import { useActiveEnvironmentName } from "./lib/environments";
+import { useActiveEnvironmentName, useEnvironments } from "./lib/environments";
+import { activeEnvIdSnapshot, subscribeActiveEnv } from "./lib/activeEnv";
 import { Toaster } from "./components/ui/toaster";
 import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
 import { loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
@@ -764,6 +765,15 @@ export default function App() {
   // tab's own switch, pushed the moment it changes for the same reason the
   // database write switch is.
   const apiWrites = useSyncExternalStore(subscribeApiWrites, apiWritesSnapshot);
+  // The three switches above are the ACTIVE environment's, and every push
+  // says which environment that is: Rust allows no write from a push for
+  // any other one, so a push still on its way when the environment changes
+  // can never carry one environment's writes into the next. The list is
+  // read here, not only on the AI Bridge tab, so the switches are the
+  // active environment's from the start.
+  useEnvironments(signedIn);
+  const envId = useSyncExternalStore(subscribeActiveEnv, activeEnvIdSnapshot);
+  const lastPushedEnv = useRef<string | null>(null);
   // Who each database signs in as - the same list, under the same key, the
   // AI Bridge card reads and refreshes when a login is saved.
   const databases = useQuery({
@@ -823,14 +833,18 @@ export default function App() {
             disabledTools,
             workingDir || null,
             dbId || null,
-            { dbWrites: dbWrites && devLogin, apiWrites },
+            { dbWrites: dbWrites && devLogin, apiWrites, envId },
           ),
         )
         .catch(() => {});
     };
     pushBridgeContextRef.current = push;
     if (bridgeContextTimerRef.current) clearTimeout(bridgeContextTimerRef.current);
-    bridgeContextTimerRef.current = setTimeout(push, 400);
+    // A new environment is pushed at once rather than after the pause:
+    // Rust holds every write off from the switch until its switches arrive.
+    const envMoved = lastPushedEnv.current !== null && lastPushedEnv.current !== envId;
+    lastPushedEnv.current = envId;
+    bridgeContextTimerRef.current = setTimeout(push, envMoved ? 0 : 400);
     return () => {
       if (bridgeContextTimerRef.current) clearTimeout(bridgeContextTimerRef.current);
     };
@@ -846,6 +860,7 @@ export default function App() {
     dbWrites,
     devLogin,
     apiWrites,
+    envId,
     tourOpen,
     dbMigrated,
   ]);
