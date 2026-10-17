@@ -7,10 +7,13 @@
 // the same shape as the Database Read Access card's create/update/delete
 // switch (dbServer.ts), which this file mirrors.
 
-/** The prove/run switch. "1" only when it is on, and absent otherwise - so
- * a fresh profile and a cleared one both read off, which is the only
- * default a switch like this may have. */
-const API_WRITES_KEY = "tcm-v2-api-writes";
+import { BRIDGE_SWITCH_KEYS, envScopedKey, subscribeActiveEnv } from "./activeEnv";
+
+/** The prove/run switch, the active environment's own (each environment
+ * keeps its own - activeEnv.ts). "1" only when it is on, and absent
+ * otherwise - so a fresh profile, a cleared one and a new environment all
+ * read off, which is the only default a switch like this may have. */
+const apiWritesKey = (): string => envScopedKey(BRIDGE_SWITCH_KEYS.apiWrites);
 
 const listeners = new Set<() => void>();
 
@@ -20,11 +23,14 @@ function notify(): void {
 
 /** Subscription so App can re-push the bridge context the moment the
  * switch changes, instead of the change waiting for the next org/project
- * change. The same pattern dbServer's write switch uses. */
+ * change. The same pattern dbServer's write switch uses. A switch of
+ * environment changes whose switch it is. */
 export function subscribeApiWrites(cb: () => void): () => void {
   listeners.add(cb);
+  const offEnv = subscribeActiveEnv(cb);
   return () => {
     listeners.delete(cb);
+    offEnv();
   };
 }
 
@@ -32,7 +38,7 @@ export function subscribeApiWrites(cb: () => void): () => void {
  * was explicitly switched on. */
 export function loadApiWrites(): boolean {
   try {
-    return localStorage.getItem(API_WRITES_KEY) === "1";
+    return localStorage.getItem(apiWritesKey()) === "1";
   } catch {
     return false;
   }
@@ -40,8 +46,8 @@ export function loadApiWrites(): boolean {
 
 export function saveApiWrites(on: boolean): void {
   try {
-    if (on) localStorage.setItem(API_WRITES_KEY, "1");
-    else localStorage.removeItem(API_WRITES_KEY);
+    if (on) localStorage.setItem(apiWritesKey(), "1");
+    else localStorage.removeItem(apiWritesKey());
   } catch {
     // storage unavailable -> the choice lasts for this session only
   }

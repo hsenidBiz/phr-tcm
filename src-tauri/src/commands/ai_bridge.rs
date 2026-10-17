@@ -128,13 +128,58 @@ impl crate::ai_bridge::ReplayHost for AppReplayHost {
 
 /// The AI Bridge tab's on/off switches, pushed together - one argument, so
 /// `set_bridge_context` stays inside the ten a specta command may take.
-#[derive(Debug, Clone, Copy, Default, serde::Deserialize, specta::Type)]
+#[derive(Debug, Clone, Default, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BridgeSwitches {
     /// Company database create/update/delete (see `BridgeContext::db_writes`).
     pub db_writes: bool,
     /// Proving and running API templates (see `BridgeContext::api_writes`).
     pub api_writes: bool,
+    /// The environment these switches are the webview's for - each keeps
+    /// its own. Empty while the webview does not know it yet. A push for any
+    /// environment but the active one turns no write on
+    /// (`push_context_with`).
+    #[serde(default)]
+    pub env_id: String,
+}
+
+/// The running bridge, if it has started.
+pub fn running_bridge(app: &tauri::AppHandle) -> Option<SharedBridge> {
+    use tauri::Manager;
+    let handle = app.state::<BridgeHandle>();
+    let guard = handle.running.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().map(|(shared, _)| Arc::clone(shared))
+}
+
+/// Put a push from the webview into the bridge's context, judged against
+/// the active environment under the context's own lock - the lock a switch
+/// holds while it moves the active environment (`move_bridge_to`). The
+/// write switches count only when they are the active environment's
+/// (`env_id`); otherwise - a push that was on its way when a switch landed,
+/// a webview that does not know the environment yet, no environments at
+/// all - every write stays off. "Without asking" is never the webview's to
+/// say: it is the active environment's own, read here.
+pub fn push_context_with(
+    slot: &std::sync::Mutex<BridgeContext>,
+    root: Option<&std::path::Path>,
+    mut next: BridgeContext,
+    env_id: &str,
+) {
+    let mut ctx = slot.lock().unwrap_or_else(|e| e.into_inner());
+    let active = root.and_then(|r| match crate::environments::read_active(r) {
+        Ok(env) => env,
+        Err(e) => {
+            crate::applog::warn(format!("AI bridge: the active environment could not be read, so no write is allowed: {e}"));
+            None
+        }
+    });
+    let its_own = !env_id.is_empty() && active.as_ref().is_some_and(|e| e.id == env_id);
+    if !its_own {
+        next.db_writes = false;
+        next.api_writes = false;
+    }
+    next.db_no_ask = active.is_some_and(|e| e.db_auto_approve);
+    *ctx = next;
 }
 
 /// The frontend pushes its current org/project + detected field refs so
@@ -154,10 +199,11 @@ pub fn set_bridge_context(
 ) {
     use tauri::Manager;
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
+    let root = super::autorun::root(&app).ok();
     let handle = app.state::<BridgeHandle>();
     let guard = handle.running.lock().unwrap();
     if let Some((shared, _)) = guard.as_ref() {
-        *shared.ctx.lock().unwrap() = BridgeContext {
+        let next = BridgeContext {
             org: organization,
             project,
             module_ref,
@@ -171,7 +217,10 @@ pub fn set_bridge_context(
             db_secrets: Some(secrets),
             db_writes: switches.db_writes,
             api_writes: switches.api_writes,
+            // Set from the active environment, never from the webview.
+            db_no_ask: false,
         };
+        push_context_with(&shared.ctx, root.as_deref(), next, &switches.env_id);
     }
     // A tool switched off in the AI Bridge tab loses its slash command too.
     // The tool side already refuses a disabled tool twice - filtered from

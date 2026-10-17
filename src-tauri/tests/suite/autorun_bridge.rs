@@ -2745,6 +2745,7 @@ fn the_active_environment_says_when_it_has_no_database_or_address() {
         db_id: String::new(),
         test_environment: false,
         test_prefix: "AUTOTEST".into(),
+        db_auto_approve: false,
     };
     let text = active_environment_section(&env, None);
     assert!(text.contains("\"Scratch\""), "{text}");
@@ -2766,6 +2767,7 @@ fn the_active_environment_says_when_its_database_is_gone() {
         db_id: "removed-db".into(),
         test_environment: false,
         test_prefix: "AUTOTEST".into(),
+        db_auto_approve: false,
     };
     let text = active_environment_section(&env, None);
     assert!(text.contains("Its database is not set up any more."), "{text}");

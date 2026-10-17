@@ -91,6 +91,7 @@ pub fn detect_ai_tools(working_dir: Option<String>) -> Vec<DetectedTool> {
 #[tauri::command]
 #[specta::specta]
 pub fn register_ai_tool(
+    app: tauri::AppHandle,
     id: String,
     working_dir: Option<String>,
     disabled_tools: Vec<String>,
@@ -101,13 +102,16 @@ pub fn register_ai_tool(
         .to_string_lossy()
         .to_string();
     register_server(&id, &tcm_server(&exe), working_dir.as_deref(), &disabled_tools, global)?;
-    // A tool registered while "Run database changes without asking" is on
-    // gets its own "always allow" too, the same as the ones registered
-    // before the switch was turned on. Best-effort: the registration worked.
-    if crate::app_settings::current().db_auto_approve {
-        for o in apply_db_auto_approve_now(true, working_dir.as_deref()) {
-            if !o.applied && !o.note.is_empty() {
-                crate::applog::info(format!("auto-approve for {}: {}", o.tool, o.note));
+    // A tool registered while the active environment runs database changes
+    // without asking gets its own "always allow" too, the same as the ones
+    // registered before the switch was turned on. Best-effort: the
+    // registration worked.
+    if let Ok(root) = super::autorun::root(&app) {
+        if active_auto_approve(&root) {
+            for o in match_allow_files_to_active(&root, working_dir.as_deref()) {
+                if !o.applied && !o.note.is_empty() {
+                    crate::applog::info(format!("auto-approve for {}: {}", o.tool, o.note));
+                }
             }
         }
     }
@@ -129,15 +133,68 @@ pub struct AutoApproveOutcome {
     pub note: String,
 }
 
-/// Switch "Run database changes without asking" on or off: keep the choice,
+/// Said when the switch was moved for an environment that is no longer the
+/// active one by the time it landed. Nothing is changed.
+pub const AUTO_APPROVE_ENV_MOVED: &str =
+    "the active environment changed - look at Run changes without asking again for the one now active";
+
+/// Whether the active environment runs database changes without asking.
+/// No environment, or one that cannot be read, is no.
+pub fn active_auto_approve(root: &std::path::Path) -> bool {
+    crate::environments::read_active(root).ok().flatten().is_some_and(|e| e.db_auto_approve)
+}
+
+/// Keep "Run database changes without asking" on the environment the tab
+/// showed it for, which must still be the active one - checked, saved and
+/// told to the bridge under the context's lock, the one a switch holds.
+pub fn set_auto_approve_with(
+    root: &std::path::Path,
+    bridge: Option<&std::sync::Mutex<crate::ai_bridge::BridgeContext>>,
+    env_id: &str,
+    on: bool,
+) -> Result<(), String> {
+    let mut held = bridge.map(|b| b.lock().unwrap_or_else(|e| e.into_inner()));
+    match crate::environments::read_active(root)? {
+        Some(active) if active.id == env_id => {}
+        _ => return Err(AUTO_APPROVE_ENV_MOVED.to_string()),
+    }
+    crate::environments::set_db_auto_approve(root, env_id, on)?;
+    if let Some(ctx) = held.as_deref_mut() {
+        ctx.db_no_ask = on;
+    }
+    Ok(())
+}
+
+/// One at a time, so two callers can never leave the files saying what an
+/// older answer said (a switch taking entries out while a turn-on writes
+/// them): each reads the active environment's choice under this lock.
+static ALLOW_FILES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Make each registered tool's own "always allow" for `db_query` say what
+/// the active environment says: written while it runs changes without
+/// asking, taken out while it does not.
+pub fn match_allow_files_to_active(root: &std::path::Path, working_dir: Option<&str>) -> Vec<AutoApproveOutcome> {
+    let _held = ALLOW_FILES.lock().unwrap_or_else(|e| e.into_inner());
+    apply_db_auto_approve_now(active_auto_approve(root), working_dir)
+}
+
+/// Switch "Run database changes without asking" on or off for the active
+/// environment (`env_id`, the one the tab showed it for): keep the choice,
 /// then write (or take out) each registered tool's own "always allow" for
 /// `db_query`. Answers per tool, so the AI Bridge tab can say which tools
 /// were set and which the person still has to set themselves.
 #[tauri::command]
 #[specta::specta]
-pub fn set_db_auto_approve(on: bool, working_dir: Option<String>) -> Result<Vec<AutoApproveOutcome>, String> {
-    crate::app_settings::update(|s| s.db_auto_approve = on)?;
-    Ok(apply_db_auto_approve_now(on, working_dir.as_deref()))
+pub fn set_db_auto_approve(
+    app: tauri::AppHandle,
+    env_id: String,
+    on: bool,
+    working_dir: Option<String>,
+) -> Result<Vec<AutoApproveOutcome>, String> {
+    let root = super::autorun::root(&app)?;
+    let bridge = super::ai_bridge::running_bridge(&app);
+    set_auto_approve_with(&root, bridge.as_deref().map(|b| &b.ctx), &env_id, on)?;
+    Ok(match_allow_files_to_active(&root, working_dir.as_deref()))
 }
 
 /// Where a tool keeps the "always allow" the app can write: a file per

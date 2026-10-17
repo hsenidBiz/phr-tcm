@@ -3,7 +3,8 @@
 
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, expect, test } from "vitest";
-import { loadEnvironments } from "./environments";
+import { activeEnvIdSnapshot, setActiveEnvId } from "./activeEnv";
+import { loadEnvironments, switchEnvironment } from "./environments";
 
 afterEach(() => {
   clearMocks();
@@ -61,4 +62,39 @@ test("a list that was read and needs nothing marks the check done", async () => 
   await loadEnvironments();
   expect(calls.some((c) => c.cmd === "env_save")).toBe(false);
   expect(localStorage.getItem("tcm-v2-env-db-reconciled")).toBe("1");
+});
+
+// The AI Bridge switches belong to the active environment, so the webview
+// has to know which one that is the moment a list or a switch says so.
+
+test("loading the environments makes their active one the switches' environment", async () => {
+  mock(() => [{ id: "dev-read" }]);
+  await loadEnvironments();
+  expect(activeEnvIdSnapshot()).toBe(DEFAULT.id);
+});
+
+test("a switch tells Rust the working repository and makes the new one the switches' environment", async () => {
+  localStorage.setItem("tcm-v2-working-dir", "D:\repo");
+  const QA = { ...DEFAULT, id: "env-00000002", name: "QA" };
+  const calls: { cmd: string; args: unknown }[] = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "db_databases") return [{ id: "dev-read" }];
+    if (cmd === "env_set_active") return { active: QA.id, environments: [DEFAULT, QA] };
+    return null;
+  });
+  setActiveEnvId(DEFAULT.id);
+  await switchEnvironment(QA.id);
+  expect(calls.find((c) => c.cmd === "env_set_active")!.args).toEqual({ id: QA.id, workingDir: "D:\repo" });
+  expect(activeEnvIdSnapshot()).toBe(QA.id);
+});
+
+test("a refused switch leaves the switches' environment where it was", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "env_set_active") throw "the environment cannot be switched";
+    return null;
+  });
+  setActiveEnvId(DEFAULT.id);
+  await expect(switchEnvironment("env-00000002")).rejects.toThrow("cannot be switched");
+  expect(activeEnvIdSnapshot()).toBe(DEFAULT.id);
 });

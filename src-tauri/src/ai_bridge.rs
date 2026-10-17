@@ -50,6 +50,11 @@ pub struct BridgeContext {
     /// running one writes to the application, so both are refused
     /// (`API_WRITES_OFF`) until they do. Off by default, like `db_writes`.
     pub api_writes: bool,
+    /// The active environment's "Run database changes without asking".
+    /// Never the webview's to say: Rust sets it from the environment, on a
+    /// push and on a switch (`commands::ai_bridge::push_context_with`,
+    /// `commands::environments::move_bridge_to`).
+    pub db_no_ask: bool,
 }
 
 /// Hand-written so the store - and therefore every password in it - cannot
@@ -79,6 +84,7 @@ impl std::fmt::Debug for BridgeContext {
             .field("db_secrets", &self.db_secrets.as_ref().map(|_| "(hidden)"))
             .field("db_writes", &self.db_writes)
             .field("api_writes", &self.api_writes)
+            .field("db_no_ask", &self.db_no_ask)
             .finish()
     }
 }
@@ -459,7 +465,7 @@ pub async fn route(
                 "autorun": crate::modules::on(crate::modules::Module::AutoRun),
                 // Only while writes are on too: without them there is no
                 // change to run, asked about or not.
-                "db_no_ask": crate::app_settings::current().db_auto_approve && ctx.db_writes,
+                "db_no_ask": ctx.db_no_ask && ctx.db_writes,
             })
             .to_string(),
         ),

@@ -35,6 +35,7 @@ test("no environment, no pill", () => {
 test("the title bar names the environment only when there are two or more", () => {
   const env = (id: string, name: string) => ({
     id, name, start_url: "", allowed_origins: [], db_id: "dev-read", test_environment: false, test_prefix: "AUTOTEST", has_default_password: false,
+    db_auto_approve: false,
   });
   const one = { active: "env-1", environments: [env("env-1", "Default")] };
   const two = { active: "env-2", environments: [env("env-1", "Default"), env("env-2", "QA")] };

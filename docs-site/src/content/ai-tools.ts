@@ -69,7 +69,7 @@ export const aiBridge: Screen = {
   groups: [
     { id: "repositories", title: "Working repositories", summary: "The folders your test cases belong to, and whether the bridge is running." },
     { id: "connect", title: "Connect your AI tools", summary: "Register the bridge with the AI tools installed on this computer." },
-    { id: "tools", title: "Tools an assistant may use", summary: "Switch off any tool you do not want an assistant to call." },
+    { id: "tools", title: "Tools an assistant may use", summary: "Switch off any tool you do not want an assistant to call. Each environment keeps its own list." },
     {
       id: "environment",
       title: "Environment",
@@ -187,7 +187,8 @@ export const aiBridge: Screen = {
       locate: { text: "6 of 6 on" },
       name: "Tools an assistant may use",
       does:
-        "How many of the tools below are switched on. The tools every writing job needs (the writing guide, reading cases, checking a draft and similar) are always on and not listed.",
+        "How many of the tools below are switched on. The tools every writing job needs (the writing guide, reading cases, checking a draft and similar) are always on and not listed. " +
+        "The list belongs to the active environment, whose name shows beside the heading: each environment keeps its own.",
     },
     {
       id: "tool-switch",
@@ -196,7 +197,8 @@ export const aiBridge: Screen = {
       locate: { role: "switch", name: "Test Suites" },
       name: "Tool switch",
       does:
-        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Project tags, Find a Product Backlog Item and Project wiki, and Database Read Access while the Database Access module is on. A connected assistant sees the change without being restarted.",
+        "Switch a tool off to keep it out of an assistant's reach: Test Suites, Run results, Project tags, Find a Product Backlog Item and Project wiki, and Database Read Access while the Database Access module is on. A connected assistant sees the change without being restarted. " +
+        "The switch is for the active environment only, and so is **Turn all on** under the list. A new environment starts with every tool on.",
     },
     {
       id: "environment-pick",
@@ -206,7 +208,9 @@ export const aiBridge: Screen = {
       name: "Environment",
       does:
         "The environment Auto Run and API Templates work in: a site address, the company database below, and its own accounts and saved sign-ins. " +
-        "Switching moves the **Database** below with it, and the environment's name shows in the title bar.",
+        "Switching moves the **Database** below with it, and the environment's name shows in the title bar. " +
+        "Each environment also keeps its own **Tools an assistant may use**, **Create, update and delete**, **Run changes without asking** and **API templates** switches, so switching shows - and an assistant gets - the new environment's at once. " +
+        "The working repositories, their AI tools switches and the list of databases are the same in every environment.",
     },
     {
       id: "edit-environments",
@@ -227,7 +231,8 @@ export const aiBridge: Screen = {
       does:
         "Lets a connected assistant prove and run API templates: build a template for the test data a case needs, prove it end to end on your site, and run a saved one for the records it creates. " +
         "Proving and running write real test data through the site's own requests, as your Auto Run accounts, against the active environment's site address, so this is off until you turn it on. " +
-        "The card is shown while the **API Templates** module is on, in Settings, under General, on the **Modules** page. The templates themselves are listed on the API Templates tab.",
+        "The card is shown while the **API Templates** module is on, in Settings, under General, on the **Modules** page. The templates themselves are listed on the API Templates tab. " +
+        "The switch is the active environment's own, named on the card; in a new environment it starts off.",
     },
     {
       id: "database",
@@ -262,7 +267,8 @@ export const aiBridge: Screen = {
       locate: { role: "switch", name: "Create, update and delete" },
       name: "Create, update and delete",
       does:
-        "Lets an assistant change data in the chosen database, not only read it. It is off until you turn it on, it can only be turned on for a dev login database (a user ending in _devlogin), and every statement is written to the app's log.",
+        "Lets an assistant change data in the chosen database, not only read it. It is off until you turn it on, it can only be turned on for a dev login database (a user ending in _devlogin), and every statement is written to the app's log. " +
+        "The switch is the active environment's own, named above it; in a new environment it starts off.",
     },
     {
       id: "no-ask",
@@ -273,7 +279,8 @@ export const aiBridge: Screen = {
       does:
         "Lets your AI tools change the database without stopping to ask you first. Available while **Create, update and delete** is on. " +
         "The app sets each registered tool's own \"always allow\" for the database tool where that tool keeps it in a file (Claude Code and Cursor), and names below the switch any tool you need to allow it in yourself. " +
-        "Assistants still try each set of changes as a dry run before saving it. Off until you turn it on.",
+        "Assistants still try each set of changes as a dry run before saving it. Off until you turn it on. " +
+        "Each environment keeps its own, and the \"always allow\" follows the active environment: switching to one that has it off takes it out again.",
     },
     {
       id: "forget",
@@ -282,7 +289,7 @@ export const aiBridge: Screen = {
       locate: { role: "button", name: "Forget them" },
       name: "Forget them",
       does:
-        "Removes the database logins saved on this computer (they are kept in Windows Credential Manager), clears the card's settings and the chosen database, and turns **Create, update and delete** off.",
+        "Removes the database logins saved on this computer (they are kept in Windows Credential Manager), clears the card's settings and the chosen database, and turns **Create, update and delete** off in every environment.",
     },
     {
       id: "breakdown",

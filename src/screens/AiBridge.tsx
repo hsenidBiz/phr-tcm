@@ -4,7 +4,7 @@ import { Database, FolderOpen, Globe } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Combobox from "../components/ui/combobox";
 import { toast } from "../lib/toast";
-import { commands, type AppSettings, type AutoApproveOutcome, type DbDatabase } from "../bindings";
+import { commands, type AutoApproveOutcome, type DbDatabase, type EnvListView } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { DbCredentialsModal } from "../components/DbCredentialsModal";
 import EnvironmentsDialog, { RECIPE_ADDRESS } from "../components/EnvironmentsDialog";
@@ -13,16 +13,17 @@ import { Switch } from "../components/ui/switch";
 import { cn } from "../lib/cn";
 import { siteName } from "../lib/siteName";
 import {
+  dbWritesSnapshot,
   forgetDbConfig,
+  forgetDbWritesEverywhere,
   forgetRemovedDb,
   isDevLoginUser,
-  loadDbWrites,
   saveDbWrites,
   saveSelectedDb,
   selectedDbSnapshot,
   subscribeDbSettings,
 } from "../lib/dbServer";
-import { loadApiWrites, saveApiWrites } from "../lib/apiTemplates";
+import { apiWritesSnapshot, saveApiWrites, subscribeApiWrites } from "../lib/apiTemplates";
 import {
   activeDbMissing,
   envKeys,
@@ -245,46 +246,58 @@ export default function AiBridge() {
       setSwitching(false);
     }
   };
+  // Every switch below that changes what an assistant may do - the tool
+  // list, database writes, running them without asking, API template
+  // writes - is the ACTIVE environment's own: each environment keeps its
+  // own, and a switch of environment shows (and enforces) the other's.
+  // Read through the stores, so a switch re-renders them at once.
+  //
   // Whether the assistant may create, update and delete. Half the
   // permission: the Rust side also requires the database's own user to be
   // the dev login, and refuses the write when either is missing.
-  const [dbWrites, setWrites] = useState<boolean>(loadDbWrites);
-  const setDbWrites = (on: boolean) => {
-    setWrites(on);
-    saveDbWrites(on);
-  };
+  const dbWrites = useSyncExternalStore(subscribeDbSettings, dbWritesSnapshot);
+  const setDbWrites = (on: boolean) => saveDbWrites(on);
   const devLogin = selectedDb ? isDevLoginUser(selectedDb.user) : false;
   // Whether the assistant may prove and run API templates - a separate
   // decision from whether the four tools are reachable at all (the "API
   // templates" row above), the same shape as the database's own
   // create/update/delete switch. Offered only where Auto Run is.
-  const [apiWrites, setApiWritesState] = useState<boolean>(loadApiWrites);
-  const setApiWrites = (on: boolean) => {
-    setApiWritesState(on);
-    saveApiWrites(on);
-  };
-  // "Run database changes without asking": kept by Rust (it writes each
-  // registered tool's own "always allow" for db_query, and re-applies it
-  // to a tool registered later), so it is read from the app settings. It
-  // means something only while writes can happen at all.
-  const appSettings = useQuery({ queryKey: ["app-settings"], queryFn: () => commands.getAppSettings() });
-  const noAsk = Boolean(appSettings.data?.db_auto_approve);
+  const apiWrites = useSyncExternalStore(subscribeApiWrites, apiWritesSnapshot);
+  const setApiWrites = (on: boolean) => saveApiWrites(on);
+  // "Run database changes without asking": kept by Rust on the environment
+  // (it writes each registered tool's own "always allow" for db_query while
+  // that environment is active, and re-applies it on a switch and to a tool
+  // registered later). It means something only while writes can happen at
+  // all, and only once there is an environment to keep it on.
+  const noAsk = Boolean(activeEnv?.db_auto_approve);
   const writesLive = dbWrites && devLogin;
   const [noAskNotes, setNoAskNotes] = useState<AutoApproveOutcome[]>([]);
   const setNoAsk = async (on: boolean) => {
-    const before = appSettings.data;
-    if (before) qc.setQueryData<AppSettings>(["app-settings"], { ...before, db_auto_approve: on });
+    if (!activeEnv) return;
+    const before = qc.getQueryData<EnvListView>(envKeys.list);
+    if (before) {
+      qc.setQueryData<EnvListView>(envKeys.list, {
+        ...before,
+        environments: before.environments.map((e) => (e.id === activeEnv.id ? { ...e, db_auto_approve: on } : e)),
+      });
+    }
     try {
-      const r = await commands.setDbAutoApprove(on, global ? null : workingDir || null);
+      const r = await commands.setDbAutoApprove(activeEnv.id, on, global ? null : workingDir || null);
       if (r.status === "error") throw r.error;
       setNoAskNotes(on ? r.data.filter((o) => o.note) : []);
-      qc.invalidateQueries({ queryKey: ["app-settings"] });
+      void qc.invalidateQueries({ queryKey: envKeys.list });
       logUi(`db auto-approve ${on ? "on" : "off"}`);
     } catch (e) {
-      if (before) qc.setQueryData(["app-settings"], before);
+      if (before) qc.setQueryData(envKeys.list, before);
       toast.error(String(e));
     }
   };
+  // Says whose switches these are, beside the switches themselves.
+  const envScope = activeEnv && (
+    <p className="text-[11px] text-faint">
+      For <span className="font-medium text-text">{activeEnv.name}</span> - each environment keeps its own.
+    </p>
+  );
   const exe = bridge.data?.mcp_exe ?? "";
   const installed = (tools.data ?? []).filter((t) => t.installed);
   const registerButton = (id: string) => (
@@ -367,7 +380,7 @@ export default function AiBridge() {
   // decision nobody made about it.
   const forgetDb = async () => {
     forgetDbConfig();
-    setDbWrites(false);
+    forgetDbWritesEverywhere();
     let failed: string | null = null;
     try {
       const res = await commands.forgetDbCredentials();
@@ -661,7 +674,14 @@ export default function AiBridge() {
 
       <section data-tour="ai-toolset" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-text">Tools an assistant may use</h2>
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+            <h2 className="text-sm font-semibold text-text">Tools an assistant may use</h2>
+            {activeEnv && (
+              <span className="text-xs text-muted">
+                on <span className="font-medium text-text">{activeEnv.name}</span>
+              </span>
+            )}
+          </div>
           <span className="text-xs text-faint">
             {/* Counted over ROWS, not names: the wiki row carries two
                 tools, so subtracting the disabled names would report one
@@ -913,6 +933,7 @@ export default function AiBridge() {
               stored choice is kept, so going back to the dev login
               restores it. */}
           <div className="space-y-1 rounded-md border border-border/60 p-2">
+            {envScope}
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-medium text-muted">
                 Create, update and delete
@@ -937,7 +958,7 @@ export default function AiBridge() {
               <Switch
                 ariaLabel="Run database changes without asking"
                 checked={noAsk && writesLive}
-                disabled={!writesLive || appSettings.isLoading}
+                disabled={!writesLive || !activeEnv}
                 onCheckedChange={(on) => void setNoAsk(on)}
               />
             </div>
@@ -980,6 +1001,7 @@ export default function AiBridge() {
         <section data-tour="ai-api-templates" className="space-y-3 rounded-md border border-border bg-surface p-4">
           <h2 className="text-sm font-semibold text-text">API templates</h2>
           <div className="space-y-1 rounded-md border border-border/60 p-2">
+            {envScope}
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-medium text-muted">
                 API templates (create, edit and delete)

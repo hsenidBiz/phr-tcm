@@ -10,8 +10,10 @@
 
 import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { commands, type EnvInput, type EnvListView, type EnvView } from "../bindings";
+import { noteEnvironments } from "./activeEnv";
 import { saveSelectedDb, selectedDbSnapshot } from "./dbServer";
 import { logUi } from "./uiLog";
+import { workingDirSnapshot } from "./workingDir";
 
 /** React Query keys for the environments. */
 export const envKeys = {
@@ -121,13 +123,17 @@ export async function loadEnvironments(): Promise<EnvListView> {
       markReconciled();
     }
   }
+  // The AI Bridge switches are the active environment's: from here on they
+  // are read for this one (moved over from older versions' single values
+  // the first time).
+  noteEnvironments(view);
   return view;
 }
 
 /** The environments and which is active, shared by everything that shows
  * them. */
-export function useEnvironments() {
-  return useQuery({ queryKey: envKeys.list, queryFn: loadEnvironments, retry: false });
+export function useEnvironments(enabled = true) {
+  return useQuery({ queryKey: envKeys.list, queryFn: loadEnvironments, retry: false, enabled });
 }
 
 /** The name the title bar shows: the active environment's, but only once
@@ -147,22 +153,30 @@ export function useActiveEnvironmentName(): string | null {
  * (a saved custom login removed or reset) still switches; it sets no
  * database, and `dbMissing` says so. `view` is the list as Rust now has it.
  *
+ * Rust moves the AI bridge with it: every write off until the new
+ * environment's own switches are pushed, and each AI tool's "always allow"
+ * made to match the new one before it answers (hence the working
+ * repository, whose allow file it may hold). Only then are the switches
+ * read for the new environment here - which is what pushes them.
+ *
  * Throws Rust's refusal (a run in progress, say) as an Error. */
 export async function switchEnvironment(id: string): Promise<{ dbMissing: boolean; view: EnvListView }> {
-  const res = await commands.envSetActive(id);
+  const res = await commands.envSetActive(id, workingDirSnapshot() || null);
   if (res.status === "error") throw new Error(res.error);
   const view = res.data ?? EMPTY;
   const env = view.environments.find((e) => e.id === view.active);
-  if (!env) return { dbMissing: false, view };
-  const known = await knownDatabaseIds();
-  // Unsure (the list could not be read) keeps the environment's choice:
-  // naming a database that turns out to be gone is recoverable.
-  if (known === null || known.includes(env.db_id)) {
-    saveSelectedDb(env.db_id);
-    return { dbMissing: false, view };
+  let dbMissing = false;
+  if (env) {
+    const known = await knownDatabaseIds();
+    // Unsure (the list could not be read) keeps the environment's choice:
+    // naming a database that turns out to be gone is recoverable.
+    dbMissing = known !== null && !known.includes(env.db_id);
+    saveSelectedDb(dbMissing ? "" : env.db_id);
   }
-  saveSelectedDb("");
-  return { dbMissing: true, view };
+  // Last, so the first push for the new environment already names its
+  // database.
+  noteEnvironments(view);
+  return { dbMissing, view };
 }
 
 /** Whether the active environment names a database that is not set up any

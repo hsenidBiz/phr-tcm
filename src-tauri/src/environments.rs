@@ -39,6 +39,14 @@ pub struct Environment {
     /// tell them from a person's own. See `validate_test_prefix`.
     #[serde(default = "default_test_prefix")]
     pub test_prefix: String,
+    /// "Run database changes without asking" for this environment: the
+    /// assistant's tools get their own "always allow" for `db_query` while
+    /// this is the active environment, and the bridge tells the assistant it
+    /// need not ask. Off unless turned on, and changed only by
+    /// `set_db_auto_approve` - a save keeps what the file holds, so an edit
+    /// made from an older copy can never turn it back on.
+    #[serde(default)]
+    pub db_auto_approve: bool,
 }
 
 /// What a new environment, and one saved before prefixes existed, uses.
@@ -66,6 +74,12 @@ pub struct EnvFile {
     /// The active environment's id.
     pub active: String,
     pub environments: Vec<Environment>,
+    /// The machine-wide "Run database changes without asking" of older
+    /// versions has been given to the environment active at the time
+    /// (`adopt_legacy_auto_approve`). Set in the same write, so it moves
+    /// exactly once.
+    #[serde(default)]
+    pub auto_approve_adopted: bool,
 }
 
 const DEFAULT_NAME: &str = "Default";
@@ -238,7 +252,9 @@ fn load_or_init_locked(root: &Path, current_db: Option<&str>) -> Result<EnvFile,
             db_id,
             test_environment: false,
             test_prefix: default_test_prefix(),
+            db_auto_approve: false,
         }],
+        auto_approve_adopted: false,
     };
     write(root, &file)?;
     crate::applog::info("Environments: made Default from this machine's settings");
@@ -294,6 +310,53 @@ pub fn active_id(root: &Path) -> Result<String, String> {
     Ok(load_or_init(root, None)?.active)
 }
 
+/// The active environment, or None while there is no file yet. Never makes
+/// one: the bridge asks this on every push, and a Default made there would
+/// not get the database the Company database card has chosen.
+pub fn read_active(root: &Path) -> Result<Option<Environment>, String> {
+    let _held = lock();
+    Ok(read(root)?.and_then(|file| file.environments.into_iter().find(|e| e.id == file.active)))
+}
+
+/// Switch "Run database changes without asking" on or off for one
+/// environment. Nothing else in the file changes.
+pub fn set_db_auto_approve(root: &Path, id: &str, on: bool) -> Result<EnvFile, String> {
+    let _held = lock();
+    let mut file = load_or_init_locked(root, None)?;
+    let env = file
+        .environments
+        .iter_mut()
+        .find(|e| e.id == id)
+        .ok_or_else(|| "that environment is not there any more".to_string())?;
+    env.db_auto_approve = on;
+    write(root, &file)?;
+    Ok(file)
+}
+
+/// Give older versions' machine-wide "Run database changes without asking"
+/// to the environment active now, and to no other - once. `legacy_on` is
+/// that old setting. Answers whether anything was turned on. No file yet
+/// means nothing to give it to, and none is made.
+pub fn adopt_legacy_auto_approve(root: &Path, legacy_on: bool) -> Result<bool, String> {
+    let _held = lock();
+    let Some(mut file) = read(root)? else { return Ok(false) };
+    if file.auto_approve_adopted {
+        return Ok(false);
+    }
+    let active = file.active.clone();
+    if legacy_on {
+        if let Some(env) = file.environments.iter_mut().find(|e| e.id == active) {
+            env.db_auto_approve = true;
+        }
+    }
+    file.auto_approve_adopted = true;
+    write(root, &file)?;
+    if legacy_on {
+        crate::applog::info("Environments: running database changes without asking now belongs to the active environment");
+    }
+    Ok(legacy_on)
+}
+
 fn tidy(mut env: Environment) -> Environment {
     env.name = env.name.trim().to_string();
     env.start_url = env.start_url.trim().to_string();
@@ -325,6 +388,8 @@ pub fn save_env_with(
     let mut env = tidy(env);
     if env.id.is_empty() {
         env.id = new_id(&env.name, &file.environments);
+        // A new environment never arrives with writes asked about less.
+        env.db_auto_approve = false;
         file.environments.push(env.clone());
     } else {
         let slot = file
@@ -332,6 +397,9 @@ pub fn save_env_with(
             .iter_mut()
             .find(|e| e.id == env.id)
             .ok_or_else(|| "that environment is not there any more".to_string())?;
+        // Kept from the file, read under this lock: only
+        // `set_db_auto_approve` moves it.
+        env.db_auto_approve = slot.db_auto_approve;
         *slot = env.clone();
     }
     let mut known = known_db_ids.to_vec();

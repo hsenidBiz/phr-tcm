@@ -8,6 +8,7 @@
 // Rust once and then deletes.
 
 import { commands } from "../bindings";
+import { BRIDGE_SWITCH_KEYS, envScopedKey, subscribeActiveEnv } from "./activeEnv";
 import { logUi } from "./uiLog";
 
 /** What older versions kept: the settings for registering a separate
@@ -19,10 +20,12 @@ const LEGACY_KEY = "tcm-v2-db-mcp";
 /** The id of the database the tools use - absent when none is chosen. */
 const SELECTED_KEY = "tcm-v2-db-selected";
 
-/** The create/update/delete switch. "1" only when it is on, and absent
- * otherwise - so a fresh profile and a cleared one both read off, which is
- * the only default a switch like this may have. */
-const WRITES_KEY = "tcm-v2-db-writes";
+/** The create/update/delete switch, the active environment's own (each
+ * environment keeps its own - activeEnv.ts). "1" only when it is on, and
+ * absent otherwise - so a fresh profile, a cleared one and a new
+ * environment all read off, which is the only default a switch like this
+ * may have. */
+const writesKey = (): string => envScopedKey(BRIDGE_SWITCH_KEYS.dbWrites);
 
 const listeners = new Set<() => void>();
 
@@ -33,11 +36,13 @@ function notify(): void {
 /** Subscription so App can re-push the bridge context the moment the
  * database or the write switch changes, instead of the change waiting for
  * the next org/project change. The same pattern the disabled tool set
- * uses. */
+ * uses. A switch of environment changes whose write switch it is. */
 export function subscribeDbSettings(cb: () => void): () => void {
   listeners.add(cb);
+  const offEnv = subscribeActiveEnv(cb);
   return () => {
     listeners.delete(cb);
+    offEnv();
   };
 }
 
@@ -106,7 +111,7 @@ export function selectedDbSnapshot(): string {
  * database. Off unless it was explicitly switched on. */
 export function loadDbWrites(): boolean {
   try {
-    return localStorage.getItem(WRITES_KEY) === "1";
+    return localStorage.getItem(writesKey()) === "1";
   } catch {
     return false;
   }
@@ -114,8 +119,8 @@ export function loadDbWrites(): boolean {
 
 export function saveDbWrites(on: boolean): void {
   try {
-    if (on) localStorage.setItem(WRITES_KEY, "1");
-    else localStorage.removeItem(WRITES_KEY);
+    if (on) localStorage.setItem(writesKey(), "1");
+    else localStorage.removeItem(writesKey());
   } catch {
     // storage unavailable -> the choice lasts for this session only
   }
@@ -124,6 +129,21 @@ export function saveDbWrites(on: boolean): void {
 
 export function dbWritesSnapshot(): boolean {
   return loadDbWrites();
+}
+
+/** The write switch off in EVERY environment - what "Forget them" leaves:
+ * the logins it wipes are every database's, and a switch left on anywhere
+ * would hand a login saved later a decision nobody made about it. */
+export function forgetDbWritesEverywhere(): void {
+  const base = BRIDGE_SWITCH_KEYS.dbWrites;
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key === base || key.startsWith(`${base}:`)) localStorage.removeItem(key);
+    }
+  } catch {
+    // storage unavailable -> nothing was stored to remove either
+  }
+  notify();
 }
 
 /** Whether a user name is the dev login - the only user the app lets an

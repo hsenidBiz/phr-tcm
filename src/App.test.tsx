@@ -10,6 +10,7 @@ import { getThemeChoice, setThemeChoice } from "./lib/theme";
 import { commands } from "./bindings";
 import { saveDbWrites, saveSelectedDb } from "./lib/dbServer";
 import { saveApiWrites } from "./lib/apiTemplates";
+import { setActiveEnvId } from "./lib/activeEnv";
 import { claimCacheFor } from "./lib/cache";
 import { resetForTests as resetNotifications } from "./lib/notifications";
 import { extrasUnlockedSnapshot, resetExtrasStore } from "./lib/extras";
@@ -525,7 +526,50 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
   await vi.waitFor(() =>
     expect(pushes[pushes.length - 1]).toMatchObject({ switches: expect.objectContaining({ apiWrites: true }) }),
   );
-  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true });
+  // No environment known in this test: the push says so, and Rust then
+  // keeps every write off whatever the switches say.
+  expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: true, envId: "" });
+});
+
+const ENV = (id: string, name: string) => ({
+  id, name, start_url: "", allowed_origins: [], db_id: "dev-read", test_environment: false,
+  test_prefix: "AUTOTEST", has_default_password: false, db_auto_approve: false,
+});
+
+/// The switches belong to the active environment, and every push says
+/// which one it carries: App learns it at start - the AI Bridge tab need
+/// never be opened - and a switch of environment re-pushes the new one's
+/// switches tagged with it.
+test("the bridge context carries the active environment's switches and names it", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }),
+  );
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  // What an older version kept, for the whole app.
+  localStorage.setItem("tcm-v2-api-writes", "1");
+  const A = ENV("env-0000000a", "Default");
+  const B = ENV("env-0000000b", "QA");
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "env_list") return { active: A.id, environments: [A, B] };
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() =>
+    expect(pushes[pushes.length - 1]?.switches).toEqual({ dbWrites: false, apiWrites: true, envId: A.id }),
+  );
+
+  act(() => setActiveEnvId(B.id));
+  await vi.waitFor(() =>
+    expect(pushes[pushes.length - 1].switches).toEqual({ dbWrites: false, apiWrites: false, envId: B.id }),
+  );
 });
 
 /// The old trial switch on the AI Bridge tab is gone: when an older version

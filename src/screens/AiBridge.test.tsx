@@ -1273,12 +1273,13 @@ test("the API templates switch is off, and stored when turned on", async () => {
 test("running changes without asking needs writes on, and says what each tool needs", async () => {
   localStorage.setItem("tcm-v2-db-selected", "dev-login");
   const asked: unknown[] = [];
-  let settings = { close_to_tray: true, close_notice_shown: false, beta_updates: false, start_minimized: true, db_auto_approve: false };
+  // The choice is the active environment's own, kept on it by Rust.
+  let dev = { ...ENV_DEFAULT, db_id: "dev-login", db_auto_approve: false };
   dbMocks((cmd, args) => {
-    if (cmd === "get_app_settings") return settings;
+    if (cmd === "env_list") return { active: dev.id, environments: [dev] };
     if (cmd === "set_db_auto_approve") {
       asked.push(args);
-      settings = { ...settings, db_auto_approve: (args as { on: boolean }).on };
+      dev = { ...dev, db_auto_approve: (args as { on: boolean }).on };
       return [
         { tool: "Claude Code", applied: true, note: "" },
         { tool: "VS Code", applied: false, note: "VS Code keeps this in its own window: when it asks about db_query, choose to always allow it (or use Chat: Manage Tool Approval)" },
@@ -1299,7 +1300,8 @@ test("running changes without asking needs writes on, and says what each tool ne
   fireEvent.click(screen.getByRole("switch", { name: "Run database changes without asking" }));
 
   await waitFor(() => expect(asked).toHaveLength(1));
-  expect((asked[0] as { on: boolean }).on).toBe(true);
+  // For the environment the switch is shown for, by id.
+  expect(asked[0]).toMatchObject({ envId: ENV_DEFAULT.id, on: true });
   expect(await screen.findByText(/VS Code keeps this in its own window/)).toBeInTheDocument();
   expect(screen.queryByText(/Claude Code keeps/)).not.toBeInTheDocument();
   await waitFor(() =>
@@ -1583,7 +1585,9 @@ test("choosing an environment switches it and the database card shows its databa
   fireEvent.click(await screen.findByRole("option", { name: "QA" }));
 
   await waitFor(() =>
-    expect(calls.find((c) => c.cmd === "env_set_active")?.args).toEqual({ id: ENV_QA.id }),
+    // With the working repository: Rust makes its AI tools' allow file match
+    // the new environment before it answers.
+    expect(calls.find((c) => c.cmd === "env_set_active")?.args).toEqual({ id: ENV_QA.id, workingDir: "D:\\repo" }),
   );
   await waitFor(() => expect(localStorage.getItem("tcm-v2-db-selected")).toBe("qa-read"));
   expect(await screen.findByText("Signs in as sgqa01db01_readonly")).toBeInTheDocument();
@@ -1750,6 +1754,78 @@ test("once reconciled, a differing card choice is not forced onto the environmen
   await waitFor(() => expect(calls.some((c) => c.cmd === "env_list")).toBe(true));
   await new Promise((r) => setTimeout(r, 50));
   expect(calls.some((c) => c.cmd === "env_save")).toBe(false);
+});
+
+// ------------------------------------------- switches per environment
+
+function toolsCard(): HTMLElement {
+  return screen.getByText("Tools an assistant may use").closest("section")!;
+}
+
+/// Each environment keeps its own tools, database writes and API template
+/// writes: the tab shows the active one's, says whose they are, and a switch
+/// of environment shows the other's.
+test("the switches shown are the active environment's, and a switch shows the other's", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  localStorage.setItem(`tcm-v2-mcp-disabled:${ENV_QA.id}`, JSON.stringify(["get_tags"]));
+  localStorage.setItem(`tcm-v2-api-writes:${ENV_QA.id}`, "1");
+  envMocks([ENV_DEFAULT, ENV_QA]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  await waitFor(() => expect(within(toolsCard()).getByText("Default")).toBeInTheDocument());
+  expect(within(toolsCard()).getByRole("switch", { name: "Project tags" })).toHaveAttribute("aria-checked", "true");
+  const api = () => screen.getByRole("switch", { name: "API templates (create, edit and delete)" });
+  expect(api()).toHaveAttribute("aria-checked", "false");
+
+  fireEvent.click(await screen.findByRole("combobox", { name: "Environment" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA" }));
+
+  await waitFor(() => expect(within(toolsCard()).getByText("QA")).toBeInTheDocument());
+  expect(within(toolsCard()).getByRole("switch", { name: "Project tags" })).toHaveAttribute("aria-checked", "false");
+  expect(api()).toHaveAttribute("aria-checked", "true");
+  // The write cards name the environment too.
+  const apiCard = api().closest("section")!;
+  expect(within(apiCard).getByText("QA")).toBeInTheDocument();
+  expect(within(dbCard()).getByText("QA")).toBeInTheDocument();
+});
+
+test("Turn all on turns on the active environment's tools and leaves another's alone", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-read");
+  localStorage.setItem(`tcm-v2-mcp-disabled:${ENV_DEFAULT.id}`, JSON.stringify(["get_tags"]));
+  localStorage.setItem(`tcm-v2-mcp-disabled:${ENV_QA.id}`, JSON.stringify(["get_tags"]));
+  envMocks([ENV_DEFAULT, ENV_QA]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  await waitFor(() => expect(within(toolsCard()).getByText("Default")).toBeInTheDocument());
+  await waitFor(() =>
+    expect(within(toolsCard()).getByRole("switch", { name: "Project tags" })).toHaveAttribute("aria-checked", "false"),
+  );
+  fireEvent.click(within(toolsCard()).getByRole("button", { name: "Turn all on" }));
+
+  expect(within(toolsCard()).getByRole("switch", { name: "Project tags" })).toHaveAttribute("aria-checked", "true");
+  expect(localStorage.getItem(`tcm-v2-mcp-disabled:${ENV_DEFAULT.id}`)).toBeNull();
+  expect(localStorage.getItem(`tcm-v2-mcp-disabled:${ENV_QA.id}`)).toBe(JSON.stringify(["get_tags"]));
+});
+
+/// "Run database changes without asking" is the active environment's own
+/// choice, kept on it by Rust: the tab shows it, and a switch shows the
+/// other environment's.
+test("running changes without asking shows the active environment's own choice", async () => {
+  localStorage.setItem("tcm-v2-db-selected", "dev-login");
+  const dev = { ...ENV_DEFAULT, db_id: "dev-login", db_auto_approve: false };
+  const qa = { ...ENV_QA, db_id: "dev-login", db_auto_approve: true };
+  localStorage.setItem(`tcm-v2-db-writes:${dev.id}`, "1");
+  localStorage.setItem(`tcm-v2-db-writes:${qa.id}`, "1");
+  envMocks([dev, qa]);
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  const noAsk = () => screen.getByRole("switch", { name: "Run database changes without asking" });
+  await waitFor(() => expect(noAsk()).not.toBeDisabled());
+  expect(noAsk()).toHaveAttribute("aria-checked", "false");
+
+  fireEvent.click(await screen.findByRole("combobox", { name: "Environment" }));
+  fireEvent.click(await screen.findByRole("option", { name: "QA" }));
+  await waitFor(() => expect(noAsk()).toHaveAttribute("aria-checked", "true"));
 });
 
 // ------------------------------------------------------- tool explanations

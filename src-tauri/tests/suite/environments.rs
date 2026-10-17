@@ -26,11 +26,12 @@ fn env(id: &str, name: &str, start_url: &str) -> Environment {
         db_id: "dev-read".into(),
         test_environment: false,
         test_prefix: "AUTOTEST".into(),
+        db_auto_approve: false,
     }
 }
 
 fn file(envs: Vec<Environment>) -> EnvFile {
-    EnvFile { active: envs[0].id.clone(), environments: envs }
+    EnvFile { active: envs[0].id.clone(), environments: envs, auto_approve_adopted: false }
 }
 
 fn input(name: &str) -> EnvInput {
