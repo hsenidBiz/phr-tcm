@@ -6056,7 +6056,12 @@ export type SyncState =
  *  The repo has it under `## Excluded <id>`: the team left it out on
  *  purpose. Nothing in Sync ever writes it.
  */
-{ kind: "ExcludedInRepo" };
+{ kind: "ExcludedInRepo" } | 
+/**
+ *  The script builds its own draft (a setup), which Playwright cannot
+ *  do: it stays in TCM. `reason` is the sentence the preview gives.
+ */
+{ kind: "NotExportable"; reason: string };
 
 /**
  *  What an action points at. A plain string keeps the meaning it has

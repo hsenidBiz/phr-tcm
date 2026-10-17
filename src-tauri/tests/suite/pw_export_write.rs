@@ -5,6 +5,8 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use v2_lib::api_templates::fixture::{Fixture, FixtureRun, FixtureStep};
+use v2_lib::api_templates::{fixture_store, store as template_store, ApiTemplate, Proven};
 use v2_lib::autorun::accounts::{save_accounts_for, Account};
 use v2_lib::autorun::{nav, recipe, store, CaseScript, LocalRun};
 use v2_lib::pw_export::export::{preview_with, write_with, ExportResult};
@@ -110,6 +112,64 @@ impl Fx {
         }))
         .unwrap();
         store::save_run(self.root.path(), &run).unwrap();
+    }
+
+    /// Saves shared draft `id` (one proven template, one output called
+    /// `name`) and, when `built` is given, a successful run that made it.
+    pub(crate) fn shared_draft(&self, id: &str, built: Option<&str>) {
+        let r = self.root.path();
+        let mut t: ApiTemplate = serde_json::from_value(json!({
+            "id": "make-cycle", "title": "Make a cycle", "module": "PMS", "effect": "create",
+            "description": "d", "sources": ["x:1"], "antiforgery": { "page": "/hr/x" },
+            "params": [{ "name": "cycleName", "type": "string", "required": true }],
+            "steps": [{ "name": "Save", "method": "POST", "path": "/hr/x",
+                        "form": { "CycleName": "{{cycleName}}" }, "expect": { "status": 200 },
+                        "capture": { "cycleName": "$.cycleName" } }],
+            "outputs": ["cycleName"]
+        }))
+        .unwrap();
+        t.proven = Some(Proven {
+            at: "2026-10-06 09:00:00".into(),
+            origin: "https://hr.example.internal".into(),
+            account: "admin".into(),
+            outputs: BTreeMap::new(),
+            environment: None,
+        });
+        template_store::save(r, ORG, PROJECT, &t).unwrap();
+        let f = Fixture {
+            id: id.into(),
+            name: format!("Draft {id}"),
+            account: "admin".into(),
+            steps: vec![FixtureStep {
+                template: "make-cycle".into(),
+                params: [("cycleName".to_string(), "{{prefix}} cycle".to_string())].into(),
+            }],
+            outputs: [("name".to_string(), "{{steps.1.cycleName}}".to_string())].into(),
+            creates: vec![],
+            skip_stages: vec![],
+        };
+        fixture_store::save(r, ORG, PROJECT, &f).unwrap();
+        if let Some(name) = built {
+            self.shared_draft_run(id, name);
+        }
+    }
+
+    /// A newer successful run of shared draft `id`, which made `name`.
+    pub(crate) fn shared_draft_run(&self, id: &str, name: &str) {
+        let run = FixtureRun {
+            at: "2026-10-06 10:00:00".into(),
+            ok: true,
+            failed_step: None,
+            detail: None,
+            outputs: [("name".to_string(), json!(name))].into(),
+        };
+        fixture_store::append_run(self.root.path(), ORG, PROJECT, id, run).unwrap();
+    }
+
+    /// A case that passed, whose one step fills `value`.
+    pub(crate) fn fill_case(&self, id: i32, title: &str, value: &str) {
+        self.script(id, title, "admin", "Definition Wizard", json!([{ "kind": "fill", "selector": "#name", "value": value }]));
+        self.run(&format!("r{id}"), "5", id, "Passed");
     }
 
     pub(crate) fn clone_path(&self) -> String {
@@ -795,4 +855,68 @@ fn a_case_with_sections_in_two_test_case_files_is_refused_on_update() {
     let e = export(&fx, &[81], &docs(&[(81, "Twice case")])).unwrap_err();
     assert!(e.starts_with("Case 81 has a section in more than one test-case file: "), "{e}");
     assert!(e.contains(OLD_FOUR) && e.contains(MOVED), "{e}");
+}
+
+fn only_case(fx: &Fx, id: i32) -> v2_lib::pw_export::export::PreviewCase {
+    let p = preview_with(fx.root.path(), ORG, PROJECT, &[id], &fx.clone_path(), &fx.modules.borrow()).unwrap();
+    p.cases.into_iter().find(|c| c.case_id == id).unwrap()
+}
+
+#[test]
+fn a_case_with_a_setup_is_refused_and_says_it_stays_in_tcm() {
+    let fx = Fx::new();
+    fx.good(90, "Own draft");
+    let mut s = store::load_script(fx.root.path(), 90).unwrap().unwrap();
+    s.setup = Some(v2_lib::autorun::Setup { fixture: "f1".into() });
+    store::save_script(fx.root.path(), &s).unwrap();
+    let pc = only_case(&fx, 90);
+    assert!(!pc.exportable);
+    assert_eq!(
+        pc.reason,
+        Some("builds its own draft with TCM fixture `f1`; Playwright has no fixture mechanism - stays TCM-only".to_string())
+    );
+    let e = export(&fx, &[90], &docs(&[(90, "Own draft")])).unwrap_err();
+    assert!(e.contains("stays TCM-only") && e.ends_with("Nothing was written."), "{e}");
+}
+
+#[test]
+fn a_shared_draft_value_is_written_into_the_spec() {
+    let fx = Fx::new();
+    fx.shared_draft("f2", Some("Shared FY26 Draft"));
+    fx.fill_case(91, "Uses a shared draft", "{{fixture.f2.name}}");
+    let pc = only_case(&fx, 91);
+    assert!(pc.exportable, "{:?}", pc.reason);
+    let r = export(&fx, &[91], &docs(&[(91, "Uses a shared draft")])).unwrap();
+    let spec = fx.read_clone(&format!("suites/_generated/{}", r.cases[0].1));
+    assert!(spec.contains("Shared FY26 Draft"), "{spec}");
+    assert!(!spec.contains("{{"), "{spec}");
+    // What is saved in Auto Run is untouched: it still holds the placeholder.
+    let saved = store::load_script(fx.root.path(), 91).unwrap().unwrap();
+    assert!(serde_json::to_string(&saved.steps).unwrap().contains("{{fixture.f2.name}}"));
+}
+
+#[test]
+fn a_shared_draft_with_no_current_output_is_refused() {
+    let fx = Fx::new();
+    fx.shared_draft("f2", None);
+    fx.fill_case(92, "Draft not built", "{{fixture.f2.name}}");
+    let pc = only_case(&fx, 92);
+    assert!(!pc.exportable);
+    assert!(pc.reason.clone().unwrap_or_default().contains("f2"), "{:?}", pc.reason);
+    assert!(export(&fx, &[92], &docs(&[(92, "Draft not built")])).is_err());
+    assert!(!fx.read_clone("suites/_generated/index.json").contains("\"92\""));
+}
+
+#[test]
+fn a_leftover_placeholder_is_refused_never_written() {
+    let fx = Fx::new();
+    fx.fill_case(93, "Odd placeholder", "{{something.x}}");
+    let pc = only_case(&fx, 93);
+    assert!(!pc.exportable);
+    assert!(pc.reason.clone().unwrap_or_default().contains("{{something.x}}"), "{:?}", pc.reason);
+    let before = fx.read_clone("suites/_generated/index.json");
+    let e = export(&fx, &[93], &docs(&[(93, "Odd placeholder")])).unwrap_err();
+    assert!(e.contains("{{something.x}}") && e.ends_with("Nothing was written."), "{e}");
+    assert_eq!(fx.read_clone("suites/_generated/index.json"), before);
+    assert!(!fx.exists(MD_REL));
 }

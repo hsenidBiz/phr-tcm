@@ -28,9 +28,9 @@ const ROWS: SyncRow[] = [
 
 type Call = { cmd: string; args: Record<string, unknown> };
 
-function mount(opts: { update?: (args: Record<string, unknown>) => ExportResult | Promise<never> } = {}) {
+function mount(opts: { update?: (args: Record<string, unknown>) => ExportResult | Promise<never>; rows?: SyncRow[] } = {}) {
   const calls: Call[] = [];
-  let rows = ROWS;
+  let rows = opts.rows ?? ROWS;
   mockIPC(
     (cmd, raw) => {
       const args = (raw ?? {}) as Record<string, unknown>;
@@ -217,6 +217,27 @@ test("a case the repo excludes has its own state and cannot be ticked", async ()
   // Neither Update out of date nor Add new counts it.
   expect(screen.getByRole("button", { name: "Update out of date (1)" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Add new (2)" })).toBeTruthy();
+  expect(m.calls.some((c) => c.cmd === "pw_sync_update")).toBe(false);
+});
+
+test("a case that builds its own draft stays in TCM: said why, never ticked, never counted", async () => {
+  const reason = "builds its own draft with TCM fixture `f1`; Playwright has no fixture mechanism - stays TCM-only";
+  const m = mount({
+    rows: [
+      ...ROWS,
+      { case_id: 17, title: "Seventeen", state: { kind: "NotExportable", reason }, exported_at: null, has_script: true, ...OUT },
+    ],
+  });
+  expect(await screen.findByText("Seventeen")).toBeTruthy();
+  expect(screen.getByText("Not exportable")).toBeTruthy();
+  expect(screen.getByText(`Stays in TCM: ${reason}`)).toBeTruthy();
+  const tone = screen.getByText("Not exportable").closest("[class*='bg-']")?.className ?? "";
+  expect(tone).toContain("text-muted");
+  const box = screen.getByRole("checkbox", { name: "Tick #17 Seventeen" });
+  expect(box.hasAttribute("disabled") || box.getAttribute("aria-disabled") === "true" || box.hasAttribute("data-disabled")).toBe(true);
+  // Add new counts the same two cases as without it.
+  expect(screen.getByRole("button", { name: "Add new (2)" })).toBeTruthy();
+  expect((screen.getByRole("button", { name: "Update ticked (0)" }) as HTMLButtonElement).disabled).toBe(true);
   expect(m.calls.some((c) => c.cmd === "pw_sync_update")).toBe(false);
 });
 

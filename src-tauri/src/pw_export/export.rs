@@ -13,7 +13,7 @@ use super::test_case::{self, CaseDoc};
 use super::translate::{self, RawSpecInput};
 use crate::autorun::nav::{self, NavFile};
 use crate::autorun::recipe::{self, SignInRecipe};
-use crate::autorun::{accounts, components, runner, store, CaseScript, LocalRun};
+use crate::autorun::{accounts, components, runner, setup, store, CaseScript, LocalRun};
 use crate::browser::actions::Action;
 use crate::browser::locator::Target;
 use crate::pw_repo::presence::{self, Presence};
@@ -105,6 +105,11 @@ pub fn nothing_written() -> ExportResult {
 
 /// Everything read once per preview or write.
 struct Ctx {
+    /// Auto Run's store and the project: where a shared draft's current
+    /// output is read from (`resolved_script`).
+    root: PathBuf,
+    org: String,
+    project: String,
     clone: Result<ClonedRepo, String>,
     /// Each case's Module, as Azure DevOps has it: what Auto Run picks a
     /// script's area by when the script names none (`nav::route_for`).
@@ -137,6 +142,9 @@ impl Ctx {
             open(Path::new(clone_path.trim()))
         };
         Ok(Ctx {
+            root: root.to_path_buf(),
+            org: org.to_string(),
+            project: project.to_string(),
             clone,
             modules: modules.clone(),
             map: mapping::load(root, org, project)?,
@@ -149,9 +157,31 @@ impl Ctx {
     }
 }
 
+/// A shared draft (an API Templates fixture) a script reads a value from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedDraft {
+    /// The fixture's id, as `{{fixture.<id>.<output>}}` names it.
+    pub fixture: String,
+    pub name: String,
+}
+
+/// Why a case that builds its own draft (a `setup`) is not exported;
+/// `setup_stays_in_tcm` puts the fixture in front of it.
+pub const SETUP_STAYS_IN_TCM: &str = "Playwright has no fixture mechanism - stays TCM-only";
+
+/// The reason a script with a setup on `fixture` is never exported.
+pub fn setup_stays_in_tcm(fixture: &str) -> String {
+    format!("builds its own draft with TCM fixture `{fixture}`; {SETUP_STAYS_IN_TCM}")
+}
+
 /// What a case needs to be written.
 struct Ready {
+    /// The script as the raw spec is written from it: components expanded
+    /// and every shared draft's value put in (`resolved_script`).
     script: CaseScript,
+    /// The shared drafts the script reads, for the hand-over's Preconditions.
+    #[allow(dead_code)] // read by the hand-over document, which builds on it
+    shared_drafts: Vec<SharedDraft>,
     placement: Placement,
     user_key: String,
     area_clicks: Vec<Target>,
@@ -283,6 +313,51 @@ fn load_expanded(root: &Path, org: &str, project: &str, id: i32, runs: &[LocalRu
     Ok(Some(script))
 }
 
+/// Every `{{name}}` still in `script`'s steps' values, in order.
+fn placeholders_in(script: &CaseScript) -> Vec<String> {
+    fn walk(v: &serde_json::Value, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::String(s) => out.extend(crate::api_templates::exec::placeholders(s)),
+            serde_json::Value::Array(items) => items.iter().for_each(|i| walk(i, out)),
+            serde_json::Value::Object(map) => map.values().for_each(|i| walk(i, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(&serde_json::to_value(&script.steps).unwrap_or_default(), &mut out);
+    out
+}
+
+/// `script` with every `{{fixture.<id>.<output>}}` replaced by that shared
+/// draft's current output (its newest successful run), and the drafts it
+/// read. `Err` names the draft that has no current output, or any
+/// placeholder TCM has no value for: a raw spec never carries one, since
+/// Playwright would type it as text.
+fn resolve_shared(root: &Path, org: &str, project: &str, script: CaseScript) -> Result<(CaseScript, Vec<SharedDraft>), String> {
+    let left_over = |names: Vec<String>| {
+        names.into_iter().next().map(|n| {
+            format!("a step still holds {{{{{n}}}}}, which TCM has no value to put in - fix the script in Auto Run")
+        })
+    };
+    // Anything but a shared draft's value is not ours to fill.
+    if let Some(why) = left_over(placeholders_in(&script).into_iter().filter(|n| !n.starts_with("fixture.")).collect()) {
+        return Err(why);
+    }
+    let fixtures = setup::fixture_values(root, org, project, &script.steps);
+    let drafts = fixtures.iter().map(|(id, f)| SharedDraft { fixture: id.clone(), name: f.name.clone() }).collect();
+    let resolved = setup::resolve(&script, &fixtures, &BTreeMap::new())?;
+    match left_over(placeholders_in(&resolved)) {
+        Some(why) => Err(why),
+        None => Ok((resolved, drafts)),
+    }
+}
+
+/// `script` as the export writes it: every shared draft's value put in
+/// (`resolve_shared`).
+pub fn resolved_script(root: &Path, org: &str, project: &str, script: CaseScript) -> Result<CaseScript, String> {
+    resolve_shared(root, org, project, script).map(|(s, _)| s)
+}
+
 /// The account case `id` ran as on its newest run, when that run's verdict
 /// is Passed - the account the case was proven with. A script with no Runs
 /// as has only ever run under the account chosen when its run started, so
@@ -326,9 +401,9 @@ impl Fingerprinter {
 
     /// The fingerprint of case `id` as an export would read it now, placed
     /// by `module` when its script names no area: its title, its steps with
-    /// every component expanded, where it starts (the area and its menu
-    /// clicks) and who it runs as (the account and the repo user it maps
-    /// to). `Ok(None)` when it has no script. A script whose components
+    /// every component expanded and every shared draft's value filled in,
+    /// where it starts (the area and its menu clicks) and who it runs as (the
+    /// account and the repo user it maps to). `Ok(None)` when it has no script. A script whose components
     /// cannot be expanded, or whose area cannot be found, is fingerprinted
     /// with that reason in place of what could not be read, so it differs
     /// from any fingerprint taken while it could.
@@ -337,7 +412,10 @@ impl Fingerprinter {
             return Ok(None);
         };
         let saved = with_run_account(saved, &self.runs);
-        let (steps, title) = match load_expanded(root, org, project, id, &self.runs) {
+        // What the raw spec holds: components expanded, shared drafts filled in.
+        let expanded = load_expanded(root, org, project, id, &self.runs)
+            .and_then(|s| s.map(|s| resolved_script(root, org, project, s)).transpose());
+        let (steps, title) = match expanded {
             Ok(Some(s)) => (serde_json::to_value(&s.steps).unwrap_or_default(), s.title),
             Ok(None) => return Ok(None),
             Err(why) => (serde_json::Value::String(format!("not expandable: {why}")), saved.title.clone()),
@@ -390,6 +468,16 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
     if let Some(why) = verdict_fails(&ctx.runs, id) {
         return fail(pc, why);
     }
+
+    // A case that builds its own draft cannot be written for Playwright.
+    if let Some(setup) = &script.setup {
+        return fail(pc, setup_stays_in_tcm(&setup.fixture));
+    }
+    // The values the shared drafts hold now go into the spec.
+    let (script, shared_drafts) = match resolve_shared(&ctx.root, &ctx.org, &ctx.project, script) {
+        Ok(r) => r,
+        Err(why) => return fail(pc, why),
+    };
 
     let (area_name, area_clicks, routed) = match route(ctx, id, &script) {
         Ok(r) => r,
@@ -493,7 +581,7 @@ fn evaluate(ctx: &Ctx, id: i32, script: Result<Option<CaseScript>, String>) -> (
     }
 
     pc.exportable = true;
-    let ready = Ready { script, placement, user_key, area_clicks, by_name, origins };
+    let ready = Ready { script, shared_drafts, placement, user_key, area_clicks, by_name, origins };
     (pc, Some(ready))
 }
 

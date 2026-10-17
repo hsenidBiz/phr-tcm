@@ -77,6 +77,8 @@ function stateText(s: SyncState): string {
       return "In the repo (not from this app)";
     case "ExcludedInRepo":
       return "Excluded in the repo";
+    case "NotExportable":
+      return "Not exportable";
   }
 }
 
@@ -90,6 +92,7 @@ function stateTone(s: SyncState): Tone {
     case "InRepoNotFromApp":
       return "info";
     case "ExcludedInRepo":
+    case "NotExportable":
       return "muted";
     case "NeverExported":
       return "neutral";
@@ -151,11 +154,13 @@ export default function Sync({
 
   const rows: SyncRow[] = states.data ?? [];
   const outOfDate = rows.filter((r) => r.state.kind === "OutOfDate" && r.has_script).map((r) => r.case_id);
-  // A case the team excluded in the repo is never written, so never ticked.
-  const tickable = (r: SyncRow) => r.has_script && r.state.kind !== "ExcludedInRepo";
+  // A case the team excluded in the repo, or one that stays in TCM, is never
+  // written, so never ticked.
+  const tickable = (r: SyncRow) =>
+    r.has_script && r.state.kind !== "ExcludedInRepo" && r.state.kind !== "NotExportable";
   const picked = rows.filter((r) => tickable(r) && ticked.has(r.case_id)).map((r) => r.case_id);
   // The same rule as Rust's `sync::add_new`, which picks the cases itself.
-  const addNew = rows.filter((r) => r.has_script && !r.in_repo).length;
+  const addNew = rows.filter((r) => r.has_script && !r.in_repo && r.state.kind !== "NotExportable").length;
 
   /** Runs one write: Update (with what was ticked to replace) or Add new. */
   const write = async (work: () => Promise<ExportResult>, addNew = false) => {
@@ -267,6 +272,9 @@ export default function Sync({
                   <td className="px-3 py-2">
                     <StatusBadge tone={stateTone(r.state)}>{stateText(r.state)}</StatusBadge>
                     {r.state.kind === "OutOfDate" && <div className="mt-0.5 text-xs text-muted">{r.state.why}</div>}
+                    {r.state.kind === "NotExportable" && (
+                      <div className="mt-0.5 text-xs text-muted">{`Stays in TCM: ${r.state.reason}`}</div>
+                    )}
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 text-xs text-muted">
                     {r.exported_at ? `exported ${localTime(r.exported_at)}` : <span className="text-faint">-</span>}

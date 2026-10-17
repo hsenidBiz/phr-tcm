@@ -868,3 +868,42 @@ fn add_new_reads_only_what_could_go_and_lists_a_case_it_could_not_read() {
     assert_eq!(sx.state(23), SyncState::NeverExported);
     assert_eq!(sx.state(24), SyncState::Current);
 }
+
+#[test]
+fn a_rebuilt_shared_draft_makes_the_export_out_of_date() {
+    let sx = Sx::new();
+    sx.fx.shared_draft("f2", Some("Shared FY26 Draft"));
+    sx.fx.fill_case(94, "Uses a shared draft", "{{fixture.f2.name}}");
+    sx.stamp(94);
+    sx.export(&[94], &docs(&[(94, "Uses a shared draft")])).unwrap();
+    assert_eq!(sx.state(94), SyncState::Current);
+
+    sx.fx.shared_draft_run("f2", "Shared FY27 Draft");
+    match sx.state(94) {
+        SyncState::OutOfDate { why } => assert!(why.contains("steps"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_setup_case_is_listed_as_not_exportable() {
+    let sx = Sx::new();
+    sx.fx.good(95, "Own draft");
+    sx.stamp(95);
+    sx.export(&[95], &docs(&[(95, "Own draft")])).unwrap();
+    // It gains a setup after it was exported; a second one never was exported.
+    sx.fx.good(96, "Own draft too");
+    for id in [95, 96] {
+        let mut s = sx.script(id);
+        s.setup = Some(v2_lib::autorun::Setup { fixture: "f1".into() });
+        store::save_script(sx.root(), &s).unwrap();
+        sx.stamp(id);
+    }
+    let reason = "builds its own draft with TCM fixture `f1`; Playwright has no fixture mechanism - stays TCM-only";
+    for id in [95, 96] {
+        assert_eq!(sx.state(id), SyncState::NotExportable { reason: reason.to_string() }, "case {id}");
+    }
+    // Add new never offers it.
+    let rows: Vec<SyncRow> = sx.rows().into_values().collect();
+    assert!(!sync::add_new(&rows).contains(&96));
+}

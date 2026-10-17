@@ -15,7 +15,7 @@
 
 use crate::autorun::{recipe, store, CaseScript};
 use crate::pw_export::clone;
-use crate::pw_export::export::Fingerprinter;
+use crate::pw_export::export::{self, Fingerprinter};
 use crate::pw_repo::presence;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -228,6 +228,9 @@ pub enum SyncState {
     /// The repo has it under `## Excluded <id>`: the team left it out on
     /// purpose. Nothing in Sync ever writes it.
     ExcludedInRepo,
+    /// The script builds its own draft (a setup), which Playwright cannot
+    /// do: it stays in TCM. `reason` is the sentence the preview gives.
+    NotExportable { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
@@ -309,6 +312,10 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
         let rec = record.cases.get(&id);
         let state = match (rec, script) {
             _ if found.excluded(id) => SyncState::ExcludedInRepo,
+            // Whatever else is true of it, the export will never write it.
+            (_, Some(CaseScript { setup: Some(setup), .. })) => {
+                SyncState::NotExportable { reason: export::setup_stays_in_tcm(&setup.fixture) }
+            }
             (None, _) if found.has(id) => SyncState::InRepoNotFromApp,
             (None, _) => SyncState::NeverExported,
             (Some(_), _) if !(found.has_feature_section(id) && raw.contains(&id)) => SyncState::NotInRepo,
@@ -339,7 +346,10 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
 /// repo still has somewhere (its section, say) is left alone, as is every
 /// InRepoNotFromApp, Current and OutOfDate case.
 pub fn add_new(rows: &[SyncRow]) -> Vec<i32> {
-    rows.iter().filter(|r| r.has_script && !r.in_repo).map(|r| r.case_id).collect()
+    rows.iter()
+        .filter(|r| r.has_script && !r.in_repo && !matches!(r.state, SyncState::NotExportable { .. }))
+        .map(|r| r.case_id)
+        .collect()
 }
 
 /// The cases of an Update the write may replace although the repo has them
