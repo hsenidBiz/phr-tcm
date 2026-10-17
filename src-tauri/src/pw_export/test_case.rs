@@ -598,6 +598,47 @@ pub fn with_order_block(file: &str, note: &[String]) -> String {
     kept.concat()
 }
 
+/// The bullet lines (without the `- `) of the order block in `file`'s
+/// header, in order; empty when it has none (`with_order_block`'s block, and
+/// only a block that is TCM's whole: a hand-broken one is none).
+pub fn order_lines(file: &str) -> Vec<String> {
+    let all: Vec<&str> = file.split_inclusive('\n').collect();
+    let header_end = all.iter().position(|l| is_h2(l)).unwrap_or(all.len());
+    let Some(start) = all[..header_end].iter().position(|l| l.trim() == ORDER_START) else { return Vec::new() };
+    let Some(end) = own_block_end(&all, start, header_end) else { return Vec::new() };
+    all[start + 1..end]
+        .iter()
+        .filter_map(|l| l.trim().strip_prefix("- "))
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
+/// The lines of case `id`'s section in `file` (its heading to the next `##`).
+fn case_lines(file: &str, id: i32) -> Vec<&str> {
+    let lines: Vec<&str> = file.split_inclusive('\n').collect();
+    let Some(start) = lines.iter().position(|l| is_case_heading(l, id)) else { return Vec::new() };
+    let end = lines[start + 1..].iter().position(|l| is_h2(l)).map_or(lines.len(), |p| start + 1 + p);
+    lines[start..end].to_vec()
+}
+
+/// Whether case `id`'s section has a `**From TCM:**` block (outside code fences).
+pub fn has_from_tcm(file: &str, id: i32) -> bool {
+    let mut fenced = false;
+    for l in case_lines(file, id) {
+        if is_fence(l) {
+            fenced = !fenced;
+        } else if !fenced && l.trim_start().starts_with("**From TCM:**") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether case `id`'s section has at least one `**Uses:**` line (`uses_lines`).
+pub fn has_uses(file: &str, id: i32) -> bool {
+    !uses_lines(&case_lines(file, id)).is_empty()
+}
+
 /// `existing` with case `id`'s section replaced by `section`, or `section`
 /// appended when the file has none. Everything outside that section is kept
 /// byte for byte, and so are the repo's own blocks inside it

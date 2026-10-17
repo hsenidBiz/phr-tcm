@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use v2_lib::pw_export::handover::ORDER_PROPOSAL;
 use v2_lib::pw_repo::handoff::{already_in, cards_at, declared_user_key, no_user_key, user_key, valid_name};
 use v2_lib::pw_repo::sync::{ExportRecord, Exported};
 
@@ -119,6 +120,8 @@ fn the_prompt_for_one_file_names_every_step_its_spec_and_its_user() {
          In step 4, run those raw specs. Classify each failure first, as step 4 says. \
          If it is a missing precondition, record it and stop. Otherwise heal it in place within the healer's bounds, and never regenerate it from the ticket. \
          Afterwards, put suites/_generated/seed.spec.ts back the way it was. \
+         Read docs/tcm-protected-baseline.md and the entries tagged tcm: in docs/app-quirks.md first; never fix a test by editing or deleting a record named in the protected baseline. \
+         A failure on a step the From TCM block lists as a known product defect is a product defect, not something to heal. \
          Before step 5, run step 2's shared-component checkpoint: if any steps belong to a component under suites/common-components, add its **Uses:** line to the test case. \
          The values in the raw specs come from each case's Test Case Manager script, which passed against the live app. \
          Tag them by the repo's own provenance rules: `from-ticket` where the test-case section states the value, \
@@ -379,4 +382,89 @@ fn the_spec_user_and_the_name_rule() {
     for bad in ["", "_a", ".a", "a`b", "a'b", "a\nb", "a/b", "con"] {
         assert!(!valid_name(bad), "{bad:?}");
     }
+}
+
+/// The pc-cycle-setup file as an export writes it: an order block under the
+/// header and whatever `cases` carry as each case's body.
+fn pc_md(order: &[&str], cases: &[(i32, &str)]) -> String {
+    let mut md = String::from("# PC\n\n**User:** REPO_HR\n\n");
+    if !order.is_empty() {
+        md.push_str("<!-- tcm:order -->\n**Order (from TCM):**\n\n");
+        for line in order {
+            md.push_str(&format!("- {line}\n"));
+        }
+        md.push_str("<!-- /tcm:order -->\n\n");
+    }
+    for (id, body) in cases {
+        md.push_str(&format!("## {id} Case\n\n**Navigation:** captured in src/navigation.json.\n\n{body}"));
+    }
+    md
+}
+
+const FROM_TCM: &str = "**From TCM:**\n\n- must not save the form\n\n";
+const USES: &str = "**Uses:** common-components/login\n\n";
+
+#[test]
+fn a_card_with_from_tcm_facts_and_order_says_so() {
+    let c = clone();
+    let proposal = ORDER_PROPOSAL;
+    put(
+        &c.root,
+        PC_MD,
+        &pc_md(
+            &["run 9001 before 9002 (9001 needs a unchanged and 9002 changes it)", "run 9002 alone and last: it publishes", proposal],
+            &[(9001, FROM_TCM), (9002, "")],
+        ),
+    );
+    let p = cards_at(&c.root, &record(&[9001, 9002]), &none(), &none(), &[9001, 9002]).unwrap().remove(0).prompt;
+    let from_tcm = "Read each case's **From TCM:** block before running: it says what the case must not save, \
+                    what it appears to write or publish, and the cleanup it relies on.";
+    let baseline = "Read docs/tcm-protected-baseline.md and the entries tagged tcm: in docs/app-quirks.md first;";
+    let order = format!(
+        "Order: run 9001 before 9002 (9001 needs a unchanged and 9002 changes it); run 9002 alone and last: it publishes; {}. \
+         Keep publishing and destructive cases out of routine runs.",
+        proposal.trim_end_matches('.')
+    );
+    for sentence in [from_tcm, baseline, &order] {
+        assert!(p.contains(sentence), "{sentence}\n{p}");
+    }
+    // After the missing-precondition sentence, before the navigation and checkpoint ones, in this order.
+    let at = |s: &str| p.find(s).unwrap_or_else(|| panic!("{s}"));
+    assert!(at("put suites/_generated/seed.spec.ts back the way it was.") < at(from_tcm));
+    assert!(at(from_tcm) < at(baseline));
+    assert!(at(baseline) < at("A failure on a step the From TCM block lists"));
+    assert!(at("A failure on a step the From TCM block lists") < at("Order: "));
+    assert!(at("Order: ") < at("Before step 5"));
+    // The order sentence replaces the independence one; no doubled full stop.
+    assert!(!p.contains("no --chain") && !p.contains(".."), "{p}");
+    assert!(p.contains("the --spec contract). Run them in the order above. Stop and report"), "{p}");
+
+    // Facts about a case the card does not carry say nothing.
+    put(&c.root, PC_MD, &pc_md(&[], &[(9001, ""), (9002, ""), (9006, FROM_TCM)]));
+    let p = cards_at(&c.root, &record(&[9001, 9002]), &none(), &none(), &[9001, 9002]).unwrap().remove(0).prompt;
+    assert!(!p.contains("Read each case's **From TCM:**") && !p.contains("Order: "), "{p}");
+    assert!(p.contains("The tests are independent (no --chain)."));
+    // A From TCM block in one case of several is enough.
+    put(&c.root, PC_MD, &pc_md(&[], &[(9001, ""), (9002, FROM_TCM)]));
+    let p = cards_at(&c.root, &record(&[9001, 9002]), &none(), &none(), &[9001, 9002]).unwrap().remove(0).prompt;
+    assert!(p.contains("Read each case's **From TCM:** block before running"));
+}
+
+#[test]
+fn written_uses_lines_drop_the_checkpoint() {
+    let c = clone();
+    let checkpoint = "shared-component checkpoint";
+    // Every case has a Uses line: TCM wrote them, so the instruction goes.
+    put(&c.root, PC_MD, &pc_md(&[], &[(9001, USES), (9002, USES)]));
+    let p = cards_at(&c.root, &record(&[9001, 9002]), &none(), &none(), &[9001, 9002]).unwrap().remove(0).prompt;
+    assert!(!p.contains(checkpoint) && !p.contains("**Uses:**"), "{p}");
+    assert!(p.contains("The values in the raw specs come from"));
+    // Only one of the two: the repo still has to look for the other's.
+    put(&c.root, PC_MD, &pc_md(&[], &[(9001, USES), (9002, "")]));
+    let p = cards_at(&c.root, &record(&[9001, 9002]), &none(), &none(), &[9001, 9002]).unwrap().remove(0).prompt;
+    assert!(p.contains(checkpoint));
+    // A Uses line in a code fence is no declaration.
+    put(&c.root, PC_MD, &pc_md(&[], &[(9001, "```\n**Uses:** common-components/login\n```\n\n")]));
+    let p = cards_at(&c.root, &record(&[9001]), &none(), &none(), &[9001]).unwrap().remove(0).prompt;
+    assert!(p.contains(checkpoint));
 }

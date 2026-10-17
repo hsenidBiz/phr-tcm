@@ -25,6 +25,7 @@
 //! else for it. Read only.
 
 use crate::pw_export::clone::ClonedRepo;
+use crate::pw_export::test_case;
 use crate::pw_repo::layout;
 use crate::pw_repo::presence::{self, INDEX_REL};
 use crate::pw_repo::sync::ExportRecord;
@@ -95,6 +96,12 @@ pub struct PromptInput<'a> {
     pub user_key: &'a str,
     /// `src/navigation.json` has an entry for the feature's last two folders.
     pub navigation_captured: bool,
+    /// A case of the prompt has a `**From TCM:**` block in the test-case file.
+    pub has_from_tcm: bool,
+    /// The lines of the file's `<!-- tcm:order -->` block; empty when it has none.
+    pub order: Vec<String>,
+    /// Every case of the prompt already has a `**Uses:**` line in the file.
+    pub uses_written: bool,
 }
 
 /// The prompt. Pure: the values are checked by `cards`.
@@ -129,15 +136,37 @@ pub fn prompt(p: &PromptInput) -> String {
          Afterwards, put suites/_generated/seed.spec.ts back the way it was."
             .to_string(),
     ];
+    if p.has_from_tcm {
+        out.push(
+            "Read each case's **From TCM:** block before running: it says what the case must not save, what it appears to write or publish, and the cleanup it relies on."
+                .to_string(),
+        );
+    }
+    out.push(
+        "Read docs/tcm-protected-baseline.md and the entries tagged tcm: in docs/app-quirks.md first; never fix a test by editing or deleting a record named in the protected baseline."
+            .to_string(),
+    );
+    out.push(
+        "A failure on a step the From TCM block lists as a known product defect is a product defect, not something to heal."
+            .to_string(),
+    );
+    if !p.order.is_empty() {
+        // A line's own full stop would double the one this sentence ends its list with.
+        let lines: Vec<&str> = p.order.iter().map(|l| l.trim_end_matches('.')).collect();
+        out.push(format!("Order: {}. Keep publishing and destructive cases out of routine runs.", lines.join("; ")));
+    }
     if !p.navigation_captured {
         out.push(format!(
             "src/navigation.json has no entry for {nav_key} yet: do step 2's navigation capture with me before step 5."
         ));
     }
-    out.push(
-        "Before step 5, run step 2's shared-component checkpoint: if any steps belong to a component under suites/common-components, add its **Uses:** line to the test case."
-            .to_string(),
-    );
+    // TCM writes a case's `**Uses:**` lines itself where its script maps to a shared component.
+    if !p.uses_written {
+        out.push(
+            "Before step 5, run step 2's shared-component checkpoint: if any steps belong to a component under suites/common-components, add its **Uses:** line to the test case."
+                .to_string(),
+        );
+    }
     out.push(
         "The values in the raw specs come from each case's Test Case Manager script, which passed against the live app. \
          Tag them by the repo's own provenance rules: `from-ticket` where the test-case section states the value, otherwise `invented`, `assumed` or `derived` as usual."
@@ -148,7 +177,11 @@ pub fn prompt(p: &PromptInput) -> String {
         "Put {them} in `suites/{seg}/specs/{stem}.spec.ts` with --spec {} (it creates the spec or appends to it; the --spec contract).",
         spec_arg(stem)
     ));
-    out.push("The tests are independent (no --chain).".to_string());
+    out.push(if p.order.is_empty() {
+        "The tests are independent (no --chain).".to_string()
+    } else {
+        "Run them in the order above.".to_string()
+    });
     out.push("Stop and report on any stop-and-report condition the command defines.".to_string());
     out.join(" ")
 }
@@ -355,6 +388,8 @@ pub fn cards(
                 Err(problem) => card.problem = Some(problem),
                 Ok(key) => {
                     let raw: Vec<String> = todo.iter().map(|c| c.raw.clone()).collect();
+                    // What the export wrote into the file; a file that cannot be read says nothing.
+                    let md = std::fs::read_to_string(repo.root.join(&section)).unwrap_or_default();
                     card.prompt = prompt(&PromptInput {
                         seg: &seg,
                         stem: &stem,
@@ -363,6 +398,9 @@ pub fn cards(
                         section: &section,
                         user_key: &key,
                         navigation_captured: repo.navigation_keys.contains(&nav_key_of(&seg)),
+                        has_from_tcm: ids.iter().any(|&id| test_case::has_from_tcm(&md, id)),
+                        order: test_case::order_lines(&md),
+                        uses_written: ids.iter().all(|&id| test_case::has_uses(&md, id)),
                     });
                 }
             }
