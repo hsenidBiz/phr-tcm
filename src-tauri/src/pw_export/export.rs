@@ -13,6 +13,7 @@ use super::app_quirks::{merge_app_quirks_removing, quirk_entries, retired_tags, 
 use super::clone::{index_with, open, ClonedRepo};
 use super::handover::{
     baseline_doc, handover_for, needs_warnings, order_note, script_warnings, uses_for, HandoverInput, BASELINE_DOC_REL,
+    ORDER_PROPOSAL,
 };
 use super::mapping::{self, ExportMap, Placement};
 use super::test_case::{self, CaseDoc};
@@ -449,8 +450,9 @@ impl Fingerprinter {
     /// The fingerprint of case `id` as an export would read it now, placed
     /// by `module` when its script names no area: its title, its steps with
     /// every component expanded and every shared draft's value filled in,
-    /// where it starts (the area and its menu clicks) and who it runs as (the
-    /// account and the repo user it maps to). `Ok(None)` when it has no script. A script whose components
+    /// where it starts (the area and its menu clicks), who it runs as (the
+    /// account and the repo user it maps to) and what TCM hands over for it
+    /// (`handover_text`). `Ok(None)` when it has no script. A script whose components
     /// cannot be expanded, or whose area cannot be found, is fingerprinted
     /// with that reason in place of what could not be read, so it differs
     /// from any fingerprint taken while it could.
@@ -461,11 +463,14 @@ impl Fingerprinter {
         let saved = with_run_account(saved, &self.runs);
         // What the raw spec holds: components expanded, shared drafts filled in.
         let expanded = load_expanded(root, org, project, id, &self.runs)
-            .and_then(|s| s.map(|s| resolved_script(root, org, project, s)).transpose());
-        let (steps, title) = match expanded {
-            Ok(Some(s)) => (serde_json::to_value(&s.steps).unwrap_or_default(), s.title),
+            .and_then(|s| s.map(|s| resolve_shared(root, org, project, s)).transpose());
+        let (steps, title, handover) = match expanded {
+            Ok(Some((s, drafts))) => {
+                let handover = self.handover_text(id, &s, &drafts);
+                (serde_json::to_value(&s.steps).unwrap_or_default(), s.title, handover)
+            }
             Ok(None) => return Ok(None),
-            Err(why) => (serde_json::Value::String(format!("not expandable: {why}")), saved.title.clone()),
+            Err(why) => (serde_json::Value::String(format!("not expandable: {why}")), saved.title.clone(), String::new()),
         };
         let (area, clicks) = match route_with(&self.nav, module, &saved) {
             Ok((name, clicks, _)) => (name, serde_json::to_value(&clicks).unwrap_or_default()),
@@ -473,7 +478,19 @@ impl Fingerprinter {
         };
         let account = saved.account.as_deref().map(str::trim).unwrap_or("").to_string();
         let user_key = self.map.accounts.get(&self.env_id).and_then(|m| m.get(&account)).cloned();
-        Ok(Some(sync::fingerprint(&sync::FingerprintInput { title, steps, area, area_clicks: clicks, account, user_key })))
+        Ok(Some(sync::fingerprint(&sync::FingerprintInput { title, steps, area, area_clicks: clicks, account, user_key, handover })))
+    }
+
+    /// What TCM hands over for case `id` that the repo cannot see, one line
+    /// each: the `**From TCM:**` lines, the Preconditions and Cleanup rows
+    /// TCM writes, and the case's own order lines (the order note for it
+    /// alone, without the fixed proposal). Warnings are not part of it: they
+    /// are said before a write and never written. Empty when there is none,
+    /// which is what a script with nothing to hand over fingerprints as.
+    fn handover_text(&self, id: i32, script: &CaseScript, drafts: &[SharedDraft]) -> String {
+        let h = handover_for(&HandoverInput { script, shared_drafts: drafts, protected: &self.nav.protected });
+        let order = order_note(&[(id, script)], None).into_iter().filter(|l| l != ORDER_PROPOSAL);
+        h.from_tcm.into_iter().chain(h.preconditions).chain(h.cleanup).chain(order).collect::<Vec<_>>().join("\n")
     }
 }
 
@@ -961,6 +978,27 @@ pub fn write_with(
     replace: &[i32],
     pbi_id: Option<i32>,
 ) -> Result<ExportResult, String> {
+    write_inner(root, org, project, case_ids, clone_path, modules, docs, replace, pbi_id, &BTreeMap::new())
+        .map(|(result, _)| result)
+}
+
+/// `write_with`, knowing the ADO table rows an earlier export wrote for some
+/// cases (`recorded`, `sync::Exported::ado_rows`): an old row equal to one is
+/// dropped, not kept as the repo's. Also returns, per case written, the ADO
+/// rows this write wrote (`test_case::ado_rows`), for the Sync record.
+#[allow(clippy::too_many_arguments)]
+fn write_inner(
+    root: &Path,
+    org: &str,
+    project: &str,
+    case_ids: &[i32],
+    clone_path: &str,
+    modules: &BTreeMap<i32, String>,
+    docs: &BTreeMap<i32, CaseDoc>,
+    replace: &[i32],
+    pbi_id: Option<i32>,
+    recorded: &BTreeMap<i32, Vec<String>>,
+) -> Result<(ExportResult, Vec<(i32, Vec<String>)>), String> {
     let ctx = Ctx::load(root, org, project, clone_path, modules, pbi_id)?;
     let repo = ctx.clone.as_ref().map_err(|e| e.clone())?;
     let found = presence::scan_repo(repo);
@@ -980,6 +1018,7 @@ pub fn write_with(
     let mut raw_files: Vec<Out> = Vec::new();
     let mut cases: Vec<(i32, String)> = Vec::new();
     let mut sections: Vec<(i32, String)> = Vec::new();
+    let mut ado_written: Vec<(i32, Vec<String>)> = Vec::new();
     let mut missing_navigation: Vec<String> = Vec::new();
     let mut chosen: BTreeSet<String> = BTreeSet::new();
     let mut chosen_by: BTreeMap<String, i32> = BTreeMap::new();
@@ -1049,7 +1088,10 @@ pub fn write_with(
             md_files.insert(md_rel.clone(), start);
         }
         let current = md_files.get_mut(&md_rel).expect("inserted above");
-        *current = test_case::splice(current, id, &test_case::section(&doc));
+        let written = test_case::section(&doc);
+        ado_written.push((id, test_case::ado_rows(&written)));
+        let earlier = recorded.get(&id).map(Vec::as_slice).unwrap_or(&[]);
+        *current = test_case::splice_dropping(current, id, &written, earlier);
         sections.push((id, md_rel.clone()));
         md_cases.entry(md_rel.clone()).or_default().push((id, &r.script));
 
@@ -1158,7 +1200,7 @@ pub fn write_with(
 
     commit(&repo.root, &outs)?;
     let user_keys = ready.iter().map(|(id, r)| (*id, r.user_key.clone())).collect();
-    Ok(ExportResult {
+    let result = ExportResult {
         files: outs.into_iter().map(|o| o.rel).collect(),
         cases,
         user_keys,
@@ -1166,7 +1208,8 @@ pub fn write_with(
         sections,
         record_error: None,
         skipped: vec![],
-    })
+    };
+    Ok((result, ado_written))
 }
 
 /// `write_with`, then the Sync record (`pw_repo::sync`) for every case
@@ -1197,7 +1240,18 @@ pub fn write_recorded(
             saved.insert(id, (s.title, fp));
         }
     }
-    let mut result = write_with(root, org, project, case_ids, clone_path, modules, docs, replace, pbi_id)?;
+    // The ADO rows each case's last export wrote: the splice drops them from
+    // the repo's rows. A record that cannot be read just says none.
+    let sync_path = sync::record_path(sync_dir, clone_path, org, project);
+    let recorded: BTreeMap<i32, Vec<String>> = sync::load(&sync_path)
+        .unwrap_or_default()
+        .cases
+        .into_iter()
+        .filter(|(id, _)| case_ids.contains(id))
+        .map(|(id, e)| (id, e.ado_rows))
+        .collect();
+    let (mut result, ado_rows) =
+        write_inner(root, org, project, case_ids, clone_path, modules, docs, replace, pbi_id, &recorded)?;
     let at = crate::applog::iso_stamp();
     let entries: Vec<(i32, sync::Exported)> = result
         .cases
@@ -1218,11 +1272,12 @@ pub fn write_recorded(
                     files,
                     module: modules.get(id).cloned().unwrap_or_default(),
                     user_key: result.user_keys.iter().find(|(i, _)| i == id).map(|(_, k)| k.clone()).unwrap_or_default(),
+                    ado_rows: ado_rows.iter().find(|(i, _)| i == id).map(|(_, r)| r.clone()).unwrap_or_default(),
                 },
             ))
         })
         .collect();
-    if let Err(e) = sync::record(&sync::record_path(sync_dir, clone_path, org, project), entries) {
+    if let Err(e) = sync::record(&sync_path, entries) {
         crate::applog::warn(format!("pw-export: the Sync record was not saved: {e}"));
         result.record_error =
             Some("The files were written, but the Sync record could not be saved, so Sync may not show these cases as current. Settings → Logs has the details.".into());

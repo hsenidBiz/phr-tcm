@@ -458,15 +458,18 @@ fn row_text(line: &str, numbered: bool) -> &str {
 /// `section` with the rows the repo added to the old section's tables put
 /// back: every row that does not end `FROM_TCM` and is not one of the ADO
 /// rows `section` writes anyway, after the ADO rows and before TCM's own,
-/// renumbered. TCM's old rows are dropped - `section` has today's.
-fn with_repo_rows(section: &str, old: &[&str]) -> String {
+/// renumbered. TCM's old rows are dropped - `section` has today's - and so
+/// is any row equal to one of `from_ado` (the ADO rows an earlier export
+/// wrote, `ado_rows`): it came from Azure DevOps, so when ADO no longer has
+/// it the repo did not add it.
+fn with_repo_rows(section: &str, old: &[&str], from_ado: &[String]) -> String {
     let mut lines: Vec<String> = section.split_inclusive('\n').map(str::to_string).collect();
     for (heading, numbered) in REPO_ROW_TABLES {
         let Some(old_rows) = table_rows(old, heading) else { continue };
         let kept: Vec<&str> = old[old_rows]
             .iter()
             .map(|l| row_text(l, numbered))
-            .filter(|t| !t.is_empty() && !t.ends_with(FROM_TCM))
+            .filter(|t| !t.is_empty() && !t.ends_with(FROM_TCM) && !from_ado.iter().any(|a| a == t))
             .collect();
         let ours: Vec<&str> = lines.iter().map(String::as_str).collect();
         let Some(new_rows) = table_rows(&ours, heading) else { continue };
@@ -486,6 +489,25 @@ fn with_repo_rows(section: &str, old: &[&str]) -> String {
         lines.splice(new_rows, rows);
     }
     lines.concat()
+}
+
+/// The rows of `section`'s Preconditions, Test Data and Cleanup tables that
+/// came from Azure DevOps (every one not marked `FROM_TCM`), as
+/// `with_repo_rows` compares them: what a Sync record keeps of an export so
+/// that the next one can tell an ADO row that has gone from one the repo added.
+pub fn ado_rows(section: &str) -> Vec<String> {
+    let lines: Vec<&str> = section.split_inclusive('\n').collect();
+    let mut out: Vec<String> = Vec::new();
+    for (heading, numbered) in REPO_ROW_TABLES {
+        let Some(rows) = table_rows(&lines, heading) else { continue };
+        for line in &lines[rows] {
+            let t = row_text(line, numbered);
+            if !t.is_empty() && !t.ends_with(FROM_TCM) && !out.iter().any(|o| o == t) {
+                out.push(t.to_string());
+            }
+        }
+    }
+    out
 }
 
 /// The ids of the case sections (`## <id> ...`) the file has, in file
@@ -646,6 +668,12 @@ pub fn has_uses(file: &str, id: i32) -> bool {
 /// every `**Uses:**` line it had (`with_kept_uses`).
 /// The old `**From TCM:**` block is TCM's, so `section`'s replaces it whole.
 pub fn splice(existing: &str, id: i32, section: &str) -> String {
+    splice_dropping(existing, id, section, &[])
+}
+
+/// `splice`, except that an old table row equal to one of `from_ado` (the
+/// ADO rows an earlier export wrote, `ado_rows`) is not kept as the repo's.
+pub fn splice_dropping(existing: &str, id: i32, section: &str, from_ado: &[String]) -> String {
     let lines: Vec<&str> = existing.split_inclusive('\n').collect();
     if let Some(start) = lines.iter().position(|l| is_case_heading(l, id)) {
         let end = lines[start + 1..]
@@ -653,7 +681,7 @@ pub fn splice(existing: &str, id: i32, section: &str) -> String {
             .position(|l| is_h2(l))
             .map_or(lines.len(), |p| start + 1 + p);
         let old = &lines[start..end];
-        let section = with_local_blocks(&with_repo_rows(&with_kept_uses(section, old), old), old);
+        let section = with_local_blocks(&with_repo_rows(&with_kept_uses(section, old), old, from_ado), old);
         let mut o = String::with_capacity(existing.len() + section.len());
         o.extend(lines[..start].iter().copied());
         o.push_str(&section);

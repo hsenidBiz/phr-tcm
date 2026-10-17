@@ -139,6 +139,7 @@ fn the_fingerprint_ignores_key_order_and_names_each_part() {
         area_clicks: json!(["a.dw"]),
         account: "admin".into(),
         user_key: Some("REPO_KEY".into()),
+        handover: String::new(),
     };
     let base = json!([{ "step_number": 1, "actions": [
         { "kind": "expect_response", "url_contains": "x", "json": { "a": 1, "b": { "c": 2, "d": 3 } } }
@@ -184,18 +185,19 @@ fn what_the_export_reads_decides_the_state() {
     sx.export(&[40, 41], &docs(&[(40, "Forty"), (41, "Forty one")])).unwrap();
     assert_eq!(sx.state(40), SyncState::Current);
 
-    // Marks are not read by the export: an edit of them alone changes nothing.
+    // Marks reach the repo as what TCM hands over (the From TCM and
+    // Preconditions rows), so an edit of them alone makes the case out of date.
     let mut s = sx.script(41);
     s.changes = vec!["cycle published".into()];
     s.needs_unchanged = vec!["draft".into()];
     store::save_script(sx.root(), &s).unwrap();
-    assert_eq!(sx.state(41), SyncState::Current);
+    assert_eq!(sx.state(41), SyncState::OutOfDate { why: "changed since the export: TCM facts".into() });
 
-    // The title is.
+    // The title is too.
     let mut s = sx.script(41);
     s.title = "Forty one, renamed".into();
     store::save_script(sx.root(), &s).unwrap();
-    assert_eq!(sx.state(41), SyncState::OutOfDate { why: "changed since the export: title".into() });
+    assert_eq!(sx.state(41), SyncState::OutOfDate { why: "changed since the export: title, TCM facts".into() });
 
     // A shared component the case uses changes: its expanded steps do.
     components::put(sx.root(), ORG, PROJECT, press("#gone")).unwrap();
@@ -222,6 +224,111 @@ fn a_record_that_cannot_be_read_is_kept_aside_and_sync_starts_again() {
     // The next export records as usual.
     sx.export(&[20], &docs(&[(20, "Twenty")])).unwrap();
     assert_eq!(sx.state(20), SyncState::Current);
+}
+
+#[test]
+fn the_handover_joins_the_fingerprint_only_when_it_says_something() {
+    let input = |handover: &str| sync::FingerprintInput {
+        title: "t".into(),
+        steps: json!([]),
+        area: "A".into(),
+        area_clicks: json!([]),
+        account: "admin".into(),
+        user_key: None,
+        handover: handover.into(),
+    };
+    let none = sync::fingerprint(&input(""));
+    let some = sync::fingerprint(&input("changes shared state: cycle published"));
+    // Nothing to hand over hashes as it did before the part existed.
+    assert_eq!(none.hash, none.legacy_hash);
+    assert_ne!(some.hash, none.hash);
+    assert_eq!(some.legacy_hash, none.legacy_hash);
+    assert_ne!(some.parts.handover, none.parts.handover);
+    assert!(!none.parts.handover.is_empty(), "an export that handed over nothing still says so");
+    // A record from before the part has none, and it is not what "nothing" hashes to.
+    assert_eq!(sync::Parts::default().handover, "");
+}
+
+#[test]
+fn an_export_from_before_this_change_stays_current() {
+    let sx = Sx::new();
+    sx.fx.good(20, "Twenty");
+    // It hands something over: a mark TCM writes into the repo.
+    let mut s = sx.script(20);
+    s.changes = vec!["cycle published".into()];
+    store::save_script(sx.root(), &s).unwrap();
+    sx.export(&[20], &docs(&[(20, "Twenty")])).unwrap();
+    assert_eq!(sx.state(20), SyncState::Current);
+
+    // The record as an export from before the part was kept left it: no
+    // handover part, and the hash of what the export read then.
+    let mut record = sync::load(&sx.record_path()).unwrap();
+    let entry = record.cases.get_mut(&20).unwrap();
+    assert!(!entry.fingerprint.parts.handover.is_empty());
+    let now = v2_lib::pw_export::export::Fingerprinter::load(sx.root(), ORG, PROJECT)
+        .unwrap()
+        .of(sx.root(), ORG, PROJECT, 20, &entry.module)
+        .unwrap()
+        .unwrap();
+    assert_ne!(now.hash, now.legacy_hash, "the case does hand something over");
+    entry.fingerprint.hash = now.legacy_hash.clone();
+    entry.fingerprint.parts.handover = String::new();
+    sync::save(&sx.record_path(), &record).unwrap();
+    assert_eq!(sx.state(20), SyncState::Current, "an old export is not flipped by the new part");
+
+    // What it did read still decides: a repair is named, and no TCM facts with it.
+    sx.repair(20, "#went");
+    match sx.state(20) {
+        SyncState::OutOfDate { why } => assert!(why.contains("steps") && !why.contains("TCM facts"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_repo_row_stays_and_an_ado_row_that_has_gone_does_not() {
+    let sx = Sx::new();
+    sx.fx.good(20, "Twenty");
+    let with = |pre: &str| {
+        let mut d = docs(&[(20, "Twenty")]);
+        d.get_mut(&20).unwrap().preconditions = pre.into();
+        d
+    };
+    sx.export(&[20], &with("pre\nsecond")).unwrap();
+    let recorded = sync::load(&sx.record_path()).unwrap().cases[&20].ado_rows.clone();
+    assert_eq!(recorded, vec!["pre".to_string(), "second".to_string()]);
+
+    // The repo adds a row of its own after the ADO ones.
+    let md = sx.fx.read_clone(MD_REL);
+    assert!(md.contains("| 2 | second |\n"), "{md}");
+    write(sx.fx.clone.path().join(MD_REL), &md.replace("| 2 | second |\n", "| 2 | second |\n| 3 | repo row |\n"));
+
+    // ADO no longer has "second": it goes, the repo's row stays.
+    sx.export(&[20], &with("pre")).unwrap();
+    let md = sx.fx.read_clone(MD_REL);
+    assert!(md.contains("| 1 | pre |\n| 2 | repo row |\n"), "{md}");
+    assert!(!md.contains("second"), "{md}");
+    assert_eq!(sync::load(&sx.record_path()).unwrap().cases[&20].ado_rows, vec!["pre".to_string()]);
+}
+
+#[test]
+fn a_record_without_ado_rows_keeps_every_unmarked_row() {
+    let sx = Sx::new();
+    sx.fx.good(20, "Twenty");
+    let with = |pre: &str| {
+        let mut d = docs(&[(20, "Twenty")]);
+        d.get_mut(&20).unwrap().preconditions = pre.into();
+        d
+    };
+    sx.export(&[20], &with("pre\nsecond")).unwrap();
+
+    // An export from before the rows were kept left none on its record.
+    let mut record = sync::load(&sx.record_path()).unwrap();
+    record.cases.get_mut(&20).unwrap().ado_rows.clear();
+    sync::save(&sx.record_path(), &record).unwrap();
+
+    sx.export(&[20], &with("pre")).unwrap();
+    let md = sx.fx.read_clone(MD_REL);
+    assert!(md.contains("| 2 | second |\n"), "today's behaviour: an unmarked row is the repo's\n{md}");
 }
 
 #[test]
@@ -422,6 +529,7 @@ fn the_record_is_written_atomically() {
         files: vec!["suites/_generated/a.spec.ts".into()],
         module: String::new(),
         user_key: String::new(),
+        ado_rows: vec![],
     };
     sync::record(&path, vec![(1, entry("one"))]).unwrap();
     let good = fs::read(&path).unwrap();

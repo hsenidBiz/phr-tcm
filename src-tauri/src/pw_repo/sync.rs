@@ -35,6 +35,11 @@ pub struct Parts {
     pub steps: String,
     pub area: String,
     pub account: String,
+    /// What TCM hands over that the case's script shows (`FingerprintInput::handover`),
+    /// hashed even when there is nothing: empty only in a record from before
+    /// the part was kept, which is then judged without it (`Fingerprint::legacy_hash`).
+    #[serde(default)]
+    pub handover: String,
 }
 
 /// A case's fingerprint: SHA-256 (lowercase hex) of the canonical JSON
@@ -46,6 +51,12 @@ pub struct Parts {
 pub struct Fingerprint {
     pub hash: String,
     pub parts: Parts,
+    /// The hash as an export from before the handover was part of it took
+    /// it. Never kept: a record that has no handover part (`Parts::handover`
+    /// empty) is still Current while this equals its `hash`, so exports made
+    /// before this change are not all flipped to Out of date by it.
+    #[serde(skip)]
+    pub legacy_hash: String,
 }
 
 /// What the export reads of a case (`export::Fingerprinter` gathers it).
@@ -61,6 +72,11 @@ pub struct FingerprintInput {
     pub account: String,
     /// The repo user that account maps to, if it is mapped.
     pub user_key: Option<String>,
+    /// What TCM hands over for the case that the repo cannot see: the
+    /// `**From TCM:**` lines, the Preconditions and Cleanup rows it writes
+    /// and the case's own order lines, one per line. Empty when it says
+    /// nothing, and then the hash is what it was before this part existed.
+    pub handover: String,
 }
 
 /// `v` with every object's keys in sorted order, all the way down: the
@@ -91,9 +107,22 @@ pub fn fingerprint(input: &FingerprintInput) -> Fingerprint {
     let title = Value::String(input.title.clone());
     let area = json!({ "name": input.area, "clicks": input.area_clicks });
     let account = json!({ "account": input.account, "user_key": input.user_key });
-    let parts = Parts { title: sha(&title), steps: sha(&input.steps), area: sha(&area), account: sha(&account) };
-    let hash = sha(&json!({ "title": title, "steps": input.steps, "area": area, "account": account }));
-    Fingerprint { hash, parts }
+    let handover = Value::String(input.handover.clone());
+    let parts = Parts {
+        title: sha(&title),
+        steps: sha(&input.steps),
+        area: sha(&area),
+        account: sha(&account),
+        handover: sha(&handover),
+    };
+    let mut whole = json!({ "title": title, "steps": input.steps, "area": area, "account": account });
+    let legacy_hash = sha(&whole);
+    // Only when it says something: a case with nothing to hand over hashes
+    // exactly as it did before the handover was part of it.
+    if !input.handover.is_empty() {
+        whole["handover"] = handover;
+    }
+    Fingerprint { hash: sha(&whole), parts, legacy_hash }
 }
 
 /// One exported case, as recorded.
@@ -113,6 +142,13 @@ pub struct Exported {
     /// record from before it was kept.
     #[serde(default)]
     pub user_key: String,
+    /// The Azure DevOps rows of the Preconditions, Test Data and Cleanup
+    /// tables this export wrote, as the md splice compares them. A later
+    /// export drops an old row equal to one of them: it came from ADO, so
+    /// when ADO no longer has it the repo did not add it. Empty in a record
+    /// from before it was kept, which keeps every unmarked row as before.
+    #[serde(default)]
+    pub ado_rows: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,6 +298,10 @@ fn changed(was: &Parts, now: &Parts) -> String {
     if was.account != now.account {
         what.push("account");
     }
+    // A record from before the part was kept has nothing to compare it with.
+    if !was.handover.is_empty() && was.handover != now.handover {
+        what.push("TCM facts");
+    }
     if what.is_empty() {
         "the script changed since the export".to_string()
     } else {
@@ -322,6 +362,11 @@ pub fn states(dir: &Path, root: &Path, clone_path: &str, org: &str, project: &st
             (Some(_), None) => SyncState::OutOfDate { why: "its script is no longer in Auto Run".into() },
             (Some(r), Some(_)) => match fingerprints.of(root, org, project, id, &r.module)? {
                 Some(now) if now.hash == r.fingerprint.hash => SyncState::Current,
+                // An export from before the handover was part of the fingerprint
+                // is judged by what it did read.
+                Some(now) if r.fingerprint.parts.handover.is_empty() && now.legacy_hash == r.fingerprint.hash => {
+                    SyncState::Current
+                }
                 Some(now) => SyncState::OutOfDate { why: changed(&r.fingerprint.parts, &now.parts) },
                 None => SyncState::OutOfDate { why: "its script is no longer in Auto Run".into() },
             },
