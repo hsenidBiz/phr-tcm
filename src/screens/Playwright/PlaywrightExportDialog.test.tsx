@@ -62,9 +62,29 @@ const STRUCTURE = {
   health: [],
 };
 
-/** The paths the Folder field offers as you type. */
-const offered = (input: HTMLElement) =>
-  Array.from(document.querySelectorAll(`datalist#${input.getAttribute("list")} option`)).map((o) => (o as HTMLOptionElement).value);
+/** A folder field: the app's own picker, named for what it sets. */
+const folderField = (name: string) => screen.getByRole("combobox", { name });
+
+/** The paths a folder field offers in its list: opened, read once the clone's folders are in, closed again. */
+async function offered(name: string) {
+  fireEvent.click(folderField(name));
+  const options = () => within(screen.getByRole("listbox")).getAllByRole("option");
+  await waitFor(() => expect(options().length).toBeGreaterThan(0));
+  const paths = options().map((o) => o.textContent);
+  fireEvent.click(folderField(name));
+  return paths;
+}
+
+/** Types a folder into a field's search box and presses Enter, as a person does. */
+function typeFolder(name: string, text: string) {
+  fireEvent.click(folderField(name));
+  const box = screen.getByPlaceholderText("Search…");
+  fireEvent.change(box, { target: { value: text } });
+  fireEvent.keyDown(box, { key: "Enter" });
+}
+
+/** Empties a folder field with its own clear button. */
+const clearFolder = (name: string) => fireEvent.click(within(folderField(name)).getByRole("button", { name: "Clear" }));
 
 /** The Export button, which says how many cases it sends. */
 const EXPORT = /^Export \(\d+\)$/;
@@ -142,16 +162,14 @@ test("choosing_a_clone_saves_it", async () => {
 test("saving_a_mapping_sends_the_map", async () => {
   const { calls } = mount();
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
-  const folder = screen.getByLabelText("Folder for Definition Wizard");
-  // The clone's own features are offered as you type.
-  await waitFor(() =>
-    expect(offered(folder)).toEqual([
-      "sl/admin/performance/definition-wizard/competencies",
-      "sl/admin/performance/rating-methods",
-    ]),
-  );
+  // The clone's own features are offered in the app's own list, never the browser's.
+  expect(await offered("Folder for Definition Wizard")).toEqual([
+    "sl/admin/performance/definition-wizard/competencies",
+    "sl/admin/performance/rating-methods",
+  ]);
+  expect(document.querySelector("datalist")).toBeNull();
   // Typed text is trimmed, and so are trailing slashes and spaces together; the case is the person's.
-  fireEvent.change(folder, { target: { value: "  sl/self/pm/wizard/ /  " } });
+  typeFolder("Folder for Definition Wizard", "  sl/self/pm/wizard/ /  ");
   fireEvent.click(screen.getByRole("combobox", { name: "User for hr.admin" }));
   fireEvent.click(await screen.findByRole("option", { name: "REPO_EMP" }));
   fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
@@ -228,7 +246,7 @@ test("a half-filled or blanked saved area row blocks the save", async () => {
   const saved = { ...PREVIEW, map: { areas: { "Definition Wizard": { path: "sl/admin/pm/wizard" } }, accounts: {} } };
   const { calls } = mount({}, saved);
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
-  fireEvent.change(screen.getByLabelText("Folder for Definition Wizard"), { target: { value: " / " } });
+  clearFolder("Folder for Definition Wizard");
   expect(screen.getByText("needs a folder path")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save mappings" })).toBeDisabled();
   expect(calls.some((c) => c.cmd === "pw_export_save_map")).toBe(false);
@@ -259,8 +277,8 @@ test("an_unplaced_area_is_filled_with_the_suggestion_and_must_be_saved_first", a
   const { calls } = mount({}, suggested);
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
   // The saved row keeps what is saved; the unplaced one shows the guess.
-  expect(screen.getByLabelText("Folder for Definition Wizard")).toHaveValue("sl/admin/pm/wizard");
-  expect(screen.getByLabelText("Folder for Goal Setting")).toHaveValue("sl/admin/performance/goal-setting");
+  expect(folderField("Folder for Definition Wizard")).toHaveTextContent("sl/admin/pm/wizard");
+  expect(folderField("Folder for Goal Setting")).toHaveTextContent("sl/admin/performance/goal-setting");
   // A guess is not a mapping until the person saves it.
   expect(screen.getByText("Save the mappings first")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: EXPORT })).toBeDisabled();
@@ -386,22 +404,20 @@ test("a refused path shows its sentence and nothing is lost", async () => {
     },
   });
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
-  const folder = screen.getByLabelText("Folder for Definition Wizard");
-  fireEvent.change(folder, { target: { value: "sl/_x" } });
+  typeFolder("Folder for Definition Wizard", "sl/_x");
   fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
   expect(await screen.findByText(/the repo's tree never reads it/)).toBeInTheDocument();
-  expect(folder).toHaveValue("sl/_x");
+  expect(folderField("Folder for Definition Wizard")).toHaveTextContent("sl/_x");
 });
 
 test("an area placed outside the clone's features says a new folder will be created", async () => {
   mount();
   await screen.findByRole("checkbox", { name: /Create a cycle/ });
-  const folder = screen.getByLabelText("Folder for Definition Wizard");
-  await waitFor(() => expect(offered(folder).length).toBe(2));
-  fireEvent.change(folder, { target: { value: "sl/self/pm/wizard" } });
+  await offered("Folder for Definition Wizard");
+  typeFolder("Folder for Definition Wizard", "sl/self/pm/wizard");
   expect(screen.getByText("A new folder will be created.")).toBeInTheDocument();
   // An existing feature's path, even with a trailing slash, needs no note.
-  fireEvent.change(folder, { target: { value: "sl/admin/performance/rating-methods/" } });
+  typeFolder("Folder for Definition Wizard", "sl/admin/performance/rating-methods/");
   expect(screen.queryByText("A new folder will be created.")).not.toBeInTheDocument();
 });
 
@@ -412,23 +428,22 @@ test("one case can be given its own folder, saved with the mappings, and handed 
   // Where it goes now: its area's folder, from the preview.
   expect(screen.getByText("sl/admin/pm/wizard")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Give #10 its own folder" }));
-  const own = screen.getByLabelText("Folder for #10");
-  expect(own).toHaveValue("sl/admin/pm/wizard");
+  expect(folderField("Folder for #10")).toHaveTextContent("sl/admin/pm/wizard");
   // Not saved yet: Export waits for the mappings.
-  fireEvent.change(own, { target: { value: saved.cases[10].path } });
+  typeFolder("Folder for #10", saved.cases[10].path);
   expect(screen.getByRole("button", { name: EXPORT })).toBeDisabled();
   expect(screen.getByText("A new folder will be created.")).toBeInTheDocument();
   // A blanked own folder blocks the save until it has a path.
-  fireEvent.change(own, { target: { value: "  " } });
+  clearFolder("Folder for #10");
   expect(screen.getByText("needs a folder path")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save mappings" })).toBeDisabled();
   // Handed back: the input goes and the case follows its area again.
   fireEvent.click(screen.getByRole("button", { name: "Use the area's folder for #10" }));
-  expect(screen.queryByLabelText("Folder for #10")).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "Folder for #10" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: EXPORT })).toBeEnabled();
   // Given again and saved: the trailing slash is trimmed.
   fireEvent.click(screen.getByRole("button", { name: "Give #10 its own folder" }));
-  fireEvent.change(screen.getByLabelText("Folder for #10"), { target: { value: `${saved.cases[10].path}/` } });
+  typeFolder("Folder for #10", `${saved.cases[10].path}/`);
   fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
   await waitFor(() => expect(calls.filter((c) => c.cmd === "pw_export_save_map")).toHaveLength(1));
   expect(calls.find((c) => c.cmd === "pw_export_save_map")!.args.map).toMatchObject(saved);
@@ -436,6 +451,86 @@ test("one case can be given its own folder, saved with the mappings, and handed 
 
 test("a saved own folder is shown for editing when the dialog opens", async () => {
   mount({}, { ...PREVIEW, map: { ...PREVIEW.map, cases: { 10: { path: "sl/x/Own Folder" } } } });
-  expect(await screen.findByLabelText("Folder for #10")).toHaveValue("sl/x/Own Folder");
+  expect(await screen.findByRole("combobox", { name: "Folder for #10" })).toHaveTextContent("sl/x/Own Folder");
   expect(screen.queryByText("Save the mappings to export.")).not.toBeInTheDocument();
+});
+
+// Folders suggested from case titles: the clone has a folder per feature of
+// the wizard, and the area's folder is one of them.
+const AREA_SEG = "sl/admin/performance/DW-wizard-landing";
+const SUGGEST_STRUCTURE = {
+  ...STRUCTURE,
+  features: ["DW-preview", "DW-proficiency-levels", "DW-rating-methods", "DW-wizard-landing"].map((n) => feature(["sl", "admin", "performance", n])),
+};
+const row = (case_id: number, title: string, extra: Record<string, unknown> = {}) => ({
+  case_id,
+  title,
+  exportable: true,
+  reason: null,
+  seg: AREA_SEG,
+  user_key: "REPO_ADMIN",
+  add_user_command: null,
+  has_script: true,
+  ...extra,
+});
+const SUGGEST_PREVIEW = {
+  ...PREVIEW,
+  areas: ["Wizard"],
+  cases: [
+    row(20, "Rating Methods - delete"),
+    row(21, "Proficiency Levels - add a level"),
+    row(22, "Wizard landing shows steps"),
+    row(23, "Rating Methods - edit", { exportable: false, reason: "the account kim has no user in the clone" }),
+  ],
+};
+const SUGGEST_HANDLERS = { pw_repo_structure: () => SUGGEST_STRUCTURE };
+
+test("a case whose title names one of the clone's folders is offered it, and taking it is a draft", async () => {
+  mount(SUGGEST_HANDLERS, SUGGEST_PREVIEW);
+  const use = await screen.findByRole("button", { name: "Use the suggested folder for #20" });
+  const line = use.parentElement as HTMLElement;
+  expect(within(line).getByText("Suggested: DW-rating-methods")).toHaveAttribute("title", "sl/admin/performance/DW-rating-methods");
+  expect(screen.getByRole("button", { name: "Use the suggested folder for #21" })).toBeInTheDocument();
+  // The area's own folder is no suggestion, and a case blocked for another reason is not offered one.
+  expect(screen.queryByRole("button", { name: "Use the suggested folder for #22" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Use the suggested folder for #23" })).not.toBeInTheDocument();
+  expect(screen.getAllByText(/^Suggested:/)).toHaveLength(2);
+  expect(screen.getByRole("button", { name: EXPORT })).toBeEnabled();
+
+  fireEvent.click(use);
+  // It is the case's own folder now, but only a draft: the mappings still have to be saved.
+  expect(folderField("Folder for #20")).toHaveTextContent("sl/admin/performance/DW-rating-methods");
+  expect(screen.queryByRole("button", { name: "Use the suggested folder for #20" })).not.toBeInTheDocument();
+  expect(screen.getByText("Save the mappings first")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: EXPORT })).toBeDisabled();
+  // One suggestion is left: no all-at-once button for a single one.
+  expect(screen.queryByRole("button", { name: /suggested folders$/ })).not.toBeInTheDocument();
+});
+
+test("all the suggestions can be taken at once, then saved with the mappings", async () => {
+  const { calls } = mount(SUGGEST_HANDLERS, SUGGEST_PREVIEW);
+  fireEvent.click(await screen.findByRole("button", { name: "Use 2 suggested folders" }));
+  expect(folderField("Folder for #20")).toHaveTextContent("sl/admin/performance/DW-rating-methods");
+  expect(folderField("Folder for #21")).toHaveTextContent("sl/admin/performance/DW-proficiency-levels");
+  expect(screen.queryByText(/^Suggested:/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /suggested folders?$/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Save mappings" }));
+  await waitFor(() => expect(calls.find((c) => c.cmd === "pw_export_save_map")).toBeTruthy());
+  expect(calls.find((c) => c.cmd === "pw_export_save_map")!.args.map).toMatchObject({
+    cases: {
+      20: { path: "sl/admin/performance/DW-rating-methods" },
+      21: { path: "sl/admin/performance/DW-proficiency-levels" },
+    },
+  });
+});
+
+test("a case with its own folder, or one handed back to its area, is offered only what fits", async () => {
+  const saved = { ...SUGGEST_PREVIEW, map: { ...PREVIEW.map, cases: { 20: { path: "sl/admin/performance/DW-preview" } } } };
+  mount(SUGGEST_HANDLERS, saved);
+  expect(await screen.findByRole("button", { name: "Use the suggested folder for #21" })).toBeInTheDocument();
+  // #20 has a folder of its own: nothing is suggested over it.
+  expect(screen.queryByRole("button", { name: "Use the suggested folder for #20" })).not.toBeInTheDocument();
+  // Handed back to its area, it is offered the suggestion again.
+  fireEvent.click(screen.getByRole("button", { name: "Use the area's folder for #20" }));
+  expect(await screen.findByRole("button", { name: "Use the suggested folder for #20" })).toBeInTheDocument();
 });

@@ -235,3 +235,13 @@ describe("label centring", () => {
     expect(hits).toEqual([]);
   });
 });
+
+describe("dropdowns", () => {
+  // <input list> + <datalist> draws the browser's own dropdown: a different
+  // look, no theme, no keyboard behaviour of ours. A field that offers
+  // suggestions and still takes free entry is a Combobox with allowCustom.
+  test("no native datalist dropdowns - use Combobox with allowCustom", () => {
+    expect(violations(/<datalist\b/, new Set())).toEqual([]);
+    expect(violations(/(?<![\w-])list=/, new Set())).toEqual([]);
+  });
+});

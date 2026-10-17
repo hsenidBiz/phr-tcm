@@ -54,6 +54,7 @@ export default function Combobox({
   const [active, setActive] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -91,10 +92,17 @@ export default function Combobox({
     onChange(v);
     setOpen(false);
   };
+  // The list's search box is about to go: the keyboard goes back to the
+  // field, not to the page, so a form around it can carry on from there.
+  const closeFromKeyboard = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
 
   return (
     <div ref={ref} className={cn("relative", className)}>
       <button
+        ref={triggerRef}
         type="button"
         role="combobox"
         aria-expanded={open}
@@ -157,10 +165,15 @@ export default function Combobox({
                   setActive((a) => Math.max(a - 1, 0));
                 } else if (e.key === "Enter") {
                   e.preventDefault();
-                  if (active < filtered.length) commit(filtered[active].value);
-                  else if (showCustom) commit(query.trim());
+                  if (active < filtered.length) onChange(filtered[active].value);
+                  else if (showCustom) onChange(query.trim());
+                  else return;
+                  closeFromKeyboard();
                 } else if (e.key === "Escape") {
-                  setOpen(false);
+                  // Closing the list is this key's whole job here: a dialog or
+                  // form around the field is not also closed by it.
+                  e.stopPropagation();
+                  closeFromKeyboard();
                 }
               }}
             />
