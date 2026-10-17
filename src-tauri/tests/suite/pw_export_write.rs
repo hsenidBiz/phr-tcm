@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use v2_lib::api_templates::fixture::{Fixture, FixtureRun, FixtureStep};
 use v2_lib::api_templates::{fixture_store, store as template_store, ApiTemplate, Proven};
 use v2_lib::autorun::accounts::{save_accounts_for, Account};
+use v2_lib::autorun::quirks::{save_quirks, Quirk, QuirkSource};
 use v2_lib::autorun::{nav, recipe, store, CaseScript, LocalRun};
 use v2_lib::pw_export::export::{preview_with, write_with, ExportResult};
 use v2_lib::pw_export::mapping::{save, ExportMap, Placement};
@@ -987,4 +988,66 @@ fn an_empty_baseline_writes_nothing() {
     write(fx.clone.path().join(BASELINE_REL), "from before\n");
     export(&fx, &[96], &docs(&[(96, "No baseline here")])).unwrap();
     assert_eq!(fx.read_clone(BASELINE_REL), "from before\n");
+}
+
+const QUIRKS_REL: &str = "docs/app-quirks.md";
+const REPO_QUIRKS: &str = "# Known application quirks\n\nIntro.\n\n---\n\n### The repo's own\n\n**Class:** app quirk\n";
+
+fn file_quirk(fx: &Fx, id: &str, text: &str, cases: &[i32]) {
+    let mut q = Quirk::new(text, "assistant", "autorun", 1_760_000_000_000);
+    q.id = id.into();
+    q.sources = cases.iter().map(|c| QuirkSource { case_id: *c, steps: vec![1], class: None }).collect();
+    save_quirks(fx.root.path(), ORG, PROJECT, &[q]).unwrap();
+}
+
+#[test]
+fn an_export_with_a_quirk_updates_app_quirks_in_the_same_commit() {
+    let fx = Fx::new();
+    fx.good(97, "Needs a quirk");
+    write(fx.clone.path().join(QUIRKS_REL), REPO_QUIRKS);
+    file_quirk(&fx, "qabc123", "The grid pages after fifty rows. Scroll to load the rest.", &[97]);
+    let r = export(&fx, &[97], &docs(&[(97, "Needs a quirk")])).unwrap();
+    let at = |rel: &str| r.files.iter().position(|f| f == rel).unwrap();
+    assert!(at(QUIRKS_REL) < at("suites/_generated/index.json"), "{:?}", r.files);
+    let quirks = fx.read_clone(QUIRKS_REL);
+    assert!(quirks.starts_with(REPO_QUIRKS), "{quirks}");
+    assert!(quirks.contains("### The grid pages after fifty rows\n<!-- tcm:qabc123 -->\n"), "{quirks}");
+    assert!(quirks.contains("**Established live:** 2025-10-09"), "{quirks}");
+    // Again, unchanged: the file is not rewritten (nothing new to say).
+    let r = export(&fx, &[97], &docs(&[(97, "Needs a quirk")])).unwrap();
+    assert!(!r.files.iter().any(|f| f == QUIRKS_REL), "{:?}", r.files);
+    assert_eq!(fx.read_clone(QUIRKS_REL), quirks);
+}
+
+#[test]
+fn an_export_without_quirks_or_popups_leaves_app_quirks_alone() {
+    let fx = Fx::new();
+    fx.good(98, "No quirks");
+    // A recipe with no pop-up and no loading indicator of its own.
+    let mut rc = recipe::load_recipe(fx.root.path(), ORG, PROJECT).unwrap().unwrap();
+    rc.close_when_shown.clear();
+    rc.wait_while_shown.clear();
+    recipe::save_recipe(fx.root.path(), ORG, PROJECT, &rc).unwrap();
+    file_quirk(&fx, "qabc123", "Belongs to another case.", &[12345]);
+    let r = export(&fx, &[98], &docs(&[(98, "No quirks")])).unwrap();
+    assert!(!r.files.iter().any(|f| f == QUIRKS_REL) && !fx.exists(QUIRKS_REL), "{:?}", r.files);
+    write(fx.clone.path().join(QUIRKS_REL), REPO_QUIRKS);
+    export(&fx, &[98], &docs(&[(98, "No quirks")])).unwrap();
+    assert_eq!(fx.read_clone(QUIRKS_REL), REPO_QUIRKS);
+}
+
+#[test]
+fn the_recipes_popups_reach_app_quirks_even_with_no_quirk() {
+    let fx = Fx::new();
+    fx.good(99, "Pop-up case");
+    let mut rc = recipe::load_recipe(fx.root.path(), ORG, PROJECT).unwrap().unwrap();
+    rc.close_when_shown = serde_json::from_value(json!([
+        { "name": "cookie banner", "shown": { "css": "#cb" }, "close": { "css": "#cbx" } }
+    ]))
+    .unwrap();
+    recipe::save_recipe(fx.root.path(), ORG, PROJECT, &rc).unwrap();
+    export(&fx, &[99], &docs(&[(99, "Pop-up case")])).unwrap();
+    let quirks = fx.read_clone(QUIRKS_REL);
+    assert!(quirks.contains("### cookie banner pops up and blocks the page\n<!-- tcm:popup:cookie banner -->\n"), "{quirks}");
+    assert!(quirks.contains("close it with #cbx whenever #cb is visible"), "{quirks}");
 }

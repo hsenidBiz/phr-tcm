@@ -3,16 +3,20 @@
 //! into a PHR-PLAYWRIGHT-AUTOMATION clone.
 //!
 //! This module only ever writes: `suites/<seg>/test-cases/<feature>.md`,
-//! `suites/_generated/<file>.spec.ts` and `suites/_generated/index.json`.
+//! `suites/_generated/<file>.spec.ts` and `suites/_generated/index.json`,
+//! plus the TCM-owned `docs/` files (the protected baseline, and the
+//! TCM-tagged entries of `docs/app-quirks.md`).
 //! It never touches `users.json`, `navigation.json`, `seed.spec.ts` or
 //! `auth.setup.ts`, and never runs git, npm or Playwright.
 
+use super::app_quirks::{merge_app_quirks, quirk_entries, APP_QUIRKS_REL};
 use super::clone::{index_with, open, ClonedRepo};
 use super::handover::{baseline_doc, handover_for, HandoverInput, BASELINE_DOC_REL};
 use super::mapping::{self, ExportMap, Placement};
 use super::test_case::{self, CaseDoc};
 use super::translate::{self, RawSpecInput};
 use crate::autorun::nav::{self, NavFile};
+use crate::autorun::quirks::{self, Quirk};
 use crate::autorun::recipe::{self, SignInRecipe};
 use crate::autorun::{accounts, components, runner, setup, store, CaseScript, LocalRun};
 use crate::browser::actions::Action;
@@ -118,6 +122,9 @@ struct Ctx {
     map: ExportMap,
     nav: NavFile,
     recipe: Option<SignInRecipe>,
+    /// The project's quirks. A file that cannot be read stops a WRITE (the
+    /// quirks would silently not travel), not a preview.
+    quirks: Result<Vec<Quirk>, String>,
     env_id: String,
     /// `(key, username)` only; a password is never read out of an Account.
     accounts: Vec<(String, String)>,
@@ -151,6 +158,7 @@ impl Ctx {
             map: mapping::load(root, org, project)?,
             nav: nav::load_nav(root, org, project)?,
             recipe: recipe::load_effective_recipe_if_any(root, org, project)?,
+            quirks: quirks::load_quirks(root, org, project),
             env_id,
             accounts,
             runs: store::list_runs(root),
@@ -987,6 +995,21 @@ pub fn write_with(
     // writes nothing and leaves an earlier export's file alone.
     if let Some(content) = baseline_doc(&ctx.nav.protected) {
         outs.push(Out { rel: BASELINE_DOC_REL.into(), content });
+    }
+    // TCM's quirks and the recipe's pop-ups and loading indicators, merged
+    // into the repo's own catalogue before index.json. Nothing to say, or
+    // nothing changed, writes nothing.
+    let quirks = ctx.quirks.as_ref().map_err(|e| format!("{e}. Nothing was written."))?;
+    let case_ids: Vec<i32> = ready.iter().map(|(id, _)| *id).collect();
+    let entries = quirk_entries(quirks, &case_ids, Some(recipe));
+    let quirks_path = repo.root.join(APP_QUIRKS_REL);
+    let existing_quirks = if quirks_path.is_file() {
+        Some(std::fs::read_to_string(&quirks_path).map_err(|e| format!("could not read {APP_QUIRKS_REL}: {e}"))?)
+    } else {
+        None
+    };
+    if let Some(content) = merge_app_quirks(existing_quirks.as_deref(), &entries) {
+        outs.push(Out { rel: APP_QUIRKS_REL.into(), content });
     }
     // index.json only when an entry is new or moved: a re-export of cases
     // it already maps leaves the repo's file as it is, byte for byte.

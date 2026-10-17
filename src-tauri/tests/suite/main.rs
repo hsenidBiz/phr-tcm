@@ -149,6 +149,7 @@ mod note_server;
 mod optimize;
 mod permissions;
 mod pipelines;
+mod pw_export_app_quirks;
 mod pw_export_clone;
 mod pw_export_handover;
 mod pw_export_mapping;
