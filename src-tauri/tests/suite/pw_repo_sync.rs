@@ -2,7 +2,7 @@
 //! export again for the cases asked for only. The fake clone and Auto Run
 //! store are Export to Playwright's own fixture (`pw_export_write`).
 
-use crate::pw_export_write::{doc, docs, write, Fx, MD_REL, ORG, PROJECT};
+use crate::pw_export_write::{component, doc, docs, file_quirk, map_component, uses_components, write, Fx, MD_REL, ORG, PROJECT};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
@@ -294,6 +294,82 @@ fn an_export_from_before_this_change_stays_current() {
         SyncState::OutOfDate { why } => assert!(why.contains("steps") && !why.contains("TCM facts"), "{why}"),
         other => panic!("{other:?}"),
     }
+}
+
+/// Case 20's fingerprint as an export would read it now.
+fn fingerprint_of(sx: &Sx, id: i32) -> sync::Fingerprint {
+    let module = sync::load(&sx.record_path()).unwrap().cases[&id].module.clone();
+    v2_lib::pw_export::export::Fingerprinter::load(sx.root(), ORG, PROJECT)
+        .unwrap()
+        .of(sx.root(), ORG, PROJECT, id, &module)
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn a_changed_app_quirk_makes_only_the_case_it_came_from_out_of_date() {
+    let sx = Sx::new();
+    sx.fx.good(20, "Twenty");
+    sx.fx.good(21, "Twenty one");
+    file_quirk(&sx.fx, "qabc123", "The grid pages after fifty rows.", &[20]);
+    sx.export(&[20, 21], &docs(&[(20, "Twenty"), (21, "Twenty one")])).unwrap();
+    assert_eq!(sx.state(20), SyncState::Current);
+    assert_eq!(sx.state(21), SyncState::Current);
+
+    // The note is edited in TCM; the entry the export writes for 20 changes.
+    file_quirk(&sx.fx, "qabc123", "The grid pages after twenty rows.", &[20]);
+    match sx.state(20) {
+        SyncState::OutOfDate { why } => assert!(why.contains("TCM facts") && !why.contains("steps"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(sx.state(21), SyncState::Current, "the quirk did not come from 21");
+
+    // Exporting again takes the new entry and the case is current.
+    sx.export(&[20], &docs(&[(20, "Twenty")])).unwrap();
+    assert_eq!(sx.state(20), SyncState::Current);
+}
+
+#[test]
+fn a_changed_component_mapping_makes_the_case_out_of_date() {
+    let sx = Sx::new();
+    component(&sx.fx, "Employee search");
+    map_component(&sx.fx, "Employee search", "employee-search");
+    uses_components(&sx.fx, 20, &["Employee search"]);
+    sx.export(&[20], &docs(&[(20, "Twenty")])).unwrap();
+    assert_eq!(sx.state(20), SyncState::Current);
+
+    // The Uses line TCM writes for it would now name another repo component.
+    map_component(&sx.fx, "Employee search", "people-search");
+    match sx.state(20) {
+        SyncState::OutOfDate { why } => assert!(why.contains("TCM facts") && !why.contains("steps"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_case_with_no_quirk_and_no_uses_fingerprints_as_it_did() {
+    let sx = Sx::new();
+    sx.fx.good(20, "Twenty");
+    sx.fx.good(21, "Twenty one");
+    let mut s = sx.script(21);
+    s.changes = vec!["cycle published".into()];
+    store::save_script(sx.root(), &s).unwrap();
+    sx.export(&[20, 21], &docs(&[(20, "Twenty"), (21, "Twenty one")])).unwrap();
+    let recorded = sync::load(&sx.record_path()).unwrap();
+    let (was_20, was_21) = (recorded.cases[&20].fingerprint.clone(), recorded.cases[&21].fingerprint.clone());
+    // Nothing handed over hashes as it did before the handover part existed.
+    let now_20 = fingerprint_of(&sx, 20);
+    assert_eq!(now_20.hash, now_20.legacy_hash);
+    assert_eq!(now_20, was_20);
+
+    // A quirk of another case, and a component mapping nothing uses, are not theirs.
+    file_quirk(&sx.fx, "qother1", "Belongs to another case.", &[999]);
+    component(&sx.fx, "Employee search");
+    map_component(&sx.fx, "Employee search", "employee-search");
+    assert_eq!(fingerprint_of(&sx, 20), was_20);
+    assert_eq!(fingerprint_of(&sx, 21), was_21);
+    assert_eq!(sx.state(20), SyncState::Current);
+    assert_eq!(sx.state(21), SyncState::Current);
 }
 
 /// The heading a section's Preconditions table is recorded under.

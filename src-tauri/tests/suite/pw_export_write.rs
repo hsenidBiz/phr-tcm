@@ -998,7 +998,7 @@ fn an_empty_baseline_writes_nothing() {
 const QUIRKS_REL: &str = "docs/app-quirks.md";
 const REPO_QUIRKS: &str = "# Known application quirks\n\nIntro.\n\n---\n\n### The repo's own\n\n**Class:** app quirk\n";
 
-fn file_quirk(fx: &Fx, id: &str, text: &str, cases: &[i32]) {
+pub(crate) fn file_quirk(fx: &Fx, id: &str, text: &str, cases: &[i32]) {
     let mut q = Quirk::new(text, "assistant", "autorun", 1_760_000_000_000);
     q.id = id.into();
     q.sources = cases.iter().map(|c| QuirkSource { case_id: *c, steps: vec![1], class: None }).collect();
@@ -1193,7 +1193,7 @@ fn no_order_block_for_independent_cases_in_an_export() {
 }
 
 /// Saves TCM component `name` (one click) in the project.
-fn component(fx: &Fx, name: &str) {
+pub(crate) fn component(fx: &Fx, name: &str) {
     let c: v2_lib::autorun::components::Component = serde_json::from_value(json!({
         "name": name, "description": "", "inputs": [],
         "actions": [{ "kind": "click", "selector": { "css": "#in-component" } }]
@@ -1204,14 +1204,14 @@ fn component(fx: &Fx, name: &str) {
 
 /// Maps TCM component `tcm` to the repo's common component `repo` (a blank
 /// `repo` is kept as such: the map holds whatever was saved).
-fn map_component(fx: &Fx, tcm: &str, repo: &str) {
+pub(crate) fn map_component(fx: &Fx, tcm: &str, repo: &str) {
     let mut map = v2_lib::pw_export::mapping::load(fx.root.path(), ORG, PROJECT).unwrap();
     map.components.insert(tcm.into(), repo.into());
     save(fx.root.path(), ORG, PROJECT, &map).unwrap();
 }
 
 /// A passing case whose one step uses the TCM components in `names`.
-fn uses_components(fx: &Fx, id: i32, names: &[&str]) {
+pub(crate) fn uses_components(fx: &Fx, id: i32, names: &[&str]) {
     let actions: Vec<_> = names.iter().map(|n| json!({ "kind": "use_component", "component": n })).collect();
     fx.script(id, "Uses components", "admin", "Definition Wizard", json!(actions));
     fx.run(&format!("r{id}"), "5", id, "Passed");

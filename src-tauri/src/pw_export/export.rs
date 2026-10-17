@@ -435,6 +435,9 @@ pub struct Fingerprinter {
     env_id: String,
     /// Read once: a script with no Runs as takes its newest passing run's.
     runs: Vec<LocalRun>,
+    /// The project's quirks, for the entries an export writes for a case. A
+    /// file that cannot be read is none here: a write refuses it already.
+    quirks: Vec<Quirk>,
 }
 
 impl Fingerprinter {
@@ -444,6 +447,7 @@ impl Fingerprinter {
             nav: nav::load_nav(root, org, project)?,
             env_id: crate::environments::active_id(root)?,
             runs: store::list_runs(root),
+            quirks: quirks::load_quirks(root, org, project).unwrap_or_default(),
         })
     }
 
@@ -462,11 +466,12 @@ impl Fingerprinter {
         };
         let saved = with_run_account(saved, &self.runs);
         // What the raw spec holds: components expanded, shared drafts filled in.
-        let expanded = load_expanded(root, org, project, id, &self.runs)
-            .and_then(|s| s.map(|s| resolve_shared(root, org, project, s)).transpose());
+        let expanded = load_expanded_named(root, org, project, id, &self.runs).and_then(|s| {
+            s.map(|(s, used)| resolve_shared(root, org, project, s).map(|(s, drafts)| (s, drafts, used))).transpose()
+        });
         let (steps, title, handover) = match expanded {
-            Ok(Some((s, drafts))) => {
-                let handover = self.handover_text(id, &s, &drafts);
+            Ok(Some((s, drafts, used))) => {
+                let handover = self.handover_text(id, &s, &drafts, &used);
                 (serde_json::to_value(&s.steps).unwrap_or_default(), s.title, handover)
             }
             Ok(None) => return Ok(None),
@@ -484,13 +489,33 @@ impl Fingerprinter {
     /// What TCM hands over for case `id` that the repo cannot see, one line
     /// each: the `**From TCM:**` lines, the Preconditions and Cleanup rows
     /// TCM writes, and the case's own order lines (the order note for it
-    /// alone, without the fixed proposal). Warnings are not part of it: they
-    /// are said before a write and never written. Empty when there is none,
-    /// which is what a script with nothing to hand over fingerprints as.
-    fn handover_text(&self, id: i32, script: &CaseScript, drafts: &[SharedDraft]) -> String {
+    /// alone, without the fixed proposal), then the entries the export
+    /// writes or replaces in `docs/app-quirks.md` for it (the quirks whose
+    /// sources include it, by tag) and its TCM-mapped `**Uses:**` lines
+    /// (`used` is the TCM components it uses). Warnings are not part of it:
+    /// they are said before a write and never written. Empty when there is
+    /// none, which is what a script with nothing to hand over fingerprints as.
+    fn handover_text(&self, id: i32, script: &CaseScript, drafts: &[SharedDraft], used: &[String]) -> String {
         let h = handover_for(&HandoverInput { script, shared_drafts: drafts, protected: &self.nav.protected });
         let order = order_note(&[(id, script)], None).into_iter().filter(|l| l != ORDER_PROPOSAL);
-        h.from_tcm.into_iter().chain(h.preconditions).chain(h.cleanup).chain(order).collect::<Vec<_>>().join("\n")
+        let mut entries = quirk_entries(&self.quirks, &[id], None);
+        entries.sort_by(|a, b| a.tag.cmp(&b.tag));
+        let quirk_lines = entries.into_iter().map(|e| {
+            format!(
+                "app quirk {}: {} | symptom: {} | cause: {} | fix: {} | class: {}",
+                e.tag, e.title, e.symptom, e.cause, e.fix, e.class
+            )
+        });
+        let uses = uses_for(used, &self.map.components).into_iter().map(|u| format!("uses common-components/{u}"));
+        h.from_tcm
+            .into_iter()
+            .chain(h.preconditions)
+            .chain(h.cleanup)
+            .chain(order)
+            .chain(quirk_lines)
+            .chain(uses)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
