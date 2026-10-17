@@ -67,13 +67,12 @@ fn a_change_reaches_the_file_on_its_own() {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         let raw = std::fs::read_to_string(dir.join("cache.json")).unwrap_or_default();
-        if raw.contains("written-behind") {
+        if raw.contains("written-behind") && store.disk_writes() == 1 {
             break;
         }
         assert!(std::time::Instant::now() < deadline, "the writer never wrote the change");
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert_eq!(store.disk_writes(), 1);
 }
 
 /// Every change used to rewrite the whole file on the caller's thread. A

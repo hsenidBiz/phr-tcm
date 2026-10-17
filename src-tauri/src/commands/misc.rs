@@ -362,6 +362,9 @@ pub async fn export_app_backup(
     let version = app.package_info().version.to_string();
     // Reading every file and writing one big one: on a blocking thread.
     tauri::async_runtime::spawn_blocking(move || {
+        // The cache writes behind its callers: put its last changes on disk
+        // before cache.json is read into the backup.
+        crate::cache::flush();
         let (files, skipped) = crate::backup::collect_files(&data_dir);
         let exported_at = crate::applog::stamp();
         let keys = local_storage.len() as u32;

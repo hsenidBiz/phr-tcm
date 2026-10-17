@@ -263,8 +263,10 @@ describe("the entry limit", () => {
 
   test("an unreadable entry found while pruning is dropped", () => {
     localStorage.setItem("tcm-v2-cache:bad", "{not json");
+    localStorage.setItem("tcm-v2-cache:no-age", JSON.stringify({ at: "x", data: 1 }));
     cacheWrite("good", 1);
     expect(localStorage.getItem("tcm-v2-cache:bad")).toBeNull();
+    expect(localStorage.getItem("tcm-v2-cache:no-age")).toBeNull();
     expect(cacheRead("good", Infinity)).toBe(1);
   });
 

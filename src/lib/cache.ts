@@ -259,11 +259,14 @@ function prune(key: string, at: number): void {
       kept[k] = index[k];
       continue;
     }
+    let entryAt: unknown;
     try {
-      kept[k] = (JSON.parse(localStorage.getItem(k) ?? "") as Entry<unknown>).at ?? 0;
+      entryAt = (JSON.parse(localStorage.getItem(k) ?? "") as Entry<unknown>).at;
     } catch {
-      localStorage.removeItem(k); // unreadable entry - not a cache anymore
+      entryAt = undefined;
     }
+    if (typeof entryAt === "number") kept[k] = entryAt;
+    else localStorage.removeItem(k); // unreadable entry - not a cache anymore
   }
   kept[PREFIX + key] = at;
   const keys = Object.keys(kept);

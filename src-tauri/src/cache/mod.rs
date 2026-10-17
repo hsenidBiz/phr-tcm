@@ -66,6 +66,8 @@ struct Wake {
     dirty: bool,
     /// The store is being dropped: write what is pending, then stop.
     closed: bool,
+    /// The writer has taken a change and not finished writing it.
+    in_flight: bool,
 }
 
 /// What the store and its writer thread share.
@@ -207,12 +209,20 @@ impl Shared {
             return;
         }
         self.wake().dirty = true;
-        self.cv.notify_one();
+        // All, not one: a `flush` may be waiting on the same condvar.
+        self.cv.notify_all();
     }
 
-    /// Write now if a change is pending.
+    /// Write now if a change is pending, after any write the writer thread
+    /// has already started - so when this returns, every change made before
+    /// it is on disk (the app exits right after).
     fn flush(&self) {
-        let pending = std::mem::take(&mut self.wake().dirty);
+        let mut wake = self.wake();
+        while wake.in_flight {
+            wake = self.cv.wait(wake).unwrap_or_else(PoisonError::into_inner);
+        }
+        let pending = std::mem::take(&mut wake.dirty);
+        drop(wake);
         if pending {
             self.write_now();
         }
@@ -242,10 +252,25 @@ impl Shared {
             // Cleared BEFORE the snapshot: a change after this point marks
             // the store dirty again and gets a write of its own.
             wake.dirty = false;
+            wake.in_flight = true;
             drop(wake);
-            self.write_now();
+            {
+                // Clears `in_flight` however the write ends, a panic
+                // included, so a waiting `flush` is never stranded.
+                let _done = InFlight(self);
+                self.write_now();
+            }
             wake = self.wake();
         }
+    }
+}
+
+struct InFlight<'a>(&'a Shared);
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        self.0.wake().in_flight = false;
+        self.0.cv.notify_all();
     }
 }
 
@@ -253,7 +278,7 @@ impl Drop for Store {
     fn drop(&mut self) {
         let Some(writer) = self.writer.take() else { return };
         self.shared.wake().closed = true;
-        self.shared.cv.notify_one();
+        self.shared.cv.notify_all();
         let _ = writer.join();
         // The writer exits only with nothing pending, unless it panicked.
         self.shared.flush();
@@ -310,9 +335,9 @@ impl Store {
     }
 
     /// Note a change: written behind the caller by the writer thread, or
-    /// right here when the thread could not be started.
+    /// right here when the thread could not be started or has died.
     fn changed(&self) {
-        if self.writer.is_some() {
+        if self.writer.as_ref().is_some_and(|w| !w.is_finished()) {
             self.shared.schedule();
         } else {
             self.shared.write_now();
