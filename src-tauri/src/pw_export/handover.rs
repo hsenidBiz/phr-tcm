@@ -10,7 +10,7 @@
 use super::export::SharedDraft;
 use crate::autorun::marks::normalise;
 use crate::autorun::nav::{ProtectedKind, ProtectedRecord};
-use crate::autorun::plan::{suggest, Marks};
+use crate::autorun::plan::{kept_constraints, suggest, Marks};
 use crate::autorun::quirks::day_of;
 use crate::autorun::CaseScript;
 use crate::browser::actions::Action;
@@ -304,17 +304,18 @@ pub fn order_note(cases: &[(i32, &CaseScript)], saved_order: Option<&[i32]>) -> 
     let marks: Vec<(i32, Marks)> = cases.iter().map(|(id, s)| (*id, Marks::of(s))).collect();
     let mut out: Vec<String> = Vec::new();
 
-    // (needer, changer, the state's name as the needer spells it), by file position.
+    // (needer, changer, the state's name as the needer spells it), by file
+    // position: only the constraints the planner keeps, so the notes never
+    // say what `autorun::plan` would not do.
+    let at = |id: i32| cases.iter().position(|(c, _)| *c == id).expect("a constraint names a listed case");
     let mut edges: Vec<(usize, usize, String)> = Vec::new();
-    for (i, (_, needer)) in marks.iter().enumerate() {
-        for (j, (_, changer)) in marks.iter().enumerate() {
-            let changed: Vec<String> = changer.changes.iter().map(|c| normalise(c)).collect();
-            let shared = needer.needs.iter().find(|n| !normalise(n).is_empty() && changed.contains(&normalise(n)));
-            if let (true, Some(item)) = (i != j, shared) {
-                edges.push((i, j, item.trim().to_string()));
-            }
-        }
+    for (needer, changer) in kept_constraints(&marks) {
+        let (i, j) = (at(needer), at(changer));
+        let changed: Vec<String> = marks[j].1.changes.iter().map(|c| normalise(c)).collect();
+        let item = marks[i].1.needs.iter().find(|n| changed.contains(&normalise(n)));
+        edges.push((i, j, item.map(|n| n.trim().to_string()).unwrap_or_default()));
     }
+    edges.sort_by_key(|(i, j, _)| (*i, *j));
     for (i, j, item) in &edges {
         out.push(format!(
             "run {} before {} ({} needs {item} unchanged and {} changes it)",

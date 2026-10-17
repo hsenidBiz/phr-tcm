@@ -264,3 +264,19 @@ fn the_case_ids_a_file_holds_come_in_file_order() {
     let file = "# T\n\n## 12 \u{2014} B\nx\n### 99 not a case\n## 3 \u{2014} A\n## 12 \u{2014} dup\n## 7x no\n## Amendment\n## 5\n";
     assert_eq!(case_ids_in(file), vec![12, 3, 5]);
 }
+
+#[test]
+fn a_hand_broken_start_marker_never_costs_the_repo_its_text() {
+    // A start with no end, ahead of the User line, then text the repo wrote.
+    let broken = "# T\n\n<!-- tcm:order -->\nRepo wrote this.\nAnd this.\n\n**User:** u  <!-- from-tcm -->\n\n## 1 \u{2014} A\nbody\n";
+    let once = with_order_block(broken, &lines(&["run 1 before 2"]));
+    let twice = with_order_block(&once, &lines(&["run 3 alone and last: it publishes"]));
+    let thrice = with_order_block(&twice, &lines(&[]));
+    for out in [&once, &twice, &thrice] {
+        assert!(out.contains("Repo wrote this.\nAnd this.\n"), "{out}");
+        assert!(out.contains("<!-- tcm:order -->\nRepo wrote this.\n"), "{out}");
+    }
+    assert!(twice.contains("- run 3 alone and last: it publishes\n") && !twice.contains("run 1 before 2"), "{twice}");
+    // Only the orphan start is left once TCM has nothing to say.
+    assert_eq!(thrice.matches("tcm:order").count(), 1, "{thrice}");
+}

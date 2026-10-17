@@ -181,6 +181,22 @@ fn incoming_of(after: &[Vec<usize>]) -> Vec<usize> {
     incoming
 }
 
+/// The constraints `suggest` keeps, as `(needer, changer)` case ids: the
+/// needer runs before the changer. One per pair at most, never both ways -
+/// a backward constraint that would close a cycle is dropped, as `suggest`
+/// drops it. For notes that must agree with the suggested order.
+pub fn kept_constraints(cases_in_list_order: &[(i32, Marks)]) -> Vec<(i32, i32)> {
+    let cases = first_of_each(cases_in_list_order);
+    let needs: Vec<Vec<String>> = cases.iter().map(|(_, m)| keys(&m.needs)).collect();
+    let changes: Vec<Vec<String>> = cases.iter().map(|(_, m)| keys(&m.changes)).collect();
+    let after = kept(&needs, &changes);
+    let mut out = Vec::new();
+    for (i, js) in after.iter().enumerate() {
+        out.extend(js.iter().map(|&j| (cases[i].0, cases[j].0)));
+    }
+    out
+}
+
 /// The suggested order (design §2.1): a stable topological sort of the
 /// cases in list order over the constraints "a case that needs X unchanged
 /// runs before a case that changes X", for every name X. A case that both

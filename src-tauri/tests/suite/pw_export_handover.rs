@@ -293,3 +293,37 @@ fn a_chain_is_one_group_in_the_suggested_order() {
     assert!(lines.contains(&"run 13 before 12 (13 needs z unchanged and 12 changes it)".to_string()), "{lines:?}");
     assert!(lines.contains(&"run 12 before 11 (12 needs y unchanged and 11 changes it)".to_string()), "{lines:?}");
 }
+
+/// The ids `suggest` puts in order for these cases, as listed.
+fn planned(cases: &[&CaseScript]) -> Vec<i32> {
+    let list: Vec<(i32, v2_lib::autorun::plan::Marks)> =
+        cases.iter().map(|s| (s.case_id, v2_lib::autorun::plan::Marks::of(s))).collect();
+    v2_lib::autorun::plan::suggest(&list)
+}
+
+fn before_lines(lines: &[String]) -> Vec<&String> {
+    lines.iter().filter(|l| l.starts_with("run ") && l.contains(" before ")).collect()
+}
+
+#[test]
+fn two_cases_that_each_need_and_change_one_thing_get_one_before_line() {
+    let a = case(1, json!([[]]), json!({ "needs_unchanged": ["x"], "changes": ["x"] }));
+    let b = case(2, json!([[]]), json!({ "needs_unchanged": ["x"], "changes": ["x"] }));
+    let lines = note(&[&a, &b], None);
+    assert_eq!(before_lines(&lines), vec!["run 1 before 2 (1 needs x unchanged and 2 changes it)"], "{lines:?}");
+    assert_eq!(planned(&[&a, &b]), vec![1, 2]);
+    // Listed the other way round, the planner (and so the note) puts 2 first.
+    let lines = note(&[&b, &a], None);
+    assert_eq!(before_lines(&lines), vec!["run 2 before 1 (2 needs x unchanged and 1 changes it)"], "{lines:?}");
+    assert_eq!(planned(&[&b, &a]), vec![2, 1]);
+}
+
+#[test]
+fn a_two_cycle_gets_one_before_line_in_the_planners_order() {
+    // 1 changes x and needs y; 2 changes y and needs x: one reset, one order.
+    let a = case(1, json!([[]]), json!({ "needs_unchanged": ["y"], "changes": ["x"] }));
+    let b = case(2, json!([[]]), json!({ "needs_unchanged": ["x"], "changes": ["y"] }));
+    let lines = note(&[&a, &b], None);
+    assert_eq!(before_lines(&lines), vec!["run 1 before 2 (1 needs y unchanged and 2 changes it)"], "{lines:?}");
+    assert_eq!(planned(&[&a, &b]), vec![1, 2]);
+}

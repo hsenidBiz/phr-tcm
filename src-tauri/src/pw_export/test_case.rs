@@ -392,6 +392,25 @@ pub fn case_ids_in(file: &str) -> Vec<i32> {
 /// whole on every export (`with_order_block`).
 pub const ORDER_START: &str = "<!-- tcm:order -->";
 pub const ORDER_END: &str = "<!-- /tcm:order -->";
+const ORDER_HEADING: &str = "**Order (from TCM):**";
+
+/// Where the order block that starts at `all[start]` ends, when it is
+/// TCM's: the `ORDER_END` line reached with nothing but the block's own
+/// shape in between (its heading, `- ` lines, blank lines). A start that
+/// is hand-broken - no end, or repo text before the end - is no block, so
+/// whatever follows it is never taken for TCM's to replace.
+fn own_block_end(all: &[&str], start: usize, limit: usize) -> Option<usize> {
+    for (j, line) in all.iter().enumerate().take(limit).skip(start + 1) {
+        let t = line.trim();
+        if t == ORDER_END {
+            return Some(j);
+        }
+        if !(t.is_empty() || t == ORDER_HEADING || t.starts_with("- ")) {
+            return None;
+        }
+    }
+    None
+}
 
 /// `file` with the order block (`order_note`'s lines) put in the header,
 /// right after the `**User:**` line: the block already there is replaced in
@@ -409,9 +428,7 @@ pub fn with_order_block(file: &str, note: &[String]) -> String {
     let mut at: Option<usize> = None;
     let mut i = 0;
     while i < all.len() {
-        let closes = (i < header_end && all[i].trim() == ORDER_START)
-            .then(|| (i + 1..header_end).find(|&j| all[j].trim() == ORDER_END))
-            .flatten();
+        let closes = (i < header_end && all[i].trim() == ORDER_START).then(|| own_block_end(&all, i, header_end)).flatten();
         match closes {
             Some(j) => {
                 at.get_or_insert(kept.len());
@@ -434,7 +451,7 @@ pub fn with_order_block(file: &str, note: &[String]) -> String {
         }
         return kept.concat();
     }
-    let mut block: Vec<String> = vec![format!("{ORDER_START}{eol}"), format!("**Order (from TCM):**{eol}"), eol.to_string()];
+    let mut block: Vec<String> = vec![format!("{ORDER_START}{eol}"), format!("{ORDER_HEADING}{eol}"), eol.to_string()];
     block.extend(note.iter().map(|l| format!("- {}{eol}", one_line(l).trim())));
     block.push(format!("{ORDER_END}{eol}"));
 
