@@ -210,6 +210,84 @@ test("cacheRemove deletes an entry that was written", () => {
   expect(cacheRead("k", 60_000)).toBeNull();
 });
 
+/** Plants an entry the way an earlier version (or this one) stores it. */
+function plant(key: string, at: number, data: unknown = 1) {
+  localStorage.setItem(`tcm-v2-cache:${key}`, JSON.stringify({ at, data }));
+}
+
+function cachedKeys(): string[] {
+  return Object.keys(localStorage)
+    .filter((k) => k.startsWith("tcm-v2-cache:"))
+    .sort();
+}
+
+describe("the entry limit", () => {
+  test("a write past 150 entries drops the oldest", () => {
+    // k0 and k1 the oldest, whatever order the same-millisecond writes land in.
+    plant("k0", 1);
+    plant("k1", 2);
+    for (let i = 2; i < 150; i++) cacheWrite(`k${i}`, i);
+    cacheWrite("k-new", "x");
+    cacheWrite("k-newer", "y");
+    expect(cachedKeys()).toHaveLength(150);
+    expect(cacheRead("k0", Infinity)).toBeNull();
+    expect(cacheRead("k1", Infinity)).toBeNull();
+    expect(cacheRead("k-new", Infinity)).toBe("x");
+    expect(cacheRead("k-newer", Infinity)).toBe("y");
+  });
+
+  /** Pruning used to JSON.parse every cached entry on every write just to
+   * read its age - the whole plan tree included. */
+  test("a write reads no other entry", () => {
+    for (let i = 0; i < 160; i++) cacheWrite(`k${i}`, { big: "x".repeat(100), i });
+    const getItem = vi.spyOn(Storage.prototype, "getItem");
+    try {
+      cacheWrite("one-more", 1);
+      const entryReads = getItem.mock.calls.filter(([k]) => String(k).startsWith("tcm-v2-cache:"));
+      expect(entryReads).toEqual([]);
+    } finally {
+      getItem.mockRestore();
+    }
+    expect(cachedKeys()).toHaveLength(150);
+  });
+
+  test("entries stored before the index existed are pruned by their real age", () => {
+    // An earlier version's 150 entries, no index: k0 the oldest.
+    for (let i = 0; i < 150; i++) plant(`old${i}`, 1_000 + i);
+    cacheWrite("fresh", "f");
+    expect(cachedKeys()).toHaveLength(150);
+    expect(cacheRead("old0", Infinity)).toBeNull();
+    expect(cacheRead("old1", Infinity)).toBe(1);
+    expect(cacheRead("fresh", Infinity)).toBe("f");
+  });
+
+  test("an unreadable entry found while pruning is dropped", () => {
+    localStorage.setItem("tcm-v2-cache:bad", "{not json");
+    cacheWrite("good", 1);
+    expect(localStorage.getItem("tcm-v2-cache:bad")).toBeNull();
+    expect(cacheRead("good", Infinity)).toBe(1);
+  });
+
+  test("an entry removed behind the index's back is not counted", () => {
+    for (let i = 0; i < 150; i++) cacheWrite(`k${i}`, i);
+    localStorage.removeItem("tcm-v2-cache:k5");
+    cacheRemove("k6");
+    cacheWrite("a", 1);
+    cacheWrite("b", 2);
+    // 148 left + 2 new = 150: nothing had to be dropped.
+    expect(cachedKeys()).toHaveLength(150);
+    expect(cacheRead("k0", Infinity)).toBe(0);
+  });
+
+  test("signing in as someone else drops the index with the entries", () => {
+    claimCacheFor("first@example.com");
+    for (let i = 0; i < 150; i++) cacheWrite(`k${i}`, i);
+    claimCacheFor("second@example.com");
+    cacheWrite("mine", 1);
+    expect(cachedKeys()).toEqual(["tcm-v2-cache:mine"]);
+  });
+});
+
 test("demo mode neither seeds nor stores", async () => {
   localStorage.setItem("tcm-v2-dev-demo", "on");
   const fetcher = vi.fn(async () => ["real"]);

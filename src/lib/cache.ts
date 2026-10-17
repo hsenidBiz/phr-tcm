@@ -30,6 +30,8 @@
 
 const PREFIX = "tcm-v2-cache:";
 const OWNER_KEY = "tcm-v2-cache-owner";
+/** Each entry's storage key to its `at`, so pruning never parses entries. */
+const INDEX_KEY = "tcm-v2-cache-index";
 const MAX_ENTRIES = 150;
 
 const HOUR = 60 * 60_000;
@@ -113,6 +115,7 @@ export function claimCacheFor(account: string | null): boolean {
     for (const k of Object.keys(localStorage)) {
       if (k.startsWith(PREFIX)) localStorage.removeItem(k);
     }
+    localStorage.removeItem(INDEX_KEY);
     localStorage.setItem(OWNER_KEY, now);
     return true;
   } catch {
@@ -175,8 +178,9 @@ export function cacheRemove(key: string): void {
 export function cacheWrite<T>(key: string, data: T): void {
   if (off()) return;
   try {
-    localStorage.setItem(PREFIX + key, JSON.stringify({ at: Date.now(), data }));
-    prune();
+    const at = Date.now();
+    localStorage.setItem(PREFIX + key, JSON.stringify({ at, data }));
+    prune(key, at);
   } catch {
     // Quota or unavailable - drop everything we own and carry on; a cache
     // that cannot write must never break the feature it accelerates.
@@ -184,6 +188,7 @@ export function cacheWrite<T>(key: string, data: T): void {
       for (const k of Object.keys(localStorage)) {
         if (k.startsWith(PREFIX)) localStorage.removeItem(k);
       }
+      localStorage.removeItem(INDEX_KEY);
     } catch {
       // storage fully unavailable
     }
@@ -225,19 +230,49 @@ export function persistentQuery<T>(opts: {
   };
 }
 
-function prune(): void {
-  const keys: { k: string; at: number }[] = [];
-  for (const k of Object.keys(localStorage)) {
-    if (!k.startsWith(PREFIX)) continue;
+function readIndex(): Record<string, number> {
+  try {
+    const index = JSON.parse(localStorage.getItem(INDEX_KEY) ?? "{}") as unknown;
+    return index && typeof index === "object" ? (index as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Keep at most MAX_ENTRIES, dropping the oldest. Each entry's age comes from
+ * the index (one small key: storage key to `at`), so a write never parses
+ * the other entries - it used to parse all of them, plan trees included.
+ *
+ * The index is checked against the keys actually in storage on every call -
+ * listing keys reads no values. An entry it does not know (stored before the
+ * index existed, or by a write whose index update was lost) is read once for
+ * its age; a key it lists that is gone is forgotten.
+ */
+function prune(key: string, at: number): void {
+  const index = readIndex();
+  const present = Object.keys(localStorage).filter((k) => k.startsWith(PREFIX));
+  const kept: Record<string, number> = {};
+  for (const k of present) {
+    if (k === PREFIX + key) continue; // just written; its age is `at`
+    if (typeof index[k] === "number") {
+      kept[k] = index[k];
+      continue;
+    }
     try {
-      keys.push({ k, at: (JSON.parse(localStorage.getItem(k) ?? "") as Entry<unknown>).at ?? 0 });
+      kept[k] = (JSON.parse(localStorage.getItem(k) ?? "") as Entry<unknown>).at ?? 0;
     } catch {
       localStorage.removeItem(k); // unreadable entry - not a cache anymore
     }
   }
-  if (keys.length <= MAX_ENTRIES) return;
-  keys.sort((a, b) => a.at - b.at);
-  for (const { k } of keys.slice(0, keys.length - MAX_ENTRIES)) {
-    localStorage.removeItem(k);
+  kept[PREFIX + key] = at;
+  const keys = Object.keys(kept);
+  if (keys.length > MAX_ENTRIES) {
+    keys.sort((a, b) => kept[a] - kept[b]);
+    for (const k of keys.slice(0, keys.length - MAX_ENTRIES)) {
+      localStorage.removeItem(k);
+      delete kept[k];
+    }
   }
+  localStorage.setItem(INDEX_KEY, JSON.stringify(kept));
 }
