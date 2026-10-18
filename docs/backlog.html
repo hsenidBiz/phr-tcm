@@ -42,7 +42,7 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 18 October 2026, after 2.2.3-beta.11 (the application's refusals during discovery, and the faster cache from 2.2.3-beta.10). What is left is below.</p>
+  <p class="sub">Updated 18 October 2026, after 2.2.3-beta.12 (replays reuse the signed-in browser). What is left is below.</p>
 
   <h2>The application's refusals (2.2.3-beta.11, 18 October 2026)</h2>
   <div class="item">
@@ -66,8 +66,14 @@
     </ul>
   </div>
   <div class="item">
-    <div class="head"><span class="title">Replays without re-signing in (backlog 27)</span><span class="status todo">Design written</span></div>
-    <p>Design: <code>docs/superpowers/specs/2026-10-18-replay-reuse-browser-design.md</code>. Next to build.</p>
+    <div class="head"><span class="title">Replays without re-signing in (2.2.3-beta.12): hand checks owed</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>Heal one case with three replays in a row: only the first signs in; the others say "Signed in already: went to ...".</li>
+      <li>A no_save discovery, then end_autorun_discovery, then a replay of a case that saves: the save goes through.</li>
+      <li>reset_autorun_browser leaves the browser signed in at the home page.</li>
+      <li>A step that signs in as another user (a role test): the next replay signs in again as its own account. Whether PeoplesHR keeps who is signed in only in cookies decides this.</li>
+      <li>Your End discovery button on the Setup card still closes the assistant's browser.</li>
+    </ul>
   </div>
 
   <h2>Agreed, not built yet</h2>
