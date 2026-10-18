@@ -506,6 +506,27 @@ impl Noted {
         }
         self.late.clear();
     }
+
+    /// Read once more what the page answered the last action that changed
+    /// it, for a caller with no next action to give it that read (the end
+    /// of a discovery call), with no wait. What is new comes back through
+    /// `take_late`.
+    pub async fn look_again<D: Driver>(&mut self, d: &mut D) {
+        let Some(last) = self.last.as_mut() else {
+            return;
+        };
+        let said = if last.replaces_page {
+            Vec::new()
+        } else {
+            let now = read_page_messages(d).await;
+            let said = new_messages(&last.after, &now.messages);
+            last.after = now.messages;
+            said
+        };
+        let refused = refused_with_ids(d, last.mark, &last.seen).await;
+        // Numbered past its own step, so it is handed back as a late answer.
+        credit_answer(last.step.wrapping_add(1), &mut [], &mut self.late, last, said, refused);
+    }
 }
 
 /// One action that changed the page, as `Noted` keeps it.
