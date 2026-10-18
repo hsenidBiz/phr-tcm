@@ -85,9 +85,9 @@ struct FakeHost {
     left_open: Option<v2_lib::autorun::replay_to::LeftOpen>,
     /// Where the app says the replay started.
     from: v2_lib::autorun::replay_to::ReplayFrom,
-    /// The area the replay went to in a browser already signed in as the
-    /// case's account, as the app says it.
-    signed_in_already: Option<String>,
+    /// What the replay made of a browser already signed in as the case's
+    /// account, as the app says it.
+    reuse: v2_lib::autorun::replay_to::Reuse,
 }
 
 impl FakeHost {
@@ -102,7 +102,7 @@ impl FakeHost {
             release: None,
             left_open: None,
             from: v2_lib::autorun::replay_to::ReplayFrom::Beginning,
-            signed_in_already: None,
+            reuse: Default::default(),
         }
     }
     fn ready() -> Self {
@@ -137,7 +137,7 @@ impl ReplayHost for FakeHost {
                 discovery,
                 left_open: self.left_open.clone(),
                 from: self.from,
-                signed_in_already: self.signed_in_already.clone(),
+                reuse: self.reuse.clone(),
             })
         })
     }
@@ -220,7 +220,7 @@ async fn a_replay_that_skipped_the_sign_in_says_it_went_straight_to_the_area() {
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
     let mut ready = FakeHost::ready();
-    ready.signed_in_already = Some("Leave".into());
+    ready.reuse.went = Some("Leave".into());
     let (status, text) = autorun_replay_with(&ctx(), &body(3), leak(ready), WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
@@ -234,10 +234,31 @@ async fn a_replay_that_skipped_the_sign_in_says_it_went_straight_to_the_area() {
         why: "nothing matched #s2".into(),
         outcomes: vec![],
     });
-    stopped.signed_in_already = Some("Leave".into());
+    stopped.reuse.went = Some("Leave".into());
     let (_, text) = autorun_replay_with(&ctx(), &body(3), leak(stopped), WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], "Started from the beginning. Signed in already: went to Leave. Replay stopped at step 2: nothing matched #s2");
+}
+
+/// A save the guard stopped while a signed-in browser went to the area is
+/// said in the answer, before the replay's own sentence.
+#[tokio::test]
+async fn a_save_stopped_on_the_way_to_the_area_is_said() {
+    use v2_lib::autorun::replay_to::save_stopped_line;
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let sentence = v2_lib::browser::save_guard::blocked("POST", "https://hr.example.internal/api/leave/save");
+    let mut ready = FakeHost::ready();
+    ready.reuse.save_stopped = Some(save_stopped_line("Leave", &sentence));
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), leak(ready), WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["sentence"],
+        format!("Started from the beginning. Signed in already, but on the way to Leave: {sentence}. Signed in again and went once more. Replayed case 77 to step 3 - the browser is on the page before step 3 runs")
+    );
 }
 
 #[tokio::test]

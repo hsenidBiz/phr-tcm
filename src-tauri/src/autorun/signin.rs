@@ -263,6 +263,13 @@ pub async fn sign_in_leased<D: Driver>(
     lease.hold(root, &account.key).await?;
     let out = sign_in(d, root, &recipe, &account, timing).await;
     *signed_in = out.ok.then(|| account.key.clone());
+    // The sign-in as its cookies left it, for a later replay to know the
+    // browser still holds it (`replay_to`): memory only, never said.
+    let print = match out.ok {
+        true => session::cookie_print(d, &recipe.origins()).await,
+        false => None,
+    };
+    lease.note_sign_in(print);
     crate::applog::info(format!("Auto-run sign-in as {}: {}", account.key, if out.ok { "ok" } else { "failed" }));
     Ok(out)
 }

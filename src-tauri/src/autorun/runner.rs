@@ -1219,6 +1219,7 @@ async fn run_expanded<D: Driver>(
             Action::SignIn { account: key } => match signin::prepare(root, organization, project, key) {
                 Err(why) => {
                     *account = None;
+                    lease.forget_sign_in();
                     blocked = Some(AFTER_FAILED_SIGN_IN);
                     ActionOutcome::failed(why)
                 }
@@ -1234,6 +1235,11 @@ async fn run_expanded<D: Driver>(
                     Ok(()) => {
                         let signed = signin::sign_in(d, root, &r, &who, timing).await;
                         *account = signed.ok.then(|| who.key.clone());
+                        let print = match signed.ok {
+                            true => crate::browser::session::cookie_print(d, &r.origins()).await,
+                            false => None,
+                        };
+                        lease.note_sign_in(print);
                         match route {
                             _ if !signed.ok => {
                                 blocked = Some(AFTER_FAILED_SIGN_IN);
@@ -1312,6 +1318,15 @@ async fn run_expanded<D: Driver>(
                         outcome
                     }
                 }
+            }
+            // The session ended on purpose: nobody is signed in here now,
+            // so a replay after it signs in again rather than trusting it.
+            Action::ExpireSession => {
+                let (outcome, stop) = plain(d, &here, action, timing).await;
+                *account = None;
+                lease.forget_sign_in();
+                blocked = stop;
+                outcome
             }
             other => {
                 let (outcome, stop) = plain(d, &here, other, timing).await;
@@ -1622,18 +1637,22 @@ async fn after_session_refused<D: Driver>(
         Ok(found) => found,
         Err(why) => {
             *account = None;
+            lease.forget_sign_in();
             return ActionOutcome::failed(why);
         }
     };
     if let Err(why) = lease.hold(here.root, &who.key).await {
         *account = None;
+        lease.forget_sign_in();
         return ActionOutcome::failed(why);
     }
     let signed = signin::sign_in_fresh(d, here.root, &r, &who, timing).await;
     if !signed.ok {
         *account = None;
+        lease.forget_sign_in();
         return as_action_outcome(&signed);
     }
+    lease.note_sign_in(crate::browser::session::cookie_print(d, &r.origins()).await);
     ActionOutcome::failed(session_refused_mid_case(key))
 }
 

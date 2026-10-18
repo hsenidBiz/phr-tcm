@@ -407,7 +407,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
         db,
         progress,
         &mut tabs,
-        &mut None,
+        &mut Reuse::default(),
     )
     .await
 }
@@ -415,16 +415,17 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
 /// `replay_to_checked`, also learning back the tab each step it ran was
 /// in when that was not `main` (`tabs`, in step order) - the failing step's
 /// too - so the pane says `in tab <name>` beside them as it does for a
-/// step the person ran; and, in `signed_in_already`, the area it went to
-/// without signing in, when the browser was already signed in as the
-/// case's account (`signin::already_signed_in`), for its answer to say so
-/// (`signed_in_already_line`).
+/// step the person ran; and, in `reuse`, what it made of a browser already
+/// signed in as the case's account, for its answer to say (`Reuse::said`).
 ///
-/// That browser - signed in as the script's account, holding its lease in
-/// this environment, its page not refused and the recipe's signed-in
-/// marker showing - keeps its sign-in and goes to the area from where it
-/// is (`TripFrom::Elsewhere`). If that trip fails, the case is signed in as
-/// it always is and goes again, once. Any other browser signs in first.
+/// That browser - signed in by the app as the script's account, holding
+/// its lease in this environment, still holding the cookies that sign-in
+/// left (`session::same_cookies`), its page not refused and the recipe's
+/// signed-in marker showing (`signin::already_signed_in`) - keeps its
+/// sign-in and goes to the area from where it is (`TripFrom::Elsewhere`).
+/// If that trip fails, the case is signed in as it always is and goes
+/// again, once; a save the guard stopped on that trip is kept for the
+/// answer. Any other browser signs in first.
 #[allow(clippy::too_many_arguments)]
 pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     d: &mut D,
@@ -442,9 +443,9 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     db: impl FnOnce() -> PreconditionDb<P>,
     mut progress: impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
-    signed_in_already: &mut Option<String>,
+    reuse: &mut Reuse,
 ) -> ReplayEnd {
-    *signed_in_already = None;
+    *reuse = Reuse::default();
     let Checked { script, route } = match check(root, organization, project, req) {
         Ok(c) => c,
         Err(why) => return ReplayEnd::Refused(why),
@@ -522,22 +523,25 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
             if closed(&went) {
                 return ReplayEnd::BrowserGone { step: 1, why: None, outcomes: Vec::new() };
             }
+            let area = route.path.name();
             if went.ok {
-                crate::applog::info(format!("{}: signed in already as {key}, went to {}", who(id), route.path.name()));
-                *signed_in_already = Some(route.path.name().to_string());
+                crate::applog::info(format!("{}: signed in already as {key}, went to {area}", who(id)));
+                reuse.went = Some(area.to_string());
             } else {
                 crate::applog::info(format!(
-                    "{}: signed in already as {key}, but the trip to {} failed - signing in again",
-                    who(id),
-                    route.path.name()
+                    "{}: signed in already as {key}, but the trip to {area} failed - signing in again",
+                    who(id)
                 ));
+                if crate::browser::save_guard::is_blocked(&went.detail) {
+                    reuse.save_stopped = Some(save_stopped_line(area, &went.detail));
+                }
             }
         }
     }
 
     // The case's own account, through the supervised browser's lease.
     let mut signed_now = false;
-    if let Some(key) = script.account.as_deref().filter(|_| signed_in_already.is_none()) {
+    if let Some(key) = script.account.as_deref().filter(|_| reuse.went.is_none()) {
         if stopped() {
             return ReplayEnd::Stopped { step: 1 };
         }
@@ -563,7 +567,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     if stopped() {
         return ReplayEnd::Stopped { step: 1 };
     }
-    if signed_in_already.is_none() {
+    if reuse.went.is_none() {
         let from = if signed_now { TripFrom::SignIn } else { TripFrom::Elsewhere };
         let went = replay::trip_to_module(d, root, &route, from, timing, &who(id)).await;
         if closed(&went) {
@@ -586,9 +590,12 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
 
 /// Is the supervised browser `d` already signed in as `key`, the case's
 /// account? Its session is `key`'s (`account`), it holds `key`'s lease in
-/// the active environment (`Held::holds`), and the page says so
-/// (`signin::already_signed_in`). A project whose recipe cannot be read is
-/// signed in as always, which says why.
+/// the active environment (`Held::holds`), it still holds the cookies the
+/// app's own sign-in left (`Held::sign_in_print`, `session::same_cookies`:
+/// not a login a step typed or the person made by hand), and the page says
+/// so (`signin::already_signed_in`). Only looked at, never changed. A
+/// project whose recipe cannot be read is signed in as always, which says
+/// why.
 #[allow(clippy::too_many_arguments)]
 async fn signed_in_here<D: Driver>(
     d: &mut D,
@@ -603,8 +610,41 @@ async fn signed_in_here<D: Driver>(
     if account.as_deref() != Some(key) || !lease.holds(root, key) {
         return false;
     }
+    let Some(print) = lease.sign_in_print() else { return false };
     let Ok(recipe) = super::recipe::load_effective_recipe(root, organization, project) else { return false };
+    if !crate::browser::session::same_cookies(d, &recipe.origins(), print).await {
+        return false;
+    }
     signin::already_signed_in(d, &recipe, account.as_deref(), key, timing).await
+}
+
+/// What a replay from the beginning made of a browser already signed in as
+/// its case's account (`replay_to_traced`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Reuse {
+    /// The area it went to without signing in.
+    pub went: Option<String>,
+    /// A save the no-save guard stopped while it went there, said as
+    /// `save_stopped_line`: the case then signed in again and went once more.
+    pub save_stopped: Option<String>,
+}
+
+impl Reuse {
+    /// Said after where the replay started, in place of a sign-in; nothing
+    /// when the browser signed in as it always did.
+    pub fn said(&self) -> Option<String> {
+        match (&self.went, &self.save_stopped) {
+            (Some(area), _) => Some(signed_in_already_line(area)),
+            (None, Some(line)) => Some(line.clone()),
+            (None, None) => None,
+        }
+    }
+}
+
+/// Said when a browser already signed in stopped a save (`sentence`, the
+/// guard's) on its way to `area`, before the case signed in again.
+pub fn save_stopped_line(area: &str, sentence: &str) -> String {
+    format!("Signed in already, but on the way to {area}: {sentence}. Signed in again and went once more.")
 }
 
 /// What a replay's answer says, after where it started, when it went to

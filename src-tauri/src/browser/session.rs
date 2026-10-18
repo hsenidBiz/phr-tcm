@@ -47,14 +47,12 @@ pub const CAPTURE_STORAGE_JS: &str = r#"(() => {
   catch (e) { return { origin: location.origin, entries: [] }; }
 })()"#;
 
-pub async fn capture<D: Driver>(
-    d: &mut D,
-    origins: &[String],
-    now_ms: u64,
-) -> Result<SavedSession, CdpError> {
+/// The browser's cookies that belong to `origins`: the set a saved session
+/// holds (`capture`). Read only.
+async fn own_cookies<D: Driver>(d: &mut D, origins: &[String]) -> Result<Vec<Value>, CdpError> {
     let hosts: Vec<String> = origins.iter().filter_map(|o| host_of(o)).collect();
     let reply = d.call("Network.getAllCookies", json!({})).await?;
-    let cookies: Vec<Value> = reply["cookies"]
+    Ok(reply["cookies"]
         .as_array()
         .into_iter()
         .flatten()
@@ -63,7 +61,80 @@ pub async fn capture<D: Driver>(
             hosts.iter().any(|h| cookie_belongs(domain, h))
         })
         .cloned()
-        .collect();
+        .collect())
+}
+
+/// Which of its own cookies a sign-in left in a browser - by name, domain
+/// and path - and a SHA-256 of their name=value pairs. Taken at each sign-in
+/// the app makes (`cookie_print`) and kept in memory only, with the
+/// browser's lease (`autorun::lease::Held`): never logged, never written,
+/// and its `Debug` shows only how many cookies it covers. The same cookies
+/// with the same values later (`same_cookies`) are the same sign-in; a value
+/// changed or a cookie gone is not. A cookie the page set after the sign-in
+/// is not part of it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CookiePrint {
+    keys: Vec<(String, String, String)>,
+    digest: Vec<u8>,
+}
+
+impl std::fmt::Debug for CookiePrint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CookiePrint({} cookies)", self.keys.len())
+    }
+}
+
+fn cookie_key(c: &Value) -> (String, String, String) {
+    let s = |k: &str| c[k].as_str().unwrap_or("").to_string();
+    (s("name"), s("domain").to_ascii_lowercase(), s("path"))
+}
+
+/// The digest of `keys`' values among `cookies`, in `keys`' order; `None`
+/// when one of them is not there.
+fn digest_of(cookies: &[Value], keys: &[(String, String, String)]) -> Option<Vec<u8>> {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for key in keys {
+        let c = cookies.iter().find(|c| cookie_key(c) == *key)?;
+        for part in [key.0.as_str(), key.1.as_str(), key.2.as_str(), c["value"].as_str().unwrap_or("")] {
+            h.update((part.len() as u64).to_le_bytes());
+            h.update(part.as_bytes());
+        }
+    }
+    Some(h.finalize().to_vec())
+}
+
+/// The print of the sign-in the browser holds now: its own cookies for
+/// `origins` (read only). `None` when it holds none - nothing then shows
+/// whose sign-in it is - or the browser does not answer.
+pub async fn cookie_print<D: Driver>(d: &mut D, origins: &[String]) -> Option<CookiePrint> {
+    let cookies = own_cookies(d, origins).await.ok()?;
+    let mut keys: Vec<(String, String, String)> = cookies.iter().map(cookie_key).collect();
+    keys.sort();
+    keys.dedup();
+    if keys.is_empty() {
+        return None;
+    }
+    let digest = digest_of(&cookies, &keys)?;
+    Some(CookiePrint { keys, digest })
+}
+
+/// Does the browser still hold the sign-in `print` was taken of: each of
+/// its cookies there, with the same value? Read only; a browser that does
+/// not answer does not.
+pub async fn same_cookies<D: Driver>(d: &mut D, origins: &[String], print: &CookiePrint) -> bool {
+    match own_cookies(d, origins).await {
+        Ok(cookies) => digest_of(&cookies, &print.keys).is_some_and(|now| now == print.digest),
+        Err(_) => false,
+    }
+}
+
+pub async fn capture<D: Driver>(
+    d: &mut D,
+    origins: &[String],
+    now_ms: u64,
+) -> Result<SavedSession, CdpError> {
+    let cookies = own_cookies(d, origins).await?;
 
     let page_storage = page::eval_value(d, CAPTURE_STORAGE_JS).await?;
     let origin = page_storage["origin"].as_str().unwrap_or("").to_ascii_lowercase();

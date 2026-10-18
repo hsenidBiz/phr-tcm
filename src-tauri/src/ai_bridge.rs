@@ -5503,10 +5503,9 @@ pub struct AssistantReplay {
     /// Where the replay started (`replay_to::carry_from`): its answer says
     /// it first.
     pub from: crate::autorun::replay_to::ReplayFrom,
-    /// The area it went to without signing in, when the browser was already
-    /// signed in as the case's account: its answer says so next
-    /// (`replay_to::signed_in_already_line`).
-    pub signed_in_already: Option<String>,
+    /// What it made of a browser already signed in as the case's account:
+    /// its answer says so next (`replay_to::Reuse::said`).
+    pub reuse: crate::autorun::replay_to::Reuse,
 }
 
 static REPLAY_HOST: std::sync::OnceLock<Box<dyn ReplayHost>> = std::sync::OnceLock::new();
@@ -5820,19 +5819,14 @@ async fn run_assistant_replay(
 ) -> (u16, String) {
     use crate::autorun::replay_to::{ReplayEnd, ReplayFrom};
     let (case_id, step) = (req.case_id, req.step);
-    let (end, discovery, left_open, from, signed_in_already) = match host.replay(org.clone(), project.clone(), req).await {
-        Ok(AssistantReplay { end, discovery, left_open, from, signed_in_already }) => {
-            (end, discovery, left_open, from, signed_in_already)
-        }
+    let (end, discovery, left_open, from, reuse) = match host.replay(org.clone(), project.clone(), req).await {
+        Ok(AssistantReplay { end, discovery, left_open, from, reuse }) => (end, discovery, left_open, from, reuse),
         Err(why) => return (503, why),
     };
     // Where it started, said first: carried on, from the beginning, or
     // already there (then nothing ran, and that is all there is to say).
     // A browser signed in already says so next, where a sign-in would be.
-    let reused = signed_in_already
-        .as_deref()
-        .map(|area| format!("{} ", crate::autorun::replay_to::signed_in_already_line(area)))
-        .unwrap_or_default();
+    let reused = reuse.said().map(|line| format!("{line} ")).unwrap_or_default();
     let said = match (&end, from) {
         (ReplayEnd::Refused(_) | ReplayEnd::Blocked(_), _) => end.sentence(),
         (_, ReplayFrom::AlreadyThere) => from.said(case_id, step),

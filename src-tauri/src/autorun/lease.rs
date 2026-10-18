@@ -257,11 +257,17 @@ pub struct Held {
     holder: Holder,
     wait: Duration,
     lease: Option<Lease>,
+    /// The sign-in the app last made in this browser, as its cookies were
+    /// (`browser::session::CookiePrint`): how a replay tells that the
+    /// browser still holds that sign-in, and not one a step typed or the
+    /// person made by hand. Memory only; gone with the lease, and whenever
+    /// the browser's signed-in account is cleared (`forget_sign_in`).
+    signed_in: Option<crate::browser::session::CookiePrint>,
 }
 
 impl Held {
     pub fn new(holder: Holder, wait: Duration) -> Self {
-        Held { holder, wait, lease: None }
+        Held { holder, wait, lease: None, signed_in: None }
     }
 
     /// The supervised Auto Run browser's: a held account is refused at
@@ -280,6 +286,24 @@ impl Held {
     /// been ended, and someone else may sign in as it.
     pub fn let_go(&mut self) {
         self.lease = None;
+        self.signed_in = None;
+    }
+
+    /// The sign-in the app just made in this browser, as its cookies are
+    /// (`session::cookie_print`); `None` when it failed or left none.
+    pub fn note_sign_in(&mut self, print: Option<crate::browser::session::CookiePrint>) {
+        self.signed_in = print;
+    }
+
+    /// The browser no longer holds the app's last sign-in: its account was
+    /// cleared (a session ended, a sign-in that failed).
+    pub fn forget_sign_in(&mut self) {
+        self.signed_in = None;
+    }
+
+    /// The app's last sign-in in this browser, if it still stands.
+    pub fn sign_in_print(&self) -> Option<&crate::browser::session::CookiePrint> {
+        self.signed_in.as_ref()
     }
 
     /// The account this browser holds, if any.
@@ -310,6 +334,7 @@ impl Held {
             return Ok(());
         }
         self.lease = Some(acquire(&env, key, self.holder.clone(), self.wait).await?);
+        self.signed_in = None;
         let key = key.to_string();
         // Off the async threads: ending a browser process waits for it to go.
         let _ = tauri::async_runtime::spawn_blocking(move || crate::api_templates::held::give_way(&env, &key)).await;
