@@ -1145,6 +1145,54 @@ async fn a_try_naming_another_case_never_lifts_the_guard() {
     assert!(!d.is_guarding_saves());
 }
 
+/// Who owns the guard (`GuardOwner`): whoever armed it for their case, the
+/// person's above the discovery's above a call's - a later call never takes
+/// the person's or a discovery's - and nobody once it is off. Lifting it
+/// (`lift_guard_of`) stops guarding and forgets its case and its owner; a
+/// lift the browser refuses keeps both, so it is asked again.
+#[tokio::test]
+async fn the_guard_owner_follows_who_armed_it_and_a_lift_forgets_it() {
+    use v2_lib::browser::cdp::Driver;
+    use v2_lib::commands::autorun::{lift_guard_of, settle_guard_owner, GuardOwner};
+    let dir = tempfile::tempdir().unwrap();
+    on_disk(dir.path(), 5, true);
+    on_disk(dir.path(), 6, true);
+    let mut d = common::FakePage::default().driver();
+    let (mut held, mut owner) = (None, None);
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 5, false).await.unwrap();
+    settle_guard_owner(&d, held, &mut owner, 5, GuardOwner::Call { case_id: Some(5) });
+    assert_eq!(owner, Some(GuardOwner::Call { case_id: Some(5) }));
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 6, false).await.unwrap();
+    settle_guard_owner(&d, held, &mut owner, 6, GuardOwner::Call { case_id: Some(6) });
+    assert_eq!(owner, Some(GuardOwner::Call { case_id: Some(6) }), "a later call's guard is that call's");
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 6, true).await.unwrap();
+    settle_guard_owner(&d, held, &mut owner, 6, GuardOwner::Person);
+    assert_eq!(owner, Some(GuardOwner::Person));
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 5, false).await.unwrap();
+    settle_guard_owner(&d, held, &mut owner, 5, GuardOwner::Call { case_id: Some(5) });
+    assert_eq!(owner, Some(GuardOwner::Person), "a call took the person's guard");
+    // A case whose guard this is not leaves the owner as it is.
+    settle_guard_owner(&d, held, &mut owner, 99, GuardOwner::Call { case_id: Some(99) });
+    assert_eq!(owner, Some(GuardOwner::Person));
+
+    assert!(lift_guard_of(&mut d, &mut held, &mut owner).await);
+    assert!(!d.is_guarding_saves());
+    assert_eq!((held, owner.clone()), (None, None));
+    settle_guard_owner(&d, held, &mut owner, 5, GuardOwner::Person);
+    assert_eq!(owner, None, "a guard that is off has no owner");
+
+    // A lift the browser refuses keeps the guard's case and owner.
+    let page = common::FakePage::default();
+    let mut d = common::ScriptedDriver::new(move |method, params| match method {
+        "Fetch.disable" => Err(CdpError::Protocol { method: "Fetch.disable".into(), message: "not now".into() }),
+        _ => page.answer(method, params),
+    });
+    let (mut held, mut owner) = (None, Some(GuardOwner::Discovery));
+    guard_for_case(&mut d, &mut held, dir.path(), "acme", "PMS", 5, false).await.unwrap();
+    assert!(!lift_guard_of(&mut d, &mut held, &mut owner).await);
+    assert_eq!((held, owner), (Some(5), Some(GuardOwner::Discovery)));
+}
+
 // ------------------------------------------- a sign-in's hold, judged honestly
 
 fn navigated(loader: &str, url: &str) -> String {

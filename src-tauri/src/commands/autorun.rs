@@ -34,6 +34,10 @@ pub(crate) struct Session {
     /// The case whose no-save guard this browser holds, if any
     /// (`guard_for_case`).
     pub(crate) guarded_case: Option<i32>,
+    /// Who the save guard on this browser belongs to (`GuardOwner`), and so
+    /// how long it lasts; `None` while nothing guards it. Cleared with the
+    /// guard (`lift_guard`), and gone with the browser.
+    pub(crate) guard_owner: Option<GuardOwner>,
     /// The Auto Run folder whose `downloads/supervised` this browser saves
     /// into, emptied once it closes. `None` when downloads could not be
     /// switched on.
@@ -103,6 +107,90 @@ pub enum OpenedBy {
     Assistant,
 }
 
+/// Who the supervised browser's save guard belongs to, which decides how
+/// long it lasts and who may lift it.
+///
+/// - `Person`: the person's own step or replay of a case marked `no_save`.
+///   Never lifted by the assistant; the person's next step or replay of a
+///   case that may save lifts it.
+/// - `Discovery`: a discovery started with `no_save` (or for a case marked
+///   so), or a mapping run. It lasts until that discovery ends
+///   (`ai_bridge::end_discovery_in`) - past the assistant's replay that
+///   ended it to take the browser, whose steps stay guarded.
+/// - `Call`: one call of the assistant's - a discovery action or batch that
+///   said `no_save` itself (lifted when that call ends), or its try or
+///   replay of a case marked `no_save` (`case_id`, guarded for every call on
+///   that case). The assistant's replay of another case that may save lifts
+///   it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuardOwner {
+    Person,
+    Discovery,
+    Call { case_id: Option<i32> },
+}
+
+impl GuardOwner {
+    /// Which of two owners a guard keeps: the person's above a discovery's
+    /// above a call's, so a later call never takes over a longer guard.
+    fn rank(&self) -> u8 {
+        match self {
+            GuardOwner::Call { .. } => 0,
+            GuardOwner::Discovery => 1,
+            GuardOwner::Person => 2,
+        }
+    }
+}
+
+/// The guard went on, or stayed on, for `wanted`: it is `wanted`'s unless a
+/// longer owner already holds it (`GuardOwner::rank`).
+pub fn claim_guard(owner: &mut Option<GuardOwner>, wanted: GuardOwner) {
+    if owner.as_ref().is_none_or(|held| held.rank() <= wanted.rank()) {
+        *owner = Some(wanted);
+    }
+}
+
+/// After the guard was put where case `case_id` needs it (`guard_for_case`)
+/// by `who`: no guard on, no owner; this case's guard, `who`'s
+/// (`claim_guard`); a guard kept for another case keeps its owner.
+pub fn settle_guard_owner<D: Driver>(
+    d: &D,
+    guarded_case: Option<i32>,
+    owner: &mut Option<GuardOwner>,
+    case_id: i32,
+    who: GuardOwner,
+) {
+    if !d.is_guarding_saves() {
+        *owner = None;
+    } else if guarded_case == Some(case_id) {
+        claim_guard(owner, who);
+    }
+}
+
+/// Lift the save guard on `d`, whoever owns it: the browser stops guarding
+/// and the guard's case and owner are forgotten. Only once the browser says
+/// it stopped: a lift it refuses keeps both, and the browser still answers
+/// every paused request as a guarded one does, so it is asked again. True
+/// when no guard is left on.
+pub async fn lift_guard_of<D: Driver>(d: &mut D, guarded_case: &mut Option<i32>, owner: &mut Option<GuardOwner>) -> bool {
+    if d.is_guarding_saves() {
+        if let Err(e) = d.stop_guarding_saves().await {
+            crate::applog::warn(format!("Auto Run: the no-save guard could not be lifted yet: {e}"));
+            return false;
+        }
+    }
+    *guarded_case = None;
+    *owner = None;
+    true
+}
+
+/// `lift_guard_of` on the supervised session's browser, for a use that
+/// takes the browser over or cleans it (a discovery taking over the
+/// replay's browser, the assistant's reset), not yet called.
+#[allow(dead_code)]
+pub(crate) async fn lift_guard(session: &mut Session) {
+    lift_guard_of(&mut session.cdp, &mut session.guarded_case, &mut session.guard_owner).await;
+}
+
 /// A discovery under way in the supervised browser: the area it explores
 /// and the account KEY it explores as (never a login). Both are `None` from
 /// the moment the browser opens for a discovery until its sign-in arrives.
@@ -122,11 +210,17 @@ pub struct DiscoveryState {
     /// Its saved script is read again before every action, so a case marked
     /// `no_save` keeps its discovery guarded (`ai_bridge::guard_a_no_save_discovery`).
     pub case_id: Option<i32>,
-    /// Set for a discovery that must not save: the start or an action said
-    /// `no_save`, or named a case whose script is marked `no_save`. Every
-    /// save the page tries is then blocked, never only reported, and it is
-    /// never cleared while the discovery lasts.
+    /// Set for a discovery that must not save: its start said `no_save`, or
+    /// the case it explores for is marked `no_save`. Every save the page
+    /// tries is then blocked, never only reported, and it is never cleared
+    /// while the discovery lasts (`GuardOwner::Discovery`). An action's own
+    /// `no_save` never sets it: that is `call_no_save`.
     pub no_save: bool,
+    /// The call under way said `no_save` itself (`ai_bridge::mark_discovery_for`):
+    /// its actions are guarded, and the guard that call put on is lifted
+    /// when it ends unless the discovery itself must not save
+    /// (`GuardOwner::Call`). Set by every discovery call, for that call only.
+    pub call_no_save: bool,
 }
 
 /// The case a discovery is for, as its start named it, and whether it must
@@ -403,6 +497,7 @@ pub(crate) async fn open_for_discovery(
             mapping,
             case_id: no_save.case_id,
             no_save: no_save.no_save,
+            call_no_save: false,
         });
     }
     publish_discovery(&slot);
@@ -421,7 +516,7 @@ pub(crate) async fn end_discovery() -> (u16, String) {
     if gone {
         return (200, DISCOVERY_BROWSER_HAD_GONE.to_string());
     }
-    let answer = crate::ai_bridge::end_discovery_in(&mut slot);
+    let answer = crate::ai_bridge::end_discovery_in(&mut slot).await;
     publish_discovery(&slot);
     answer
 }
@@ -735,6 +830,8 @@ impl crate::ai_bridge::DiscoveryBrowser for Session {
             lease: &mut self.lease,
             signed_in: &mut self.account,
             discovery: &mut self.discovery,
+            guarded_case: &mut self.guarded_case,
+            guard_owner: &mut self.guard_owner,
         }
     }
     fn close(self) {
@@ -811,6 +908,7 @@ async fn open_into(
         account: None,
         lease: crate::autorun::lease::Held::supervised(),
         guarded_case: None,
+        guard_owner: None,
         downloads_root,
         tabs_case: None,
         discovery: None,
@@ -1065,7 +1163,7 @@ pub async fn release_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(slo
         Some(b) => b.parts().discovery.is_some(),
     };
     if discovering {
-        return crate::ai_bridge::end_discovery_in(slot);
+        return crate::ai_bridge::end_discovery_in(slot).await;
     }
     if slot.as_mut().is_some_and(|b| b.opened_by_assistant()) {
         crate::ai_bridge::close_browser_in(slot);
@@ -1291,11 +1389,24 @@ pub enum ReplayBy {
 }
 
 impl ReplayBy {
-    /// `guard_for_case`'s `may_lift`: the person's replay may lift a no-save
-    /// guard held for another case; the assistant's may switch one on but
-    /// never lifts one.
-    pub fn may_lift(self) -> bool {
-        self == ReplayBy::Person
+    /// `guard_for_case`'s `may_lift`, for a guard `owner` holds: the
+    /// person's replay may lift a no-save guard held for another case; the
+    /// assistant's may switch one on, and lifts only one a call of its own
+    /// left (`GuardOwner::Call`) - never the person's, nor a no_save
+    /// discovery's.
+    pub fn may_lift(self, owner: Option<&GuardOwner>) -> bool {
+        match self {
+            ReplayBy::Person => true,
+            ReplayBy::Assistant => matches!(owner, None | Some(GuardOwner::Call { .. })),
+        }
+    }
+
+    /// Who a guard this replay puts on for case `case_id` belongs to.
+    pub fn owns_as(self, case_id: i32) -> GuardOwner {
+        match self {
+            ReplayBy::Person => GuardOwner::Person,
+            ReplayBy::Assistant => GuardOwner::Call { case_id: Some(case_id) },
+        }
     }
 
     /// Whether a discovery holding the browser is ended first rather than
@@ -1423,14 +1534,28 @@ pub(crate) async fn replay_supervised(
         false,
     );
     let mut tabs = Vec::new();
-    let mut end = match from {
-        ReplayFrom::AlreadyThere => ReplayEnd::Ready {
+    // The guard as its owner needs it, before anything runs: a no_save
+    // discovery this replay ended keeps its guard on (`guard_before_replay`),
+    // and whether this replay may lift a guard is decided by whose it is.
+    let guard = guard_before_replay(
+        &mut session.cdp,
+        &mut session.guard_owner,
+        discovery.no_save,
+        by,
+        &root,
+        organization,
+        project,
+    )
+    .await;
+    let mut end = match (guard, from) {
+        (Err(why), _) => ReplayEnd::Refused(why),
+        (Ok(_), ReplayFrom::AlreadyThere) => ReplayEnd::Ready {
             case_id,
             step,
             notice: None,
             whole: saved.as_ref().and_then(|s| replay_to::whole_case(s, step)),
         },
-        ReplayFrom::CarriedOn(k) => {
+        (Ok(_), ReplayFrom::CarriedOn(k)) => {
             replay_to::carry_on(
                 &mut session.cdp,
                 &root,
@@ -1450,7 +1575,7 @@ pub(crate) async fn replay_supervised(
             )
             .await
         }
-        ReplayFrom::Beginning => {
+        (Ok(may_lift), ReplayFrom::Beginning) => {
             replay_to::replay_to_traced(
                 &mut session.cdp,
                 &mut setup_browsers,
@@ -1461,7 +1586,7 @@ pub(crate) async fn replay_supervised(
                 &mut session.account,
                 &mut session.lease,
                 &mut session.guarded_case,
-                by.may_lift(),
+                may_lift,
                 &crate::browser::timing::Timing::supervised(),
                 &replay_to::CANCEL,
                 || crate::autorun::preconditions::for_run(&root, Some(secrets.as_ref()), db_read_access),
@@ -1485,6 +1610,9 @@ pub(crate) async fn replay_supervised(
     if let Some(changed) = replay_to::signed_in_event(&account_before, &session.account) {
         let _ = changed.emit(app);
     }
+    // A guard this replay put on for its case is the replay's; one it
+    // lifted has no owner left; one it kept keeps its own.
+    settle_guard_owner(&session.cdp, session.guarded_case, &mut session.guard_owner, case_id, by.owns_as(case_id));
     if session.cdp.is_guarding_saves() {
         answer_between_commands();
     }
@@ -1660,7 +1788,10 @@ pub async fn supervised_setup<B: crate::autorun::replay::Browsers>(
 }
 
 /// Put the supervised browser's no-save guard where this case needs it
-/// (`guard_for_case`), for a step or an assistant's try alike.
+/// (`guard_for_case`), for a step or an assistant's try alike. `may_lift`
+/// is the person's step; an assistant's try never lifts a guard. A guard
+/// this puts on for the case is the person's for a step, the try's call's
+/// for a try (`settle_guard_owner`).
 pub(crate) async fn guard_supervised(
     session: &mut Session,
     root: &std::path::Path,
@@ -1671,13 +1802,42 @@ pub(crate) async fn guard_supervised(
 ) -> Result<(), String> {
     // A discovery that must not save keeps its guard: no step run in its
     // browser lifts it.
+    let who = if may_lift { GuardOwner::Person } else { GuardOwner::Call { case_id: Some(case_id) } };
     let may_lift = may_lift && !session.discovery.as_ref().is_some_and(|s| s.no_save);
     let out =
         guard_for_case(&mut session.cdp, &mut session.guarded_case, root, organization, project, case_id, may_lift).await;
+    settle_guard_owner(&session.cdp, session.guarded_case, &mut session.guard_owner, case_id, who);
     if session.cdp.is_guarding_saves() {
         answer_between_commands();
     }
     out
+}
+
+/// Before a replay of `by`'s runs in the browser `d`: the guard as its
+/// owner needs it. `ended_no_save` is a no_save discovery the replay ended
+/// to take the browser: its guard is the discovery's still
+/// (`GuardOwner::Discovery`), on until `end_autorun_discovery`, so a replay
+/// inside it never saves - put back on here when the browser does not have
+/// it. Answers the `may_lift` the replay runs with (`ReplayBy::may_lift`).
+/// `Err` is a guard that would not go on: the replay is refused.
+pub async fn guard_before_replay<D: Driver>(
+    d: &mut D,
+    owner: &mut Option<GuardOwner>,
+    ended_no_save: bool,
+    by: ReplayBy,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+) -> Result<bool, String> {
+    if ended_no_save {
+        claim_guard(owner, GuardOwner::Discovery);
+    }
+    if *owner == Some(GuardOwner::Discovery) && !d.is_guarding_saves() {
+        let nav = crate::autorun::nav::load_nav(root, organization, project)
+            .map_err(|why| crate::browser::save_guard::setup_failed(&why))?;
+        d.guard_saves(&nav.save_words).await.map_err(|e| crate::browser::save_guard::setup_failed(&e.to_string()))?;
+    }
+    Ok(by.may_lift(owner.as_ref()))
 }
 
 /// Put a browser's no-save guard where this case needs it. A case whose

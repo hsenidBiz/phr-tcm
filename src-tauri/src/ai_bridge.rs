@@ -3129,6 +3129,10 @@ pub struct DiscoveryParts<'a, D> {
     pub lease: &'a mut crate::autorun::lease::Held,
     pub signed_in: &'a mut Option<String>,
     pub discovery: &'a mut Option<crate::commands::autorun::DiscoveryState>,
+    /// The case whose no-save guard the browser holds, and who the guard
+    /// belongs to (`commands::autorun::GuardOwner`).
+    pub guarded_case: &'a mut Option<i32>,
+    pub guard_owner: &'a mut Option<crate::commands::autorun::GuardOwner>,
 }
 
 /// The Auto Run browser as a discovery sees it: the app's session
@@ -3341,6 +3345,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     mapping,
                     case_id,
                     no_save,
+                    call_no_save: false,
                 };
                 let must_not_save = discovery_must_not_save(root, &state);
                 *p.discovery = Some(crate::commands::autorun::DiscoveryState { no_save: must_not_save, ..state });
@@ -3356,6 +3361,10 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                 if let Err(why) = guarded {
                     why
                 } else {
+                    // Both guards are the discovery's, on until it ends.
+                    if is_mapping || must_not_save {
+                        crate::commands::autorun::claim_guard(p.guard_owner, crate::commands::autorun::GuardOwner::Discovery);
+                    }
                     // The landing page is filed, but does not mark the area
                     // explored: nothing of the area itself has been seen yet.
                     let at =
@@ -3651,10 +3660,40 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     area: Option<&str>,
 ) -> (u16, String) {
     let mut heard = Heard::default();
+    let was_guarding = guarding_saves(slot);
     let answer = discover_action_heard(slot, root, organization, project, action, draft, area, &mut heard, 0, true).await;
     heard.remember(root, organization, project);
     heard.forget(slot);
+    end_call_guard(slot, root, was_guarding).await;
     answer
+}
+
+/// Whether the browser in `slot` guards saves now.
+fn guarding_saves<B: DiscoveryBrowser>(slot: &mut Option<B>) -> bool {
+    slot.as_mut().is_some_and(|b| crate::browser::cdp::Driver::is_guarding_saves(&*b.parts().driver))
+}
+
+/// A discovery call is over: its own `no_save` (`DiscoveryState::call_no_save`)
+/// is let go, and the guard it put on is lifted (`commands::autorun::lift_guard_of`)
+/// unless the discovery itself must not save (`discovery_must_not_save`) - a
+/// mapping run, or one started with `no_save` or for a case marked so. A guard
+/// already on before the call (`was_guarding`) was not the call's, and stays.
+async fn end_call_guard<B: DiscoveryBrowser>(slot: &mut Option<B>, root: &std::path::Path, was_guarding: bool) {
+    let Some(browser) = slot.as_mut() else {
+        return;
+    };
+    let p = browser.parts();
+    let Some(state) = p.discovery.as_mut() else {
+        return;
+    };
+    let said = std::mem::take(&mut state.call_no_save);
+    if !said || was_guarding || state.mapping.is_some() || discovery_must_not_save(root, state) {
+        return;
+    }
+    if !matches!(p.guard_owner, None | Some(crate::commands::autorun::GuardOwner::Call { .. })) {
+        return;
+    }
+    crate::commands::autorun::lift_guard_of(p.driver, p.guarded_case, p.guard_owner).await;
 }
 
 /// `discover_action_in` as action `at` of a discovery call that `heard`
@@ -3697,8 +3736,12 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     heard.case_id = state.case_id;
     let mapping = state.mapping.is_some();
     // Once a discovery must not save, it stays so (`DiscoveryState::no_save`).
-    let must_not_save = discovery_must_not_save(root, state);
-    state.no_save = must_not_save;
+    // A call that said `no_save` itself is guarded too, for that call only
+    // (`end_call_guard` lifts it): it never makes the discovery one.
+    let discovery_guarded = discovery_must_not_save(root, state);
+    state.no_save = discovery_guarded;
+    let must_not_save = discovery_guarded || state.call_no_save;
+    let case_id = state.case_id;
     let d = p.driver;
     let runs: Vec<&crate::browser::actions::Action> = match &component {
         Some((_, actions)) => actions.iter().collect(),
@@ -3708,6 +3751,11 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     // it stopped between calls is reported with this action, never failing it.
     if let Err(why) = guard_a_no_save_discovery(d, must_not_save, root, organization, project).await {
         return (409, why);
+    }
+    if discovery_guarded {
+        crate::commands::autorun::claim_guard(p.guard_owner, crate::commands::autorun::GuardOwner::Discovery);
+    } else if must_not_save {
+        crate::commands::autorun::claim_guard(p.guard_owner, crate::commands::autorun::GuardOwner::Call { case_id });
     }
     let reports_blocks = must_not_save && !mapping;
     let mut blocked_writes = if reports_blocks { take_no_save_blocks(d, &runs) } else { Vec::new() };
@@ -4046,11 +4094,13 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
     stop: &std::sync::atomic::AtomicBool,
 ) -> (u16, String) {
     let mut heard = Heard::default();
+    let was_guarding = guarding_saves(slot);
     let answer =
         discover_actions_heard(slot, root, organization, project, actions, draft, area, stop_on_failure, stop, &mut heard)
             .await;
     heard.remember(root, organization, project);
     heard.forget(slot);
+    end_call_guard(slot, root, was_guarding).await;
     answer
 }
 
@@ -4301,20 +4351,49 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
     Ok(Discovered { outcome: tried.outcome, dialogs, writes, after })
 }
 
-/// End the discovery in `slot`: its browser is closed. A browser the
-/// person opened is left as it is, and with nothing to end this is still
-/// an answer, not an error - ending twice is fine.
+/// End the discovery in `slot`: its browser is closed, and its guard with
+/// it. A browser the person opened is left as it is, and with nothing to
+/// end this is still an answer, not an error - ending twice is fine.
+///
+/// A no_save discovery the assistant's replay ended to take the browser
+/// left its guard on there (`GuardOwner::Discovery`): this is what lifts it,
+/// keeping the browser (`DISCOVERY_GUARD_LIFTED`). No other guard is lifted.
 ///
 /// A mapping run's summary is kept first (`finish_mapping`), and the
 /// answer is `{detail, summary}`.
-pub fn end_discovery_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
+pub async fn end_discovery_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
     const ENDED: &str = "the discovery is over and its browser is closed";
     match close_discovery(slot) {
         Some(Some(summary)) => (200, serde_json::json!({ "detail": ENDED, "summary": summary }).to_string()),
         Some(None) => (200, ENDED.to_string()),
-        None => (200, "no discovery is going".to_string()),
+        None => {
+            let Some(b) = slot.as_mut() else {
+                return (200, NO_DISCOVERY_GOING.to_string());
+            };
+            let p = b.parts();
+            if *p.guard_owner != Some(crate::commands::autorun::GuardOwner::Discovery) {
+                return (200, NO_DISCOVERY_GOING.to_string());
+            }
+            if crate::commands::autorun::lift_guard_of(p.driver, p.guarded_case, p.guard_owner).await {
+                crate::applog::info("Auto Run: the guard a no_save discovery left on is lifted");
+                (200, DISCOVERY_GUARD_LIFTED.to_string())
+            } else {
+                (409, DISCOVERY_GUARD_STUCK.to_string())
+            }
+        }
     }
 }
+
+/// Ending with no discovery going, and no guard of one left on.
+const NO_DISCOVERY_GOING: &str = "no discovery is going";
+
+/// `end_autorun_discovery` once the assistant's replay had ended a no_save
+/// discovery: the guard it left on is lifted.
+pub const DISCOVERY_GUARD_LIFTED: &str =
+    "no discovery is going; the save guard your no_save discovery left on is lifted, so replays may save again";
+
+/// That guard would not come off yet: the browser is still guarded.
+pub const DISCOVERY_GUARD_STUCK: &str = "no discovery is going, but the save guard your no_save discovery left on would not come off yet - the browser is still guarded; call end_autorun_discovery again";
 
 /// The one way a discovery in `slot` ends: a mapping run's summary is kept
 /// (`finish_mapping`), then its browser is closed. `None` with no discovery
@@ -4375,10 +4454,11 @@ pub fn refuse_while_discovering<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Re
 /// nothing takes the browser between the end and the replay. The person's
 /// own Replay to step still goes through `refuse_while_discovering`.
 pub fn end_discovery_for_replay<B: DiscoveryBrowser>(slot: &mut Option<B>) -> DiscoveryEnded {
+    let no_save = slot.as_mut().and_then(|b| b.parts().discovery.as_ref().map(|s| s.no_save)).unwrap_or(false);
     match close_discovery(slot) {
         Some(summary) => {
             crate::applog::info("Auto Run: the assistant's replay to a step ended its discovery first");
-            DiscoveryEnded { ended: true, summary }
+            DiscoveryEnded { ended: true, summary, no_save }
         }
         None => DiscoveryEnded::default(),
     }
@@ -4391,12 +4471,21 @@ pub fn end_discovery_for_replay<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Di
 pub struct DiscoveryEnded {
     pub ended: bool,
     pub summary: Option<crate::autorun::mapping_summary::MappingSummary>,
+    /// The discovery it ended must not save (`DiscoveryState::no_save`): its
+    /// guard stays on for the replay, and after it, until
+    /// `end_autorun_discovery` (`commands::autorun::guard_before_replay`).
+    pub no_save: bool,
 }
 
 /// Put before the answer to an assistant's replay that ended its discovery
 /// first (`end_discovery_for_replay`).
 pub const ENDED_DISCOVERY_FIRST: &str =
     "Ended your discovery first (what it mapped is kept); start a new one to explore again.";
+
+/// Said after `ENDED_DISCOVERY_FIRST` when the discovery the replay ended
+/// was a no_save one: its guard stays on (`DiscoveryEnded::no_save`).
+pub const DISCOVERY_GUARD_KEPT: &str =
+    "Its no_save guard stays on: nothing saves in this browser until you call end_autorun_discovery.";
 
 /// `said`, after `ENDED_DISCOVERY_FIRST` when the replay ended a discovery:
 /// its answer, or the browser that would not open after the end.
@@ -4815,14 +4904,17 @@ pub fn discovery_for(root: &std::path::Path, body: &str) -> Result<crate::comman
 }
 
 /// Put what a discovery call named (`discovery_for`) on the discovery in
-/// `slot`: it becomes a discovery that must not save when the call said so,
-/// and it never stops being one. The first case named is the one it
-/// explores for. Nothing to do with no discovery going.
+/// `slot`, for that call: when it said `no_save` (or named a case marked
+/// so), that call is guarded (`DiscoveryState::call_no_save`) - the
+/// discovery does not become one that must not save. The first case named
+/// is the one it explores for, and a case marked `no_save` keeps its
+/// discovery guarded from then on (`discovery_must_not_save`). Nothing to do
+/// with no discovery going.
 pub fn mark_discovery_for<B: DiscoveryBrowser>(slot: &mut Option<B>, asked: crate::commands::autorun::DiscoveryFor) {
     let Some(state) = slot.as_mut().and_then(|b| b.parts().discovery.as_mut()) else {
         return;
     };
-    state.no_save |= asked.no_save;
+    state.call_no_save = asked.no_save;
     if state.case_id.is_none() {
         state.case_id = asked.case_id;
     }
@@ -5757,7 +5849,12 @@ async fn run_assistant_replay(
         (_, ReplayFrom::AlreadyThere) => from.said(case_id, step),
         _ => format!("{} {}", from.said(case_id, step), capitalised(&end.sentence())),
     };
-    // Said before that when the replay ended the assistant's own discovery.
+    // Said before that when the replay ended the assistant's own discovery,
+    // with the guard a no_save one leaves on.
+    let said = match discovery.no_save {
+        true => format!("{DISCOVERY_GUARD_KEPT} {said}"),
+        false => said,
+    };
     let mut sentence = after_ended_discovery(discovery.ended, &said);
     // A browser the replay leaves open, on a line of its own after it.
     // Not after a stop: Stop, Close or Release stopped it, and the browser

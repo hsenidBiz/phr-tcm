@@ -19,7 +19,8 @@ use v2_lib::autorun::replay_to::{
     guarding_other_case, opened_event, replay_to, replay_to_checked, signed_in_event, stopped_before_opening, OneReplay,
     ReplayAnswer, ReplayEnd, ReplayPhase, ReplayRequest, ALREADY_RUNNING, CANCEL,
 };
-use v2_lib::commands::autorun::guard_for_case;
+use v2_lib::ai_bridge::{DiscoveryBrowser, DiscoveryParts};
+use v2_lib::commands::autorun::{guard_before_replay, guard_for_case, settle_guard_owner, GuardOwner, ReplayBy};
 use v2_lib::autorun::runner::NEEDS_SCRIPT_AREA;
 use v2_lib::autorun::{store, CaseScript};
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
@@ -526,9 +527,10 @@ fn the_browser_last_chosen_is_remembered_and_edge_is_the_default() {
     assert_eq!(store::last_browser(dir.path()), "edge");
 }
 
-/// An assistant's replay (`may_lift` false) may switch a guard on, never
-/// take one away: a guard held for no-save case 5 stays on while unflagged
-/// case 77 is replayed, and still belongs to case 5.
+/// An assistant's replay may switch a guard on, and never takes away one
+/// the PERSON holds for another case: the person's guard for no-save case 5
+/// stays on while unflagged case 77 is replayed (`may_lift` false), and
+/// still belongs to case 5 and to the person.
 #[tokio::test]
 async fn an_assistants_replay_never_lifts_a_guard_held_for_another_case() {
     let _l = crate::serial::account_leases();
@@ -542,6 +544,13 @@ async fn an_assistants_replay_never_lifts_a_guard_held_for_another_case() {
     let mut guarded = None;
     guard_for_case(&mut d, &mut guarded, dir.path(), "acme", "Web", 5, true).await.unwrap();
     assert_eq!(guarded, Some(5));
+    let mut owner = None;
+    settle_guard_owner(&d, guarded, &mut owner, 5, GuardOwner::Person);
+    assert_eq!(owner, Some(GuardOwner::Person));
+    let may_lift = guard_before_replay(&mut d, &mut owner, false, ReplayBy::Assistant, dir.path(), "acme", "Web")
+        .await
+        .unwrap();
+    assert!(!may_lift, "the assistant's replay may lift the person's guard");
     let (mut account, cancel) = (None, AtomicBool::new(false));
     let mut held = Held::supervised();
     let end = replay_to_checked(
@@ -554,7 +563,7 @@ async fn an_assistants_replay_never_lifts_a_guard_held_for_another_case() {
         &mut account,
         &mut held,
         &mut guarded,
-        false,
+        may_lift,
         &quick(),
         &cancel,
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
@@ -566,6 +575,8 @@ async fn an_assistants_replay_never_lifts_a_guard_held_for_another_case() {
     assert!(d.is_guarding_saves(), "the guard was lifted: {:?}", d.methods());
     assert!(!d.methods().contains(&"Fetch.disable".to_string()), "{:?}", d.methods());
     assert_eq!(guarded, Some(5));
+    settle_guard_owner(&d, guarded, &mut owner, ID, ReplayBy::Assistant.owns_as(ID));
+    assert_eq!(owner, Some(GuardOwner::Person), "the person's guard became the assistant's");
 
     // The person's own replay of the same case does lift it. (`replay`
     // brings its own lease, so this one lets the account go first.)
@@ -574,6 +585,241 @@ async fn an_assistants_replay_never_lifts_a_guard_held_for_another_case() {
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     assert!(!d.is_guarding_saves());
     assert_eq!(guarded, None);
+    settle_guard_owner(&d, guarded, &mut owner, ID, ReplayBy::Person.owns_as(ID));
+    assert_eq!(owner, None);
+}
+
+/// A browser whose page tries to save on the first click after `armed` is
+/// set. Guarded, the guard stops it (`blocked`, `stopped`); unguarded, the
+/// save goes through (`sent`).
+struct SavesOnClick {
+    inner: ScriptedDriver,
+    armed: Arc<AtomicBool>,
+    blocked: Option<String>,
+    stopped: usize,
+    sent: usize,
+}
+
+impl SavesOnClick {
+    fn new(inner: ScriptedDriver, armed: Arc<AtomicBool>) -> Self {
+        SavesOnClick { inner, armed, blocked: None, stopped: 0, sent: 0 }
+    }
+}
+
+impl Driver for SavesOnClick {
+    async fn call(&mut self, method: &str, params: Value) -> Result<Value, CdpError> {
+        if method == "Input.dispatchMouseEvent" && self.armed.swap(false, Ordering::SeqCst) {
+            if self.inner.is_guarding_saves() {
+                self.blocked = Some(v2_lib::browser::save_guard::blocked("POST", "https://app.example/api/leave/save"));
+                self.stopped += 1;
+            } else {
+                self.sent += 1;
+            }
+        }
+        self.inner.call(method, params).await
+    }
+    async fn wait_event(&mut self, method: &str, limit: Duration) -> Result<Event, CdpError> {
+        self.inner.wait_event(method, limit).await
+    }
+    fn forget_events(&mut self) {
+        self.inner.forget_events();
+    }
+    fn take_dialogs(&mut self) -> Vec<String> {
+        self.inner.take_dialogs()
+    }
+    fn set_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        self.inner.set_deadline(deadline);
+    }
+    fn take_save_blocked(&mut self) -> Option<String> {
+        self.blocked.take()
+    }
+    fn is_guarding_saves(&self) -> bool {
+        self.inner.is_guarding_saves()
+    }
+}
+
+/// The supervised browser as `ai_bridge`'s `_in` functions see it, around
+/// a `SavesOnClick`.
+struct Supervised {
+    d: SavesOnClick,
+    lease: Held,
+    account: Option<String>,
+    discovery: Option<v2_lib::commands::autorun::DiscoveryState>,
+    guarded_case: Option<i32>,
+    guard_owner: Option<GuardOwner>,
+}
+
+impl DiscoveryBrowser for Supervised {
+    type D = SavesOnClick;
+    fn parts(&mut self) -> DiscoveryParts<'_, SavesOnClick> {
+        DiscoveryParts {
+            driver: &mut self.d,
+            lease: &mut self.lease,
+            signed_in: &mut self.account,
+            discovery: &mut self.discovery,
+            guarded_case: &mut self.guarded_case,
+            guard_owner: &mut self.guard_owner,
+        }
+    }
+    fn close(self) {}
+}
+
+fn supervised(d: SavesOnClick) -> Option<Supervised> {
+    Some(Supervised { d, lease: Held::supervised(), account: None, discovery: None, guarded_case: None, guard_owner: None })
+}
+
+/// An assistant's replay of case `ID` to step 2 in `b`, as `replay_supervised`
+/// runs one: the guard put where it must be first (`guard_before_replay`,
+/// `ended_no_save` being whether the replay ended a no_save discovery), the
+/// replay with the `may_lift` that gave, and the guard's owner settled after.
+/// The page tries to save at step 1.
+async fn assistant_replay(b: &mut Supervised, root: &Path, armed: &Arc<AtomicBool>, ended_no_save: bool) -> ReplayEnd {
+    let may_lift = match guard_before_replay(&mut b.d, &mut b.guard_owner, ended_no_save, ReplayBy::Assistant, root, "acme", "Web").await {
+        Ok(may_lift) => may_lift,
+        Err(why) => return ReplayEnd::Refused(why),
+    };
+    let (mut account, cancel) = (b.account.take(), AtomicBool::new(false));
+    let end = replay_to_checked(
+        &mut b.d,
+        &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
+        root,
+        "acme",
+        "Web",
+        &req(2),
+        &mut account,
+        &mut b.lease,
+        &mut b.guarded_case,
+        may_lift,
+        &quick(),
+        &cancel,
+        || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
+        |k, _| {
+            if k == 1 {
+                armed.store(true, Ordering::SeqCst);
+            }
+        },
+    )
+    .await;
+    b.account = account;
+    settle_guard_owner(&b.d, b.guarded_case, &mut b.guard_owner, ID, ReplayBy::Assistant.owns_as(ID));
+    end
+}
+
+/// Review Focus 1. A no_save discovery is running and the assistant replays
+/// a case NOT marked no_save: the replay ends the discovery to take the
+/// browser, and the discovery's guard stays on - the page's save at step 1
+/// is stopped, and a second replay is guarded too. Only
+/// `end_autorun_discovery` lifts it; the next replay then saves.
+#[tokio::test]
+async fn a_no_save_discovery_stays_guarded_until_it_ends() {
+    use v2_lib::ai_bridge::{end_discovery_for_replay, end_discovery_in, DISCOVERY_GUARD_LIFTED};
+    use v2_lib::commands::autorun::DiscoveryState;
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let armed = Arc::new(AtomicBool::new(false));
+    // The discovery, started with no_save and guarded from its sign-in on.
+    let (inner, _) = app();
+    let mut slot = supervised(SavesOnClick::new(inner, armed.clone()));
+    let b = slot.as_mut().unwrap();
+    b.discovery = Some(DiscoveryState {
+        area: Some("Leave".into()),
+        account: Some("admin".into()),
+        started_at: 1,
+        tried: Vec::new(),
+        mapping: None,
+        case_id: None,
+        no_save: true,
+        call_no_save: false,
+    });
+    b.d.guard_saves(&[]).await.unwrap();
+    b.guard_owner = Some(GuardOwner::Discovery);
+    // The assistant's replay ends it first, and the replay is guarded.
+    let ended = end_discovery_for_replay(&mut slot);
+    assert!(ended.ended && ended.no_save, "{ended:?}");
+    let (inner, app) = app();
+    let mut slot = supervised(SavesOnClick::new(inner, armed.clone()));
+    let b = slot.as_mut().unwrap();
+    let end = assistant_replay(b, dir.path(), &armed, ended.no_save).await;
+    let ReplayEnd::StoppedAt { phase, step, why, .. } = &end else { panic!("{end:?}") };
+    assert_eq!((*phase, *step), (ReplayPhase::Step, 1), "{end:?}");
+    assert!(v2_lib::browser::save_guard::is_blocked(why), "{why}");
+    assert_eq!((b.d.stopped, b.d.sent), (1, 0), "a save got through inside a no_save discovery");
+    assert!(clicked(&app, "#s1"));
+    assert!(b.d.is_guarding_saves());
+    assert_eq!(b.guard_owner, Some(GuardOwner::Discovery));
+    // A second replay in that browser is still guarded.
+    let end = assistant_replay(b, dir.path(), &armed, false).await;
+    assert!(matches!(end, ReplayEnd::StoppedAt { .. }), "{end:?}");
+    assert_eq!((b.d.stopped, b.d.sent), (2, 0));
+    // end_autorun_discovery lifts it, keeping the browser.
+    let (status, said) = end_discovery_in(&mut slot).await;
+    assert_eq!((status, said.as_str()), (200, DISCOVERY_GUARD_LIFTED));
+    let b = slot.as_mut().expect("ending the discovery's guard closed the browser");
+    assert!(!b.d.is_guarding_saves());
+    assert_eq!(b.guard_owner, None);
+    // The next replay may save.
+    let end = assistant_replay(b, dir.path(), &armed, false).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!((b.d.stopped, b.d.sent), (2, 1), "the replay after the end was still guarded");
+}
+
+/// The assistant's own guard for another case - its replay or try of
+/// no-save case 5 - is lifted by its replay of unflagged case 77, rather
+/// than refusing 77's saves for 5: the save at step 1 goes through, and the
+/// guard has no owner after.
+#[tokio::test]
+async fn a_replay_lifts_a_guard_the_assistant_left_for_another_case() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let mut five = script(three_steps());
+    five.case_id = 5;
+    five.no_save = true;
+    store::save_script(dir.path(), &five).unwrap();
+    let armed = Arc::new(AtomicBool::new(false));
+    let (inner, app) = app();
+    let mut slot = supervised(SavesOnClick::new(inner, armed.clone()));
+    let b = slot.as_mut().unwrap();
+    guard_for_case(&mut b.d, &mut b.guarded_case, dir.path(), "acme", "Web", 5, false).await.unwrap();
+    settle_guard_owner(&b.d, b.guarded_case, &mut b.guard_owner, 5, ReplayBy::Assistant.owns_as(5));
+    assert_eq!((b.guarded_case, b.guard_owner.clone()), (Some(5), Some(GuardOwner::Call { case_id: Some(5) })));
+
+    let end = assistant_replay(b, dir.path(), &armed, false).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert!(clicked(&app, "#s1"));
+    assert_eq!((b.d.stopped, b.d.sent), (0, 1), "case 77's save was stopped for case 5");
+    assert!(!b.d.is_guarding_saves());
+    assert_eq!((b.guarded_case, b.guard_owner.clone()), (None, None));
+}
+
+/// The person's guard is never the assistant's to lift: the person's step of
+/// no-save case 5 guards the browser, and the assistant's replay of
+/// unflagged case 77 there keeps it - the save at step 1 is stopped for
+/// case 5 - and the guard is still the person's after.
+#[tokio::test]
+async fn a_replay_never_lifts_the_persons_guard() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let mut five = script(three_steps());
+    five.case_id = 5;
+    five.no_save = true;
+    store::save_script(dir.path(), &five).unwrap();
+    let armed = Arc::new(AtomicBool::new(false));
+    let (inner, _app) = app();
+    let mut slot = supervised(SavesOnClick::new(inner, armed.clone()));
+    let b = slot.as_mut().unwrap();
+    guard_for_case(&mut b.d, &mut b.guarded_case, dir.path(), "acme", "Web", 5, true).await.unwrap();
+    settle_guard_owner(&b.d, b.guarded_case, &mut b.guard_owner, 5, GuardOwner::Person);
+
+    let end = assistant_replay(b, dir.path(), &armed, false).await;
+    let ReplayEnd::StoppedAt { why, .. } = &end else { panic!("{end:?}") };
+    assert_eq!(why, &guarding_other_case(5));
+    assert_eq!((b.d.stopped, b.d.sent), (1, 0), "a save got through the person's guard");
+    assert!(b.d.is_guarding_saves());
+    assert!(!b.d.inner.methods().contains(&"Fetch.disable".to_string()));
+    assert_eq!((b.guarded_case, b.guard_owner.clone()), (Some(5), Some(GuardOwner::Person)));
 }
 
 /// A Close that took the session's lock before the replay did: the replay
@@ -705,9 +951,10 @@ impl Driver for SavesWhenArmed {
     }
 }
 
-/// An assistant's replay keeps a guard held for another case (5). A save
-/// the replayed case's page tries is stopped for case 5, and the sentence
-/// says so rather than calling it this script's own save.
+/// An assistant's replay keeps a guard the person holds for another case
+/// (5): it may not lift it (`ReplayBy::may_lift`, false here). A save the
+/// replayed case's page tries is stopped for case 5, and the sentence says
+/// so rather than calling it this script's own save.
 #[tokio::test]
 async fn a_save_stopped_for_another_cases_guard_says_whose_draft_it_guards() {
     let _l = crate::serial::account_leases();
@@ -729,7 +976,7 @@ async fn a_save_stopped_for_another_cases_guard_says_whose_draft_it_guards() {
         &mut account,
         &mut held,
         &mut guarded,
-        false,
+        ReplayBy::Assistant.may_lift(Some(&GuardOwner::Person)),
         &quick(),
         &cancel,
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
@@ -1036,4 +1283,28 @@ fn every_other_use_of_the_browser_clears_the_stand() {
     assert!(replay.contains("(ReplayBy::Assistant, true, OpenedBy::Assistant, Some(stand), Some(saved)) =>"), "{replay}");
     assert!(replay.contains("(ReplayEnd::Ready { .. }, Some(saved)) if by == ReplayBy::Assistant =>"), "{replay}");
     assert!(replay.contains("&mut session.guarded_case,"), "{replay}");
+}
+
+/// The wiring of the replay's guard: `replay_supervised` puts the guard where
+/// its owner says before either kind of replay runs (`guard_before_replay`,
+/// carrying a no_save discovery it ended), hands its `may_lift` to the replay
+/// from the beginning, and settles the owner once the replay is over.
+#[test]
+fn the_replay_puts_the_guard_where_its_owner_says() {
+    let norm = |s: &str| s.replace("
+", "
+");
+    let source = norm(include_str!("../../src/commands/autorun.rs"));
+    let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
+    let replay = &replay[..replay.find("
+}
+").unwrap()];
+    let before = replay.find("guard_before_replay(").expect("the replay does not put the guard first");
+    let call = &replay[before..before + replay[before..].find(".await").unwrap()];
+    assert!(call.contains("discovery.no_save,"), "a no_save discovery's guard is not carried: {call}");
+    let carry = replay.find("replay_to::carry_on(").unwrap();
+    let traced = replay.find("replay_to::replay_to_traced(").unwrap();
+    let settled = replay.find("settle_guard_owner(").expect("the owner is not settled after");
+    assert!(before < carry && before < traced && traced < settled, "{replay}");
+    assert!(!replay.contains("by.may_lift(),"), "the replay's may_lift ignores the guard's owner");
 }

@@ -74,6 +74,8 @@ struct FakeHost {
     discovering: bool,
     /// The ended discovery was a mapping run with this summary.
     summary: Option<MappingSummary>,
+    /// The ended discovery must not save: its guard stays on.
+    no_save: bool,
     /// The browser would not open: the replay answers this `Err`.
     open_failed: Option<String>,
     /// The replay runs on until this is notified (a slow replay); `None`
@@ -92,6 +94,7 @@ impl FakeHost {
             end,
             discovering: false,
             summary: None,
+            no_save: false,
             open_failed: None,
             release: None,
             left_open: None,
@@ -124,7 +127,7 @@ impl ReplayHost for FakeHost {
             if let Some(why) = &self.open_failed {
                 return Err(after_ended_discovery(self.discovering, why));
             }
-            let discovery = DiscoveryEnded { ended: self.discovering, summary: self.summary.clone() };
+            let discovery = DiscoveryEnded { ended: self.discovering, summary: self.summary.clone(), no_save: self.no_save };
             Ok(AssistantReplay { end: self.end.clone(), discovery, left_open: self.left_open.clone(), from: self.from })
         })
     }
@@ -327,6 +330,27 @@ async fn the_replay_answer_says_the_discovery_was_ended() {
     let (_, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     let v: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["sentence"], ready);
+}
+
+/// A replay that ended a no_save discovery says its guard stays on, and
+/// what lifts it.
+#[tokio::test]
+async fn the_replay_answer_says_a_no_save_discoverys_guard_stays_on() {
+    use v2_lib::ai_bridge::DISCOVERY_GUARD_KEPT;
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    assert_eq!(
+        DISCOVERY_GUARD_KEPT,
+        "Its no_save guard stays on: nothing saves in this browser until you call end_autorun_discovery."
+    );
+    let ready = "Started from the beginning. Replayed case 77 to step 3 - the browser is on the page before step 3 runs";
+    let host = leak(FakeHost { discovering: true, no_save: true, ..FakeHost::ready() });
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["sentence"], format!("{ENDED_DISCOVERY_FIRST} {DISCOVERY_GUARD_KEPT} {ready}"));
 }
 
 /// A mapping run the replay ended hands back its summary beside the

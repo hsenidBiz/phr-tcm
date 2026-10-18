@@ -142,8 +142,8 @@ pub fn signed_in_event(
 }
 
 /// Why a replay stopped when its page tried to save while the browser was
-/// guarding case `other`'s draft (an assistant's replay never lifts that
-/// guard).
+/// guarding case `other`'s draft with a guard the replay may not lift (the
+/// person's, for the assistant's replay: `commands::autorun::ReplayBy::may_lift`).
 pub fn guarding_other_case(other: i32) -> String {
     format!("the Auto Run browser is guarding case {other}'s draft, and the page tried to save")
 }
@@ -362,9 +362,11 @@ pub async fn replay_to<D: Driver>(
 /// Replay case `req.case_id` in the supervised browser `d` up to the page
 /// before step `req.step`. `account`, `lease` and `guarded_case` are the
 /// supervised session's own, as `auto_run_step` uses them. `may_lift` is
-/// `guard_for_case`'s: true for the person's replay; false for an
-/// assistant's, which may switch the guard on for a no-save case but never
-/// lifts one held for another case, as a try never does. `db` gives the
+/// `guard_for_case`'s, from who asked and whose guard is on
+/// (`commands::autorun::ReplayBy::may_lift`): true for the person's replay,
+/// and for the assistant's over a guard a call of its own left; false over
+/// the person's guard or a no_save discovery's, which the replay keeps
+/// while it may still switch the guard on for a no-save case. `db` gives the
 /// place preconditions are asked (`preconditions::for_run`), looked at only
 /// when the script has some. `setup_browsers` gives the browser a case's
 /// setup runs in (`setup::prepare_case`), after the preconditions and
@@ -491,8 +493,9 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     {
         return ReplayEnd::Refused(why);
     }
-    // A guard still held for another case: an assistant's replay never
-    // lifts it, so a save this case's page tries is stopped for that case.
+    // A guard still held for another case: one this replay may not lift
+    // (the person's), so a save this case's page tries is stopped for that
+    // case.
     let guarding_other = guarded_case.filter(|c| *c != id);
 
     // The case's own account, through the supervised browser's lease.

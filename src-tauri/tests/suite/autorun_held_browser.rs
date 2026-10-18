@@ -29,6 +29,8 @@ struct HeldOne {
     lease: Held,
     account: Option<String>,
     discovery: Option<DiscoveryState>,
+    guarded_case: Option<i32>,
+    guard_owner: Option<v2_lib::commands::autorun::GuardOwner>,
     alive: bool,
     closed: Arc<AtomicBool>,
     /// The assistant opened it (its replay); otherwise the person did.
@@ -43,6 +45,8 @@ impl DiscoveryBrowser for HeldOne {
             lease: &mut self.lease,
             signed_in: &mut self.account,
             discovery: &mut self.discovery,
+            guarded_case: &mut self.guarded_case,
+            guard_owner: &mut self.guard_owner,
         }
     }
     fn close(self) {
@@ -64,7 +68,17 @@ fn gone_driver() -> ScriptedDriver {
 fn held(alive: bool, discovery: Option<DiscoveryState>) -> (Option<HeldOne>, Arc<AtomicBool>) {
     let closed = Arc::new(AtomicBool::new(false));
     let d = if alive { ScriptedDriver::new(|_, _| Ok(serde_json::json!({}))) } else { gone_driver() };
-    let b = HeldOne { d, lease: Held::supervised(), account: None, discovery, alive, closed: closed.clone(), assistant: false };
+    let b = HeldOne {
+        d,
+        lease: Held::supervised(),
+        account: None,
+        discovery,
+        guarded_case: None,
+        guard_owner: None,
+        alive,
+        closed: closed.clone(),
+        assistant: false,
+    };
     (Some(b), closed)
 }
 
@@ -86,6 +100,7 @@ fn discovering() -> Option<DiscoveryState> {
         mapping: None,
         case_id: None,
         no_save: false,
+        call_no_save: false,
     })
 }
 
