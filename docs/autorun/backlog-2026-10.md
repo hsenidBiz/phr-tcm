@@ -220,6 +220,23 @@ information in the slots the Playwright pipeline already reads; it never overrid
     - import loads a capture for reading and searching only, never replayed into the browser;
     - cookie values of session/auth cookies and secret body fields are never shown.
 
+## Element inspection (agreed 2026-10-18)
+
+30. **Read-only element inspection for the assistant**, from stealth-browser-mcp's "Element
+    Extraction" group, TCM's own versions on its CDP driver, for diagnosing a step and checking
+    edge cases (Avin: make the assistant more capable):
+    - **computed styles** of an element (CSS `getComputedStyle` / `CSS.getComputedStyleForNode`),
+      e.g. to confirm a field turned red, a button looks disabled, text is hidden; and a script
+      check `expect_style {property, equals}` built on it;
+    - **event listeners** on an element and on the element covering it
+      (`DOMDebugger.getEventListeners`), for "why did my click do nothing";
+    - **animations and transitions** running on an element (computed transition/animation, the
+      Web Animations list), to explain "still moving" failures and the wait they need;
+    - **one element's structure**: attributes, children, text and which frame it is in, beside the
+      page read TCM already has.
+    Not taken: assets, related CSS/JS files and complete element cloning - they serve copying a
+    design, not testing, and would pull large files into the assistant's context.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
