@@ -162,6 +162,27 @@ information in the slots the Playwright pipeline already reads; it never overrid
 26. **Export warnings (E11).** Before writing: unnamed deletes, publishes, state conflicts, not run
     twice in a row, quirks attached.
 
+## Replays without re-signing in (agreed 2026-10-18)
+
+27. **Stop releasing the browser between replays.** Assistants call `release_autorun_browser`
+    and then `replay_autorun_to_step`, which opens a fresh browser and replays the whole sign-in
+    (login, password, the "Another active session" bootbox, the menu) - 10-30 s every time,
+    many times per healing session. Causes and fixes:
+    - **`no_save` is sticky per browser**: once a no_save replay/discovery runs, every later save
+      in that browser is blocked until release, so the rules tell agents to release between a
+      no_save replay and a saving one. Make `no_save` a per-call setting that resets with the call.
+    - **Replays always start fresh**: if the Auto Run browser is already signed in as the same
+      account and environment, a replay should return to the case's area through its menu path
+      (as `return_to_area` does) instead of opening a new browser and signing in; start fresh only
+      when the session has dropped, the account differs, or the page is broken. (Same idea as
+      item 17 for template runs.)
+    - **A cheap reset**: `reset_autorun_browser` - go home, clear the save guard and any open
+      dialog, keep the session - for when an assistant wants a clean start without a sign-in.
+    - **Discovery and replay share one browser**, so moving from exploring to replaying does not
+      sign in again.
+    - **Guide**: release only when the browser is broken (frozen, wrong account, session gone),
+      never as a routine step between replays.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
