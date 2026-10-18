@@ -710,10 +710,16 @@ impl AdoClient {
                 fields.push((m.to_string(), tc.module_value.trim().to_string()));
             }
         }
+        // Set when the prerequisites are written into a field the work item
+        // stores as Markdown: see the format op below.
+        let mut markdown_field: Option<&str> = None;
         if let Some(p) = preconditions_ref {
             if writes(&tc.preconditions) {
                 if let Some(value) = prereq_patch(&tc.preconditions, original_prereq) {
                     fields.push((p.to_string(), value));
+                    if original_prereq.is_some_and(|o| o.markdown) {
+                        markdown_field = Some(p);
+                    }
                 }
             }
         }
@@ -721,6 +727,14 @@ impl AdoClient {
             .iter()
             .map(|(r, v)| serde_json::json!({"op": "add", "path": format!("/fields/{r}"), "value": v}))
             .collect();
+        // Azure DevOps keeps a multi-line field's format as the last edit
+        // chose it. A write of the value alone may store the field back as
+        // HTML, and the Markdown then shows as `**admin**`. Saying Markdown
+        // with the write keeps the format the item already has - it never
+        // converts a field, because it is only sent for one already Markdown.
+        if let Some(p) = markdown_field {
+            ops.push(serde_json::json!({"op": "add", "path": format!("/multilineFieldsFormat/{p}"), "value": "Markdown"}));
+        }
         // Priority only when the case sets one, whatever `blanks` says:
         // `None` means "leave Azure DevOps' value alone", and an update
         // never resets a priority to the create default.
@@ -1716,12 +1730,6 @@ fn steps_patch(steps: &[crate::steps_xml::Step], original_xml: Option<&str>) -> 
     merged
 }
 
-/// Text going into an HTML field value.
-///
-/// Preconditions are typed as plain text and were interpolated straight
-/// into `<div>...</div>`, so a `<` or an `&` - "value < 10", "Tom & Jerry"
-/// - reached Azure DevOps as broken markup and came back mangled or
-/// truncated. Escaping is what makes the round-trip faithful.
 /// The prerequisites value an update writes, or `None` to leave the field
 /// out. The blank policy is the caller's, decided before this.
 ///
@@ -1733,6 +1741,19 @@ fn steps_patch(steps: &[crate::steps_xml::Step], original_xml: Option<&str>) -> 
 /// old one-line draft from flattening a list someone formatted in Azure
 /// DevOps. Otherwise the value is the Markdown as HTML - or as-is, for a
 /// Markdown field - and a blank empties the field.
+///
+/// The value goes through `prereq_md_to_html`, which escapes text, so a
+/// typed `<` or `&` ("value < 10", "Tom & Jerry") reaches Azure DevOps as
+/// text, never as broken markup.
+///
+/// A field is Markdown only when the work item said so (`stores_markdown`).
+/// When it says nothing - `multilineFieldsFormat` absent from the read, or
+/// no baseline at all - the field is written as HTML, which is what every
+/// field held before the Markdown switch existed and what a field nobody
+/// converted still holds. Writing HTML into a field someone converted would
+/// show its markup as text; guessing Markdown for an unconverted one would
+/// show `**` the same way, on every field in every org. The first is the
+/// rarer case, so it is the one taken.
 pub fn prereq_patch(new_md: &str, original: Option<&super::StoredText>) -> Option<String> {
     let text = new_md.trim();
     let markdown = original.is_some_and(|o| o.markdown);
@@ -1775,6 +1796,12 @@ fn prereq_readings(stored: Option<&super::StoredText>) -> (String, Option<String
 /// Markdown. Azure DevOps reports that per item, under
 /// `multilineFieldsFormat`, keyed by reference name; a field it does not
 /// name is HTML. Both the key and "Markdown" are matched ignoring case.
+///
+/// Only the STRING "markdown" counts. The REST API sends the format as a
+/// name; a number (the extension SDK's `LargeTextCustomHtmlFormat` enum),
+/// `null` or anything else is not a name this reader can trust, so it reads
+/// as HTML - the format the field had before Markdown existed (see
+/// `prereq_patch`).
 fn stores_markdown(w: &serde_json::Value, field: &str) -> bool {
     w["multilineFieldsFormat"].as_object().is_some_and(|formats| {
         formats.iter().any(|(k, v)| {

@@ -789,11 +789,12 @@ pub async fn submit_queue(
                 .await;
             // A prerequisites field the read refuses (Azure DevOps answers
             // an unknown field with a 400) must not cost the steps and tags
-            // their baseline: read again without it, and the prerequisites
-            // are written as before.
+            // their baseline: read again without it. The updates then leave
+            // the prerequisites out (see `queue_item_request`).
             if matches!(read, Err(ado::AdoError::Http { status: 400, .. })) && preconditions_ref.is_some() {
                 crate::applog::warn(
-                    "could not read the current prerequisites for the updates - reading without them",
+                    "could not read the current prerequisites for the updates - reading without them; \
+                     the updates leave the prerequisites as Azure DevOps holds them",
                 );
                 read = client.get_test_cases_by_ids(&organization, &update_ids, None, None).await;
             }
@@ -811,7 +812,9 @@ pub async fn submit_queue(
                 // Say so, because it is the one path where markup can still
                 // be lost and the log is where that has to be visible.
                 Err(e) => crate::applog::warn(format!(
-                    "could not read the current steps for {} update(s) ({e}) - their steps                      will be rewritten from the imported text, which drops any formatting                      Azure DevOps holds",
+                    "could not read the current steps and prerequisites for {} update(s) ({e}) - their \
+                     steps will be rewritten from the imported text, which drops any formatting Azure \
+                     DevOps holds, and their prerequisites are left as Azure DevOps holds them",
                     update_ids.len()
                 )),
             }
@@ -1188,7 +1191,14 @@ pub fn queue_item_request(
             body: serde_json::Value::Array(client.update_test_case_doc(
                 tc,
                 m_ref,
-                p_ref,
+                // An update with no baseline for its prerequisites - the
+                // read failed, or was refused the field - leaves them OUT.
+                // Without the field as Azure DevOps holds it, nothing says
+                // whether the row's text is an edit or the old plain-text
+                // copy of a list someone formatted since, and writing the
+                // second flattens it. The queue keeps no copy of what it
+                // loaded to compare with instead, so the field stays as it is.
+                p_ref.filter(|_| original_prereq.is_some()),
                 original_steps_xml,
                 original_tags,
                 original_prereq,

@@ -518,3 +518,32 @@ fn exactly_one_found_for_one_create_is_claimed() {
     let r = failed_batch_results(&queue, &[0], "http 500", Some(&found), false);
     assert_eq!((r[0].action.as_str(), r[0].id), ("created", Some(901)));
 }
+
+/// An update row with no baseline for its prerequisites - the read failed,
+/// or was refused the field - leaves them out: nothing says whether its
+/// text is an edit or an old plain-text copy of a list formatted since. A
+/// create has nothing to compare with and writes them as always.
+#[test]
+fn an_update_with_no_prerequisites_baseline_leaves_them_out() {
+    let prereq = |req: &v2_lib::ado::wit_batch::BatchRequest| -> Vec<serde_json::Value> {
+        req.body.as_array().unwrap().iter().filter(|o| o["path"] == "/fields/Custom.Prec").cloned().collect()
+    };
+    let mut up = case("Old one", Some(777));
+    up.preconditions = "Signed in as admin".into();
+    let blind = queue_item_request(&client(), "acme", "Web", 42, &up, None, Some("Custom.Prec"), "", "", None, None, None, 1).unwrap();
+    assert!(prereq(&blind).is_empty(), "{}", blind.body);
+    assert!(paths(&blind.body).contains(&"/fields/System.Title".to_string()), "the rest of the update still goes");
+
+    // With the baseline, an edit is written and an unchanged copy is not.
+    let held = v2_lib::ado::StoredText { value: "<p>Signed in as <b>admin</b></p>".into(), markdown: false };
+    let same = queue_item_request(&client(), "acme", "Web", 42, &up, None, Some("Custom.Prec"), "", "", None, None, Some(&held), 1).unwrap();
+    assert!(prereq(&same).is_empty(), "{}", same.body);
+    up.preconditions = "Signed in as a viewer".into();
+    let edit = queue_item_request(&client(), "acme", "Web", 42, &up, None, Some("Custom.Prec"), "", "", None, None, Some(&held), 1).unwrap();
+    assert_eq!(prereq(&edit).len(), 1, "{}", edit.body);
+
+    let mut new = case("New one", None);
+    new.preconditions = "Signed in as admin".into();
+    let create = queue_item_request(&client(), "acme", "Web", 42, &new, None, Some("Custom.Prec"), "", "", None, None, None, 1).unwrap();
+    assert_eq!(prereq(&create).len(), 1, "{}", create.body);
+}

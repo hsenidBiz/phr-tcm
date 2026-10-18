@@ -1738,3 +1738,70 @@ fn a_blank_policy_still_applies() {
     let create = doc_client().create_test_case_doc("org", "proj", &tc, None, "", "", Some("Custom.Prec"), None);
     assert!(prereq_ops(&create).is_empty());
 }
+
+/// A write into a field stored as Markdown says Markdown in the same PATCH:
+/// Azure DevOps keeps the format the last edit chose, so the value alone
+/// may store the field back as HTML and show `**admin**` as typed. The op
+/// is sent only for a field already Markdown - it never converts one.
+#[tokio::test]
+async fn a_markdown_field_write_keeps_its_format() {
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/org/proj/_apis/wit/workitems/55"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 55})))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let markdown = v2_lib::ado::StoredText { value: "- an **admin** account".into(), markdown: true };
+    let html = v2_lib::ado::StoredText { value: "<ul><li>an <b>admin</b> account</li></ul>".into(), markdown: false };
+    let mut tc = sample_tc();
+    tc.preconditions = "- an **admin** account\n- a second user".into();
+    let send = |original: v2_lib::ado::StoredText, tc: v2_lib::model::TestCase| {
+        let client = &client;
+        async move {
+            client
+                .update_test_case_from_model("org", "proj", 55, &tc, None, Some("Custom.Prec"), None, None, Some(&original), BlankPolicy::Skip)
+                .await
+                .unwrap();
+        }
+    };
+    send(markdown.clone(), tc.clone()).await;
+    send(html, tc.clone()).await;
+    let mut unchanged = tc.clone();
+    unchanged.preconditions = markdown.value.clone();
+    send(markdown, unchanged).await;
+
+    let reqs = server.received_requests().await.unwrap();
+    let bodies: Vec<serde_json::Value> = reqs.iter().map(|r| serde_json::from_slice(&r.body).unwrap()).collect();
+    let format_ops = |b: &serde_json::Value| -> Vec<serde_json::Value> {
+        b.as_array().unwrap().iter().filter(|o| o["path"].as_str().unwrap().starts_with("/multilineFieldsFormat")).cloned().collect()
+    };
+    // The Markdown field: its value as-is, and its format restated.
+    assert_eq!(prereq_ops(bodies[0].as_array().unwrap()), [serde_json::json!(tc.preconditions)]);
+    assert_eq!(
+        format_ops(&bodies[0]),
+        [serde_json::json!({"op": "add", "path": "/multilineFieldsFormat/Custom.Prec", "value": "Markdown"})],
+        "{}", bodies[0]
+    );
+    // An HTML field never gets a format op: that would convert it.
+    assert_eq!(prereq_ops(bodies[1].as_array().unwrap()).len(), 1);
+    assert!(format_ops(&bodies[1]).is_empty(), "{}", bodies[1]);
+    // Nothing written, nothing said about the format.
+    assert!(prereq_ops(bodies[2].as_array().unwrap()).is_empty());
+    assert!(format_ops(&bodies[2]).is_empty(), "{}", bodies[2]);
+}
+
+/// The format arrives as a name. A number (the extension SDK's enum), a
+/// null or any other value is not one this reader trusts: it reads as
+/// HTML, as an absent format does.
+#[tokio::test]
+async fn a_format_that_is_not_the_name_markdown_reads_as_html() {
+    for format in [serde_json::json!(0), serde_json::json!(1), serde_json::json!(null), serde_json::json!("Html")] {
+        let full = read_prereq("<p>a</p>", Some(serde_json::json!({ "Custom.Prec": format }))).await;
+        assert!(!full.preconditions_stored.unwrap().markdown, "{format}");
+        assert_eq!(full.preconditions, "a", "{format}");
+    }
+    // Absent altogether: HTML.
+    let full = read_prereq("<p>a</p>", None).await;
+    assert!(!full.preconditions_stored.unwrap().markdown);
+}
