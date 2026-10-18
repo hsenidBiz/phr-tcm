@@ -6285,8 +6285,11 @@ pub async fn record_validation_rule_in<B: DiscoveryBrowser>(
 
 /// The rule a body tells, kept in (or taken out of) the map. `discovery_area`
 /// and `browser_page` (a path, empty when not known) fill in what the body
-/// leaves out; an area from neither is asked for rather than guessed. A
-/// removal without a page is from every page: the words are the rule.
+/// leaves out; an area from neither is asked for rather than guessed, and
+/// one the body names that is neither recorded nor in the map is refused,
+/// so a typo makes no stray area. An add without a page is on the page the
+/// browser is on; a removal without one is from every page of the area,
+/// whatever the browser shows: the words are the rule.
 fn rule_in_area(
     root: &std::path::Path,
     organization: &str,
@@ -6322,11 +6325,32 @@ fn rule_in_area(
     if message.is_empty() {
         return (400, "\"message\" is the application's own words, as the page showed them".to_string());
     }
-    let Some(area) = named(&rule.area).or_else(|| discovery_area.map(str::trim).filter(|a| !a.is_empty()).map(str::to_string)) else {
+    if organization.trim().is_empty() || project.trim().is_empty() {
+        return (400, RULE_NEEDS_A_PROJECT.to_string());
+    }
+    let named_area = named(&rule.area);
+    let Some(area) = named_area.clone().or_else(|| discovery_area.map(str::trim).filter(|a| !a.is_empty()).map(str::to_string)) else {
         return (400, "Name the area: no discovery is running.".to_string());
     };
     let area = canonical_area(root, organization, project, &area);
-    let page = named(&rule.page).or_else(|| Some(browser_page.trim().to_string()).filter(|p| !p.is_empty())).map(|p| page_path(&p));
+    if named_area.is_some() {
+        // The discovery's own area is one the assistant started; a name
+        // typed into the body must already be known.
+        let key = crate::autorun::discovery_map::area_key(&area);
+        let recorded = crate::autorun::nav::load_nav(root, organization, project)
+            .ok()
+            .is_some_and(|nav| crate::autorun::nav::find_area(&nav, &area).is_some());
+        let mapped = crate::autorun::discovery_map::load_map(root, organization, project)
+            .ok()
+            .is_some_and(|map| map.areas.iter().any(|a| crate::autorun::discovery_map::area_key(&a.area) == key));
+        if !recorded && !mapped {
+            return (400, format!("No area named \"{area}\" is recorded."));
+        }
+    }
+    // Only an add takes the page the browser is on.
+    let page = named(&rule.page)
+        .or_else(|| Some(browser_page.trim().to_string()).filter(|p| !p.is_empty() && !rule.remove))
+        .map(|p| page_path(&p));
     if rule.remove {
         return match forget_refusal_saved(root, organization, project, &area, page.as_deref(), &message) {
             Ok(true) => (200, format!("Removed from {area}.")),
@@ -6349,6 +6373,9 @@ fn rule_in_area(
         Err(_) => rule_not_kept(),
     }
 }
+
+/// Said by `record_validation_rule` with no project open: a rule belongs to one.
+const RULE_NEEDS_A_PROJECT: &str = "open a project in the app first - a validation rule belongs to a project";
 
 /// Said when the map could not be written: how, never in the rule's words
 /// or a file's path.

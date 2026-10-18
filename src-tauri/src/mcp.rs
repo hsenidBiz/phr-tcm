@@ -566,12 +566,12 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "record_validation_rule",
-            "description": "Remember (or remove) one rule the application enforced, in an area: the words its page showed after an action it refused, e.g. \"End date must be after the start date\". Use it when you judge a message the page showed to be a validation rule that Auto Run did not file by itself, or to remove one that no longer holds (`remove`). `message` is the application's own words, as the page showed them; `after` is the action that caused it, in a few words (needed unless you remove). `area` defaults to your discovery's area and `page` to the page the browser is on; `step` is the wizard step when the page shows one. The rule is kept against the area, attributed to the assistant, and the guide shows it to whoever writes the next script there.",
+            "description": "Remember (or remove) one rule the application enforced, in an area: the words its page showed after an action it refused, e.g. \"End date must be after the start date\". Use it when you judge a message the page showed to be a validation rule that Auto Run did not file by itself, or to remove one that no longer holds (`remove`). `message` is the application's own words, as the page showed them; `after` is the action that caused it, in a few words (needed unless you remove). `area` defaults to your discovery's area and `page` (when adding) to the page the browser is on; a removal with no `page` is from every page of the area; `step` is the wizard step when the page shows one. The rule is kept against the area, attributed to the assistant, and the guide shows it to whoever writes the next script there.",
             "inputSchema": schema(serde_json::json!({
                 "message": { "type": "string", "description": "The application's words, as the page showed them." },
                 "after": { "type": "string", "description": "The action that caused it, in a few words, e.g. \"clicked Save with the end date before the start date\". Needed unless `remove` is set." },
                 "area": { "type": "string", "description": "The area it holds in. Defaults to the open discovery's area; refused when there is neither." },
-                "page": { "type": "string", "description": "The page it was met on (its path). Defaults to the page the browser is on." },
+                "page": { "type": "string", "description": "The page it was met on (its path). Adding defaults to the page the browser is on; removing without it removes the words from every page of the area." },
                 "step": { "type": "string", "description": "The page's wizard step, when it shows one." },
                 "remove": { "type": "boolean", "description": "True to take the rule out instead of remembering it." },
             }), &["message"]),
