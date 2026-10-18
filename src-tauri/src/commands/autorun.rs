@@ -2535,7 +2535,7 @@ async fn import_case_texts(
         Ok(cases) => Ok(Some(
             cases
                 .into_iter()
-                .map(|c| (c.id, c.steps.into_iter().flat_map(|s| [s.action, s.expected]).collect()))
+                .map(|c| (c.id, crate::steps_xml::plain_texts(&c.steps)))
                 .collect(),
         )),
         // Azure DevOps refuses the whole batch when any id is not a work

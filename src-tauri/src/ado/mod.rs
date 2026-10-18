@@ -94,13 +94,20 @@ pub struct TestCaseFull {
     pub tags: String,
     pub automation_status: String,
     pub steps: Vec<crate::steps_xml::Step>,
+    /// The steps as TCM read them before step text was Markdown - one line,
+    /// formatting stripped (`steps_xml::parse_steps_text`) - and only when
+    /// that differs from `steps`. A queue draft or cache saved before then
+    /// holds this reading; the webview's review counts a step equal to
+    /// either as unchanged, as the save itself does (`steps_unchanged`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps_legacy: Option<Vec<crate::steps_xml::Step>>,
     /// Real ADO step ids (document order, aligned with `steps`) - the runner
     /// needs them to build iterationDetails.
     pub step_ids: Vec<String>,
     /// The Steps field EXACTLY as Azure DevOps holds it.
     ///
-    /// `steps` above is a lossy read: parse_steps_xml strips every tag, so
-    /// bold, links and embedded screenshots do not survive it. Writing that
+    /// `steps` above is a lossy read: parse_steps_xml keeps a step's lines,
+    /// bold and italic, but links and embedded screenshots do not survive it. Writing that
     /// back would delete them from the work item. Keeping the original
     /// lets a save ask "did the user actually change the steps?" and, when
     /// the answer is no, leave the field out of the patch entirely.

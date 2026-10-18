@@ -328,14 +328,21 @@ fn build_writes_a_shared_step_as_a_compref() {
 /// has to be escaped for that layer as well as the XML one. With the XML
 /// layer alone, a typed `<cycleId>` reached ADO as a tag and disappeared
 /// from its UI, and a typed `&lt;` came back as `<`.
+///
+/// Step text is Markdown now, where `&lt;` is the entity for `<`; the
+/// literal four characters are `\&lt;`, and they still reach Azure DevOps
+/// as text and come back as written.
 #[test]
 fn step_text_is_escaped_for_the_html_layer_too() {
-    let xml = build_steps_xml(&[step("Use <cycleId> & \"quotes\"", "Reads &lt; literally")]);
+    let xml = build_steps_xml(&[step("Use <cycleId> & \"quotes\"", r"Reads \&lt; literally")]);
     assert!(xml.contains("Use &amp;lt;cycleId&amp;gt; &amp;amp; &amp;quot;quotes&amp;quot;"), "{xml}");
     assert!(xml.contains("Reads &amp;amp;lt; literally"), "{xml}");
     let back = parse_steps_xml(&xml);
     assert_eq!(back[0].action, "Use <cycleId> & \"quotes\"");
-    assert_eq!(back[0].expected, "Reads &lt; literally", "no double decode");
+    assert_eq!(back[0].expected, r"Reads \&lt; literally", "no double decode");
+    // What the old reader made of it is the literal text, so a copy saved
+    // before Markdown is unchanged.
+    assert_eq!(v2_lib::steps_xml::parse_steps_text(&xml)[0].expected, "Reads &lt; literally");
 }
 
 /// Shared steps carry no action of their own; that is not an empty step.
@@ -589,4 +596,118 @@ fn a_root_that_is_not_steps_is_rebuilt_not_closed_as_steps() {
     let xml = "<list id=\"0\" last=\"2\"><step id=\"2\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Open</parameterizedString><parameterizedString isformatted=\"true\"></parameterizedString></step></list>";
     let steps = vec![step("Open the page", "")];
     assert_eq!(merge(xml, &steps), build_steps_xml(&steps));
+}
+
+// ------------------------------------------------------------ formatting
+
+/// A step as Azure DevOps' editor holds one with line breaks: lines in
+/// `<DIV>`s, a `<BR/>`, bold. Read with its lines and its bold, as the
+/// Markdown TCM holds it - no longer collapsed onto one line.
+const LINED: &str = concat!(
+    "<steps id=\"0\" last=\"3\">",
+    "<step id=\"2\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">",
+    "&lt;DIV&gt;Open the page&lt;/DIV&gt;&lt;DIV&gt;&lt;B&gt;Click Save&lt;/B&gt;&lt;/DIV&gt;</parameterizedString>",
+    "<parameterizedString isformatted=\"true\">Saved&lt;BR/&gt;The list shows it</parameterizedString></step>",
+    "<step id=\"3\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Wait</parameterizedString>",
+    "<parameterizedString isformatted=\"true\"></parameterizedString></step>",
+    "</steps>"
+);
+
+#[test]
+fn a_step_keeps_its_line_breaks_when_read() {
+    let steps = parse_steps_xml(LINED);
+    assert_eq!(steps[0].action, "Open the page\n**Click Save**");
+    assert_eq!(steps[0].expected, "Saved\nThe list shows it");
+    assert_eq!(steps[1], step("Wait", ""));
+    // A raw newline inside the HTML is whitespace, as Azure DevOps shows it.
+    let raw = build_steps_xml(&[step("x", "")]).replace(">x<", ">one\ntwo<");
+    assert_eq!(parse_steps_xml(&raw)[0].action, "one two");
+}
+
+/// The one-line reading every copy saved before Markdown holds - what the
+/// old reader made of the same XML.
+#[test]
+fn the_old_reading_is_still_there_for_comparisons() {
+    use v2_lib::steps_xml::parse_steps_text;
+    let old = parse_steps_text(LINED);
+    assert_eq!(old[0], step("Open the page Click Save", "Saved The list shows it"));
+    assert_eq!(old[1], step("Wait", ""));
+    assert_eq!(parse_steps_text(WITH_SHARED), parse_steps_xml(WITH_SHARED), "plain steps read the same");
+    assert!(parse_steps_text("<steps><step").is_empty());
+}
+
+#[test]
+fn a_formatted_step_is_written_as_b_i_br() {
+    let s = step("Click **Save**\nthen *wait*", "- one\n- two");
+    let xml = build_steps_xml(std::slice::from_ref(&s));
+    // The step's HTML, escaped once more for the XML around it.
+    assert!(
+        xml.contains("Click &lt;B&gt;Save&lt;/B&gt;&lt;BR/&gt;then &lt;I&gt;wait&lt;/I&gt;"),
+        "{xml}"
+    );
+    assert!(xml.contains("\u{2022} one&lt;BR/&gt;\u{2022} two"), "{xml}");
+    assert!(!xml.contains("**") && !xml.contains("- one"), "no Markdown reaches Azure DevOps: {xml}");
+    let back = parse_steps_xml(&xml);
+    assert_eq!(back[0].action, "Click **Save**\nthen *wait*");
+    assert_eq!(back[0].expected, "\u{2022} one\n\u{2022} two");
+    // A merge writes an edited step the same way.
+    let merged = v2_lib::steps_xml::merge_steps_xml(RICH, &[s]).unwrap();
+    assert!(merged.contains("Click &lt;B&gt;Save&lt;/B&gt;&lt;BR/&gt;"), "{merged}");
+}
+
+/// Plain text is written exactly as before: escaped, nothing added.
+#[test]
+fn a_plain_step_is_written_as_it_always_was() {
+    let xml = build_steps_xml(&[step("Run SELECT COUNT(*) FROM t WHERE a * b > 1", "")]);
+    assert!(xml.contains(">Run SELECT COUNT(*) FROM t WHERE a * b &amp;gt; 1<"), "{xml}");
+}
+
+/// Review Focus 2: a queue draft (or cache, or exported file) saved before
+/// steps kept their lines holds this step as one line. Azure DevOps holds
+/// it with line breaks and bold. That is no edit, and must not rewrite it.
+#[test]
+fn an_old_one_line_draft_does_not_rewrite_a_step_with_line_breaks() {
+    use v2_lib::steps_xml::{merge_steps_xml, steps_unchanged};
+    let draft = vec![step("Open the page Click Save", "Saved The list shows it"), step("Wait", "")];
+    assert!(steps_unchanged(LINED, &draft), "the old one-line copy is unchanged");
+    assert!(steps_unchanged(LINED, &parse_steps_xml(LINED)), "and so is today's reading");
+
+    // The stale step rides along with a real edit elsewhere: the edit is
+    // written, the stale step's node is kept byte for byte.
+    let mut edited = draft.clone();
+    edited[1].action = "Wait 5 seconds".into();
+    assert!(!steps_unchanged(LINED, &edited));
+    let merged = merge_steps_xml(LINED, &edited).unwrap();
+    let kept = &LINED["<steps id=\"0\" last=\"3\">".len()..LINED.find("<step id=\"3\"").unwrap()];
+    assert!(merged.contains(kept), "the formatted step is kept verbatim: {merged}");
+    assert!(merged.contains("Wait 5 seconds"), "{merged}");
+}
+
+#[test]
+fn a_real_edit_adding_line_breaks_is_saved() {
+    use v2_lib::steps_xml::{merge_steps_xml, steps_unchanged};
+    let one_line = build_steps_xml(&[step("Open the page Click Save", "")]);
+    let edited = vec![step("Open the page\nClick **Save**", "")];
+    assert!(!steps_unchanged(&one_line, &edited), "lines and bold are an edit");
+    let merged = merge_steps_xml(&one_line, &edited).unwrap();
+    assert!(merged.contains("Open the page&lt;BR/&gt;Click &lt;B&gt;Save&lt;/B&gt;"), "{merged}");
+    // Taking the line breaks out of a step that has them is an edit too.
+    let flat = vec![step("Open the page **Click Save**", "Saved The list shows it"), step("Wait", "")];
+    assert!(!steps_unchanged(LINED, &flat));
+    // So is a different number of steps, or a shared step in a step's place.
+    assert!(!steps_unchanged(LINED, &parse_steps_xml(LINED)[..1]));
+    assert!(!steps_unchanged(LINED, &[parse_steps_xml(LINED)[0].clone(), shared(812)]));
+}
+
+/// What a comparison of words reads (the Auto Run seen check): the text
+/// without its Markdown, on one line.
+#[test]
+fn plain_texts_drop_the_markdown() {
+    use v2_lib::steps_xml::plain_texts;
+    let steps = parse_steps_xml(LINED);
+    assert_eq!(
+        plain_texts(&steps),
+        vec!["Open the page Click Save", "Saved The list shows it", "Wait", ""]
+    );
+    assert_eq!(plain_texts(&[step(r"COUNT(\*) & <cycleId>", "")]), vec!["COUNT(*) & <cycleId>", ""]);
 }

@@ -8343,9 +8343,9 @@ impl SaveRefusal {
 }
 
 /// A test case's step actions and expected results, as the seen check
-/// reads them.
+/// reads them: plain words, the Markdown taken out.
 fn case_step_text(case: &crate::ado::TestCaseFull) -> Vec<String> {
-    case.steps.iter().flat_map(|s| [s.action.clone(), s.expected.clone()]).collect()
+    crate::steps_xml::plain_texts(&case.steps)
 }
 
 /// What a script save's seen check reads: the discovery map, the project's

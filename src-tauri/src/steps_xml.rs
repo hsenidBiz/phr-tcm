@@ -9,6 +9,12 @@
 //! - parse strips REAL HTML markup only. v1 removed every `<...>` run, so a
 //!   literal "<cycleId>" a user typed did not survive a round-trip; that was
 //!   silent data loss, and `strip_tags` explains what replaced it.
+//! - step text is Markdown in TCM and the step HTML Azure DevOps shows
+//!   (`<B>`, `<I>`, `<BR/>`) in the XML; `case_markdown` is both directions.
+//!   It is read with its line breaks. What TCM read before (tags stripped,
+//!   one line) is `parse_steps_text`, and a step equal to either reading is
+//!   unchanged (`steps_unchanged`) - so a copy saved before never rewrites a
+//!   step.
 //! - malformed XML parses to an empty list, never an error
 
 use quick_xml::events::{BytesStart, Event};
@@ -60,12 +66,14 @@ pub(crate) fn escape_html(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// Plain step text as it goes into the XML: HTML-escaped, then XML-escaped.
+/// A step's Markdown as it goes into the XML: the step HTML Azure DevOps
+/// shows (escaped text, `<B>`, `<I>`, `<BR/>`), then XML-escaped. Plain
+/// text is written exactly as before: HTML-escaped and nothing else.
 fn step_text(text: &str) -> String {
-    escape_xml(&escape_html(text))
+    escape_xml(&crate::case_markdown::step_md_to_html(text))
 }
 
-/// One `<step>` element built from plain text.
+/// One `<step>` element built from a step's Markdown.
 fn step_node(id: &str, step: &Step) -> String {
     format!(
         "<step id=\"{id}\" type=\"{}\"><parameterizedString isformatted=\"true\">{}</parameterizedString><parameterizedString isformatted=\"true\">{}</parameterizedString></step>",
@@ -271,7 +279,10 @@ fn merge_into(original: &str, steps: &[Step]) -> Option<String> {
     // closed with `</steps>` below and stop being XML at all; the caller
     // builds it from the steps instead.
     let close = doc.root_close.filter(|_| doc.root_is_steps)?;
-    let old = parse_steps_xml(original);
+    // The original's steps as the HTML each field holds, so a step counts
+    // as the same when it is unchanged by the rule `steps_unchanged` uses -
+    // an old one-line copy of a step that has line breaks included.
+    let old = parse_steps_html(original);
     let lines_up = old.len() == doc.nodes.len()
         && old
             .iter()
@@ -280,7 +291,7 @@ fn merge_into(original: &str, steps: &[Step]) -> Option<String> {
     if steps.is_empty() || doc.nodes.is_empty() || !lines_up {
         return None;
     }
-    let same = |i: usize, j: usize| old[i].action == steps[j].action && old[i].expected == steps[j].expected;
+    let same = |i: usize, j: usize| same_text(&old[i], &steps[j]);
     let old_local: Vec<usize> = (0..old.len()).filter(|&i| old[i].shared.is_none()).collect();
     let new_local: Vec<usize> = (0..steps.len()).filter(|&j| steps[j].shared.is_none()).collect();
 
@@ -595,10 +606,62 @@ fn shared_step(e: &BytesStart) -> Step {
 }
 
 /// Parse the Steps XML into Step structs: one per top-level `<step>` or
-/// `<compref>`, in document order. A compref's nested steps belong to the
-/// Shared Steps work item and are not flattened into the case. Returns []
-/// on empty or malformed input, mirroring v1 parse_steps_xml.
+/// `<compref>`, in document order, each field read as Markdown with its
+/// line breaks and its bold and italic (`case_markdown::step_html_to_md`).
+/// A compref's nested steps belong to the Shared Steps work item and are
+/// not flattened into the case. Returns [] on empty or malformed input,
+/// mirroring v1 parse_steps_xml.
 pub fn parse_steps_xml(xml_str: &str) -> Vec<Step> {
+    read_steps(xml_str, crate::case_markdown::step_html_to_md)
+}
+
+/// The steps as TCM read them before step text was Markdown: entities
+/// undone, real tags stripped, all whitespace collapsed onto one line. It
+/// is what every copy saved before then holds - a queue draft, a cache, an
+/// exported file - and what `steps_unchanged` accepts as no edit.
+pub fn parse_steps_text(xml_str: &str) -> Vec<Step> {
+    read_steps(xml_str, |html| crate::case_markdown::legacy_text(html, crate::case_markdown::Field::Step))
+}
+
+/// The steps with each field the HTML Azure DevOps holds, one escaping
+/// layer (the XML's) undone.
+fn parse_steps_html(xml_str: &str) -> Vec<Step> {
+    read_steps(xml_str, str::to_string)
+}
+
+/// Whether `new` says what the original `old` (read by `parse_steps_html`)
+/// says: the same shared reference, or each field unchanged by
+/// `case_markdown::unchanged`.
+fn same_text(old: &Step, new: &Step) -> bool {
+    use crate::case_markdown::{unchanged, Field};
+    old.shared == new.shared
+        && unchanged(&new.action, &old.action, Field::Step)
+        && unchanged(&new.expected, &old.expected, Field::Step)
+}
+
+/// Whether saving `steps` over the Steps field `xml` changes no step's
+/// text: as many steps, each equal to its field read as Markdown or to what
+/// the old reader made of it (`parse_steps_text`). A stale one-line copy of
+/// a step Azure DevOps holds with line breaks or bold is unchanged; adding
+/// or removing a line break, a bold or a word is an edit.
+pub fn steps_unchanged(xml: &str, steps: &[Step]) -> bool {
+    let old = parse_steps_html(xml);
+    old.len() == steps.len() && old.iter().zip(steps).all(|(o, n)| same_text(o, n))
+}
+
+/// Each step's action then its expected result as plain words on one line
+/// - the Markdown taken out - for a comparison of words, such as the Auto
+/// Run seen check. A shared step has no words of its own.
+pub fn plain_texts(steps: &[Step]) -> Vec<String> {
+    let plain = |md: &str| {
+        let html = crate::case_markdown::step_md_to_html(md);
+        crate::case_markdown::legacy_text(&html, crate::case_markdown::Field::Step)
+    };
+    steps.iter().flat_map(|s| [plain(&s.action), plain(&s.expected)]).collect()
+}
+
+/// The reader proper: `read` turns each field's HTML into its text.
+fn read_steps(xml_str: &str, read: impl Fn(&str) -> String) -> Vec<Step> {
     if xml_str.trim().is_empty() {
         return vec![];
     }
@@ -638,10 +701,10 @@ pub fn parse_steps_xml(xml_str: &str) -> Vec<Step> {
                         // Two layers of escaping: quick-xml (and the
                         // GeneralRef arm below) undid the XML's, leaving the
                         // HTML that ADO stores escaped inside it - `&quot;`,
-                        // `&amp;`, `&lt;P&gt;`. Undo that layer too, THEN
-                        // strip tags, so real markup goes and a typed
-                        // `<cycleId>` stays (see HTML_TAGS).
-                        let text = collapse_ws(&strip_tags(&unescape_html(buf)));
+                        // `&amp;`, `&lt;P&gt;`. `read` takes that HTML from
+                        // here; it tells real markup from a typed
+                        // `<cycleId>` the same way (see HTML_TAGS).
+                        let text = read(buf);
                         if let Some(p) = parts.as_mut() {
                             p.push(text);
                         }

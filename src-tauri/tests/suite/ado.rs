@@ -1485,3 +1485,74 @@ async fn case_texts_with_projects_leave_out_missing_ids() {
     assert_eq!(got[0].project, "Web");
     assert_eq!(got[0].text, vec!["Press Save".to_string(), "Saved appears".to_string()]);
 }
+
+// ------------------------------------------------- steps keep their lines
+
+/// A step Azure DevOps holds with line breaks and bold.
+const LINED_STEPS: &str = "<steps id=\"0\" last=\"2\"><step id=\"2\" type=\"ValidateStep\">\
+<parameterizedString isformatted=\"true\">&lt;DIV&gt;Open the page&lt;/DIV&gt;&lt;DIV&gt;&lt;B&gt;Click Save&lt;/B&gt;&lt;/DIV&gt;</parameterizedString>\
+<parameterizedString isformatted=\"true\">Saved</parameterizedString></step></steps>";
+
+/// Review Focus 2: a queue draft saved before steps kept their lines holds
+/// the step as one line, without its bold. Saving it (a retitle, say) must
+/// not rewrite the step Azure DevOps holds.
+#[tokio::test]
+async fn an_old_one_line_draft_does_not_rewrite_a_step_with_line_breaks() {
+    let mut tc = case_from(LINED_STEPS, "A better title");
+    assert_eq!(tc.steps[0].action, "Open the page\n**Click Save**", "read with its lines");
+    tc.steps[0].action = "Open the page Click Save".into(); // the old draft's copy
+    let body = captured_patch(&tc, Some(LINED_STEPS)).await;
+    assert!(body.contains("A better title"), "the title is still written");
+    assert!(!body.contains("Microsoft.VSTS.TCM.Steps"), "the steps are left alone:\n{body}");
+}
+
+/// The reading itself is unchanged too: a title-only save of today's copy.
+#[tokio::test]
+async fn a_title_only_save_of_a_formatted_step_does_not_touch_it() {
+    let tc = case_from(LINED_STEPS, "A better title");
+    let body = captured_patch(&tc, Some(LINED_STEPS)).await;
+    assert!(!body.contains("Microsoft.VSTS.TCM.Steps"), "{body}");
+}
+
+/// A real edit - line breaks added to a one-line step - is written, as the
+/// step HTML Azure DevOps shows.
+#[tokio::test]
+async fn a_real_edit_adding_line_breaks_is_saved() {
+    let plain = v2_lib::steps_xml::build_steps_xml(&[v2_lib::steps_xml::Step {
+        action: "Open the page Click Save".into(),
+        expected: "Saved".into(),
+        shared: None,
+    }]);
+    let mut tc = case_from(&plain, "T");
+    tc.steps[0].action = "Open the page\nClick **Save**".into();
+    let body = captured_patch(&tc, Some(&plain)).await;
+    assert!(body.contains("Microsoft.VSTS.TCM.Steps"), "an edit must write:\n{body}");
+    assert!(body.contains("Open the page&lt;BR/&gt;Click &lt;B&gt;Save&lt;/B&gt;"), "{body}");
+    assert!(!body.contains("**"), "no Markdown reaches Azure DevOps:\n{body}");
+}
+
+/// A loaded case carries the one-line reading too, only where it differs -
+/// what the webview's review compares an old draft with, as `steps_patch`
+/// does.
+#[tokio::test]
+async fn a_loaded_case_carries_the_old_reading_where_it_differs() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                { "id": 201, "fields": { "System.Title": "Lined", "Microsoft.VSTS.TCM.Steps": LINED_STEPS } },
+                { "id": 202, "fields": { "System.Title": "Plain", "Microsoft.VSTS.TCM.Steps": RICH_STEPS.replace("&lt;B&gt;", "").replace("&lt;/B&gt;", "") } }
+            ]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let cases = client.get_test_cases_by_ids("org", &[201, 202], None, None).await.unwrap();
+    assert_eq!(cases[0].steps[0].action, "Open the page\n**Click Save**");
+    let old = cases[0].steps_legacy.as_ref().expect("the readings differ");
+    assert_eq!(old[0].action, "Open the page Click Save");
+    assert_eq!(old[0].expected, "Saved");
+    assert_eq!(cases[1].steps[0].action, "Click Save");
+    assert_eq!(cases[1].steps_legacy, None, "nothing sent twice for a plain case");
+}

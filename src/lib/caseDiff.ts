@@ -133,15 +133,19 @@ export function diffCase(
   }
 
   // Steps compare positionally: index-by-index changed, extras added or
-  // removed. Steps always write, so any difference is a real change.
+  // removed. A queued step equal to the step as read now, or to the
+  // one-line reading a draft saved before steps kept their lines holds
+  // (`steps_legacy`), is unchanged - the save leaves it alone by the same
+  // rule (`steps_unchanged` in Rust), so the review must not promise it.
   const detail: CaseDiff["steps"]["detail"] = [];
   const max = Math.max(queued.steps.length, current.steps.length);
   for (let i = 0; i < max; i++) {
     const q = queued.steps[i];
     const c = current.steps[i];
+    const old = current.steps_legacy?.[i];
     if (q && !c) detail.push({ index: i, kind: "added", new: q });
     else if (!q && c) detail.push({ index: i, kind: "removed", old: c });
-    else if (q && c && !sameStep(q, c)) {
+    else if (q && c && !sameStep(q, c) && !(old && sameStep(q, old))) {
       detail.push({ index: i, kind: "changed", old: c, new: q });
     }
   }

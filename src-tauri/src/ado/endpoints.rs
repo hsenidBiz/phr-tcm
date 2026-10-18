@@ -1003,6 +1003,11 @@ impl AdoClient {
                     },
                     priority: parse_priority(&f["Microsoft.VSTS.Common.Priority"]),
                     steps: crate::steps_xml::parse_steps_xml(&str_of("Microsoft.VSTS.TCM.Steps")),
+                    steps_legacy: {
+                        let xml = str_of("Microsoft.VSTS.TCM.Steps");
+                        let old = crate::steps_xml::parse_steps_text(&xml);
+                        (old != crate::steps_xml::parse_steps_xml(&xml)).then_some(old)
+                    },
                     step_ids: crate::steps_xml::parse_step_ids(&str_of("Microsoft.VSTS.TCM.Steps")),
                     steps_xml: str_of("Microsoft.VSTS.TCM.Steps"),
                     module_value: module_ref.map(str_of).unwrap_or_default(),
@@ -1041,7 +1046,8 @@ impl AdoClient {
                 out.push(CaseText {
                     id: id as i32,
                     project: f["System.TeamProject"].as_str().unwrap_or_default().to_string(),
-                    text: steps.into_iter().flat_map(|s| [s.action, s.expected]).collect(),
+                    // Words, not Markdown: the seen check matches phrases.
+                    text: crate::steps_xml::plain_texts(&steps),
                 });
             }
         }
@@ -1650,15 +1656,17 @@ pub fn tags_write_ops(desired: &str, original: Option<&str>) -> Vec<serde_json::
 /// The Steps XML to write, or `None` to leave the field out of the patch.
 ///
 /// The problem this solves: `steps` on a loaded case is a LOSSY read.
-/// `parse_steps_xml` strips every tag, so a step whose action is
-/// `<b>Click Save</b><img src="...screenshot...">` comes back as the bare
-/// text `Click Save`. Rebuilding the field from that and PATCHing it - which
-/// is what every save used to do, unconditionally - deleted the formatting
-/// and the screenshot from Azure DevOps. Editing only the TITLE was enough
-/// to do it, and the save reported success.
+/// `parse_steps_xml` keeps a step's lines, bold and italic but nothing
+/// else, so a step whose action is `<b>Click Save</b><img src="...">` comes
+/// back as `**Click Save**`. Rebuilding the field from that and PATCHing it
+/// - which is what every save used to do, unconditionally - deleted the
+/// screenshot from Azure DevOps. Editing only the TITLE was enough to do
+/// it, and the save reported success.
 ///
-/// The comparison is deliberately PARSED against PARSED. A case the user did
-/// not touch parses to exactly what it parsed to when it was loaded, so it
+/// The comparison is deliberately PARSED against PARSED
+/// (`steps_unchanged`). A case the user did not touch parses to exactly
+/// what it parsed to when it was loaded - or, for a copy saved before steps
+/// kept their lines, to what the old one-line reader made of it - so it
 /// compares equal and the field is omitted (or only its step types are
 /// repaired). A real edit is MERGED into the original (`merge_steps_xml`):
 /// only the steps that changed are rewritten, every other step keeps its
@@ -1679,7 +1687,7 @@ fn steps_patch(steps: &[crate::steps_xml::Step], original_xml: Option<&str>) -> 
         return None;
     }
     if let Some(xml) = original_xml {
-        if crate::steps_xml::parse_steps_xml(xml) == steps {
+        if crate::steps_xml::steps_unchanged(xml, steps) {
             // Same text: leave the markup alone. But a step whose stored
             // TYPE is wrong for its Expected Result (every step this app
             // wrote before 1.25.1 was an ActionStep) is repaired in place -
