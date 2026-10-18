@@ -474,3 +474,38 @@ async fn the_report_shows_the_count_as_a_badge() {
     let html = v2_lib::autorun::report::build_with_downloads(&run, &[], "2 Oct 2026", &|_| false, &|_| None);
     assert!(!html.contains("page errors seen"));
 }
+
+// ---- Trace ids ----------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_5xx_page_error_line_names_its_trace_id() {
+    let page = FakePage::default();
+    let mut d = ScriptedDriver::new(move |method, params| match method {
+        "Network.getResponseBody" => {
+            Ok(json!({ "body": r#"{"title":"Server error","traceId":"t-1"}"#, "base64Encoded": false }))
+        }
+        _ => page.answer(method, params),
+    })
+    .with_net_record();
+    for e in answered("r1", "POST", "https://hr.example/api/Save?token=hunter2", 500) {
+        d.on_call_events.push((CLICK.to_string(), e));
+    }
+    let (out, _) = run(&mut d, &click_then_check(), Some(PageErrors::Fail), &[]).await;
+    assert_eq!(out[1].detail, "a request was answered 500: POST /api/Save, trace id t-1");
+    assert!(out.iter().all(|o| o.refused.is_empty()), "a 5xx is never a refusal: {out:?}");
+    assert_eq!(d.calls_to("Network.getResponseBody"), vec![json!({ "requestId": "r1" })]);
+}
+
+#[tokio::test]
+async fn a_5xx_whose_body_has_no_trace_id_reads_as_before() {
+    let mut d = clicking_meets(save_failed());
+    let (out, _) = run(&mut d, &click_then_check(), Some(PageErrors::Flag), &[]).await;
+    assert!(out[1].detail.ends_with(&format!("(page errors: {SAVE_SAID})")), "{}", out[1].detail);
+}
+
+#[tokio::test]
+async fn with_no_page_errors_set_no_body_is_read() {
+    let mut d = clicking_meets(answered("r1", "POST", "https://hr.example/api/Save", 500));
+    let _ = run(&mut d, &click_then_check(), None, &[]).await;
+    assert!(d.calls_to("Network.getResponseBody").is_empty());
+}

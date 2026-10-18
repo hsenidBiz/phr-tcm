@@ -21,7 +21,9 @@
 use super::api_checks as api;
 use super::components::{ran_actions, ComponentFile, Ran};
 use super::failures::{is_failed, stop_reason};
+use super::refusals::APP_REFUSED;
 use super::replay::{MODULE_STEP, SIGN_IN_STEP};
+use super::runner::{AFTER_EARLIER, PAGE_SHOWED};
 use super::{CaseScript, LocalRun, StepRecord};
 use crate::browser::actions::{self as act, Action};
 use crate::browser::{expect as exp, input as inp};
@@ -48,7 +50,12 @@ pub enum ErrorClass {
     StillVisible,
     PageTextMissing,
     UrlMismatch,
+    /// The browser refused a protocol call (`input::PAGE_REFUSED`).
     PageRefused,
+    /// The application refused a request the page made of it
+    /// (`refusals::APP_REFUSED`), or one it refused came before the
+    /// failure in the same step.
+    AppRefused,
     LostFocus,
     NoOption,
     NoFileChooser,
@@ -93,6 +100,7 @@ impl ErrorClass {
             ErrorClass::PageTextMissing => "page_text_missing",
             ErrorClass::UrlMismatch => "url_mismatch",
             ErrorClass::PageRefused => "page_refused",
+            ErrorClass::AppRefused => "app_refused",
             ErrorClass::LostFocus => "lost_focus",
             ErrorClass::NoOption => "no_option",
             ErrorClass::NoFileChooser => "no_file_chooser",
@@ -125,6 +133,7 @@ impl ErrorClass {
             ErrorClass::PageTextMissing => "the page lacked the words".to_string(),
             ErrorClass::UrlMismatch => "a different address".to_string(),
             ErrorClass::PageRefused => "the page refused the call".to_string(),
+            ErrorClass::AppRefused => "the application refused the action".to_string(),
             ErrorClass::LostFocus => "lost the focus before typing".to_string(),
             ErrorClass::NoOption => "the list had no such option".to_string(),
             ErrorClass::NoFileChooser => "no file chooser opened".to_string(),
@@ -145,11 +154,44 @@ impl ErrorClass {
     }
 }
 
+/// Where the runner's note on an earlier action begins (` - after <action>
+/// the app refused: ...` or `... the page showed: ...`), and whether it
+/// names a refusal: whichever of the two words comes first after it. The
+/// page's words follow, so they could read as anything.
+fn earlier_note(detail: &str) -> Option<(usize, bool)> {
+    let mut from = 0;
+    while let Some(i) = detail[from..].find(AFTER_EARLIER) {
+        let at = from + i;
+        let rest = &detail[at..];
+        match (rest.find(APP_REFUSED), rest.find(PAGE_SHOWED)) {
+            (Some(r), Some(s)) => return Some((at, r < s)),
+            (Some(_), None) => return Some((at, true)),
+            (None, Some(_)) => return Some((at, false)),
+            (None, None) => from = at + AFTER_EARLIER.len(),
+        }
+    }
+    None
+}
+
+/// A sentence without what the runner adds of the page's own words: the
+/// note on an earlier action, and a refusal's `; the page showed: ...`.
+fn without_page_notes(detail: &str) -> &str {
+    let detail = match earlier_note(detail) {
+        Some((i, _)) => &detail[..i],
+        None => detail,
+    };
+    match detail.find(&format!("; {PAGE_SHOWED}")) {
+        Some(i) => &detail[..i],
+        None => detail,
+    }
+}
+
 /// The part of a failure sentence after its target: `waited 5000ms:
 /// button "Save" is covered by div.modal` -> `is covered by div.modal`.
 /// Without a target (no script on disk) the sentence comes back with the
 /// `waited ...: ` prefix dropped and the target still in front.
 fn tail<'a>(detail: &'a str, target: Option<&str>) -> &'a str {
+    let detail = without_page_notes(detail);
     let detail = match detail.find(act::DIALOG_NOTE) {
         Some(i) => &detail[..i],
         None => detail,
@@ -189,6 +231,13 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
     if whole.starts_with(act::CANNOT_RUN) {
         return ErrorClass::CannotRun;
     }
+    // The application refused a request: the failure itself, or one before
+    // it in the step that the runner names after it.
+    if whole.starts_with(APP_REFUSED) || earlier_note(whole).is_some_and(|(_, refused)| refused) {
+        return ErrorClass::AppRefused;
+    }
+    // From here on, the page's words never decide the class.
+    let whole = without_page_notes(whole).trim();
     // The guard's own sentence, before anything that reads an ending: it
     // ends with a path, which could read as anything.
     if crate::browser::save_guard::is_blocked(whole) {

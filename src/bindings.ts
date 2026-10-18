@@ -1623,6 +1623,17 @@ export type ActionOutcome_Deserialize = {
 	 *  same.
 	 */
 	component?: string | null,
+	/**
+	 *  What the page newly showed after this action changed it - toasts,
+	 *  alerts, field errors (`page_messages`). Never fails the action by
+	 *  itself. Left out when empty, so older run files read the same.
+	 */
+	page_said?: PageMessage[],
+	/**
+	 *  The requests this action started that the application refused
+	 *  (`autorun::refusals`). Left out when empty.
+	 */
+	refused?: RefusedRequest_Deserialize[],
 };
 
 export type ActionOutcome_Serialize = {
@@ -1640,6 +1651,17 @@ export type ActionOutcome_Serialize = {
 	 *  same.
 	 */
 	component?: string | null,
+	/**
+	 *  What the page newly showed after this action changed it - toasts,
+	 *  alerts, field errors (`page_messages`). Never fails the action by
+	 *  itself. Left out when empty, so older run files read the same.
+	 */
+	page_said?: PageMessage[],
+	/**
+	 *  The requests this action started that the application refused
+	 *  (`autorun::refusals`). Left out when empty.
+	 */
+	refused?: RefusedRequest_Serialize[],
 };
 
 export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { absent?: never; account?: never; answer?: never; area?: never; as?: never; at_least?: never; at_most?: never; cells?: never; checked?: never; column?: never; component?: never; contains?: never; contains_text?: never; equals?: never; exact?: never; except?: never; expect?: never; file?: never; from?: never; headers?: never; inputs?: never; json?: never; key?: never; max?: never; method?: never; name?: never; order?: never; path?: never; pdf?: never; position?: never; prompt_text?: never; query?: never; selector?: never; sheet?: never; status?: never; table?: never; text?: never; then?: never; timeout_ms?: never; times?: never; to?: never; url_contains?: never; value?: never; within_ms?: never } | 
@@ -4148,6 +4170,15 @@ export type PageErrors =
 /**  The step is judged as usual; the case counts them. */
 "flag";
 
+/**
+ *  One message the page is showing, and where: `"page"`, or
+ *  `"frame <title, name or id>"` for one inside a frame.
+ */
+export type PageMessage = {
+	text: string,
+	where: string,
+};
+
 /**  Both schemes a page can wear, and which one it opens in. */
 export type PagePalette = {
 	light: ReportPalette,
@@ -4942,6 +4973,29 @@ export type RecordingEvent = {
 	 *  was typed into it.
 	 */
 	password: boolean,
+};
+
+/**  A request the application refused. */
+export type RefusedRequest = RefusedRequest_Serialize | RefusedRequest_Deserialize;
+
+/**  A request the application refused. */
+export type RefusedRequest_Deserialize = {
+	method: string,
+	/**  Where it went, with no host and no query. */
+	path: string,
+	status: number,
+	message: string,
+	trace_id?: string | null,
+};
+
+/**  A request the application refused. */
+export type RefusedRequest_Serialize = {
+	method: string,
+	/**  Where it went, with no host and no query. */
+	path: string,
+	status: number,
+	message: string,
+	trace_id?: string | null,
 };
 
 /**

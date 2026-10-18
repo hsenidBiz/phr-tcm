@@ -325,3 +325,26 @@ fn a_component_step_is_classified_by_its_expanded_action() {
     assert_eq!(points[0].target.as_deref(), Some("the component \"Pick a date\""));
     assert_eq!(points[1].kind.as_deref(), Some("check_text"));
 }
+
+#[test]
+fn a_refusal_by_the_app_is_its_own_class() {
+    let refused = r#"the app refused: "Weightage must total 100." (POST /api/eval-rules, 400, trace id 00-4bf9-00)"#;
+    assert_eq!(classify(refused, None), ErrorClass::AppRefused);
+    assert_eq!(classify(&format!(r#"{refused}; the page showed: "is not visible""#), None), ErrorClass::AppRefused);
+    assert_eq!(ErrorClass::AppRefused.key(), "app_refused");
+    assert_eq!(ErrorClass::AppRefused.label(), "the application refused the action");
+    // A later failure that a refusal came before.
+    let later = format!("waited 100ms and never saw css #goals - after click css #save {refused}");
+    assert_eq!(classify(&later, None), ErrorClass::AppRefused);
+    // The browser's own refusal is not the application's.
+    assert_eq!(classify("the page refused: Cannot find node", None), ErrorClass::PageRefused);
+}
+
+#[test]
+fn what_the_page_showed_never_decides_the_class() {
+    let target = r#"button "Save""#;
+    let base = format!("waited 5000ms: {target} is not visible");
+    let noted = format!(r#"{base} - after click css #a the page showed: "is disabled""#);
+    assert_eq!(classify(&noted, Some(target)), ErrorClass::NotVisible);
+    assert_eq!(classify(&noted, None), classify(&base, None));
+}

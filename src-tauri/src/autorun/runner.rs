@@ -20,8 +20,10 @@ use crate::browser::actions::{
     execute_in, expectation, in_missing_tab, shows_up, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN,
     WHEN_VISIBLE_MS,
 };
+use super::refusals::{app_refused_line, refused_since};
 use crate::browser::cdp::{Driver, MAIN_TAB};
 use crate::browser::page;
+use crate::browser::page_messages::{new_messages, read_page_messages, PageMessage, MAX_MESSAGES};
 use crate::browser::timing::{Timing, SHOT_TIMEOUT_MS};
 use crate::browser::downloads::{DownloadEntry, DownloadState};
 use std::collections::BTreeMap;
@@ -463,6 +465,11 @@ pub struct InRun<'a> {
     /// Told each action as it begins and ends, for whoever asks how far
     /// the step has got (a replay's "still running" answer).
     pub progress: Option<&'a StepProgress>,
+    /// A request the application refuses fails the action that sent it: a
+    /// try's, where the assistant is finding out what the page does. A
+    /// replay or a run only reports it - a saved case may provoke the
+    /// refusal on purpose and check its message.
+    pub refusals_fail: bool,
 }
 
 /// The action a step is on, as `StepProgress` keeps it.
@@ -550,6 +557,30 @@ impl Default for StepProgress {
 /// has no Stop to end it: the person, or the assistant, is waiting on the
 /// answer, and a step must never hold the browser for two minutes unasked.
 pub const WATCHED_DOWNLOAD_WAIT_MS: u32 = 30_000;
+
+/// What a line about the page's new messages starts with.
+pub const PAGE_SHOWED: &str = "the page showed: ";
+
+/// How a failed action's sentence goes on to name an earlier action of its
+/// step and what the page answered it: ` - after <action> <line>`.
+pub const AFTER_EARLIER: &str = " - after ";
+
+/// The messages a page newly showed, each quoted: `the page showed: "a"; "b"`.
+pub fn page_showed_note(messages: &[PageMessage]) -> String {
+    let quoted: Vec<String> = messages.iter().map(|m| format!("\"{}\"", m.text)).collect();
+    format!("{PAGE_SHOWED}{}", quoted.join("; "))
+}
+
+/// What the page answered an action, as a line: the first request the
+/// application refused, with what the page showed after it, or else what
+/// the page showed. `None` when it answered neither.
+fn answered_line(o: &ActionOutcome) -> Option<String> {
+    let said = (!o.page_said.is_empty()).then(|| page_showed_note(&o.page_said));
+    match (o.refused.first().map(app_refused_line), said) {
+        (Some(refused), Some(said)) => Some(format!("{refused}; {said}")),
+        (refused, said) => refused.or(said),
+    }
+}
 
 /// Every action of a step after one that failed: it is never carried out,
 /// so it never waits its full timeout for what cannot appear now.
@@ -730,6 +761,11 @@ async fn run_expanded<D: Driver>(
     // Until then a save the guard stopped was sent while the step before's
     // picture was still being taken: it is that step's, not this one's.
     let mut acted = false;
+    // The step's last action that changed the page, by its place in `out`,
+    // and what the page showed after it. The next such action's first read
+    // is that action's late read: a message the page took a moment to show
+    // is that action's, found with no wait of its own.
+    let mut last_changed: Option<(usize, Vec<PageMessage>)> = None;
     for (index, action) in step.actions.iter().enumerate() {
         if let Some(why) = blocked {
             out.push(ActionOutcome::failed(why));
@@ -789,6 +825,24 @@ async fn run_expanded<D: Driver>(
         if let Some(p) = run.progress {
             p.began(index + 1, step.actions.len(), action);
         }
+        // What the page shows before an action that changes it, and where
+        // the network record stands, so what is new after it is the
+        // action's. A sign-in is left out: its own trip settles a session
+        // the application refused, and its page is the sign-in's.
+        let before = if changes_the_page(action) && !matches!(action, Action::SignIn { .. }) {
+            let read = read_page_messages(d).await;
+            if let Some((at, after)) = &last_changed {
+                let late = new_messages(after, &read.messages);
+                let said = &mut out[*at].page_said;
+                said.extend(late);
+                said.truncate(MAX_MESSAGES);
+            }
+            Some((read.messages, d.net_mark()))
+        } else {
+            None
+        };
+        // The step's own `api_request` fetches: never the page's doing.
+        let mut own: Vec<String> = Vec::new();
         let mut outcome = match action {
             Action::SignIn { account: key } => match signin::prepare(root, organization, project, key) {
                 Err(why) => {
@@ -844,14 +898,14 @@ async fn run_expanded<D: Driver>(
                 // never the page's error.
                 let before = d.net_mark();
                 let outcome = api_checks::api_request(d, action, timing).await;
-                let own: Vec<String> = d
+                own = d
                     .net_since(before)
                     .into_iter()
                     .filter(|e| e.method == "GET" && e.path_query.split(['?', '#']).next() == Some(path.as_str()))
                     .map(|e| e.id)
                     .collect();
                 if let Some(book) = d.page_error_book() {
-                    book.exclude(own);
+                    book.exclude(own.clone());
                 }
                 outcome
             }
@@ -909,9 +963,6 @@ async fn run_expanded<D: Driver>(
             }
         }
         unexpected_dialog(d, &mut dialogs_read, fail_on_unexpected, &mut outcome);
-        if let Some(p) = run.progress {
-            p.ended(outcome.ok);
-        }
         // The application refused the session the browser holds ("Cookie
         // has been tampered", an empty 400): the account is signed in fresh
         // so its saved session is repaired, and the action fails saying so,
@@ -927,6 +978,40 @@ async fn run_expanded<D: Driver>(
                     blocked = Some(AFTER_SESSION_REFUSED);
                 }
             }
+        }
+        // What the page newly shows, and the requests the application
+        // refused, since the action began. Not for a browser that stopped
+        // answering, a Stop, or a page signed in afresh: none of those is
+        // the action's page.
+        let fresh_session = blocked == Some(AFTER_SESSION_REFUSED);
+        let mut refused_here = false;
+        if let Some((before, mark)) = before {
+            if !outcome.harness && outcome.detail != AFTER_STOP && !stop_pending && !fresh_session {
+                let after = read_page_messages(d).await;
+                outcome.page_said = new_messages(&before, &after.messages);
+                outcome.refused = refused_since(d, mark, &own).await;
+                outcome.page_step = after.step;
+                // A try fails on it, like a target that is not there.
+                if run.refusals_fail && outcome.ok && !outcome.refused.is_empty() {
+                    outcome.ok = false;
+                    outcome.detail = answered_line(&outcome).unwrap_or_default();
+                    refused_here = true;
+                }
+                last_changed = Some((out.len(), after.messages));
+            }
+        }
+        // The step fails here for a reason of its own: what the page
+        // answered the nearest earlier action is said with it, as the
+        // likelier cause than the failure the step ran into later.
+        if !outcome.ok && !refused_here && !outcome.harness && outcome.detail != AFTER_STOP && !fresh_session {
+            let earlier = out.iter().enumerate().rev().find_map(|(i, o)| answered_line(o).map(|line| (i, line)));
+            if let Some((i, line)) = earlier {
+                let what = step.actions.get(i).map(crate::ai_bridge::describe_action).unwrap_or_default();
+                outcome.detail = format!("{}{AFTER_EARLIER}{what} {line}", outcome.detail);
+            }
+        }
+        if let Some(p) = run.progress {
+            p.ended(outcome.ok);
         }
         // A Stop is no failure to picture.
         if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP {
@@ -982,6 +1067,7 @@ async fn run_expanded<D: Driver>(
         .map(|s| StepDialog { kind: s.kind.clone(), message: s.message.clone() });
     // The page's own errors since the previous step was judged. An outcome
     // they failed is pictured, as any failed action is.
+    super::page_errors::read_trace_ids(d, run.page_errors).await;
     let judged = super::page_errors::judge_step(d, run.page_errors, &run.ignore_page_errors, &mut out);
     run.page_errors_seen = judged.seen;
     if let Some(i) = judged.failed {

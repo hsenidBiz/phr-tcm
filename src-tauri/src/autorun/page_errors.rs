@@ -19,6 +19,8 @@
 use super::{CaseScript, PageErrors};
 use crate::browser::actions::ActionOutcome;
 use crate::browser::cdp::Driver;
+use super::api_checks::{body_of, Body};
+use super::refusals::trace_id_of;
 use crate::browser::page_errors::{counted, note, summary};
 
 /// The most phrases `ignore_page_errors` holds.
@@ -60,6 +62,29 @@ pub fn check_saved(scripts: &[CaseScript]) -> Result<(), String> {
 pub fn drop_all<D: Driver>(d: &mut D) {
     if let Some(book) = d.page_error_book() {
         book.take();
+    }
+}
+
+/// The most 5xx bodies read for a trace id in one step.
+const MAX_TRACED: usize = 5;
+
+/// Read the trace id of each 5xx answer the step met, from its body, so its
+/// page-error line can name it and the server log be found. Only when the
+/// script looks at page errors (`mode`): otherwise nothing is said of them.
+/// A body Chrome no longer holds, or one with no trace id, leaves the line
+/// as it was.
+pub async fn read_trace_ids<D: Driver>(d: &mut D, mode: Option<PageErrors>) {
+    if mode.is_none() {
+        return;
+    }
+    let ids = d.page_error_book().map(|b| b.untraced(MAX_TRACED)).unwrap_or_default();
+    for id in ids {
+        let Ok(Body::Text(text)) = body_of(d, &id).await else { continue };
+        if let Some(trace) = trace_id_of(&text) {
+            if let Some(book) = d.page_error_book() {
+                book.set_trace(&id, trace);
+            }
+        }
     }
 }
 

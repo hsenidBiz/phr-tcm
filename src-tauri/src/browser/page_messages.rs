@@ -17,7 +17,7 @@ pub const MAX_MESSAGES: usize = 5;
 pub const MAX_MESSAGE_CHARS: usize = 300;
 
 /// The page's read: an expression that evaluates to `{ messages, step }`.
-const READ_JS: &str = include_str!("page_messages.js");
+pub const READ_JS: &str = include_str!("page_messages.js");
 
 /// One message the page is showing, and where: `"page"`, or
 /// `"frame <title, name or id>"` for one inside a frame.

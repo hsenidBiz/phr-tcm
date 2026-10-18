@@ -216,6 +216,14 @@ pub async fn refused_since<D: Driver>(d: &mut D, mark: u64, own: &[String]) -> V
     out
 }
 
+/// The trace id a response body carries, read as a refusal's is: from the
+/// body redacted first, one short token, never an address. For a 5xx the
+/// page errors name, so its server log can be found.
+pub fn trace_id_of(body: &str) -> Option<String> {
+    let text = body.trim_start_matches('\u{feff}').trim();
+    serde_json::from_str::<Value>(text).ok().and_then(|v| trace_of(&redact(&v)))
+}
+
 /// The line a failed step or a discovery answer carries for one refusal.
 pub fn app_refused_line(r: &RefusedRequest) -> String {
     let trace = r.trace_id.as_deref().map(|t| format!(", trace id {t}")).unwrap_or_default();

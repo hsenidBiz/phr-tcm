@@ -5623,7 +5623,9 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     let started_on =
         if matched.is_empty() && waited.is_none() { String::new() } else { page_address(d).await.0 };
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
-    let mut run = InRun { areas: Some(&areas), saves_only_counted, ..Default::default() };
+    // A try fails on a request the application refused: the assistant learns
+    // the reason now, not from a wait that times out later.
+    let mut run = InRun { areas: Some(&areas), saves_only_counted, refusals_fail: true, ..Default::default() };
     let outcomes = match crate::autorun::runner::run_step_in_run(
         d,
         root,
