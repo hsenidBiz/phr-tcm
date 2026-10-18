@@ -46,6 +46,14 @@ pub struct NetEntry {
     pub state: NetState,
     /// What the request itself answered when the server sent it on.
     pub redirect: Option<NetRedirect>,
+    /// Chrome's resource type for it (`XHR`, `Fetch`, `Document`, `Other`);
+    /// `None` when the event named none.
+    pub kind: Option<String>,
+    /// Sent to the site of the document that made it. Compared when the
+    /// request starts and only the answer kept - never either address.
+    pub same_site: bool,
+    /// The page asked this again within `POLL_REPEAT` (mirrors `Times`).
+    pub polling: bool,
 }
 
 /// A request's first redirect: the 3xx it answered and where it was sent.
@@ -180,8 +188,13 @@ impl NetRecord {
                 if let Some(t) = self.times.get_mut(&earlier) {
                     t.polling = true;
                 }
+                if let Some(e) = self.entry_at(earlier) {
+                    e.polling = true;
+                }
             }
         }
+        let site = origin(url);
+        let same_site = site.is_some() && site == p["documentURL"].as_str().and_then(origin);
         self.times.insert(seq, Times { started: now, changed: now, polling });
         self.entries.push_back(NetEntry {
             seq,
@@ -192,6 +205,9 @@ impl NetRecord {
             mime: None,
             state: NetState::Pending,
             redirect: None,
+            kind: p["type"].as_str().map(str::to_string),
+            same_site,
+            polling,
         });
         while self.entries.len() > MAX_REQUESTS {
             if let Some(old) = self.entries.pop_front() {
@@ -213,6 +229,10 @@ impl NetRecord {
 
     fn entry(&mut self, p: &Value) -> Option<&mut NetEntry> {
         let seq = *self.by_id.get(p["requestId"].as_str()?)?;
+        self.entry_at(seq)
+    }
+
+    fn entry_at(&mut self, seq: u64) -> Option<&mut NetEntry> {
         let first = self.entries.front()?.seq;
         let at = usize::try_from(seq.checked_sub(first)?).ok()?;
         self.entries.get_mut(at)
