@@ -434,6 +434,7 @@ pub async fn route(
         ("GET", "/autorun-failures") => autorun_failures(ctx, target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
+        ("POST", "/autorun-validation-rule") => record_validation_rule(ctx, body).await,
         ("POST", "/autorun-defect") => autorun_defect(body),
         // Components: saved only once the open discovery has tried them
         // live, and retired only while no saved script uses them.
@@ -6234,6 +6235,117 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
         Ok(Recorded::Reactivated(id, reason)) => (200, reactivated_reply(&id, reason.as_deref())),
         Err(why) => (400, why),
     }
+}
+
+/// Remember, or take out, one rule the application enforced in an area -
+/// the words its page showed after an action it refused - as the
+/// assistant judged it (`record_validation_rule`). Reads the open
+/// discovery's area and the page the browser is on, the way `try` does,
+/// without waiting for a browser an unattended run holds.
+async fn record_validation_rule(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    if unattended_run_is_using_the_browser().is_some() || crate::autorun::replay_to::is_running() {
+        return rule_in_area(&root, &ctx.org, &ctx.project, body, None, "");
+    }
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    record_validation_rule_in(&mut slot, &root, &ctx.org, &ctx.project, body).await
+}
+
+/// `record_validation_rule` in the browser `slot` holds: its discovery's
+/// area is where a rule goes when the body names none, and the page it is
+/// on is the rule's page when the body names none. No browser, or one open
+/// for no discovery, leaves the body to name them.
+pub async fn record_validation_rule_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    body: &str,
+) -> (u16, String) {
+    let Some(browser) = slot.as_mut() else {
+        return rule_in_area(root, organization, project, body, None, "");
+    };
+    let p = browser.parts();
+    let area = p.discovery.as_ref().and_then(|d| d.area.clone());
+    let (page, _) = current_page(p.driver).await;
+    rule_in_area(root, organization, project, body, area.as_deref(), &page)
+}
+
+/// The rule a body tells, kept in (or taken out of) the map. `discovery_area`
+/// and `browser_page` (a path, empty when not known) fill in what the body
+/// leaves out; an area from neither is asked for rather than guessed. A
+/// removal without a page is from every page: the words are the rule.
+fn rule_in_area(
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    body: &str,
+    discovery_area: Option<&str>,
+    browser_page: &str,
+) -> (u16, String) {
+    use crate::autorun::discovery_map::{canonical_area, forget_refusal_saved, page_path, remember_refusals, RefusalRule, RuleSource};
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RuleBody {
+        message: String,
+        after: Option<String>,
+        area: Option<String>,
+        page: Option<String>,
+        step: Option<String>,
+        #[serde(default)]
+        remove: bool,
+    }
+    let shape = "{ \"message\": \"the words the page showed\", \"after\": \"the action that caused it\" }";
+    let rule: RuleBody = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(e) => return (400, format!("that is not a rule: {e}. Expected {shape}.")),
+    };
+    // One line, as the page's messages are read.
+    let words = |text: &str| -> String {
+        let one = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        one.chars().take(crate::browser::page_messages::MAX_MESSAGE_CHARS).collect()
+    };
+    let named = |text: &Option<String>| text.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
+    let message = words(&rule.message);
+    if message.is_empty() {
+        return (400, "\"message\" is the application's own words, as the page showed them".to_string());
+    }
+    let Some(area) = named(&rule.area).or_else(|| discovery_area.map(str::trim).filter(|a| !a.is_empty()).map(str::to_string)) else {
+        return (400, "Name the area: no discovery is running.".to_string());
+    };
+    let area = canonical_area(root, organization, project, &area);
+    let page = named(&rule.page).or_else(|| Some(browser_page.trim().to_string()).filter(|p| !p.is_empty())).map(|p| page_path(&p));
+    if rule.remove {
+        return match forget_refusal_saved(root, organization, project, &area, page.as_deref(), &message) {
+            Ok(true) => (200, format!("Removed from {area}.")),
+            Ok(false) => (200, format!("No such rule in {area}.")),
+            Err(_) => rule_not_kept(),
+        };
+    }
+    let after = words(rule.after.as_deref().unwrap_or(""));
+    if after.is_empty() {
+        return (400, "\"after\" is the action that caused it, in a few words (needed unless you remove the rule)".to_string());
+    }
+    let Some(page) = page else {
+        return (400, "Name the page: the Auto Run browser is not on one.".to_string());
+    };
+    let now = crate::autorun::sessions::now_ms();
+    let step = named(&rule.step);
+    let rule = RefusalRule { page, step, after, message, source: RuleSource::Assistant, case_id: None, first_seen: now, last_seen: now, count: 1 };
+    match remember_refusals(root, organization, project, &area, vec![rule]) {
+        Ok(()) => (200, format!("Remembered for {area}.")),
+        Err(_) => rule_not_kept(),
+    }
+}
+
+/// Said when the map could not be written: how, never in the rule's words
+/// or a file's path.
+fn rule_not_kept() -> (u16, String) {
+    crate::applog::warn("Discovery map: a rule the assistant gave could not be kept".to_string());
+    (500, "the discovery map could not be written, so the rule was not kept".to_string())
 }
 
 /// Mark a case as a suspected application defect: the script is right, the

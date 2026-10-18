@@ -165,6 +165,7 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "get_autorun_failures",
     "record_autorun_quirk",
     "retire_autorun_quirk",
+    "record_validation_rule",
     "mark_autorun_suspected_defect",
     "set_autorun_order",
     "propose_accounts",

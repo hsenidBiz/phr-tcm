@@ -128,6 +128,7 @@ fn tools_list_names_every_tool() {
             "get_autorun_failures",
             "record_autorun_quirk",
             "retire_autorun_quirk",
+            "record_validation_rule",
             "mark_autorun_suspected_defect",
             "set_autorun_order",
             "propose_accounts",
@@ -677,7 +678,7 @@ fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordina
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1230,6 +1231,41 @@ fn the_quirk_tools_carry_the_schemas_an_assistant_needs() {
     );
 }
 
+/// The validation-rule tool: listed with a `message` always required, the
+/// action (`after`) asked for in its words, and a call forwards its arguments
+/// whole to the bridge's rule route.
+#[test]
+fn the_validation_rule_tool_asks_for_the_message_and_reaches_its_route() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let rule = tools.iter().find(|t| t["name"] == "record_validation_rule").expect("the rule tool is listed");
+    let schema = &rule["inputSchema"];
+    assert_eq!(schema["required"], serde_json::json!(["message"]));
+    for prop in ["message", "after", "area", "page", "step"] {
+        assert_eq!(schema["properties"][prop]["type"], "string", "{prop}: {schema}");
+    }
+    assert_eq!(schema["properties"]["remove"]["type"], "boolean");
+    assert!(rule["description"].as_str().unwrap().contains("after"), "says when `after` is needed");
+    assert!(module_of_tool("record_validation_rule") == Some(Module::AutoRun));
+
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "Remembered for Cycles.".to_string()))
+    };
+    let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"record_validation_rule","arguments":{"message":"Name is required","after":"clicked Save"}}}"#;
+    let v: serde_json::Value = serde_json::from_str(&handle_message(req, "1.0.0", &call).unwrap()).unwrap();
+    assert_eq!(v["result"]["content"][0]["text"], "Remembered for Cycles.");
+    let recorded = calls.borrow();
+    let last = recorded.last().unwrap();
+    assert_eq!((last.0.as_str(), last.1.as_str()), ("POST", "/autorun-validation-rule"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&last.2).unwrap(),
+        serde_json::json!({ "message": "Name is required", "after": "clicked Save" })
+    );
+}
+
 /// With the Auto Run row switched off and the API templates row on, the
 /// API templates assistant still has its quirk tools - under that row's
 /// own names - and each reaches the same route with `from` set to "api"
@@ -1241,7 +1277,7 @@ fn with_auto_run_off_and_api_templates_on_the_app_quirk_tools_stay() {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
             ));
         }
         calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
@@ -1301,7 +1337,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))

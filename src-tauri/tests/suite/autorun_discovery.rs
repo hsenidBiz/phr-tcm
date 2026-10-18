@@ -4338,3 +4338,40 @@ async fn a_message_two_page_changes_before_a_failure_is_not_remembered() {
     let map = load_map(dir.path(), ORG, PROJECT).unwrap();
     assert!(rules_of(&map, "Leave").is_empty(), "{:?}", rules_of(&map, "Leave"));
 }
+
+// ----------------------------- a rule the assistant records in a discovery
+
+use v2_lib::ai_bridge::record_validation_rule_in;
+
+/// With a discovery going, the area is its area and the page is the one the
+/// browser is on (cut to its path and filed as the map files pages); naming
+/// either wins.
+#[tokio::test]
+async fn record_validation_rule_saves_into_the_discovery_area() {
+    let dir = TempDir::new();
+    let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));
+    let body = json!({ "message": "End date must be after the start date", "after": "clicked Save" }).to_string();
+    let (status, out) = record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &body).await;
+    assert_eq!((status, out.as_str()), (200, "Remembered for Cycles."));
+    let area = mapped_area(dir.path(), "Cycles").expect("nothing was recorded");
+    assert_eq!(area.refusals.len(), 1, "{:?}", area.refusals);
+    assert_eq!(area.refusals[0].page, "/hr/cycles");
+    assert_eq!(area.refusals[0].message, "End date must be after the start date");
+
+    // Removed again from the current page, with the same defaults.
+    let gone = json!({ "message": "end date must be after the start date", "remove": true }).to_string();
+    let (status, out) = record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &gone).await;
+    assert_eq!((status, out.as_str()), (200, "Removed from Cycles."));
+    assert!(mapped_area(dir.path(), "Cycles").is_none_or(|a| a.refusals.is_empty()));
+
+    // An area and a page named win over the discovery's.
+    let named = json!({ "message": "Name is required", "after": "clicked Save", "area": "Leave", "page": "/hr/leave/new" }).to_string();
+    let (status, out) = record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &named).await;
+    assert_eq!((status, out.as_str()), (200, "Remembered for Leave."));
+    assert_eq!(mapped_area(dir.path(), "Leave").unwrap().refusals[0].page, "/hr/leave/new");
+
+    // A browser that is open for no discovery has no area to default to.
+    let (mut open, _) = slot(cycles_page(1, true), opened_for_discovery());
+    let (status, out) = record_validation_rule_in(&mut open, dir.path(), ORG, PROJECT, &body).await;
+    assert_eq!((status, out.as_str()), (400, "Name the area: no discovery is running."));
+}

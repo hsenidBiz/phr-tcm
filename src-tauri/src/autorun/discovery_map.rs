@@ -1172,6 +1172,25 @@ pub fn remember_refusals(root: &Path, org: &str, project: &str, area: &str, rule
     })
 }
 
+/// `forget_refusal` in the saved map, in one load, change and write: says
+/// whether any rule went. Nothing is written when none did.
+pub fn forget_refusal_saved(
+    root: &Path,
+    org: &str,
+    project: &str,
+    area: &str,
+    page: Option<&str>,
+    message: &str,
+) -> Result<bool, String> {
+    let area = canonical_area(root, org, project, area);
+    if area.is_empty() {
+        return Ok(false);
+    }
+    let mut gone = false;
+    update(root, org, project, |map| gone = forget_refusal(map, &area, page, message))?;
+    Ok(gone)
+}
+
 /// `remember_refusals` for an action or a run that goes on whatever comes
 /// of it: a map that could not be written is said in the log - how many
 /// rules, and the area, never their words - and nothing fails. No project,

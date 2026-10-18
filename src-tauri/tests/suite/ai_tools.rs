@@ -578,6 +578,7 @@ fn each_tool_belongs_to_its_module() {
             "get_autorun_failures",
             "record_autorun_quirk",
             "retire_autorun_quirk",
+            "record_validation_rule",
             "mark_autorun_suspected_defect",
             "set_autorun_order",
             "propose_accounts",
