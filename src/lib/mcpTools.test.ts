@@ -205,7 +205,7 @@ test("only the switchable tools are left, as nine rows with every module on", ()
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_results",
-    "get_autorun_guide+save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+start_autorun_discovery+discover_autorun_action+discover_autorun_actions+save_autorun_area+end_autorun_discovery+release_autorun_browser+save_autorun_component+remove_autorun_component+get_autorun_failures+record_autorun_quirk+retire_autorun_quirk+record_validation_rule+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+list_test_files+get_autorun_network_wait",
+    "get_autorun_guide+save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+start_autorun_discovery+discover_autorun_action+discover_autorun_actions+save_autorun_area+end_autorun_discovery+release_autorun_browser+reset_autorun_browser+save_autorun_component+remove_autorun_component+get_autorun_failures+record_autorun_quirk+retire_autorun_quirk+record_validation_rule+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+list_test_files+get_autorun_network_wait",
     "get_api_template_guide+list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+save_api_fixture+run_api_fixture+list_api_fixtures+record_app_quirk+retire_app_quirk",
     "db_lookup+db_query",
     "open_report+read_report+edit_report+compare_reports+check_report+new_report+preview_report+preview_report_live+get_report_guide",
@@ -243,7 +243,7 @@ test("the two database tools are one switchable row, there while Database Access
 
 /// With Auto Run on, its group is offered as one row and its switch moves
 /// every tool in it together, the same as any other pair.
-test("the Auto Run scripts row carries all twenty-five tools", () => {
+test("the Auto Run scripts row carries all twenty-seven tools", () => {
   const row = visibleRows().find((r) => r.label === "Auto Run scripts");
   expect(row, "the Auto Run scripts row exists").toBeTruthy();
   expect(row!.names).toEqual([
@@ -261,6 +261,7 @@ test("the Auto Run scripts row carries all twenty-five tools", () => {
     "save_autorun_area",
     "end_autorun_discovery",
     "release_autorun_browser",
+    "reset_autorun_browser",
     "save_autorun_component",
     "remove_autorun_component",
     "get_autorun_failures",

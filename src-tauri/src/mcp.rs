@@ -504,6 +504,11 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
+            "name": "reset_autorun_browser",
+            "description": "Start clean in the Auto Run browser your replay or discovery left open, without signing out: it closes the other tabs, forgets any dialog a replay expected or saw, lifts your save guard, forgets where your last replay stopped, and loads the home page with the sign-in kept. Use it instead of release_autorun_browser when you only want a clean page; release is for a broken browser. It ends your discovery if one is going, as end_autorun_discovery does (what it mapped is kept). If the sign-in has gone it says so, and the next replay signs in again. Refused while a replay is running, and for the person's own browser.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
             "name": "save_autorun_component",
             "description": "Save a component: a widget or short flow worked out once on the live app, that any script then runs with one use_component action. Make one the first time a widget or short flow will be needed more than once; use a saved one instead of repeating its actions. Try it first with discover_autorun_action, a use_component of it with this component as its `draft`, and save it unchanged once that works; anything else is refused. Every fixed locator in it must have been seen: an action needs one seen matching exactly one element, while a check that can pass with several matches may use one seen matching several; every input it declares must be used, and every one it uses declared; it cannot sign in, type a username or password, use another component, or build an address from an input. Saving a name already saved is a change: it needs `why` and is tried live again first.",
             "inputSchema": schema(serde_json::json!({
@@ -1235,6 +1240,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "save_autorun_area" => call("POST", "/autorun-discover-area", &args.to_string()),
         "end_autorun_discovery" => call("POST", "/autorun-discover-end", &args.to_string()),
         "release_autorun_browser" => call("POST", "/autorun-release", &args.to_string()),
+        "reset_autorun_browser" => call("POST", "/autorun-reset", &args.to_string()),
         // Components: each route reads its own named fields out of the body.
         "save_autorun_component" => call("POST", "/autorun-component-save", &args.to_string()),
         "remove_autorun_component" => call("POST", "/autorun-component-retire", &args.to_string()),

@@ -4094,7 +4094,7 @@ async fn a_batch_gives_way_to_a_stop_before_its_next_action() {
     assert_eq!(lines.len(), 2, "{text}");
     assert!(lines[0].starts_with("1. ok: "), "{text}");
     assert_eq!(lines[1], ended_line(2));
-    assert_eq!(ended_line(2), "Stopped: 2 not run - End discovery, Close browser or a release asked the batch to stop.");
+    assert_eq!(ended_line(2), "Stopped: 2 not run - End discovery, Close browser, a release or a reset asked the batch to stop.");
     assert!(!stop.load(Ordering::SeqCst), "the stop was not used up");
     let b = browser.as_ref().unwrap();
     assert_eq!(b.d.calls_to("Accessibility.getFullAXTree").len(), 1, "the batch read on after the stop");
@@ -4141,7 +4141,7 @@ async fn end_discovery_is_not_stuck_behind_a_long_batch() {
     drop(slot);
     let (status, text) = batch.await.unwrap();
     assert_eq!(status, 409, "{text}");
-    assert!(text.ends_with("not run - End discovery, Close browser or a release asked the batch to stop."), "{text}");
+    assert!(text.ends_with("not run - End discovery, Close browser, a release or a reset asked the batch to stop."), "{text}");
 
     // Each way the person or the assistant ends the discovery asks a batch
     // to give way before it waits for the browser.
@@ -4151,6 +4151,7 @@ async fn end_discovery_is_not_stuck_behind_a_long_batch() {
         "pub async fn auto_run_close_browser()",
         "pub async fn release_autorun_browsers()",
         "pub async fn release_for_assistant()",
+        "pub async fn reset_for_assistant(",
         "pub async fn close_autorun_browsers()",
     ] {
         let body = &source[source.find(start).unwrap_or_else(|| panic!("{start} is gone"))..];

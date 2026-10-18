@@ -732,3 +732,103 @@ async fn release_refuses_while_a_fixture_cleanup_or_setup_run_holds_its_browser(
         drop(held);
     }
 }
+
+/// Nothing a reset does was done to `b`: no tab closed, no page loaded, no
+/// guard lifted, nothing forgotten.
+fn untouched_by_a_reset(b: &HeldOne) {
+    assert_eq!(b.d.tabs.closed_others, 0, "a tab was closed");
+    assert!(b.d.calls_to("Page.navigate").is_empty(), "a page was loaded");
+    assert!(b.d.calls_to("Fetch.disable").is_empty(), "the guard was lifted");
+    assert_eq!(b.taken_over, 0, "the replay's stand or last page change was forgotten");
+}
+
+/// Review Focus 5: the assistant's reset never touches the person's
+/// browser - one the person opened, or one holding a guard the person set -
+/// and asks for the person, as release does.
+#[tokio::test]
+async fn a_reset_of_the_persons_browser_is_refused() {
+    use v2_lib::browser::cdp::Driver;
+    use v2_lib::commands::autorun::{reset_in_for_assistant, GuardOwner};
+    let dir = tempfile::tempdir().unwrap();
+    let quick = v2_lib::browser::timing::Timing::supervised();
+    let (mut slot, closed) = held(true, None);
+    slot.as_mut().unwrap().account = Some("admin".into());
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick).await;
+    assert_eq!((status, said.as_str()), (409, PERSONS_BROWSER_OPEN));
+    let b = slot.as_ref().expect("the person's browser was let go");
+    assert!(!closed.load(Ordering::SeqCst), "the person's browser was closed");
+    untouched_by_a_reset(b);
+    assert_eq!(b.account.as_deref(), Some("admin"));
+
+    // A guard the person set is never lifted, whoever opened the browser.
+    let (mut slot, closed) = left_open_by_assistant(true, None);
+    {
+        let b = slot.as_mut().unwrap();
+        b.d.guard_saves(&[]).await.unwrap();
+        b.guarded_case = Some(9);
+        b.guard_owner = Some(GuardOwner::Person);
+    }
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick).await;
+    assert_eq!((status, said.as_str()), (409, PERSONS_BROWSER_OPEN));
+    let b = slot.as_ref().unwrap();
+    assert!(!closed.load(Ordering::SeqCst));
+    untouched_by_a_reset(b);
+    assert!(b.d.is_guarding_saves());
+    assert_eq!((b.guarded_case, b.guard_owner.clone()), (Some(9), Some(GuardOwner::Person)));
+}
+
+/// Review Focus 5: a reset while a replay runs is refused at once, and the
+/// replay is not asked to stop.
+#[tokio::test]
+async fn a_reset_during_a_replay_is_refused() {
+    use v2_lib::commands::autorun::{reset_for_assistant, REPLAY_RUNNING_AT_RESET};
+    let _a = crate::serial::autorun();
+    let replay = v2_lib::autorun::replay_to::OneReplay::claim().unwrap();
+    let answer = tokio::time::timeout(std::time::Duration::from_secs(2), reset_for_assistant("acme", "Web"))
+        .await
+        .expect("the reset waited on the replay");
+    assert_eq!(answer, (409, REPLAY_RUNNING_AT_RESET.to_string()));
+    assert_eq!(REPLAY_RUNNING_AT_RESET, "A replay is running: try again when it has finished.");
+    assert!(!v2_lib::autorun::replay_to::CANCEL.load(Ordering::SeqCst), "the replay was asked to stop");
+    drop(replay);
+}
+
+/// With no browser held - or one that has gone, which is let go through
+/// its normal close - a reset says none is open.
+#[tokio::test]
+async fn a_reset_with_no_browser_says_so() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, NO_BROWSER_OPEN};
+    let dir = tempfile::tempdir().unwrap();
+    let quick = v2_lib::browser::timing::Timing::supervised();
+    assert_eq!(NO_BROWSER_OPEN, "No browser is open.");
+    let mut none: Option<HeldOne> = None;
+    assert_eq!(reset_in_for_assistant(&mut none, dir.path(), "acme", "Web", &quick).await, (404, NO_BROWSER_OPEN.to_string()));
+    let (mut slot, closed) = left_open_by_assistant(false, None);
+    assert_eq!(reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick).await, (404, NO_BROWSER_OPEN.to_string()));
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst), "a gone browser was kept");
+}
+
+/// The assistant's tool and route: `reset_autorun_browser` posts to
+/// `/autorun-reset`, on the Auto Run gate beside release.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_assistant_resets_through_its_route() {
+    let _a = crate::serial::autorun();
+    let _h = crate::serial::held_browsers();
+    let dir = tempfile::tempdir().unwrap();
+    v2_lib::autorun::store::set_root(dir.path().to_path_buf());
+    let ctx = v2_lib::ai_bridge::BridgeContext { org: "acme".into(), project: "Web".into(), ..Default::default() };
+    let answer = v2_lib::ai_bridge::route(&ctx, None, "POST", "/autorun-reset", "{}", "1.0.0").await;
+    assert_eq!(answer, (404, v2_lib::commands::autorun::NO_BROWSER_OPEN.to_string()), "the route is missing");
+    let mcp = include_str!("../../src/mcp.rs");
+    assert!(mcp.contains("\"reset_autorun_browser\" => call(\"POST\", \"/autorun-reset\""), "the tool does not reach the route");
+    assert_eq!(
+        v2_lib::ai_tools::module_of_tool("reset_autorun_browser"),
+        Some(v2_lib::modules::Module::AutoRun),
+        "not on the Auto Run gate"
+    );
+    // A replay is refused before it waits for the browser.
+    let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+    let body = body_of(&source, "pub async fn reset_for_assistant(");
+    let before_lock = &body[..body.find("SESSION.lock()").expect("the reset never takes the browser")];
+    assert!(before_lock.contains("replay_to::is_running()"), "a replay is not refused first");
+}

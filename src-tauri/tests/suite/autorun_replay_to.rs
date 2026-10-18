@@ -1599,6 +1599,9 @@ struct Kept {
     discovery: Option<v2_lib::commands::autorun::DiscoveryState>,
     guarded_case: Option<i32>,
     guard_owner: Option<GuardOwner>,
+    /// How often something used it otherwise - a takeover, a reset - and
+    /// so forgot the replay's stand and last page change.
+    used_otherwise: usize,
 }
 
 impl DiscoveryBrowser for Kept {
@@ -1617,12 +1620,15 @@ impl DiscoveryBrowser for Kept {
     fn opened_by_assistant(&mut self) -> bool {
         true
     }
+    fn taken_over(&mut self) {
+        self.used_otherwise += 1;
+    }
 }
 
 impl Kept {
     /// The browser a replay signed in, with no discovery begun in it yet.
     fn of(d: ScriptedDriver, lease: Held, account: Option<String>) -> Kept {
-        Kept { d, lease, account, discovery: None, guarded_case: None, guard_owner: None }
+        Kept { d, lease, account, discovery: None, guarded_case: None, guard_owner: None, used_otherwise: 0 }
     }
 }
 
@@ -1963,4 +1969,127 @@ async fn a_trip_that_fails_after_the_sign_in_too_stops_at_the_area() {
     assert_eq!(reused.went, None);
     assert_eq!(sign_ins(&d), 1, "{:?}", log(&app));
     assert!(!clicked(&app, "#s1"), "{:?}", log(&app));
+}
+
+/// The browser a replay signed in as admin and left on the Leave screen,
+/// as the assistant's reset finds it: a report tab its steps opened, a
+/// dialog it expected and one it saw, and the guard its call put on for
+/// its no_save case 77.
+async fn left_by_a_replay(root: &Path) -> (Option<Kept>, common::MenuApp, Jar) {
+    let (mut d, app, jar) = jar_app();
+    let (mut account, mut held) = (None, Held::supervised());
+    signed_in_once(root, &mut d, &app, &mut account, &mut held).await;
+    d.call("Page.navigate", json!({ "url": "https://hr.example.internal/hr/leave" })).await.unwrap();
+    d.guard_saves(&[]).await.unwrap();
+    d.tabs.open.push("report".into());
+    // Counted from here: the replay closed other tabs of its own.
+    d.tabs.closed_others = 0;
+    {
+        use v2_lib::browser::actions::DialogAnswer;
+        use v2_lib::browser::dialogs::plan_of;
+        d.book.arm(vec![plan_of(1, DialogAnswer::Accept, &None)]);
+        d.book.opened("alert", "Saved");
+    }
+    app.log.lock().unwrap().clear();
+    d.calls.clear();
+    let mut kept = Kept::of(d, held, account);
+    kept.guarded_case = Some(ID);
+    kept.guard_owner = Some(GuardOwner::Call { case_id: Some(ID) });
+    (Some(kept), app, jar)
+}
+
+/// The assistant's reset gives it a clean page without signing out: the
+/// other tabs closed, the dialogs forgotten, its guard lifted, the replay's
+/// stand and last page change forgotten, and the home page loaded with the
+/// sign-in kept - nothing cleared, nothing typed.
+#[tokio::test]
+async fn a_reset_keeps_the_sign_in_and_goes_home() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
+    assert_eq!(
+        reset_sentence("admin"),
+        "Reset: other tabs closed, dialogs cleared, guard lifted, at the home page, still signed in as admin."
+    );
+    let b = slot.as_ref().expect("the reset closed the browser");
+    assert_eq!(sign_ins(&b.d), 0, "the reset signed in again: {:?}", log(&app));
+    assert!(b.d.calls_to("Input.dispatchKeyEvent").is_empty() && b.d.calls_to("Input.insertText").is_empty(), "something was typed");
+    assert_eq!(log(&app), vec!["navigate /hr/home/index".to_string()], "it did not just go home");
+    assert_eq!(b.d.tabs.closed_others, 1, "the other tabs were left open");
+    assert!(!b.d.book.is_armed() && b.d.book.seen().is_empty(), "the replay's dialogs were kept");
+    assert!(!b.d.is_guarding_saves(), "the assistant's guard was left on");
+    assert_eq!((b.guarded_case, b.guard_owner.clone()), (None, None));
+    assert_eq!(b.used_otherwise, 1, "the replay's stand and last page change were kept");
+    assert_eq!((b.account.as_deref(), b.lease.account()), (Some("admin"), Some("admin")));
+    assert!(b.lease.sign_in_print().is_some(), "the sign-in's cookies were forgotten");
+
+    // The next replay reuses that sign-in.
+    let mut b = slot.unwrap();
+    let (mut account, mut held) = (b.account.take(), b.lease);
+    let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after a reset signed in again");
+}
+
+/// A reset ends the assistant's discovery as end_autorun_discovery does -
+/// its guard lifted, the browser kept - and says so first.
+#[tokio::test]
+async fn a_reset_ends_the_assistants_discovery_and_keeps_the_browser() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence, DISCOVERY_ENDED_AT_RESET};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
+    {
+        let b = slot.as_mut().unwrap();
+        b.discovery = begun_discovery().map(|s| v2_lib::commands::autorun::DiscoveryState {
+            area: Some("Leave".into()),
+            account: Some("admin".into()),
+            no_save: true,
+            ..s
+        });
+        b.guarded_case = None;
+        b.guard_owner = Some(GuardOwner::Discovery);
+    }
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!(status, 200, "{said} {:?}", log(&app));
+    assert_eq!(said, format!("{DISCOVERY_ENDED_AT_RESET} {}", reset_sentence("admin")));
+    let b = slot.as_ref().expect("the reset closed the discovery's browser");
+    assert!(b.discovery.is_none(), "the discovery is still going");
+    assert!(!b.d.is_guarding_saves() && b.guard_owner.is_none(), "the discovery's guard outlived it");
+    assert_eq!(sign_ins(&b.d), 0);
+}
+
+/// A reset whose home page never shows the app's sign-in - its session
+/// gone - says so, and forgets the account and its cookies' print, so the
+/// next replay signs in again rather than trust it.
+#[tokio::test]
+async fn a_reset_whose_sign_in_has_gone_says_so() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, SIGN_IN_GONE_AT_RESET};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, jar) = left_by_a_replay(dir.path()).await;
+    // The application ended the session: its cookies are gone.
+    jar.now.lock().unwrap().clear();
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    assert_eq!(SIGN_IN_GONE_AT_RESET, "Reset, but the sign-in has gone: the next replay signs in again.");
+    let b = slot.as_ref().expect("the reset closed the browser");
+    assert_eq!(b.account, None, "the gone sign-in still names its account");
+    assert!(b.lease.sign_in_print().is_none(), "the gone sign-in's print was kept");
+    assert_eq!(sign_ins(&b.d), 0, "the reset signed in itself");
+    assert!(!b.d.is_guarding_saves(), "the assistant's guard was left on");
+
+    // The next replay signs in.
+    let mut b = slot.unwrap();
+    let (mut account, mut held) = (b.account.take(), b.lease);
+    app.log.lock().unwrap().clear();
+    b.d.calls.clear();
+    let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
+    signed_in_again(&end, &reused, &b.d, &app);
 }

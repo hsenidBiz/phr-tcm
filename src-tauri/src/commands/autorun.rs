@@ -1210,6 +1210,162 @@ pub async fn release_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(slo
 pub const RELEASED_YOURS: &str =
     "closed the Auto Run browser your replay left open; its account is free, and none is held now";
 
+/// Said by the assistant's reset with no Auto Run browser held (or one that
+/// had gone, now let go).
+pub const NO_BROWSER_OPEN: &str = "No browser is open.";
+
+/// Said by the assistant's reset while a replay holds the browser: a reset
+/// never stops one.
+pub const REPLAY_RUNNING_AT_RESET: &str = "A replay is running: try again when it has finished.";
+
+/// Said by the assistant's reset when the home page no longer holds the
+/// app's sign-in: the account and its cookies' print are forgotten.
+pub const SIGN_IN_GONE_AT_RESET: &str = "Reset, but the sign-in has gone: the next replay signs in again.";
+
+/// Put before the reset's answer when it first ended the assistant's
+/// discovery in that browser.
+pub const DISCOVERY_ENDED_AT_RESET: &str = "Ended your discovery (what it mapped is kept).";
+
+/// Said when the browser's lock did not come free within `RELEASE_WAIT`
+/// for the assistant's reset.
+const BUSY_AT_RESET: &str = "the Auto Run browser is busy - call reset_autorun_browser again in a moment";
+
+/// What the assistant's reset says once the browser is clean and still
+/// signed in as `account`.
+pub fn reset_sentence(account: &str) -> String {
+    format!("Reset: other tabs closed, dialogs cleared, guard lifted, at the home page, still signed in as {account}.")
+}
+
+/// `/autorun-reset`, the assistant's `reset_autorun_browser`: a clean page
+/// in the browser its replay or discovery left, without signing out, so it
+/// never has to release and sign in again only to start clean
+/// (`reset_in_for_assistant`). Refused while a replay runs (one going holds
+/// the lock, and a reset never stops it); a batch of discovery actions is
+/// asked to give way first, as release asks.
+pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, String) {
+    if crate::autorun::replay_to::is_running() {
+        return (409, REPLAY_RUNNING_AT_RESET.to_string());
+    }
+    crate::ai_bridge::stop_batch();
+    let Some(root) = crate::autorun::store::configured_root() else {
+        return (503, "the app could not set up its data directory this session - restart the app".to_string());
+    };
+    let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, SESSION.lock()).await else {
+        return (409, BUSY_AT_RESET.to_string());
+    };
+    let held = slot.is_some();
+    let timing = crate::browser::timing::Timing::supervised();
+    let answer = reset_in_for_assistant(&mut slot, &root, organization, project, &timing).await;
+    let answer = crate::ai_bridge::let_go_if_silent(&mut slot, answer).await;
+    publish_discovery(&slot);
+    if held && slot.is_none() {
+        tell_panes_closed();
+    }
+    // A guard the browser would not lift pauses every request: the browser
+    // is answered between the assistant's calls too.
+    if slot.as_ref().is_some_and(|s| s.cdp.is_guarding_saves()) {
+        answer_between_commands();
+    }
+    crate::applog::info(format!("Auto Run: the assistant's reset: {}", answer.1));
+    answer
+}
+
+/// The assistant's reset over `slot` (`reset_for_assistant`), for any held
+/// browser, a test's fake included. In order: a held browser that has gone
+/// is let go and none is open; the person's browser - one they opened, or
+/// one holding a guard they set - is never touched; the assistant's
+/// discovery is ended as `end_autorun_discovery` ends it (what it mapped
+/// kept, its guard lifted, the browser kept); the other tabs are closed;
+/// the dialogs a replay expected or saw are forgotten (one opening later is
+/// answered as nobody's); the assistant's own guard is lifted - no case is
+/// in play to keep one; the replay's stand and last page change are
+/// forgotten (`DiscoveryBrowser::taken_over`); and the home page is loaded
+/// (`nav::load_home`), cookies kept. The sign-in still stands only when a
+/// replay would reuse it (`replay_to::signed_in_here`: the lease, the
+/// sign-in's cookies, a session not refused, the signed-in marker);
+/// otherwise the account and its cookies' print are forgotten, so the next
+/// replay signs in again.
+pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    timing: &crate::browser::timing::Timing,
+) -> (u16, String) {
+    if crate::ai_bridge::forget_gone_browser(slot).await {
+        return (404, NO_BROWSER_OPEN.to_string());
+    }
+    let persons = match slot.as_mut() {
+        None => return (404, NO_BROWSER_OPEN.to_string()),
+        Some(b) => !b.opened_by_assistant() || *b.parts().guard_owner == Some(GuardOwner::Person),
+    };
+    if persons {
+        return (409, PERSONS_BROWSER_OPEN.to_string());
+    }
+    // Read before anything changes: with no recipe, nothing is touched.
+    let recipe = match crate::autorun::recipe::load_effective_recipe(root, organization, project) {
+        Ok(recipe) => recipe,
+        Err(why) => return (409, why),
+    };
+    let ended = crate::ai_bridge::end_discovery_keeping(slot, true).await;
+    let summary = match ended {
+        // Its guard would not lift, so its browser was closed.
+        Some(ended) if !ended.kept => {
+            return crate::ai_bridge::ended_answer(crate::ai_bridge::DISCOVERY_ENDED_CLOSED, ended.summary);
+        }
+        Some(ended) => Some(ended.summary),
+        None => None,
+    };
+    let Some(b) = slot.as_mut() else {
+        return (404, NO_BROWSER_OPEN.to_string());
+    };
+    let lifted = {
+        let p = b.parts();
+        Driver::close_other_tabs(p.driver).await;
+        if let Some(book) = Driver::dialog_book(p.driver) {
+            book.disarm();
+            book.take_seen();
+        }
+        lift_guard_of(p.driver, p.guarded_case, p.guard_owner).await
+    };
+    b.taken_over();
+    let p = b.parts();
+    let home = crate::autorun::nav::load_home(p.driver, &crate::autorun::nav::Home::of(&recipe), timing).await;
+    if !home.ok {
+        let status = if home.harness { 503 } else { 502 };
+        let said = format!(
+            "Reset, but {}: try reset_autorun_browser again, or release_autorun_browser if the browser is broken.",
+            home.detail
+        );
+        return (status, said);
+    }
+    let account = p.signed_in.clone();
+    let still = match account.as_deref() {
+        Some(key) => {
+            crate::autorun::replay_to::signed_in_here(p.driver, root, organization, project, key, &account, &*p.lease, timing)
+                .await
+        }
+        None => false,
+    };
+    let said = match (still, account) {
+        (true, Some(key)) if lifted => reset_sentence(&key),
+        (true, Some(key)) => reset_sentence(&key).replace("guard lifted", "guard still on (it would not lift yet)"),
+        _ => {
+            *p.signed_in = None;
+            p.lease.forget_sign_in();
+            SIGN_IN_GONE_AT_RESET.to_string()
+        }
+    };
+    match summary {
+        Some(Some(summary)) => {
+            let detail = format!("{DISCOVERY_ENDED_AT_RESET} {said}");
+            (200, serde_json::json!({ "detail": detail, "summary": summary }).to_string())
+        }
+        Some(None) => (200, format!("{DISCOVERY_ENDED_AT_RESET} {said}")),
+        None => (200, said),
+    }
+}
+
 /// Auto Run's browsers go with the app. A recording - or a Start, a check or
 /// a Try still going - is ended the way Cancel ends it, which closes the
 /// recording browser; then the supervised browser is closed. Each takes its

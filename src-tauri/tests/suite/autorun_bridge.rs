@@ -2436,6 +2436,7 @@ fn the_guard_still_holds_for_every_new_route() {
         "/autorun-discover-action",
         "/autorun-discover-end",
         "/autorun-release",
+        "/autorun-reset",
         "/autorun-discover-area",
         "/autorun-failures",
         "/autorun-quirk",

@@ -1051,6 +1051,7 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     "release_autorun_browser",
     "remove_autorun_component",
     "replay_autorun_to_step",
+    "reset_autorun_browser",
     "retire_autorun_quirk",
     "save_autorun_area",
     "save_autorun_component",

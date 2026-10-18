@@ -107,6 +107,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Let go of an Auto Run browser the app still holds after it closed, and close the app's own browsers.",
   },
   {
+    name: "reset_autorun_browser",
+    label: "Reset the Auto Run browser",
+    summary: "Give the assistant's Auto Run browser a clean page - other tabs closed, back at the home page - without signing out.",
+  },
+  {
     name: "save_autorun_component",
     label: "Save a component",
     summary: "Save a widget or short flow, once tried live, as a component any script can use.",
@@ -317,6 +322,7 @@ export const AUTORUN_TOOLS = [
   "save_autorun_area",
   "end_autorun_discovery",
   "release_autorun_browser",
+  "reset_autorun_browser",
   "save_autorun_component",
   "remove_autorun_component",
   "get_autorun_failures",
@@ -431,6 +437,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "save_autorun_area",
     "end_autorun_discovery",
     "release_autorun_browser",
+    "reset_autorun_browser",
     "save_autorun_component",
     "remove_autorun_component",
     "get_autorun_failures",

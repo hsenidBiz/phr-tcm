@@ -160,6 +160,7 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "save_autorun_area",
     "end_autorun_discovery",
     "release_autorun_browser",
+    "reset_autorun_browser",
     "save_autorun_component",
     "remove_autorun_component",
     "get_autorun_failures",

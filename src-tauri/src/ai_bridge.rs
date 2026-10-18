@@ -429,6 +429,10 @@ pub async fn route(
         // and the app's own browsers closed, for a browser held after it
         // is gone. Never a process outside the app's own jobs.
         ("POST", "/autorun-release") => crate::commands::autorun::release_for_assistant().await,
+        // Reset: a clean page in the assistant's own browser - other tabs
+        // closed, dialogs and its guard cleared, back home - keeping the
+        // sign-in. Never the person's browser, never while a replay runs.
+        ("POST", "/autorun-reset") => crate::commands::autorun::reset_for_assistant(&ctx.org, &ctx.project).await,
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body).await,
         ("POST", "/autorun-replay") => without_page(autorun_replay(ctx, body).await, body),
         ("GET", "/autorun-failures") => autorun_failures(ctx, target),
@@ -3157,9 +3161,10 @@ pub trait DiscoveryBrowser {
         false
     }
     /// A discovery took this browser over from the replay that left it
-    /// (`make_way_for_discovery`): no replay carries on from where it stood,
-    /// and no watched step names what happened before. Nothing to forget in
-    /// a test's fake unless it counts it.
+    /// (`make_way_for_discovery`), or the assistant's reset cleaned it
+    /// (`commands::autorun::reset_in_for_assistant`): no replay carries on
+    /// from where it stood, and no watched step names what happened before.
+    /// Nothing to forget in a test's fake unless it counts it.
     fn taken_over(&mut self) {}
     /// Which browser this is (Edge or Chrome), when known: a discovery that
     /// names the other one does not take it over. A test's fake says none.
@@ -4175,13 +4180,14 @@ fn not_run_line(n: usize) -> String {
 /// release that timed out still asked, so the line never claims the
 /// discovery ended.
 pub fn ended_line(n: usize) -> String {
-    format!("Stopped: {n} not run - End discovery, Close browser or a release asked the batch to stop.")
+    format!("Stopped: {n} not run - End discovery, Close browser, a release or a reset asked the batch to stop.")
 }
 
-/// The batch's stop control: set by End discovery, Close browser and both
-/// releases before they wait for the browser, so a batch holding it gives
-/// way before its next action instead of keeping them waiting. Cleared
-/// when a batch hears it, and before each batch starts.
+/// The batch's stop control: set by End discovery, Close browser, both
+/// releases and the assistant's reset before they wait for the browser, so
+/// a batch holding it gives way before its next action instead of keeping
+/// them waiting. Cleared when a batch hears it, and before each batch
+/// starts.
 pub static BATCH_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Ask the batch going, if any, to stop before its next action.
@@ -4511,7 +4517,7 @@ pub const DISCOVERY_ENDED_KEPT: &str =
 
 /// Said once a discovery is over and its browser closed: by the assistant's
 /// release, and by an end whose guard would not lift.
-const DISCOVERY_ENDED_CLOSED: &str = "the discovery is over and its browser is closed";
+pub(crate) const DISCOVERY_ENDED_CLOSED: &str = "the discovery is over and its browser is closed";
 
 /// End the discovery in `slot` (`end_discovery_keeping`): its browser is
 /// kept, signed in, for the next replay or discovery, and its guard
@@ -4567,7 +4573,7 @@ pub fn end_discovery_closing<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16,
 
 /// A discovery's end, said: `{detail, summary}` for a mapping run, else
 /// the words.
-fn ended_answer(detail: &str, summary: Option<crate::autorun::mapping_summary::MappingSummary>) -> (u16, String) {
+pub(crate) fn ended_answer(detail: &str, summary: Option<crate::autorun::mapping_summary::MappingSummary>) -> (u16, String) {
     match summary {
         Some(summary) => (200, serde_json::json!({ "detail": detail, "summary": summary }).to_string()),
         None => (200, detail.to_string()),
@@ -4576,9 +4582,9 @@ fn ended_answer(detail: &str, summary: Option<crate::autorun::mapping_summary::M
 
 /// How a discovery ended (`end_discovery_keeping`): the mapping run's
 /// summary, if it was one, and whether its browser was kept.
-struct Ended {
-    summary: Option<crate::autorun::mapping_summary::MappingSummary>,
-    kept: bool,
+pub(crate) struct Ended {
+    pub(crate) summary: Option<crate::autorun::mapping_summary::MappingSummary>,
+    pub(crate) kept: bool,
 }
 
 /// The way a discovery in `slot` ends and its browser stays: a mapping
@@ -4590,7 +4596,7 @@ struct Ended {
 /// through its normal close; one the person opened is never closed, and its
 /// guard stays on until the person's next step decides it. `None` with no
 /// discovery going.
-async fn end_discovery_keeping<B: DiscoveryBrowser>(slot: &mut Option<B>, lift: bool) -> Option<Ended> {
+pub(crate) async fn end_discovery_keeping<B: DiscoveryBrowser>(slot: &mut Option<B>, lift: bool) -> Option<Ended> {
     use crate::commands::autorun::GuardOwner;
     if !slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
         return None;
