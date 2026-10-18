@@ -208,6 +208,18 @@ information in the slots the Playwright pipeline already reads; it never overrid
     shape. Not exported; not a separate stealth browser (rejected 2026-10-18: it would bypass
     TCM's save guard, seen check and session rules).
 
+    **Scope widened (Avin, 2026-10-18): TCM's own versions of stealth-browser-mcp's 13 network and
+    cookie tools**, to make the assistant more capable at edge cases: list, request details,
+    response details, response content, search, export and import of captured network data, read
+    and set capture filters, modify request headers, get / set / clear cookies. Guards:
+    - header changes go through the save guard's own Fetch interceptor, the guard deciding first
+      (a blocked save stays blocked); they last for the call or discovery that set them and every
+      answer names them;
+    - `set_cookie` never touches the sign-in session's cookies (no switching who is signed in);
+    - `clear_cookies` is a real sign-out: the session records it, and the next replay signs in;
+    - import loads a capture for reading and searching only, never replayed into the browser;
+    - cookie values of session/auth cookies and secret body fields are never shown.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
