@@ -46,11 +46,32 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use std::ops::Range;
 
 use crate::steps_xml::{
-    collapse_ws, contains_html_markup, escape_html, html_tag_end, strip_tags, unescape_html,
+    collapse_ws, contains_html_markup, escape_html, html_tag_end, html_to_text, strip_tags,
+    unescape_html,
 };
 
 /// What a Markdown list item becomes in a step, which has no lists.
 const BULLET: &str = "\u{2022} ";
+
+/// The Markdown dialect of test case text: plain CommonMark - no tables,
+/// strikethrough, task lists, footnotes or smart punctuation.
+///
+/// Every place TCM shows case text renders it with exactly these options,
+/// so what a person sees in TCM is what this module writes to Azure DevOps.
+/// A renderer with tables switched on would show a pipe-table as a table
+/// in TCM while the step in Azure DevOps holds its text; one with
+/// strikethrough would show `~~x~~` struck through while Azure DevOps shows
+/// the tildes. Neither field can hold those, so neither dialect may
+/// pretend to.
+pub const CASE_MARKDOWN_OPTIONS: Options = Options::empty();
+
+/// Which field a text belongs to: a step's action or expected result, or
+/// the List of Prerequisites. They take different HTML.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    Step,
+    Prereq,
+}
 
 // ---------------------------------------------------------------------------
 // The model
@@ -134,13 +155,33 @@ pub fn prereq_html_to_md(html: &str) -> String {
     protect(&blocks, ser_prereq, prereq_md_blocks, plainer_blocks)
 }
 
-/// Whether `new_md` leaves a field holding `current_md` as it is: equal to
-/// it, or equal to it with its whitespace collapsed. The second is what a
-/// copy read before line breaks were kept looks like - a queue draft, a
-/// cache, an exported file - and it must never rewrite a field that Azure
-/// DevOps now holds with line breaks.
-pub fn unchanged(new_md: &str, current_md: &str) -> bool {
-    new_md == current_md || new_md == collapse_ws(current_md)
+/// Whether `new_md` leaves a field that holds `current_html` as it is:
+/// equal to that HTML read as Markdown, or equal to what TCM's reader
+/// made of it before Markdown (`legacy_text`).
+///
+/// The second is every copy saved before this change - a queue draft, a
+/// cache, an exported file. It holds `Save` where Azure DevOps holds
+/// `<B>Save</B>`, one line where it holds three, `COUNT(*)` where the
+/// Markdown is `COUNT(\*)`; none of that is an edit, and none of it may
+/// rewrite the field. An edit that adds bold or a line break differs from
+/// both.
+pub fn unchanged(new_md: &str, current_html: &str, field: Field) -> bool {
+    let read = match field {
+        Field::Step => step_html_to_md(current_html),
+        Field::Prereq => prereq_html_to_md(current_html),
+    };
+    new_md == read || new_md == legacy_text(current_html, field)
+}
+
+/// A field's HTML as TCM read it before case text was Markdown: for a
+/// step, entities undone, real tags stripped and all whitespace collapsed
+/// (as `steps_xml::parse_steps_xml` did); for the prerequisites,
+/// `steps_xml::html_to_text`.
+pub fn legacy_text(html: &str, field: Field) -> String {
+    match field {
+        Field::Step => collapse_ws(&strip_tags(&unescape_html(html))),
+        Field::Prereq => html_to_text(html),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -500,7 +541,7 @@ fn step_md_lines(md: &str) -> Vec<Line> {
     let (mut bold, mut italic) = (0usize, 0usize);
     let mut in_code = false;
     let mut lists: Vec<Option<u64>> = vec![];
-    for (ev, r) in Parser::new_ext(md, Options::empty()).into_offset_iter() {
+    for (ev, r) in Parser::new_ext(md, CASE_MARKDOWN_OPTIONS).into_offset_iter() {
         let style = Style { bold: bold > 0, italic: italic > 0, code: false };
         match ev {
             Event::Start(Tag::Strong) => bold += 1,
@@ -514,7 +555,7 @@ fn step_md_lines(md: &str) -> Vec<Line> {
             Event::Start(Tag::Item) => {
                 let prefix = match lists.last_mut() {
                     Some(Some(n)) => {
-                        let p = format!("{n}. ");
+                        let p = format!("{n}{} ", ordered_delimiter(md, r.start));
                         *n += 1;
                         p
                     }
@@ -544,6 +585,17 @@ fn step_md_lines(md: &str) -> Vec<Line> {
     }
     acc.newline();
     finish_step_lines(acc.lines)
+}
+
+/// The `.` or `)` a person typed after an ordered item's number, read from
+/// the source at the item: `1) Login` stays `1) Login` in a step.
+fn ordered_delimiter(src: &str, at: usize) -> char {
+    src[at..]
+        .trim_start()
+        .chars()
+        .find(|c| !c.is_ascii_digit())
+        .filter(|c| *c == ')')
+        .unwrap_or('.')
 }
 
 struct StepLines<'a> {
@@ -606,7 +658,7 @@ fn prereq_md_blocks(md: &str) -> Vec<Block> {
     let mut b = Builder::new();
     let (mut bold, mut italic) = (0usize, 0usize);
     let mut code: Option<String> = None;
-    for ev in Parser::new_ext(md, Options::empty()) {
+    for ev in Parser::new_ext(md, CASE_MARKDOWN_OPTIONS) {
         let style = Style { bold: bold > 0, italic: italic > 0, code: false };
         match ev {
             Event::Start(Tag::Strong) => bold += 1,
@@ -779,10 +831,6 @@ impl Builder {
 
     fn has_cur(&mut self) -> bool {
         self.top_box().is_some_and(|c| c.has_cur())
-    }
-
-    fn has_lines(&mut self) -> bool {
-        self.top_box().is_some_and(|c| !c.lines.is_empty())
     }
 
     fn text(&mut self, t: &str, style: Style) {
@@ -1026,11 +1074,10 @@ impl Walker {
 
     /// A run of text between tags, entities still in it.
     ///
-    /// Whitespace is HTML's - collapsed - except that a line break inside
-    /// real text is a line break: TCM itself once wrote the prerequisites
-    /// as one `<div>` with raw newlines, and those read back as lines. A
-    /// chunk that is ONLY whitespace is the indentation between tags and
-    /// at most a space.
+    /// Whitespace is HTML's: any run of it - a raw newline included - is
+    /// one space, because that is what Azure DevOps shows. Only `<BR>`,
+    /// `<P>`, `<DIV>` and `<li>` break a line. A chunk that is ONLY
+    /// whitespace is the indentation between tags and at most a space.
     fn text(&mut self, raw: &str) {
         if raw.is_empty() {
             return;
@@ -1050,34 +1097,7 @@ impl Walker {
             }
             return;
         }
-        let s = s.replace('\u{a0}', " ");
-        let mut pending = 0usize;
-        for (k, seg) in s.split('\n').enumerate() {
-            if k > 0 {
-                pending += 1;
-            }
-            if seg.trim().is_empty() {
-                continue;
-            }
-            if pending > 0 {
-                let extra = if self.b.has_cur() {
-                    self.b.newline();
-                    pending - 1
-                } else if self.b.has_lines() {
-                    pending - 1
-                } else {
-                    0
-                };
-                for _ in 0..extra {
-                    self.b.newline();
-                }
-                pending = 0;
-            }
-            self.b.text(seg, style);
-        }
-        if pending > 0 {
-            self.b.soft_break();
-        }
+        self.b.text(&s.replace('\u{a0}', " "), style);
     }
 
     fn finish(mut self) -> Vec<Block> {

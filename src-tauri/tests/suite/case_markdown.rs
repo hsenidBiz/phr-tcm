@@ -4,16 +4,12 @@
 //! stability checks over many inputs in both directions.
 
 use v2_lib::case_markdown::{
-    prereq_html_to_md, prereq_md_to_html, step_html_to_md, step_md_to_html, unchanged,
+    legacy_text, prereq_html_to_md, prereq_md_to_html, step_html_to_md, step_md_to_html,
+    unchanged, Field, CASE_MARKDOWN_OPTIONS,
 };
+use v2_lib::steps_xml::html_to_text;
 
 /// Both fields, so a table can run over each.
-#[derive(Clone, Copy, Debug)]
-enum Field {
-    Step,
-    Prereq,
-}
-
 const FIELDS: [Field; 2] = [Field::Step, Field::Prereq];
 
 fn to_html(f: Field, md: &str) -> String {
@@ -322,10 +318,46 @@ fn ado_html_with_b_strong_div_p_reads_back() {
     assert_eq!(prereq_html_to_md(pre), "```\nSELECT 1\nFROM t\n```");
     assert_eq!(prereq_html_to_md("<p>Use <code>npm test</code></p>"), "Use `npm test`");
     assert_eq!(step_html_to_md("Use <code>npm test</code>"), "Use npm test");
-    // TCM's own older prerequisites: escaped text inside one div, its line
-    // breaks as raw newlines.
-    assert_eq!(prereq_html_to_md("<div>\u{2022} a\n\u{2022} b</div>"), "\u{2022} a\n\u{2022} b");
     assert_eq!(prereq_html_to_md("<div>\u{2022} a<br>\u{2022} b</div>"), "\u{2022} a\n\u{2022} b");
+}
+
+#[test]
+fn a_raw_newline_in_ado_html_is_a_space() {
+    // HTML whitespace: Azure DevOps shows these on one line, so TCM does.
+    // TCM's own older prerequisites were one div with raw newlines.
+    for f in FIELDS {
+        assert_eq!(to_md(f, "<div>\u{2022} a\n\u{2022} b</div>"), "\u{2022} a \u{2022} b", "{f:?}");
+        assert_eq!(to_md(f, "a\nb"), "a b", "{f:?}");
+        assert_eq!(to_md(f, "<DIV>a\n\n   b</DIV>"), "a b", "{f:?}");
+        assert_eq!(to_md(f, "<B>bold\n</B>\nplain"), "**bold** plain", "{f:?}");
+        assert_eq!(to_md(f, "<DIV>a</DIV>\n<DIV>b</DIV>"), "a\nb", "{f:?}");
+        assert_eq!(to_md(f, "<P>a</P>\n\n<P>b</P>"), "a\n\nb", "{f:?}");
+        assert_eq!(to_md(f, "a<BR/>\nb"), "a\nb", "{f:?}");
+    }
+    let list = "<ul>\n  <li>one\n</li>\n  <li>two</li>\n</ul>";
+    assert_eq!(step_html_to_md(list), "\u{2022} one\n\u{2022} two");
+    assert_eq!(prereq_html_to_md(list), "- one\n- two");
+    // A <pre> keeps its newlines: there they ARE line breaks.
+    assert_eq!(step_html_to_md("<pre>a\nb</pre>"), "a\nb");
+}
+
+#[test]
+fn an_ordered_list_keeps_the_delimiter_typed() {
+    assert_eq!(step_md_to_html("1) Login\n2) Save"), "1) Login<BR/>2) Save");
+    assert_eq!(step_html_to_md("1) Login<BR/>2) Save"), "1) Login\n2) Save");
+    assert_eq!(step_md_to_html("1. Login\n2. Save"), "1. Login<BR/>2. Save");
+    assert_eq!(step_md_to_html("3) three"), "3) three");
+    // Plain "1) x" from Azure DevOps reads back as itself, no escape needed.
+    assert_eq!(step_html_to_md("1) not escaped"), "1) not escaped");
+}
+
+#[test]
+fn the_dialect_is_plain_commonmark() {
+    use pulldown_cmark::Options;
+    assert_eq!(CASE_MARKDOWN_OPTIONS, Options::empty());
+    // So a pipe table and tildes are text, in TCM as in Azure DevOps.
+    assert_eq!(step_md_to_html("~~gone~~"), "~~gone~~");
+    assert_eq!(prereq_md_to_html("| a |\n|---|\n| 1 |"), "<p>| a |<br>|---|<br>| 1 |</p>");
 }
 
 // ---------------------------------------------------------------------------
@@ -770,15 +802,57 @@ fn ado_plain_text_that_looks_like_markdown_is_written_back_as_the_same_text() {
 
 #[test]
 fn unchanged_treats_a_collapsed_copy_as_unchanged() {
-    let current = "Run the following query.\nSELECT 1\nFROM t";
-    assert!(unchanged(current, current), "the same text");
-    assert!(unchanged("Run the following query. SELECT 1 FROM t", current), "a collapsed copy");
-    assert!(!unchanged("Run the following query. SELECT 2 FROM t", current), "a real edit");
-    assert!(!unchanged("Run the following query.\n\nSELECT 1\nFROM t", current), "added a line");
-    assert!(!unchanged("**Run** the following query.\nSELECT 1\nFROM t", current), "added bold");
-    assert!(unchanged("", ""));
-    assert!(unchanged("a b", "a  b"));
-    assert!(!unchanged("a\nb", "a b"), "a copy with MORE line breaks is an edit");
+    let current = "Run the following query.<BR/>SELECT 1<BR/>FROM t";
+    let s = Field::Step;
+    assert!(unchanged("Run the following query.\nSELECT 1\nFROM t", current, s), "as read now");
+    assert!(unchanged("Run the following query. SELECT 1 FROM t", current, s), "a collapsed copy");
+    assert!(!unchanged("Run the following query. SELECT 2 FROM t", current, s), "a real edit");
+    assert!(!unchanged("Run the following query.\n\nSELECT 1\nFROM t", current, s), "added a line");
+    assert!(!unchanged("**Run** the following query.\nSELECT 1\nFROM t", current, s), "added bold");
+    assert!(unchanged("", "", s));
+    assert!(!unchanged("a\nb", "a b", s), "a copy with MORE line breaks is an edit");
+}
+
+#[test]
+fn an_old_copy_without_the_formatting_is_unchanged() {
+    let s = Field::Step;
+    // Read before Markdown, `<B>Save</B>` was just "Save".
+    assert!(unchanged("Click Save now", "Click <B>Save</B> now", s), "the old reading");
+    assert!(unchanged("Click **Save** now", "Click <B>Save</B> now", s), "the Markdown reading");
+    assert!(!unchanged("Click Save now!", "Click <B>Save</B> now", s), "a real edit");
+    assert!(!unchanged("Click **Save** *now*", "Click <B>Save</B> now", s), "added italic");
+    assert!(!unchanged("Click **Save** now", "Click Save now", s), "added bold");
+    // The plain query that reads back escaped: its old, unescaped copy is
+    // not an edit - writing it back would italicise.
+    let q = "SELECT COUNT(*) FROM a WHERE n = (SELECT COUNT(*) FROM b)";
+    assert_ne!(step_html_to_md(q), q);
+    assert!(unchanged(q, q, s));
+    assert!(unchanged(&step_html_to_md(q), q, s));
+    // A typed placeholder, either way.
+    assert!(unchanged("WHERE id = <cycleId>", "WHERE id = &lt;cycleId&gt;", s));
+    // ADO's own step markup.
+    assert!(unchanged("Open Settings then Logs", "<DIV><P>Open <STRONG>Settings</STRONG></P><P>then Logs</P></DIV>", s));
+
+    let p = Field::Prereq;
+    let list = "<ul><li>E1</li><li>E2</li></ul>";
+    assert!(unchanged("- E1\n- E2", list, p), "the Markdown reading");
+    assert!(unchanged("\u{2022} E1\n\u{2022} E2", list, p), "the old reading");
+    assert!(!unchanged("- E1\n- E3", list, p), "a real edit");
+    assert!(unchanged("Tom & Jerry", "<div>Tom &amp; Jerry</div>", p));
+    // TCM's own older value, one div with raw newlines: ADO shows one line,
+    // the old reader kept the lines. Either copy is unchanged.
+    let old = "<div>\u{2022} a\n\u{2022} b</div>";
+    assert!(unchanged("\u{2022} a \u{2022} b", old, p));
+    assert!(unchanged("\u{2022} a\n\u{2022} b", old, p));
+    assert!(!unchanged("- a\n- b", old, p), "turning it into a list is an edit");
+}
+
+#[test]
+fn legacy_text_is_what_the_old_readers_produced() {
+    assert_eq!(legacy_text("Click <B>Save</B>  now<BR/>then &amp; close", Field::Step), "Click Save now then & close");
+    assert_eq!(legacy_text("WHERE id = &lt;cycleId&gt;", Field::Step), "WHERE id = <cycleId>");
+    assert_eq!(legacy_text("<div>First</div><ul><li>one</li><li>two</li></ul>", Field::Prereq), html_to_text("<div>First</div><ul><li>one</li><li>two</li></ul>"));
+    assert_eq!(legacy_text("<div>a\nb</div>", Field::Prereq), "a\nb");
 }
 
 #[test]
