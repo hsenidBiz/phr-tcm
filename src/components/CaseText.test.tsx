@@ -15,7 +15,7 @@ test("CaseText shows bold, a query fence and line breaks", () => {
 });
 
 test("CaseText never renders markup from the text as elements", () => {
-  for (const text of ["<img src=x onerror=alert(1)>", "<script>alert(1)</script>", "x <img src=x onerror=alert(1)>"]) {
+  for (const text of ["<img src=x onerror=alert(1)>", "<script>alert(1)</script>", "x <img src=x onerror=alert(1)>", "<code><img src=https://evil.invalid/x.png "]) {
     const { container, unmount } = render(<CaseText kind="step" text={text} />);
     expect(container.querySelectorAll("img,script"), text).toHaveLength(0);
     for (const el of container.querySelectorAll("*")) {
