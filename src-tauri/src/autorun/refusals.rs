@@ -17,6 +17,7 @@ use crate::autorun::report::without_query;
 use crate::browser::cdp::Driver;
 use crate::browser::net_record::{NetEntry, NetState};
 use serde_json::Value;
+use std::time::Duration;
 
 /// What the line a person reads starts with.
 pub const APP_REFUSED: &str = "the app refused: ";
@@ -46,19 +47,31 @@ pub struct RefusedRequest {
     pub trace_id: Option<String>,
 }
 
-/// Whether `e` is the application refusing something the page asked: its
-/// own XHR or fetch, to its own site, not a poll, not one of TCM's own
-/// (`own`, request ids), finished, and answered 400-499 other than the
-/// three that mean something else (401 signed out, 403 not allowed, 404 not
-/// there - the page and its menus handle those themselves).
-pub fn counts(e: &NetEntry, own: &[String]) -> bool {
+/// How long `refused_since` waits for an answer that has arrived but has
+/// not finished, once.
+const FINISH_WAIT: Duration = Duration::from_millis(250);
+
+/// Everything `counts` asks of a request but whether it has finished: its
+/// own XHR or fetch, to its own site (and not redirected off it), not a
+/// poll, not one of TCM's own (`own`, request ids), and answered 400-499
+/// other than the three that mean something else (401 signed out, 403 not
+/// allowed, 404 not there - the page and its menus handle those themselves).
+fn refusal_shaped(e: &NetEntry, own: &[String]) -> bool {
     matches!(e.kind.as_deref(), Some("XHR" | "Fetch"))
         && e.same_site
+        && e.redirect.as_ref().is_none_or(|r| !r.other_site)
         && !e.polling
-        && e.state == NetState::Finished
         && !own.contains(&e.id)
         && matches!(e.status, Some(400..=499))
         && !matches!(e.status, Some(401 | 403 | 404))
+}
+
+/// Whether `e` is the application refusing something the page asked
+/// (`refusal_shaped`) and the answer has come: finished, or answered and
+/// still arriving - `refused_since` gives that a moment to finish, and
+/// reads its status when it does not. One that failed is not an answer.
+pub fn counts(e: &NetEntry, own: &[String]) -> bool {
+    refusal_shaped(e, own) && matches!(e.state, NetState::Finished | NetState::Pending)
 }
 
 /// The status as a person says it, for when the body says nothing.
@@ -77,15 +90,34 @@ fn text_of(v: &Value) -> Option<String> {
     (!s.is_empty() && s != REDACTED).then(|| s.to_string())
 }
 
-/// The first message in a field-errors value: an object of field to a list
-/// or a string, or a list of either.
+/// The first message in a field-errors value: a string, a list of them, or
+/// an object - which is an entry with its own `message` ({"field":"Code",
+/// "message":"..."}, read before its other values, which name the field)
+/// or a set of fields to their messages.
 fn first_error(v: &Value) -> Option<String> {
     match v {
         Value::String(_) => text_of(v),
         Value::Array(items) => items.iter().find_map(first_error),
-        Value::Object(map) => map.values().find_map(first_error).or_else(|| text_of(map.get("message")?)),
+        Value::Object(map) => ["message", "Message"]
+            .iter()
+            .find_map(|k| map.get(*k).and_then(text_of))
+            .or_else(|| map.values().find_map(first_error)),
         _ => None,
     }
+}
+
+/// The first message of the `errors` of a body: of a field set, its first
+/// field's - or, when that field is named like a secret and so was hidden
+/// whole (`redact`), only that it was refused. Its value is never shown.
+fn errors_message(v: &Value) -> Option<String> {
+    let Value::Object(fields) = v else { return first_error(v) };
+    if fields.contains_key("message") || fields.contains_key("Message") {
+        return first_error(v);
+    }
+    fields.iter().find_map(|(field, value)| match value.as_str() {
+        Some(REDACTED) => Some(format!("{field}: refused (message hidden)")),
+        _ => first_error(value),
+    })
 }
 
 /// The message of a JSON body, by the keys servers use, most specific first.
@@ -106,11 +138,16 @@ fn message_of(v: &Value) -> Option<String> {
             return Some(m);
         }
     }
-    map.get("errors").and_then(first_error)
+    map.get("errors").and_then(errors_message)
 }
 
 fn trace_of(v: &Value) -> Option<String> {
     let id = ["traceId", "TraceId", "trace_id", "traceIdentifier"].iter().find_map(|k| v.get(*k).and_then(text_of))?;
+    let id = id.split_whitespace().collect::<Vec<_>>().join(" ");
+    // An id is one token: words or an address are something else.
+    if id.contains("://") || id.contains(' ') {
+        return None;
+    }
     Some(id.chars().take(MAX_TRACE).collect())
 }
 
@@ -131,7 +168,10 @@ fn shown(text: &str, cap: usize) -> Option<String> {
 /// Chrome no longer holds gives the status.
 pub fn message_and_trace(status: u16, body: Option<&str>) -> (String, Option<String>) {
     let none = || status_line(status);
-    let Some(text) = body.map(str::trim).filter(|t| !t.is_empty()) else { return (none(), None) };
+    // A byte-order mark is not part of the body.
+    let Some(text) = body.map(|b| b.trim_start_matches('\u{feff}').trim()).filter(|t| !t.is_empty()) else {
+        return (none(), None);
+    };
     match serde_json::from_str::<Value>(text) {
         Ok(v) => {
             let v = redact(&v);
@@ -147,7 +187,14 @@ pub fn message_and_trace(status: u16, body: Option<&str>) -> (String, Option<Str
 /// (`counts`), at most three, in the order they started, each with what
 /// its body said. A body is read only for a request that counts.
 pub async fn refused_since<D: Driver>(d: &mut D, mark: u64, own: &[String]) -> Vec<RefusedRequest> {
-    let refused: Vec<NetEntry> = d.net_since(mark).into_iter().filter(|e| counts(e, own)).take(MAX_REFUSED).collect();
+    let mut seen = d.net_since(mark);
+    // A refusal whose answer has come but whose end has not been read yet:
+    // wait once for it, and only when there is one.
+    if seen.iter().any(|e| refusal_shaped(e, own) && e.state == NetState::Pending) {
+        d.idle(FINISH_WAIT).await;
+        seen = d.net_since(mark);
+    }
+    let refused: Vec<NetEntry> = seen.into_iter().filter(|e| counts(e, own)).take(MAX_REFUSED).collect();
     let mut out = Vec::with_capacity(refused.len());
     for e in refused {
         let status = e.status.unwrap_or_default();

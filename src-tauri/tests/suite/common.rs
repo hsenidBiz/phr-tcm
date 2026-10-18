@@ -35,6 +35,9 @@ pub struct ScriptedDriver {
     /// Events that appear once a call to the named method has been made -
     /// how a test says "the load event follows Page.navigate".
     pub on_call_events: Vec<(String, Event)>,
+    /// Events that appear while the driver idles (once): how a test says
+    /// "that request finished a moment later".
+    pub on_idle_events: Vec<Event>,
     /// Events that appear after EVERY call to the named method - how a
     /// test says "the load event follows Page.navigate" when that method
     /// is called more than once (`on_call_events` fires once and is
@@ -195,6 +198,7 @@ impl ScriptedDriver {
             dialogs_on_call: vec![],
             page_errors: PageErrorBook::default(),
             idle_clock: None,
+            on_idle_events: vec![],
             defers: false,
             dies_before_collect: false,
             deferred: std::collections::HashMap::new(),
@@ -340,6 +344,11 @@ impl Driver for ScriptedDriver {
     }
 
     async fn idle(&mut self, wait: Duration) {
+        for ev in std::mem::take(&mut self.on_idle_events) {
+            if let Some(net) = self.net.as_mut() {
+                net.observe(&ev);
+            }
+        }
         match &self.idle_clock {
             Some(clock) => {
                 clock.fetch_add(wait.as_millis() as u64, Ordering::SeqCst);
