@@ -257,3 +257,56 @@ fn empty_case_text_renders_nothing() {
         assert_eq!(case_text_to_html("  \n\n ", field), "");
     }
 }
+
+/// The review page must read the same as the app's own screens. These are
+/// `renderCaseMarkdown(md, "step")`'s outputs from src/lib/markdown.ts for the
+/// same inputs (a block's trailing newline is whitespace in HTML and left out).
+#[test]
+fn a_step_has_the_same_line_breaks_as_the_apps_own_rendering() {
+    let cases: &[(&str, &str)] = &[
+        ("a\n\nb", "a<br><br>b"),
+        ("a\n\n\n\nb", "a<br><br><br><br>b"),
+        // Not blank lines: a rule, a link definition, a tag-only HTML block.
+        ("a\n\n---\nb", "a<br><br>b"),
+        ("a\n\n---\n\nb", "a<br><br><br>b"),
+        ("a\n---\nb", "a<br>b"),
+        ("a\n\n\n---\n\n\nb", "a<br><br><br><br><br>b"),
+        ("a\n\n[x]: http://e.com\nb", "a<br><br>b"),
+        ("a\n\n[x]: http://e.com\n\nb", "a<br><br><br>b"),
+        ("a\n\n<div></div>\n\nb", "a<br><br><br>b"),
+        // Quotes and lists.
+        ("> a\n>\n> b", "a<br><br>b"),
+        ("> 1) x\n> 2) y", "1) x<br>2) y"),
+        ("1) Login\n2) Open Leave", "1) Login<br>2) Open Leave"),
+        ("3. a\n4. b", "3. a<br>4. b"),
+        ("1) a\n2) b\n\n3. c", "1) a<br>2) b<br><br>3. c"),
+        ("- a\n- **b**", "\u{2022} a<br>\u{2022} <strong>b</strong>"),
+        ("Do:\n- a\n- b", "Do:<br>\u{2022} a<br>\u{2022} b"),
+        ("- a\n\n- b", "\u{2022} a<br><br>\u{2022} b"),
+        ("- a\n  - b", "\u{2022} a<br>\u{2022} b"),
+        ("- a\n\n  b\n- c", "\u{2022} a<br><br>b<br>\u{2022} c"),
+        ("x\n\n- a\n\n\n- b", "x<br><br>\u{2022} a<br><br><br>\u{2022} b"),
+        ("- [ ] x", "\u{2022} [ ] x"),
+        // A block ends its own line.
+        ("a\n```\nx\n```\nb", "a<pre><code>x\n</code></pre>b"),
+        ("a\n\n```\nx\n```\n\nb", "a<br><br><pre><code>x\n</code></pre><br>b"),
+    ];
+    for (md, want) in cases {
+        assert_eq!(case_text_to_html(md, Field::Step), *want, "{md:?}");
+    }
+}
+
+#[test]
+fn a_prerequisites_list_typed_with_a_paren_keeps_it() {
+    assert_eq!(
+        case_text_to_html("1) a\n2) b", Field::Prereq),
+        "<ol class=\"paren\"><li>a</li><li>b</li></ol>\n"
+    );
+    assert_eq!(
+        case_text_to_html("3) a\n4) b", Field::Prereq),
+        "<ol start=\"3\" class=\"paren\"><li>a</li><li>b</li></ol>\n"
+    );
+    assert_eq!(case_text_to_html("2. a", Field::Prereq), "<ol start=\"2\"><li>a</li></ol>\n");
+    assert_eq!(case_text_to_html("1. a", Field::Prereq), "<ol><li>a</li></ol>\n");
+    assert!(case_text_to_html("> 1) x", Field::Prereq).contains("<ol class=\"paren\">"));
+}

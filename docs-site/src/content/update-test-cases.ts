@@ -175,7 +175,7 @@ export const updateTestCases: Screen = {
       locate: { role: "textbox", name: "Step 1 action" },
       name: "Action",
       does: "What the tester does in this step.",
-      tips: ["Bold, italic, lists and code blocks show in Azure DevOps; a step keeps bold, italic and line breaks."],
+      tips: ["In the List of Prerequisites, bold, italic, lists and code blocks show as they do in Azure DevOps; a step keeps bold, italic and line breaks, and its lists and code show as plain lines."],
     },
     {
       id: "step-expected",

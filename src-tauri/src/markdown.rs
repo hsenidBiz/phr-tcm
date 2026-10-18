@@ -244,13 +244,19 @@ fn prereq_text_to_html(src: &str) -> String {
     let mut out = String::new();
     // A raw HTML block arrives line by line; it is one paragraph of text.
     let mut html_block: Option<String> = None;
-    for event in Parser::new_ext(src, CASE_MARKDOWN_OPTIONS) {
+    for (event, range) in Parser::new_ext(src, CASE_MARKDOWN_OPTIONS).into_offset_iter() {
         match event {
             Event::Start(tag) => match tag {
                 Tag::Paragraph | Tag::Heading { .. } => out.push_str("<p>"),
                 Tag::CodeBlock(_) => out.push_str("<pre><code>"),
                 Tag::HtmlBlock => html_block = Some(String::new()),
-                Tag::List(Some(start)) => out.push_str(&format!("<ol start=\"{start}\">")),
+                Tag::List(Some(start)) => {
+                    // `1) Login` keeps its `)`: the page draws it on the
+                    // `paren` class (cases-page.css), as the app does.
+                    let start = if start == 1 { String::new() } else { format!(" start=\"{start}\"") };
+                    let paren = if ordered_delimiter(src, range.start) == ')' { " class=\"paren\"" } else { "" };
+                    out.push_str(&format!("<ol{start}{paren}>"));
+                }
                 Tag::List(None) => out.push_str("<ul>"),
                 Tag::Item => out.push_str("<li>"),
                 Tag::Emphasis => out.push_str("<em>"),
@@ -458,25 +464,38 @@ fn step_text_to_html(src: &str) -> String {
     html
 }
 
-/// The `.` or `)` a person typed after an ordered list's first number.
+/// The `.` or `)` a person typed after an ordered list's first number (a
+/// list in a quote starts after the `>`, or at it).
 fn ordered_delimiter(src: &str, at: usize) -> char {
     src[at..]
-        .trim_start()
+        .trim_start_matches(|c: char| c.is_whitespace() || c == '>')
         .chars()
         .find(|c| !c.is_ascii_digit())
         .filter(|c| *c == ')')
         .unwrap_or('.')
 }
 
-/// How many blank lines lie in the source between where one piece ends and
-/// the next starts.
+/// How many blank lines lie between where one piece ends and the next
+/// starts: the lines that are empty (inside a quote, only `>`), not every
+/// line break. A rule, a link definition or a tag-only HTML block between two
+/// pieces shows nothing, but it is not a blank line either.
 fn blank_lines(src: &str, prev_end: usize, next_start: usize) -> usize {
     if next_start <= prev_end {
         return 0;
     }
-    let breaks = src[prev_end..next_start].matches('\n').count();
-    // A piece's range may or may not take in its own line ending.
-    if src[..prev_end].ends_with('\n') { breaks } else { breaks.saturating_sub(1) }
+    let mut lines = src[prev_end..next_start].split('\n');
+    // The first segment finishes the line the piece ended in, unless the
+    // piece's range took in its own line ending.
+    if !src[..prev_end].ends_with('\n') {
+        lines.next();
+    }
+    // The last is the indent before the next piece.
+    let mut between: Vec<&str> = lines.collect();
+    between.pop();
+    between
+        .iter()
+        .filter(|l| l.trim_matches(|c: char| c.is_whitespace() || c == '>').is_empty())
+        .count()
 }
 
 /// Which element a `[...]( ... )` opened, so its End can close that one.
