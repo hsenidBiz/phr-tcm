@@ -1,5 +1,5 @@
 import DOMPurify from "dompurify";
-import { marked } from "marked";
+import { Marked, marked, type MarkedExtension } from "marked";
 
 /**
  * Markdown for the in-app previews, sanitised on the way out.
@@ -96,7 +96,10 @@ const ALLOWED_ATTR = [
  * `breaks: true` matches Azure DevOps, which treats single newlines as
  * line breaks in work-item and PR descriptions. */
 export function renderMarkdown(md: string): string {
-  const html = marked.parse(md || "", { async: false, breaks: true }) as string;
+  return sanitize(marked.parse(md || "", { async: false, breaks: true }) as string);
+}
+
+function sanitize(html: string): string {
   return DOMPurify.sanitize(html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
@@ -105,4 +108,107 @@ export function renderMarkdown(md: string): string {
     // markup, not the sentence it was wrapped around.
     KEEP_CONTENT: true,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Test case text
+// ---------------------------------------------------------------------------
+
+/** Which field a case text belongs to: a step's action or expected result,
+ * or the List of Prerequisites. */
+export type CaseTextKind = "step" | "prereq";
+
+const ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ESCAPES[c]);
+const lineBreaks = (html: string) => html.replace(/\n/g, "<br>");
+
+/**
+ * The dialect of test case text, which is the converter's
+ * (`case_markdown.rs`, `CASE_MARKDOWN_OPTIONS`): plain CommonMark, and
+ * only what the two Azure DevOps fields can hold shows as formatting.
+ *
+ * - No GFM. A pipe-table, `~~x~~` or `- [ ] x` is text in Azure DevOps, so
+ *   it is text here; old cases that happen to hold one never change look.
+ *   `breaks` would turn GFM back on (marked only honours it with `gfm`),
+ *   so a soft break is made a `<br>` in the `text` renderer instead: a
+ *   single newline is a line break in both fields, as the converter
+ *   writes it (`<BR/>` in a step, `<br>` in the prerequisites).
+ * - Headings, links, images, quotes and rules become their plain text, as
+ *   the converter writes them - and a case's link has no business
+ *   navigating this webview, nor its image fetching from anywhere.
+ * - Raw HTML is shown as typed: a `<cycleId>` placeholder is text in Azure
+ *   DevOps and must not vanish here as an unknown tag.
+ * - A step keeps every blank line (one `<BR/>` per line break); the
+ *   prerequisites are paragraphs, one gap however many blank lines.
+ */
+function caseDialect(kind: CaseTextKind): MarkedExtension {
+  return {
+    gfm: false,
+    async: false,
+    renderer: {
+      text(token) {
+        if ("tokens" in token && token.tokens) return this.parser.parseInline(token.tokens);
+        const html = "escaped" in token && token.escaped ? token.text : escapeHtml(token.text);
+        return lineBreaks(html);
+      },
+      html(token) {
+        const text = lineBreaks(escapeHtml(token.text.replace(/\s+$/, "")));
+        return token.block ? `<p>${text}</p>\n` : text;
+      },
+      heading(token) {
+        return `<p>${this.parser.parseInline(token.tokens)}</p>\n`;
+      },
+      link(token) {
+        return this.parser.parseInline(token.tokens);
+      },
+      image(token) {
+        return escapeHtml(token.text);
+      },
+      blockquote(token) {
+        return this.parser.parse(token.tokens);
+      },
+      hr() {
+        return "";
+      },
+      space(token) {
+        if (kind !== "step") return "";
+        // Between two blocks the gap itself is one blank line; each line
+        // beyond it is one more break.
+        const extra = (token.raw.match(/\n/g)?.length ?? 0) - 2;
+        return extra > 0 ? "<br>".repeat(extra) : "";
+      },
+    },
+  };
+}
+
+const CASE_MARKED: Record<CaseTextKind, Marked> = {
+  step: new Marked(caseDialect("step")),
+  prereq: new Marked(caseDialect("prereq")),
+};
+
+/** Render test case text (a step's action or expected result, or the List
+ * of Prerequisites) for a `.md-preview` container, in the converter's
+ * dialect (see `caseDialect`) and through the same sanitiser as
+ * `renderMarkdown`. */
+export function renderCaseMarkdown(md: string, kind: CaseTextKind): string {
+  // Leading blank lines and trailing whitespace show as nothing in Azure
+  // DevOps; only blank lines BETWEEN content count.
+  const text = (md || "").replace(/^(?:[ \t]*\r?\n)+/, "").trimEnd();
+  return sanitize(CASE_MARKED[kind].parse(text) as string);
+}
+
+/** Test case text as one line of plain words, for the places that show a
+ * step in a single truncated line or a heading: the Markdown's formatting
+ * is dropped (never shown as `**`), and each line break is a space. */
+export function caseTextLine(md: string): string {
+  const html = renderCaseMarkdown(md, "step").replace(/<br>|<\/(?:p|li|pre)>/g, " ");
+  // DOMParser builds an inert document: nothing in it loads or runs.
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return (doc.body.textContent ?? "").replace(/\s+/g, " ").trim();
 }

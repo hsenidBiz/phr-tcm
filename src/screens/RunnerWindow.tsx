@@ -9,6 +9,7 @@ import HoverDismissToaster from "../components/HoverDismissToaster";
 import { commands, type RunAttachment, type TestCaseFull } from "../bindings";
 import AstryxIsland from "../components/AstryxIsland";
 import BugDialog from "../components/BugDialog";
+import CaseText from "../components/CaseText";
 import HistoryDots from "../components/HistoryDots";
 import SharedStepLabel from "../components/SharedStepLabel";
 import { Button } from "../components/ui/button";
@@ -983,7 +984,7 @@ export default function RunnerWindow() {
           {current.preconditions.trim() !== "" && (
             <div className="rounded-md border border-accent/40 bg-accent-soft/30 p-2 text-sm">
               <div className="mb-0.5 text-xs font-semibold text-accent">Preconditions</div>
-              <div className="whitespace-pre-wrap text-text">{current.preconditions}</div>
+              <CaseText kind="prereq" text={current.preconditions} className="text-text" />
             </div>
           )}
 
@@ -997,9 +998,12 @@ export default function RunnerWindow() {
                       <SharedStepLabel id={step.shared} org={session?.org} />
                     ) : (
                       <>
-                        <div>{step.action}</div>
+                        <CaseText kind="step" text={step.action} />
                         {step.expected && (
-                          <div className="text-xs text-muted">Expect: {step.expected}</div>
+                          <div className="flex gap-1 text-xs text-muted">
+                            <span className="shrink-0">Expect:</span>
+                            <CaseText kind="step" text={step.expected} className="min-w-0 flex-1" />
+                          </div>
                         )}
                       </>
                     )}

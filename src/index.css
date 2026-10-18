@@ -611,6 +611,11 @@ body {
   text-align: left;
 }
 .md-preview th { background: var(--color-surface-2); font-weight: 600; }
+/* Test case text (CaseText) sits in table cells and step rows: no trailing
+   gap under its last block, and a long query wraps in its cell instead of
+   widening the table. */
+.case-text > :last-child { margin-bottom: 0; }
+.case-text pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .md-preview blockquote {
   border-left: 3px solid var(--color-border-strong);
   margin: 0 0 0.5rem;

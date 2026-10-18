@@ -77,3 +77,26 @@ test("a shared step reads as its reference across both columns", () => {
   const cell = screen.getByText("Shared steps #812").closest("td")!;
   expect(cell.getAttribute("colspan")).toBe("2");
 });
+
+/// Steps and preconditions are Markdown now: shown formatted, in the
+/// converter's dialect, so text with tildes or pipes shows as typed.
+test("steps and preconditions show their formatting, and nothing more", () => {
+  const { container } = render(
+    <CaseStepsTable
+      steps={[
+        { action: "Click **Save**\nthen **Close**", expected: "Status ~~Draft~~ is gone" },
+        { action: "Run:\n\n```sql\nSELECT COUNT(*) FROM t\n```", expected: "<img src=x onerror=alert(1)>" },
+      ]}
+      preconditions={"Signed in as **admin**\n- leave on\n- payroll off"}
+    />,
+  );
+  const table = screen.getByRole("table");
+  expect(within(table).getByText("Save").tagName).toBe("STRONG");
+  expect(table.querySelector("td br")).not.toBeNull();
+  expect(table.querySelector("del")).toBeNull();
+  expect(within(table).getByText("Status ~~Draft~~ is gone")).toBeInTheDocument();
+  expect(table.querySelector("pre code")?.textContent).toContain("SELECT COUNT(*) FROM t");
+  expect(container.querySelector("img")).toBeNull();
+  expect(screen.getByText("admin").tagName).toBe("STRONG");
+  expect(screen.getByText("leave on").tagName).toBe("LI");
+});

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { type PbiHit, type Step, type TestCase } from "../bindings";
+import { CaseTextField, PreviewToggle } from "../components/CaseText";
 import DefaultTagsDialog from "../components/DefaultTagsDialog";
 import ModuleField from "../components/ModuleField";
 import PickPbiEmpty from "../components/PickPbiEmpty";
@@ -8,7 +9,7 @@ import QueueSection from "../components/QueueSection";
 import StepsEditor from "../components/StepsEditor";
 import TagsField from "../components/TagsField";
 import { Button } from "../components/ui/button";
-import { Input, Textarea } from "../components/ui/input";
+import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { joinTags, splitTags } from "../components/ui/tagfield";
 import { useQueue } from "../hooks/useQueue";
@@ -44,6 +45,7 @@ export default function ManualEntry({
   const [priority, setPriority] = useState<number>(DEFAULT_PRIORITY);
   const [moduleValue, setModuleValue] = useState("");
   const [preconditions, setPreconditions] = useState("");
+  const [previewPre, setPreviewPre] = useState(false);
   useEffect(() => {
     setDefaults(loadDefaultTags(org, project));
     setExtras("");
@@ -133,12 +135,18 @@ export default function ManualEntry({
               onChange={setModuleValue}
               className="w-full"
             />
-            <Textarea
-              className="h-20 w-full"
-              placeholder="Preconditions (optional)"
-              value={preconditions}
-              onChange={(e) => setPreconditions(e.target.value)}
-            />
+            <div className="space-y-1">
+              <CaseTextField
+                kind="prereq"
+                preview={previewPre}
+                aria-label="Preconditions"
+                className="h-20 w-full"
+                placeholder="Preconditions (optional)"
+                value={preconditions}
+                onChange={setPreconditions}
+              />
+              <PreviewToggle what="preconditions" on={previewPre} onToggle={() => setPreviewPre((p) => !p)} />
+            </div>
           </div>
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted">Steps</p>

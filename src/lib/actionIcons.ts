@@ -202,4 +202,8 @@ export {
   // an eye, open to show it and struck through to hide it again.
   Eye as IconShowSecret,
   EyeOff as IconHideSecret,
+  // Seeing test case text formatted instead of as the Markdown typed (the
+  // case editors' Preview toggle) - an eye, since it only shows what was
+  // typed and changes none of it.
+  Eye as IconPreview,
 } from "lucide-react";

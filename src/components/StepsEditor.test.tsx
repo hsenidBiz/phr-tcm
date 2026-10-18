@@ -155,3 +155,27 @@ test("without an org the reference still shows, and nothing is fetched", () => {
   expect(screen.getByText("Shared steps #812")).toBeInTheDocument();
   expect(calls).toBe(0);
 });
+
+// Step text is Markdown: typed on several lines, kept exactly, and shown
+// formatted on Preview.
+test("a step keeps the Markdown typed, line breaks included, and Preview shows it formatted", () => {
+  render(<SharedHarness initial={[{ action: "", expected: "" }]} />);
+  const action = screen.getByLabelText("Step 1 action");
+  expect(action.tagName).toBe("TEXTAREA");
+  const typed = "Run the query:\n\n```sql\nSELECT COUNT(*)\nFROM leave\n```";
+  fireEvent.change(action, { target: { value: typed } });
+  fireEvent.change(screen.getByLabelText("Step 1 expected"), { target: { value: "The count is **3**" } });
+  expect(currentSteps()[0]).toEqual({ action: typed, expected: "The count is **3**" });
+
+  const toggle = screen.getByRole("button", { name: "Preview steps" });
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-pressed")).toBe("true");
+  expect(screen.queryByLabelText("Step 1 action")).toBeNull();
+  expect(screen.getByText("3").tagName).toBe("STRONG");
+  expect(document.querySelector(".md-preview pre code")?.textContent).toContain("SELECT COUNT(*)");
+  // Nothing typed changed by looking at it.
+  expect(currentSteps()[0].action).toBe(typed);
+
+  fireEvent.click(toggle);
+  expect((screen.getByLabelText("Step 1 action") as HTMLTextAreaElement).value).toBe(typed);
+});

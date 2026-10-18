@@ -5,6 +5,7 @@ import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/input";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 import SharedStepLabel from "../../components/SharedStepLabel";
+import CaseText from "../../components/CaseText";
 
 /** The expanded (read-only) detail: preconditions, steps, and the personal
  * local comment - a scratchpad saved on this machine only, never written
@@ -40,10 +41,10 @@ export default function CaseDetail({
         </div>
       )}
       {c.preconditions && (
-        <p className="whitespace-pre-wrap border-b border-border/60 px-3 py-2 text-xs text-muted">
+        <div className="border-b border-border/60 px-3 py-2 text-xs text-muted">
           <span className="font-semibold">Preconditions: </span>
-          {c.preconditions}
-        </p>
+          <CaseText kind="prereq" text={c.preconditions} />
+        </div>
       )}
 
       {c.steps.length > 0 ? (
@@ -65,8 +66,12 @@ export default function CaseDetail({
                   </td>
                 ) : (
                   <>
-                    <td className="whitespace-pre-wrap px-3 py-1 text-text">{s.action}</td>
-                    <td className="whitespace-pre-wrap px-3 py-1 text-muted">{s.expected}</td>
+                    <td className="px-3 py-1 text-text">
+                      <CaseText kind="step" text={s.action} />
+                    </td>
+                    <td className="px-3 py-1 text-muted">
+                      <CaseText kind="step" text={s.expected} />
+                    </td>
                   </>
                 )}
               </tr>

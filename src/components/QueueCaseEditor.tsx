@@ -6,6 +6,7 @@
 import { useState } from "react";
 import type { TestCase } from "../bindings";
 import { validateCase } from "../lib/validate";
+import { CaseTextField, PreviewToggle } from "./CaseText";
 import ModuleField from "./ModuleField";
 import PrioritySelect from "./PrioritySelect";
 import StepsEditor from "./StepsEditor";
@@ -29,6 +30,7 @@ export default function QueueCaseEditor({
   onCancel: () => void;
 }) {
   const [tc, setTc] = useState<TestCase>(original);
+  const [previewPre, setPreviewPre] = useState(false);
   const problem = validateCase(tc);
   // Same-shape objects edited only by spreads: string compare works.
   const dirty = JSON.stringify(tc) !== JSON.stringify(original);
@@ -79,13 +81,18 @@ export default function QueueCaseEditor({
           onChange={(v) => setTc((t) => ({ ...t, module_value: v }))}
         />
       </div>
-      <Textarea
-        aria-label="Preconditions"
-        className="h-16 w-full"
-        placeholder="Preconditions"
-        value={tc.preconditions}
-        onChange={(e) => setTc((t) => ({ ...t, preconditions: e.target.value }))}
-      />
+      <div className="space-y-1">
+        <CaseTextField
+          kind="prereq"
+          preview={previewPre}
+          aria-label="Preconditions"
+          className="h-16 w-full"
+          placeholder="Preconditions"
+          value={tc.preconditions}
+          onChange={(v) => setTc((t) => ({ ...t, preconditions: v }))}
+        />
+        <PreviewToggle what="preconditions" on={previewPre} onToggle={() => setPreviewPre((p) => !p)} />
+      </div>
       {/* In-app note: round-trips through the JSON export, never sent to ADO. */}
       <Textarea
         aria-label="Comment (in-app only)"

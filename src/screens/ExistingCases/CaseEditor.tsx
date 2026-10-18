@@ -5,12 +5,13 @@ import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "../../lib/toast";
 import { commands, type TestCase, type TestCaseFull } from "../../bindings";
+import { CaseTextField, PreviewToggle } from "../../components/CaseText";
 import ModuleField from "../../components/ModuleField";
 import PrioritySelect from "../../components/PrioritySelect";
 import StepsEditor from "../../components/StepsEditor";
 import TagsField from "../../components/TagsField";
 import { Button } from "../../components/ui/button";
-import { Input, Textarea } from "../../components/ui/input";
+import { Input } from "../../components/ui/input";
 import { Select } from "../../components/ui/select";
 import { toTestCase } from "../../lib/testCaseConvert";
 import { validateCase } from "../../lib/validate";
@@ -32,6 +33,7 @@ export default function CaseEditor({
   onSaved: () => void;
 }) {
   const [tc, setTc] = useState<TestCase>(() => toTestCase(original));
+  const [previewPre, setPreviewPre] = useState(false);
   const problem = validateCase(tc);
 
   /** What Discard puts back.
@@ -146,13 +148,18 @@ export default function CaseEditor({
         )}
       </div>
       {preconditionsRef && (
-        <Textarea
-          aria-label="Preconditions"
-          className="h-16 w-full"
-          placeholder="Preconditions"
-          value={tc.preconditions}
-          onChange={(e) => setTc((t) => ({ ...t, preconditions: e.target.value }))}
-        />
+        <div className="space-y-1">
+          <CaseTextField
+            kind="prereq"
+            preview={previewPre}
+            aria-label="Preconditions"
+            className="h-16 w-full"
+            placeholder="Preconditions"
+            value={tc.preconditions}
+            onChange={(v) => setTc((t) => ({ ...t, preconditions: v }))}
+          />
+          <PreviewToggle what="preconditions" on={previewPre} onToggle={() => setPreviewPre((p) => !p)} />
+        </div>
       )}
 
       <StepsEditor steps={tc.steps} org={org} onChange={(steps) => setTc((t) => ({ ...t, steps }))} />

@@ -10,6 +10,7 @@
 
 import type { Step } from "../bindings";
 import { renderMarkdown } from "../lib/markdown";
+import CaseText from "./CaseText";
 import SharedStepLabel from "./SharedStepLabel";
 
 export default function CaseStepsTable({
@@ -39,10 +40,10 @@ export default function CaseStepsTable({
   return (
     <>
       {preconditions ? (
-        <p className="whitespace-pre-wrap border-b border-border/60 px-3 py-2 text-xs text-muted">
+        <div className="border-b border-border/60 px-3 py-2 text-xs text-muted">
           <span className="font-semibold">Preconditions: </span>
-          {preconditions}
-        </p>
+          <CaseText kind="prereq" text={preconditions} />
+        </div>
       ) : null}
       {notes ? (
         // The same box the browser review page draws around notes: tinted
@@ -80,8 +81,12 @@ export default function CaseStepsTable({
                   </td>
                 ) : (
                   <>
-                    <td className="whitespace-pre-wrap px-3 py-1 text-text">{s.action}</td>
-                    <td className="whitespace-pre-wrap px-3 py-1 text-muted">{s.expected}</td>
+                    <td className="px-3 py-1 text-text">
+                      <CaseText kind="step" text={s.action} />
+                    </td>
+                    <td className="px-3 py-1 text-muted">
+                      <CaseText kind="step" text={s.expected} />
+                    </td>
                   </>
                 )}
               </tr>
