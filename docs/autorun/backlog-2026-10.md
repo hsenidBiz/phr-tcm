@@ -183,6 +183,18 @@ information in the slots the Playwright pipeline already reads; it never overrid
     - **Guide**: release only when the browser is broken (frozen, wrong account, session gone),
       never as a routine step between replays.
 
+## Assistants can change a script's preconditions (agreed 2026-10-18)
+
+28. **Let `save_autorun_script` edit preconditions.** A repair (`edits`) can change steps but not a
+    script's preconditions, so when the data model changed (Playwright leaves Definition Wizard
+    profile assignments empty; scripts now assign a temporary Step 4 profile themselves) the
+    precondition "A profile has a competency assigned" blocked 135057, 135621 and 135581 before
+    step 1, and only a person could remove it in the script editor. Add a precondition edit to
+    repairs (add / remove / change one precondition, with a one-line reason), shown in the save
+    answer and in the script's history like other repairs. Guardrails: a removed precondition must
+    be replaced by steps that create that state (or the reason must say why it is no longer
+    needed); the repair cap counts it; a person can still see and revert it in the editor.
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
