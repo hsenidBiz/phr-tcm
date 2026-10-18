@@ -76,6 +76,7 @@ pub mod drag;
 pub mod dialogs;
 pub mod table;
 pub mod page_errors;
+pub mod page_messages;
 pub mod actions;
 pub mod repeat;
 pub mod snapshot;

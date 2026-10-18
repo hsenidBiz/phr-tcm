@@ -147,6 +147,7 @@ mod modules;
 mod net_record;
 mod note_server;
 mod optimize;
+mod page_messages;
 mod permissions;
 mod pipelines;
 mod pw_export_app_quirks;
