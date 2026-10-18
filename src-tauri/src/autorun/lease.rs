@@ -287,6 +287,14 @@ impl Held {
         self.lease.as_ref().map(Lease::key)
     }
 
+    /// Does this browser hold `key`'s lease in `root`'s active environment -
+    /// the one `hold` would keep as it is? An environment that cannot be
+    /// read holds nothing.
+    pub fn holds(&self, root: &Path, key: &str) -> bool {
+        let Ok(env) = crate::environments::active_id(root) else { return false };
+        self.lease.as_ref().is_some_and(|l| l.env == env && l.key == key)
+    }
+
     /// Before a sign-in as `key` in `root`'s active environment: its lease,
     /// kept when this browser already holds it, otherwise taken - waiting as
     /// this holder waits - in place of the one held before. `Err` is the

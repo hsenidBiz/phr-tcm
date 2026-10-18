@@ -85,6 +85,9 @@ struct FakeHost {
     left_open: Option<v2_lib::autorun::replay_to::LeftOpen>,
     /// Where the app says the replay started.
     from: v2_lib::autorun::replay_to::ReplayFrom,
+    /// The area the replay went to in a browser already signed in as the
+    /// case's account, as the app says it.
+    signed_in_already: Option<String>,
 }
 
 impl FakeHost {
@@ -99,6 +102,7 @@ impl FakeHost {
             release: None,
             left_open: None,
             from: v2_lib::autorun::replay_to::ReplayFrom::Beginning,
+            signed_in_already: None,
         }
     }
     fn ready() -> Self {
@@ -128,7 +132,13 @@ impl ReplayHost for FakeHost {
                 return Err(after_ended_discovery(self.discovering, why));
             }
             let discovery = DiscoveryEnded { ended: self.discovering, summary: self.summary.clone(), no_save: self.no_save };
-            Ok(AssistantReplay { end: self.end.clone(), discovery, left_open: self.left_open.clone(), from: self.from })
+            Ok(AssistantReplay {
+                end: self.end.clone(),
+                discovery,
+                left_open: self.left_open.clone(),
+                from: self.from,
+                signed_in_already: self.signed_in_already.clone(),
+            })
         })
     }
     fn page(&self, _organization: String, _project: String) -> HostFuture<'_, (u16, String)> {
@@ -198,6 +208,36 @@ async fn a_normal_script_runs_without_asking() {
     assert_eq!(host.replays().len(), 1);
     let v: Value = serde_json::from_str(&text).unwrap();
     assert!(v["page"].is_string(), "{v}");
+}
+
+/// A replay in a browser already signed in as its case's account says so
+/// where a sign-in would have been, after where it started - on a stop
+/// too, and never on a refusal (nothing ran).
+#[tokio::test]
+async fn a_replay_that_skipped_the_sign_in_says_it_went_straight_to_the_area() {
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let mut ready = FakeHost::ready();
+    ready.signed_in_already = Some("Leave".into());
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), leak(ready), WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["sentence"],
+        "Started from the beginning. Signed in already: went to Leave. Replayed case 77 to step 3 - the browser is on the page before step 3 runs"
+    );
+    let mut stopped = FakeHost::ending(ReplayEnd::StoppedAt {
+        phase: v2_lib::autorun::replay_to::ReplayPhase::Step,
+        step: 2,
+        why: "nothing matched #s2".into(),
+        outcomes: vec![],
+    });
+    stopped.signed_in_already = Some("Leave".into());
+    let (_, text) = autorun_replay_with(&ctx(), &body(3), leak(stopped), WAIT).await;
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["sentence"], "Started from the beginning. Signed in already: went to Leave. Replay stopped at step 2: nothing matched #s2");
 }
 
 #[tokio::test]

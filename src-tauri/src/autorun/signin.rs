@@ -162,6 +162,37 @@ pub async fn session_refused<D: Driver>(d: &mut D) -> Option<SessionRefusal> {
     }
 }
 
+/// The longest look `already_signed_in` takes for the recipe's signed-in
+/// marker: a page that is signed in already shows it, and one that does not
+/// is signed in as it always was.
+pub const SIGNED_IN_LOOK_MS: u64 = 2_000;
+
+/// Is the browser `d`, signed in as `signed_in_as` (the account key its
+/// session holds; `None` when nobody is, as after a setup made way), already
+/// signed in as `wanted`, so a replay may skip the sign-in? Only when it is
+/// that same account, the page does not say the application refused the
+/// session (`session_refused`), and the recipe's signed-in marker shows
+/// within a short look (`SIGNED_IN_LOOK_MS`, never longer than
+/// `timing.expect_ms`). Nothing is loaded, cleared or clicked: the browser
+/// is only looked at, and not at all for another account. A browser that
+/// does not answer is not signed in.
+pub async fn already_signed_in<D: Driver>(
+    d: &mut D,
+    recipe: &SignInRecipe,
+    signed_in_as: Option<&str>,
+    wanted: &str,
+    timing: &Timing,
+) -> bool {
+    if signed_in_as != Some(wanted) {
+        return false;
+    }
+    if session_refused(d).await.is_some() {
+        return false;
+    }
+    let look = timing.expect_ms.min(SIGNED_IN_LOOK_MS);
+    expect(d, &recipe.signed_in, Check::Visible, look, timing.poll_ms).await.ok
+}
+
 /// Said when the application refused an account's session again after a
 /// fresh sign-in. Names the account by its key, never its login.
 pub fn session_refused_again(account_key: &str) -> String {

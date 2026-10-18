@@ -9,7 +9,7 @@ use v2_lib::autorun::accounts::save_accounts;
 use v2_lib::autorun::accounts::session_path;
 use v2_lib::autorun::recipe::save_recipe;
 use v2_lib::autorun::sessions::{now_ms, save_session};
-use v2_lib::autorun::signin::{prepare, redact, sign_in};
+use v2_lib::autorun::signin::{already_signed_in, prepare, redact, sign_in, SESSION_REFUSED_JS};
 use v2_lib::browser::cdp::CdpError;
 use v2_lib::browser::session::{OriginStorage, SavedSession};
 
@@ -283,4 +283,70 @@ async fn a_failing_after_sign_in_step_fails_the_sign_in_and_names_it() {
     assert!(out.detail.contains("after_sign_in step 1"), "{}", out.detail);
     no_password_anywhere(&out);
     assert!(!session_path(dir.path(), "admin").unwrap().exists(), "an incomplete sign-in was saved");
+}
+
+// ---- a browser already signed in (a replay that skips the sign-in) -------
+
+/// `stateful_app` with the page saying the application refused the session
+/// it holds ("Cookie has been tampered").
+fn refusing_app() -> (ScriptedDriver, common::StatefulApp) {
+    let (d, state) = stateful_app(false, None);
+    let d = d.answering_first(|method, params| {
+        (method == "Runtime.evaluate" && params["expression"] == SESSION_REFUSED_JS)
+            .then(|| Ok(json!({ "result": { "value": "tampered" } })))
+    });
+    (d, state)
+}
+
+/// Nothing a sign-in does was done: no cookie cleared or set, no page
+/// loaded, nothing typed or clicked.
+fn only_looked(d: &ScriptedDriver) {
+    for m in d.methods() {
+        assert!(
+            !m.starts_with("Network.") && !m.starts_with("Input.") && m != "Page.navigate" && !m.starts_with("Storage."),
+            "the check did more than look: {:?}",
+            d.methods()
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_browser_signed_in_as_the_account_with_its_marker_showing_is_signed_in_already() {
+    let (mut d, state) = stateful_app(false, None);
+    state.signed_in.store(true, Ordering::SeqCst);
+    assert!(already_signed_in(&mut d, &recipe(), Some("admin"), "admin", &quick()).await);
+    only_looked(&d);
+}
+
+#[tokio::test]
+async fn a_browser_signed_in_as_another_account_or_none_is_not_even_looked_at() {
+    let (mut d, state) = stateful_app(false, None);
+    state.signed_in.store(true, Ordering::SeqCst);
+    assert!(!already_signed_in(&mut d, &recipe(), Some("boss"), "admin", &quick()).await);
+    assert!(!already_signed_in(&mut d, &recipe(), None, "admin", &quick()).await);
+    assert!(d.calls.is_empty(), "the browser was asked: {:?}", d.methods());
+}
+
+#[tokio::test]
+async fn a_refused_session_is_not_signed_in_already() {
+    let (mut d, state) = refusing_app();
+    state.signed_in.store(true, Ordering::SeqCst);
+    assert!(!already_signed_in(&mut d, &recipe(), Some("admin"), "admin", &quick()).await);
+    only_looked(&d);
+}
+
+#[tokio::test]
+async fn a_page_without_the_marker_is_not_signed_in_already() {
+    let (mut d, _state) = stateful_app(false, None);
+    let started = std::time::Instant::now();
+    assert!(!already_signed_in(&mut d, &recipe(), Some("admin"), "admin", &quick()).await);
+    only_looked(&d);
+    // A short look: never longer than the expectation's own wait.
+    assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?}", started.elapsed());
+}
+
+#[tokio::test]
+async fn a_browser_that_does_not_answer_is_not_signed_in_already() {
+    let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
+    assert!(!already_signed_in(&mut d, &recipe(), Some("admin"), "admin", &quick()).await);
 }

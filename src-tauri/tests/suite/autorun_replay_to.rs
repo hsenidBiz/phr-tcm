@@ -248,6 +248,7 @@ async fn a_replayed_step_in_a_second_tab_carries_its_tab() {
         || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
         |_, _| {},
         &mut tabs,
+        &mut None,
     )
     .await;
     assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: None }, "{:?}", log(&app));
@@ -1315,4 +1316,232 @@ fn the_replay_puts_the_guard_where_its_owner_says() {
     assert!(replay.contains("let discovering = session.discovery.is_some();"), "{replay}");
     assert!(before < carry && before < traced && traced < settled, "{replay}");
     assert!(!replay.contains("by.may_lift(),"), "the replay's may_lift ignores the guard's owner");
+}
+
+// ---- a browser already signed in as the case's account ----------------------
+
+/// `replay_to_traced` in the one browser a test keeps: its account, its
+/// lease and its guard carried from one replay to the next, as the
+/// supervised browser's are. The second value is the area a replay went to
+/// without signing in, when it did.
+async fn replay_kept(
+    d: &mut ScriptedDriver,
+    root: &Path,
+    step: i32,
+    account: &mut Option<String>,
+    held: &mut Held,
+) -> (ReplayEnd, Option<String>) {
+    use v2_lib::autorun::replay_to::replay_to_traced;
+    let (mut guarded, cancel) = (None, AtomicBool::new(false));
+    let mut signed_in_already = None;
+    let end = replay_to_traced(
+        d,
+        &mut v2_lib::autorun::setup::NoBrowsers::<crate::common::ScriptedDriver>::default(),
+        root,
+        "acme",
+        "Web",
+        &req(step),
+        account,
+        held,
+        &mut guarded,
+        true,
+        &quick(),
+        &cancel,
+        || -> PreconditionDb<FakeStageDb> { PreconditionDb::ReadingOff },
+        |_, _| {},
+        &mut Vec::new(),
+        &mut signed_in_already,
+    )
+    .await;
+    (end, signed_in_already)
+}
+
+/// How many times the recipe's login (`#go`) was clicked since the log was
+/// last cleared.
+fn sign_ins(app: &common::MenuApp) -> usize {
+    log(app).iter().filter(|l| *l == "click #go").count()
+}
+
+/// A browser a first replay signed in as `admin` and left before step 3,
+/// with the log and the calls cleared: what a second replay then does is
+/// all there is.
+async fn signed_in_once(
+    root: &Path,
+    d: &mut ScriptedDriver,
+    app: &common::MenuApp,
+    account: &mut Option<String>,
+    held: &mut Held,
+) {
+    let (first, reused) = replay_kept(d, root, 3, account, held).await;
+    assert_eq!(first, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(app));
+    assert_eq!(reused, None, "a fresh browser signs in");
+    assert_eq!(sign_ins(app), 1);
+    assert_eq!(account.as_deref(), Some("admin"));
+    app.log.lock().unwrap().clear();
+    d.calls.clear();
+}
+
+#[tokio::test]
+async fn a_replay_in_a_browser_signed_in_as_its_account_skips_the_sign_in() {
+    use v2_lib::autorun::replay_to::signed_in_already_line;
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut d, app) = app();
+    let (mut account, mut held) = (None, Held::supervised());
+    signed_in_once(dir.path(), &mut d, &app, &mut account, &mut held).await;
+
+    let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(reused.as_deref(), Some("Leave"), "it went to the case's area without signing in");
+    assert_eq!(signed_in_already_line("Leave"), "Signed in already: went to Leave.");
+    // No sign-in at all: nothing cleared, no login page, no login clicked.
+    assert_eq!(sign_ins(&app), 0, "{:?}", log(&app));
+    assert!(d.calls_to("Network.clearBrowserCookies").is_empty(), "the sign-in was cleared: {:?}", d.methods());
+    assert!(d.calls_to("Page.navigate").is_empty(), "a page was loaded: {:?}", log(&app));
+    let seen = log(&app);
+    let at = |what: &str| seen.iter().position(|l| l == what).unwrap_or_else(|| panic!("no {what:?} in {seen:?}"));
+    assert!(at("click Leave") < at("click #s1") && at("click #s1") < at("click #s2"), "{seen:?}");
+    assert_eq!((account.as_deref(), held.account()), (Some("admin"), Some("admin")), "the sign-in and its lease are kept");
+}
+
+/// Review Focus 2: a browser signed in as another account is never reused.
+#[tokio::test]
+async fn another_account_signs_in() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let mut boss = script(three_steps());
+    boss.account = Some("boss".into());
+    project(dir.path(), &boss);
+    let mut second = account();
+    second.key = "boss".into();
+    second.label = "Boss".into();
+    save_accounts(dir.path(), &[account(), second]).unwrap();
+    let (mut d, app) = app();
+    let (mut account, mut held) = (None, Held::supervised());
+    let (first, _) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(first, ReplayEnd::Ready { .. }), "{first:?}");
+    assert_eq!(account.as_deref(), Some("boss"));
+    app.log.lock().unwrap().clear();
+    d.calls.clear();
+
+    // The case is run as admin now, and the browser is the boss account's:
+    // it signs in.
+    store::save_script(dir.path(), &script(three_steps())).unwrap();
+    let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused, None);
+    assert_eq!(sign_ins(&app), 1, "{:?}", log(&app));
+    assert!(!d.calls_to("Network.clearBrowserCookies").is_empty(), "the other sign-in was not cleared first");
+    assert_eq!((account.as_deref(), held.account()), (Some("admin"), Some("admin")));
+}
+
+/// Review Focus 3: a session the application refused ("Cookie has been
+/// tampered") is never reused: the replay signs in fresh.
+#[tokio::test]
+async fn a_refused_session_signs_in() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (d, app) = app();
+    // The page refuses the session once `refusing` is set, until a sign-in
+    // clears it.
+    let refusing = Arc::new(AtomicBool::new(false));
+    let r = refusing.clone();
+    let mut d = d.answering_first(move |method, params| {
+        if method == "Network.clearBrowserCookies" {
+            r.store(false, Ordering::SeqCst);
+        }
+        (method == "Runtime.evaluate"
+            && params["expression"] == v2_lib::autorun::signin::SESSION_REFUSED_JS
+            && r.load(Ordering::SeqCst))
+        .then(|| Ok(json!({ "result": { "value": "tampered" } })))
+    });
+    let (mut account, mut held) = (None, Held::supervised());
+    signed_in_once(dir.path(), &mut d, &app, &mut account, &mut held).await;
+
+    refusing.store(true, Ordering::SeqCst);
+    let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?} {:?}", log(&app));
+    assert_eq!(reused, None);
+    assert_eq!(sign_ins(&app), 1, "{:?}", log(&app));
+    assert!(!refusing.load(Ordering::SeqCst), "the refused session was not cleared");
+}
+
+/// Review Focus 4: a setup that made way (`setup::make_way` ended the
+/// browser's session and let its lease go) leaves it signed in as nobody:
+/// the replay signs in.
+#[tokio::test]
+async fn after_a_setup_made_way_it_signs_in() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut d, app) = app();
+    let (mut account, mut held) = (None, Held::supervised());
+    signed_in_once(dir.path(), &mut d, &app, &mut account, &mut held).await;
+
+    v2_lib::autorun::setup::make_way(&mut d, &mut account, &mut held, "admin", &quick()).await;
+    assert_eq!((account.as_deref(), held.account()), (None, None));
+    app.log.lock().unwrap().clear();
+    let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused, None);
+    assert_eq!(sign_ins(&app), 1, "{:?}", log(&app));
+    assert_eq!(account.as_deref(), Some("admin"));
+}
+
+/// The menu a signed-in browser shows is gone while `hidden` is set: until
+/// the next sign-in clears the browser, or for good when `for_good`.
+fn hiding_menu(d: ScriptedDriver, hidden: Arc<AtomicBool>, for_good: bool) -> ScriptedDriver {
+    d.answering_first(move |method, _| {
+        if method == "Network.clearBrowserCookies" && !for_good {
+            hidden.store(false, Ordering::SeqCst);
+        }
+        (method == "Accessibility.queryAXTree" && hidden.load(Ordering::SeqCst)).then(|| Ok(json!({ "nodes": [] })))
+    })
+}
+
+/// A browser that looks signed in but cannot reach the area: the replay
+/// signs in once, as it would have, and goes again from there.
+#[tokio::test]
+async fn a_failed_trip_signs_in_once_and_goes_again() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let hidden = Arc::new(AtomicBool::new(false));
+    let (d, app) = app();
+    let mut d = hiding_menu(d, hidden.clone(), false);
+    let (mut account, mut held) = (None, Held::supervised());
+    signed_in_once(dir.path(), &mut d, &app, &mut account, &mut held).await;
+
+    hidden.store(true, Ordering::SeqCst);
+    let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(reused, None, "it signed in after all");
+    assert_eq!(sign_ins(&app), 1, "{:?}", log(&app));
+    let seen = log(&app);
+    let at = |what: &str| seen.iter().position(|l| l == what).unwrap_or_else(|| panic!("no {what:?} in {seen:?}"));
+    assert!(at("click #go") < at("click Leave") && at("click Leave") < at("click #s1"), "{seen:?}");
+}
+
+/// The area out of reach even after that sign-in: one sign-in, then the
+/// replay stops while going to the area - it never signs in twice.
+#[tokio::test]
+async fn a_trip_that_fails_after_the_sign_in_too_stops_at_the_area() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let hidden = Arc::new(AtomicBool::new(false));
+    let (d, app) = app();
+    let mut d = hiding_menu(d, hidden.clone(), true);
+    let (mut account, mut held) = (None, Held::supervised());
+    signed_in_once(dir.path(), &mut d, &app, &mut account, &mut held).await;
+
+    hidden.store(true, Ordering::SeqCst);
+    let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
+    let ReplayEnd::StoppedAt { phase, step, .. } = &end else { panic!("{end:?}") };
+    assert_eq!((*phase, *step), (ReplayPhase::Area, 1), "{end:?}");
+    assert_eq!(reused, None);
+    assert_eq!(sign_ins(&app), 1, "{:?}", log(&app));
+    assert!(!clicked(&app, "#s1"), "{:?}", log(&app));
 }

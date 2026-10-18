@@ -407,6 +407,7 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
         db,
         progress,
         &mut tabs,
+        &mut None,
     )
     .await
 }
@@ -414,7 +415,16 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
 /// `replay_to_checked`, also learning back the tab each step it ran was
 /// in when that was not `main` (`tabs`, in step order) - the failing step's
 /// too - so the pane says `in tab <name>` beside them as it does for a
-/// step the person ran.
+/// step the person ran; and, in `signed_in_already`, the area it went to
+/// without signing in, when the browser was already signed in as the
+/// case's account (`signin::already_signed_in`), for its answer to say so
+/// (`signed_in_already_line`).
+///
+/// That browser - signed in as the script's account, holding its lease in
+/// this environment, its page not refused and the recipe's signed-in
+/// marker showing - keeps its sign-in and goes to the area from where it
+/// is (`TripFrom::Elsewhere`). If that trip fails, the case is signed in as
+/// it always is and goes again, once. Any other browser signs in first.
 #[allow(clippy::too_many_arguments)]
 pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     d: &mut D,
@@ -432,7 +442,9 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     db: impl FnOnce() -> PreconditionDb<P>,
     mut progress: impl FnMut(i32, i32),
     tabs: &mut Vec<ReplayedTab>,
+    signed_in_already: &mut Option<String>,
 ) -> ReplayEnd {
+    *signed_in_already = None;
     let Checked { script, route } = match check(root, organization, project, req) {
         Ok(c) => c,
         Err(why) => return ReplayEnd::Refused(why),
@@ -498,9 +510,34 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     // case.
     let guarding_other = guarded_case.filter(|c| *c != id);
 
+    // A browser already signed in as the case's account keeps its sign-in
+    // and goes to the area from where it is. A trip that fails then signs in
+    // below, as any other browser does, and goes again.
+    if let Some(key) = script.account.as_deref() {
+        if stopped() {
+            return ReplayEnd::Stopped { step: 1 };
+        }
+        if signed_in_here(d, root, organization, project, key, account, lease, timing).await {
+            let went = replay::trip_to_module(d, root, &route, TripFrom::Elsewhere, timing, &who(id)).await;
+            if closed(&went) {
+                return ReplayEnd::BrowserGone { step: 1, why: None, outcomes: Vec::new() };
+            }
+            if went.ok {
+                crate::applog::info(format!("{}: signed in already as {key}, went to {}", who(id), route.path.name()));
+                *signed_in_already = Some(route.path.name().to_string());
+            } else {
+                crate::applog::info(format!(
+                    "{}: signed in already as {key}, but the trip to {} failed - signing in again",
+                    who(id),
+                    route.path.name()
+                ));
+            }
+        }
+    }
+
     // The case's own account, through the supervised browser's lease.
     let mut signed_now = false;
-    if let Some(key) = script.account.as_deref() {
+    if let Some(key) = script.account.as_deref().filter(|_| signed_in_already.is_none()) {
         if stopped() {
             return ReplayEnd::Stopped { step: 1 };
         }
@@ -521,17 +558,20 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
         signed_now = true;
     }
 
-    // The trip to the case's area, the one the unattended run makes.
+    // The trip to the case's area, the one the unattended run makes - made
+    // already by a browser that was signed in.
     if stopped() {
         return ReplayEnd::Stopped { step: 1 };
     }
-    let from = if signed_now { TripFrom::SignIn } else { TripFrom::Elsewhere };
-    let went = replay::trip_to_module(d, root, &route, from, timing, &who(id)).await;
-    if closed(&went) {
-        return ReplayEnd::BrowserGone { step: 1, why: None, outcomes: Vec::new() };
-    }
-    if !went.ok {
-        return ReplayEnd::StoppedAt { phase: ReplayPhase::Area, step: 1, why: went.detail.clone(), outcomes: vec![went] };
+    if signed_in_already.is_none() {
+        let from = if signed_now { TripFrom::SignIn } else { TripFrom::Elsewhere };
+        let went = replay::trip_to_module(d, root, &route, from, timing, &who(id)).await;
+        if closed(&went) {
+            return ReplayEnd::BrowserGone { step: 1, why: None, outcomes: Vec::new() };
+        }
+        if !went.ok {
+            return ReplayEnd::StoppedAt { phase: ReplayPhase::Area, step: 1, why: went.detail.clone(), outcomes: vec![went] };
+        }
     }
 
     // Steps 1 to N-1, in the script's order.
@@ -542,6 +582,36 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
         return stopped;
     }
     ReplayEnd::Ready { case_id: id, step: n, notice: checked.notice, whole: whole_case(&script, n) }
+}
+
+/// Is the supervised browser `d` already signed in as `key`, the case's
+/// account? Its session is `key`'s (`account`), it holds `key`'s lease in
+/// the active environment (`Held::holds`), and the page says so
+/// (`signin::already_signed_in`). A project whose recipe cannot be read is
+/// signed in as always, which says why.
+#[allow(clippy::too_many_arguments)]
+async fn signed_in_here<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    key: &str,
+    account: &Option<String>,
+    lease: &Held,
+    timing: &Timing,
+) -> bool {
+    if account.as_deref() != Some(key) || !lease.holds(root, key) {
+        return false;
+    }
+    let Ok(recipe) = super::recipe::load_effective_recipe(root, organization, project) else { return false };
+    signin::already_signed_in(d, &recipe, account.as_deref(), key, timing).await
+}
+
+/// What a replay's answer says, after where it started, when it went to
+/// the case's area `area` in a browser already signed in as its account,
+/// in place of a sign-in.
+pub fn signed_in_already_line(area: &str) -> String {
+    format!("Signed in already: went to {area}.")
 }
 
 /// How many steps `script` has when `step` is past its last, so a replay to
