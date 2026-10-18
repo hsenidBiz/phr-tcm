@@ -165,7 +165,7 @@ pub fn left_open_line(left: &LeftOpen) -> String {
     };
     if left.by_assistant {
         format!(
-            "The Auto Run browser stays open on this step: {blocked} are refused until release_autorun_browser closes it, and start_autorun_discovery closes it."
+            "The Auto Run browser stays open on this step, signed in: {blocked} are refused until start_autorun_discovery takes it over as it is. Do not release it between replays; release_autorun_browser is for a broken browser."
         )
     } else {
         format!("The person's Auto Run browser stays open on this step: {blocked} are refused until the person closes it.")

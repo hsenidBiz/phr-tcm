@@ -125,8 +125,7 @@ pub fn quick_rules() -> String {
 
 const QUICK_RULES: &str = r##"## Quick rules
 
-Short form: for anything these rules do not cover, call `get_autorun_guide`
-with the `section` that covers it, or with `full` true for the whole guide.
+Not covered here: call `get_autorun_guide` with a `section`, or `full` true.
 
 - Discover the live app; never read the application's code to write scripts.
   A save refuses any locator the app has not seen. During a discovery with
@@ -154,13 +153,14 @@ with the `section` that covers it, or with `full` true for the whole guide.
 - A picture: open it directly with the file reader. Never search the disk
   for a picture. Set `"no_save": true` on any script that works on a shared
   draft and must not change it. A repair can turn `no_save` on, never off.
-- `end_autorun_discovery` closes the browser when you are done. A replay to
-  a failing step ends your own discovery first, keeping what it mapped. When
-  the sign-in fails, the session expires or you reach a cap, stop and report
-  to the person; never try again in a loop.
-- `release_autorun_browser` lets go of a browser the app still holds after
-  it closed, ends your own discovery, and closes a browser your replay left
-  open (never the person's). Never ask the person to restart the app.
+- Replays, discovery and resets share one browser and its sign-in.
+  `end_autorun_discovery` keeps it; a replay to a failing step ends your own
+  discovery first, keeping what it mapped. When the sign-in fails, the session
+  expires or you reach a cap, stop and report to the person; never try again
+  in a loop. Name the `case_id` on every discovery call for a `no_save` case.
+- `reset_autorun_browser` gives a clean page, sign-in kept. Use
+  `release_autorun_browser` only for a broken browser (frozen, wrong account,
+  session gone), never between replays. Never ask the person to restart the app.
 - If a case creates, deletes, publishes or submits shared data, or needs the
   site in a particular state, mark it `changes` or `needs_unchanged`,
   reusing one name for one change across the PBI; a setting it needs at one
@@ -945,6 +945,16 @@ save words, which a person adds on the
 Auto Run Setup tab. Every other request goes through
 unchanged. The sign-in is not checked: it is the app's own.
 
+How long the guard lasts depends on what set it. A discovery started with
+`no_save`, or for a case marked `no_save`, keeps its saves stopped until it
+ends. `no_save: true` on one discovery action or batch lasts for that call
+only. A case's mark applies to every replay, try and discovery call that names
+the case. A discovery call that names a case marked `no_save` is guarded for
+that call only, unless the discovery is for that case (it started with it, or
+it was the first case named). Name the `case_id` on every discovery call for a
+`no_save` case. The replay that ends a guarded discovery is guarded too, for
+that replay only; the next replay of a case that may save is not guarded.
+
 When the page tries to save, the case fails at once with:
 
     this script must not save, but the page tried to send POST /api/Save - it was stopped before it reached the server
@@ -1321,7 +1331,10 @@ You open and drive a browser of your own to find what a script needs:
   its script is marked `no_save` (or you pass `no_save: true`), every
   save the page tries is blocked, not only reported, until the discovery
   ends. An action whose save was blocked fails with the guard's sentence,
-  and its answer names the request in `blocked_writes`.
+  and its answer names the request in `blocked_writes`. On each
+  `discover_autorun_action` and `discover_autorun_actions`, name the case
+  (`case_id`) again: a call that names a marked case is guarded for that call
+  only, and so is `no_save: true` on one action or batch.
 - `discover_autorun_action` carries out one action and answers what it
   did: the page afterwards, an address change, a dialog or message that
   appeared, and the requests that wrote data. Carry each of the case's
@@ -1349,10 +1362,21 @@ You open and drive a browser of your own to find what a script needs:
   The app replays the clicks from the home page and saves the area only
   if they arrive where you are. If you cannot reach a screen through the
   menus, ask the person to record the area in Auto Run.
-- `end_autorun_discovery` closes the browser when you are done.
-- `release_autorun_browser` lets go of an Auto Run browser the app still
-  holds after it closed, ends your own discovery the way
-  `end_autorun_discovery` does, and closes a browser your replay left
+- `end_autorun_discovery` ends your discovery and keeps the browser: what it
+  mapped is kept, and the browser stays open and signed in for your next
+  replay or discovery; only the person's End discovery button closes it.
+- `reset_autorun_browser` gives a clean page and keeps the sign-in: it closes
+  the other tabs, forgets any dialog a replay expected or saw, lifts your save
+  guard, forgets where your last replay stopped, and loads the home page. Use it
+  when you only want a clean page. It ends your own discovery if one is going,
+  keeping what it mapped. If the sign-in has gone it says so, and the next
+  replay signs in again. It is refused while a replay is running, and for the
+  person's own browser.
+- `release_autorun_browser` is only for a broken browser (frozen, wrong account,
+  session gone), never between replays: a browser that is signed in and
+  answering is kept, and your next replay or discovery uses it. It lets go of an
+  Auto Run browser the app still holds after it closed, ends your own discovery
+  the way `end_autorun_discovery` does, and closes a browser your replay left
   open (never the person's). Call it when a discovery or a replay is
   refused with "close the supervised browser first", or a page read
   answers "the browser did not answer", while no Auto Run browser is
@@ -1361,8 +1385,17 @@ You open and drive a browser of your own to find what a script needs:
   while it is open: then it says so, and you ask the person to close it
   or to press Release Auto Run browser. It never stops a replay. Never ask
   the person to restart the app for any of this.
-- `start_autorun_discovery` closes a browser your replay left open and
-  says "Closed the browser your replay left open." before it signs in.
+- `start_autorun_discovery` takes over a browser your replay left open (its
+  other tabs closed), goes home, and does not sign in again when that browser
+  is signed in as the account you name. It says "Took over the browser your
+  replay left open (its other tabs closed)." Asking for the other browser
+  (`browser`) closes the open one and opens a new one, and it says "Closed the
+  browser your replay left open."
+
+Replays, discovery and resets share one browser and its sign-in. A replay in a
+browser already signed in as its case's account goes straight to the area and
+says "Signed in already: went to <area>."; `end_autorun_discovery` keeps it for
+your next replay or discovery, so nothing needs closing in between.
 
 When the sign-in fails, the session expires or you reach a cap (a mapping
 run's 150 screens), stop and report to the person; never try again in a
@@ -1789,7 +1822,7 @@ with the case and its failing step, runs that case's saved steps before it
 in the supervised browser and stops there. Its answer carries the page, so
 you can try the step with `try_autorun_action` at once. No browser needs to
 be open: the app opens one, signs in as the case's account and goes to its
-area. A discovery of yours still open is ended first, keeping what it
+area (a browser already signed in as that account goes straight there). A discovery of yours still open is ended first, keeping what it
 mapped, and the answer says so; start a new one to explore again.
 
 - You may replay without asking the person. A script marked must not save
@@ -1797,10 +1830,14 @@ mapped, and the answer says so; start a new one to explore again.
 - Never replay past the failing step to "see what happens". The steps after
   it are not the failure, and they can change the application's data.
 - The replay leaves the Auto Run browser open on that step, and its answer
-  says so: until it closes, discovery actions, component saves and
-  template runs as the case's account are refused. `release_autorun_browser`
-  closes a browser your replay opened, and starting a discovery closes it.
-  So explore, probe and save components first, and replay last.
+  says so. It stays signed in: your next replay of a case with the same account
+  goes straight to its area ("Signed in already: went to <area>."), and
+  `start_autorun_discovery` takes it over as it is. Until you start a discovery,
+  discovery actions, component saves and template runs as the case's account are
+  refused. Do not release the browser between replays:
+  `release_autorun_browser` is only for a broken one (frozen, wrong account,
+  session gone, "the browser did not answer"), and `reset_autorun_browser` gives
+  a clean page with the sign-in kept.
 - Replaying the same case to a later step carries on from where your last
   replay of it stood, when that browser is yours and nothing (a step, a
   try, a discovery action or another replay) has used it since; the

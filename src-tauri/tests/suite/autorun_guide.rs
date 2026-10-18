@@ -719,7 +719,10 @@ fn the_guide_teaches_replaying_to_the_failing_step() {
     assert!(flat.contains("The replay leaves the Auto Run browser open on that step"), "{flat}");
     assert!(flat.contains("carries on from where your last replay of it stood"), "{flat}");
     assert!(flat.contains("\"Carried on from step K\" or \"Started from the beginning\""), "{flat}");
-    assert!(flat.contains("`release_autorun_browser` closes a browser your replay opened, and starting a discovery closes it"), "{flat}");
+    assert!(flat.contains("Do not release the browser between replays"), "{flat}");
+    assert!(flat.contains("`start_autorun_discovery` takes it over as it is"), "{flat}");
+    assert!(flat.contains("\"Signed in already: went to <area>.\""), "{flat}");
+    assert!(!flat.contains("starting a discovery closes it"), "{flat}");
     assert!(flat.contains("Never replay past the failing step to \"see what happens\"."), "{flat}");
     assert!(flat.contains("No browser needs to be open"), "{flat}");
     assert!(!section.contains('\u{2014}'), "no em dashes in text an assistant reads");
@@ -1262,6 +1265,84 @@ fn the_guide_states_the_save_rules() {
     }
 }
 
+/// Release is for a broken browser, never a step between replays: the
+/// quick rules and both sections that mention it say so, with what counts
+/// as broken, and none still teaches closing the browser after a replay.
+#[test]
+fn the_guide_says_release_only_when_broken() {
+    use v2_lib::autorun::guide::quick_rules;
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = autorun_guide();
+    let part = |title: &str| {
+        let at = g.find(&format!("\n## {title}\n")).unwrap_or_else(|| panic!("no section {title:?}"));
+        flat(g[at + 1..].split("\n## ").next().unwrap())
+    };
+    let quick = flat(&quick_rules());
+    assert!(quick.contains("only for a broken browser (frozen, wrong account, session gone), never between replays"), "{quick}");
+    let discovering = part("Discovering the app");
+    for broken in ["frozen, wrong account, session gone", "\"the browser did not answer\"", "never between replays"] {
+        assert!(discovering.contains(broken), "Discovering the app never says {broken:?}: {discovering}");
+    }
+    assert!(discovering.contains("`end_autorun_discovery` ends your discovery and keeps the browser"), "{discovering}");
+    assert!(discovering.contains("only the person's End discovery button closes it"), "{discovering}");
+    assert!(discovering.contains("takes over a browser your replay left open"), "{discovering}");
+    assert!(!discovering.contains("`end_autorun_discovery` closes the browser"), "{discovering}");
+    assert!(!discovering.contains("closes a browser your replay left open and says"), "{discovering}");
+    let repairing = part("Repairing a script that failed");
+    assert!(repairing.contains("Do not release the browser between replays"), "{repairing}");
+    assert!(repairing.contains("frozen, wrong account, session gone"), "{repairing}");
+    assert!(!repairing.contains("So explore, probe and save components first, and replay last"), "{repairing}");
+    for text in [&quick, &discovering, &repairing] {
+        assert!(!text.contains('\u{2014}'), "no em dashes in text an assistant reads");
+    }
+}
+
+/// `reset_autorun_browser` is taught where the browser is shared: what it
+/// does, that it keeps the sign-in, and when to use it instead of release.
+#[test]
+fn the_guide_names_reset() {
+    use v2_lib::autorun::guide::quick_rules;
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = autorun_guide();
+    let quick = flat(&quick_rules());
+    assert!(quick.contains("`reset_autorun_browser` gives a clean page, sign-in kept"), "{quick}");
+    let full = flat(&g);
+    for said in [
+        "`reset_autorun_browser` gives a clean page and keeps the sign-in",
+        "closes the other tabs",
+        "lifts your save guard",
+        "the next replay signs in again",
+        "when you only want a clean page",
+    ] {
+        assert!(full.contains(said), "the guide never says {said:?}");
+    }
+    assert!(full.contains("Replays, discovery and resets share one browser and its sign-in"), "{full}");
+    assert!(full.contains("\"Signed in already: went to <area>.\""), "{full}");
+}
+
+/// How long a Must not save guard lasts, said once where the mark is
+/// taught: a discovery's until it ends, one action's for that call, a
+/// case's for every call on that case - and so every discovery call for a
+/// marked case names the case.
+#[test]
+fn the_guide_says_how_long_must_not_save_lasts() {
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = autorun_guide();
+    let at = g.find("\n## Scripts that must not save\n").expect("no section");
+    let section = flat(g[at + 1..].split("\n## ").next().unwrap());
+    for said in [
+        "A discovery started with `no_save`, or for a case marked `no_save`, keeps its saves stopped until it ends.",
+        "`no_save: true` on one discovery action or batch lasts for that call only.",
+        "A case's mark applies to every replay, try and discovery call that names the case.",
+        "A discovery call that names a case marked `no_save` is guarded for that call only",
+        "Name the `case_id` on every discovery call for a `no_save` case",
+        "The replay that ends a guarded discovery is guarded too, for that replay only",
+    ] {
+        assert!(section.contains(said), "the section never says {said:?}: {section}");
+    }
+    assert!(!section.contains('\u{2014}'));
+}
+
 /// The Quick rules open the guide, short enough to read every time, and
 /// with nothing in them an assistant must never read: no dash, no banned
 /// phrase, no hidden feature.
@@ -1299,7 +1380,7 @@ fn the_guide_opens_with_the_quick_rules() {
         let re = regex::Regex::new(&format!("(?i){hidden}")).unwrap();
         assert!(!re.is_match(&quick), "the quick rules name {hidden:?}");
     }
-    assert!(quick.contains("call `get_autorun_guide`\nwith the `section` that covers it, or with `full` true for the whole guide."), "{quick}");
+    assert!(quick.contains("call `get_autorun_guide` with a `section`, or `full` true."), "{quick}");
 }
 
 /// Review Focus 5: the quick guide never contradicts the full guide. Each
@@ -1348,13 +1429,15 @@ fn every_quick_rule_is_in_the_full_guide() {
         ("Never search the disk for a picture", "Seeing the page"),
         ("Set `\"no_save\": true` on any script that works on a shared draft and must not change it", "Scripts that must not save"),
         ("A repair can turn `no_save` on, never off", "Scripts that must not save"),
-        ("`end_autorun_discovery` closes the browser when you are done", "Discovering the app"),
+        ("Replays, discovery and resets share one browser and its sign-in", "Discovering the app"),
+        ("`end_autorun_discovery` keeps it", "Discovering the app"),
+        ("`reset_autorun_browser` gives a clean page", "Discovering the app"),
+        ("only for a broken browser (frozen, wrong account, session gone), never between replays", "Discovering the app"),
+        ("Name the `case_id` on every discovery call for a `no_save` case", "Scripts that must not save"),
         ("first, keeping what it mapped", "Repairing a script that failed"),
         ("When the sign-in fails, the session expires or you reach a cap", "Discovering the app"),
         ("stop and report to the person; never try again in a loop", "Discovering the app"),
-        ("the app still holds after it closed", "Discovering the app"),
         ("Never ask the person to restart the app", "Discovering the app"),
-        ("closes a browser your replay left open (never the person's)", "Discovering the app"),
         ("Use full names, and probe `nth` locators exactly as written", "Selectors"),
         ("Use `exact: true` when a name is part of another, such as \"Continue\" and \"Save & Continue\"", "Selectors"),
         (

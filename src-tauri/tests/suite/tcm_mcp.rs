@@ -1498,11 +1498,64 @@ fn the_replay_tool_rides_with_the_auto_run_tools() {
     assert!(d.contains("must not save replays at once too, its saves stopped throughout"), "{d}");
     assert!(!d.contains("Allow"), "{d}");
     assert!(d.contains("call again with the same case and step to keep waiting"), "{d}");
-    assert!(d.contains("release_autorun_browser closes a browser your replay opened"), "{d}");
+    assert!(d.contains("Do not release it between replays"), "{d}");
+    assert!(d.contains("release_autorun_browser is for a broken browser"), "{d}");
+    assert!(d.contains("goes straight to the area (\"Signed in already: went to <area>.\")"), "{d}");
+    assert!(d.contains("start_autorun_discovery takes the browser over as it is"), "{d}");
+    assert!(!d.contains("closes a browser your replay opened"), "{d}");
     assert!(d.contains("carries on from there; the answer starts with Carried on from step K, or Started from the beginning"), "{d}");
     assert!(d.contains("never past it"), "{d}");
     assert!(d.contains("try_autorun_action"), "{d}");
     assert!(!d.contains('\u{2014}'), "{d}");
+}
+
+/// The browser is shared by replays, discovery and resets, and the tool
+/// descriptions say so: release only for a broken browser, never between
+/// replays; a discovery takes a replay's browser over; the assistant's end
+/// keeps it; a guard lasts as long as what set it.
+#[test]
+fn the_descriptions_keep_the_browser_between_replays() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("no tool {name}")).clone();
+    let desc = |name: &str| tool(name)["description"].as_str().unwrap().to_string();
+
+    let release = desc("release_autorun_browser");
+    assert!(release.contains("Only when the browser is broken"), "{release}");
+    assert!(release.contains("frozen, on the wrong account, its session gone"), "{release}");
+    assert!(release.contains("\"the browser did not answer\""), "{release}");
+    assert!(release.contains("never between replays"), "{release}");
+    assert!(release.contains("reset_autorun_browser"), "{release}");
+
+    let start = desc("start_autorun_discovery");
+    assert!(start.contains("takes over a browser your own replay left open"), "{start}");
+    assert!(start.contains("Took over the browser your replay left open"), "{start}");
+    assert!(!start.contains("is closed first, and the answer says"), "{start}");
+    assert!(start.contains("until the discovery ends"), "{start}");
+
+    let end = desc("end_autorun_discovery");
+    assert!(end.contains("Only the person's End discovery button closes it"), "{end}");
+
+    let replay = desc("replay_autorun_to_step");
+    assert!(!replay.contains("so does start_autorun_discovery"), "{replay}");
+
+    for name in ["discover_autorun_action", "discover_autorun_actions", "start_autorun_discovery"] {
+        let props = &tool(name)["inputSchema"]["properties"];
+        let case_id = props["case_id"]["description"].as_str().unwrap().to_string();
+        let no_save = props["no_save"]["description"].as_str().unwrap().to_string();
+        if name == "start_autorun_discovery" {
+            assert!(case_id.contains("until the discovery ends"), "{case_id}");
+            assert!(no_save.contains("until the discovery ends"), "{no_save}");
+        } else {
+            assert!(case_id.contains("for this call only"), "{name}: {case_id}");
+            assert!(case_id.contains("name it on every call"), "{name}: {case_id}");
+            assert!(no_save.contains("for this call only"), "{name}: {no_save}");
+        }
+    }
+    for name in ["release_autorun_browser", "start_autorun_discovery", "end_autorun_discovery", "replay_autorun_to_step"] {
+        assert!(!desc(name).contains('\u{2014}'), "{name} has an em dash");
+    }
 }
 
 /// `set_autorun_order` is one of the Auto Run tools: listed with them where
