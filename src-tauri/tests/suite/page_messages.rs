@@ -37,6 +37,19 @@ fn at_most_five_messages_of_at_most_300_chars() {
     assert_eq!(got.iter().map(|m| m.text.chars().count()).max(), Some(MAX_MESSAGE_CHARS));
 }
 
+#[test]
+fn a_refusal_given_again_is_new() {
+    let before = [msg("Save failed")];
+    let after = [msg("Save failed"), msg("Save failed")];
+    assert_eq!(new_messages(&before, &after), vec![msg("Save failed")]);
+}
+
+#[test]
+fn a_message_shown_twice_is_two_new_messages() {
+    let after = [msg("Save failed"), msg("Save failed")];
+    assert_eq!(new_messages(&[], &after), vec![msg("Save failed"), msg("Save failed")]);
+}
+
 #[tokio::test]
 async fn an_unreadable_page_reads_as_no_messages() {
     let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));

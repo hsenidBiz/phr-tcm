@@ -70,3 +70,58 @@ test("an iframe the page cannot reach is passed over", () => {
   });
   expect(read().messages.map((m) => m.text)).toEqual(["Here"]);
 });
+
+test("a toast stack reads each toast as one message, title and body together", () => {
+  const toast = (kind: string, title: string, body: string) =>
+    `<div class="toast toast-${kind}"><div class="toast-title">${title}</div><div class="toast-message">${body}</div></div>`;
+  document.body.innerHTML = `<div id="toast-container" class="toast-top-right">${toast("success", "Saved", "Old body")}</div>`;
+  const before = read().messages.map((m) => m.text);
+  expect(before).toEqual(["Saved Old body"]);
+  document.body.innerHTML = `<div id="toast-container" class="toast-top-right">${toast("success", "Saved", "Old body")}${toast("error", "Refused", "Weightage must total 100.")}</div>`;
+  const after = read().messages.map((m) => m.text);
+  expect(after).toEqual(["Saved Old body", "Refused Weightage must total 100."]);
+  expect(after[0]).toBe(before[0]);
+});
+
+test("a form group in error says its help text, not its label or field", () => {
+  document.body.innerHTML = `<div class="form-group has-error"><label for="n">Name</label><input id="n" value="x"><span class="help-block">Name is required</span></div>`;
+  expect(read().messages.map((m) => m.text)).toEqual(["Name is required"]);
+});
+
+test("a validated form gives only the feedback it shows", () => {
+  document.body.innerHTML = `<form class="needs-validation"><label>Title</label><input class="is-invalid">
+    <div class="invalid-feedback">Please choose a title.</div>
+    <div class="invalid-feedback" style="display:none">Hidden one</div>
+    <button type="submit">Save</button></form>`;
+  expect(read().messages.map((m) => m.text)).toEqual(["Please choose a title."]);
+});
+
+test("a message at opacity 0, or under one, is not read yet", () => {
+  document.body.innerHTML = `<div class="toast" style="opacity:0">Coming</div>
+    <div style="opacity:0"><div role="alert">Under it</div></div>
+    <div class="toast" style="opacity:1">Here</div>`;
+  expect(read().messages.map((m) => m.text)).toEqual(["Here"]);
+});
+
+test("a crowd of ordinary rows does not push a toast out of the read", () => {
+  const rows = Array.from({ length: 60 }, (_, i) => `<div class="message-row">Row ${i}</div>`).join("");
+  document.body.innerHTML = `${rows}<div class="toast">Refused</div>`;
+  const got = read().messages.map((m) => m.text);
+  expect(got[0]).toBe("Refused");
+  expect(got).toHaveLength(61);
+});
+
+test("the element right after an invalid field is its message", () => {
+  document.body.innerHTML = `<input aria-invalid="true"><span>Required</span>`;
+  expect(read().messages.map((m) => m.text)).toEqual(["Required"]);
+});
+
+test("a button inside a message is not part of it", () => {
+  document.body.innerHTML = `<div class="alert">Save failed <button type="button">&times;</button></div>`;
+  expect(read().messages.map((m) => m.text)).toEqual(["Save failed"]);
+});
+
+test("the same message twice is read twice", () => {
+  document.body.innerHTML = `<div class="toast">Save failed</div><div class="toast">Save failed</div>`;
+  expect(read().messages.map((m) => m.text)).toEqual(["Save failed", "Save failed"]);
+});

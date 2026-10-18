@@ -52,17 +52,27 @@ fn collapsed(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The messages in `after` that `before` did not already have, by their
-/// collapsed text, at most `MAX_MESSAGES` of them, each cut to
-/// `MAX_MESSAGE_CHARS` characters.
+/// The messages in `after` that `before` did not already have, at most
+/// `MAX_MESSAGES` of them, each cut to `MAX_MESSAGE_CHARS` characters.
+/// Messages are matched by their collapsed text and counted: two "Save
+/// failed" after one before is one new "Save failed", so a refusal the page
+/// gives again is not lost behind the one it gave first.
 pub fn new_messages(before: &[PageMessage], after: &[PageMessage]) -> Vec<PageMessage> {
-    let mut known: std::collections::HashSet<String> =
-        before.iter().map(|m| collapsed(&m.text)).collect();
+    let mut had: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for m in before {
+        *had.entry(collapsed(&m.text)).or_insert(0) += 1;
+    }
     let mut out = Vec::new();
     for m in after {
         let text = collapsed(&m.text);
-        if text.is_empty() || !known.insert(text.clone()) {
+        if text.is_empty() {
             continue;
+        }
+        if let Some(n) = had.get_mut(&text) {
+            if *n > 0 {
+                *n -= 1;
+                continue;
+            }
         }
         out.push(PageMessage { text: text.chars().take(MAX_MESSAGE_CHARS).collect(), place: m.place.clone() });
         if out.len() == MAX_MESSAGES {
