@@ -1584,3 +1584,28 @@ async fn a_try_that_is_refused_keeps_the_dialog_it_met() {
     assert!(out[0].detail.starts_with("the app refused: "), "{}", out[0].detail);
     assert!(out[0].detail.ends_with(r#" (a confirm dialog was accepted: "Leave?")"#), "{}", out[0].detail);
 }
+
+/// A watched step clicks; then something else uses the browser (a replay,
+/// a try, a sign-in), which forgets the watched run's last page change. A
+/// later watched step that fails names nothing from before that use.
+#[tokio::test]
+async fn a_watched_step_after_another_use_names_nothing_from_before_it() {
+    use v2_lib::autorun::runner::Noted;
+    let mut d = said_page(vec![vec![], vec![], vec!["Weightage must total 100."]], true);
+    click_saves_late(&mut d, 20);
+    let mut noted = Noted::default();
+    let two = run_noted(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), &mut noted, 0).await;
+    assert!(two[0].ok, "{two:?}");
+    // The replay, try or sign-in in between.
+    noted.forget(&d);
+    let five = run_noted(
+        &mut d,
+        json!([{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }]),
+        &mut noted,
+        1,
+    )
+    .await;
+    assert!(!five[0].ok, "{:?}", five[0]);
+    assert!(!five[0].detail.contains(" - after "), "{}", five[0].detail);
+    assert!(noted.take_late().is_empty());
+}

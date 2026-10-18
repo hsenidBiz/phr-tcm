@@ -64,6 +64,17 @@ pub(crate) struct Session {
     pub(crate) noted: crate::autorun::runner::Noted,
 }
 
+impl Session {
+    /// The browser is used by something other than a watched step or the
+    /// replay that left it: no replay carries on from where it stood, and
+    /// the watched run's last page change (`noted`) is no longer the page's
+    /// - a later step names nothing that happened before this use.
+    pub(crate) fn used_otherwise(&mut self) {
+        self.replay_stand = None;
+        self.noted.forget(&self.cdp);
+    }
+}
+
 /// How many times the supervised browser has been used for anything but
 /// a page read since the app started: a step, a try, a sign-in, a watched
 /// start, a setup making way, a replay, or a browser opened or closed. An
@@ -1368,6 +1379,8 @@ pub(crate) async fn replay_supervised(
     // starts from the beginning. The stand is used up either way.
     note_session_use();
     let stand = session.replay_stand.take();
+    // A watched run's last page change is not carried past a replay.
+    session.noted.forget(&session.cdp);
     // The script as it is now, loaded once: what this replay runs, what
     // decides whether it carries on, and what its stand is stamped with.
     let saved = store::load_script(&root, case_id).ok().flatten();
@@ -1545,7 +1558,7 @@ pub async fn auto_run_check_preconditions(
         session.tabs_case = Some(case_id);
         // The person starting a case in this browser makes it theirs.
         session.opened_by = OpenedBy::Person;
-        session.replay_stand = None;
+        session.used_otherwise();
         note_session_use();
     }
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
@@ -1588,7 +1601,7 @@ pub async fn auto_run_check_preconditions(
 pub async fn make_way_for_setup(key: String, timing: &crate::browser::timing::Timing) {
     let mut slot = SESSION.lock().await;
     if let Some(s) = slot.as_mut() {
-        s.replay_stand = None;
+        s.used_otherwise();
         note_session_use();
         crate::autorun::setup::make_way(&mut s.cdp, &mut s.account, &mut s.lease, &key, timing).await;
     }
@@ -2691,7 +2704,7 @@ pub async fn auto_run_sign_in(
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     // The person signing in here makes the browser theirs.
     session.opened_by = OpenedBy::Person;
-    session.replay_stand = None;
+    session.used_otherwise();
     note_session_use();
     crate::autorun::signin::sign_in_leased(
         &mut session.cdp,

@@ -3054,8 +3054,9 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
-    // A try uses the browser: no replay carries on from where it stood.
-    session.replay_stand = None;
+    // A try uses the browser: no replay carries on from where it stood, and
+    // no watched step names what happened before it.
+    session.used_otherwise();
     crate::commands::autorun::note_session_use();
     // Another case's tabs go first, before its unreported stop is read by
     // the guard below (`try_for_case` does this too).
