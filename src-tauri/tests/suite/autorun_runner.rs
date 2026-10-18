@@ -1175,7 +1175,7 @@ fn said_page(reads: Vec<Vec<&'static str>>, gone_after_click: bool) -> ScriptedD
                 n += 1;
                 let messages: Vec<serde_json::Value> =
                     reads[i].iter().map(|t| json!({ "text": t, "where": "page" })).collect();
-                Ok(json!({ "result": { "value": { "messages": messages, "step": null } } }))
+                Ok(json!({ "result": { "value": { "messages": messages, "step": null, "path": "/hr/eval/42/rules" } } }))
             }
             "Network.getResponseBody" => Ok(json!({ "body": ASPNET_400, "base64Encoded": false })),
             "Runtime.getProperties" if gone_after_click && clicked => Ok(json!({ "result": [] })),
@@ -1625,14 +1625,14 @@ async fn a_failed_step_remembers_what_the_step_before_was_refused() {
     let save = json!([{ "kind": "click", "selector": { "css": "#save" } }]);
     let three = run_noted(&mut d, save.clone(), &mut noted, 0).await;
     let late = noted.take_late();
-    remember_failed_step(&mut d, dir.path(), "Acme", "Web", &tab_step(save), &three, &late, noted.area(), 7).await;
+    remember_failed_step(dir.path(), "Acme", "Web", &tab_step(save), &three, &late, noted.area(), 7);
     assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty(), "a step that passed was remembered");
     let wait = json!([{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }]);
     let four = run_noted(&mut d, wait.clone(), &mut noted, 1).await;
     assert!(!four[0].ok, "{:?}", four[0]);
     let late = noted.take_late();
     assert_eq!(late.len(), 1, "{late:?}");
-    remember_failed_step(&mut d, dir.path(), "Acme", "Web", &tab_step(wait), &four, &late, noted.area(), 7).await;
+    remember_failed_step(dir.path(), "Acme", "Web", &tab_step(wait), &four, &late, noted.area(), 7);
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
     let rules = rules_of(&map, "Eval Rules");
     let mut messages: Vec<&str> = rules.iter().map(|r| r.message.as_str()).collect();
@@ -1640,6 +1640,7 @@ async fn a_failed_step_remembers_what_the_step_before_was_refused() {
     assert_eq!(messages, ["One or more validation errors occurred.", "Weightage must total 100."], "{rules:?}");
     let click = v2_lib::ai_bridge::describe_action(&serde_json::from_value(json!({ "kind": "click", "selector": { "css": "#save" } })).unwrap());
     assert!(rules.iter().all(|r| r.after == click && r.source == RuleSource::Run && r.case_id == Some(7)), "{rules:?}");
+    assert!(rules.iter().all(|r| r.page == "/hr/eval/:id/rules"), "{rules:?}");
     let file = std::fs::read_to_string(v2_lib::autorun::discovery_map::map_path(dir.path(), "Acme", "Web")).unwrap();
     assert!(!file.contains("00-4bf9-00") && !file.contains("eval-rules"), "{file}");
 }
@@ -1659,6 +1660,108 @@ async fn a_failed_step_with_no_area_is_not_remembered() {
     ]);
     let out = run_noted(&mut d, steps.clone(), &mut noted, 0).await;
     assert!(out[0].ok && !out[0].refused.is_empty() && !out[1].ok, "{out:?}");
-    remember_failed_step(&mut d, dir.path(), "Acme", "Web", &tab_step(steps), &out, &[], noted.area(), 7).await;
+    remember_failed_step(dir.path(), "Acme", "Web", &tab_step(steps), &out, &[], noted.area(), 7);
     assert!(!v2_lib::autorun::discovery_map::map_path(dir.path(), "Acme", "Web").exists());
+}
+
+/// A late refusal of step N's save is filed under the page the save's own
+/// read was on, though the next step moved to another page before the
+/// failure.
+#[tokio::test]
+async fn a_late_refusal_is_filed_under_the_page_of_the_action_it_answered() {
+    use v2_lib::autorun::discovery_map::{load_map, rules_of};
+    use v2_lib::autorun::runner::{remember_failed_step, Noted};
+    let page = common::FakePage::default();
+    let mut clicks = 0usize;
+    let mut d = ScriptedDriver::new(move |method, params| {
+        if method == CLICKED && params["type"] == "mouseReleased" {
+            clicks += 1;
+        }
+        match method {
+            "Runtime.evaluate" if params["expression"] == v2_lib::browser::page_messages::READ_JS => {
+                let path = if clicks <= 1 { "/hr/eval/42/rules" } else { "/hr/goals" };
+                Ok(json!({ "result": { "value": { "messages": [], "step": null, "path": path } } }))
+            }
+            "Network.getResponseBody" => Ok(json!({ "body": ASPNET_400, "base64Encoded": false })),
+            "Runtime.getProperties" if clicks >= 2 => Ok(json!({ "result": [] })),
+            _ => page.answer(method, params),
+        }
+    })
+    .with_net_record();
+    click_saves_late(&mut d, 20);
+    let dir = tempfile::tempdir().unwrap();
+    let mut noted = Noted::default();
+    noted.in_case(Some("Eval Rules"));
+    let save = run_noted(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), &mut noted, 0).await;
+    assert!(save[0].ok && save[0].refused.is_empty(), "{save:?}");
+    // The save is sent and refused only once the step has ended.
+    v2_lib::browser::cdp::Driver::idle(&mut d, std::time::Duration::from_millis(50)).await;
+    noted.take_late();
+    let next = json!([
+        { "kind": "click", "selector": { "css": "#goals-tab" } },
+        { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
+    ]);
+    let out = run_noted(&mut d, next.clone(), &mut noted, 1).await;
+    assert!(out[0].ok && !out[1].ok, "{out:?}");
+    let late = noted.take_late();
+    assert_eq!(late.len(), 1, "{late:?}");
+    remember_failed_step(dir.path(), "Acme", "Web", &tab_step(next), &out, &late, noted.area(), 7);
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let rules = rules_of(&map, "Eval Rules");
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].page, "/hr/eval/:id/rules");
+}
+
+/// A failure TCM made itself - a save the guard stopped, a Stop, a browser
+/// that stopped answering - is no evidence for the message before it; a
+/// refused request is kept all the same.
+#[test]
+fn a_failure_tcm_made_is_no_evidence_for_a_message() {
+    use v2_lib::autorun::discovery_map::{load_map, map_path, rules_of};
+    use v2_lib::autorun::runner::{remember_failed_step, AFTER_STEP_BEFORE_FAILED, AFTER_STOP};
+    use v2_lib::browser::actions::ActionOutcome;
+    let refusal = v2_lib::autorun::refusals::RefusedRequest {
+        method: "POST".into(),
+        path: "/api/eval-rules".into(),
+        status: 400,
+        message: "Weightage must total 100.".into(),
+        trace_id: None,
+        from_body: true,
+    };
+    let clicked = |refused: bool| {
+        let mut o = ActionOutcome::passed("clicked #save");
+        o.page_said = vec![said("Name is required")];
+        o.page_path = Some("/hr/eval/42/rules".into());
+        if refused {
+            o.refused = vec![refusal.clone()];
+        }
+        o
+    };
+    let mut gone = ActionOutcome::failed("the browser did not answer");
+    gone.harness = true;
+    let failures = [
+        ActionOutcome::failed(v2_lib::browser::save_guard::blocked("POST", "https://hr.example/api/x?y=1")),
+        ActionOutcome::failed(AFTER_STOP),
+        ActionOutcome::failed(AFTER_STEP_BEFORE_FAILED),
+        gone,
+    ];
+    let step = tab_step(json!([
+        { "kind": "click", "selector": { "css": "#save" } },
+        { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
+    ]));
+    for failure in failures {
+        let dir = tempfile::tempdir().unwrap();
+        remember_failed_step(dir.path(), "Acme", "Web", &step, &[clicked(false), failure.clone()], &[], Some("A"), 7);
+        assert!(!map_path(dir.path(), "Acme", "Web").exists(), "{failure:?} was taken for evidence");
+        remember_failed_step(dir.path(), "Acme", "Web", &step, &[clicked(true), failure.clone()], &[], Some("A"), 7);
+        let map = load_map(dir.path(), "Acme", "Web").unwrap();
+        let kept: Vec<String> = rules_of(&map, "A").iter().map(|r| r.message.clone()).collect();
+        assert_eq!(kept, ["Weightage must total 100."], "{failure:?}");
+    }
+    // A failure the page gave is evidence.
+    let dir = tempfile::tempdir().unwrap();
+    let check = ActionOutcome::failed("waited 100ms and never saw #goals");
+    remember_failed_step(dir.path(), "Acme", "Web", &step, &[clicked(false), check], &[], Some("A"), 7);
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(rules_of(&map, "A").len(), 1);
 }

@@ -593,8 +593,9 @@ struct Changed {
     /// Everything reported on it so far.
     said: Vec<PageMessage>,
     refused: Vec<RefusedRequest>,
-    /// The page's step indicator after it, when it has one.
+    /// The page's step indicator after it, when it has one, and its path.
     page_step: Option<String>,
+    page_path: String,
 }
 
 /// What the page answered an action of an earlier step after that step
@@ -608,10 +609,11 @@ pub struct LateAnswer {
     pub page_said: Vec<PageMessage>,
     pub refused: Vec<RefusedRequest>,
     /// The action in a few words (`ai_bridge::describe_action`), and the
-    /// page's step indicator after it: for a caller that keeps no record
-    /// of that step and remembers what it was refused.
+    /// page's step indicator and path after it: for a caller that keeps no
+    /// record of that step and remembers what it was refused.
     pub what: String,
     pub page_step: Option<String>,
+    pub page_path: String,
 }
 
 /// Put each late answer on the outcome it belongs to, in the case's step
@@ -624,21 +626,32 @@ pub fn credit_late(steps: &mut [super::StepRecord], late: Vec<LateAnswer>) {
     }
 }
 
+/// Whether a failure is one TCM made itself rather than one the page gave:
+/// a browser that stopped answering, an action not run (a Stop, a step or
+/// an action before it that failed), or a save the no-save guard stopped.
+/// It is no evidence that a message the page showed before it was a
+/// refusal.
+pub fn tcm_made(o: &ActionOutcome) -> bool {
+    use crate::browser::save_guard::{BLOCKED_START, SETUP_FAILED};
+    o.harness
+        || o.detail.starts_with("not run: ")
+        || o.detail.starts_with(BLOCKED_START)
+        || o.detail.starts_with(SETUP_FAILED)
+}
+
 /// What a step that failed in a replay or a run teaches of the
 /// application's rules, kept in the discovery map under `area` - the area
-/// the case is in (`Noted::area`) - as a run's: the requests the
-/// application refused the step's actions up to the failure, and the
-/// messages the page showed after the last action before it that the page
-/// answered - the step before's last, when its answer came late (`late`,
-/// as `Noted::take_late` handed it back). A step that passed, no area, or
-/// nothing to keep keeps nothing; a failure of the browser or a Stop is no
-/// evidence that a message was a refusal. The page is the one the browser
-/// is on now: a refused save leaves the page where it was, and only a step
-/// that has something to keep reads it. A map that could not be written is
-/// only logged.
+/// the case is in (`Noted::area`) - as a run's (`discovery_map::rules_from`):
+/// the requests the application refused the step's actions up to the
+/// failure and the step before's that were answered late (`late`, as
+/// `Noted::take_late` handed it back), and the messages the page showed
+/// after the nearest action before the failure that changed the page. A
+/// failure TCM made itself (`tcm_made`) is no evidence for a message. Each
+/// rule is filed under the page the action's own read after it was on. A
+/// step that passed, or no area, keeps nothing; a map that could not be
+/// written is only logged.
 #[allow(clippy::too_many_arguments)]
-pub async fn remember_failed_step<D: Driver>(
-    d: &mut D,
+pub fn remember_failed_step(
     root: &Path,
     organization: &str,
     project: &str,
@@ -648,54 +661,49 @@ pub async fn remember_failed_step<D: Driver>(
     area: Option<&str>,
     case_id: i32,
 ) {
-    use super::discovery_map::{page_path, remember_refusals_logged, rules_from, ActionAnswer, RuleSource};
+    use super::discovery_map::{remember_refusals_logged, rules_from, ActionAnswer, RuleSource};
     let Some(failed) = outcomes.iter().position(|o| !o.ok) else {
         return;
     };
     if area.is_none_or(|a| a.trim().is_empty()) || project.trim().is_empty() {
         return;
     }
-    let telling = !outcomes[failed].harness && outcomes[failed].detail != AFTER_STOP;
     // The outcomes are the expanded actions': a component's own.
     let actions: Vec<Action> = match components::expand_step(root, organization, project, &step.actions) {
         Ok((expanded, _)) => expanded.into_iter().map(|(a, _)| a).collect(),
         Err(_) => step.actions.clone(),
     };
-    let mut answers: Vec<ActionAnswer> = late
-        .iter()
-        .map(|l| ActionAnswer {
-            step: l.page_step.clone(),
-            after: l.what.clone(),
-            said: l.page_said.clone(),
-            refused: l.refused.clone(),
-            ..Default::default()
-        })
-        .collect();
+    // One answer per earlier action, however many times it came late.
+    let mut answers: Vec<ActionAnswer> = Vec::new();
+    let mut whose: Vec<(usize, usize)> = Vec::new();
+    for l in late {
+        let at = match whose.iter().position(|&w| w == (l.step, l.action)) {
+            Some(at) => at,
+            None => {
+                whose.push((l.step, l.action));
+                answers.push(ActionAnswer {
+                    page: l.page_path.clone(),
+                    step: l.page_step.clone(),
+                    after: l.what.clone(),
+                    changed: true,
+                    ..Default::default()
+                });
+                answers.len() - 1
+            }
+        };
+        answers[at].said.extend(l.page_said.iter().cloned());
+        answers[at].refused.extend(l.refused.iter().cloned());
+    }
     answers.extend(outcomes[..=failed].iter().enumerate().map(|(i, o)| ActionAnswer {
+        page: o.page_path.clone().unwrap_or_default(),
         step: o.page_step.clone(),
         after: actions.get(i).map(crate::ai_bridge::describe_action).unwrap_or_default(),
         said: o.page_said.clone(),
         refused: o.refused.clone(),
-        failed: i == failed && telling,
-        ..Default::default()
+        changed: o.page_path.is_some(),
+        failed: i == failed && !tcm_made(o),
     }));
-    // Of the messages, only the last action's before the failure that the
-    // page answered with one: the one the failure's own words name.
-    let named = answers[..answers.len() - 1].iter().rposition(|a| !a.said.is_empty());
-    for (i, a) in answers.iter_mut().enumerate() {
-        if Some(i) != named {
-            a.said.clear();
-        }
-    }
-    let mut rules = rules_from(&answers, RuleSource::Run, Some(case_id), super::sessions::now_ms());
-    if rules.is_empty() {
-        return;
-    }
-    let page = crate::ai_bridge::current_page(d).await.0;
-    let page = if page.is_empty() { page } else { page_path(&page) };
-    for rule in &mut rules {
-        rule.page = page.clone();
-    }
+    let rules = rules_from(&answers, RuleSource::Run, Some(case_id), super::sessions::now_ms());
     remember_refusals_logged(root, organization, project, area, rules);
 }
 
@@ -737,6 +745,7 @@ fn credit_answer(
             refused,
             what: to.what.clone(),
             page_step: to.page_step.clone(),
+            page_path: to.page_path.clone(),
         });
     }
 }
@@ -1318,6 +1327,7 @@ async fn run_expanded<D: Driver>(
                 let refused = refused_with_ids(d, action_mark, &own).await;
                 outcome.refused = refused.iter().map(|(_, r)| r.clone()).collect();
                 outcome.page_step = after.step.clone();
+                outcome.page_path = Some(after.path.clone().unwrap_or_default());
                 // A try fails on it, like a target that is not there. What a
                 // dialog nobody expected left on its words stays.
                 if run.refusals_fail && outcome.ok && !outcome.refused.is_empty() {
@@ -1339,6 +1349,7 @@ async fn run_expanded<D: Driver>(
                     said: outcome.page_said.clone(),
                     refused: outcome.refused.clone(),
                     page_step: after.step,
+                    page_path: after.path.unwrap_or_default(),
                 });
             } else {
                 d.net_unmark(action_mark);
@@ -1439,6 +1450,7 @@ async fn run_expanded<D: Driver>(
                     failed.page_said = std::mem::take(&mut last.page_said);
                     failed.refused = std::mem::take(&mut last.refused);
                     failed.page_step = last.page_step.take();
+                    failed.page_path = last.page_path.take();
                     *last = failed;
                 }
             }

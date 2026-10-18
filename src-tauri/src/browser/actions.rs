@@ -944,6 +944,12 @@ pub struct ActionOutcome {
     #[serde(skip)]
     #[specta(skip)]
     pub page_step: Option<String>,
+    /// The page's path at the read after this action changed it: `Some`
+    /// once that read was made (empty when the page would not say), `None`
+    /// for an action that changed nothing. In memory only, as `page_step`.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub page_path: Option<String>,
 }
 
 impl ActionOutcome {

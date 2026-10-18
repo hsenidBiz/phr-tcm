@@ -595,8 +595,7 @@ async fn run_case_in<D: Driver>(
         let late = noted.take_late();
         // A step that failed teaches the application's rules, under the
         // area the case is in: once per case, as the case stops there.
-        runner::remember_failed_step(d, root, organization, project, step, &outcomes, &late, noted.area(), script.case_id)
-            .await;
+        runner::remember_failed_step(root, organization, project, step, &outcomes, &late, noted.area(), script.case_id);
         runner::credit_late(&mut steps, late);
         steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot: None, downloads: Vec::new(), tab, dialog, components, duration_ms: Some(ms(asked_at.elapsed())) });
         page_errors_seen += seen_errors;

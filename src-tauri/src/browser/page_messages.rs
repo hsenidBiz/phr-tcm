@@ -6,7 +6,8 @@
 //!
 //! The read is `page_messages.js`, one expression evaluated in the page and
 //! in every same-origin frame of it. It reads text the page itself shows
-//! and nothing else: no address, no request, no value typed into a field.
+//! and the page's path, and nothing else: no host, query or fragment, no
+//! request, no value typed into a field.
 
 use super::cdp::Driver;
 use super::page;
@@ -16,7 +17,7 @@ pub const MAX_MESSAGES: usize = 5;
 /// The longest a reported message is, in characters.
 pub const MAX_MESSAGE_CHARS: usize = 300;
 
-/// The page's read: an expression that evaluates to `{ messages, step }`.
+/// The page's read: an expression that evaluates to `{ messages, step, path }`.
 pub const READ_JS: &str = include_str!("page_messages.js");
 
 /// One message the page is showing, and where: `"page"`, or
@@ -34,6 +35,9 @@ pub struct PageRead {
     pub messages: Vec<PageMessage>,
     /// The active item of the page's step indicator, when it has one.
     pub step: Option<String>,
+    /// The page's path (`location.pathname`): no host, query or fragment.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// Read what the page shows now. A page that cannot be read (closed,

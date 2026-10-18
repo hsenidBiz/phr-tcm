@@ -152,6 +152,7 @@ fn the_line_names_method_path_status_and_trace() {
         status: 400,
         message: "Weightage must total 100.".into(),
         trace_id: Some("00-4bf9-00".into()),
+        from_body: true,
     };
     assert_eq!(
         app_refused_line(&r),
@@ -215,6 +216,7 @@ async fn refused_since_reads_the_body_of_the_requests_that_count() {
             status: 400,
             message: "Weightage must total 100.".into(),
             trace_id: Some("00-4bf9-00".into()),
+            from_body: true,
         }]
     );
     assert_eq!(d.calls_to("Network.getResponseBody"), vec![json!({ "requestId": "1" })], "only a counted request's body is read");
@@ -320,4 +322,30 @@ async fn nothing_is_waited_for_when_no_refusal_is_arriving() {
     let got = refused_since(&mut d, mark, &[]).await;
     assert_eq!(got.len(), 1);
     assert_eq!(clock.load(std::sync::atomic::Ordering::SeqCst), 0, "no idle wait");
+}
+
+/// Only the application's own words are marked as coming from the body: a
+/// body that is gone, a page, or JSON with no message leaves the status to
+/// speak, and that is never a rule.
+#[tokio::test]
+async fn a_status_in_place_of_a_message_is_marked_as_not_from_the_body() {
+    for body in [None, Some("<html><body>Bad</body></html>"), Some(r#"{"traceId":"00-1"}"#)] {
+        let mut d = browser(body);
+        let mark = d.net_mark();
+        let mut events = vec![sent("1", "POST", "https://hr.example/api/eval-rules", "XHR")];
+        events.extend(refused("1", 400));
+        feed(&mut d, events);
+        let got = refused_since(&mut d, mark, &[]).await;
+        assert_eq!(got.len(), 1, "{body:?}");
+        assert!(!got[0].from_body, "{body:?}: {:?}", got[0]);
+    }
+    for body in [r#"{"message":"Weightage must total 100."}"#, "Weightage must total 100.", r#"{"errors":{"Password":["too short"]}}"#] {
+        let mut d = browser(Some(body));
+        let mark = d.net_mark();
+        let mut events = vec![sent("1", "POST", "https://hr.example/api/eval-rules", "XHR")];
+        events.extend(refused("1", 400));
+        feed(&mut d, events);
+        let got = refused_since(&mut d, mark, &[]).await;
+        assert!(got[0].from_body, "{body}: {:?}", got[0]);
+    }
 }

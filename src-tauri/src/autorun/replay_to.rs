@@ -647,8 +647,8 @@ async fn run_steps<D: Driver>(
         // area the case is in, with what came late for the step before.
         if outcomes.iter().any(|o| !o.ok) {
             let late = noted.take_late();
-            runner::remember_failed_step(d, root, organization, project, step, &outcomes, &late, noted.area(), script.case_id)
-                .await;
+            let area = noted.area();
+            runner::remember_failed_step(root, organization, project, step, &outcomes, &late, area, script.case_id);
         }
         if let Some(mut why) = outcomes.iter().find(|o| !o.ok).map(|o| o.detail.clone()) {
             if let Some(other) = guarding_other.filter(|_| crate::browser::save_guard::is_blocked(&why)) {

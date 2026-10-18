@@ -53,7 +53,7 @@ fn a_message_shown_twice_is_two_new_messages() {
 #[tokio::test]
 async fn an_unreadable_page_reads_as_no_messages() {
     let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
-    assert_eq!(read_page_messages(&mut d).await, PageRead { messages: vec![], step: None });
+    assert_eq!(read_page_messages(&mut d).await, PageRead { messages: vec![], step: None, path: None });
 }
 
 #[tokio::test]
@@ -61,7 +61,8 @@ async fn the_pages_answer_is_read_as_messages_and_a_step() {
     let mut d = ScriptedDriver::new(|_, _| {
         Ok(serde_json::json!({ "result": { "value": {
             "messages": [{ "text": "Name is required", "where": "frame Eval Rules" }],
-            "step": "Assessment Components"
+            "step": "Assessment Components",
+            "path": "/hr/eval/42/rules"
         } } }))
     });
     let got = read_page_messages(&mut d).await;
@@ -70,6 +71,7 @@ async fn the_pages_answer_is_read_as_messages_and_a_step() {
         PageRead {
             messages: vec![PageMessage { text: "Name is required".into(), place: "frame Eval Rules".into() }],
             step: Some("Assessment Components".into()),
+            path: Some("/hr/eval/42/rules".into()),
         }
     );
 }

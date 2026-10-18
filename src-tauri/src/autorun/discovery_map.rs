@@ -12,9 +12,9 @@
 //!
 //! An area's `refusals` are the application's validation rules as Auto Run
 //! met them: a request the application refused, or a message the page
-//! showed that a failure then followed. Each is kept once per page and
-//! message (`remember_refusal`), with the action that caused it, and never
-//! a trace id, a status or an address. They are rules of the application,
+//! showed that a failure then followed. Each is kept once per page, wizard
+//! step and message (`remember_refusal`), with the action that caused it,
+//! and never a trace id, a status or an address. They are rules of the application,
 //! not of the map, so exploring the area again keeps them; at most
 //! `MAX_RULES_PER_AREA` are kept, the least recently seen going first.
 //!
@@ -1044,8 +1044,9 @@ fn kept_message(message: &str) -> String {
 
 /// Keep `rule` in `area`'s entry, made when there is none (callers make
 /// the name canonical, `canonical_area`). One met before on the same page
-/// with the same message (`rule_key`) counts once more and takes the newer
-/// action and step. Past `MAX_RULES_PER_AREA` the least recently seen
+/// and wizard step - a wizard keeps one address for every step - with the
+/// same message (`rule_key`) counts once more and takes the newer action.
+/// Past `MAX_RULES_PER_AREA` the least recently seen
 /// goes. A rule with no area, or no words, is never kept: the guide never
 /// shows the bucket for no area.
 pub fn remember_refusal(map: &mut DiscoveryMap, area: &str, rule: RefusalRule) {
@@ -1055,13 +1056,12 @@ pub fn remember_refusal(map: &mut DiscoveryMap, area: &str, rule: RefusalRule) {
     }
     let key = rule_key(&message);
     let a = area_mut(map, area);
-    match a.refusals.iter_mut().find(|r| r.page == rule.page && rule_key(&r.message) == key) {
+    match a.refusals.iter_mut().find(|r| r.page == rule.page && r.step == rule.step && rule_key(&r.message) == key) {
         Some(r) => {
             r.first_seen = r.first_seen.min(rule.first_seen);
             r.last_seen = r.last_seen.max(rule.last_seen);
             r.count = r.count.saturating_add(1);
             r.after = rule.after;
-            r.step = rule.step;
         }
         None => a.refusals.push(RefusalRule { message, count: rule.count.max(1), ..rule }),
     }
@@ -1098,7 +1098,8 @@ pub fn rules_of<'a>(map: &'a DiscoveryMap, area: &str) -> Vec<&'a RefusalRule> {
 /// from it (`rules_from`).
 #[derive(Debug, Clone, Default)]
 pub struct ActionAnswer {
-    /// The page the action ran on (`page_path`).
+    /// The page's path at the read after the action (`rules_from` files it
+    /// under `page_path`); empty when it is not known.
     pub page: String,
     /// The page's wizard step after it, when it shows one.
     pub step: Option<String>,
@@ -1106,33 +1107,43 @@ pub struct ActionAnswer {
     pub after: String,
     pub said: Vec<crate::browser::page_messages::PageMessage>,
     pub refused: Vec<crate::autorun::refusals::RefusedRequest>,
-    /// The action failed, for a reason the page gave: what the page showed
-    /// after an action before it was then a refusal.
+    /// The action changed the page, so the page was read after it.
+    pub changed: bool,
+    /// The action failed, for a reason the page gave rather than TCM: what
+    /// the page showed after the action before it was then a refusal.
     pub failed: bool,
 }
 
 /// The rules a discovery call, a try or a failed step teaches, from what
 /// the page answered each of its actions in order: every request the
-/// application refused, by its message (never its trace id, status or
-/// address), and every message the page showed after an action that a
-/// failure then followed. A message with no failure after it is never one
-/// on its own: it may as well have been "Saved".
+/// application refused, by the message its answer gave (never its trace
+/// id, status or address - a refusal whose answer said nothing, so its
+/// status stands in, is no rule), and the messages the page showed after
+/// the nearest action before a failure that changed the page. A message
+/// with no failure after it is never one on its own: it may as well have
+/// been "Saved".
 pub fn rules_from(answers: &[ActionAnswer], source: RuleSource, case_id: Option<i32>, now: u64) -> Vec<RefusalRule> {
-    let last_failure = answers.iter().rposition(|a| a.failed);
+    let mut followed = vec![false; answers.len()];
+    for f in (0..answers.len()).filter(|&f| answers[f].failed) {
+        if let Some(j) = answers[..f].iter().rposition(|a| a.changed) {
+            followed[j] = true;
+        }
+    }
     let mut out = Vec::new();
     for (i, a) in answers.iter().enumerate() {
-        let followed = last_failure.is_some_and(|f| i < f);
-        let said = a.said.iter().filter(|_| followed).map(|m| m.text.as_str());
+        let said = a.said.iter().filter(|_| followed[i]).map(|m| m.text.as_str());
+        let refused = a.refused.iter().filter(|r| r.from_body).map(|r| r.message.as_str());
+        let page = if a.page.is_empty() { String::new() } else { page_path(&a.page) };
         // The same words twice from one action are one rule, met once.
         let mut met: Vec<String> = Vec::new();
-        for message in a.refused.iter().map(|r| r.message.as_str()).chain(said) {
+        for message in refused.chain(said) {
             let key = rule_key(message);
             if key.is_empty() || met.contains(&key) {
                 continue;
             }
             met.push(key);
             out.push(RefusalRule {
-                page: a.page.clone(),
+                page: page.clone(),
                 step: a.step.clone(),
                 after: a.after.clone(),
                 message: message.to_string(),

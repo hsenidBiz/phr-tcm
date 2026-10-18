@@ -1240,7 +1240,6 @@ pub async fn auto_run_step(
     if outcomes.iter().any(|o| !o.ok) {
         let late = session.noted.take_late();
         crate::autorun::runner::remember_failed_step(
-            &mut session.cdp,
             &root,
             &organization,
             &project,
@@ -1249,8 +1248,7 @@ pub async fn auto_run_step(
             &late,
             session.noted.area(),
             case_id,
-        )
-        .await;
+        );
     }
     Ok(StepRun { outcomes, tab, dialog, page_errors_seen })
 }

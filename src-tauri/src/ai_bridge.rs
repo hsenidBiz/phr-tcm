@@ -3458,12 +3458,11 @@ fn count_blocked_writes<D: crate::browser::cdp::Driver>(
 }
 
 /// What one action a discovery ran did: its outcome, the dialog it raised,
-/// the writes the page sent, and the paths it began and ended on.
+/// the writes the page sent and the path it ended on.
 struct Discovered {
     outcome: crate::browser::actions::ActionOutcome,
     dialogs: Vec<String>,
     writes: Vec<serde_json::Value>,
-    before: String,
     after: String,
 }
 
@@ -3476,8 +3475,8 @@ struct Discovered {
 /// mapped back to the call's actions.
 ///
 /// It also keeps, for each of those steps, what the application's rules
-/// are read from (`discovery_map::rules_from`): the page the action ran
-/// on, the action and what the page answered it. The call keeps them once,
+/// are read from (`discovery_map::rules_from`): the action, the page its
+/// read after it was on, and what the page answered it. The call keeps them once,
 /// when it is over (`remember`).
 #[derive(Default)]
 struct Heard {
@@ -3525,22 +3524,22 @@ impl Heard {
 
     /// What the step action `at` just ran answered it, and what came late
     /// for the call's earlier actions. `one` is the action the step ran (a
-    /// component's own), on the page at `page`.
+    /// component's own).
     fn ran(
         &mut self,
         at: usize,
         outcome: &crate::browser::actions::ActionOutcome,
         one: &crate::browser::actions::Action,
-        page: &str,
     ) {
         self.add(at, outcome.page_said.clone(), outcome.refused.clone());
         if let Some(spot) = self.spots.get_mut(self.noted.step) {
-            spot.page = if page.is_empty() { String::new() } else { crate::autorun::discovery_map::page_path(page) };
+            spot.page = outcome.page_path.clone().unwrap_or_default();
             spot.step = outcome.page_step.clone();
             spot.after = describe_action(one);
             spot.said.extend(outcome.page_said.iter().cloned());
             spot.refused.extend(outcome.refused.iter().cloned());
-            spot.failed = !outcome.ok && !outcome.harness;
+            spot.changed = outcome.page_path.is_some();
+            spot.failed = !outcome.ok && !crate::autorun::runner::tcm_made(outcome);
         }
         self.take_late();
     }
@@ -3724,7 +3723,7 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
             Ok(ran) => ran,
             Err(refused) => return refused,
         };
-        heard.ran(at, &ran.outcome, one, &ran.before);
+        heard.ran(at, &ran.outcome, one);
         // A component that fails on its first action says where the
         // browser is: most often it stands on another screen.
         if component.is_some() && i == 0 && !ran.outcome.ok {
@@ -4283,7 +4282,7 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
             unrecorded(&why);
         }
     }
-    Ok(Discovered { outcome: tried.outcome, dialogs, writes, before, after })
+    Ok(Discovered { outcome: tried.outcome, dialogs, writes, after })
 }
 
 /// End the discovery in `slot`: its browser is closed. A browser the
@@ -5850,7 +5849,7 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
         Ok(tried) => (tried.outcome, tried.steps, tried.answered),
         Err(refused) => return refused,
     };
-    remember_tried(d, root, organization, project, discovery_area, case_id, &answered).await;
+    remember_tried(root, organization, project, discovery_area, case_id, &answered);
     let mut text = format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
     if let Some(shot) = &outcome.screenshot {
         text.push_str(&format!(" (picture: {})", crate::autorun::store::shot_path(root, shot).display()));
@@ -5885,13 +5884,10 @@ struct Tried {
 /// What a try teaches of the application's rules, kept as a discovery's
 /// (`discovery_map::rules_from`) under the area its sightings go to
 /// (`recording_area`): every request the application refused its actions
-/// up to the first that failed, and what the page showed after the ones
-/// before that failure. Only a try with something to keep reads the page
-/// it is on, which a refused action leaves where it was; with no area
-/// known nothing is kept, and a map that could not be written fails
-/// nothing.
-async fn remember_tried<D: crate::browser::cdp::Driver>(
-    d: &mut D,
+/// up to the first that failed, and what the page showed after the nearest
+/// one before that failure that changed the page. With no area known
+/// nothing is kept, and a map that could not be written fails nothing.
+fn remember_tried(
     root: &std::path::Path,
     organization: &str,
     project: &str,
@@ -5899,34 +5895,28 @@ async fn remember_tried<D: crate::browser::cdp::Driver>(
     case_id: i32,
     answered: &[(String, crate::browser::actions::ActionOutcome)],
 ) {
-    use crate::autorun::discovery_map::{page_path, remember_refusals_logged, rules_from, ActionAnswer, RuleSource};
+    use crate::autorun::discovery_map::{remember_refusals_logged, rules_from, ActionAnswer, RuleSource};
     // What the first failure stopped was never carried out.
     let ran = answered.iter().position(|(_, o)| !o.ok).map_or(answered.len(), |i| i + 1);
     let answers: Vec<ActionAnswer> = answered[..ran]
         .iter()
         .map(|(what, o)| ActionAnswer {
+            page: o.page_path.clone().unwrap_or_default(),
             step: o.page_step.clone(),
             after: what.clone(),
             said: o.page_said.clone(),
             refused: o.refused.clone(),
-            failed: !o.ok && !o.harness,
-            ..Default::default()
+            changed: o.page_path.is_some(),
+            failed: !o.ok && !crate::autorun::runner::tcm_made(o),
         })
         .collect();
     let case = (case_id != 0).then_some(case_id);
-    let mut rules = rules_from(&answers, RuleSource::Discovery, case, crate::autorun::sessions::now_ms());
+    let rules = rules_from(&answers, RuleSource::Discovery, case, crate::autorun::sessions::now_ms());
     if rules.is_empty() || project.trim().is_empty() {
         return;
     }
-    let Some(area) = recording_area(root, discovery_area, case) else {
-        return;
-    };
-    let page = current_page(d).await.0;
-    let page = if page.is_empty() { page } else { page_path(&page) };
-    for rule in &mut rules {
-        rule.page = page.clone();
-    }
-    remember_refusals_logged(root, organization, project, Some(&area), rules);
+    let area = recording_area(root, discovery_area, case);
+    remember_refusals_logged(root, organization, project, area.as_deref(), rules);
 }
 
 /// One action, carried out by the runner's own step loop as a step of one

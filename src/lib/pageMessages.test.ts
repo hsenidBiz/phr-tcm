@@ -11,7 +11,7 @@ import { afterEach, expect, test } from "vitest";
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(resolve(here, "../../src-tauri/src/browser/page_messages.js"), "utf8");
 
-type Read = { messages: { text: string; where: string }[]; step: string | null };
+type Read = { messages: { text: string; where: string }[]; step: string | null; path: string };
 const read = (): Read => new Function("return " + src)() as Read;
 
 afterEach(() => {
@@ -27,6 +27,13 @@ test("a toast and a field message are read, a hidden one is not", () => {
   expect(got.messages.map((m) => m.text)).toEqual(["Weightage must total 100.", "Name is required"]);
   expect(got.messages.map((m) => m.where)).toEqual(["page", "page"]);
   expect(got.step).toBeNull();
+});
+
+test("the page's path is read, never its host or query", () => {
+  window.history.pushState({}, "", "/hr/eval/42/rules?token=t0p-secret#top");
+  const got = read();
+  expect(got.path).toBe("/hr/eval/42/rules");
+  expect(JSON.stringify(got)).not.toContain("t0p-secret");
 });
 
 test("a message inside a same-origin iframe names its frame", () => {

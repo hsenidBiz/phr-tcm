@@ -3934,6 +3934,11 @@ const REFUSED_BODY: &str = r#"{"message":"Weightage must total 100.","traceId":"
 /// The message a wizard step shows when its save is not allowed.
 const NO_COMPONENT: &str = "At least one assessment component must be enabled.";
 
+/// The path `telling_page`'s message read gives, and the page a rule
+/// remembered there is filed under.
+const TELLING_PATH: &str = "/hr/eval/42/rules";
+const TELLING_PAGE: &str = "/hr/eval/:id/rules";
+
 /// `stepping_page`, whose messages are `shows(clicks, reads)`: what the
 /// page shows once `clicks` clicks were made, at the `reads`-th read of its
 /// messages since the last click (from 0). Nothing is found on it once
@@ -3952,7 +3957,7 @@ fn telling_page(shows: impl Fn(usize, usize) -> Vec<&'static str> + Send + 'stat
                 let messages: Vec<Value> =
                     shows(clicks, reads).into_iter().map(|t| json!({ "text": t, "where": "page" })).collect();
                 reads += 1;
-                Ok(json!({ "result": { "value": { "messages": messages, "step": null } } }))
+                Ok(json!({ "result": { "value": { "messages": messages, "step": null, "path": TELLING_PATH } } }))
             }
             "Network.getResponseBody" => Ok(json!({ "body": REFUSED_BODY, "base64Encoded": false })),
             "Runtime.getProperties" if clicks >= missing_after => Ok(json!({ "result": [] })),
@@ -4270,7 +4275,7 @@ async fn a_refused_request_in_discovery_is_remembered_without_its_trace_id() {
     let map = load_map(dir.path(), ORG, PROJECT).unwrap();
     let rules = rules_of(&map, "Leave");
     assert_eq!(rules.len(), 1, "{rules:?}");
-    assert_eq!(rules[0].page, "/hr/leave/start");
+    assert_eq!(rules[0].page, TELLING_PAGE);
     assert_eq!(rules[0].after, describe_action(&click("#save")));
     assert_eq!((rules[0].source, rules[0].count), (RuleSource::Discovery, 1));
 
@@ -4314,6 +4319,22 @@ async fn a_message_followed_by_a_failure_is_remembered() {
     let rules = rules_of(&map, "Leave");
     assert_eq!(rules.len(), 1, "{rules:?}");
     assert_eq!(rules[0].message, NO_COMPONENT);
-    assert_eq!(rules[0].page, "/hr/leave/start");
+    assert_eq!(rules[0].page, TELLING_PAGE);
     assert_eq!(rules[0].after, describe_action(&click("#save")));
+}
+
+/// A message two page changes before a failure is not taken for a rule:
+/// only the nearest page change before the failure is.
+#[tokio::test]
+async fn a_message_two_page_changes_before_a_failure_is_not_remembered() {
+    let dir = root_with_recipe_and_account();
+    let saved = |clicks: usize, _| if clicks >= 1 { vec!["Saved."] } else { vec![] };
+    let (mut browser, _) = slot(telling_page(saved, 2), exploring("Leave"));
+    let actions = [click("#a"), click("#b"), expect_goals()];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert!(lines[0].contains(r#"the page showed: "Saved.""#) && lines[2].starts_with("3. failed: "), "{text}");
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    assert!(rules_of(&map, "Leave").is_empty(), "{:?}", rules_of(&map, "Leave"));
 }

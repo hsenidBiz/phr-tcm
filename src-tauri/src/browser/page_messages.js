@@ -192,5 +192,7 @@
 
   let step = null;
   for (let i = 0; i < docs.length && step === null; i++) step = stepIn(docs[i].doc);
-  return { messages, step };
+  // The page's path only - never its host, query or fragment - so what it
+  // answered is filed under the page it was shown on.
+  return { messages, step, path: location.pathname };
 })()

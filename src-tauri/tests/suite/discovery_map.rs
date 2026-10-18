@@ -1018,7 +1018,6 @@ fn a_repeat_counts_and_moves_last_seen() {
     remember_refusal(&mut map, "Eval Rules", rule("/eval/rules", "At least one component must be enabled.", 10));
     let mut again = rule("/eval/rules", "  at least ONE component\n must be enabled. ", 50);
     again.after = "click \"Save & Continue\"".to_string();
-    again.step = Some("Assessment Components".to_string());
     remember_refusal(&mut map, "eval rules", again);
     // Another page is another rule.
     remember_refusal(&mut map, "Eval Rules", rule("/eval/other", "At least one component must be enabled.", 60));
@@ -1029,7 +1028,6 @@ fn a_repeat_counts_and_moves_last_seen() {
     assert_eq!((r.first_seen, r.last_seen, r.count), (10, 50, 2));
     assert_eq!(r.message, "At least one component must be enabled.", "the first wording is kept");
     assert_eq!(r.after, "click \"Save & Continue\"");
-    assert_eq!(r.step.as_deref(), Some("Assessment Components"));
     let newest: Vec<&str> = rules_of(&map, "EVAL RULES").iter().map(|r| r.page.as_str()).collect();
     assert_eq!(newest, ["/eval/other", "/eval/rules"], "most recently seen first");
 }
@@ -1111,4 +1109,83 @@ fn a_rule_is_forgotten_by_its_message() {
     assert!(rules_of(&map, "A").is_empty());
     assert!(!forget_refusal(&mut map, "Nowhere", None, "Name is required."));
     assert_eq!(map.areas.len(), 1, "forgetting made no area");
+}
+
+/// A wizard keeps one address for every step: the same words on two of
+/// its steps are two rules, and a repeat on one step counts on that one.
+#[test]
+fn the_same_message_on_two_wizard_steps_is_two_rules() {
+    let mut map = DiscoveryMap::default();
+    let on = |step: &str, at: u64| RefusalRule { step: Some(step.to_string()), ..rule("/eval/rules", "Name is required.", at) };
+    remember_refusal(&mut map, "A", on("Details", 1));
+    remember_refusal(&mut map, "A", on("Assessment Components", 2));
+    remember_refusal(&mut map, "A", on("Details", 3));
+    let rules = rules_of(&map, "A");
+    assert_eq!(rules.len(), 2, "{rules:?}");
+    assert_eq!((rules[0].step.as_deref(), rules[0].count), (Some("Details"), 2));
+    assert_eq!((rules[1].step.as_deref(), rules[1].count), (Some("Assessment Components"), 1));
+}
+
+fn refusal(message: &str, from_body: bool) -> v2_lib::autorun::refusals::RefusedRequest {
+    v2_lib::autorun::refusals::RefusedRequest {
+        method: "POST".into(),
+        path: "/api/eval-rules".into(),
+        status: 400,
+        message: message.into(),
+        trace_id: Some("00-4bf9-00".into()),
+        from_body,
+    }
+}
+
+fn said(text: &str) -> v2_lib::browser::page_messages::PageMessage {
+    v2_lib::browser::page_messages::PageMessage { text: text.into(), place: "page".into() }
+}
+
+/// A refusal whose answer said nothing - its status stands in for the
+/// message - is no rule; one the application put in words is, filed under
+/// the page its read after the action was on, ids collapsed.
+#[test]
+fn a_status_in_place_of_a_message_is_never_a_rule() {
+    use v2_lib::autorun::discovery_map::{rules_from, ActionAnswer};
+    let answer = |r| ActionAnswer {
+        page: "/hr/eval/42/rules".into(),
+        after: "click css #save".into(),
+        refused: vec![r],
+        changed: true,
+        ..ActionAnswer::default()
+    };
+    assert!(rules_from(&[answer(refusal("400 Bad Request", false))], RuleSource::Discovery, None, 1).is_empty());
+    let rules = rules_from(&[answer(refusal("Weightage must total 100.", true))], RuleSource::Discovery, None, 1);
+    assert_eq!(rules.len(), 1);
+    assert_eq!((rules[0].page.as_str(), rules[0].message.as_str()), ("/hr/eval/:id/rules", "Weightage must total 100."));
+}
+
+/// A message counts only from the nearest action before a failure that
+/// changed the page; a failure TCM made itself counts for nothing, though
+/// a refused request is kept whatever came after it.
+#[test]
+fn only_the_nearest_page_change_before_a_failure_that_the_page_gave_counts() {
+    use v2_lib::autorun::discovery_map::{rules_from, ActionAnswer};
+    let changed = |text: Option<&str>| ActionAnswer {
+        page: "/p".into(),
+        after: "click css #a".into(),
+        said: text.map(said).into_iter().collect(),
+        changed: true,
+        ..ActionAnswer::default()
+    };
+    let check = ActionAnswer { after: "expect_visible css #goals".into(), failed: true, ..ActionAnswer::default() };
+    let quiet_check = ActionAnswer { after: "expect_visible css #x".into(), ..ActionAnswer::default() };
+    // "Saved." two page changes back: no rule.
+    let answers = [changed(Some("Saved.")), changed(None), check.clone()];
+    assert!(rules_from(&answers, RuleSource::Discovery, None, 1).is_empty());
+    // The nearest page change, with a check that changed nothing between.
+    let answers = [changed(Some("Name is required.")), quiet_check.clone(), check.clone()];
+    let rules = rules_from(&answers, RuleSource::Discovery, None, 1);
+    assert_eq!(rules.iter().map(|r| r.message.as_str()).collect::<Vec<_>>(), ["Name is required."]);
+    // A failure the caller found TCM made is not marked failed: nothing.
+    let mine = ActionAnswer { failed: false, ..check.clone() };
+    let mut refused = changed(Some("Name is required."));
+    refused.refused = vec![refusal("Weightage must total 100.", true)];
+    let rules = rules_from(&[refused, mine], RuleSource::Run, Some(7), 1);
+    assert_eq!(rules.iter().map(|r| r.message.as_str()).collect::<Vec<_>>(), ["Weightage must total 100."]);
 }

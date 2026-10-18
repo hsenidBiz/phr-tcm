@@ -45,6 +45,13 @@ pub struct RefusedRequest {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<String>,
+    /// Whether `message` is the application's own words, from its answer's
+    /// body, rather than the status said in words (`status_line`): only
+    /// its own words are a rule worth keeping. Kept in memory, never saved
+    /// and never sent to the webview.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub from_body: bool,
 }
 
 /// How long `refused_since` waits for an answer that has arrived but has
@@ -179,19 +186,24 @@ fn shown(text: &str, cap: usize) -> Option<String> {
 /// not JSON gives its first characters; a page (HTML), no body, or a body
 /// Chrome no longer holds gives the status.
 pub fn message_and_trace(status: u16, body: Option<&str>) -> (String, Option<String>) {
-    let none = || status_line(status);
+    let (message, trace) = body_message_and_trace(body);
+    (message.unwrap_or_else(|| status_line(status)), trace)
+}
+
+/// What the body itself said, when it said anything (`message_and_trace`
+/// gives the status in its place), and the trace id when it gave one.
+fn body_message_and_trace(body: Option<&str>) -> (Option<String>, Option<String>) {
     // A byte-order mark is not part of the body.
     let Some(text) = body.map(|b| b.trim_start_matches('\u{feff}').trim()).filter(|t| !t.is_empty()) else {
-        return (none(), None);
+        return (None, None);
     };
     match serde_json::from_str::<Value>(text) {
         Ok(v) => {
             let v = redact(&v);
-            let message = message_of(&v).and_then(|m| shown(&m, MAX_MESSAGE));
-            (message.unwrap_or_else(none), trace_of(&v))
+            (message_of(&v).and_then(|m| shown(&m, MAX_MESSAGE)), trace_of(&v))
         }
-        Err(_) if text.starts_with('<') => (none(), None),
-        Err(_) => (shown(text, PLAIN_TEXT).unwrap_or_else(none), None),
+        Err(_) if text.starts_with('<') => (None, None),
+        Err(_) => (shown(text, PLAIN_TEXT), None),
     }
 }
 
@@ -222,10 +234,19 @@ pub async fn refused_with_ids<D: Driver>(d: &mut D, mark: u64, own: &[String]) -
             Some(Body::Text(t)) => Some(t.as_str()),
             _ => None,
         };
-        let (message, trace_id) = message_and_trace(status, text);
+        let (said, trace_id) = body_message_and_trace(text);
+        let from_body = said.is_some();
+        let message = said.unwrap_or_else(|| status_line(status));
         out.push((
             e.id.clone(),
-            RefusedRequest { method: e.method.clone(), path: without_query(&e.path_query).to_string(), status, message, trace_id },
+            RefusedRequest {
+                method: e.method.clone(),
+                path: without_query(&e.path_query).to_string(),
+                status,
+                message,
+                trace_id,
+                from_body,
+            },
         ));
     }
     out
