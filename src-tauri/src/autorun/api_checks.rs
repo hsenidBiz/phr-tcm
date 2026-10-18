@@ -138,7 +138,7 @@ fn secret_key(key: &str) -> bool {
 /// `REDACTED`, at any depth. A string is a place JSON hides too: one that
 /// holds a JSON object or array is redacted the same way, and any other
 /// has `hide_members` run over it.
-fn redact(v: &Value) -> Value {
+pub(crate) fn redact(v: &Value) -> Value {
     match v {
         Value::Object(map) => Value::Object(
             map.iter()
@@ -668,7 +668,7 @@ async fn watch<D: Driver>(
 /// Chrome no longer holds it (it refuses the request), `Unreadable` when
 /// its base64 does not decode; a browser that does not answer at all is a
 /// harness failure.
-async fn body_of<D: Driver>(d: &mut D, request_id: &str) -> Result<Body, ActionOutcome> {
+pub(crate) async fn body_of<D: Driver>(d: &mut D, request_id: &str) -> Result<Body, ActionOutcome> {
     let got = match d.call("Network.getResponseBody", json!({ "requestId": request_id })).await {
         Ok(v) => v,
         Err(CdpError::Protocol { .. }) => return Ok(Body::Gone),

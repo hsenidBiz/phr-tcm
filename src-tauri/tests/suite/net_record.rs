@@ -391,3 +391,33 @@ fn a_request_the_page_repeats_is_a_poll_and_never_counts() {
     assert_eq!(rec.quiet(Instant::now()).in_flight, 1);
     assert!(POLL_REPEAT >= Duration::from_secs(1));
 }
+
+/// The type, the site and the poll flag of a request are kept on it: the
+/// site as a yes/no only, never an address.
+#[test]
+fn the_type_site_and_poll_of_a_request_are_kept() {
+    let typed = |id: &str, url: &str, kind: &str, doc: &str| {
+        ev(
+            "Network.requestWillBeSent",
+            json!({ "requestId": id, "type": kind, "documentURL": doc, "request": { "url": url, "method": "GET" } }),
+        )
+    };
+    let mut rec = NetRecord::default();
+    rec.observe(&typed("1", "https://hr.example/api/a", "XHR", "https://hr.example/hr/page"));
+    rec.observe(&typed("2", "https://other.example/api/b", "Fetch", "https://hr.example/hr/page"));
+    rec.observe(&sent("3", "GET", "https://hr.example/api/c"));
+    let all = rec.since(0);
+    assert_eq!(all[0].kind.as_deref(), Some("XHR"));
+    assert!(all[0].same_site);
+    assert_eq!(all[1].kind.as_deref(), Some("Fetch"));
+    assert!(!all[1].same_site, "another host");
+    assert_eq!(all[2].kind, None);
+    assert!(!all[2].same_site, "no document to compare with");
+    assert!(all.iter().all(|e| !e.polling));
+    // The same method and path again: both become polls, the earlier one too.
+    rec.observe(&typed("4", "https://hr.example/api/a?_=2", "XHR", "https://hr.example/hr/page"));
+    let all = rec.since(0);
+    assert!(all[0].polling, "the earlier request turns into a poll");
+    assert!(all[3].polling);
+    assert!(!all[1].polling);
+}

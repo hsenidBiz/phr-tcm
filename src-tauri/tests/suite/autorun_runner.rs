@@ -1130,3 +1130,724 @@ async fn a_step_tells_which_action_it_is_on_and_how_many_failed() {
     progress.reset();
     assert_eq!(progress.now().index, 0);
 }
+
+// ---- What the page said, and what the application refused ------------------
+
+const CLICKED: &str = "Input.dispatchMouseEvent";
+
+/// An ASP.NET problem body, as a refused save answers.
+const ASPNET_400: &str = r#"{"title":"One or more validation errors occurred.","errors":{"Weightage":["Weightage must total 100."]},"traceId":"00-4bf9-00"}"#;
+
+fn net_event(method: &str, params: serde_json::Value) -> v2_lib::browser::cdp::Event {
+    v2_lib::browser::cdp::Event { method: method.to_string(), params }
+}
+
+/// One request the page sends its own server, answered `status`.
+fn page_request(id: &str, method: &str, url: &str, kind: &str, status: u16) -> Vec<v2_lib::browser::cdp::Event> {
+    vec![
+        net_event(
+            "Network.requestWillBeSent",
+            json!({ "requestId": id, "type": kind, "documentURL": "https://hr.example/hr/page",
+                    "request": { "url": url, "method": method } }),
+        ),
+        net_event(
+            "Network.responseReceived",
+            json!({ "requestId": id, "response": { "status": status, "url": url, "mimeType": "application/json" } }),
+        ),
+        net_event("Network.loadingFinished", json!({ "requestId": id })),
+    ]
+}
+
+/// A page whose message reads answer `reads` in turn (the last repeats),
+/// whose refused requests answer `ASPNET_400`, and - with `gone_after_click`
+/// - on which nothing is found once something was clicked.
+fn said_page(reads: Vec<Vec<&'static str>>, gone_after_click: bool) -> ScriptedDriver {
+    let page = common::FakePage::default();
+    let mut n = 0usize;
+    let mut clicked = false;
+    ScriptedDriver::new(move |method, params| {
+        if method == CLICKED {
+            clicked = true;
+        }
+        match method {
+            "Runtime.evaluate" if params["expression"] == v2_lib::browser::page_messages::READ_JS => {
+                let i = n.min(reads.len() - 1);
+                n += 1;
+                let messages: Vec<serde_json::Value> =
+                    reads[i].iter().map(|t| json!({ "text": t, "where": "page" })).collect();
+                Ok(json!({ "result": { "value": { "messages": messages, "step": null, "path": "/hr/eval/42/rules" } } }))
+            }
+            "Network.getResponseBody" => Ok(json!({ "body": ASPNET_400, "base64Encoded": false })),
+            "Runtime.getProperties" if gone_after_click && clicked => Ok(json!({ "result": [] })),
+            _ => page.answer(method, params),
+        }
+    })
+    .with_net_record()
+}
+
+/// The click makes the page send a save that the application refuses.
+fn click_is_refused(d: &mut ScriptedDriver) {
+    for e in page_request("r1", "POST", "https://hr.example/api/eval-rules?x=1", "XHR", 400) {
+        d.on_call_events.push((CLICKED.to_string(), e));
+    }
+}
+
+/// One step, run as a try (`refusals_fail`) or as a run.
+async fn run_said(
+    d: &mut ScriptedDriver,
+    actions: serde_json::Value,
+    refusals_fail: bool,
+) -> Vec<v2_lib::browser::actions::ActionOutcome> {
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
+    let dir = tempfile::tempdir().unwrap();
+    let (mut acc, mut lease) = (None, v2_lib::autorun::lease::Held::supervised());
+    let mut run = InRun { refusals_fail, ..Default::default() };
+    run_step_in_run(
+        d,
+        dir.path(),
+        "Acme",
+        "Web",
+        &tab_step(actions),
+        &quick(),
+        &mut acc,
+        &mut lease,
+        None,
+        AreaRoute::Unknown(NEEDS_SCRIPT_AREA),
+        &mut run,
+    )
+    .await
+    .unwrap()
+}
+
+fn said(text: &str) -> v2_lib::browser::page_messages::PageMessage {
+    v2_lib::browser::page_messages::PageMessage { text: text.to_string(), place: "page".to_string() }
+}
+
+#[tokio::test]
+async fn a_try_fails_on_a_refused_request() {
+    let mut d = said_page(vec![vec![]], false);
+    click_is_refused(&mut d);
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), true).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.starts_with(r#"the app refused: "One or more validation errors occurred.""#), "{}", out[0].detail);
+    assert!(out[0].detail.ends_with("trace id 00-4bf9-00)"), "{}", out[0].detail);
+    assert!(!out[0].detail.contains("x=1"), "no query: {}", out[0].detail);
+    assert_eq!(out[0].refused.len(), 1);
+}
+
+#[tokio::test]
+async fn a_try_that_is_refused_also_says_what_the_page_showed() {
+    let mut d = said_page(vec![vec![], vec!["Weightage must total 100."]], false);
+    click_is_refused(&mut d);
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), true).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(
+        out[0].detail.ends_with(r#"trace id 00-4bf9-00); the page showed: "Weightage must total 100.""#),
+        "{}",
+        out[0].detail
+    );
+}
+
+#[tokio::test]
+async fn a_run_reports_but_does_not_fail_on_a_refusal() {
+    let mut d = said_page(vec![vec![], vec!["Weightage must total 100."]], false);
+    click_is_refused(&mut d);
+    let out = run_said(
+        &mut d,
+        json!([
+            { "kind": "click", "selector": { "css": "#save" } },
+            { "kind": "expect_visible", "selector": { "css": "#weightage-error" } }
+        ]),
+        false,
+    )
+    .await;
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert_eq!(out[0].refused.len(), 1, "{out:?}");
+    assert_eq!(out[0].page_said, vec![said("Weightage must total 100.")]);
+    assert!(out[1].refused.is_empty() && out[1].page_said.is_empty(), "a check changes nothing: {:?}", out[1]);
+}
+
+#[tokio::test]
+async fn a_run_step_that_fails_after_a_refusal_names_it() {
+    use v2_lib::autorun::patterns::{classify, ErrorClass};
+    let mut d = said_page(vec![vec![]], true);
+    click_is_refused(&mut d);
+    let out = run_said(
+        &mut d,
+        json!([
+            { "kind": "click", "selector": { "css": "#save" } },
+            { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
+        ]),
+        false,
+    )
+    .await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(!out[1].ok, "{:?}", out[1]);
+    assert!(out[1].detail.contains(" - after click"), "{}", out[1].detail);
+    assert!(out[1].detail.contains("the app refused: "), "{}", out[1].detail);
+    assert_eq!(classify(&out[1].detail, None), ErrorClass::AppRefused);
+}
+
+#[tokio::test]
+async fn a_run_step_that_fails_after_a_message_names_it_and_keeps_its_class() {
+    use v2_lib::autorun::patterns::{classify, ErrorClass};
+    let mut d = said_page(vec![vec![], vec!["At least one component must be enabled."]], true);
+    let out = run_said(
+        &mut d,
+        json!([
+            { "kind": "click", "selector": { "css": "#save" } },
+            { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
+        ]),
+        false,
+    )
+    .await;
+    assert!(!out[1].ok, "{:?}", out[1]);
+    assert!(out[1].detail.contains(" - after click "), "{}", out[1].detail);
+    assert!(
+        out[1].detail.ends_with(r#"the page showed: "At least one component must be enabled.""#),
+        "{}",
+        out[1].detail
+    );
+    assert_eq!(classify(&out[1].detail, None), ErrorClass::NotFound);
+}
+
+#[tokio::test]
+async fn a_message_after_a_click_is_reported_not_failed() {
+    let mut d = said_page(vec![vec![], vec!["Saved."]], false);
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), true).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].page_said, vec![said("Saved.")]);
+    assert!(out[0].refused.is_empty());
+}
+
+#[tokio::test]
+async fn a_late_message_goes_to_the_action_that_caused_it() {
+    let mut d = said_page(vec![vec![], vec![], vec!["Name is required"]], false);
+    let out = run_said(
+        &mut d,
+        json!([
+            { "kind": "click", "selector": { "css": "#save" } },
+            { "kind": "click", "selector": { "css": "#next" } }
+        ]),
+        false,
+    )
+    .await;
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert_eq!(out[0].page_said, vec![said("Name is required")]);
+    assert!(out[1].page_said.is_empty(), "{:?}", out[1]);
+}
+
+#[tokio::test]
+async fn the_runs_own_api_request_is_not_a_refusal() {
+    use v2_lib::autorun::api_checks::GET_FN;
+    let mut d = ScriptedDriver::new(|method, params| match method {
+        "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == GET_FN => Ok(json!({ "result": { "value": {
+            "status": 400, "text": "", "sameOrigin": true, "redirected": false, "finalPath": "/api/cycles/42"
+        } } })),
+        "Network.getResponseBody" => Ok(json!({ "body": ASPNET_400, "base64Encoded": false })),
+        _ => Ok(json!({})),
+    })
+    .with_net_record();
+    for e in page_request("own-1", "GET", "https://hr.example/api/cycles/42", "Fetch", 400) {
+        d.on_call_events.push(("Runtime.callFunctionOn".to_string(), e));
+    }
+    let out =
+        run_said(&mut d, json!([{ "kind": "api_request", "path": "/api/cycles/42", "expect": { "status": 400 } }]), true)
+            .await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(out.iter().all(|o| o.refused.is_empty()), "{out:?}");
+}
+
+#[test]
+fn a_page_note_quotes_each_message() {
+    use v2_lib::autorun::runner::{page_showed_note, PAGE_SHOWED};
+    assert_eq!(page_showed_note(&[said("a"), said("b")]), r#"the page showed: "a"; "b""#);
+    assert!(page_showed_note(&[said("a")]).starts_with(PAGE_SHOWED));
+}
+
+#[test]
+fn an_outcome_with_nothing_said_saves_as_before() {
+    let o = v2_lib::browser::actions::ActionOutcome::passed("clicked");
+    let v = serde_json::to_value(&o).unwrap();
+    assert!(v.get("page_said").is_none() && v.get("refused").is_none(), "{v}");
+    let back: v2_lib::browser::actions::ActionOutcome =
+        serde_json::from_value(json!({ "ok": true, "detail": "clicked" })).unwrap();
+    assert_eq!(back, o);
+}
+
+// ---- Answers that come after the action ------------------------------------
+
+/// The click's save starts at once and is answered `after_ms` of waiting
+/// later.
+fn click_is_refused_after(d: &mut ScriptedDriver, after_ms: u64) {
+    let mut events = page_request("r1", "POST", "https://hr.example/api/eval-rules", "XHR", 400);
+    d.on_call_events.push((CLICKED.to_string(), events.remove(0)));
+    for e in events {
+        d.on_idle_after_call.push((CLICKED.to_string(), after_ms, e));
+    }
+}
+
+/// The click's save is sent, and answered, only `after_ms` of waiting
+/// after the click: after the click's own reads are done.
+fn click_saves_late(d: &mut ScriptedDriver, after_ms: u64) {
+    for e in page_request("r1", "POST", "https://hr.example/api/eval-rules", "XHR", 400) {
+        d.on_idle_after_call.push((CLICKED.to_string(), after_ms, e));
+    }
+}
+
+fn fake_clock(d: &mut ScriptedDriver) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
+    let clock = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    d.idle_clock = Some(clock.clone());
+    clock
+}
+
+#[tokio::test]
+async fn a_refusal_answered_after_the_click_is_reported_and_fails_a_try() {
+    let mut d = said_page(vec![vec![]], false);
+    click_is_refused_after(&mut d, 150);
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), true).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.starts_with("the app refused: "), "{}", out[0].detail);
+    assert_eq!(out[0].refused.len(), 1);
+    // A run reports it.
+    let mut d = said_page(vec![vec![]], false);
+    click_is_refused_after(&mut d, 150);
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), false).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].refused.len(), 1, "{out:?}");
+}
+
+#[tokio::test]
+async fn a_request_that_never_answers_is_waited_for_three_seconds_and_fails_nothing() {
+    let click = json!([{ "kind": "click", "selector": { "css": "#save" } }]);
+    let mut d = said_page(vec![vec![]], false);
+    let quiet = fake_clock(&mut d);
+    run_said(&mut d, click.clone(), true).await;
+    let mut d = said_page(vec![vec![]], false);
+    let waiting = fake_clock(&mut d);
+    let sent = page_request("r1", "POST", "https://hr.example/api/eval-rules", "XHR", 400).remove(0);
+    d.on_call_events.push((CLICKED.to_string(), sent));
+    let out = run_said(&mut d, click, true).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(out[0].refused.is_empty());
+    let extra = waiting.load(Ordering::SeqCst) - quiet.load(Ordering::SeqCst);
+    assert_eq!(extra, v2_lib::autorun::runner::ANSWER_WAIT_MS, "waited {extra} ms for the answer");
+}
+
+#[tokio::test]
+async fn a_request_answered_with_the_click_costs_no_wait() {
+    let click = json!([{ "kind": "click", "selector": { "css": "#save" } }]);
+    let mut d = said_page(vec![vec![]], false);
+    let quiet = fake_clock(&mut d);
+    run_said(&mut d, click.clone(), false).await;
+    let mut d = said_page(vec![vec![]], false);
+    let answered = fake_clock(&mut d);
+    for e in page_request("r1", "POST", "https://hr.example/api/eval-rules", "XHR", 200) {
+        d.on_call_events.push((CLICKED.to_string(), e));
+    }
+    run_said(&mut d, click, false).await;
+    assert_eq!(answered.load(Ordering::SeqCst), quiet.load(Ordering::SeqCst));
+}
+
+/// Runs `actions` as step `at` of a case whose last page change `noted`
+/// carries.
+async fn run_noted(
+    d: &mut ScriptedDriver,
+    actions: serde_json::Value,
+    noted: &mut v2_lib::autorun::runner::Noted,
+    at: usize,
+) -> Vec<v2_lib::browser::actions::ActionOutcome> {
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
+    let dir = tempfile::tempdir().unwrap();
+    let (mut acc, mut lease) = (None, v2_lib::autorun::lease::Held::supervised());
+    noted.step = at;
+    let mut run = InRun { noted: Some(noted), ..Default::default() };
+    run_step_in_run(
+        d,
+        dir.path(),
+        "Acme",
+        "Web",
+        &tab_step(actions),
+        &quick(),
+        &mut acc,
+        &mut lease,
+        None,
+        AreaRoute::Unknown(NEEDS_SCRIPT_AREA),
+        &mut run,
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_step_that_fails_names_what_the_step_before_caused() {
+    use v2_lib::autorun::patterns::{classify, ErrorClass};
+    use v2_lib::autorun::runner::{credit_late, Noted};
+    // Step 3's click; the save, its 400 and the toast come only once the
+    // step has ended.
+    let mut d = said_page(vec![vec![], vec![], vec!["Weightage must total 100."]], true);
+    click_saves_late(&mut d, 20);
+    let mut noted = Noted::default();
+    let three = run_noted(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), &mut noted, 0).await;
+    assert!(three[0].ok && three[0].refused.is_empty(), "{three:?}");
+    let four = run_noted(
+        &mut d,
+        json!([{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }]),
+        &mut noted,
+        1,
+    )
+    .await;
+    assert!(!four[0].ok, "{:?}", four[0]);
+    assert!(four[0].detail.contains(" - after click "), "{}", four[0].detail);
+    assert!(four[0].detail.contains("the app refused: \"One or more validation errors occurred.\""), "{}", four[0].detail);
+    assert!(four[0].detail.ends_with(r#"the page showed: "Weightage must total 100.""#), "{}", four[0].detail);
+    assert_eq!(classify(&four[0].detail, None), ErrorClass::AppRefused);
+    // What came late is put on step 3's own record.
+    let late = noted.take_late();
+    assert_eq!(late.len(), 1, "{late:?}");
+    assert_eq!((late[0].step, late[0].action), (0, 0));
+    let mut steps = vec![v2_lib::autorun::StepRecord {
+        step_number: 3,
+        outcomes: three,
+        screenshot: None,
+        downloads: vec![],
+        tab: None,
+        dialog: None,
+        components: Vec::new(),
+        duration_ms: None,
+    }];
+    credit_late(&mut steps, late);
+    assert_eq!(steps[0].outcomes[0].refused.len(), 1);
+    assert_eq!(steps[0].outcomes[0].page_said, vec![said("Weightage must total 100.")]);
+}
+
+#[tokio::test]
+async fn a_wait_that_fails_names_what_the_click_before_it_caused_late() {
+    use v2_lib::autorun::patterns::{classify, ErrorClass};
+    let mut d = said_page(vec![vec![], vec![], vec!["Weightage must total 100."]], true);
+    click_saves_late(&mut d, 20);
+    let out = run_said(
+        &mut d,
+        json!([
+            { "kind": "click", "selector": { "css": "#save" } },
+            { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
+        ]),
+        false,
+    )
+    .await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].refused.len(), 1, "credited to the click: {out:?}");
+    assert_eq!(out[0].page_said, vec![said("Weightage must total 100.")]);
+    assert!(!out[1].ok, "{:?}", out[1]);
+    assert!(out[1].detail.contains(" - after click ") && out[1].detail.contains("the app refused: "), "{}", out[1].detail);
+    assert_eq!(classify(&out[1].detail, None), ErrorClass::AppRefused);
+}
+
+#[tokio::test]
+async fn twenty_clicks_never_push_out_the_steps_own_mark() {
+    let mut d = said_page(vec![vec![]], false).with_mark_ring();
+    // A request from before the step: never the step's.
+    for e in page_request("old", "GET", "https://hr.example/api/list", "XHR", 200) {
+        d.net.as_mut().unwrap().observe(&e);
+    }
+    let mut actions: Vec<serde_json::Value> =
+        (0..20).map(|i| json!({ "kind": "click", "selector": { "css": format!("#b{i}") } })).collect();
+    actions.push(json!({ "kind": "expect_response", "url_contains": "/api/list", "timeout_ms": 100 }));
+    let out = run_said(&mut d, serde_json::Value::Array(actions), false).await;
+    assert!(out[..20].iter().all(|o| o.ok), "{out:?}");
+    assert!(!out[20].ok, "an earlier step's request was taken for this one's: {:?}", out[20]);
+}
+
+#[tokio::test]
+async fn a_new_page_is_not_what_a_navigation_said() {
+    let mut d = said_page(vec![vec![], vec!["Welcome back"]], false);
+    d.on_every_call_events.push((
+        "Page.navigate".into(),
+        v2_lib::browser::cdp::Event {
+            method: "Page.lifecycleEvent".into(),
+            params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }),
+        },
+    ));
+    let out = run_said(&mut d, json!([{ "kind": "navigate", "url": "https://hr.example/home" }]), false).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(out[0].page_said.is_empty(), "{:?}", out[0]);
+}
+
+#[tokio::test]
+async fn a_try_that_is_refused_keeps_the_dialog_it_met() {
+    let mut d = said_page(vec![vec![]], false);
+    click_is_refused(&mut d);
+    d.dialogs_on_call.push((CLICKED.to_string(), "confirm".to_string(), "Leave?".to_string()));
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), true).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.starts_with("the app refused: "), "{}", out[0].detail);
+    assert!(out[0].detail.ends_with(r#" (a confirm dialog was accepted: "Leave?")"#), "{}", out[0].detail);
+}
+
+/// A watched step clicks; then something else uses the browser (a replay,
+/// a try, a sign-in), which forgets the watched run's last page change. A
+/// later watched step that fails names nothing from before that use.
+#[tokio::test]
+async fn a_watched_step_after_another_use_names_nothing_from_before_it() {
+    use v2_lib::autorun::runner::Noted;
+    let mut d = said_page(vec![vec![], vec![], vec!["Weightage must total 100."]], true);
+    click_saves_late(&mut d, 20);
+    let mut noted = Noted::default();
+    let two = run_noted(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), &mut noted, 0).await;
+    assert!(two[0].ok, "{two:?}");
+    // The replay, try or sign-in in between.
+    noted.forget(&d);
+    let five = run_noted(
+        &mut d,
+        json!([{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }]),
+        &mut noted,
+        1,
+    )
+    .await;
+    assert!(!five[0].ok, "{:?}", five[0]);
+    assert!(!five[0].detail.contains(" - after "), "{}", five[0].detail);
+    assert!(noted.take_late().is_empty());
+}
+
+/// A step that fails in a run teaches the application's rules: the
+/// refusal and the message the step before's save got are kept under the
+/// case's area, as a run's - and a step that passed teaches nothing.
+#[tokio::test]
+async fn a_failed_step_remembers_what_the_step_before_was_refused() {
+    use v2_lib::autorun::discovery_map::{load_map, rules_of, RuleSource};
+    use v2_lib::autorun::runner::{remember_failed_step, Noted};
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = said_page(vec![vec![], vec![], vec!["Weightage must total 100."]], true);
+    click_saves_late(&mut d, 20);
+    let mut noted = Noted::default();
+    noted.in_case(Some("Eval Rules"));
+    let save = json!([{ "kind": "click", "selector": { "css": "#save" } }]);
+    let three = run_noted(&mut d, save.clone(), &mut noted, 0).await;
+    let late = noted.take_late();
+    remember_failed_step(dir.path(), "Acme", "Web", &tab_step(save), &three, &late, noted.area(), 7);
+    assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty(), "a step that passed was remembered");
+    let wait = json!([{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }]);
+    let four = run_noted(&mut d, wait.clone(), &mut noted, 1).await;
+    assert!(!four[0].ok, "{:?}", four[0]);
+    let late = noted.take_late();
+    assert_eq!(late.len(), 1, "{late:?}");
+    remember_failed_step(dir.path(), "Acme", "Web", &tab_step(wait), &four, &late, noted.area(), 7);
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let rules = rules_of(&map, "Eval Rules");
+    let mut messages: Vec<&str> = rules.iter().map(|r| r.message.as_str()).collect();
+    messages.sort();
+    assert_eq!(messages, ["One or more validation errors occurred.", "Weightage must total 100."], "{rules:?}");
+    let click = v2_lib::ai_bridge::describe_action(&serde_json::from_value(json!({ "kind": "click", "selector": { "css": "#save" } })).unwrap());
+    assert!(rules.iter().all(|r| r.after == click && r.source == RuleSource::Run && r.case_id == Some(7)), "{rules:?}");
+    assert!(rules.iter().all(|r| r.page == "/hr/eval/:id/rules"), "{rules:?}");
+    let file = std::fs::read_to_string(v2_lib::autorun::discovery_map::map_path(dir.path(), "Acme", "Web")).unwrap();
+    assert!(!file.contains("00-4bf9-00") && !file.contains("eval-rules"), "{file}");
+}
+
+/// With no area known, a failed step is not remembered anywhere.
+#[tokio::test]
+async fn a_failed_step_with_no_area_is_not_remembered() {
+    use v2_lib::autorun::runner::{remember_failed_step, Noted};
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = said_page(vec![vec![]], true);
+    click_is_refused(&mut d);
+    let mut noted = Noted::default();
+    noted.in_case(None);
+    let steps = json!([
+        { "kind": "click", "selector": { "css": "#save" } },
+        { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
+    ]);
+    let out = run_noted(&mut d, steps.clone(), &mut noted, 0).await;
+    assert!(out[0].ok && !out[0].refused.is_empty() && !out[1].ok, "{out:?}");
+    remember_failed_step(dir.path(), "Acme", "Web", &tab_step(steps), &out, &[], noted.area(), 7);
+    assert!(!v2_lib::autorun::discovery_map::map_path(dir.path(), "Acme", "Web").exists());
+}
+
+/// A late refusal of step N's save is filed under the page the save's own
+/// read was on, though the next step moved to another page before the
+/// failure.
+#[tokio::test]
+async fn a_late_refusal_is_filed_under_the_page_of_the_action_it_answered() {
+    use v2_lib::autorun::discovery_map::{load_map, rules_of};
+    use v2_lib::autorun::runner::{remember_failed_step, Noted};
+    let page = common::FakePage::default();
+    let mut clicks = 0usize;
+    let mut d = ScriptedDriver::new(move |method, params| {
+        if method == CLICKED && params["type"] == "mouseReleased" {
+            clicks += 1;
+        }
+        match method {
+            "Runtime.evaluate" if params["expression"] == v2_lib::browser::page_messages::READ_JS => {
+                let path = if clicks <= 1 { "/hr/eval/42/rules" } else { "/hr/goals" };
+                Ok(json!({ "result": { "value": { "messages": [], "step": null, "path": path } } }))
+            }
+            "Network.getResponseBody" => Ok(json!({ "body": ASPNET_400, "base64Encoded": false })),
+            "Runtime.getProperties" if clicks >= 2 => Ok(json!({ "result": [] })),
+            _ => page.answer(method, params),
+        }
+    })
+    .with_net_record();
+    click_saves_late(&mut d, 20);
+    let dir = tempfile::tempdir().unwrap();
+    let mut noted = Noted::default();
+    noted.in_case(Some("Eval Rules"));
+    let save = run_noted(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), &mut noted, 0).await;
+    assert!(save[0].ok && save[0].refused.is_empty(), "{save:?}");
+    // The save is sent and refused only once the step has ended.
+    v2_lib::browser::cdp::Driver::idle(&mut d, std::time::Duration::from_millis(50)).await;
+    noted.take_late();
+    let next = json!([
+        { "kind": "click", "selector": { "css": "#goals-tab" } },
+        { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
+    ]);
+    let out = run_noted(&mut d, next.clone(), &mut noted, 1).await;
+    assert!(out[0].ok && !out[1].ok, "{out:?}");
+    let late = noted.take_late();
+    assert_eq!(late.len(), 1, "{late:?}");
+    remember_failed_step(dir.path(), "Acme", "Web", &tab_step(next), &out, &late, noted.area(), 7);
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let rules = rules_of(&map, "Eval Rules");
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].page, "/hr/eval/:id/rules");
+}
+
+/// A failure TCM made itself - a save the guard stopped, a Stop, a browser
+/// that stopped answering - is no evidence for the message before it; a
+/// refused request is kept all the same.
+#[test]
+fn a_failure_tcm_made_is_no_evidence_for_a_message() {
+    use v2_lib::autorun::discovery_map::{load_map, map_path, rules_of};
+    use v2_lib::autorun::runner::{remember_failed_step, AFTER_STEP_BEFORE_FAILED, AFTER_STOP};
+    use v2_lib::browser::actions::ActionOutcome;
+    let refusal = v2_lib::autorun::refusals::RefusedRequest {
+        method: "POST".into(),
+        path: "/api/eval-rules".into(),
+        status: 400,
+        message: "Weightage must total 100.".into(),
+        trace_id: None,
+        from_body: true,
+    };
+    let clicked = |refused: bool| {
+        let mut o = ActionOutcome::passed("clicked #save");
+        o.page_said = vec![said("Name is required")];
+        o.page_path = Some("/hr/eval/42/rules".into());
+        if refused {
+            o.refused = vec![refusal.clone()];
+        }
+        o
+    };
+    let mut gone = ActionOutcome::failed("the browser did not answer");
+    gone.harness = true;
+    let failures = [
+        ActionOutcome::failed(v2_lib::browser::save_guard::blocked("POST", "https://hr.example/api/x?y=1")),
+        ActionOutcome::failed(AFTER_STOP),
+        ActionOutcome::failed(AFTER_STEP_BEFORE_FAILED),
+        ActionOutcome::failed(v2_lib::browser::cdp::TAB_HELD_UNGUARDED),
+        ActionOutcome::failed(v2_lib::browser::cdp::TAB_OPEN_UNGUARDED),
+        gone,
+    ];
+    let step = tab_step(json!([
+        { "kind": "click", "selector": { "css": "#save" } },
+        { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
+    ]));
+    for failure in failures {
+        let dir = tempfile::tempdir().unwrap();
+        remember_failed_step(dir.path(), "Acme", "Web", &step, &[clicked(false), failure.clone()], &[], Some("A"), 7);
+        assert!(!map_path(dir.path(), "Acme", "Web").exists(), "{failure:?} was taken for evidence");
+        remember_failed_step(dir.path(), "Acme", "Web", &step, &[clicked(true), failure.clone()], &[], Some("A"), 7);
+        let map = load_map(dir.path(), "Acme", "Web").unwrap();
+        let kept: Vec<String> = rules_of(&map, "A").iter().map(|r| r.message.clone()).collect();
+        assert_eq!(kept, ["Weightage must total 100."], "{failure:?}");
+    }
+    // A failure the page gave is evidence.
+    let dir = tempfile::tempdir().unwrap();
+    let check = ActionOutcome::failed("waited 100ms and never saw #goals");
+    remember_failed_step(dir.path(), "Acme", "Web", &step, &[clicked(false), check], &[], Some("A"), 7);
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert_eq!(rules_of(&map, "A").len(), 1);
+}
+
+/// A mark the whole browser no longer holds reads nothing, never the
+/// record from its start: a request refused long before is not taken for
+/// one since the mark.
+#[tokio::test]
+async fn a_mark_no_longer_held_finds_no_refusal() {
+    use v2_lib::autorun::refusals::refused_since;
+    use v2_lib::browser::cdp::{Driver, MAX_NET_MARKS};
+    let mut d = said_page(vec![vec![]], false).with_mark_ring();
+    for e in page_request("old", "POST", "https://hr.example/api/eval-rules", "XHR", 400) {
+        d.net.as_mut().unwrap().observe(&e);
+    }
+    let mark = d.net_mark();
+    // Another address: the same one twice is taken for a poll.
+    for e in page_request("new", "POST", "https://hr.example/api/goals", "XHR", 400) {
+        d.net.as_mut().unwrap().observe(&e);
+    }
+    assert_eq!(refused_since(&mut d, mark, &[]).await.len(), 1, "a mark held reads what came after it");
+    for _ in 0..MAX_NET_MARKS {
+        d.net_mark();
+    }
+    assert!(refused_since(&mut d, mark, &[]).await.is_empty(), "a mark pushed out read the whole record");
+    assert!(d.net_since_held(mark).is_none());
+}
+
+/// The case's last page change whose mark was pushed out is put nothing
+/// more on: a later failure names no refusal from before it.
+#[tokio::test]
+async fn a_page_change_whose_mark_is_gone_is_credited_nothing() {
+    use v2_lib::autorun::runner::Noted;
+    use v2_lib::browser::cdp::{Driver, MAX_NET_MARKS};
+    let mut d = said_page(vec![vec![]], true).with_mark_ring();
+    for e in page_request("old", "POST", "https://hr.example/api/eval-rules", "XHR", 400) {
+        d.net.as_mut().unwrap().observe(&e);
+    }
+    let mut noted = Noted::default();
+    let three = run_noted(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), &mut noted, 0).await;
+    assert!(three[0].ok && three[0].refused.is_empty(), "{three:?}");
+    for _ in 0..MAX_NET_MARKS {
+        d.net_mark();
+    }
+    let four = run_noted(
+        &mut d,
+        json!([{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }]),
+        &mut noted,
+        1,
+    )
+    .await;
+    assert!(!four[0].ok, "{:?}", four[0]);
+    assert!(!four[0].detail.contains("the app refused"), "{}", four[0].detail);
+    assert!(noted.take_late().is_empty());
+}
+
+/// An unattended case: step 3's save is refused within the click's own
+/// reads, so the step passes; step 4 then fails, and its failure line names
+/// that refusal. The run keeps it as a rule of the case's area.
+#[tokio::test]
+async fn a_run_remembers_the_refusal_its_failure_names_from_the_step_before() {
+    use v2_lib::autorun::discovery_map::{load_map, rules_of, RuleSource};
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = said_page(vec![vec![]], true);
+    click_is_refused(&mut d);
+    let case: v2_lib::autorun::CaseScript = serde_json::from_value(json!({
+        "case_id": 7,
+        "title": "case 7",
+        "area": "Eval Rules",
+        "steps": [
+            { "step_number": 3, "actions": [{ "kind": "click", "selector": { "css": "#save" } }] },
+            { "step_number": 4, "actions": [{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }] }
+        ]
+    }))
+    .unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let rec = v2_lib::autorun::replay::run_case(&mut d, dir.path(), "Acme", "Web", &case, &quick(), &cancel, &mut |_| {}).await;
+    let three = &rec.steps[0].outcomes[0];
+    assert!(three.ok && three.refused.len() == 1, "{three:?}");
+    let four = &rec.steps[1].outcomes[0];
+    assert!(!four.ok && four.detail.contains(" - after click "), "{four:?}");
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let rules = rules_of(&map, "Eval Rules");
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].message, "One or more validation errors occurred.");
+    assert_eq!((rules[0].source, rules[0].case_id), (RuleSource::Run, Some(7)));
+}

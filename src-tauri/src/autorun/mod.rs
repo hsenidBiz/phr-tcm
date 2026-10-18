@@ -33,6 +33,7 @@ pub mod publish;
 pub mod quirks;
 pub mod recipe;
 pub mod recorder;
+pub mod refusals;
 pub mod replay;
 pub mod reset_wait;
 pub mod replay_record;

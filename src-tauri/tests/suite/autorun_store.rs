@@ -118,6 +118,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
                     screenshot: None,
                     harness: false,
                     component: None,
+                    ..Default::default()
                 }],
                 screenshot: None,
                 downloads: vec![],

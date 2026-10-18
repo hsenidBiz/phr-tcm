@@ -2151,6 +2151,43 @@ async fn a_quirk_can_be_recorded_on_its_own() {
     assert_eq!(status, 400, "{out}");
 }
 
+/// The rules the project's map keeps are in the live guide, quick or full,
+/// and a project with none adds no heading.
+#[tokio::test]
+async fn the_route_appends_the_projects_validation_rules() {
+    use v2_lib::autorun::discovery_map::{remember_refusals, RefusalRule, RuleSource};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+
+    let (_, before) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert!(!before.contains("## Known validation rules
+"), "{before}");
+
+    let rule = RefusalRule {
+        page: "/eval/rules".into(),
+        step: None,
+        after: "click css #save".into(),
+        message: "Weightage must total 100.".into(),
+        source: RuleSource::Discovery,
+        case_id: None,
+        first_seen: 5,
+        last_seen: 5,
+        count: 2,
+    };
+    remember_refusals(dir.path(), "acme", "Web", "Eval Rules", vec![rule]).unwrap();
+    let line = "- Eval Rules, /eval/rules: after click css #save - \"Weightage must total 100.\" (seen 2 times)
+";
+    for target in ["/autorun-guide", "/autorun-guide?quick=true"] {
+        let (status, body) = route(&ctx(), None, "GET", target, "", "1.0.0").await;
+        assert_eq!(status, 200);
+        assert!(body.contains("## Known validation rules
+
+"), "{target}: {body}");
+        assert!(body.contains(line), "{target}: {body}");
+    }
+}
+
 /// The guide's constant only says a quirks section exists - the route is
 /// what actually appends the real one, read fresh from what this project
 /// has recorded. With nothing recorded, the route adds nothing at all.
@@ -3618,4 +3655,215 @@ async fn the_network_wait_route_answers_both_shapes_without_a_host() {
 
     // Read only: asking leaves the wait as it was, and nothing here ends it.
     assert!(waits.current().is_none());
+}
+
+// ------------------------------------ the assistant records or removes a rule
+
+/// An area the project has recorded, so a rule may name it.
+fn record_area(root: &std::path::Path, name: &str) {
+    let path = v2_lib::autorun::nav::ModulePath {
+        area: name.into(),
+        module: name.into(),
+        clicks: vec![v2_lib::browser::locator::Target::from("#menu")],
+        arrived: "/hr/home".into(),
+        recorded: "2026-10-01T00:00:00Z".into(),
+        start: String::new(),
+        made_by: v2_lib::autorun::nav::MadeBy::Person,
+    };
+    v2_lib::autorun::nav::put_path(root, "acme", "Web", path).unwrap();
+}
+
+/// A rule the assistant judged from a message the page showed.
+fn rule_body(extra: serde_json::Value) -> String {
+    let mut body = serde_json::json!({
+        "message": "End date must be after the start date",
+        "after": "clicked Save",
+        "area": "Cycles",
+        "page": "/hr/cycles/42?tab=2",
+    });
+    body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+    body.to_string()
+}
+
+/// A rule named with its area lands in the map as the assistant's own: its
+/// page is filed the way the map files pages, its words and action kept,
+/// and a second telling on another wizard step is another rule.
+#[tokio::test]
+async fn record_validation_rule_saves_into_the_named_area() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    record_area(dir.path(), "Cycles");
+
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-validation-rule", &rule_body(serde_json::json!({})), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "Remembered for Cycles."));
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    let rules = v2_lib::autorun::discovery_map::rules_of(&map, "Cycles");
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].page, "/hr/cycles/:id");
+    assert_eq!(rules[0].message, "End date must be after the start date");
+    assert_eq!(rules[0].after, "clicked Save");
+    assert_eq!(rules[0].source, v2_lib::autorun::discovery_map::RuleSource::Assistant);
+    assert_eq!(rules[0].count, 1);
+    assert!(rules[0].first_seen > 0 && rules[0].first_seen == rules[0].last_seen);
+
+    let step = rule_body(serde_json::json!({ "step": "Step 2", "message": "  end DATE must be after the start date " }));
+    let (status, _) = route(&ctx(), None, "POST", "/autorun-validation-rule", &step, "1.0.0").await;
+    assert_eq!(status, 200);
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    let rules = v2_lib::autorun::discovery_map::rules_of(&map, "Cycles");
+    assert_eq!(rules.len(), 2, "a rule on another wizard step is another rule: {rules:?}");
+    assert!(rules.iter().any(|r| r.step.as_deref() == Some("Step 2")));
+}
+
+/// `remove` takes the rule out again, and says so when there was none.
+#[tokio::test]
+async fn record_validation_rule_with_remove_forgets_it() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    record_area(dir.path(), "Cycles");
+    let path = "/autorun-validation-rule";
+
+    let (status, _) = route(&ctx(), None, "POST", path, &rule_body(serde_json::json!({})), "1.0.0").await;
+    assert_eq!(status, 200);
+
+    // Not on this page, so not removed.
+    let elsewhere = rule_body(serde_json::json!({ "remove": true, "page": "/hr/other" }));
+    let (status, out) = route(&ctx(), None, "POST", path, &elsewhere, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "No such rule in Cycles."));
+
+    let gone = serde_json::json!({ "message": "end date MUST be after the start date", "area": "Cycles", "page": "/hr/cycles/7", "remove": true });
+    let (status, out) = route(&ctx(), None, "POST", path, &gone.to_string(), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "Removed from Cycles."));
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    assert!(v2_lib::autorun::discovery_map::rules_of(&map, "Cycles").is_empty());
+
+    let (status, out) = route(&ctx(), None, "POST", path, &gone.to_string(), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "No such rule in Cycles."));
+}
+
+/// No area named and no discovery to take one from: nothing is guessed. A
+/// rule needs the action that caused it, a removal does not, and a body that
+/// is not a rule is named.
+#[tokio::test]
+async fn record_validation_rule_without_an_area_is_refused() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    record_area(dir.path(), "Cycles");
+    let path = "/autorun-validation-rule";
+
+    let no_area = serde_json::json!({ "message": "Name is required", "after": "clicked Save", "page": "/hr/cycles" });
+    let (status, out) = route(&ctx(), None, "POST", path, &no_area.to_string(), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "Name the area: no discovery is running."));
+    let blank = serde_json::json!({ "message": "Name is required", "after": "clicked Save", "area": "  ", "page": "/hr/cycles" });
+    let (status, out) = route(&ctx(), None, "POST", path, &blank.to_string(), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "Name the area: no discovery is running."));
+
+    let no_after = rule_body(serde_json::json!({ "after": "  " }));
+    let (status, out) = route(&ctx(), None, "POST", path, &no_after, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("after"), "{out}");
+    let no_message = rule_body(serde_json::json!({ "message": " " }));
+    let (status, out) = route(&ctx(), None, "POST", path, &no_message, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("message"), "{out}");
+    let (status, out) = route(&ctx(), None, "POST", path, r#"{"message":"x","after":"y","area":"A","color":1}"#, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+
+    // Named with no page and no browser on one: refused, not filed under none.
+    let no_page = serde_json::json!({ "message": "Name is required", "after": "clicked Save", "area": "Cycles" });
+    let (status, out) = route(&ctx(), None, "POST", path, &no_page.to_string(), "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("page"), "{out}");
+
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    assert!(map.areas.is_empty(), "{map:?}");
+}
+
+/// A removal with no page named is from every page of the area; one that
+/// names a page is from that page only.
+#[tokio::test]
+async fn record_validation_rule_remove_without_a_page_clears_every_page() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    record_area(dir.path(), "Cycles");
+    let path = "/autorun-validation-rule";
+    for page in ["/hr/cycles", "/hr/cycles/new"] {
+        let (status, _) = route(&ctx(), None, "POST", path, &rule_body(serde_json::json!({ "page": page })), "1.0.0").await;
+        assert_eq!(status, 200);
+    }
+    let one = rule_body(serde_json::json!({ "page": "/hr/cycles/new", "remove": true }));
+    let (_, out) = route(&ctx(), None, "POST", path, &one, "1.0.0").await;
+    assert_eq!(out, "Removed from Cycles.");
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(v2_lib::autorun::discovery_map::rules_of(&map, "Cycles").len(), 1);
+
+    let all = serde_json::json!({ "message": "End date must be after the start date", "area": "Cycles", "remove": true });
+    let (_, out) = route(&ctx(), None, "POST", path, &all.to_string(), "1.0.0").await;
+    assert_eq!(out, "Removed from Cycles.");
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    assert!(v2_lib::autorun::discovery_map::rules_of(&map, "Cycles").is_empty());
+}
+
+/// No project open: a 400, and nothing written.
+#[tokio::test]
+async fn record_validation_rule_needs_a_project() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    for (org, project) in [("", "Web"), ("acme", ""), (" ", "  ")] {
+        let ctx = BridgeContext { org: org.into(), project: project.into(), ..BridgeContext::default() };
+        let (status, out) = route(&ctx, None, "POST", "/autorun-validation-rule", &rule_body(serde_json::json!({})), "1.0.0").await;
+        assert_eq!(status, 400, "{org:?} {project:?}: {out}");
+        assert!(out.contains("project"), "{out}");
+    }
+}
+
+/// An area that is neither recorded nor in the map is refused, so a typo
+/// makes no stray area; one only the map holds, or only the areas file,
+/// is known.
+#[tokio::test]
+async fn record_validation_rule_refuses_an_area_nobody_recorded() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    record_area(dir.path(), "Cycles");
+    let path = "/autorun-validation-rule";
+
+    let typo = rule_body(serde_json::json!({ "area": "Cyclez" }));
+    let (status, out) = route(&ctx(), None, "POST", path, &typo, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "No area named \"Cyclez\" is recorded."));
+    let remove = rule_body(serde_json::json!({ "area": "Cyclez", "remove": true }));
+    let (status, out) = route(&ctx(), None, "POST", path, &remove, "1.0.0").await;
+    assert_eq!((status, out.as_str()), (400, "No area named \"Cyclez\" is recorded."));
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    assert!(map.areas.is_empty(), "{map:?}");
+
+    // Known by the areas file in any case; known by the map alone.
+    let (status, out) = route(&ctx(), None, "POST", path, &rule_body(serde_json::json!({ "area": "cycles" })), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "Remembered for Cycles."));
+    v2_lib::autorun::discovery_map::mark_failed(dir.path(), "acme", "Web", "Mapped Only").unwrap();
+    let (status, out) = route(&ctx(), None, "POST", path, &rule_body(serde_json::json!({ "area": "Mapped Only" })), "1.0.0").await;
+    assert_eq!((status, out.as_str()), (200, "Remembered for Mapped Only."));
+}
+
+/// A message is kept as long as a message the page is read for: 300
+/// characters, white space collapsed.
+#[tokio::test]
+async fn record_validation_rule_keeps_a_long_message_at_300_characters() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+    record_area(dir.path(), "Cycles");
+    let long = format!("{}  {}", "a".repeat(200), "b".repeat(400));
+    let (status, out) =
+        route(&ctx(), None, "POST", "/autorun-validation-rule", &rule_body(serde_json::json!({ "message": long })), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    let rules = v2_lib::autorun::discovery_map::rules_of(&map, "Cycles");
+    assert_eq!(rules[0].message.chars().count(), 300);
+    assert_eq!(rules[0].message, format!("{} {}", "a".repeat(200), "b".repeat(99)));
 }

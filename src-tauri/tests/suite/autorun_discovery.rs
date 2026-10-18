@@ -3923,3 +3923,554 @@ async fn a_draft_leaves_another_component_to_run_as_saved() {
     let state = browser.as_ref().unwrap().discovery.as_ref().unwrap();
     assert_eq!(state.tried, vec![draft_fingerprint(&pick_a_date())], "the saved one was not what ran");
 }
+
+// ------------------------------- what the page said, what the app refused
+
+use v2_lib::ai_bridge::describe_action;
+
+/// What a refused save answers: a validation message and a trace id.
+const REFUSED_BODY: &str = r#"{"message":"Weightage must total 100.","traceId":"00-4bf9-00"}"#;
+
+/// The message a wizard step shows when its save is not allowed.
+const NO_COMPONENT: &str = "At least one assessment component must be enabled.";
+
+/// The path `telling_page`'s message read gives, and the page a rule
+/// remembered there is filed under.
+const TELLING_PATH: &str = "/hr/eval/42/rules";
+const TELLING_PAGE: &str = "/hr/eval/:id/rules";
+
+/// `stepping_page`, whose messages are `shows(clicks, reads)`: what the
+/// page shows once `clicks` clicks were made, at the `reads`-th read of its
+/// messages since the last click (from 0). Nothing is found on it once
+/// `missing_after` clicks were made, and a request it refuses answers
+/// `REFUSED_BODY`.
+fn telling_page(shows: impl Fn(usize, usize) -> Vec<&'static str> + Send + 'static, missing_after: usize) -> ScriptedDriver {
+    let mut inner = stepping_answers();
+    let (mut clicks, mut reads) = (0usize, 0usize);
+    ScriptedDriver::new(move |method, params| {
+        if method == "Input.dispatchMouseEvent" && params["type"] == "mouseReleased" {
+            clicks += 1;
+            reads = 0;
+        }
+        match method {
+            "Runtime.evaluate" if params["expression"] == v2_lib::browser::page_messages::READ_JS => {
+                let messages: Vec<Value> =
+                    shows(clicks, reads).into_iter().map(|t| json!({ "text": t, "where": "page" })).collect();
+                reads += 1;
+                Ok(json!({ "result": { "value": { "messages": messages, "step": null, "path": TELLING_PATH } } }))
+            }
+            "Network.getResponseBody" => Ok(json!({ "body": REFUSED_BODY, "base64Encoded": false })),
+            "Runtime.getProperties" if clicks >= missing_after => Ok(json!({ "result": [] })),
+            _ => inner(method, params),
+        }
+    })
+    .with_net_record()
+}
+
+/// The first click sends a save the application refuses; its answer
+/// arrives a moment after the click.
+fn first_click_is_refused(d: &mut ScriptedDriver) {
+    const CLICK: &str = "Input.dispatchMouseEvent";
+    let url = "https://hr.example.internal/api/eval-rules?x=1";
+    let event = |method: &str, params: Value| Event { method: method.into(), params };
+    d.on_call_events.push((
+        CLICK.into(),
+        event(
+            "Network.requestWillBeSent",
+            json!({ "requestId": "r1", "type": "XHR", "documentURL": "https://hr.example.internal/hr/leave/start",
+                    "request": { "url": url, "method": "POST" } }),
+        ),
+    ));
+    d.on_idle_after_call.push((
+        CLICK.into(),
+        50,
+        event(
+            "Network.responseReceived",
+            json!({ "requestId": "r1", "response": { "status": 400, "url": url, "mimeType": "application/json" } }),
+        ),
+    ));
+    d.on_idle_after_call.push((CLICK.into(), 50, event("Network.loadingFinished", json!({ "requestId": "r1" }))));
+}
+
+fn press_tab() -> Action {
+    serde_json::from_value(json!({ "kind": "press_key", "key": "Tab" })).unwrap()
+}
+
+fn expect_goals() -> Action {
+    serde_json::from_value(json!({ "kind": "expect_visible", "selector": "#goals", "timeout_ms": 100 })).unwrap()
+}
+
+/// A success toast is reported on the action that raised it, and never
+/// stops the batch.
+#[tokio::test]
+async fn a_success_toast_does_not_stop_a_batch() {
+    let dir = root_with_recipe_and_account();
+    let saved = |clicks: usize, _| if clicks >= 1 { vec!["Saved."] } else { vec![] };
+    let (mut browser, _) = slot(telling_page(saved, usize::MAX), exploring("Leave"));
+    let actions = [click("#a"), click("#b"), click("#c")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 3, "all three ran: {text}");
+    assert!(lines.iter().all(|l| l.contains(". ok: ")), "{text}");
+    assert!(lines[0].ends_with(r#"; the page showed: "Saved.""#), "{text}");
+    assert!(!lines[1].contains("the page showed") && !lines[2].contains("the page showed"), "{text}");
+
+    // A single action's answer carries it as `page_said`.
+    let (mut browser, _) = slot(telling_page(saved, usize::MAX), exploring("Leave"));
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click("#a"), None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], true, "{body}");
+    assert_eq!(v["page_said"], json!([{ "text": "Saved.", "where": "page" }]), "{body}");
+    assert!(v.get("app_refused").is_none(), "{body}");
+}
+
+/// A request the application refuses fails the action that sent it - its
+/// answer came after the click - and stops the batch.
+#[tokio::test]
+async fn a_refused_request_stops_the_batch() {
+    let dir = root_with_recipe_and_account();
+    let mut d = telling_page(|_, _| vec![], usize::MAX);
+    first_click_is_refused(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let actions = [press_tab(), click("#save"), click("#b")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 3, "{text}");
+    assert!(lines[0].starts_with("1. ok: "), "{text}");
+    assert!(
+        lines[1].starts_with(
+            r#"2. failed: the app refused: "Weightage must total 100." (POST /api/eval-rules, 400, trace id 00-4bf9-00)"#
+        ),
+        "{text}"
+    );
+    assert_eq!(lines[2], "Stopped at the failure: 1 action was not run.");
+    assert!(!text.contains("x=1") && !text.contains("hr.example.internal"), "{text}");
+}
+
+/// A single action's answer names each request the application refused.
+#[tokio::test]
+async fn a_refused_action_answers_what_the_app_refused() {
+    let dir = root_with_recipe_and_account();
+    let mut d = telling_page(|_, _| vec![], usize::MAX);
+    first_click_is_refused(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click("#save"), None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], false, "{body}");
+    assert_eq!(
+        v["app_refused"],
+        json!([{ "method": "POST", "path": "/api/eval-rules", "status": 400,
+                 "message": "Weightage must total 100.", "trace_id": "00-4bf9-00" }]),
+        "{body}"
+    );
+    assert!(v.get("page_said").is_none(), "{body}");
+}
+
+/// A check that fails after a save the page answered with a message names
+/// that message on its own line - the stop line does not say it again.
+#[tokio::test]
+async fn a_later_failure_points_back_to_the_message() {
+    let dir = root_with_recipe_and_account();
+    let shows = |clicks: usize, _| if clicks >= 1 { vec![NO_COMPONENT] } else { vec![] };
+    let (mut browser, _) = slot(telling_page(shows, 1), exploring("Leave"));
+    let actions = [click("#save"), expect_goals(), click("#b")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 3, "{text}");
+    assert!(lines[0].contains(&format!("; the page showed: \"{NO_COMPONENT}\"")), "{text}");
+    assert!(lines[1].starts_with("2. failed: "), "{text}");
+    let after = format!(" - after {} the page showed: \"{NO_COMPONENT}\"", describe_action(&click("#save")));
+    assert!(lines[1].contains(&after), "{text}");
+    assert_eq!(lines[2], "Stopped at the failure: 1 action was not run.", "said twice: {text}");
+}
+
+/// When the failure's own line cannot name it - a quieter action came
+/// between - the stop line points back to the action the page answered.
+#[tokio::test]
+async fn a_failure_after_a_quiet_action_points_back_on_the_stop_line() {
+    let dir = root_with_recipe_and_account();
+    let shows = |clicks: usize, _| if clicks >= 1 { vec![NO_COMPONENT] } else { vec![] };
+    let (mut browser, _) = slot(telling_page(shows, 2), exploring("Leave"));
+    let actions = [click("#save"), click("#next"), expect_goals(), click("#c")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 4, "{text}");
+    assert!(lines[2].starts_with("3. failed: ") && !lines[2].contains(" - after "), "{text}");
+    assert_eq!(
+        lines[3],
+        format!(
+            "Stopped at the failure: 1 action was not run. After action 1 ({}) the page showed: \"{NO_COMPONENT}\".",
+            describe_action(&click("#save"))
+        )
+    );
+}
+
+/// A message the page already showed before the action is nothing new:
+/// the answer has no `page_said`, and no `app_refused` without a refusal.
+#[tokio::test]
+async fn an_action_with_nothing_new_has_no_page_said_key() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(telling_page(|_, _| vec!["Welcome back"], usize::MAX), exploring("Leave"));
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click("#a"), None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], true, "{body}");
+    assert!(v.get("page_said").is_none() && v.get("app_refused").is_none(), "{body}");
+
+    let (mut browser, _) = slot(telling_page(|_, _| vec!["Welcome back"], usize::MAX), exploring("Leave"));
+    let (_, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a"), click("#b")], None, None, true, &no_stop()).await;
+    assert!(!text.contains("the page showed"), "{text}");
+}
+
+/// A message the page showed only after the action's own read goes to that
+/// action, found by the next action's first read.
+#[tokio::test]
+async fn a_message_shown_late_goes_to_the_action_before() {
+    let dir = root_with_recipe_and_account();
+    let late = |clicks: usize, reads: usize| {
+        if clicks >= 2 || (clicks == 1 && reads >= 1) {
+            vec!["Name is required"]
+        } else {
+            vec![]
+        }
+    };
+    let (mut browser, _) = slot(telling_page(late, usize::MAX), exploring("Leave"));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a"), click("#b")], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert!(lines[0].ends_with(r#"; the page showed: "Name is required""#), "{text}");
+    assert!(!lines[1].contains("the page showed"), "{text}");
+}
+
+/// The last action has no next one to read the page for it: the call reads
+/// the messages once more before it answers.
+#[tokio::test]
+async fn the_last_action_is_read_once_more_before_the_answer() {
+    let dir = root_with_recipe_and_account();
+    let late = |clicks: usize, reads: usize| if clicks >= 1 && reads >= 1 { vec!["Name is required"] } else { vec![] };
+    let (mut browser, _) = slot(telling_page(late, usize::MAX), exploring("Leave"));
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click("#a"), None, None).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["page_said"], json!([{ "text": "Name is required", "where": "page" }]), "{body}");
+
+    let (mut browser, _) = slot(telling_page(late, usize::MAX), exploring("Leave"));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#a")], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(batch_lines(&text)[0].ends_with(r#"; the page showed: "Name is required""#), "{text}");
+    let read_js = v2_lib::browser::page_messages::READ_JS;
+    let reads = browser.as_ref().unwrap().d.calls_to("Runtime.evaluate").iter().filter(|p| p["expression"] == read_js).count();
+    assert_eq!(reads, 3, "before, after, and once more at the end");
+}
+
+/// The page sends a save the application refuses only once the first
+/// action's own reads are done - as the discovery reads the page's live
+/// notes after it - so the refusal is found after that action ended.
+fn refused_after_the_first_action(d: &mut ScriptedDriver) {
+    let url = "https://hr.example.internal/api/eval-rules";
+    let event = |method: &str, params: Value| Event { method: method.into(), params };
+    let events = vec![
+        event(
+            "Network.requestWillBeSent",
+            json!({ "requestId": "late-1", "type": "XHR", "documentURL": "https://hr.example.internal/hr/leave/first",
+                    "request": { "url": url, "method": "POST" } }),
+        ),
+        event(
+            "Network.responseReceived",
+            json!({ "requestId": "late-1", "response": { "status": 400, "url": url, "mimeType": "application/json" } }),
+        ),
+        event("Network.loadingFinished", json!({ "requestId": "late-1" })),
+    ];
+    // The live notes are read once before the action and once after it.
+    let mut notes_read = 0;
+    let after_the_action = move |method: &str, params: &Value| {
+        if method == "Runtime.evaluate" && params["expression"].as_str().is_some_and(|e| e.contains("[role=alert]")) {
+            notes_read += 1;
+        }
+        notes_read == 2
+    };
+    d.events_when = Some((Box::new(after_the_action), events));
+}
+
+/// A refusal found only after an action that worked had ended still stops
+/// the batch before the next action, and says which action it was. The
+/// action's line stays ok, with the refusal on it.
+#[tokio::test]
+async fn a_refusal_found_after_an_action_ended_stops_the_batch() {
+    let dir = root_with_recipe_and_account();
+    let mut d = telling_page(|_, _| vec![], usize::MAX);
+    refused_after_the_first_action(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let actions = [click("#a"), click("#b"), click("#c")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(lines[0].starts_with("1. ok: ") && lines[0].contains(r#"; the app refused: "Weightage must total 100.""#), "{text}");
+    assert_eq!(
+        lines[1],
+        format!("Stopped: the app refused action 1 ({}) after it ended: 2 not run.", describe_action(&click("#a")))
+    );
+    let b = browser.as_ref().unwrap();
+    let released = b.d.calls_to("Input.dispatchMouseEvent").iter().filter(|p| p["type"] == "mouseReleased").count();
+    assert_eq!(released, 1, "an action after the refusal ran");
+
+    // A single action's answer names it, and stays ok.
+    let mut d = telling_page(|_, _| vec![], usize::MAX);
+    refused_after_the_first_action(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click("#a"), None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], true, "{body}");
+    assert_eq!(v["app_refused"][0]["status"], 400, "{body}");
+}
+
+/// A request the application refused before the discovery's actions is
+/// never one of theirs, however many actions ran: on the whole browser
+/// each action's marks are let go, so the last page change's mark is never
+/// pushed out - and one that was would read nothing, not the whole record.
+#[tokio::test]
+async fn an_old_refusal_never_stops_a_batch_after_many_actions() {
+    let dir = root_with_recipe_and_account();
+    let mut d = telling_page(|_, _| vec![], usize::MAX).with_mark_ring();
+    let url = "https://hr.example.internal/api/eval-rules";
+    let event = |method: &str, params: Value| Event { method: method.into(), params };
+    for e in [
+        event(
+            "Network.requestWillBeSent",
+            json!({ "requestId": "old-1", "type": "XHR", "documentURL": "https://hr.example.internal/hr/leave/start",
+                    "request": { "url": url, "method": "POST" } }),
+        ),
+        event(
+            "Network.responseReceived",
+            json!({ "requestId": "old-1", "response": { "status": 400, "url": url, "mimeType": "application/json" } }),
+        ),
+        event("Network.loadingFinished", json!({ "requestId": "old-1" })),
+    ] {
+        d.net.as_mut().unwrap().observe(&e);
+    }
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let look = || -> Action {
+        serde_json::from_value(json!({ "kind": "expect_visible", "selector": "#a", "timeout_ms": 100 })).unwrap()
+    };
+    // Twenty actions one at a time first.
+    for _ in 0..20 {
+        let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &look(), None, None).await;
+        assert_eq!(status, 200, "{body}");
+    }
+    let mut actions = vec![click("#a")];
+    actions.extend((0..18).map(|_| look()));
+    actions.push(click("#b"));
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert!(!text.contains("the app refused"), "{text}");
+    assert_eq!(lines.len(), 20, "{text}");
+    assert!(lines.iter().all(|l| l.contains(". ok")), "{text}");
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    assert!(rules_of(&map, "Leave").is_empty(), "{:?}", rules_of(&map, "Leave"));
+}
+
+/// What the page showed a failed action that its detail does not say is
+/// still on its line.
+#[tokio::test]
+async fn a_failed_action_says_what_the_page_showed_it() {
+    let dir = root_with_recipe_and_account();
+    let late = |clicks: usize, reads: usize| if clicks >= 1 && reads >= 1 { vec!["Weightage must total 100."] } else { vec![] };
+    let mut d = telling_page(late, usize::MAX);
+    first_click_is_refused(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#save"), click("#b")], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert!(lines[0].starts_with("1. failed: the app refused: "), "{text}");
+    assert!(lines[0].ends_with(r#"; the page showed: "Weightage must total 100.""#), "{text}");
+    assert_eq!(lines[0].matches("the page showed").count(), 1, "{text}");
+}
+
+// ------------------------------------------- what the app refused, kept
+
+use v2_lib::autorun::discovery_map::{rules_of, RuleSource};
+
+/// A request the application refused in a discovery is kept as a rule of
+/// the discovery's area: the application's words, the page it ran on and
+/// the action - never its trace id, status or address.
+#[tokio::test]
+async fn a_refused_request_in_discovery_is_remembered_without_its_trace_id() {
+    let dir = root_with_recipe_and_account();
+    let mut d = telling_page(|_, _| vec![], usize::MAX);
+    first_click_is_refused(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let actions = [press_tab(), click("#save"), click("#b")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let file = std::fs::read_to_string(map_path(dir.path(), ORG, PROJECT)).unwrap();
+    assert!(file.contains("Weightage must total 100."), "{file}");
+    assert!(!file.contains("00-4bf9-00"), "{file}");
+    assert!(!file.contains("hr.example.internal") && !file.contains('?'), "{file}");
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    let rules = rules_of(&map, "Leave");
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].page, TELLING_PAGE);
+    assert_eq!(rules[0].after, describe_action(&click("#save")));
+    assert_eq!((rules[0].source, rules[0].count), (RuleSource::Discovery, 1));
+
+    // The same refusal again is the same rule, seen twice.
+    let mut d = telling_page(|_, _| vec![], usize::MAX);
+    first_click_is_refused(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click("#save"), None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    let rules = rules_of(&map, "Leave");
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].count, 2);
+}
+
+/// A message on its own is never taken for a rule: a success toast is
+/// not kept, whatever came after it.
+#[tokio::test]
+async fn a_success_toast_alone_is_never_remembered() {
+    let dir = root_with_recipe_and_account();
+    let saved = |clicks: usize, _| if clicks >= 1 { vec!["Saved."] } else { vec![] };
+    let (mut browser, _) = slot(telling_page(saved, usize::MAX), exploring("Leave"));
+    let actions = [click("#a"), click("#b"), click("#c")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    assert!(map.areas.iter().all(|a| a.refusals.is_empty()), "{:?}", map.areas.iter().map(|a| &a.refusals).collect::<Vec<_>>());
+}
+
+/// A message followed by a failure in the same batch is kept: the
+/// failure is the evidence it was a refusal.
+#[tokio::test]
+async fn a_message_followed_by_a_failure_is_remembered() {
+    let dir = root_with_recipe_and_account();
+    let shows = |clicks: usize, _| if clicks >= 1 { vec![NO_COMPONENT] } else { vec![] };
+    let (mut browser, _) = slot(telling_page(shows, 1), exploring("Leave"));
+    let actions = [click("#save"), expect_goals(), click("#b")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    let rules = rules_of(&map, "Leave");
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].message, NO_COMPONENT);
+    assert_eq!(rules[0].page, TELLING_PAGE);
+    assert_eq!(rules[0].after, describe_action(&click("#save")));
+}
+
+/// A message two page changes before a failure is not taken for a rule:
+/// only the nearest page change before the failure is.
+#[tokio::test]
+async fn a_message_two_page_changes_before_a_failure_is_not_remembered() {
+    let dir = root_with_recipe_and_account();
+    let saved = |clicks: usize, _| if clicks >= 1 { vec!["Saved."] } else { vec![] };
+    let (mut browser, _) = slot(telling_page(saved, 2), exploring("Leave"));
+    let actions = [click("#a"), click("#b"), expect_goals()];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert!(lines[0].contains(r#"the page showed: "Saved.""#) && lines[2].starts_with("3. failed: "), "{text}");
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    assert!(rules_of(&map, "Leave").is_empty(), "{:?}", rules_of(&map, "Leave"));
+}
+
+// ----------------------------- a rule the assistant records in a discovery
+
+use v2_lib::ai_bridge::record_validation_rule_in;
+
+/// With a discovery going, the area is its area and the page is the one the
+/// browser is on (cut to its path and filed as the map files pages); naming
+/// either wins.
+#[tokio::test]
+async fn record_validation_rule_saves_into_the_discovery_area() {
+    let dir = TempDir::new();
+    put_path(dir.path(), ORG, PROJECT, leave_apply(MadeBy::Person, vec![css("#apply")], "/hr/leave/new")).unwrap();
+    let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));
+    let body = json!({ "message": "End date must be after the start date", "after": "clicked Save" }).to_string();
+    let (status, out) = record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &body).await;
+    assert_eq!((status, out.as_str()), (200, "Remembered for Cycles."));
+    let area = mapped_area(dir.path(), "Cycles").expect("nothing was recorded");
+    assert_eq!(area.refusals.len(), 1, "{:?}", area.refusals);
+    assert_eq!(area.refusals[0].page, "/hr/cycles");
+    assert_eq!(area.refusals[0].message, "End date must be after the start date");
+
+    // Removed again from the current page, with the same defaults.
+    let gone = json!({ "message": "end date must be after the start date", "remove": true }).to_string();
+    let (status, out) = record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &gone).await;
+    assert_eq!((status, out.as_str()), (200, "Removed from Cycles."));
+    assert!(mapped_area(dir.path(), "Cycles").is_none_or(|a| a.refusals.is_empty()));
+
+    // An area and a page named win over the discovery's.
+    let named = json!({ "message": "Name is required", "after": "clicked Save", "area": "Leave Apply", "page": "/hr/leave/new" }).to_string();
+    let (status, out) = record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &named).await;
+    assert_eq!((status, out.as_str()), (200, "Remembered for Leave Apply."));
+    assert_eq!(mapped_area(dir.path(), "Leave Apply").unwrap().refusals[0].page, "/hr/leave/new");
+
+    // A browser that is open for no discovery has no area to default to.
+    let (mut open, _) = slot(cycles_page(1, true), opened_for_discovery());
+    let (status, out) = record_validation_rule_in(&mut open, dir.path(), ORG, PROJECT, &body).await;
+    assert_eq!((status, out.as_str()), (400, "Name the area: no discovery is running."));
+}
+
+/// A removal never takes the page from the browser: with no page named it
+/// is from every page of the area, wherever the browser is. An add with no
+/// page named still takes the page the browser is on.
+#[tokio::test]
+async fn record_validation_rule_remove_ignores_the_browsers_page() {
+    let dir = TempDir::new();
+    let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));
+    for page in ["/hr/leave", "/hr/cycles/new"] {
+        let body = json!({ "message": "Name is required", "after": "clicked Save", "page": page }).to_string();
+        let (status, _) = record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &body).await;
+        assert_eq!(status, 200);
+    }
+    let gone = json!({ "message": "Name is required", "remove": true }).to_string();
+    let (status, out) = record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &gone).await;
+    assert_eq!((status, out.as_str()), (200, "Removed from Cycles."));
+    assert!(mapped_area(dir.path(), "Cycles").is_none_or(|a| a.refusals.is_empty()));
+
+    // The same with no browser at all.
+    let body = json!({ "message": "Name is required", "after": "clicked Save", "area": "Cycles", "page": "/hr/leave" }).to_string();
+    let none: &mut Option<FakeBrowser> = &mut None;
+    let (status, _) = record_validation_rule_in(none, dir.path(), ORG, PROJECT, &body).await;
+    assert_eq!(status, 200);
+    let gone = json!({ "message": "Name is required", "area": "Cycles", "remove": true }).to_string();
+    let (status, out) = record_validation_rule_in(none, dir.path(), ORG, PROJECT, &gone).await;
+    assert_eq!((status, out.as_str()), (200, "Removed from Cycles."));
+
+    // An add with no page is on the page the browser is on.
+    let add = json!({ "message": "Name is required", "after": "clicked Save" }).to_string();
+    let (status, _) = record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &add).await;
+    assert_eq!(status, 200);
+    assert_eq!(mapped_area(dir.path(), "Cycles").unwrap().refusals[0].page, "/hr/cycles");
+}
+
+/// The browser's page is read only for an add that names no page: a
+/// removal, or an add with its page, never asks the browser where it is.
+#[tokio::test]
+async fn record_validation_rule_reads_the_page_only_for_an_add_without_one() {
+    let dir = TempDir::new();
+    let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));
+    let reads = |b: &Option<FakeBrowser>| {
+        b.as_ref().unwrap().d.calls_to("Runtime.evaluate").iter().filter(|p| p["expression"] == "location.href").count()
+    };
+    let named = json!({ "message": "Name is required", "after": "clicked Save", "page": "/hr/leave" }).to_string();
+    assert_eq!(record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &named).await.0, 200);
+    let gone = json!({ "message": "Name is required", "remove": true }).to_string();
+    assert_eq!(record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &gone).await.0, 200);
+    assert_eq!(reads(&browser), 0, "a removal or a named page read the browser's page");
+    let add = json!({ "message": "Name is required", "after": "clicked Save" }).to_string();
+    assert_eq!(record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &add).await.0, 200);
+    assert_eq!(reads(&browser), 1);
+}

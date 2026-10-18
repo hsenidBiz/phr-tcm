@@ -181,6 +181,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                             screenshot: Some("shot-1-000002.jpg".to_string()),
                             harness: false,
                             component: None,
+                            ..Default::default()
                         }],
                         screenshot: None,
                         downloads: vec![],
@@ -219,6 +220,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                         screenshot: None,
                         harness: false,
                         component: None,
+                        ..Default::default()
                     }],
                     screenshot: None,
                     downloads: vec![],
@@ -804,6 +806,7 @@ fn a_failure_line_names_the_picture_by_a_path_that_exists() {
                     screenshot: Some(name.clone()),
                     harness: false,
                     component: None,
+                    ..Default::default()
                 }],
                 screenshot: None,
                 downloads: vec![],

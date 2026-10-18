@@ -35,6 +35,9 @@ pub struct ScriptedDriver {
     /// Events that appear once a call to the named method has been made -
     /// how a test says "the load event follows Page.navigate".
     pub on_call_events: Vec<(String, Event)>,
+    /// Events that appear while the driver idles (once): how a test says
+    /// "that request finished a moment later".
+    pub on_idle_events: Vec<Event>,
     /// Events that appear after EVERY call to the named method - how a
     /// test says "the load event follows Page.navigate" when that method
     /// is called more than once (`on_call_events` fires once and is
@@ -113,6 +116,20 @@ pub struct ScriptedDriver {
     /// The page sends a save the guard stops as the first call this says
     /// yes to is made: the sentence is taken next. Fires once.
     pub block_when: Option<(SaysYes, String)>,
+    /// Events that appear once the first call this says yes to is made:
+    /// how a test says "the page sent this between two particular reads".
+    /// Fires once.
+    pub events_when: Option<(SaysYes, Vec<Event>)>,
+    /// Events that arrive while the driver idles, once it has idled this
+    /// many ms since a call to the named method: how a test says "the save
+    /// was answered 150 ms after the click". Each fires once.
+    pub on_idle_after_call: Vec<(String, u64, Event)>,
+    /// The ones whose call was made: ms still to idle, and the event.
+    pub arriving: Vec<(u64, Event)>,
+    /// Marks kept as `Cdp` keeps them on the whole browser (`with_mark_ring`):
+    /// (mark, record position), at most `MAX_NET_MARKS`, the oldest let go
+    /// first; a mark let go reads from the start of the record.
+    pub mark_ring: Option<Mutex<(u64, VecDeque<(u64, u64)>)>>,
 }
 
 /// A test's yes or no to a call, by method and parameters.
@@ -195,12 +212,48 @@ impl ScriptedDriver {
             dialogs_on_call: vec![],
             page_errors: PageErrorBook::default(),
             idle_clock: None,
+            on_idle_events: vec![],
             defers: false,
             dies_before_collect: false,
             deferred: std::collections::HashMap::new(),
             block_on_collect: None,
             block_when: None,
+            events_when: None,
+            on_idle_after_call: vec![],
+            arriving: vec![],
+            mark_ring: None,
         }
+    }
+
+    /// Keep marks as the whole browser keeps them (`mark_ring`).
+    pub fn with_mark_ring(mut self) -> Self {
+        self.mark_ring = Some(Mutex::new((0, VecDeque::new())));
+        self
+    }
+
+    /// Answer some calls before the driver's own answers do: `first` gives
+    /// an answer, or `None` to leave the call to them. How a test puts one
+    /// more answer on a page a helper built.
+    pub fn answering_first(
+        mut self,
+        mut first: impl FnMut(&str, &serde_json::Value) -> Option<Result<serde_json::Value, CdpError>> + Send + 'static,
+    ) -> Self {
+        let mut inner = std::mem::replace(&mut self.handler, Box::new(|_, _| Ok(serde_json::Value::Null)));
+        self.handler = Box::new(move |method, params| first(method, params).unwrap_or_else(|| inner(method, params)));
+        self
+    }
+
+    /// Hand one event over as the browser would: to the page errors, and to
+    /// the network record or the waiting events.
+    fn deliver(&mut self, ev: Event) {
+        self.page_errors.observe(&ev);
+        if let Some(net) = self.net.as_mut() {
+            net.observe(&ev);
+            if ev.method.starts_with("Network.") {
+                return;
+            }
+        }
+        self.events.push_back(ev);
     }
 
     /// Keep a network record of the events this driver emits.
@@ -269,6 +322,16 @@ impl Driver for ScriptedDriver {
                 self.saves_stopped.push((verb, v2_lib::browser::save_guard::path_of(&url)));
             }
         }
+        let mut armed = vec![];
+        self.on_idle_after_call.retain(|(m, ms, ev)| {
+            if m == method {
+                armed.push((*ms, ev.clone()));
+                false
+            } else {
+                true
+            }
+        });
+        self.arriving.extend(armed);
         let mut fired = vec![];
         self.on_call_events.retain(|(m, ev)| {
             if m == method {
@@ -282,6 +345,9 @@ impl Driver for ScriptedDriver {
             if m == method {
                 fired.push(ev.clone());
             }
+        }
+        if self.events_when.as_mut().is_some_and(|(says, _)| says(method, &params)) {
+            fired.extend(self.events_when.take().map(|(_, events)| events).unwrap_or_default());
         }
         for ev in fired {
             self.page_errors.observe(&ev);
@@ -340,6 +406,23 @@ impl Driver for ScriptedDriver {
     }
 
     async fn idle(&mut self, wait: Duration) {
+        for ev in std::mem::take(&mut self.on_idle_events) {
+            if let Some(net) = self.net.as_mut() {
+                net.observe(&ev);
+            }
+        }
+        let waited = wait.as_millis() as u64;
+        let mut due = vec![];
+        for (left, ev) in std::mem::take(&mut self.arriving) {
+            if left <= waited {
+                due.push(ev);
+            } else {
+                self.arriving.push((left - waited, ev));
+            }
+        }
+        for ev in due {
+            self.deliver(ev);
+        }
         match &self.idle_clock {
             Some(clock) => {
                 clock.fetch_add(wait.as_millis() as u64, Ordering::SeqCst);
@@ -366,11 +449,39 @@ impl Driver for ScriptedDriver {
     }
 
     fn net_mark(&self) -> u64 {
-        self.net.as_ref().map_or(0, NetRecord::mark)
+        let at = self.net.as_ref().map_or(0, NetRecord::mark);
+        let Some(ring) = &self.mark_ring else { return at };
+        let mut ring = ring.lock().unwrap();
+        ring.0 += 1;
+        let id = ring.0;
+        if ring.1.len() >= v2_lib::browser::cdp::MAX_NET_MARKS {
+            ring.1.pop_front();
+        }
+        ring.1.push_back((id, at));
+        id
     }
 
     fn net_since(&self, mark: u64) -> Vec<NetEntry> {
-        self.net.as_ref().map_or_else(Vec::new, |n| n.since(mark))
+        let from = match &self.mark_ring {
+            Some(ring) => ring.lock().unwrap().1.iter().find(|(id, _)| *id == mark).map_or(0, |(_, at)| *at),
+            None => mark,
+        };
+        self.net.as_ref().map_or_else(Vec::new, |n| n.since(from))
+    }
+
+    fn net_since_held(&self, mark: u64) -> Option<Vec<NetEntry>> {
+        if let Some(ring) = &self.mark_ring {
+            if !ring.lock().unwrap().1.iter().any(|(id, _)| *id == mark) {
+                return None;
+            }
+        }
+        Some(self.net_since(mark))
+    }
+
+    fn net_unmark(&self, mark: u64) {
+        if let Some(ring) = &self.mark_ring {
+            ring.lock().unwrap().1.retain(|(id, _)| *id != mark);
+        }
     }
 
     fn set_deadline(&mut self, deadline: Option<Instant>) {

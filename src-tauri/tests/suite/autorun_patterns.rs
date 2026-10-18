@@ -325,3 +325,84 @@ fn a_component_step_is_classified_by_its_expanded_action() {
     assert_eq!(points[0].target.as_deref(), Some("the component \"Pick a date\""));
     assert_eq!(points[1].kind.as_deref(), Some("check_text"));
 }
+
+#[test]
+fn a_refusal_by_the_app_is_its_own_class() {
+    let refused = r#"the app refused: "Weightage must total 100." (POST /api/eval-rules, 400, trace id 00-4bf9-00)"#;
+    assert_eq!(classify(refused, None), ErrorClass::AppRefused);
+    assert_eq!(classify(&format!(r#"{refused}; the page showed: "is not visible""#), None), ErrorClass::AppRefused);
+    assert_eq!(ErrorClass::AppRefused.key(), "app_refused");
+    assert_eq!(ErrorClass::AppRefused.label(), "the application refused the action");
+    // A later failure that a refusal came before.
+    let later = format!("waited 100ms and never saw css #goals - after click css #save {refused}");
+    assert_eq!(classify(&later, None), ErrorClass::AppRefused);
+    // The browser's own refusal is not the application's.
+    assert_eq!(classify("the page refused: Cannot find node", None), ErrorClass::PageRefused);
+}
+
+#[test]
+fn what_the_page_showed_never_decides_the_class() {
+    let target = r#"button "Save""#;
+    let base = format!("waited 5000ms: {target} is not visible");
+    let noted = format!(r#"{base} - after click css #a the page showed: "is disabled""#);
+    assert_eq!(classify(&noted, Some(target)), ErrorClass::NotVisible);
+    assert_eq!(classify(&noted, None), classify(&base, None));
+}
+
+const REFUSED_LINE: &str = r#"the app refused: "Weightage must total 100." (POST /api/eval-rules, 400, trace id 00-4bf9-00)"#;
+
+#[test]
+fn a_blocked_save_or_an_overlay_keeps_its_class_after_a_refusal() {
+    let blocked = v2_lib::browser::save_guard::blocked("POST", "https://hr.example/api/Save");
+    let noted = format!("{blocked} - after click css #a {REFUSED_LINE}");
+    assert_eq!(classify(&noted, None), ErrorClass::SaveBlocked);
+    let target = r#"button "Save""#;
+    let covered = format!("waited 5000ms: {target} is covered by div.modal.fade - after click css #a {REFUSED_LINE}");
+    assert_eq!(classify(&covered, Some(target)), ErrorClass::CoveredBy("div.modal.fade".into()));
+}
+
+#[test]
+fn the_note_is_found_from_the_end() {
+    // The failure's own sentence quotes " - after ", and so does the page.
+    let target = r#"button "Go - after review""#;
+    let base = format!("waited 5000ms: {target} is not visible");
+    let noted = format!(r#"{base} - after click css #a the page showed: "Saved - after review""#);
+    assert_eq!(classify(&base, Some(target)), ErrorClass::NotVisible);
+    assert_eq!(classify(&noted, Some(target)), ErrorClass::NotVisible);
+    // The page's words never make it a refusal.
+    let page = format!(r#"{base} - after click css #a the page showed: "the app refused: nothing""#);
+    assert_eq!(classify(&page, Some(target)), ErrorClass::NotVisible);
+}
+
+#[test]
+fn a_refusal_names_its_request() {
+    use v2_lib::autorun::patterns::refused_request;
+    assert_eq!(refused_request(REFUSED_LINE).as_deref(), Some("POST /api/eval-rules"));
+    let later = format!("waited 100ms and never saw css #goals - after click css #save {REFUSED_LINE}");
+    assert_eq!(refused_request(&later).as_deref(), Some("POST /api/eval-rules"));
+    // Quoted words that look like a bracket are passed over.
+    let tricky = r#"the app refused: "Bad" (input" (PUT /api/x, 409)"#;
+    assert_eq!(refused_request(tricky).as_deref(), Some("PUT /api/x"));
+    assert_eq!(refused_request(r#"waited 100ms and never saw css #goals"#), None);
+    let shown = r#"waited 100ms and never saw css #goals - after click css #a the page showed: "x""#;
+    assert_eq!(refused_request(shown), None);
+}
+
+#[test]
+fn refusals_of_one_request_are_one_pattern_whatever_failed_after() {
+    let run = run(vec![
+        failed_case(1, 1, &format!("waited 100ms and never saw css #goals - after click css #save {REFUSED_LINE}")),
+        failed_case(2, 1, &format!("page does NOT contain Saved - after click css #next {REFUSED_LINE}")),
+    ]);
+    let scripts = vec![
+        script(1, 1, Action::WaitFor { selector: role("heading", "Goals"), timeout_ms: 100 }),
+        script(2, 1, Action::CheckText { value: "Saved".into() }),
+    ];
+    let found = find_patterns(&run, &scripts);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].class, ErrorClass::AppRefused);
+    assert_eq!(found[0].request.as_deref(), Some("POST /api/eval-rules"));
+    assert_eq!(found[0].cases(), 2);
+    let section = patterns_section(&found);
+    assert!(section.contains("the application refused the action: POST /api/eval-rules (in 2 cases)"), "{section}");
+}

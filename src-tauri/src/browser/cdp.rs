@@ -332,8 +332,10 @@ const CLOSE_LIMIT: Duration = Duration::from_secs(2);
 /// How long the end of a case waits for the browser to dispose of its
 /// context (`dispose_context`).
 const DISPOSE_LIMIT: Duration = Duration::from_secs(5);
-/// How many network marks are remembered (`net_mark`).
-const MAX_NET_MARKS: usize = 16;
+/// How many network marks are remembered (`net_mark`). A mark no longer
+/// needed is let go (`net_unmark`), so the ones still held are not pushed
+/// out by marks taken after them.
+pub const MAX_NET_MARKS: usize = 16;
 
 impl Tab {
     /// Note which document is which: a document loaded, or a request sent
@@ -2487,6 +2489,16 @@ impl<T: Transport> Cdp<T> {
         id
     }
 
+    /// Let go of a mark `net_mark` gave: nothing will ask what came since it
+    /// again. A mark it no longer holds is nothing to let go.
+    pub fn net_unmark(&self, mark: u64) {
+        if !self.whole_browser {
+            return;
+        }
+        let mut marks = self.net_marks.lock().unwrap_or_else(|e| e.into_inner());
+        marks.1.retain(|(id, _)| *id != mark);
+    }
+
     /// Is a JavaScript dialog open in any tab: one opened that has not yet
     /// closed (`Page.javascriptDialogClosed`), as far as the events read so
     /// far say. Each is answered the moment it is read, so this is true
@@ -2505,16 +2517,25 @@ impl<T: Transport> Cdp<T> {
     /// (`NetRecord::since`). Empty unless `page_log::watch` switched the
     /// Network domain on.
     pub fn net_since(&self, mark: u64) -> Vec<super::net_record::NetEntry> {
+        // A mark no longer held reads the whole record.
+        self.net_since_held(mark).unwrap_or_else(|| self.current().map(|t| t.net_record.since(0)).unwrap_or_default())
+    }
+
+    /// `net_since`, or `None` when the whole browser no longer holds `mark`
+    /// (let go, or pushed out by `MAX_NET_MARKS` newer ones): what came
+    /// since it can no longer be told from what came before it, so a reader
+    /// that must never take an old request for a new one reads nothing.
+    pub fn net_since_held(&self, mark: u64) -> Option<Vec<super::net_record::NetEntry>> {
         let Some(t) = self.current() else {
-            return Vec::new();
+            return Some(Vec::new());
         };
         if !self.whole_browser {
-            return t.net_record.since(mark);
+            return Some(t.net_record.since(mark));
         }
-        // A tab opened after the mark: all it did came after it.
         let marks = self.net_marks.lock().unwrap_or_else(|e| e.into_inner());
-        let from = marks.1.iter().find(|(id, _)| *id == mark).and_then(|(_, each)| each.get(&t.session_id).copied());
-        t.net_record.since(from.unwrap_or(0))
+        let (_, each) = marks.1.iter().find(|(id, _)| *id == mark)?;
+        // A tab opened after the mark: all it did came after it.
+        Some(t.net_record.since(each.get(&t.session_id).copied().unwrap_or(0)))
     }
 
     /// Run an expression in the page and return the raw DevTools result.
@@ -2615,6 +2636,15 @@ pub trait Driver {
     fn net_since(&self, _mark: u64) -> Vec<super::net_record::NetEntry> {
         Vec::new()
     }
+    /// `net_since`, or `None` for a mark no longer held
+    /// (`Cdp::net_since_held`). A driver that never lets a mark go always
+    /// holds it.
+    fn net_since_held(&self, mark: u64) -> Option<Vec<super::net_record::NetEntry>> {
+        Some(self.net_since(mark))
+    }
+    /// Let go of a mark (`Cdp::net_unmark`). Nothing for a driver whose
+    /// marks are not kept.
+    fn net_unmark(&self, _mark: u64) {}
     /// How busy the page's requests are (`Cdp::net_quiet`). `None` for a
     /// driver that keeps no record: nothing is ever waited on.
     fn net_quiet(&self) -> Option<super::net_record::NetQuiet> {
@@ -2802,6 +2832,12 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn net_since(&self, mark: u64) -> Vec<super::net_record::NetEntry> {
         Cdp::net_since(self, mark)
+    }
+    fn net_since_held(&self, mark: u64) -> Option<Vec<super::net_record::NetEntry>> {
+        Cdp::net_since_held(self, mark)
+    }
+    fn net_unmark(&self, mark: u64) {
+        Cdp::net_unmark(self, mark)
     }
     fn net_quiet(&self) -> Option<super::net_record::NetQuiet> {
         Cdp::net_quiet(self)

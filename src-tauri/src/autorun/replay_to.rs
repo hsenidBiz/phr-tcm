@@ -581,13 +581,20 @@ async fn run_steps<D: Driver>(
     let files = super::run_files::RunFiles::default();
     // What the page met before the first of them is no step's error.
     super::page_errors::drop_all(d);
-    for step in script.steps.iter().filter(|s| in_range(s.step_number)) {
+    // The last action that changed the page, carried from step to step: a
+    // failure names what the page answered the step before. A replay keeps
+    // no step records, so what came late is said only there.
+    let mut noted = runner::Noted::default();
+    noted.in_case(script.area.as_deref());
+    for (at, step) in script.steps.iter().filter(|s| in_range(s.step_number)).enumerate() {
         let k = step.step_number;
         if stopped() {
             return Some(ReplayEnd::Stopped { step: k });
         }
         note_progress(k, n - 1);
         progress(k, n - 1);
+        noted.step = at;
+        noted.take_late();
         let mut in_run = InRun {
             cancel: Some(cancel),
             areas: Some(&areas),
@@ -596,6 +603,7 @@ async fn run_steps<D: Driver>(
             page_errors: script.page_errors,
             ignore_page_errors: script.ignore_page_errors.clone(),
             progress: Some(&ACTIONS),
+            noted: Some(&mut noted),
             ..Default::default()
         };
         let ran = runner::run_step_in_run(
@@ -634,6 +642,15 @@ async fn run_steps<D: Driver>(
                     last.screenshot = runner::picture(d, root).await;
                 }
             }
+        }
+        // A step that failed teaches the application's rules, under the
+        // area the case is in, with what came late for the step before and
+        // the earlier action its failure line names.
+        if outcomes.iter().any(|o| !o.ok) {
+            let late = noted.take_late();
+            let answers = noted.with_earlier(&late);
+            let area = noted.area();
+            runner::remember_failed_step(root, organization, project, step, &outcomes, &answers, area, script.case_id);
         }
         if let Some(mut why) = outcomes.iter().find(|o| !o.ok).map(|o| o.detail.clone()) {
             if let Some(other) = guarding_other.filter(|_| crate::browser::save_guard::is_blocked(&why)) {

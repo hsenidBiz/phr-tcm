@@ -14,7 +14,9 @@ use super::expect::{self, Check};
 use super::input::{self, Blocked};
 use super::locator::{resolve_explained, Target};
 use super::page;
+use super::page_messages::PageMessage;
 use super::timing::Timing;
+use crate::autorun::refusals::RefusedRequest;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -906,7 +908,7 @@ fn check_status(status: u16) -> Result<(), String> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct ActionOutcome {
     pub ok: bool,
     pub detail: String,
@@ -927,14 +929,35 @@ pub struct ActionOutcome {
     /// same.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component: Option<String>,
+    /// What the page newly showed after this action changed it - toasts,
+    /// alerts, field errors (`page_messages`). Never fails the action by
+    /// itself. Left out when empty, so older run files read the same.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub page_said: Vec<PageMessage>,
+    /// The requests this action started that the application refused
+    /// (`autorun::refusals`). Left out when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refused: Vec<RefusedRequest>,
+    /// The page's step indicator after this action, when it has one: kept
+    /// in memory for whoever remembers what the page refused where, never
+    /// saved and never sent to the webview.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub page_step: Option<String>,
+    /// The page's path at the read after this action changed it: `Some`
+    /// once that read was made (empty when the page would not say), `None`
+    /// for an action that changed nothing. In memory only, as `page_step`.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub page_path: Option<String>,
 }
 
 impl ActionOutcome {
     pub fn passed(detail: impl Into<String>) -> Self {
-        ActionOutcome { ok: true, detail: detail.into(), screenshot: None, harness: false, component: None }
+        ActionOutcome { ok: true, detail: detail.into(), ..Default::default() }
     }
     pub fn failed(detail: impl Into<String>) -> Self {
-        ActionOutcome { ok: false, detail: detail.into(), screenshot: None, harness: false, component: None }
+        ActionOutcome { ok: false, detail: detail.into(), ..Default::default() }
     }
 }
 

@@ -137,6 +137,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Retire one of the assistant's own quirks that no longer helps, optionally with a better one.",
   },
   {
+    name: "record_validation_rule",
+    label: "Record a validation rule",
+    summary: "Remembers (or removes) a validation rule the application showed in an area.",
+  },
+  {
     name: "mark_autorun_suspected_defect",
     label: "Mark a suspected defect",
     summary: "Mark a failed step as the application's fault, not the script's, with a note, and leave the script alone.",
@@ -317,6 +322,7 @@ export const AUTORUN_TOOLS = [
   "get_autorun_failures",
   "record_autorun_quirk",
   "retire_autorun_quirk",
+  "record_validation_rule",
   "mark_autorun_suspected_defect",
   "set_autorun_order",
   "propose_accounts",
@@ -430,6 +436,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "get_autorun_failures",
     "record_autorun_quirk",
     "retire_autorun_quirk",
+    "record_validation_rule",
     "mark_autorun_suspected_defect",
     "set_autorun_order",
     "propose_accounts",

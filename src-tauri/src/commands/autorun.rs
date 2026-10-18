@@ -57,6 +57,22 @@ pub(crate) struct Session {
     /// (`release_stepped_run`), another case is stepped, or the browser
     /// closes.
     pub(crate) stepping: Option<store::Replaying>,
+    /// A watched run's last action that changed the page, carried from one
+    /// step to the next (`runner::Noted`), so a failing step can name what
+    /// the page answered the step before. Begun afresh at a case's first
+    /// step, or a step of another case.
+    pub(crate) noted: crate::autorun::runner::Noted,
+}
+
+impl Session {
+    /// The browser is used by something other than a watched step or the
+    /// replay that left it: no replay carries on from where it stood, and
+    /// the watched run's last page change (`noted`) is no longer the page's
+    /// - a later step names nothing that happened before this use.
+    pub(crate) fn used_otherwise(&mut self) {
+        self.replay_stand = None;
+        self.noted.forget(&self.cdp);
+    }
 }
 
 /// How many times the supervised browser has been used for anything but
@@ -801,6 +817,7 @@ async fn open_into(
         opened_by: by,
         replay_stand: None,
         stepping: None,
+        noted: Default::default(),
     });
     note_session_use();
     // A tab the page opens waits, paused, until this connection reads that
@@ -1168,6 +1185,16 @@ pub async fn auto_run_step(
     // page's own errors, and which of its steps comes first.
     let saved = crate::autorun::store::load_script(&root, case_id).ok().flatten();
     let first_step = saved.as_ref().and_then(|s| s.steps.iter().map(|s| s.step_number).min()) == Some(step.step_number);
+    if first_step || session.tabs_case != Some(case_id) {
+        session.noted.forget(&session.cdp);
+    }
+    // Every step a place of its own. The pane holds the records, so what an
+    // earlier step's action caused late is said only in a failure's words.
+    session.noted.step = session.noted.step.wrapping_add(1);
+    session.noted.take_late();
+    // The area the case is in: its script's, unless a `return_to_area` of
+    // an earlier step took it elsewhere.
+    session.noted.in_case(saved.as_ref().and_then(|s| s.area.as_deref()));
     crate::autorun::runner::supervised_step_begins(&mut session.cdp, &mut session.tabs_case, case_id, first_step).await;
     guard_supervised(session, &root, &organization, &project, case_id, true).await?;
     // A watched run makes no trip of its own: a bare `return_to_area` builds
@@ -1189,6 +1216,7 @@ pub async fn auto_run_step(
         fail_on_unexpected_dialog: saved.as_ref().is_some_and(|s| s.fail_on_unexpected_dialog),
         page_errors: saved.as_ref().and_then(|s| s.page_errors),
         ignore_page_errors: saved.map(|s| s.ignore_page_errors).unwrap_or_default(),
+        noted: Some(&mut session.noted),
         ..Default::default()
     };
     let outcomes = crate::autorun::runner::run_step_in_run(
@@ -1205,7 +1233,26 @@ pub async fn auto_run_step(
         &mut run,
     )
     .await?;
-    Ok(StepRun { outcomes, tab: run.tab.take(), dialog: run.dialog.take(), page_errors_seen: run.page_errors_seen })
+    let (tab, dialog, page_errors_seen) = (run.tab.take(), run.dialog.take(), run.page_errors_seen);
+    drop(run);
+    // A step that failed teaches the application's rules, with what came
+    // late for the step before and the earlier action its failure line
+    // names (`runner::remember_failed_step`).
+    if outcomes.iter().any(|o| !o.ok) {
+        let late = session.noted.take_late();
+        let answers = session.noted.with_earlier(&late);
+        crate::autorun::runner::remember_failed_step(
+            &root,
+            &organization,
+            &project,
+            &step,
+            &outcomes,
+            &answers,
+            session.noted.area(),
+            case_id,
+        );
+    }
+    Ok(StepRun { outcomes, tab, dialog, page_errors_seen })
 }
 
 /// Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised
@@ -1354,6 +1401,8 @@ pub(crate) async fn replay_supervised(
     // starts from the beginning. The stand is used up either way.
     note_session_use();
     let stand = session.replay_stand.take();
+    // A watched run's last page change is not carried past a replay.
+    session.noted.forget(&session.cdp);
     // The script as it is now, loaded once: what this replay runs, what
     // decides whether it carries on, and what its stand is stamped with.
     let saved = store::load_script(&root, case_id).ok().flatten();
@@ -1531,7 +1580,7 @@ pub async fn auto_run_check_preconditions(
         session.tabs_case = Some(case_id);
         // The person starting a case in this browser makes it theirs.
         session.opened_by = OpenedBy::Person;
-        session.replay_stand = None;
+        session.used_otherwise();
         note_session_use();
     }
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
@@ -1574,7 +1623,7 @@ pub async fn auto_run_check_preconditions(
 pub async fn make_way_for_setup(key: String, timing: &crate::browser::timing::Timing) {
     let mut slot = SESSION.lock().await;
     if let Some(s) = slot.as_mut() {
-        s.replay_stand = None;
+        s.used_otherwise();
         note_session_use();
         crate::autorun::setup::make_way(&mut s.cdp, &mut s.account, &mut s.lease, &key, timing).await;
     }
@@ -2677,7 +2726,7 @@ pub async fn auto_run_sign_in(
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     // The person signing in here makes the browser theirs.
     session.opened_by = OpenedBy::Person;
-    session.replay_stand = None;
+    session.used_otherwise();
     note_session_use();
     crate::autorun::signin::sign_in_leased(
         &mut session.cdp,

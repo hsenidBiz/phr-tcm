@@ -26,8 +26,9 @@ const MAX_METHODS: usize = 500;
 pub enum PageError {
     /// An uncaught script error (`Runtime.exceptionThrown`).
     Script { message: String },
-    /// A request answered 500 to 599.
-    Response { id: String, status: u16, method: String, path: String },
+    /// A request answered 500 to 599, and the trace id its body gave, once
+    /// read (`set_trace`).
+    Response { id: String, status: u16, method: String, path: String, trace_id: Option<String> },
 }
 
 impl PageError {
@@ -36,8 +37,9 @@ impl PageError {
     pub fn sentence(&self) -> String {
         match self {
             PageError::Script { message } => format!("the page had an error: {message}"),
-            PageError::Response { status, method, path, .. } => {
-                format!("a request was answered {status}: {method} {path}")
+            PageError::Response { status, method, path, trace_id, .. } => {
+                let trace = trace_id.as_deref().map(|t| format!(", trace id {t}")).unwrap_or_default();
+                format!("a request was answered {status}: {method} {path}{trace}")
             }
         }
     }
@@ -85,7 +87,13 @@ impl PageErrorBook {
                 if (500..=599).contains(&status) && url.starts_with("http") {
                     let id = p["requestId"].as_str().unwrap_or("").to_string();
                     let method = self.methods.get(&id).cloned().unwrap_or_else(|| "GET".to_string());
-                    self.push(PageError::Response { id, status: status as u16, method, path: cut(&path_of(url)) });
+                    self.push(PageError::Response {
+                        id,
+                        status: status as u16,
+                        method,
+                        path: cut(&path_of(url)),
+                        trace_id: None,
+                    });
                 }
             }
             "Runtime.exceptionThrown" => {
@@ -109,6 +117,31 @@ impl PageErrorBook {
     /// These requests are the run's own: never counted.
     pub fn exclude(&mut self, ids: impl IntoIterator<Item = String>) {
         self.mine.extend(ids);
+    }
+
+    /// The request ids of the 5xx answers held whose trace id has not been
+    /// read, the run's own and the ones an ignore phrase covers (`counted`)
+    /// left out: at most `most`, the first ones.
+    pub fn untraced(&self, most: usize, ignore: &[String]) -> Vec<String> {
+        counted(self.seen.clone(), ignore)
+            .into_iter()
+            .filter_map(|e| match e {
+                PageError::Response { id, trace_id: None, .. } if !self.mine.contains(&id) => Some(id),
+                _ => None,
+            })
+            .take(most)
+            .collect()
+    }
+
+    /// The trace id the body of request `id` gave.
+    pub fn set_trace(&mut self, id: &str, trace: String) {
+        for e in &mut self.seen {
+            if let PageError::Response { id: held, trace_id, .. } = e {
+                if held == id {
+                    *trace_id = Some(trace.clone());
+                }
+            }
+        }
     }
 
     /// How many are held; for a caller that drops what came after

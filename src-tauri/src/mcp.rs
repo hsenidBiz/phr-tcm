@@ -565,6 +565,18 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["id", "reason"]),
         },
         {
+            "name": "record_validation_rule",
+            "description": "Remember (or remove) one rule the application enforced, in an area: the words its page showed after an action it refused, e.g. \"End date must be after the start date\". Use it when you judge a message the page showed to be a validation rule that Auto Run did not file by itself, or to remove one that no longer holds (`remove`). `message` is the application's own words, as the page showed them; `after` is the action that caused it, in a few words (needed unless you remove). `area` defaults to your discovery's area and `page` (when adding) to the page the browser is on; a removal with no `page` is from every page of the area; `step` is the wizard step when the page shows one. The rule is kept against the area, attributed to the assistant, and the guide shows it to whoever writes the next script there.",
+            "inputSchema": schema(serde_json::json!({
+                "message": { "type": "string", "description": "The application's words, as the page showed them." },
+                "after": { "type": "string", "description": "The action that caused it, in a few words, e.g. \"clicked Save with the end date before the start date\". Needed unless `remove` is set." },
+                "area": { "type": "string", "description": "The area it holds in. Defaults to the open discovery's area; refused when there is neither." },
+                "page": { "type": "string", "description": "The page it was met on (its path). Adding defaults to the page the browser is on; removing without it removes the words from every page of the area." },
+                "step": { "type": "string", "description": "The page's wizard step, when it shows one." },
+                "remove": { "type": "boolean", "description": "True to take the rule out instead of remembering it." },
+            }), &["message"]),
+        },
+        {
             "name": "mark_autorun_suspected_defect",
             "description": "Use this instead of a repair when the application, not the script, is wrong: it marks the failed step of a case as a suspected application defect with a note on what the application did, leaves the script's actions and its repair count untouched, and is refused unless that step failed in the case's newest run (or in a replay of it that stopped there, when that is newer or no run has the case) for a reason other than a STOP line.",
             "inputSchema": schema(serde_json::json!({
@@ -1243,6 +1255,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         "record_autorun_quirk" => call("POST", "/autorun-quirk", &args.to_string()),
         "retire_autorun_quirk" => call("POST", "/autorun-quirk-retire", &args.to_string()),
+        "record_validation_rule" => call("POST", "/autorun-validation-rule", &args.to_string()),
         "mark_autorun_suspected_defect" => call("POST", "/autorun-defect", &args.to_string()),
         "set_autorun_order" => call("POST", "/autorun-order", &args.to_string()),
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),

@@ -812,7 +812,14 @@ async fn a_file_missing_from_test_files_fails_the_step_before_the_page_is_touche
         "{}",
         out[0].detail
     );
-    let touched: Vec<String> = d.methods().into_iter().filter(|m| m != "Page.captureScreenshot").collect();
+    // Reading what the page says around an action is not touching it.
+    let read_js = v2_lib::browser::page_messages::READ_JS;
+    let touched: Vec<String> = d
+        .calls
+        .iter()
+        .filter(|(m, p)| m != "Page.captureScreenshot" && p["expression"] != read_js)
+        .map(|(m, _)| m.clone())
+        .collect();
     assert!(touched.is_empty(), "the page was touched: {touched:?}");
 }
 

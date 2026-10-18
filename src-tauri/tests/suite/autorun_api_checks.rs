@@ -50,6 +50,9 @@ fn entry(seq: u64, method: &str, path_query: &str, status: Option<u16>, state: N
         mime: Some("application/json".to_string()),
         state,
         redirect: None,
+        kind: Some("XHR".to_string()),
+        same_site: true,
+        polling: false,
     }
 }
 

@@ -434,6 +434,7 @@ pub async fn route(
         ("GET", "/autorun-failures") => autorun_failures(ctx, target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
+        ("POST", "/autorun-validation-rule") => record_validation_rule(ctx, body).await,
         ("POST", "/autorun-defect") => autorun_defect(body),
         // Components: saved only once the open discovery has tried them
         // live, and retired only while no saved script uses them.
@@ -2002,6 +2003,7 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool) -> String {
     for section in [
         crate::autorun::nav::guide_section(&nav),
         crate::autorun::discovery_map::explore_section(&areas, &map, crate::autorun::sessions::now_ms()),
+        crate::autorun::discovery_map::rules_section(&map, running_discovery_area().as_deref()),
         crate::autorun::components::guide_section(&components),
         crate::autorun::quirks::quirks_section(&quirks),
         crate::test_files::guide_section(&files),
@@ -2012,6 +2014,14 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool) -> String {
         }
     }
     out
+}
+
+/// The area of the discovery going on now, for the guide's rules. It never
+/// waits: a call that holds the browser is busy, and the guide then lists
+/// every area's rules, which is still true.
+fn running_discovery_area() -> Option<String> {
+    let slot = crate::commands::autorun::supervised().try_lock().ok()?;
+    slot.as_ref()?.discovery.as_ref()?.area.clone()
 }
 
 /// What `/autorun-network-wait` answers. The registry's view carries no
@@ -3054,8 +3064,9 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let Some(session) = slot.as_mut() else {
         return (409, NO_SUPERVISED_BROWSER.to_string());
     };
-    // A try uses the browser: no replay carries on from where it stood.
-    session.replay_stand = None;
+    // A try uses the browser: no replay carries on from where it stood, and
+    // no watched step names what happened before it.
+    session.used_otherwise();
     crate::commands::autorun::note_session_use();
     // Another case's tabs go first, before its unreported stop is read by
     // the guard below (`try_for_case` does this too).
@@ -3465,6 +3476,148 @@ struct Discovered {
     after: String,
 }
 
+/// What the page answered each action of one discovery call - one action,
+/// a component's actions, or a batch - kept across them. One `Noted`
+/// carries the call's last action that changed the page on to the next, as
+/// a run's steps carry it: a message or a refusal that came after an
+/// action's own reads is still put on it, and a later failure names it.
+/// Each action runs as a step of its own, so the steps `noted` numbers are
+/// mapped back to the call's actions.
+///
+/// It also keeps, for each of those steps, what the application's rules
+/// are read from (`discovery_map::rules_from`): the action, the page its
+/// read after it was on, and what the page answered it. The call keeps them once,
+/// when it is over (`remember`).
+#[derive(Default)]
+struct Heard {
+    noted: crate::autorun::runner::Noted,
+    /// The call's action each step `noted` numbered belongs to.
+    owners: Vec<usize>,
+    /// Everything the page answered each of the call's actions so far.
+    answers: Vec<Answered>,
+    /// What the page answered each step `noted` numbered, by that number.
+    spots: Vec<crate::autorun::discovery_map::ActionAnswer>,
+    /// The discovery's area and case, as the call found them.
+    area: Option<String>,
+    case_id: Option<i32>,
+}
+
+/// What the page answered one action of a discovery call.
+#[derive(Default, Clone)]
+struct Answered {
+    said: Vec<crate::browser::page_messages::PageMessage>,
+    refused: Vec<crate::autorun::refusals::RefusedRequest>,
+}
+
+impl Heard {
+    /// The call's action `at` is about to run one step.
+    fn begin(&mut self, at: usize) {
+        self.noted.step = self.owners.len();
+        self.owners.push(at);
+        self.spots.push(Default::default());
+    }
+
+    fn add(
+        &mut self,
+        at: usize,
+        said: Vec<crate::browser::page_messages::PageMessage>,
+        refused: Vec<crate::autorun::refusals::RefusedRequest>,
+    ) {
+        if self.answers.len() <= at {
+            self.answers.resize_with(at + 1, Answered::default);
+        }
+        let a = &mut self.answers[at];
+        a.said.extend(said);
+        a.said.truncate(crate::browser::page_messages::MAX_MESSAGES);
+        a.refused.extend(refused);
+    }
+
+    /// What the step action `at` just ran answered it, and what came late
+    /// for the call's earlier actions. `one` is the action the step ran (a
+    /// component's own).
+    fn ran(
+        &mut self,
+        at: usize,
+        outcome: &crate::browser::actions::ActionOutcome,
+        one: &crate::browser::actions::Action,
+    ) {
+        self.add(at, outcome.page_said.clone(), outcome.refused.clone());
+        if let Some(spot) = self.spots.get_mut(self.noted.step) {
+            spot.page = outcome.page_path.clone().unwrap_or_default();
+            spot.step = outcome.page_step.clone();
+            spot.after = describe_action(one);
+            spot.said.extend(outcome.page_said.iter().cloned());
+            spot.refused.extend(outcome.refused.iter().cloned());
+            spot.changed = outcome.page_path.is_some();
+            spot.failed = !outcome.ok && !crate::autorun::runner::tcm_made(outcome);
+        }
+        self.take_late();
+    }
+
+    fn take_late(&mut self) {
+        for late in self.noted.take_late() {
+            if let Some(spot) = self.spots.get_mut(late.step) {
+                spot.said.extend(late.page_said.iter().cloned());
+                spot.refused.extend(late.refused.iter().cloned());
+            }
+            if let Some(&at) = self.owners.get(late.step) {
+                self.add(at, late.page_said, late.refused);
+            }
+        }
+    }
+
+    /// The call is over: what it taught of the application's rules is kept
+    /// under the discovery's area, in one write - a map that could not be
+    /// written fails nothing.
+    fn remember(&self, root: &std::path::Path, organization: &str, project: &str) {
+        use crate::autorun::discovery_map::{remember_refusals_logged, rules_from, RuleSource};
+        let rules = rules_from(&self.spots, RuleSource::Discovery, self.case_id, crate::autorun::sessions::now_ms());
+        remember_refusals_logged(root, organization, project, self.area.as_deref(), rules);
+    }
+
+    /// The call's last action has no next one to read the page for it: the
+    /// messages are read once more, before the call's closing page read.
+    async fn look_again<D: crate::browser::cdp::Driver>(&mut self, d: &mut D) {
+        self.noted.look_again(d).await;
+        self.take_late();
+    }
+
+    /// Before a batch's next action: the requests the application refused
+    /// the last action that changed the page since its own reads.
+    async fn look_for_refusals<D: crate::browser::cdp::Driver>(&mut self, d: &mut D) {
+        self.noted.look_for_refusals(d).await;
+        self.take_late();
+    }
+
+    fn of(&self, at: usize) -> Answered {
+        self.answers.get(at).cloned().unwrap_or_default()
+    }
+
+    /// Put what the page answered action `at` on its JSON answer:
+    /// `page_said` and `app_refused`, each only when there is one.
+    fn put_on(&self, at: usize, v: &mut serde_json::Value) {
+        let Some(o) = v.as_object_mut() else {
+            return;
+        };
+        let a = self.of(at);
+        o.remove("page_said");
+        o.remove("app_refused");
+        if !a.said.is_empty() {
+            o.insert("page_said".into(), serde_json::json!(a.said));
+        }
+        if !a.refused.is_empty() {
+            o.insert("app_refused".into(), serde_json::json!(a.refused));
+        }
+    }
+
+    /// The call is over: the mark its last action kept is let go.
+    fn forget<B: DiscoveryBrowser>(&mut self, slot: &mut Option<B>) {
+        if let Some(b) = slot.as_mut() {
+            self.noted.forget(&*b.parts().driver);
+        }
+    }
+}
+
 /// One action in the discovery's browser, run as `/autorun-try` runs one
 /// (`try_action`, case 0), with what it set off: `{ok, detail, path,
 /// dialogs, writes, page}`. Every write request the page sent (`SAVE_METHODS`)
@@ -3483,6 +3636,11 @@ struct Discovered {
 ///
 /// In a mapping run the answer adds `blocked`: how many saves the guard
 /// stopped since the last action (`count_blocked_writes`).
+///
+/// What the page newly showed after it is `page_said`, and the requests the
+/// application refused it `app_refused`, each only when there is one: the
+/// messages are read once more before the closing page read, as nothing
+/// comes after this action to read them for it.
 pub async fn discover_action_in<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
     root: &std::path::Path,
@@ -3491,6 +3649,29 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     action: &crate::browser::actions::Action,
     draft: Option<&crate::autorun::components::Component>,
     area: Option<&str>,
+) -> (u16, String) {
+    let mut heard = Heard::default();
+    let answer = discover_action_heard(slot, root, organization, project, action, draft, area, &mut heard, 0, true).await;
+    heard.remember(root, organization, project);
+    heard.forget(slot);
+    answer
+}
+
+/// `discover_action_in` as action `at` of a discovery call that `heard`
+/// keeps; `closing` when it is the call's last, which reads the page's
+/// messages once more for it.
+#[allow(clippy::too_many_arguments)]
+async fn discover_action_heard<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    action: &crate::browser::actions::Action,
+    draft: Option<&crate::autorun::components::Component>,
+    area: Option<&str>,
+    heard: &mut Heard,
+    at: usize,
+    closing: bool,
 ) -> (u16, String) {
     let Some(browser) = slot.as_mut() else {
         return (409, NO_DISCOVERY.to_string());
@@ -3512,6 +3693,8 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
         state.area = Some(crate::autorun::discovery_map::canonical_area(root, organization, project, &moved));
     }
     let area_name = state.area.clone();
+    heard.area = area_name.clone();
+    heard.case_id = state.case_id;
     let mapping = state.mapping.is_some();
     // Once a discovery must not save, it stays so (`DiscoveryState::no_save`).
     let must_not_save = discovery_must_not_save(root, state);
@@ -3532,13 +3715,25 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
     let mut last = None;
     let mut after = String::new();
     for (i, one) in runs.iter().copied().enumerate() {
-        let mut ran =
-            match discover_one(d, p.signed_in, p.lease, root, organization, project, area_name.as_deref(), mapping, one)
-                .await
-            {
-                Ok(ran) => ran,
-                Err(refused) => return refused,
-            };
+        heard.begin(at);
+        let ran = discover_one(
+            d,
+            p.signed_in,
+            p.lease,
+            root,
+            organization,
+            project,
+            area_name.as_deref(),
+            mapping,
+            one,
+            &mut heard.noted,
+        )
+        .await;
+        let mut ran = match ran {
+            Ok(ran) => ran,
+            Err(refused) => return refused,
+        };
+        heard.ran(at, &ran.outcome, one);
         // A component that fails on its first action says where the
         // browser is: most often it stands on another screen.
         if component.is_some() && i == 0 && !ran.outcome.ok {
@@ -3569,8 +3764,11 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
             }
         }
     }
-    let at = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref());
-    let (status, page) = read_page(d, crate::browser::snapshot::PAGE_LINES_DEFAULT, at.as_ref()).await;
+    if closing {
+        heard.look_again(d).await;
+    }
+    let sighting = discovery_sighting(root, organization, project, p.discovery.as_ref(), None, p.signed_in.as_deref());
+    let (status, page) = read_page(d, crate::browser::snapshot::PAGE_LINES_DEFAULT, sighting.as_ref()).await;
     let mut blocked = count_blocked_writes(d, p.discovery.as_mut(), &runs);
     if reports_blocks {
         blocked_writes.extend(take_no_save_blocks(d, &runs));
@@ -3584,6 +3782,7 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
         "writes": writes,
         "page": if status == 200 { page.as_str() } else { "" },
     });
+    heard.put_on(at, &mut answer);
     if let Some(n) = blocked {
         answer["blocked"] = serde_json::json!(n);
     }
@@ -3647,12 +3846,14 @@ fn draft_for<'a>(
 /// One line of a batch's answer for an action that ran, from its single
 /// answer (`discover_action_in`'s JSON): ok or failed with the detail, the
 /// dialogs it raised, the writes it set off (method and path only), the
-/// page path when it changed, whether its own page read failed, and where
-/// its picture is.
+/// page path when it changed, whether its own page read failed, where its
+/// picture is, and what the page answered it (`page_said`, `app_refused`).
+/// A failed action's detail already names its refusal, so only what the
+/// page showed it and the detail does not say is added.
 fn batch_line(n: usize, action: &crate::browser::actions::Action, v: &serde_json::Value, last_path: &mut Option<String>) -> String {
     let ok = v["ok"].as_bool().unwrap_or(false);
     let detail = v["detail"].as_str().map(str::trim).filter(|d| !d.is_empty());
-    let mut said = one_short_line(&detail.map(str::to_string).unwrap_or_else(|| describe_action(action)));
+    let mut said = batch_detail(&detail.map(str::to_string).unwrap_or_else(|| describe_action(action)));
     for dialog in v["dialogs"].as_array().into_iter().flatten().filter_map(|d| d.as_str()) {
         said.push_str(&format!("; dialog {}", one_short_line(dialog)));
     }
@@ -3675,7 +3876,91 @@ fn batch_line(n: usize, action: &crate::browser::actions::Action, v: &serde_json
     if let Some(picture) = v["picture"].as_str() {
         said.push_str(&format!("; picture {picture}"));
     }
+    if ok {
+        let refused: Vec<crate::autorun::refusals::RefusedRequest> =
+            serde_json::from_value(v["app_refused"].clone()).unwrap_or_default();
+        if let Some(first) = refused.first() {
+            said.push_str(&format!("; {}", crate::autorun::refusals::app_refused_line(first)));
+        }
+    }
+    let shown: Vec<crate::browser::page_messages::PageMessage> =
+        serde_json::from_value(v["page_said"].clone()).unwrap_or_default();
+    if !shown.is_empty() {
+        let note = crate::autorun::runner::page_showed_note(&shown);
+        if ok || !detail.is_some_and(|d| d.contains(&note)) {
+            said.push_str(&format!("; {note}"));
+        }
+    }
     format!("{n}. {}: {said}", if ok { "ok" } else { "failed" })
+}
+
+/// An action's detail on its batch line: one line of at most 200
+/// characters, unless it carries what the page or the application answered
+/// - the reason the assistant needs whole - which is kept on one line, as
+/// long as the runner made it.
+fn batch_detail(detail: &str) -> String {
+    use crate::autorun::{refusals::APP_REFUSED, runner::PAGE_SHOWED};
+    if detail.contains(APP_REFUSED) || detail.contains(PAGE_SHOWED) {
+        detail.split_whitespace().collect::<Vec<_>>().join(" ")
+    } else {
+        one_short_line(detail)
+    }
+}
+
+/// Whether a failed action's detail already names what the page answered
+/// an earlier action (`runner::AFTER_EARLIER`).
+fn names_an_earlier_answer(detail: &str) -> bool {
+    use crate::autorun::{refusals::APP_REFUSED, runner::{AFTER_EARLIER, PAGE_SHOWED}};
+    detail.find(AFTER_EARLIER).is_some_and(|i| detail[i..].contains(PAGE_SHOWED) || detail[i..].contains(APP_REFUSED))
+}
+
+/// Said after a batch stopped at action `failed` (from 0): the last action
+/// before it that the page answered with a message, as the likelier cause.
+/// Nothing when the failed action has a refusal of its own, or its detail
+/// already names an earlier action's answer.
+fn points_back(actions: &[crate::browser::actions::Action], heard: &Heard, failed: usize, detail: &str) -> Option<String> {
+    if !heard.of(failed).refused.is_empty() || names_an_earlier_answer(detail) {
+        return None;
+    }
+    let (k, said) = (0..failed).rev().map(|k| (k, heard.of(k).said)).find(|(_, said)| !said.is_empty())?;
+    let what = actions.get(k).map(describe_action).unwrap_or_default();
+    Some(format!("After action {} ({what}) {}.", k + 1, crate::autorun::runner::page_showed_note(&said)))
+}
+
+/// The first action of a batch that worked and was refused once it had
+/// ended (from 0): a refusal found within its own reads would have failed it.
+fn refused_once_ended(rows: &[Row], heard: &Heard) -> Option<usize> {
+    rows.iter().find_map(|row| match row {
+        Row::Ran(k, v) if v["ok"].as_bool() == Some(true) && !heard.of(*k).refused.is_empty() => Some(*k),
+        _ => None,
+    })
+}
+
+/// One line of a batch's answer, before the batch is done: said as it is,
+/// or the action (from 0) that ran with its single answer, put into words
+/// once everything the page answered it is known.
+enum Row {
+    Said(String),
+    Ran(usize, serde_json::Value),
+}
+
+/// A batch's rows as its answer's lines (`batch_line`), each action with
+/// what the page answered it (`Heard::put_on`).
+fn batch_rows(actions: &[crate::browser::actions::Action], rows: &[Row], heard: &Heard) -> Vec<String> {
+    let mut last_path = None;
+    rows.iter()
+        .map(|row| match row {
+            Row::Said(line) => line.clone(),
+            Row::Ran(i, v) => {
+                let mut v = v.clone();
+                heard.put_on(*i, &mut v);
+                match actions.get(*i) {
+                    Some(action) => batch_line(i + 1, action, &v, &mut last_path),
+                    None => String::new(),
+                }
+            }
+        })
+        .collect()
 }
 
 /// Said when a batch stopped at a failure: how many actions were not run.
@@ -3741,6 +4026,13 @@ async fn batch_ended_by_the_browser<B: DiscoveryBrowser>(
 /// last read replaces the page's elements just as `get_autorun_page` after
 /// a single action does: something only the last action's own read saw (a
 /// message that has since gone) is dropped.
+///
+/// The batch's actions share one `Heard`: what the page showed only after
+/// an action's own reads is found by the next action's first read (or, for
+/// the last, by one more read before the page's) and said on that action's
+/// line. When the batch stopped at a failure whose own line cannot name it,
+/// the stop line points back to the last action the page answered with a
+/// message (`points_back`).
 #[allow(clippy::too_many_arguments)]
 pub async fn discover_actions_in<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
@@ -3753,6 +4045,30 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
     stop_on_failure: bool,
     stop: &std::sync::atomic::AtomicBool,
 ) -> (u16, String) {
+    let mut heard = Heard::default();
+    let answer =
+        discover_actions_heard(slot, root, organization, project, actions, draft, area, stop_on_failure, stop, &mut heard)
+            .await;
+    heard.remember(root, organization, project);
+    heard.forget(slot);
+    answer
+}
+
+/// `discover_actions_in`, with what the page answered its actions kept in
+/// `heard`.
+#[allow(clippy::too_many_arguments)]
+async fn discover_actions_heard<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    actions: &[crate::browser::actions::Action],
+    draft: Option<&crate::autorun::components::Component>,
+    area: Option<&str>,
+    stop_on_failure: bool,
+    stop: &std::sync::atomic::AtomicBool,
+    heard: &mut Heard,
+) -> (u16, String) {
     if let Err(refused) = refuse_batch_size(actions.len()) {
         return refused;
     }
@@ -3763,24 +4079,43 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
         state.area = Some(crate::autorun::discovery_map::canonical_area(root, organization, project, &moved));
     }
     let blocked_by = if state.mapping.is_some() { "the mapping run" } else { "the no-save guard" };
-    let mut lines = Vec::new();
+    let mut rows = Vec::new();
     let mut blocked = 0usize;
-    let mut last_path = None;
     let mut ran = 0;
+    // The action the batch stopped at, and its detail.
+    let mut stopped_at = None;
+    // An action that worked, refused once it had ended, and how many were
+    // then not run.
+    let mut refused_after = None;
     for (i, action) in actions.iter().enumerate() {
         if stop.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            let mut lines = batch_rows(actions, &rows, heard);
             lines.push(ended_line(actions.len() - i));
             return (409, lines.join("\n"));
         }
+        // A refused request stops the batch even when it was answered after
+        // the action that sent it had ended (past the answer wait, or sent
+        // after its own reads): the next action does not run.
+        if stop_on_failure && i > 0 {
+            if let Some(b) = slot.as_mut() {
+                heard.look_for_refusals(b.parts().driver).await;
+            }
+            if let Some(k) = refused_once_ended(&rows, heard) {
+                refused_after = Some((k, actions.len() - i));
+                break;
+            }
+        }
         let (status, body) =
-            discover_action_in(slot, root, organization, project, action, draft_for(action, draft), None).await;
+            discover_action_heard(slot, root, organization, project, action, draft_for(action, draft), None, heard, i, false)
+                .await;
         ran = i + 1;
         if status != 200 {
             // The browser failed or the discovery is gone: nothing after
             // it can run.
             let stopped = said_browser_failed(&(status, body.clone())) || body == NO_DISCOVERY;
-            lines.push(format!("{}. failed: {}", i + 1, one_short_line(&body)));
+            rows.push(Row::Said(format!("{}. failed: {}", i + 1, one_short_line(&body))));
             if stopped {
+                let mut lines = batch_rows(actions, &rows, heard);
                 if ran < actions.len() {
                     lines.push(not_run_line(actions.len() - ran));
                 }
@@ -3793,13 +4128,29 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
         }
         let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
         blocked += v["blocked"].as_u64().map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX));
-        lines.push(batch_line(i + 1, action, &v, &mut last_path));
-        if stop_on_failure && !v["ok"].as_bool().unwrap_or(false) {
+        let failed = !v["ok"].as_bool().unwrap_or(false);
+        let detail = v["detail"].as_str().unwrap_or("").to_string();
+        rows.push(Row::Ran(i, v));
+        if stop_on_failure && failed {
+            stopped_at = Some((i, detail));
             break;
         }
     }
-    if ran < actions.len() {
-        lines.push(not_run_line(actions.len() - ran));
+    // The last action has no next one to read the page's messages for it.
+    if let Some(b) = slot.as_mut() {
+        heard.look_again(b.parts().driver).await;
+    }
+    let mut lines = batch_rows(actions, &rows, heard);
+    let back = stopped_at.and_then(|(i, detail)| points_back(actions, heard, i, &detail));
+    match (refused_after, ran < actions.len(), back) {
+        (Some((k, n)), _, _) => {
+            let what = actions.get(k).map(describe_action).unwrap_or_default();
+            lines.push(format!("Stopped: the app refused action {} ({what}) after it ended: {n} not run.", k + 1));
+        }
+        (None, true, Some(back)) => lines.push(format!("{} {back}", not_run_line(actions.len() - ran))),
+        (None, true, None) => lines.push(not_run_line(actions.len() - ran)),
+        (None, false, Some(back)) => lines.push(back),
+        (None, false, None) => {}
     }
     if blocked > 0 {
         lines.push(format!("Saves blocked by {blocked_by}: {blocked}."));
@@ -3895,17 +4246,25 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
     area_name: Option<&str>,
     mapping: bool,
     action: &crate::browser::actions::Action,
+    noted: &mut crate::autorun::runner::Noted,
 ) -> Result<Discovered, (u16, String)> {
     let recording = !project.trim().is_empty();
     let bucket = area_name.unwrap_or("");
     let before = current_page(d).await.0;
     let notes_before = status_texts(d).await;
     let mark = crate::browser::cdp::Driver::net_mark(d);
-    let tried = try_action(d, signed_in, lease, root, organization, project, 0, area_name, mapping, action).await?;
+    let tried =
+        try_action(d, signed_in, lease, root, organization, project, 0, area_name, mapping, action, Some(noted)).await;
+    // The writes are read once and the mark let go, however the action
+    // went: on the whole browser a mark kept pushes out the ones still in
+    // use (`MAX_NET_MARKS`).
+    let sent = crate::browser::cdp::Driver::net_since(d, mark);
+    crate::browser::cdp::Driver::net_unmark(d, mark);
+    let tried = tried?;
     let what = describe_action(action);
     let now = crate::autorun::sessions::now_ms();
     let mut writes = Vec::new();
-    for sent in crate::browser::cdp::Driver::net_since(d, mark) {
+    for sent in sent {
         if !crate::browser::save_guard::SAVE_METHODS.contains(&sent.method.as_str()) {
             continue;
         }
@@ -5501,11 +5860,12 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
     discovery_area: Option<&str>,
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
-    let tried = try_action(d, account, lease, root, organization, project, case_id, discovery_area, false, action).await;
-    let (outcome, steps) = match tried {
-        Ok(tried) => (tried.outcome, tried.steps),
+    let tried = try_action(d, account, lease, root, organization, project, case_id, discovery_area, false, action, None).await;
+    let (outcome, steps, answered) = match tried {
+        Ok(tried) => (tried.outcome, tried.steps, tried.answered),
         Err(refused) => return refused,
     };
+    remember_tried(root, organization, project, discovery_area, case_id, &answered);
     let mut text = format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
     if let Some(shot) = &outcome.screenshot {
         text.push_str(&format!(" (picture: {})", crate::autorun::store::shot_path(root, shot).display()));
@@ -5532,6 +5892,47 @@ struct Tried {
     steps: Vec<(String, crate::browser::actions::ActionOutcome)>,
     outcome: crate::browser::actions::ActionOutcome,
     dialog: Option<crate::autorun::StepDialog>,
+    /// Each action the try carried out - a component's own, or the one -
+    /// described, with its own outcome: what the page answered each.
+    answered: Vec<(String, crate::browser::actions::ActionOutcome)>,
+}
+
+/// What a try teaches of the application's rules, kept as a discovery's
+/// (`discovery_map::rules_from`) under the area its sightings go to
+/// (`recording_area`): every request the application refused its actions
+/// up to the first that failed, and what the page showed after the nearest
+/// one before that failure that changed the page. With no area known
+/// nothing is kept, and a map that could not be written fails nothing.
+fn remember_tried(
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    discovery_area: Option<&str>,
+    case_id: i32,
+    answered: &[(String, crate::browser::actions::ActionOutcome)],
+) {
+    use crate::autorun::discovery_map::{remember_refusals_logged, rules_from, ActionAnswer, RuleSource};
+    // What the first failure stopped was never carried out.
+    let ran = answered.iter().position(|(_, o)| !o.ok).map_or(answered.len(), |i| i + 1);
+    let answers: Vec<ActionAnswer> = answered[..ran]
+        .iter()
+        .map(|(what, o)| ActionAnswer {
+            page: o.page_path.clone().unwrap_or_default(),
+            step: o.page_step.clone(),
+            after: what.clone(),
+            said: o.page_said.clone(),
+            refused: o.refused.clone(),
+            changed: o.page_path.is_some(),
+            failed: !o.ok && !crate::autorun::runner::tcm_made(o),
+        })
+        .collect();
+    let case = (case_id != 0).then_some(case_id);
+    let rules = rules_from(&answers, RuleSource::Discovery, case, crate::autorun::sessions::now_ms());
+    if rules.is_empty() || project.trim().is_empty() {
+        return;
+    }
+    let area = recording_area(root, discovery_area, case);
+    remember_refusals_logged(root, organization, project, area.as_deref(), rules);
 }
 
 /// One action, carried out by the runner's own step loop as a step of one
@@ -5550,6 +5951,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     discovery_area: Option<&str>,
     saves_only_counted: bool,
     action: &crate::browser::actions::Action,
+    noted: Option<&mut crate::autorun::runner::Noted>,
 ) -> Result<Tried, (u16, String)> {
     use crate::autorun::runner::{area_route, area_routes, named_areas, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
     // A bare `return_to_area` goes to the case's own area - in a discovery
@@ -5623,7 +6025,11 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     let started_on =
         if matched.is_empty() && waited.is_none() { String::new() } else { page_address(d).await.0 };
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
-    let mut run = InRun { areas: Some(&areas), saves_only_counted, ..Default::default() };
+    // A try fails on a request the application refused: the assistant learns
+    // the reason now, not from a wait that times out later.
+    // A discovery's `noted` carries its last action that changed the page
+    // to the next action, as a run's steps carry it.
+    let mut run = InRun { areas: Some(&areas), saves_only_counted, refusals_fail: true, noted, ..Default::default() };
     let outcomes = match crate::autorun::runner::run_step_in_run(
         d,
         root,
@@ -5656,6 +6062,10 @@ async fn try_action<D: crate::browser::cdp::Driver>(
                 .collect()
         }
         _ => Vec::new(),
+    };
+    let answered = match (&steps[..], outcomes.first()) {
+        ([], Some(o)) => vec![(describe_action(action), o.clone())],
+        _ => steps.clone(),
     };
     let outcome = if steps.is_empty() {
         let Some(outcome) = outcomes.into_iter().next() else {
@@ -5696,7 +6106,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         }
         record_matched_targets(&at, &started_on, &matched);
     }
-    Ok(Tried { outcome, dialog: run.dialog, steps })
+    Ok(Tried { outcome, dialog: run.dialog, steps, answered })
 }
 
 /// A run's failed cases, as text an assistant can act on - and, when it
@@ -5840,6 +6250,157 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
         Ok(Recorded::Reactivated(id, reason)) => (200, reactivated_reply(&id, reason.as_deref())),
         Err(why) => (400, why),
     }
+}
+
+/// Remember, or take out, one rule the application enforced in an area -
+/// the words its page showed after an action it refused - as the
+/// assistant judged it (`record_validation_rule`). Reads the open
+/// discovery's area and the page the browser is on, the way `try` does,
+/// without waiting for a browser an unattended run holds.
+async fn record_validation_rule(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    if unattended_run_is_using_the_browser().is_some() || crate::autorun::replay_to::is_running() {
+        return rule_in_area(&root, &ctx.org, &ctx.project, body, None, "");
+    }
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    record_validation_rule_in(&mut slot, &root, &ctx.org, &ctx.project, body).await
+}
+
+/// `record_validation_rule` in the browser `slot` holds: its discovery's
+/// area is where a rule goes when the body names none, and the page it is
+/// on is the rule's page when the body names none. No browser, or one open
+/// for no discovery, leaves the body to name them.
+pub async fn record_validation_rule_in<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    body: &str,
+) -> (u16, String) {
+    let Some(browser) = slot.as_mut() else {
+        return rule_in_area(root, organization, project, body, None, "");
+    };
+    let p = browser.parts();
+    let area = p.discovery.as_ref().and_then(|d| d.area.clone());
+    // Only an add that names no page takes the browser's.
+    let page = if takes_the_browsers_page(body) { current_page(p.driver).await.0 } else { String::new() };
+    rule_in_area(root, organization, project, body, area.as_deref(), &page)
+}
+
+/// Whether a `record_validation_rule` body is an add that names no page,
+/// the one kind filed under the page the browser is on. A body that is not
+/// a rule is left to `rule_in_area` to refuse.
+fn takes_the_browsers_page(body: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    let removal = v["remove"].as_bool().unwrap_or(false);
+    let named = v["page"].as_str().is_some_and(|p| !p.trim().is_empty());
+    !removal && !named
+}
+
+/// The rule a body tells, kept in (or taken out of) the map. `discovery_area`
+/// and `browser_page` (a path, empty when not known) fill in what the body
+/// leaves out; an area from neither is asked for rather than guessed, and
+/// one the body names that is neither recorded nor in the map is refused,
+/// so a typo makes no stray area. An add without a page is on the page the
+/// browser is on; a removal without one is from every page of the area,
+/// whatever the browser shows: the words are the rule.
+fn rule_in_area(
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    body: &str,
+    discovery_area: Option<&str>,
+    browser_page: &str,
+) -> (u16, String) {
+    use crate::autorun::discovery_map::{canonical_area, forget_refusal_saved, page_path, remember_refusals, RefusalRule, RuleSource};
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RuleBody {
+        message: String,
+        after: Option<String>,
+        area: Option<String>,
+        page: Option<String>,
+        step: Option<String>,
+        #[serde(default)]
+        remove: bool,
+    }
+    let shape = "{ \"message\": \"the words the page showed\", \"after\": \"the action that caused it\" }";
+    let rule: RuleBody = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(e) => return (400, format!("that is not a rule: {e}. Expected {shape}.")),
+    };
+    // One line, as the page's messages are read.
+    let words = |text: &str| -> String {
+        let one = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        one.chars().take(crate::browser::page_messages::MAX_MESSAGE_CHARS).collect()
+    };
+    let named = |text: &Option<String>| text.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
+    let message = words(&rule.message);
+    if message.is_empty() {
+        return (400, "\"message\" is the application's own words, as the page showed them".to_string());
+    }
+    if organization.trim().is_empty() || project.trim().is_empty() {
+        return (400, RULE_NEEDS_A_PROJECT.to_string());
+    }
+    let named_area = named(&rule.area);
+    let Some(area) = named_area.clone().or_else(|| discovery_area.map(str::trim).filter(|a| !a.is_empty()).map(str::to_string)) else {
+        return (400, "Name the area: no discovery is running.".to_string());
+    };
+    let area = canonical_area(root, organization, project, &area);
+    if named_area.is_some() {
+        // The discovery's own area is one the assistant started; a name
+        // typed into the body must already be known.
+        let key = crate::autorun::discovery_map::area_key(&area);
+        let recorded = crate::autorun::nav::load_nav(root, organization, project)
+            .ok()
+            .is_some_and(|nav| crate::autorun::nav::find_area(&nav, &area).is_some());
+        let mapped = crate::autorun::discovery_map::load_map(root, organization, project)
+            .ok()
+            .is_some_and(|map| map.areas.iter().any(|a| crate::autorun::discovery_map::area_key(&a.area) == key));
+        if !recorded && !mapped {
+            return (400, format!("No area named \"{area}\" is recorded."));
+        }
+    }
+    // Only an add takes the page the browser is on.
+    let page = named(&rule.page)
+        .or_else(|| Some(browser_page.trim().to_string()).filter(|p| !p.is_empty() && !rule.remove))
+        .map(|p| page_path(&p));
+    if rule.remove {
+        return match forget_refusal_saved(root, organization, project, &area, page.as_deref(), &message) {
+            Ok(true) => (200, format!("Removed from {area}.")),
+            Ok(false) => (200, format!("No such rule in {area}.")),
+            Err(_) => rule_not_kept(),
+        };
+    }
+    let after = words(rule.after.as_deref().unwrap_or(""));
+    if after.is_empty() {
+        return (400, "\"after\" is the action that caused it, in a few words (needed unless you remove the rule)".to_string());
+    }
+    let Some(page) = page else {
+        return (400, "Name the page: the Auto Run browser is not on one.".to_string());
+    };
+    let now = crate::autorun::sessions::now_ms();
+    let step = named(&rule.step);
+    let rule = RefusalRule { page, step, after, message, source: RuleSource::Assistant, case_id: None, first_seen: now, last_seen: now, count: 1 };
+    match remember_refusals(root, organization, project, &area, vec![rule]) {
+        Ok(()) => (200, format!("Remembered for {area}.")),
+        Err(_) => rule_not_kept(),
+    }
+}
+
+/// Said by `record_validation_rule` with no project open: a rule belongs to one.
+const RULE_NEEDS_A_PROJECT: &str = "open a project in the app first - a validation rule belongs to a project";
+
+/// Said when the map could not be written: how, never in the rule's words
+/// or a file's path.
+fn rule_not_kept() -> (u16, String) {
+    crate::applog::warn("Discovery map: a rule the assistant gave could not be kept".to_string());
+    (500, "the discovery map could not be written, so the rule was not kept".to_string())
 }
 
 /// Mark a case as a suspected application defect: the script is right, the
