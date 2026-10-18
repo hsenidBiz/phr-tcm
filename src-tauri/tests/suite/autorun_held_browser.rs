@@ -831,4 +831,9 @@ async fn the_assistant_resets_through_its_route() {
     let body = body_of(&source, "pub async fn reset_for_assistant(");
     let before_lock = &body[..body.find("SESSION.lock()").expect("the reset never takes the browser")];
     assert!(before_lock.contains("replay_to::is_running()"), "a replay is not refused first");
+    // With no data directory and no browser, none is open - not a 503.
+    let after_lock = &body[body.find("SESSION.lock()").unwrap()..];
+    let no_root = &after_lock[after_lock.find("configured_root()").expect("the data directory is read before the lock")..];
+    let no_root = &no_root[..no_root.find("NO_DATA_DIRECTORY").unwrap()];
+    assert!(no_root.contains("if slot.is_none() {") && no_root.contains("(404, NO_BROWSER_OPEN.to_string())"), "{no_root}");
 }

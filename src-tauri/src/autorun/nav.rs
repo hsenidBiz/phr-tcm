@@ -603,6 +603,14 @@ pub async fn go_home<D: Driver>(d: &mut D, home: &Home, timing: &Timing) -> Acti
     load_home(d, home, timing).await
 }
 
+/// Said by `load_home` when the home page loaded but its signed-in marker
+/// never showed: the browser is no longer signed in.
+pub const HOME_NEVER_SIGNED_IN: &str = "the home page opened but never showed it was signed in";
+
+/// How `load_home` begins its answer when the home page loaded, signed in,
+/// and one of the `after_sign_in` steps then stopped.
+pub const AFTER_SIGN_IN_STOPPED_AT_HOME: &str = "went to the home page, but after_sign_in step ";
+
 /// Load the recipe's home page whether or not the browser is on it - a
 /// fresh load - and leave it ready: the signed-in marker waited for and
 /// `after_sign_in` run again, as `go_home` does once it has to go.
@@ -628,7 +636,7 @@ pub async fn load_home<D: Driver>(d: &mut D, home: &Home, timing: &Timing) -> Ac
         let mut failed = ActionOutcome::failed(if marker.harness {
             "the browser did not answer while the home page was opening"
         } else {
-            "the home page opened but never showed it was signed in"
+            HOME_NEVER_SIGNED_IN
         });
         failed.harness = marker.harness;
         return failed;
@@ -640,7 +648,7 @@ pub async fn load_home<D: Driver>(d: &mut D, home: &Home, timing: &Timing) -> Ac
             // after_sign_in); this sentence reaches the person, so they go
             // to the log instead.
             crate::applog::warn(format!("going home: after_sign_in step {n} stopped: {why}"));
-            let mut failed = ActionOutcome::failed(format!("went to the home page, but after_sign_in step {n} stopped"));
+            let mut failed = ActionOutcome::failed(format!("{AFTER_SIGN_IN_STOPPED_AT_HOME}{n} stopped"));
             failed.harness = harness;
             failed
         }

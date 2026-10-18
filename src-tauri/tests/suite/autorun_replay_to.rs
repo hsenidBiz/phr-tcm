@@ -1980,7 +1980,6 @@ async fn left_by_a_replay(root: &Path) -> (Option<Kept>, common::MenuApp, Jar) {
     let (mut account, mut held) = (None, Held::supervised());
     signed_in_once(root, &mut d, &app, &mut account, &mut held).await;
     d.call("Page.navigate", json!({ "url": "https://hr.example.internal/hr/leave" })).await.unwrap();
-    d.guard_saves(&[]).await.unwrap();
     d.tabs.open.push("report".into());
     // Counted from here: the replay closed other tabs of its own.
     d.tabs.closed_others = 0;
@@ -1992,6 +1991,8 @@ async fn left_by_a_replay(root: &Path) -> (Option<Kept>, common::MenuApp, Jar) {
     }
     app.log.lock().unwrap().clear();
     d.calls.clear();
+    // After the clear: the fake tells its guard from the calls it saw.
+    d.guard_saves(&[]).await.unwrap();
     let mut kept = Kept::of(d, held, account);
     kept.guarded_case = Some(ID);
     kept.guard_owner = Some(GuardOwner::Call { case_id: Some(ID) });
@@ -2092,4 +2093,124 @@ async fn a_reset_whose_sign_in_has_gone_says_so() {
     b.d.calls.clear();
     let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
     signed_in_again(&end, &reused, &b.d, &app);
+}
+
+/// `b`'s driver, answering `first` before the fake app does.
+fn answering_first(
+    b: &mut Kept,
+    first: impl FnMut(&str, &Value) -> Option<Result<Value, CdpError>> + Send + 'static,
+) {
+    let d = std::mem::replace(&mut b.d, ScriptedDriver::new(|_, _| Ok(json!({}))));
+    b.d = d.answering_first(first);
+}
+
+/// A recipe whose fresh home runs `after_sign_in` once `#marker` shows,
+/// as PeoplesHR's does: `nav::load_home` then waits for the marker itself.
+fn with_after_sign_in(root: &Path) {
+    let recipe: v2_lib::autorun::recipe::SignInRecipe = serde_json::from_value(json!({
+        "start_url": "https://hr.example.internal/hr/home/index",
+        "steps": [ { "kind": "click", "selector": { "css": "#go" } } ],
+        "after_sign_in": [ { "kind": "click", "selector": { "css": "#menu" } } ],
+        "signed_in": { "css": "#marker" }
+    }))
+    .unwrap();
+    save_recipe(root, "acme", "Web", &recipe).unwrap();
+}
+
+/// With `after_sign_in`, a home page that loads but never shows the
+/// signed-in marker is a sign-in that has gone - not a page that failed:
+/// the account and its cookies' print are forgotten.
+#[tokio::test]
+async fn a_reset_whose_home_never_shows_the_marker_says_the_sign_in_has_gone() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, SIGN_IN_GONE_AT_RESET};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    with_after_sign_in(dir.path());
+    let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
+    // The page no longer shows the marker: the application signed it out.
+    answering_first(slot.as_mut().unwrap(), |method, params| match method {
+        "Runtime.callFunctionOn" if params["arguments"][0]["value"] == "#marker" => {
+            Some(Ok(json!({ "result": { "objectId": "no-marker" } })))
+        }
+        "Runtime.getProperties" if params["objectId"] == "no-marker" => Some(Ok(json!({ "result": [] }))),
+        _ => None,
+    });
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, SIGN_IN_GONE_AT_RESET), "{:?}", log(&app));
+    let b = slot.as_ref().expect("the reset closed the browser");
+    assert_eq!(b.account, None, "the gone sign-in still names its account");
+    assert!(b.lease.sign_in_print().is_none(), "the gone sign-in's print was kept");
+    assert!(b.guard_owner.is_none(), "the assistant's guard was left on");
+    assert_eq!(sign_ins(&b.d), 0, "the reset signed in itself");
+}
+
+/// A home page that does not open - 502, or 503 when the browser does not
+/// answer - still says what the reset cleaned first, after the
+/// discovery-ended line when it ended one; the sign-in is not judged.
+#[tokio::test]
+async fn a_reset_whose_home_page_does_not_open_says_what_it_did() {
+    use v2_lib::commands::autorun::{reset_failed_sentence, reset_in_for_assistant, DISCOVERY_ENDED_AT_RESET};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+
+    let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
+    answering_first(slot.as_mut().unwrap(), |method, _| {
+        (method == "Page.navigate").then(|| Ok(json!({ "errorText": "net::ERR_CONNECTION_REFUSED" })))
+    });
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.clone()), (502, reset_failed_sentence("guard lifted", "the home page did not load")), "{:?}", log(&app));
+    assert_eq!(
+        said,
+        "Reset: other tabs closed, dialogs cleared, guard lifted, but the home page did not open: the home page did not load. Try reset_autorun_browser again, or release_autorun_browser if the browser is stuck."
+    );
+    let b = slot.as_ref().unwrap();
+    assert_eq!(b.d.tabs.closed_others, 1);
+    assert!(b.guard_owner.is_none() && b.d.book.seen().is_empty());
+    assert_eq!(b.account.as_deref(), Some("admin"), "a page that failed to load was taken for a gone sign-in");
+    // Its lease goes with it, for the next browser to sign in as admin.
+    drop(slot);
+
+    let (mut slot, _app, _jar) = left_by_a_replay(dir.path()).await;
+    {
+        let b = slot.as_mut().unwrap();
+        b.discovery = begun_discovery();
+        answering_first(b, |method, _| (method == "Page.navigate").then(|| Err(CdpError::Transport("socket reset".into()))));
+    }
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!(status, 503, "{said}");
+    assert_eq!(
+        said,
+        format!(
+            "{DISCOVERY_ENDED_AT_RESET} {}",
+            reset_failed_sentence("guard lifted", "the browser did not answer while the home page was opening")
+        )
+    );
+    assert!(slot.as_ref().unwrap().discovery.is_none());
+}
+
+/// A guard the browser will not lift is said to be still on - saves stay
+/// stopped - and stays the call's, for a later call to lift.
+#[tokio::test]
+async fn a_reset_whose_guard_will_not_lift_says_it_is_still_on() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence, GUARD_STILL_ON_AT_RESET};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, _jar) = left_by_a_replay(dir.path()).await;
+    answering_first(slot.as_mut().unwrap(), |method, _| {
+        (method == "Fetch.disable").then(|| Err(CdpError::Protocol { method: "Fetch.disable".into(), message: "busy".into() }))
+    });
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!(GUARD_STILL_ON_AT_RESET, "guard still on (it would not lift yet)");
+    assert_eq!(
+        (status, said.as_str()),
+        (200, "Reset: other tabs closed, dialogs cleared, guard still on (it would not lift yet), at the home page, still signed in as admin."),
+        "{:?}",
+        log(&app)
+    );
+    assert_ne!(said, reset_sentence("admin"));
+    let b = slot.as_ref().unwrap();
+    assert_eq!((b.guarded_case, b.guard_owner.clone()), (Some(ID), Some(GuardOwner::Call { case_id: Some(ID) })), "a refused lift forgot the guard");
 }

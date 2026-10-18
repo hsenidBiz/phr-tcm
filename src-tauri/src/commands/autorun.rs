@@ -1247,11 +1247,15 @@ pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, Str
         return (409, REPLAY_RUNNING_AT_RESET.to_string());
     }
     crate::ai_bridge::stop_batch();
-    let Some(root) = crate::autorun::store::configured_root() else {
-        return (503, "the app could not set up its data directory this session - restart the app".to_string());
-    };
     let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, SESSION.lock()).await else {
         return (409, BUSY_AT_RESET.to_string());
+    };
+    // With no browser there is nothing to reset, data directory or not.
+    let Some(root) = crate::autorun::store::configured_root() else {
+        if slot.is_none() {
+            return (404, NO_BROWSER_OPEN.to_string());
+        }
+        return (503, NO_DATA_DIRECTORY.to_string());
     };
     let held = slot.is_some();
     let timing = crate::browser::timing::Timing::supervised();
@@ -1283,8 +1287,10 @@ pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, Str
 /// (`nav::load_home`), cookies kept. The sign-in still stands only when a
 /// replay would reuse it (`replay_to::signed_in_here`: the lease, the
 /// sign-in's cookies, a session not refused, the signed-in marker);
-/// otherwise the account and its cookies' print are forgotten, so the next
-/// replay signs in again.
+/// otherwise - a home page whose marker never shows included - the account
+/// and its cookies' print are forgotten, so the next replay signs in again.
+/// A home page that does not open answers 502 (503 when the browser did not
+/// answer), still saying what was cleaned first.
 pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
     slot: &mut Option<B>,
     root: &std::path::Path,
@@ -1329,40 +1335,70 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
         lift_guard_of(p.driver, p.guarded_case, p.guard_owner).await
     };
     b.taken_over();
+    let guard = if lifted { "guard lifted" } else { GUARD_STILL_ON_AT_RESET };
     let p = b.parts();
     let home = crate::autorun::nav::load_home(p.driver, &crate::autorun::nav::Home::of(&recipe), timing).await;
-    if !home.ok {
+    // The home page loaded, but its signed-in marker never showed: the
+    // sign-in has gone. Neither the page failing to load nor the browser
+    // not answering says that.
+    let marker_gone = !home.ok && !home.harness && home.detail == crate::autorun::nav::HOME_NEVER_SIGNED_IN;
+    // An after_sign_in step that stopped came after the marker showed: the
+    // browser is home, signed in, and the sign-in is judged below.
+    let loaded = home.ok || (!home.harness && home.detail.starts_with(crate::autorun::nav::AFTER_SIGN_IN_STOPPED_AT_HOME));
+    if !loaded && !marker_gone {
         let status = if home.harness { 503 } else { 502 };
-        let said = format!(
-            "Reset, but {}: try reset_autorun_browser again, or release_autorun_browser if the browser is broken.",
-            home.detail
-        );
-        return (status, said);
+        return said_at_reset(status, summary, reset_failed_sentence(guard, &home.detail));
     }
     let account = p.signed_in.clone();
     let still = match account.as_deref() {
-        Some(key) => {
+        Some(key) if !marker_gone => {
             crate::autorun::replay_to::signed_in_here(p.driver, root, organization, project, key, &account, &*p.lease, timing)
                 .await
         }
-        None => false,
+        _ => false,
     };
     let said = match (still, account) {
-        (true, Some(key)) if lifted => reset_sentence(&key),
-        (true, Some(key)) => reset_sentence(&key).replace("guard lifted", "guard still on (it would not lift yet)"),
+        (true, Some(key)) => reset_sentence(&key).replace("guard lifted", guard),
         _ => {
             *p.signed_in = None;
             p.lease.forget_sign_in();
-            SIGN_IN_GONE_AT_RESET.to_string()
+            if lifted {
+                SIGN_IN_GONE_AT_RESET.to_string()
+            } else {
+                format!("{SIGN_IN_GONE_AT_RESET} The {GUARD_STILL_ON_AT_RESET}.")
+            }
         }
     };
+    said_at_reset(200, summary, said)
+}
+
+/// Said in place of "guard lifted" when the browser would not lift it: saves
+/// stay stopped, and a later call lifts it.
+pub const GUARD_STILL_ON_AT_RESET: &str = "guard still on (it would not lift yet)";
+
+/// What the reset says when it cleaned the browser but the home page did not
+/// open (`detail`, from `nav::load_home`): what it did first, then why not.
+pub fn reset_failed_sentence(guard: &str, detail: &str) -> String {
+    format!(
+        "Reset: other tabs closed, dialogs cleared, {guard}, but the home page did not open: {detail}. Try reset_autorun_browser again, or release_autorun_browser if the browser is stuck."
+    )
+}
+
+/// The reset's answer `said` with `status`, after the discovery-ended line
+/// when it ended one (`summary` is `Some`), as `{detail, summary}` when that
+/// was a mapping run.
+fn said_at_reset(
+    status: u16,
+    summary: Option<Option<crate::autorun::mapping_summary::MappingSummary>>,
+    said: String,
+) -> (u16, String) {
     match summary {
         Some(Some(summary)) => {
             let detail = format!("{DISCOVERY_ENDED_AT_RESET} {said}");
-            (200, serde_json::json!({ "detail": detail, "summary": summary }).to_string())
+            (status, serde_json::json!({ "detail": detail, "summary": summary }).to_string())
         }
-        Some(None) => (200, format!("{DISCOVERY_ENDED_AT_RESET} {said}")),
-        None => (200, said),
+        Some(None) => (status, format!("{DISCOVERY_ENDED_AT_RESET} {said}")),
+        None => (status, said),
     }
 }
 
