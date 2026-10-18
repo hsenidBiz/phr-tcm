@@ -3082,7 +3082,6 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
         return (409, why);
     }
     let discovery_area = session.discovery.as_ref().and_then(|s| s.area.clone());
-    let account_before = session.account.clone();
     let answer = try_for_case(
         &mut session.cdp,
         &mut session.tabs_case,
@@ -3096,10 +3095,6 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
         &action,
     )
     .await;
-    // A try that signed in, or ended the session (`expire_session`), is
-    // heard by the panes, as a replay's is.
-    let changed = crate::autorun::replay_to::signed_in_event(&account_before, &session.account);
-    crate::commands::autorun::tell_panes(changed);
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery(&slot);
     answer

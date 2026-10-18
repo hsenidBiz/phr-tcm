@@ -1183,7 +1183,7 @@ test("a sign-in forgotten under the pane is said, and this case signs in again b
   const run = await screen.findByRole("button", { name: "Run step 1" });
   await waitFor(() => expect(run).toBeEnabled());
 
-  // The assistant's reset found the sign-in gone, or a step ended the session.
+  // The assistant's reset found the sign-in gone.
   const { emit } = await import("@tauri-apps/api/event");
   await act(async () => {
     await emit("autorun-session-changed", { opened: true, account: null });

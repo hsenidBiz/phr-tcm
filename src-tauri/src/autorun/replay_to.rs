@@ -131,15 +131,26 @@ pub fn opened_event(had_browser: bool) -> Option<crate::events::AutorunSessionCh
     (!had_browser).then_some(crate::events::AutorunSessionChanged { opened: true, account: None })
 }
 
-/// What the panes hear once something changed the browser's sign-in - a
-/// replay signed it in, or its sign-in was forgotten (a step's
-/// `expire_session`, a reset that found it gone): the account key it holds
-/// now (`None`: nobody), when that is not the one it held `before`.
+/// What the panes hear once a replay (or a try) has signed the browser in:
+/// the account key it holds now, when that is not the one it held `before`.
+/// A sign-in a step's `expire_session` ended is NOT news: the steps after it
+/// expect no session, and a pane told so would sign in before them.
 pub fn signed_in_event(
     before: &Option<String>,
     after: &Option<String>,
 ) -> Option<crate::events::AutorunSessionChanged> {
-    (after != before).then(|| crate::events::AutorunSessionChanged { opened: true, account: after.clone() })
+    (after.is_some() && after != before)
+        .then(|| crate::events::AutorunSessionChanged { opened: true, account: after.clone() })
+}
+
+/// What the panes hear once the assistant's reset found the browser's
+/// sign-in gone and forgot it: the browser is open with nobody signed in,
+/// so a pane signs in again before its next step. Only the reset says this.
+pub fn sign_in_forgotten_event(
+    before: &Option<String>,
+    after: &Option<String>,
+) -> Option<crate::events::AutorunSessionChanged> {
+    (before.is_some() && after.is_none()).then_some(crate::events::AutorunSessionChanged { opened: true, account: None })
 }
 
 /// Why a replay stopped when its page tried to save while the browser was

@@ -1026,19 +1026,28 @@ fn the_panes_hear_a_browser_a_replay_opened_and_the_account_it_signed_in() {
     assert_eq!(signed_in_event(&clerk, &admin), Some(AutorunSessionChanged { opened: true, account: admin.clone() }));
     assert_eq!(signed_in_event(&admin, &admin), None, "the same account is no news");
     assert_eq!(signed_in_event(&none, &none), None, "nobody signed in still is no news");
-    // A sign-in forgotten (a step's expire_session, a reset that found it
-    // gone) is news too: the browser is open with nobody signed in.
-    assert_eq!(signed_in_event(&admin, &none), Some(AutorunSessionChanged { opened: true, account: None }));
+    // A replay (or try) through a step's expire_session ends with nobody
+    // signed in, and that is NOT news: the steps after it expect no session,
+    // and a pane told so would sign in before them.
+    assert_eq!(signed_in_event(&admin, &none), None, "a replay through expire_session told the panes nobody is signed in");
     let json = serde_json::to_value(signed_in_event(&none, &admin).unwrap()).unwrap();
     assert_eq!(json, json!({ "opened": true, "account": "admin" }));
-    // Both the replay and the assistant's reset tell the panes.
+    // Only the assistant's reset that found the sign-in gone says so.
+    use v2_lib::autorun::replay_to::sign_in_forgotten_event;
+    assert_eq!(sign_in_forgotten_event(&admin, &none), Some(AutorunSessionChanged { opened: true, account: None }));
+    assert_eq!(sign_in_forgotten_event(&admin, &admin), None);
+    assert_eq!(sign_in_forgotten_event(&none, &none), None);
     let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
-    for name in ["pub(crate) async fn replay_supervised", "pub async fn reset_for_assistant"] {
+    let body = |name: &str| {
         let at = source.find(name).unwrap_or_else(|| panic!("{name} is gone"));
-        let body = &source[at..];
-        let body = &body[..body.find("\n}\n").unwrap()];
-        assert!(body.contains("signed_in_event("), "{name} never tells the panes of the account it leaves");
-    }
+        let rest = &source[at..];
+        rest[..rest.find("\n}\n").unwrap()].to_string()
+    };
+    let replay = body("pub(crate) async fn replay_supervised");
+    assert!(replay.contains("signed_in_event(") && !replay.contains("sign_in_forgotten_event("), "{replay}");
+    assert!(body("pub async fn reset_for_assistant").contains("sign_in_forgotten_event("));
+    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    assert!(!bridge.contains("sign_in_forgotten_event(") && !bridge.contains("tell_panes("), "a try tells the panes of a session it ended");
 }
 
 /// The reuse trip's stopped-save line ends the guard's sentence with one

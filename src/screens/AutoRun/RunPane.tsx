@@ -552,8 +552,9 @@ export default function RunPane({
         mustSignIn.current = true;
         setResign(`the Auto Run browser was signed in as ${account} by a replay - sign in again before the next step`);
       }
-      // Its sign-in was forgotten under this pane (a reset that found it
-      // gone, a step that ended the session): nobody is signed in now.
+      // Its sign-in was forgotten under this pane (the assistant's reset found
+      // it gone): nobody is signed in now. A step's expire_session is never
+      // said, so the steps after it still meet no session.
       if (!account && wasOpen && own !== "") {
         mustSignIn.current = true;
         setResign("the Auto Run browser is no longer signed in - sign in again before the next step");

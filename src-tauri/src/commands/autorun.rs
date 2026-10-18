@@ -1278,7 +1278,7 @@ pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, Str
     } else if let Some(s) = slot.as_ref() {
         // A sign-in the reset found gone is forgotten: the panes hear that
         // nobody is signed in now, as they hear a replay's sign-in.
-        tell_panes(crate::autorun::replay_to::signed_in_event(&account_before, &s.account));
+        tell_panes(crate::autorun::replay_to::sign_in_forgotten_event(&account_before, &s.account));
     }
     // A guard the browser would not lift pauses every request: the browser
     // is answered between the assistant's calls too.
