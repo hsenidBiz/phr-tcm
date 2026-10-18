@@ -157,20 +157,44 @@ impl ErrorClass {
 /// Where the runner's note on an earlier action begins (` - after <action>
 /// the app refused: ...` or `... the page showed: ...`), and whether it
 /// names a refusal: whichever of the two words comes first after it. The
-/// page's words follow, so they could read as anything.
+/// note is the last thing the runner adds, so it is looked for from the
+/// end: words the failure's own sentence quotes before it are kept, and a
+/// ` - after ` inside the page's words after it is passed over.
 fn earlier_note(detail: &str) -> Option<(usize, bool)> {
-    let mut from = 0;
-    while let Some(i) = detail[from..].find(AFTER_EARLIER) {
-        let at = from + i;
-        let rest = &detail[at..];
+    let mut until = detail.len();
+    while let Some(at) = detail[..until].rfind(AFTER_EARLIER) {
+        let rest = &detail[at + AFTER_EARLIER.len()..];
         match (rest.find(APP_REFUSED), rest.find(PAGE_SHOWED)) {
             (Some(r), Some(s)) => return Some((at, r < s)),
             (Some(_), None) => return Some((at, true)),
             (None, Some(_)) => return Some((at, false)),
-            (None, None) => from = at + AFTER_EARLIER.len(),
+            (None, None) => until = at,
         }
     }
     None
+}
+
+/// The request a refusal line names, as `<METHOD> <path>`: what the line
+/// says in brackets after the application's quoted words (`"..." (POST
+/// /api/eval-rules, 400, ...)`). From the failure's own refusal, or the
+/// one the runner's note names. `None` when there is none.
+pub fn refused_request(detail: &str) -> Option<String> {
+    let from = if detail.starts_with(APP_REFUSED) { 0 } else { earlier_note(detail).filter(|(_, r)| *r)?.0 };
+    let line = &detail[from..];
+    let line = &line[line.find(APP_REFUSED)? + APP_REFUSED.len()..];
+    // The quoted words may hold anything: the first bracket that reads
+    // as a request is the one.
+    line.match_indices("\" (").find_map(|(i, opener)| {
+        let inside = &line[i + opener.len()..];
+        let (method, rest) = inside.split_once(' ')?;
+        let (path, after) = rest.split_once(", ")?;
+        let status = after.get(..3)?;
+        let ok = !method.is_empty()
+            && method.chars().all(|c| c.is_ascii_uppercase())
+            && path.starts_with('/')
+            && status.chars().all(|c| c.is_ascii_digit());
+        ok.then(|| format!("{method} {path}"))
+    })
 }
 
 /// A sentence without what the runner adds of the page's own words: the
@@ -231,17 +255,22 @@ pub fn classify(detail: &str, target: Option<&str>) -> ErrorClass {
     if whole.starts_with(act::CANNOT_RUN) {
         return ErrorClass::CannotRun;
     }
-    // The application refused a request: the failure itself, or one before
-    // it in the step that the runner names after it.
-    if whole.starts_with(APP_REFUSED) || earlier_note(whole).is_some_and(|(_, refused)| refused) {
-        return ErrorClass::AppRefused;
-    }
+    let refused = whole.starts_with(APP_REFUSED) || earlier_note(whole).is_some_and(|(_, refused)| refused);
     // From here on, the page's words never decide the class.
     let whole = without_page_notes(whole).trim();
     // The guard's own sentence, before anything that reads an ending: it
     // ends with a path, which could read as anything.
     if crate::browser::save_guard::is_blocked(whole) {
         return ErrorClass::SaveBlocked;
+    }
+    // The application refused a request: the failure itself, or one before
+    // it that the runner names after it. An element in the way is still
+    // grouped by what covered it: one overlay is one fact.
+    if refused {
+        return match by_start(tail(whole, target)) {
+            Some(covered @ ErrorClass::CoveredBy(_)) => covered,
+            _ => ErrorClass::AppRefused,
+        };
     }
     // Before anything that reads a sentence's ending: an API check's
     // failure can end with an excerpt of whatever the server answered.
@@ -506,6 +535,9 @@ pub struct FailurePoint {
     pub kind: Option<String>,
     pub target: Option<String>,
     pub class: ErrorClass,
+    /// The request the application refused, for a refusal
+    /// (`refused_request`).
+    pub request: Option<String>,
 }
 
 /// Every failed action in one ordinary step (never sign-in or the module
@@ -545,6 +577,7 @@ pub fn step_failures_with(step: &StepRecord, script: Option<&CaseScript>, compon
                 kind,
                 class: classify(&o.detail, target.as_deref()),
                 target,
+                request: refused_request(&o.detail),
             }
         })
         .collect()
@@ -569,9 +602,13 @@ pub struct Hit {
 pub struct Pattern {
     pub class: ErrorClass,
     /// `click on button "Save"` - for a covering pattern, every target
-    /// the overlay blocked, in order.
+    /// the overlay blocked, in order; for a refusal, every action that
+    /// failed after it.
     pub targets: Vec<String>,
     pub hits: Vec<Hit>,
+    /// For a refusal, the request the application refused
+    /// (`refused_request`), which is what it is grouped by.
+    pub request: Option<String>,
 }
 
 impl Pattern {
@@ -610,9 +647,10 @@ pub fn find_patterns_with(run: &LocalRun, scripts: &[CaseScript], components: &C
     #[derive(PartialEq, Eq, PartialOrd, Ord)]
     enum Key {
         Covering(String),
+        Refused(String),
         Target { kind: String, target: String, class: ErrorClass },
     }
-    let mut groups: BTreeMap<Key, (Vec<String>, Vec<Hit>, ErrorClass)> = BTreeMap::new();
+    let mut groups: BTreeMap<Key, (Vec<String>, Vec<Hit>, ErrorClass, Option<String>)> = BTreeMap::new();
     for case in run.cases.iter().filter(|c| is_failed(c) && stop_reason(c).is_none()) {
         let script = scripts.iter().find(|s| s.case_id == case.case_id);
         for step in &case.steps {
@@ -624,8 +662,10 @@ pub fn find_patterns_with(run: &LocalRun, scripts: &[CaseScript], components: &C
                     (Some(k), Some(t)) => Some(format!("{k} on {t}")),
                     _ => None,
                 };
+                let request = f.request.clone().filter(|_| f.class == ErrorClass::AppRefused);
                 let key = match (&f.class, &what) {
                     (ErrorClass::CoveredBy(by), _) => Key::Covering(overlay_key(by)),
+                    (ErrorClass::AppRefused, _) if request.is_some() => Key::Refused(request.clone().unwrap_or_default()),
                     (_, Some(_)) => Key::Target {
                         kind: f.kind.clone().unwrap_or_default(),
                         target: f.target.clone().unwrap_or_default(),
@@ -638,7 +678,7 @@ pub fn find_patterns_with(run: &LocalRun, scripts: &[CaseScript], components: &C
                     ErrorClass::CoveredBy(by) => ErrorClass::CoveredBy(overlay_key(by)),
                     other => other.clone(),
                 };
-                let entry = groups.entry(key).or_insert_with(|| (Vec::new(), Vec::new(), class));
+                let entry = groups.entry(key).or_insert_with(|| (Vec::new(), Vec::new(), class, request));
                 if let Some(w) = what {
                     if !entry.0.contains(&w) {
                         entry.0.push(w);
@@ -650,7 +690,7 @@ pub fn find_patterns_with(run: &LocalRun, scripts: &[CaseScript], components: &C
     }
     let mut out: Vec<Pattern> = groups
         .into_values()
-        .map(|(targets, hits, class)| Pattern { class, targets, hits })
+        .map(|(targets, hits, class, request)| Pattern { class, targets, hits, request })
         .filter(|p| p.cases() >= 2)
         .collect();
     out.sort_by(|a, b| b.cases().cmp(&a.cases()));
@@ -667,13 +707,17 @@ pub fn patterns_section(patterns: &[Pattern]) -> String {
     }
     let mut out = String::from("## Patterns across cases\n\n");
     for p in patterns {
-        let head = match &p.class {
-            ErrorClass::CoveredBy(_) => p.class.label(),
+        let head = match (&p.class, &p.request) {
+            (ErrorClass::CoveredBy(_), _) => p.class.label(),
+            (_, Some(request)) => format!("{}: {request}", p.class.label()),
             _ => format!("{} - {}", p.targets.join("; "), p.class.label()),
         };
         out.push_str(&format!("- {head} (in {} cases)\n", p.cases()));
         if matches!(p.class, ErrorClass::CoveredBy(_)) && !p.targets.is_empty() {
             out.push_str(&format!("  blocked: {}\n", p.targets.join("; ")));
+        }
+        if p.request.is_some() && !p.targets.is_empty() {
+            out.push_str(&format!("  failed at: {}\n", p.targets.join("; ")));
         }
         let at: Vec<String> = p
             .hits

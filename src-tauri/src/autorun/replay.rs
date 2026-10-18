@@ -505,6 +505,9 @@ async fn run_case_in<D: Driver>(
     // step settles before it changes the page, or before its own picture
     // is asked for. Every one is finished before the record is made.
     let mut pictures: Vec<(usize, runner::Picture)> = Vec::new();
+    // The case's last action that changed the page, carried from step to
+    // step: a failure names what the page answered the step before.
+    let mut noted = runner::Noted::default();
     let stepping = Instant::now();
     for step in &script.steps {
         if skip.is_none() && cancel.load(Ordering::SeqCst) {
@@ -523,6 +526,8 @@ async fn run_case_in<D: Driver>(
             Some(r) => runner::AreaRoute::To(r),
             None => runner::AreaRoute::Unknown(runner::NO_AREA_IN_RUN),
         };
+        // The step's record will be the case's next.
+        noted.step = steps.len();
         let mut in_run = runner::InRun {
             cancel: Some(cancel),
             areas: Some(&areas),
@@ -531,6 +536,7 @@ async fn run_case_in<D: Driver>(
             page_errors: script.page_errors,
             ignore_page_errors: script.ignore_page_errors.clone(),
             picture: pictures.last_mut().map(|(_, p)| p),
+            noted: Some(&mut noted),
             ..Default::default()
         };
         let outcomes = match runner::run_step_in_run(
@@ -584,12 +590,15 @@ async fn run_case_in<D: Driver>(
         } else if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
         }
+        // What the page answered an earlier step's action after it ended.
+        runner::credit_late(&mut steps, noted.take_late());
         steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot: None, downloads: Vec::new(), tab, dialog, components, duration_ms: Some(ms(asked_at.elapsed())) });
         page_errors_seen += seen_errors;
         if let Some(p) = picture {
             pictures.push((steps.len() - 1, p));
         }
     }
+    noted.forget(d);
     // Every picture on disk, or none, before the record names it. A
     // browser that went away leaves its step with none.
     // A save read as the last one was taken is its step's.

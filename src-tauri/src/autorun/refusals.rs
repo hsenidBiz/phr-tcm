@@ -57,13 +57,25 @@ const FINISH_WAIT: Duration = Duration::from_millis(250);
 /// other than the three that mean something else (401 signed out, 403 not
 /// allowed, 404 not there - the page and its menus handle those themselves).
 fn refusal_shaped(e: &NetEntry, own: &[String]) -> bool {
+    asked_by_the_page(e, own) && matches!(e.status, Some(400..=499)) && !matches!(e.status, Some(401 | 403 | 404))
+}
+
+/// The page's own XHR or fetch to its own site (and not redirected off
+/// it), not a poll and not one of TCM's own (`own`): a request whose
+/// answer could be a refusal.
+fn asked_by_the_page(e: &NetEntry, own: &[String]) -> bool {
     matches!(e.kind.as_deref(), Some("XHR" | "Fetch"))
         && e.same_site
         && e.redirect.as_ref().is_none_or(|r| !r.other_site)
         && !e.polling
         && !own.contains(&e.id)
-        && matches!(e.status, Some(400..=499))
-        && !matches!(e.status, Some(401 | 403 | 404))
+}
+
+/// Whether `e` is a request the page asked of its own server
+/// (`asked_by_the_page`) that has no answer yet: one that would be read
+/// for a refusal once it has one.
+pub fn awaits_answer(e: &NetEntry, own: &[String]) -> bool {
+    asked_by_the_page(e, own) && e.status.is_none() && e.state == NetState::Pending
 }
 
 /// Whether `e` is the application refusing something the page asked
@@ -187,6 +199,12 @@ pub fn message_and_trace(status: u16, body: Option<&str>) -> (String, Option<Str
 /// (`counts`), at most three, in the order they started, each with what
 /// its body said. A body is read only for a request that counts.
 pub async fn refused_since<D: Driver>(d: &mut D, mark: u64, own: &[String]) -> Vec<RefusedRequest> {
+    refused_with_ids(d, mark, own).await.into_iter().map(|(_, r)| r).collect()
+}
+
+/// `refused_since`, each refusal with its request's id: what a later look
+/// passes over (`own`) so a refusal is reported once.
+pub async fn refused_with_ids<D: Driver>(d: &mut D, mark: u64, own: &[String]) -> Vec<(String, RefusedRequest)> {
     let mut seen = d.net_since(mark);
     // A refusal whose answer has come but whose end has not been read yet:
     // wait once for it, and only when there is one.
@@ -205,13 +223,10 @@ pub async fn refused_since<D: Driver>(d: &mut D, mark: u64, own: &[String]) -> V
             _ => None,
         };
         let (message, trace_id) = message_and_trace(status, text);
-        out.push(RefusedRequest {
-            method: e.method.clone(),
-            path: without_query(&e.path_query).to_string(),
-            status,
-            message,
-            trace_id,
-        });
+        out.push((
+            e.id.clone(),
+            RefusedRequest { method: e.method.clone(), path: without_query(&e.path_query).to_string(), status, message, trace_id },
+        ));
     }
     out
 }

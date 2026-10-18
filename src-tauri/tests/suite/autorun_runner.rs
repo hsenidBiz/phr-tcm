@@ -1375,3 +1375,212 @@ fn an_outcome_with_nothing_said_saves_as_before() {
         serde_json::from_value(json!({ "ok": true, "detail": "clicked" })).unwrap();
     assert_eq!(back, o);
 }
+
+// ---- Answers that come after the action ------------------------------------
+
+/// The click's save starts at once and is answered `after_ms` of waiting
+/// later.
+fn click_is_refused_after(d: &mut ScriptedDriver, after_ms: u64) {
+    let mut events = page_request("r1", "POST", "https://hr.example/api/eval-rules", "XHR", 400);
+    d.on_call_events.push((CLICKED.to_string(), events.remove(0)));
+    for e in events {
+        d.on_idle_after_call.push((CLICKED.to_string(), after_ms, e));
+    }
+}
+
+/// The click's save is sent, and answered, only `after_ms` of waiting
+/// after the click: after the click's own reads are done.
+fn click_saves_late(d: &mut ScriptedDriver, after_ms: u64) {
+    for e in page_request("r1", "POST", "https://hr.example/api/eval-rules", "XHR", 400) {
+        d.on_idle_after_call.push((CLICKED.to_string(), after_ms, e));
+    }
+}
+
+fn fake_clock(d: &mut ScriptedDriver) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
+    let clock = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    d.idle_clock = Some(clock.clone());
+    clock
+}
+
+#[tokio::test]
+async fn a_refusal_answered_after_the_click_is_reported_and_fails_a_try() {
+    let mut d = said_page(vec![vec![]], false);
+    click_is_refused_after(&mut d, 150);
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), true).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.starts_with("the app refused: "), "{}", out[0].detail);
+    assert_eq!(out[0].refused.len(), 1);
+    // A run reports it.
+    let mut d = said_page(vec![vec![]], false);
+    click_is_refused_after(&mut d, 150);
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), false).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].refused.len(), 1, "{out:?}");
+}
+
+#[tokio::test]
+async fn a_request_that_never_answers_is_waited_for_three_seconds_and_fails_nothing() {
+    let click = json!([{ "kind": "click", "selector": { "css": "#save" } }]);
+    let mut d = said_page(vec![vec![]], false);
+    let quiet = fake_clock(&mut d);
+    run_said(&mut d, click.clone(), true).await;
+    let mut d = said_page(vec![vec![]], false);
+    let waiting = fake_clock(&mut d);
+    let sent = page_request("r1", "POST", "https://hr.example/api/eval-rules", "XHR", 400).remove(0);
+    d.on_call_events.push((CLICKED.to_string(), sent));
+    let out = run_said(&mut d, click, true).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(out[0].refused.is_empty());
+    let extra = waiting.load(Ordering::SeqCst) - quiet.load(Ordering::SeqCst);
+    assert_eq!(extra, v2_lib::autorun::runner::ANSWER_WAIT_MS, "waited {extra} ms for the answer");
+}
+
+#[tokio::test]
+async fn a_request_answered_with_the_click_costs_no_wait() {
+    let click = json!([{ "kind": "click", "selector": { "css": "#save" } }]);
+    let mut d = said_page(vec![vec![]], false);
+    let quiet = fake_clock(&mut d);
+    run_said(&mut d, click.clone(), false).await;
+    let mut d = said_page(vec![vec![]], false);
+    let answered = fake_clock(&mut d);
+    for e in page_request("r1", "POST", "https://hr.example/api/eval-rules", "XHR", 200) {
+        d.on_call_events.push((CLICKED.to_string(), e));
+    }
+    run_said(&mut d, click, false).await;
+    assert_eq!(answered.load(Ordering::SeqCst), quiet.load(Ordering::SeqCst));
+}
+
+/// Runs `actions` as step `at` of a case whose last page change `noted`
+/// carries.
+async fn run_noted(
+    d: &mut ScriptedDriver,
+    actions: serde_json::Value,
+    noted: &mut v2_lib::autorun::runner::Noted,
+    at: usize,
+) -> Vec<v2_lib::browser::actions::ActionOutcome> {
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, NEEDS_SCRIPT_AREA};
+    let dir = tempfile::tempdir().unwrap();
+    let (mut acc, mut lease) = (None, v2_lib::autorun::lease::Held::supervised());
+    noted.step = at;
+    let mut run = InRun { noted: Some(noted), ..Default::default() };
+    run_step_in_run(
+        d,
+        dir.path(),
+        "Acme",
+        "Web",
+        &tab_step(actions),
+        &quick(),
+        &mut acc,
+        &mut lease,
+        None,
+        AreaRoute::Unknown(NEEDS_SCRIPT_AREA),
+        &mut run,
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_step_that_fails_names_what_the_step_before_caused() {
+    use v2_lib::autorun::patterns::{classify, ErrorClass};
+    use v2_lib::autorun::runner::{credit_late, Noted};
+    // Step 3's click; the save, its 400 and the toast come only once the
+    // step has ended.
+    let mut d = said_page(vec![vec![], vec![], vec!["Weightage must total 100."]], true);
+    click_saves_late(&mut d, 20);
+    let mut noted = Noted::default();
+    let three = run_noted(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), &mut noted, 0).await;
+    assert!(three[0].ok && three[0].refused.is_empty(), "{three:?}");
+    let four = run_noted(
+        &mut d,
+        json!([{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }]),
+        &mut noted,
+        1,
+    )
+    .await;
+    assert!(!four[0].ok, "{:?}", four[0]);
+    assert!(four[0].detail.contains(" - after click "), "{}", four[0].detail);
+    assert!(four[0].detail.contains("the app refused: \"One or more validation errors occurred.\""), "{}", four[0].detail);
+    assert!(four[0].detail.ends_with(r#"the page showed: "Weightage must total 100.""#), "{}", four[0].detail);
+    assert_eq!(classify(&four[0].detail, None), ErrorClass::AppRefused);
+    // What came late is put on step 3's own record.
+    let late = noted.take_late();
+    assert_eq!(late.len(), 1, "{late:?}");
+    assert_eq!((late[0].step, late[0].action), (0, 0));
+    let mut steps = vec![v2_lib::autorun::StepRecord {
+        step_number: 3,
+        outcomes: three,
+        screenshot: None,
+        downloads: vec![],
+        tab: None,
+        dialog: None,
+        components: Vec::new(),
+        duration_ms: None,
+    }];
+    credit_late(&mut steps, late);
+    assert_eq!(steps[0].outcomes[0].refused.len(), 1);
+    assert_eq!(steps[0].outcomes[0].page_said, vec![said("Weightage must total 100.")]);
+}
+
+#[tokio::test]
+async fn a_wait_that_fails_names_what_the_click_before_it_caused_late() {
+    use v2_lib::autorun::patterns::{classify, ErrorClass};
+    let mut d = said_page(vec![vec![], vec![], vec!["Weightage must total 100."]], true);
+    click_saves_late(&mut d, 20);
+    let out = run_said(
+        &mut d,
+        json!([
+            { "kind": "click", "selector": { "css": "#save" } },
+            { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
+        ]),
+        false,
+    )
+    .await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].refused.len(), 1, "credited to the click: {out:?}");
+    assert_eq!(out[0].page_said, vec![said("Weightage must total 100.")]);
+    assert!(!out[1].ok, "{:?}", out[1]);
+    assert!(out[1].detail.contains(" - after click ") && out[1].detail.contains("the app refused: "), "{}", out[1].detail);
+    assert_eq!(classify(&out[1].detail, None), ErrorClass::AppRefused);
+}
+
+#[tokio::test]
+async fn twenty_clicks_never_push_out_the_steps_own_mark() {
+    let mut d = said_page(vec![vec![]], false).with_mark_ring();
+    // A request from before the step: never the step's.
+    for e in page_request("old", "GET", "https://hr.example/api/list", "XHR", 200) {
+        d.net.as_mut().unwrap().observe(&e);
+    }
+    let mut actions: Vec<serde_json::Value> =
+        (0..20).map(|i| json!({ "kind": "click", "selector": { "css": format!("#b{i}") } })).collect();
+    actions.push(json!({ "kind": "expect_response", "url_contains": "/api/list", "timeout_ms": 100 }));
+    let out = run_said(&mut d, serde_json::Value::Array(actions), false).await;
+    assert!(out[..20].iter().all(|o| o.ok), "{out:?}");
+    assert!(!out[20].ok, "an earlier step's request was taken for this one's: {:?}", out[20]);
+}
+
+#[tokio::test]
+async fn a_new_page_is_not_what_a_navigation_said() {
+    let mut d = said_page(vec![vec![], vec!["Welcome back"]], false);
+    d.on_every_call_events.push((
+        "Page.navigate".into(),
+        v2_lib::browser::cdp::Event {
+            method: "Page.lifecycleEvent".into(),
+            params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }),
+        },
+    ));
+    let out = run_said(&mut d, json!([{ "kind": "navigate", "url": "https://hr.example/home" }]), false).await;
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(out[0].page_said.is_empty(), "{:?}", out[0]);
+}
+
+#[tokio::test]
+async fn a_try_that_is_refused_keeps_the_dialog_it_met() {
+    let mut d = said_page(vec![vec![]], false);
+    click_is_refused(&mut d);
+    d.dialogs_on_call.push((CLICKED.to_string(), "confirm".to_string(), "Leave?".to_string()));
+    let out = run_said(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), true).await;
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.starts_with("the app refused: "), "{}", out[0].detail);
+    assert!(out[0].detail.ends_with(r#" (a confirm dialog was accepted: "Leave?")"#), "{}", out[0].detail);
+}

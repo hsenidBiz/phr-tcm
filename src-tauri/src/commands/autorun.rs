@@ -57,6 +57,11 @@ pub(crate) struct Session {
     /// (`release_stepped_run`), another case is stepped, or the browser
     /// closes.
     pub(crate) stepping: Option<store::Replaying>,
+    /// A watched run's last action that changed the page, carried from one
+    /// step to the next (`runner::Noted`), so a failing step can name what
+    /// the page answered the step before. Begun afresh at a case's first
+    /// step, or a step of another case.
+    pub(crate) noted: crate::autorun::runner::Noted,
 }
 
 /// How many times the supervised browser has been used for anything but
@@ -801,6 +806,7 @@ async fn open_into(
         opened_by: by,
         replay_stand: None,
         stepping: None,
+        noted: Default::default(),
     });
     note_session_use();
     // A tab the page opens waits, paused, until this connection reads that
@@ -1168,6 +1174,13 @@ pub async fn auto_run_step(
     // page's own errors, and which of its steps comes first.
     let saved = crate::autorun::store::load_script(&root, case_id).ok().flatten();
     let first_step = saved.as_ref().and_then(|s| s.steps.iter().map(|s| s.step_number).min()) == Some(step.step_number);
+    if first_step || session.tabs_case != Some(case_id) {
+        session.noted.forget(&session.cdp);
+    }
+    // Every step a place of its own. The pane holds the records, so what an
+    // earlier step's action caused late is said only in a failure's words.
+    session.noted.step = session.noted.step.wrapping_add(1);
+    session.noted.take_late();
     crate::autorun::runner::supervised_step_begins(&mut session.cdp, &mut session.tabs_case, case_id, first_step).await;
     guard_supervised(session, &root, &organization, &project, case_id, true).await?;
     // A watched run makes no trip of its own: a bare `return_to_area` builds
@@ -1189,6 +1202,7 @@ pub async fn auto_run_step(
         fail_on_unexpected_dialog: saved.as_ref().is_some_and(|s| s.fail_on_unexpected_dialog),
         page_errors: saved.as_ref().and_then(|s| s.page_errors),
         ignore_page_errors: saved.map(|s| s.ignore_page_errors).unwrap_or_default(),
+        noted: Some(&mut session.noted),
         ..Default::default()
     };
     let outcomes = crate::autorun::runner::run_step_in_run(

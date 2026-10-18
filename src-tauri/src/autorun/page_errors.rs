@@ -70,14 +70,14 @@ const MAX_TRACED: usize = 5;
 
 /// Read the trace id of each 5xx answer the step met, from its body, so its
 /// page-error line can name it and the server log be found. Only when the
-/// script looks at page errors (`mode`): otherwise nothing is said of them.
-/// A body Chrome no longer holds, or one with no trace id, leaves the line
-/// as it was.
-pub async fn read_trace_ids<D: Driver>(d: &mut D, mode: Option<PageErrors>) {
+/// script looks at page errors (`mode`), and never for one its `ignore`
+/// phrases cover: otherwise nothing is said of them. A body Chrome no
+/// longer holds, or one with no trace id, leaves the line as it was.
+pub async fn read_trace_ids<D: Driver>(d: &mut D, mode: Option<PageErrors>, ignore: &[String]) {
     if mode.is_none() {
         return;
     }
-    let ids = d.page_error_book().map(|b| b.untraced(MAX_TRACED)).unwrap_or_default();
+    let ids = d.page_error_book().map(|b| b.untraced(MAX_TRACED, ignore)).unwrap_or_default();
     for id in ids {
         let Ok(Body::Text(text)) = body_of(d, &id).await else { continue };
         if let Some(trace) = trace_id_of(&text) {

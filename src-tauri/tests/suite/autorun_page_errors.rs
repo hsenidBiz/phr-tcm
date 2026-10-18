@@ -509,3 +509,19 @@ async fn with_no_page_errors_set_no_body_is_read() {
     let _ = run(&mut d, &click_then_check(), None, &[]).await;
     assert!(d.calls_to("Network.getResponseBody").is_empty());
 }
+
+#[tokio::test]
+async fn an_ignored_5xx_body_is_never_read() {
+    let page = FakePage::default();
+    let mut d = ScriptedDriver::new(move |method, params| match method {
+        "Network.getResponseBody" => Ok(json!({ "body": r#"{"traceId":"t-1"}"#, "base64Encoded": false })),
+        _ => page.answer(method, params),
+    })
+    .with_net_record();
+    for e in answered("r1", "POST", "https://hr.example/api/Save", 500) {
+        d.on_call_events.push((CLICK.to_string(), e));
+    }
+    let (out, _) = run(&mut d, &click_then_check(), Some(PageErrors::Fail), &["/api/save"]).await;
+    assert!(out.iter().all(|o| o.ok), "{out:?}");
+    assert!(d.calls_to("Network.getResponseBody").is_empty(), "an ignored error's body was read");
+}

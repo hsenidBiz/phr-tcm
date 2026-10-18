@@ -1500,3 +1500,28 @@ async fn the_sign_in_tabs_own_login_goes_through() {
     settle(&mut cdp).await;
     assert_eq!(answer_to(&cdp, "r2").unwrap()["method"], "Fetch.failRequest");
 }
+
+/// A mark let go (`net_unmark`) never pushes out one still held: a step's
+/// own mark outlives the marks its actions take and let go.
+#[tokio::test]
+async fn marks_let_go_never_push_out_the_steps_own() {
+    let mut cdp = with_named("report").await;
+    let request = |id: &str, path: &str| {
+        on(
+            "S-main",
+            "Network.requestWillBeSent",
+            json!({ "requestId": id, "timestamp": 1.0, "request": { "method": "GET", "url": format!("https://hr.example{path}") } }),
+        )
+    };
+    feed(&mut cdp, [request("n0", "/api/before")]);
+    settle(&mut cdp).await;
+    let step = cdp.net_mark();
+    for _ in 0..(v2_lib::browser::cdp::MAX_NET_MARKS + 4) {
+        let action = cdp.net_mark();
+        cdp.net_unmark(action);
+    }
+    feed(&mut cdp, [request("n1", "/api/after")]);
+    settle(&mut cdp).await;
+    let since: Vec<String> = cdp.net_since(step).into_iter().map(|e| e.path_query).collect();
+    assert_eq!(since, ["/api/after"], "the step's mark was pushed out");
+}

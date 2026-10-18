@@ -581,13 +581,19 @@ async fn run_steps<D: Driver>(
     let files = super::run_files::RunFiles::default();
     // What the page met before the first of them is no step's error.
     super::page_errors::drop_all(d);
-    for step in script.steps.iter().filter(|s| in_range(s.step_number)) {
+    // The last action that changed the page, carried from step to step: a
+    // failure names what the page answered the step before. A replay keeps
+    // no step records, so what came late is said only there.
+    let mut noted = runner::Noted::default();
+    for (at, step) in script.steps.iter().filter(|s| in_range(s.step_number)).enumerate() {
         let k = step.step_number;
         if stopped() {
             return Some(ReplayEnd::Stopped { step: k });
         }
         note_progress(k, n - 1);
         progress(k, n - 1);
+        noted.step = at;
+        noted.take_late();
         let mut in_run = InRun {
             cancel: Some(cancel),
             areas: Some(&areas),
@@ -596,6 +602,7 @@ async fn run_steps<D: Driver>(
             page_errors: script.page_errors,
             ignore_page_errors: script.ignore_page_errors.clone(),
             progress: Some(&ACTIONS),
+            noted: Some(&mut noted),
             ..Default::default()
         };
         let ran = runner::run_step_in_run(

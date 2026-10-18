@@ -120,12 +120,13 @@ impl PageErrorBook {
     }
 
     /// The request ids of the 5xx answers held whose trace id has not been
-    /// read, the run's own left out: at most `most`, the first ones.
-    pub fn untraced(&self, most: usize) -> Vec<String> {
-        self.seen
-            .iter()
+    /// read, the run's own and the ones an ignore phrase covers (`counted`)
+    /// left out: at most `most`, the first ones.
+    pub fn untraced(&self, most: usize, ignore: &[String]) -> Vec<String> {
+        counted(self.seen.clone(), ignore)
+            .into_iter()
             .filter_map(|e| match e {
-                PageError::Response { id, trace_id: None, .. } if !self.mine.contains(id) => Some(id.clone()),
+                PageError::Response { id, trace_id: None, .. } if !self.mine.contains(&id) => Some(id),
                 _ => None,
             })
             .take(most)

@@ -332,8 +332,10 @@ const CLOSE_LIMIT: Duration = Duration::from_secs(2);
 /// How long the end of a case waits for the browser to dispose of its
 /// context (`dispose_context`).
 const DISPOSE_LIMIT: Duration = Duration::from_secs(5);
-/// How many network marks are remembered (`net_mark`).
-const MAX_NET_MARKS: usize = 16;
+/// How many network marks are remembered (`net_mark`). A mark no longer
+/// needed is let go (`net_unmark`), so the ones still held are not pushed
+/// out by marks taken after them.
+pub const MAX_NET_MARKS: usize = 16;
 
 impl Tab {
     /// Note which document is which: a document loaded, or a request sent
@@ -2487,6 +2489,16 @@ impl<T: Transport> Cdp<T> {
         id
     }
 
+    /// Let go of a mark `net_mark` gave: nothing will ask what came since it
+    /// again. A mark it no longer holds is nothing to let go.
+    pub fn net_unmark(&self, mark: u64) {
+        if !self.whole_browser {
+            return;
+        }
+        let mut marks = self.net_marks.lock().unwrap_or_else(|e| e.into_inner());
+        marks.1.retain(|(id, _)| *id != mark);
+    }
+
     /// Is a JavaScript dialog open in any tab: one opened that has not yet
     /// closed (`Page.javascriptDialogClosed`), as far as the events read so
     /// far say. Each is answered the moment it is read, so this is true
@@ -2615,6 +2627,9 @@ pub trait Driver {
     fn net_since(&self, _mark: u64) -> Vec<super::net_record::NetEntry> {
         Vec::new()
     }
+    /// Let go of a mark (`Cdp::net_unmark`). Nothing for a driver whose
+    /// marks are not kept.
+    fn net_unmark(&self, _mark: u64) {}
     /// How busy the page's requests are (`Cdp::net_quiet`). `None` for a
     /// driver that keeps no record: nothing is ever waited on.
     fn net_quiet(&self) -> Option<super::net_record::NetQuiet> {
@@ -2802,6 +2817,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn net_since(&self, mark: u64) -> Vec<super::net_record::NetEntry> {
         Cdp::net_since(self, mark)
+    }
+    fn net_unmark(&self, mark: u64) {
+        Cdp::net_unmark(self, mark)
     }
     fn net_quiet(&self) -> Option<super::net_record::NetQuiet> {
         Cdp::net_quiet(self)

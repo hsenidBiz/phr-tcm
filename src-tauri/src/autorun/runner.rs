@@ -20,7 +20,7 @@ use crate::browser::actions::{
     execute_in, expectation, in_missing_tab, shows_up, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN,
     WHEN_VISIBLE_MS,
 };
-use super::refusals::{app_refused_line, refused_since};
+use super::refusals::{self, app_refused_line, refused_with_ids, RefusedRequest};
 use crate::browser::cdp::{Driver, MAIN_TAB};
 use crate::browser::page;
 use crate::browser::page_messages::{new_messages, read_page_messages, PageMessage, MAX_MESSAGES};
@@ -470,6 +470,160 @@ pub struct InRun<'a> {
     /// replay or a run only reports it - a saved case may provoke the
     /// refusal on purpose and check its message.
     pub refusals_fail: bool,
+    /// The case's last action that changed the page, carried from one step
+    /// to the next (`Noted`), so a step that fails can name what the page
+    /// answered the step before. `None` keeps it within the step.
+    pub noted: Option<&'a mut Noted>,
+}
+
+/// The case's last action that changed the page, and what the page has
+/// answered it so far, carried by the caller from one step to the next:
+/// a refusal or a message that comes after the action's own reads is still
+/// put on it, and a later failure names it. The caller sets `step` before
+/// each step, and puts what `take_late` hands back on its earlier steps'
+/// records (`credit_late`).
+#[derive(Debug, Default)]
+pub struct Noted {
+    /// Where the caller's record of the step about to run will be: its
+    /// place in the case's steps. Different for every step of a case.
+    pub step: usize,
+    last: Option<Changed>,
+    late: Vec<LateAnswer>,
+}
+
+impl Noted {
+    /// What the page answered an action of an earlier step, found since
+    /// the last take: for that step's record.
+    pub fn take_late(&mut self) -> Vec<LateAnswer> {
+        std::mem::take(&mut self.late)
+    }
+
+    /// A new case: nothing of the last one carries over, and its mark is
+    /// let go.
+    pub fn forget<D: Driver>(&mut self, d: &D) {
+        if let Some(last) = self.last.take() {
+            d.net_unmark(last.mark);
+        }
+        self.late.clear();
+    }
+}
+
+/// One action that changed the page, as `Noted` keeps it.
+#[derive(Debug)]
+struct Changed {
+    step: usize,
+    /// Its place in its step's outcomes.
+    action: usize,
+    /// It in a few words (`ai_bridge::describe_action`).
+    what: String,
+    /// What the page showed at the last read after it.
+    after: Vec<PageMessage>,
+    /// Where the network record stood as it began.
+    mark: u64,
+    /// Requests that are never its refusals: the run's own, and the ones
+    /// already reported.
+    seen: Vec<String>,
+    /// A navigation, a reload or a tab action: the page it ends on is
+    /// another, so what that page shows is not the action's to report.
+    replaces_page: bool,
+    /// Everything reported on it so far.
+    said: Vec<PageMessage>,
+    refused: Vec<RefusedRequest>,
+}
+
+/// What the page answered an action of an earlier step after that step
+/// ended: for the caller to put on the step's record (`credit_late`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LateAnswer {
+    /// The step's place, as `Noted::step` gave it.
+    pub step: usize,
+    /// The action's place in the step's outcomes.
+    pub action: usize,
+    pub page_said: Vec<PageMessage>,
+    pub refused: Vec<RefusedRequest>,
+}
+
+/// Put each late answer on the outcome it belongs to, in the case's step
+/// records (indexed as `Noted::step` was set).
+pub fn credit_late(steps: &mut [super::StepRecord], late: Vec<LateAnswer>) {
+    for l in late {
+        if let Some(o) = steps.get_mut(l.step).and_then(|s| s.outcomes.get_mut(l.action)) {
+            add_answer(o, l.page_said, l.refused);
+        }
+    }
+}
+
+/// Add what the page answered an action to its outcome.
+fn add_answer(o: &mut ActionOutcome, said: Vec<PageMessage>, refused: Vec<RefusedRequest>) {
+    o.page_said.extend(said);
+    o.page_said.truncate(MAX_MESSAGES);
+    o.refused.extend(refused);
+}
+
+/// Put what the page answered `to` after its own reads on it: through
+/// `out` when it is of the step running (`step`), through `late` for the
+/// caller when it is of an earlier one.
+fn credit_answer(
+    step: usize,
+    out: &mut [ActionOutcome],
+    late: &mut Vec<LateAnswer>,
+    to: &mut Changed,
+    said: Vec<PageMessage>,
+    refused: Vec<(String, RefusedRequest)>,
+) {
+    if said.is_empty() && refused.is_empty() {
+        return;
+    }
+    let (ids, refused): (Vec<String>, Vec<RefusedRequest>) = refused.into_iter().unzip();
+    to.seen.extend(ids);
+    to.said.extend(said.iter().cloned());
+    to.said.truncate(MAX_MESSAGES);
+    to.refused.extend(refused.iter().cloned());
+    if to.step == step {
+        if let Some(o) = out.get_mut(to.action) {
+            add_answer(o, said, refused);
+        }
+    } else {
+        late.push(LateAnswer { step: to.step, action: to.action, page_said: said, refused });
+    }
+}
+
+/// The longest an action that changed the page waits for the answers to
+/// the requests it sent the page's own server, before what the page says
+/// is read: a refusal is only one once it is answered.
+pub const ANSWER_WAIT_MS: u64 = 3000;
+
+/// How often that wait looks again.
+const ANSWER_LOOK_MS: u64 = 50;
+
+/// Wait, at most `ANSWER_WAIT_MS`, until every request the action started
+/// (since `mark`) that could be refused (`refusals::awaits_answer`) has its
+/// answer. An action that sent none waits nothing; a Stop ends the wait.
+async fn await_answers<D: Driver>(d: &mut D, mark: u64, own: &[String], cancel: Option<&AtomicBool>) {
+    let mut waited = 0;
+    while waited < ANSWER_WAIT_MS
+        && !cancel.is_some_and(|c| c.load(Ordering::SeqCst))
+        && d.net_since(mark).iter().any(|e| refusals::awaits_answer(e, own))
+    {
+        d.idle(Duration::from_millis(ANSWER_LOOK_MS)).await;
+        waited += ANSWER_LOOK_MS;
+    }
+}
+
+/// An action whose page is another once it is done: a navigation, a
+/// reload, or one that moves to or opens a tab. What that page shows is
+/// not new because of the action.
+fn replaces_the_page(action: &Action) -> bool {
+    matches!(action, Action::Navigate { .. } | Action::Reload) || action.is_tab_action()
+}
+
+/// The note a dialog nobody expected left on a passing action's words
+/// (` (a confirm dialog was accepted: "...")`), or nothing.
+fn dialog_note(detail: &str) -> &str {
+    match detail.find(dialogs::WAS_ACCEPTED).and_then(|w| detail[..w].rfind(" (a")) {
+        Some(i) => &detail[i..],
+        None => "",
+    }
 }
 
 /// The action a step is on, as `StepProgress` keeps it.
@@ -575,8 +729,13 @@ pub fn page_showed_note(messages: &[PageMessage]) -> String {
 /// application refused, with what the page showed after it, or else what
 /// the page showed. `None` when it answered neither.
 fn answered_line(o: &ActionOutcome) -> Option<String> {
-    let said = (!o.page_said.is_empty()).then(|| page_showed_note(&o.page_said));
-    match (o.refused.first().map(app_refused_line), said) {
+    line_of(&o.page_said, &o.refused)
+}
+
+/// `answered_line` of what was said and refused.
+fn line_of(said: &[PageMessage], refused: &[RefusedRequest]) -> Option<String> {
+    let said = (!said.is_empty()).then(|| page_showed_note(said));
+    match (refused.first().map(app_refused_line), said) {
         (Some(refused), Some(said)) => Some(format!("{refused}; {said}")),
         (refused, said) => refused.or(said),
     }
@@ -761,11 +920,16 @@ async fn run_expanded<D: Driver>(
     // Until then a save the guard stopped was sent while the step before's
     // picture was still being taken: it is that step's, not this one's.
     let mut acted = false;
-    // The step's last action that changed the page, by its place in `out`,
-    // and what the page showed after it. The next such action's first read
-    // is that action's late read: a message the page took a moment to show
-    // is that action's, found with no wait of its own.
-    let mut last_changed: Option<(usize, Vec<PageMessage>)> = None;
+    // The case's last action that changed the page (`Noted`): the caller's,
+    // carried across its steps, or this step's own. The next such action's
+    // first read is that action's late read: a message the page took a
+    // moment to show is that action's, found with no wait of its own.
+    let mut carried = run.noted.take();
+    let mut own_noted = Noted::default();
+    let noted: &mut Noted = match carried.as_deref_mut() {
+        Some(n) => n,
+        None => &mut own_noted,
+    };
     for (index, action) in step.actions.iter().enumerate() {
         if let Some(why) = blocked {
             out.push(ActionOutcome::failed(why));
@@ -831,11 +995,11 @@ async fn run_expanded<D: Driver>(
         // the application refused, and its page is the sign-in's.
         let before = if changes_the_page(action) && !matches!(action, Action::SignIn { .. }) {
             let read = read_page_messages(d).await;
-            if let Some((at, after)) = &last_changed {
-                let late = new_messages(after, &read.messages);
-                let said = &mut out[*at].page_said;
-                said.extend(late);
-                said.truncate(MAX_MESSAGES);
+            if let Some(last) = noted.last.as_mut() {
+                let said = if last.replaces_page { Vec::new() } else { new_messages(&last.after, &read.messages) };
+                let refused = refused_with_ids(d, last.mark, &last.seen).await;
+                last.after = read.messages.clone();
+                credit_answer(noted.step, &mut out, &mut noted.late, last, said, refused);
             }
             Some((read.messages, d.net_mark()))
         } else {
@@ -898,8 +1062,9 @@ async fn run_expanded<D: Driver>(
                 // never the page's error.
                 let before = d.net_mark();
                 let outcome = api_checks::api_request(d, action, timing).await;
-                own = d
-                    .net_since(before)
+                let sent = d.net_since(before);
+                d.net_unmark(before);
+                own = sent
                     .into_iter()
                     .filter(|e| e.method == "GET" && e.path_query.split(['?', '#']).next() == Some(path.as_str()))
                     .map(|e| e.id)
@@ -984,30 +1149,86 @@ async fn run_expanded<D: Driver>(
         // answering, a Stop, or a page signed in afresh: none of those is
         // the action's page.
         let fresh_session = blocked == Some(AFTER_SESSION_REFUSED);
+        let readable = !outcome.harness && outcome.detail != AFTER_STOP && !stop_pending && !fresh_session;
         let mut refused_here = false;
-        if let Some((before, mark)) = before {
-            if !outcome.harness && outcome.detail != AFTER_STOP && !stop_pending && !fresh_session {
+        let mut mine: Option<Changed> = None;
+        if let Some((before, action_mark)) = before {
+            if readable {
+                // A refusal is one once it is answered: the requests the
+                // action sent are given their answers first.
+                await_answers(d, action_mark, &own, run.cancel).await;
                 let after = read_page_messages(d).await;
-                outcome.page_said = new_messages(&before, &after.messages);
-                outcome.refused = refused_since(d, mark, &own).await;
+                let replaces = replaces_the_page(action);
+                if !replaces {
+                    outcome.page_said = new_messages(&before, &after.messages);
+                }
+                let refused = refused_with_ids(d, action_mark, &own).await;
+                outcome.refused = refused.iter().map(|(_, r)| r.clone()).collect();
                 outcome.page_step = after.step;
-                // A try fails on it, like a target that is not there.
+                // A try fails on it, like a target that is not there. What a
+                // dialog nobody expected left on its words stays.
                 if run.refusals_fail && outcome.ok && !outcome.refused.is_empty() {
+                    let dialog = dialog_note(&outcome.detail).to_string();
                     outcome.ok = false;
-                    outcome.detail = answered_line(&outcome).unwrap_or_default();
+                    outcome.detail = format!("{}{dialog}", answered_line(&outcome).unwrap_or_default());
                     refused_here = true;
                 }
-                last_changed = Some((out.len(), after.messages));
+                let mut seen = own.clone();
+                seen.extend(refused.into_iter().map(|(id, _)| id));
+                mine = Some(Changed {
+                    step: noted.step,
+                    action: out.len(),
+                    what: crate::ai_bridge::describe_action(action),
+                    after: after.messages,
+                    mark: action_mark,
+                    seen,
+                    replaces_page: replaces,
+                    said: outcome.page_said.clone(),
+                    refused: outcome.refused.clone(),
+                });
+            } else {
+                d.net_unmark(action_mark);
             }
         }
-        // The step fails here for a reason of its own: what the page
-        // answered the nearest earlier action is said with it, as the
-        // likelier cause than the failure the step ran into later.
-        if !outcome.ok && !refused_here && !outcome.harness && outcome.detail != AFTER_STOP && !fresh_session {
-            let earlier = out.iter().enumerate().rev().find_map(|(i, o)| answered_line(o).map(|line| (i, line)));
-            if let Some((i, line)) = earlier {
-                let what = step.actions.get(i).map(crate::ai_bridge::describe_action).unwrap_or_default();
+        // The step fails here for a reason of its own. The last action
+        // before this one that changed the page - in this step or the one
+        // before - is looked at once more, as what it caused may have come
+        // after its own reads; and what the page answered it is said with
+        // the failure, as the likelier cause than what the step ran into.
+        if !outcome.ok && !refused_here && readable {
+            if let Some(last) = noted.last.as_mut() {
+                // Messages new since this action began are this action's.
+                let said = if mine.is_some() || last.replaces_page {
+                    Vec::new()
+                } else {
+                    let now = read_page_messages(d).await;
+                    let said = new_messages(&last.after, &now.messages);
+                    last.after = now.messages;
+                    said
+                };
+                let mut skip = last.seen.clone();
+                if let Some(m) = &mine {
+                    skip.extend(m.seen.iter().cloned());
+                }
+                let refused = refused_with_ids(d, last.mark, &skip).await;
+                credit_answer(noted.step, &mut out, &mut noted.late, last, said, refused);
+            }
+            let in_step = out.iter().enumerate().rev().find_map(|(i, o)| {
+                answered_line(o).map(|line| (step.actions.get(i).map(crate::ai_bridge::describe_action).unwrap_or_default(), line))
+            });
+            let before_step = || {
+                let last = noted.last.as_ref().filter(|l| l.step != noted.step)?;
+                line_of(&last.said, &last.refused).map(|line| (last.what.clone(), line))
+            };
+            if let Some((what, line)) = in_step.or_else(before_step) {
                 outcome.detail = format!("{}{AFTER_EARLIER}{what} {line}", outcome.detail);
+            }
+        }
+        // This action is now the last that changed the page; the one
+        // before it is not asked of again.
+        if let Some(m) = mine {
+            if let Some(old) = noted.last.replace(m) {
+                d.net_unmark(old.mark);
             }
         }
         if let Some(p) = run.progress {
@@ -1050,12 +1271,17 @@ async fn run_expanded<D: Driver>(
         }
         None => Vec::new(),
     };
-    // One that opened after the step's last look: still this step's.
+    // One that opened after the step's last look: still this step's. What
+    // the page answered the action stays on it.
     if let Some(last) = out.last_mut() {
         if last.ok {
             if let Some(s) = seen.iter().skip(dialogs_read).find(|s| s.claimed_by.is_none()) {
                 if fail_on_unexpected {
-                    *last = ActionOutcome::failed(dialogs::unexpected(&s.kind, &s.message));
+                    let mut failed = ActionOutcome::failed(dialogs::unexpected(&s.kind, &s.message));
+                    failed.page_said = std::mem::take(&mut last.page_said);
+                    failed.refused = std::mem::take(&mut last.refused);
+                    failed.page_step = last.page_step.take();
+                    *last = failed;
                 }
             }
         }
@@ -1067,7 +1293,7 @@ async fn run_expanded<D: Driver>(
         .map(|s| StepDialog { kind: s.kind.clone(), message: s.message.clone() });
     // The page's own errors since the previous step was judged. An outcome
     // they failed is pictured, as any failed action is.
-    super::page_errors::read_trace_ids(d, run.page_errors).await;
+    super::page_errors::read_trace_ids(d, run.page_errors, &run.ignore_page_errors).await;
     let judged = super::page_errors::judge_step(d, run.page_errors, &run.ignore_page_errors, &mut out);
     run.page_errors_seen = judged.seen;
     if let Some(i) = judged.failed {
@@ -1075,6 +1301,11 @@ async fn run_expanded<D: Driver>(
     }
     let ended_in = d.tab_name();
     run.tab = if ended_in != MAIN_TAB { Some(ended_in) } else { ran_in };
+    // The step's own mark is done with, and so is the last action's when
+    // nothing carries it on to the next step.
+    d.net_unmark(mark);
+    own_noted.forget(d);
+    run.noted = carried;
     Ok(out)
 }
 
