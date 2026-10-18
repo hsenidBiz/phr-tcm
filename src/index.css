@@ -616,6 +616,8 @@ body {
    widening the table. */
 .case-text > :last-child { margin-bottom: 0; }
 .case-text pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* An ordered list typed `1) Login` keeps its `)` (renderCaseMarkdown marks it `paren`). */
+.case-text ol.paren > li::marker { content: counter(list-item) ") "; }
 .md-preview blockquote {
   border-left: 3px solid var(--color-border-strong);
   margin: 0 0 0.5rem;

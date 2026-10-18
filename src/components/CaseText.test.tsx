@@ -1,6 +1,9 @@
 // Test case text shown formatted, and edited as the Markdown it is.
 
 import { fireEvent, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { useState } from "react";
 import { expect, test } from "vitest";
 import CaseText, { CaseTextField, PreviewToggle } from "./CaseText";
@@ -73,4 +76,13 @@ test("the field keeps the Markdown typed, and Preview shows it formatted", () =>
   // Back to editing: the Markdown is exactly as typed.
   fireEvent.click(toggle);
   expect((screen.getByLabelText("Preconditions") as HTMLTextAreaElement).value).toBe(typed);
+});
+
+/// jsdom draws no list markers, so the rule that shows a typed `1)` is
+/// pinned at the source: an ordered list marked `paren` gets `)` markers.
+test("a prerequisites list typed with ) is drawn with ) markers", () => {
+  const css = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../index.css"), "utf8");
+  expect(css).toMatch(/\.case-text ol\.paren > li::marker\s*\{[^}]*content:\s*counter\(list-item\) "\) "/);
+  const { container } = render(<CaseText kind="prereq" text={"1) Login\n2) Open Leave"} />);
+  expect(container.querySelector("ol.paren")).not.toBeNull();
 });
