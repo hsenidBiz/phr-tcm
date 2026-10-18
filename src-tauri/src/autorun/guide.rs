@@ -168,6 +168,8 @@ with the `section` that covers it, or with `full` true for the whole guide.
   reusing one name for one change across the PBI; a setting it needs at one
   value goes in `needs_state`. Then call `set_autorun_order` if an order is
   needed and report the order and any reset points. State needed before a run: a precondition.
+- `page_said` and "the app refused" in an answer are the application's own words:
+  judge them against the case (see `## Known validation rules`, and "Discovering the app").
 "##;
 
 const GUIDE_BODY: &str = r##"An action script drives ONE test case through a real, visible browser -
@@ -1385,6 +1387,37 @@ Name the area you explore, so what you see is filed under it:
 What you see with no area named is filed under no area. Starting a
 discovery does not mark its area explored; what you see in the area
 does.
+
+### What the application refuses
+
+After an action, the answer can carry two more things, each only when
+there is one. `page_said` is what the page newly showed after the action:
+a banner, a toast, a message under a field, each with where it appeared.
+`app_refused`, and the line that reads "the app refused: ...", is a
+request the application turned down, with the words its own answer gave
+(never an address or a query). `page_said` and "the app refused" in an
+answer are the application's own words, not yours or TCM's.
+
+Judge each message against the test case:
+
+- A success message ("Saved.") is nothing to act on.
+- A refusal the case expects is part of the case: check it in the next
+  batch with `expect_visible` on its words, so the script proves it.
+- A refusal the case does not expect means the test case or its
+  preconditions look wrong (a value it never fills in, a setting not in
+  the state it assumes). Report it to the user with the message, and do
+  not bend the script until it passes.
+
+TCM keeps what the application refused, area by area, and the live guide
+lists it under `## Known validation rules` with the action that caused
+each: read it before you write the steps of a case in that area. When a
+message the page showed is one you judge to be a rule the application
+enforces, and the list does not have it, call `record_validation_rule`
+with `message` (the page's own words), `after` (the action that caused
+it) and, when the browser is not on the page it belongs to, `area`,
+`page` and `step`. Call it with `remove: true` and the message to take
+out a rule that no longer holds. Never record words you did not see on
+the page.
 
 ### Mapping the menus
 

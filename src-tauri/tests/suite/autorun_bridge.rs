@@ -2151,6 +2151,43 @@ async fn a_quirk_can_be_recorded_on_its_own() {
     assert_eq!(status, 400, "{out}");
 }
 
+/// The rules the project's map keeps are in the live guide, quick or full,
+/// and a project with none adds no heading.
+#[tokio::test]
+async fn the_route_appends_the_projects_validation_rules() {
+    use v2_lib::autorun::discovery_map::{remember_refusals, RefusalRule, RuleSource};
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    set_root(dir.path().to_path_buf());
+
+    let (_, before) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert!(!before.contains("## Known validation rules
+"), "{before}");
+
+    let rule = RefusalRule {
+        page: "/eval/rules".into(),
+        step: None,
+        after: "click css #save".into(),
+        message: "Weightage must total 100.".into(),
+        source: RuleSource::Discovery,
+        case_id: None,
+        first_seen: 5,
+        last_seen: 5,
+        count: 2,
+    };
+    remember_refusals(dir.path(), "acme", "Web", "Eval Rules", vec![rule]).unwrap();
+    let line = "- Eval Rules, /eval/rules: after click css #save - \"Weightage must total 100.\" (seen 2 times)
+";
+    for target in ["/autorun-guide", "/autorun-guide?quick=true"] {
+        let (status, body) = route(&ctx(), None, "GET", target, "", "1.0.0").await;
+        assert_eq!(status, 200);
+        assert!(body.contains("## Known validation rules
+
+"), "{target}: {body}");
+        assert!(body.contains(line), "{target}: {body}");
+    }
+}
+
 /// The guide's constant only says a quirks section exists - the route is
 /// what actually appends the real one, read fresh from what this project
 /// has recorded. With nothing recorded, the route adds nothing at all.

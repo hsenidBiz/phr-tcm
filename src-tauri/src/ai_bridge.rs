@@ -2003,6 +2003,7 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool) -> String {
     for section in [
         crate::autorun::nav::guide_section(&nav),
         crate::autorun::discovery_map::explore_section(&areas, &map, crate::autorun::sessions::now_ms()),
+        crate::autorun::discovery_map::rules_section(&map, running_discovery_area().as_deref()),
         crate::autorun::components::guide_section(&components),
         crate::autorun::quirks::quirks_section(&quirks),
         crate::test_files::guide_section(&files),
@@ -2013,6 +2014,14 @@ fn autorun_guide_with_quirks(ctx: &BridgeContext, quick: bool) -> String {
         }
     }
     out
+}
+
+/// The area of the discovery going on now, for the guide's rules. It never
+/// waits: a call that holds the browser is busy, and the guide then lists
+/// every area's rules, which is still true.
+fn running_discovery_area() -> Option<String> {
+    let slot = crate::commands::autorun::supervised().try_lock().ok()?;
+    slot.as_ref()?.discovery.as_ref()?.area.clone()
 }
 
 /// What `/autorun-network-wait` answers. The registry's view carries no

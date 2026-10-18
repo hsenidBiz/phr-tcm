@@ -1272,7 +1272,7 @@ fn the_guide_opens_with_the_quick_rules() {
     let quick = quick_rules();
     assert!(g.starts_with("# Writing an Auto Run action script\n\n## Quick rules\n"), "{}", &g[..200]);
     assert_eq!(g.matches(quick.as_str()).count(), 1, "the quick rules are the guide's own, word for word, once");
-    assert!(quick.lines().count() <= 45, "the quick rules run to {} lines", quick.lines().count());
+    assert!(quick.lines().count() <= 47, "the quick rules run to {} lines", quick.lines().count());
     assert!(!quick.contains('\u{2014}') && !quick.contains('\u{2013}'), "no em or en dashes");
     let lower = quick.to_lowercase();
     for banned in ["read the source", "application's source", "source-derived"] {
@@ -1367,6 +1367,7 @@ fn every_quick_rule_is_in_the_full_guide() {
         ("call `set_autorun_order` if an order is needed", "Shared state a case changes"),
         ("report the order and any reset points", "Shared state a case changes"),
         ("State needed before a run: a precondition", "Shared state a case changes"),
+        ("`page_said` and \"the app refused\" in an answer are the application's own words", "Discovering the app"),
     ] {
         assert!(quick.contains(phrase), "the quick rules never say {phrase:?}: {quick}");
         assert!(section(home).contains(phrase), "\"{home}\" never says {phrase:?}");
@@ -1476,4 +1477,27 @@ fn the_overview_lists_every_section_and_how_to_ask() {
     assert!(overview.contains("`section`") && overview.contains("`full` true"), "{overview}");
     assert!(overview.len() * 4 < full.len(), "the overview is {} of {} characters", overview.len(), full.len());
     assert!(!overview.contains('\u{2014}') && !overview.contains('\u{2013}'), "no em or en dashes");
+}
+
+/// The assistant is told about the application's refusals: the quick rules
+/// point at the live section, and the full guide says what the answers
+/// call them, how to judge each, and when to keep one.
+#[test]
+fn the_guide_teaches_the_applications_refusals() {
+    use v2_lib::autorun::guide::quick_rules;
+    let quick = quick_rules();
+    assert!(quick.contains("## Known validation rules"), "{quick}");
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = flat(&autorun_guide());
+    for phrase in [
+        "`record_validation_rule`",
+        "`remove: true`",
+        "`page_said`",
+        "the app refused",
+        "`expect_visible`",
+        "the test case or its preconditions look wrong",
+        "## Known validation rules",
+    ] {
+        assert!(g.contains(phrase), "the guide never says {phrase:?}");
+    }
 }

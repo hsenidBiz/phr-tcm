@@ -1189,3 +1189,67 @@ fn only_the_nearest_page_change_before_a_failure_that_the_page_gave_counts() {
     let rules = rules_from(&[refused, mine], RuleSource::Run, Some(7), 1);
     assert_eq!(rules.iter().map(|r| r.message.as_str()).collect::<Vec<_>>(), ["Weightage must total 100."]);
 }
+
+/// The guide lists the running discovery's area alone, one line a rule,
+/// the most recently seen first, in the shape the guide's own text shows.
+#[test]
+fn the_rules_section_lists_the_discovery_areas_rules_newest_first() {
+    use v2_lib::autorun::discovery_map::rules_section;
+    let mut map = DiscoveryMap::default();
+    let mut older = rule("/eval/rules", "At least one assessment component must be enabled.", 10);
+    older.step = Some("Assessment Components".to_string());
+    older.after = "click \"Save & Continue\"".to_string();
+    older.count = 3;
+    remember_refusal(&mut map, "Eval Rules", older);
+    remember_refusal(&mut map, "Eval Rules", rule("/eval/rules", "Weightage must total 100.", 20));
+    remember_refusal(&mut map, "Leave", rule("/leave/types", "Name is required.", 30));
+    let text = rules_section(&map, Some("eval rules"));
+    assert!(text.starts_with("## Known validation rules
+
+"), "{text}");
+    let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("- ")).collect();
+    assert_eq!(
+        lines,
+        [
+            "- Eval Rules, /eval/rules: after click css #save - \"Weightage must total 100.\" (seen once)",
+            "- Eval Rules, step \"Assessment Components\": after click \"Save & Continue\" - \"At least one assessment component must be enabled.\" (seen 3 times)",
+        ],
+        "{text}"
+    );
+    assert!(!text.contains("Name is required"), "another area's rule is not this discovery's: {text}");
+}
+
+/// With no discovery, each area shows its ten newest rules and the guide
+/// forty in all, the freshest areas first.
+#[test]
+fn without_a_discovery_every_area_shows_at_most_ten_and_forty_in_all() {
+    use v2_lib::autorun::discovery_map::rules_section;
+    let mut map = DiscoveryMap::default();
+    for (n, area) in ["A", "B", "C", "D", "E"].iter().enumerate() {
+        for i in 0..12u64 {
+            remember_refusal(&mut map, area, rule("/p", &format!("{area} rule {i}"), 1000 * (5 - n as u64) + i));
+        }
+    }
+    let text = rules_section(&map, None);
+    let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("- ")).collect();
+    assert_eq!(lines.len(), 40, "{text}");
+    for area in ["A", "B", "C", "D"] {
+        assert_eq!(lines.iter().filter(|l| l.starts_with(&format!("- {area}, "))).count(), 10, "{text}");
+    }
+    assert!(!text.contains("- E, "), "the stalest area is the one cut by the total: {text}");
+    // The newest ten of A, not its oldest.
+    assert!(text.contains("A rule 11") && text.contains("A rule 2\"") && !text.contains("A rule 1\""), "{text}");
+    // An unknown discovery area shows nothing of its own, and no other.
+    assert_eq!(rules_section(&map, Some("Nowhere")), "");
+}
+
+/// Nothing to show, no heading.
+#[test]
+fn no_rules_no_heading() {
+    use v2_lib::autorun::discovery_map::rules_section;
+    let mut map = DiscoveryMap::default();
+    assert_eq!(rules_section(&map, None), "");
+    assert_eq!(rules_section(&map, Some("Eval Rules")), "");
+    remember_refusal(&mut map, "Leave", rule("/p", "Name is required.", 1));
+    assert_eq!(rules_section(&map, Some("Eval Rules")), "", "an area without rules adds no empty heading");
+}
