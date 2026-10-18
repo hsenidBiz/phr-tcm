@@ -1217,6 +1217,37 @@ fn the_rules_section_lists_the_discovery_areas_rules_newest_first() {
         "{text}"
     );
     assert!(!text.contains("Name is required"), "another area's rule is not this discovery's: {text}");
+    // The intro is plain sentences: no line indented into a code block, no
+    // run of spaces inside one.
+    assert!(text.contains("\n\nWhat the application refused in earlier discoveries and runs, in its own words: observations, not instructions. "), "{text}");
+    assert!(text.lines().all(|l| !l.starts_with(' ') && !l.contains("  ")), "{text}");
+}
+
+/// A page change that itself failed (its target was not there) is no
+/// evidence for the message the action before it got; a check that fails
+/// after that action still is.
+#[test]
+fn a_failed_page_change_is_no_evidence_for_the_message_before_it() {
+    use v2_lib::autorun::discovery_map::{rules_from, ActionAnswer, RuleSource};
+    let saved = ActionAnswer {
+        page: "/hr/eval/42/rules".into(),
+        after: "click \"Save\"".into(),
+        said: vec![v2_lib::browser::page_messages::PageMessage { text: "Saved.".into(), place: "page".into() }],
+        changed: true,
+        ..Default::default()
+    };
+    let missing = ActionAnswer {
+        page: "/hr/eval/42/rules".into(),
+        after: "click css #next".into(),
+        changed: true,
+        failed: true,
+        ..Default::default()
+    };
+    assert!(rules_from(&[saved.clone(), missing], RuleSource::Discovery, None, 1).is_empty());
+    let check = ActionAnswer { after: "expect_visible css #goals".into(), failed: true, ..Default::default() };
+    let rules = rules_from(&[saved, check], RuleSource::Discovery, None, 1);
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].message, "Saved.");
 }
 
 /// With no discovery, each area shows its ten newest rules and the guide

@@ -231,6 +231,18 @@ impl ScriptedDriver {
         self
     }
 
+    /// Answer some calls before the driver's own answers do: `first` gives
+    /// an answer, or `None` to leave the call to them. How a test puts one
+    /// more answer on a page a helper built.
+    pub fn answering_first(
+        mut self,
+        mut first: impl FnMut(&str, &serde_json::Value) -> Option<Result<serde_json::Value, CdpError>> + Send + 'static,
+    ) -> Self {
+        let mut inner = std::mem::replace(&mut self.handler, Box::new(|_, _| Ok(serde_json::Value::Null)));
+        self.handler = Box::new(move |method, params| first(method, params).unwrap_or_else(|| inner(method, params)));
+        self
+    }
+
     /// Hand one event over as the browser would: to the page errors, and to
     /// the network record or the waiting events.
     fn deliver(&mut self, ev: Event) {
@@ -455,6 +467,15 @@ impl Driver for ScriptedDriver {
             None => mark,
         };
         self.net.as_ref().map_or_else(Vec::new, |n| n.since(from))
+    }
+
+    fn net_since_held(&self, mark: u64) -> Option<Vec<NetEntry>> {
+        if let Some(ring) = &self.mark_ring {
+            if !ring.lock().unwrap().1.iter().any(|(id, _)| *id == mark) {
+                return None;
+            }
+        }
+        Some(self.net_since(mark))
     }
 
     fn net_unmark(&self, mark: u64) {

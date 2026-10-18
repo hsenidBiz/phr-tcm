@@ -594,8 +594,12 @@ async fn run_case_in<D: Driver>(
         // What the page answered an earlier step's action after it ended.
         let late = noted.take_late();
         // A step that failed teaches the application's rules, under the
-        // area the case is in: once per case, as the case stops there.
-        runner::remember_failed_step(root, organization, project, step, &outcomes, &late, noted.area(), script.case_id);
+        // area the case is in: once per case, as the case stops there. The
+        // earlier action its failure line names is learned from whole.
+        if outcomes.iter().any(|o| !o.ok) {
+            let answers = noted.with_earlier(&late);
+            runner::remember_failed_step(root, organization, project, step, &outcomes, &answers, noted.area(), script.case_id);
+        }
         runner::credit_late(&mut steps, late);
         steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot: None, downloads: Vec::new(), tab, dialog, components, duration_ms: Some(ms(asked_at.elapsed())) });
         page_errors_seen += seen_errors;

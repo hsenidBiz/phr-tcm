@@ -505,6 +505,42 @@ impl Noted {
         std::mem::take(&mut self.late)
     }
 
+    /// `late`, as a step that failed learns from it
+    /// (`remember_failed_step`): with the case's last action that changed
+    /// the page, when an earlier step ran it, in place of its late answers -
+    /// everything the page answered it, what its own reads found while its
+    /// step passed included, as that is what the failure line names. Given
+    /// once per action, so a step tried again does not count it twice.
+    pub fn with_earlier(&mut self, late: &[LateAnswer]) -> Vec<LateAnswer> {
+        let step = self.step;
+        let Some(last) = self.last.as_mut().filter(|l| l.step != step && !l.kept) else {
+            return late.to_vec();
+        };
+        last.kept = true;
+        let mut out: Vec<LateAnswer> =
+            late.iter().filter(|l| (l.step, l.action) != (last.step, last.action)).cloned().collect();
+        out.push(LateAnswer {
+            step: last.step,
+            action: last.action,
+            page_said: last.said.clone(),
+            refused: last.refused.clone(),
+            what: last.what.clone(),
+            page_step: last.page_step.clone(),
+            page_path: last.page_path.clone(),
+        });
+        out
+    }
+
+    /// The last action that changed the page is put nothing more on, nor
+    /// named by a failure, once the browser no longer holds its mark
+    /// (`Driver::net_since_held`): what came since it can no longer be told
+    /// from what came before it.
+    fn let_go_if_gone<D: Driver>(&mut self, d: &D) {
+        if self.last.as_ref().is_some_and(|l| d.net_since_held(l.mark).is_none()) {
+            self.last = None;
+        }
+    }
+
     /// A new case: nothing of the last one carries over, and its mark is
     /// let go.
     pub fn forget<D: Driver>(&mut self, d: &D) {
@@ -555,6 +591,7 @@ impl Noted {
     }
 
     async fn look<D: Driver>(&mut self, d: &mut D, messages: bool) {
+        self.let_go_if_gone(d);
         let Some(last) = self.last.as_mut() else {
             return;
         };
@@ -587,8 +624,8 @@ struct Changed {
     /// Requests that are never its refusals: the run's own, and the ones
     /// already reported.
     seen: Vec<String>,
-    /// A navigation, a reload or a tab action: the page it ends on is
-    /// another, so what that page shows is not the action's to report.
+    /// It ends on another page (`replaces_the_page`), so what that page
+    /// shows is not the action's to report.
     replaces_page: bool,
     /// Everything reported on it so far.
     said: Vec<PageMessage>,
@@ -596,6 +633,9 @@ struct Changed {
     /// The page's step indicator after it, when it has one, and its path.
     page_step: Option<String>,
     page_path: String,
+    /// A later step that failed has already learned from it
+    /// (`Noted::with_earlier`).
+    kept: bool,
 }
 
 /// What the page answered an action of an earlier step after that step
@@ -628,14 +668,14 @@ pub fn credit_late(steps: &mut [super::StepRecord], late: Vec<LateAnswer>) {
 
 /// Whether a failure is one TCM made itself rather than one the page gave:
 /// a browser that stopped answering, an action not run (a Stop, a step or
-/// an action before it that failed), or a save the no-save guard stopped.
-/// It is no evidence that a message the page showed before it was a
-/// refusal.
+/// an action before it that failed), or the no-save guard (a save it
+/// stopped, a tab it could not guard). It is no evidence that a message the
+/// page showed before it was a refusal.
 pub fn tcm_made(o: &ActionOutcome) -> bool {
-    use crate::browser::save_guard::{BLOCKED_START, SETUP_FAILED};
+    use crate::browser::save_guard::{GUARD_START, SETUP_FAILED};
     o.harness
         || o.detail.starts_with("not run: ")
-        || o.detail.starts_with(BLOCKED_START)
+        || o.detail.starts_with(GUARD_START)
         || o.detail.starts_with(SETUP_FAILED)
 }
 
@@ -643,8 +683,9 @@ pub fn tcm_made(o: &ActionOutcome) -> bool {
 /// application's rules, kept in the discovery map under `area` - the area
 /// the case is in (`Noted::area`) - as a run's (`discovery_map::rules_from`):
 /// the requests the application refused the step's actions up to the
-/// failure and the step before's that were answered late (`late`, as
-/// `Noted::take_late` handed it back), and the messages the page showed
+/// failure and the step before's (`late`: what `Noted::take_late` handed
+/// back, passed through `Noted::with_earlier` so the earlier action the
+/// failure line names is there whole), and the messages the page showed
 /// after the nearest action before the failure that changed the page. A
 /// failure TCM made itself (`tcm_made`) is no evidence for a message. Each
 /// rule is filed under the page the action's own read after it was on. A
@@ -765,7 +806,7 @@ async fn await_answers<D: Driver>(d: &mut D, mark: u64, own: &[String], cancel: 
     let mut waited = 0;
     while waited < ANSWER_WAIT_MS
         && !cancel.is_some_and(|c| c.load(Ordering::SeqCst))
-        && d.net_since(mark).iter().any(|e| refusals::awaits_answer(e, own))
+        && d.net_since_held(mark).is_some_and(|sent| sent.iter().any(|e| refusals::awaits_answer(e, own)))
     {
         d.idle(Duration::from_millis(ANSWER_LOOK_MS)).await;
         waited += ANSWER_LOOK_MS;
@@ -773,10 +814,14 @@ async fn await_answers<D: Driver>(d: &mut D, mark: u64, own: &[String], cancel: 
 }
 
 /// An action whose page is another once it is done: a navigation, a
-/// reload, or one that moves to or opens a tab. What that page shows is
-/// not new because of the action.
+/// reload, a trip to an area (`return_to_area`), or one that moves to or
+/// opens a tab - itself or one a `when_visible` guards. What that page
+/// shows (a banner it always has) is not new because of the action. An
+/// `expire_session` only forgets the site's cookies, and its page stays.
 fn replaces_the_page(action: &Action) -> bool {
-    matches!(action, Action::Navigate { .. } | Action::Reload) || action.is_tab_action()
+    action.each().into_iter().any(|a| {
+        matches!(a, Action::Navigate { .. } | Action::Reload | Action::ReturnToArea { .. }) || a.is_tab_action()
+    })
 }
 
 /// The note a dialog nobody expected left on a passing action's words
@@ -1157,6 +1202,7 @@ async fn run_expanded<D: Driver>(
         // the application refused, and its page is the sign-in's.
         let before = if changes_the_page(action) && !matches!(action, Action::SignIn { .. }) {
             let read = read_page_messages(d).await;
+            noted.let_go_if_gone(d);
             if let Some(last) = noted.last.as_mut() {
                 let said = if last.replaces_page { Vec::new() } else { new_messages(&last.after, &read.messages) };
                 let refused = refused_with_ids(d, last.mark, &last.seen).await;
@@ -1350,6 +1396,7 @@ async fn run_expanded<D: Driver>(
                     refused: outcome.refused.clone(),
                     page_step: after.step,
                     page_path: after.path.unwrap_or_default(),
+                    kept: false,
                 });
             } else {
                 d.net_unmark(action_mark);
@@ -1361,6 +1408,7 @@ async fn run_expanded<D: Driver>(
         // after its own reads; and what the page answered it is said with
         // the failure, as the likelier cause than what the step ran into.
         if !outcome.ok && !refused_here && readable {
+            noted.let_go_if_gone(d);
             if let Some(last) = noted.last.as_mut() {
                 // Messages new since this action began are this action's.
                 let said = if mine.is_some() || last.replaces_page {

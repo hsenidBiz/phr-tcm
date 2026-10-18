@@ -4234,6 +4234,52 @@ async fn a_refusal_found_after_an_action_ended_stops_the_batch() {
     assert_eq!(v["app_refused"][0]["status"], 400, "{body}");
 }
 
+/// A request the application refused before the discovery's actions is
+/// never one of theirs, however many actions ran: on the whole browser
+/// each action's marks are let go, so the last page change's mark is never
+/// pushed out - and one that was would read nothing, not the whole record.
+#[tokio::test]
+async fn an_old_refusal_never_stops_a_batch_after_many_actions() {
+    let dir = root_with_recipe_and_account();
+    let mut d = telling_page(|_, _| vec![], usize::MAX).with_mark_ring();
+    let url = "https://hr.example.internal/api/eval-rules";
+    let event = |method: &str, params: Value| Event { method: method.into(), params };
+    for e in [
+        event(
+            "Network.requestWillBeSent",
+            json!({ "requestId": "old-1", "type": "XHR", "documentURL": "https://hr.example.internal/hr/leave/start",
+                    "request": { "url": url, "method": "POST" } }),
+        ),
+        event(
+            "Network.responseReceived",
+            json!({ "requestId": "old-1", "response": { "status": 400, "url": url, "mimeType": "application/json" } }),
+        ),
+        event("Network.loadingFinished", json!({ "requestId": "old-1" })),
+    ] {
+        d.net.as_mut().unwrap().observe(&e);
+    }
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let look = || -> Action {
+        serde_json::from_value(json!({ "kind": "expect_visible", "selector": "#a", "timeout_ms": 100 })).unwrap()
+    };
+    // Twenty actions one at a time first.
+    for _ in 0..20 {
+        let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &look(), None, None).await;
+        assert_eq!(status, 200, "{body}");
+    }
+    let mut actions = vec![click("#a")];
+    actions.extend((0..18).map(|_| look()));
+    actions.push(click("#b"));
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert!(!text.contains("the app refused"), "{text}");
+    assert_eq!(lines.len(), 20, "{text}");
+    assert!(lines.iter().all(|l| l.contains(". ok")), "{text}");
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    assert!(rules_of(&map, "Leave").is_empty(), "{:?}", rules_of(&map, "Leave"));
+}
+
 /// What the page showed a failed action that its detail does not say is
 /// still on its line.
 #[tokio::test]
@@ -4408,4 +4454,23 @@ async fn record_validation_rule_remove_ignores_the_browsers_page() {
     let (status, _) = record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &add).await;
     assert_eq!(status, 200);
     assert_eq!(mapped_area(dir.path(), "Cycles").unwrap().refusals[0].page, "/hr/cycles");
+}
+
+/// The browser's page is read only for an add that names no page: a
+/// removal, or an add with its page, never asks the browser where it is.
+#[tokio::test]
+async fn record_validation_rule_reads_the_page_only_for_an_add_without_one() {
+    let dir = TempDir::new();
+    let (mut browser, _) = slot(cycles_page(1, true), exploring("Cycles"));
+    let reads = |b: &Option<FakeBrowser>| {
+        b.as_ref().unwrap().d.calls_to("Runtime.evaluate").iter().filter(|p| p["expression"] == "location.href").count()
+    };
+    let named = json!({ "message": "Name is required", "after": "clicked Save", "page": "/hr/leave" }).to_string();
+    assert_eq!(record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &named).await.0, 200);
+    let gone = json!({ "message": "Name is required", "remove": true }).to_string();
+    assert_eq!(record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &gone).await.0, 200);
+    assert_eq!(reads(&browser), 0, "a removal or a named page read the browser's page");
+    let add = json!({ "message": "Name is required", "after": "clicked Save" }).to_string();
+    assert_eq!(record_validation_rule_in(&mut browser, dir.path(), ORG, PROJECT, &add).await.0, 200);
+    assert_eq!(reads(&browser), 1);
 }

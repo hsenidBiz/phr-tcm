@@ -1525,3 +1525,26 @@ async fn marks_let_go_never_push_out_the_steps_own() {
     let since: Vec<String> = cdp.net_since(step).into_iter().map(|e| e.path_query).collect();
     assert_eq!(since, ["/api/after"], "the step's mark was pushed out");
 }
+
+/// A mark pushed out by newer ones is no longer held: `net_since_held`
+/// says so rather than reading the record from its start.
+#[tokio::test]
+async fn a_mark_pushed_out_is_no_longer_held() {
+    let mut cdp = with_named("report").await;
+    feed(
+        &mut cdp,
+        [on(
+            "S-main",
+            "Network.requestWillBeSent",
+            json!({ "requestId": "n0", "timestamp": 1.0, "request": { "method": "GET", "url": "https://hr.example/api/before" } }),
+        )],
+    );
+    settle(&mut cdp).await;
+    let old = cdp.net_mark();
+    assert_eq!(cdp.net_since_held(old).map(|s| s.len()), Some(0));
+    for _ in 0..v2_lib::browser::cdp::MAX_NET_MARKS {
+        cdp.net_mark();
+    }
+    assert!(cdp.net_since_held(old).is_none(), "a mark pushed out is still read");
+    assert_eq!(cdp.net_since(old).len(), 1, "net_since still reads the whole record");
+}

@@ -1743,6 +1743,8 @@ fn a_failure_tcm_made_is_no_evidence_for_a_message() {
         ActionOutcome::failed(v2_lib::browser::save_guard::blocked("POST", "https://hr.example/api/x?y=1")),
         ActionOutcome::failed(AFTER_STOP),
         ActionOutcome::failed(AFTER_STEP_BEFORE_FAILED),
+        ActionOutcome::failed(v2_lib::browser::cdp::TAB_HELD_UNGUARDED),
+        ActionOutcome::failed(v2_lib::browser::cdp::TAB_OPEN_UNGUARDED),
         gone,
     ];
     let step = tab_step(json!([
@@ -1764,4 +1766,88 @@ fn a_failure_tcm_made_is_no_evidence_for_a_message() {
     remember_failed_step(dir.path(), "Acme", "Web", &step, &[clicked(false), check], &[], Some("A"), 7);
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
     assert_eq!(rules_of(&map, "A").len(), 1);
+}
+
+/// A mark the whole browser no longer holds reads nothing, never the
+/// record from its start: a request refused long before is not taken for
+/// one since the mark.
+#[tokio::test]
+async fn a_mark_no_longer_held_finds_no_refusal() {
+    use v2_lib::autorun::refusals::refused_since;
+    use v2_lib::browser::cdp::{Driver, MAX_NET_MARKS};
+    let mut d = said_page(vec![vec![]], false).with_mark_ring();
+    for e in page_request("old", "POST", "https://hr.example/api/eval-rules", "XHR", 400) {
+        d.net.as_mut().unwrap().observe(&e);
+    }
+    let mark = d.net_mark();
+    // Another address: the same one twice is taken for a poll.
+    for e in page_request("new", "POST", "https://hr.example/api/goals", "XHR", 400) {
+        d.net.as_mut().unwrap().observe(&e);
+    }
+    assert_eq!(refused_since(&mut d, mark, &[]).await.len(), 1, "a mark held reads what came after it");
+    for _ in 0..MAX_NET_MARKS {
+        d.net_mark();
+    }
+    assert!(refused_since(&mut d, mark, &[]).await.is_empty(), "a mark pushed out read the whole record");
+    assert!(d.net_since_held(mark).is_none());
+}
+
+/// The case's last page change whose mark was pushed out is put nothing
+/// more on: a later failure names no refusal from before it.
+#[tokio::test]
+async fn a_page_change_whose_mark_is_gone_is_credited_nothing() {
+    use v2_lib::autorun::runner::Noted;
+    use v2_lib::browser::cdp::{Driver, MAX_NET_MARKS};
+    let mut d = said_page(vec![vec![]], true).with_mark_ring();
+    for e in page_request("old", "POST", "https://hr.example/api/eval-rules", "XHR", 400) {
+        d.net.as_mut().unwrap().observe(&e);
+    }
+    let mut noted = Noted::default();
+    let three = run_noted(&mut d, json!([{ "kind": "click", "selector": { "css": "#save" } }]), &mut noted, 0).await;
+    assert!(three[0].ok && three[0].refused.is_empty(), "{three:?}");
+    for _ in 0..MAX_NET_MARKS {
+        d.net_mark();
+    }
+    let four = run_noted(
+        &mut d,
+        json!([{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }]),
+        &mut noted,
+        1,
+    )
+    .await;
+    assert!(!four[0].ok, "{:?}", four[0]);
+    assert!(!four[0].detail.contains("the app refused"), "{}", four[0].detail);
+    assert!(noted.take_late().is_empty());
+}
+
+/// An unattended case: step 3's save is refused within the click's own
+/// reads, so the step passes; step 4 then fails, and its failure line names
+/// that refusal. The run keeps it as a rule of the case's area.
+#[tokio::test]
+async fn a_run_remembers_the_refusal_its_failure_names_from_the_step_before() {
+    use v2_lib::autorun::discovery_map::{load_map, rules_of, RuleSource};
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = said_page(vec![vec![]], true);
+    click_is_refused(&mut d);
+    let case: v2_lib::autorun::CaseScript = serde_json::from_value(json!({
+        "case_id": 7,
+        "title": "case 7",
+        "area": "Eval Rules",
+        "steps": [
+            { "step_number": 3, "actions": [{ "kind": "click", "selector": { "css": "#save" } }] },
+            { "step_number": 4, "actions": [{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }] }
+        ]
+    }))
+    .unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let rec = v2_lib::autorun::replay::run_case(&mut d, dir.path(), "Acme", "Web", &case, &quick(), &cancel, &mut |_| {}).await;
+    let three = &rec.steps[0].outcomes[0];
+    assert!(three.ok && three.refused.len() == 1, "{three:?}");
+    let four = &rec.steps[1].outcomes[0];
+    assert!(!four.ok && four.detail.contains(" - after click "), "{four:?}");
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let rules = rules_of(&map, "Eval Rules");
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].message, "One or more validation errors occurred.");
+    assert_eq!((rules[0].source, rules[0].case_id), (RuleSource::Run, Some(7)));
 }

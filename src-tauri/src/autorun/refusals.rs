@@ -216,13 +216,19 @@ pub async fn refused_since<D: Driver>(d: &mut D, mark: u64, own: &[String]) -> V
 
 /// `refused_since`, each refusal with its request's id: what a later look
 /// passes over (`own`) so a refusal is reported once.
+///
+/// A mark the browser no longer holds finds nothing: what came since it
+/// can no longer be told from what came before, and an old refusal taken
+/// for this action's would stop a batch and become a rule.
 pub async fn refused_with_ids<D: Driver>(d: &mut D, mark: u64, own: &[String]) -> Vec<(String, RefusedRequest)> {
-    let mut seen = d.net_since(mark);
+    let Some(mut seen) = d.net_since_held(mark) else {
+        return Vec::new();
+    };
     // A refusal whose answer has come but whose end has not been read yet:
     // wait once for it, and only when there is one.
     if seen.iter().any(|e| refusal_shaped(e, own) && e.state == NetState::Pending) {
         d.idle(FINISH_WAIT).await;
-        seen = d.net_since(mark);
+        seen = d.net_since_held(mark).unwrap_or_default();
     }
     let refused: Vec<NetEntry> = seen.into_iter().filter(|e| counts(e, own)).take(MAX_REFUSED).collect();
     let mut out = Vec::with_capacity(refused.len());

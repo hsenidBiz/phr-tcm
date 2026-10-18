@@ -4254,11 +4254,17 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
     let notes_before = status_texts(d).await;
     let mark = crate::browser::cdp::Driver::net_mark(d);
     let tried =
-        try_action(d, signed_in, lease, root, organization, project, 0, area_name, mapping, action, Some(noted)).await?;
+        try_action(d, signed_in, lease, root, organization, project, 0, area_name, mapping, action, Some(noted)).await;
+    // The writes are read once and the mark let go, however the action
+    // went: on the whole browser a mark kept pushes out the ones still in
+    // use (`MAX_NET_MARKS`).
+    let sent = crate::browser::cdp::Driver::net_since(d, mark);
+    crate::browser::cdp::Driver::net_unmark(d, mark);
+    let tried = tried?;
     let what = describe_action(action);
     let now = crate::autorun::sessions::now_ms();
     let mut writes = Vec::new();
-    for sent in crate::browser::cdp::Driver::net_since(d, mark) {
+    for sent in sent {
         if !crate::browser::save_guard::SAVE_METHODS.contains(&sent.method.as_str()) {
             continue;
         }
@@ -6279,8 +6285,21 @@ pub async fn record_validation_rule_in<B: DiscoveryBrowser>(
     };
     let p = browser.parts();
     let area = p.discovery.as_ref().and_then(|d| d.area.clone());
-    let (page, _) = current_page(p.driver).await;
+    // Only an add that names no page takes the browser's.
+    let page = if takes_the_browsers_page(body) { current_page(p.driver).await.0 } else { String::new() };
     rule_in_area(root, organization, project, body, area.as_deref(), &page)
+}
+
+/// Whether a `record_validation_rule` body is an add that names no page,
+/// the one kind filed under the page the browser is on. A body that is not
+/// a rule is left to `rule_in_area` to refuse.
+fn takes_the_browsers_page(body: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    let removal = v["remove"].as_bool().unwrap_or(false);
+    let named = v["page"].as_str().is_some_and(|p| !p.trim().is_empty());
+    !removal && !named
 }
 
 /// The rule a body tells, kept in (or taken out of) the map. `discovery_area`

@@ -28,6 +28,11 @@ pub const WORD_SAVES: [&str; 3] = ["add", "create", "insert"];
 /// always goes through.
 pub const SAVE_METHODS: [&str; 4] = ["POST", "PUT", "PATCH", "DELETE"];
 
+/// How every sentence the no-save guard fails a step with begins: a save it
+/// stopped (`BLOCKED_START`), and a tab it could not guard
+/// (`cdp::TAB_HELD_UNGUARDED`, `cdp::TAB_OPEN_UNGUARDED`).
+pub const GUARD_START: &str = "this script must not save, but ";
+
 /// How the sentence of a blocked save begins (`blocked`).
 pub const BLOCKED_START: &str = "this script must not save, but the page tried to send ";
 /// How the sentence of a blocked save ends.

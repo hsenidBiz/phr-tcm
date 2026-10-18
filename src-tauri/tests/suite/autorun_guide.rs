@@ -1272,7 +1272,7 @@ fn the_guide_opens_with_the_quick_rules() {
     let quick = quick_rules();
     assert!(g.starts_with("# Writing an Auto Run action script\n\n## Quick rules\n"), "{}", &g[..200]);
     assert_eq!(g.matches(quick.as_str()).count(), 1, "the quick rules are the guide's own, word for word, once");
-    assert!(quick.lines().count() <= 47, "the quick rules run to {} lines", quick.lines().count());
+    assert!(quick.lines().count() <= 45, "the quick rules run to {} lines", quick.lines().count());
     assert!(!quick.contains('\u{2014}') && !quick.contains('\u{2013}'), "no em or en dashes");
     let lower = quick.to_lowercase();
     for banned in ["read the source", "application's source", "source-derived"] {
@@ -1330,8 +1330,7 @@ fn every_quick_rule_is_in_the_full_guide() {
             "Probe every final locator with `probe_autorun_locator`, exactly as it is written in the script, immediately before saving",
             "Saving it",
         ),
-        ("Save with `\"dry_run\": true` to check a save without making it", "Saving it"),
-        ("writing nothing and recording nothing", "Saving it"),
+        ("`\"dry_run\": true` checks a save, writing and recording nothing", "Saving it"),
         ("A refused save lists every locator never seen", "Discovering the app"),
         ("each with a hint when a close one was seen", "Discovering the app"),
         (
@@ -1367,7 +1366,7 @@ fn every_quick_rule_is_in_the_full_guide() {
         ("call `set_autorun_order` if an order is needed", "Shared state a case changes"),
         ("report the order and any reset points", "Shared state a case changes"),
         ("State needed before a run: a precondition", "Shared state a case changes"),
-        ("`page_said` and \"the app refused\" in an answer are the application's own words", "Discovering the app"),
+        ("`page_said` and \"the app refused\" are the app's own words; judge them against the case", "Discovering the app"),
     ] {
         assert!(quick.contains(phrase), "the quick rules never say {phrase:?}: {quick}");
         assert!(section(home).contains(phrase), "\"{home}\" never says {phrase:?}");

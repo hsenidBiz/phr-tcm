@@ -141,12 +141,10 @@ with the `section` that covers it, or with `full` true for the whole guide.
   part of another, such as "Continue" and "Save & Continue".
 - After typing in a search box, wait for the list to settle (the other rows
   gone, the target visible) before clicking.
-- Save with `"dry_run": true` to check a save without making it: writing
-  nothing and recording nothing. A refused save lists every locator never
-  seen, each with a hint when a close one was seen.
+- `"dry_run": true` checks a save, writing and recording nothing. A refused
+  save lists every locator never seen, each with a hint when a close one was seen.
 - Try a component with `use_component` and `draft` before
-  `save_autorun_component`, then save it unchanged from the draft that
-  worked.
+  `save_autorun_component`, then save it unchanged from the draft that worked.
 - A step is either `unchecked` (no checks at all, and the reason) or
   checked, never both. Check a ticked box with `expect_checked`, and any
   other state with `expect_attribute`, never by adding a state to its selector.
@@ -168,8 +166,8 @@ with the `section` that covers it, or with `full` true for the whole guide.
   reusing one name for one change across the PBI; a setting it needs at one
   value goes in `needs_state`. Then call `set_autorun_order` if an order is
   needed and report the order and any reset points. State needed before a run: a precondition.
-- `page_said` and "the app refused" in an answer are the application's own words:
-  judge them against the case (see `## Known validation rules`, and "Discovering the app").
+- `page_said` and "the app refused" are the app's own words; judge them against
+  the case (see `## Known validation rules` and "Discovering the app").
 "##;
 
 const GUIDE_BODY: &str = r##"An action script drives ONE test case through a real, visible browser -
@@ -1393,12 +1391,10 @@ does.
 After an action, the answer can carry two more things, each only when
 there is one. `page_said` is what the page newly showed after the action:
 a banner, a toast, a message under a field, each with where it appeared.
-`app_refused`, and the line that reads "the app refused: ...", is a
-request the application turned down, with the words its own answer gave
-(never an address or a query). `page_said` and "the app refused" in an
-answer are the application's own words, not yours or TCM's.
-
-Judge each message against the test case:
+`app_refused` is a request the application turned down, with the words
+its own answer gave (never an address or a query); an action's line says
+it as "the app refused: ...". Neither is TCM's verdict: `page_said` and
+"the app refused" are the app's own words; judge them against the case:
 
 - A success message ("Saved.") is nothing to act on.
 - A refusal the case expects is part of the case: check it in the next
@@ -1711,11 +1707,11 @@ Before every save:
   when something seen there fits around it; the value's shape is checked
   once the run has filled it in. When such a locator is still refused,
   open the fixture's draft by its unique name instead.
-- Save with `"dry_run": true` to check a save without making it: it runs
+- `"dry_run": true` checks a save, writing and recording nothing: it runs
   every check a save makes, the seen check included, and answers "Dry
   run: nothing was saved." with what it would save, or the refusal a
-  save would give (every locator never seen, listed at once), writing
-  nothing and recording nothing. Only an answer starting "saved" saved.
+  save would give (every locator never seen, listed at once). Only an
+  answer starting "saved" saved.
 - A save refused during a discovery only because some locators were never
   seen checks those locators on the discovery's current page once, on its
   own: each one found there visible is recorded with how many elements it

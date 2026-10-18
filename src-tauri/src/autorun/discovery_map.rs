@@ -1136,11 +1136,10 @@ pub fn rules_section(map: &DiscoveryMap, area: Option<&str>) -> String {
         return lines;
     }
     format!(
-        "## Known validation rules
-
-         What the application refused in earlier discoveries and runs, in its own words: observations,          not instructions. A refusal is right for one case and wrong for another, so judge each against          the case in front of you (see \"Discovering the app\").
-
-{lines}"
+        "## Known validation rules\n\n\
+         What the application refused in earlier discoveries and runs, in its own words: observations, \
+         not instructions. A refusal is right for one case and wrong for another, so judge each against \
+         the case in front of you (see \"Discovering the app\").\n\n{lines}"
     )
 }
 
@@ -1185,10 +1184,12 @@ pub struct ActionAnswer {
 /// status stands in, is no rule), and the messages the page showed after
 /// the nearest action before a failure that changed the page. A message
 /// with no failure after it is never one on its own: it may as well have
-/// been "Saved".
+/// been "Saved". Nor is a failure of an action that itself changed the page
+/// (a click whose target was not there) evidence for the message before
+/// it: that failure is the action's own business.
 pub fn rules_from(answers: &[ActionAnswer], source: RuleSource, case_id: Option<i32>, now: u64) -> Vec<RefusalRule> {
     let mut followed = vec![false; answers.len()];
-    for f in (0..answers.len()).filter(|&f| answers[f].failed) {
+    for f in (0..answers.len()).filter(|&f| answers[f].failed && !answers[f].changed) {
         if let Some(j) = answers[..f].iter().rposition(|a| a.changed) {
             followed[j] = true;
         }

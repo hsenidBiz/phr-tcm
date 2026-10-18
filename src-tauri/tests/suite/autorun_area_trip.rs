@@ -216,6 +216,33 @@ async fn a_named_area_takes_its_own_path_and_a_bare_one_the_cases() {
     assert_eq!(*app.path.lock().unwrap(), "/hr/leave");
 }
 
+/// A `return_to_area` lands on another page: a banner that page always
+/// shows is not what the trip caused, so it is no `page_said` of it (and
+/// never a rule).
+#[tokio::test]
+async fn a_return_to_area_reports_nothing_the_landing_page_shows() {
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    let (d, app) = menu();
+    let path = app.path.clone();
+    let mut d = d.answering_first(move |method, params| {
+        (method == "Runtime.evaluate" && params["expression"] == v2_lib::browser::page_messages::READ_JS).then(|| {
+            let here = path.lock().unwrap().clone();
+            let messages = if here == "/hr/leave" {
+                json!([{ "text": "You have 3 pending approvals", "where": "page" }])
+            } else {
+                json!([])
+            };
+            Ok(json!({ "result": { "value": { "messages": messages, "step": null, "path": here } } }))
+        })
+    });
+    let own = Route::new(&menu_recipe(), leave());
+    let out = run_one(&mut d, dir.path(), &step(2, json!([{ "kind": "return_to_area" }])), &own, None).await;
+    assert!(out[0].ok, "{out:?}");
+    assert_eq!(*app.path.lock().unwrap(), "/hr/leave");
+    assert!(out[0].page_said.is_empty(), "{:?}", out[0].page_said);
+}
+
 #[tokio::test]
 async fn an_area_removed_since_the_save_blocks_the_rest_of_the_step() {
     let dir = tempfile::tempdir().unwrap();

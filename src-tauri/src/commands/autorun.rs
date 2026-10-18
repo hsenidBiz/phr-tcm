@@ -1236,16 +1236,18 @@ pub async fn auto_run_step(
     let (tab, dialog, page_errors_seen) = (run.tab.take(), run.dialog.take(), run.page_errors_seen);
     drop(run);
     // A step that failed teaches the application's rules, with what came
-    // late for the step before (`runner::remember_failed_step`).
+    // late for the step before and the earlier action its failure line
+    // names (`runner::remember_failed_step`).
     if outcomes.iter().any(|o| !o.ok) {
         let late = session.noted.take_late();
+        let answers = session.noted.with_earlier(&late);
         crate::autorun::runner::remember_failed_step(
             &root,
             &organization,
             &project,
             &step,
             &outcomes,
-            &late,
+            &answers,
             session.noted.area(),
             case_id,
         );

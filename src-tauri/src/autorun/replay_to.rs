@@ -644,11 +644,13 @@ async fn run_steps<D: Driver>(
             }
         }
         // A step that failed teaches the application's rules, under the
-        // area the case is in, with what came late for the step before.
+        // area the case is in, with what came late for the step before and
+        // the earlier action its failure line names.
         if outcomes.iter().any(|o| !o.ok) {
             let late = noted.take_late();
+            let answers = noted.with_earlier(&late);
             let area = noted.area();
-            runner::remember_failed_step(root, organization, project, step, &outcomes, &late, area, script.case_id);
+            runner::remember_failed_step(root, organization, project, step, &outcomes, &answers, area, script.case_id);
         }
         if let Some(mut why) = outcomes.iter().find(|o| !o.ok).map(|o| o.detail.clone()) {
             if let Some(other) = guarding_other.filter(|_| crate::browser::save_guard::is_blocked(&why)) {
