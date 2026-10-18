@@ -495,7 +495,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "end_autorun_discovery",
-            "description": "Close the discovery browser. Call it when you have finished exploring. Safe to call when no discovery is going.",
+            "description": "End your discovery: what it mapped is kept, and its browser stays open and signed in for your next replay or discovery. Call it when you have finished exploring. Safe to call when no discovery is going.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {

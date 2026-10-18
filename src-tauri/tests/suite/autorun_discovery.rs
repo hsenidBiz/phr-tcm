@@ -94,6 +94,9 @@ struct FakeBrowser {
     guard_owner: Option<GuardOwner>,
     closed: Arc<AtomicBool>,
     gone: Arc<AtomicBool>,
+    /// The assistant opened it, as `open_for_discovery` does; a test's
+    /// slot is the person's unless it says otherwise.
+    assistant: bool,
 }
 
 impl DiscoveryBrowser for FakeBrowser {
@@ -114,6 +117,9 @@ impl DiscoveryBrowser for FakeBrowser {
     async fn alive(&mut self) -> bool {
         !self.gone.load(Ordering::SeqCst)
     }
+    fn opened_by_assistant(&mut self) -> bool {
+        self.assistant
+    }
 }
 
 /// A browser slot holding `d`, opened for a discovery (no account yet)
@@ -130,6 +136,7 @@ fn slot(d: ScriptedDriver, discovery: Option<DiscoveryState>) -> (Option<FakeBro
         guard_owner: None,
         closed: closed.clone(),
         gone,
+        assistant: false,
     };
     (Some(b), closed)
 }
@@ -497,17 +504,24 @@ async fn close_browser_ends_a_discovery_session() {
     assert!(!close_browser_in(&mut browser), "nothing left to close");
 }
 
-/// Ending closes a discovery's browser, and ending again - or with no
-/// browser, or with the person's own browser open - is fine and closes
-/// nothing more.
+/// Ending a discovery keeps its browser, signed in, for the next replay or
+/// discovery, and ending again - or with no browser, or with the person's
+/// own browser open - is fine and closes nothing.
 #[tokio::test]
 async fn end_is_idempotent() {
     let (mut browser, closed) = slot(FakePage::default().driver(), exploring("Leave"));
-    let (status, _) = end_discovery_in(&mut browser).await;
-    assert_eq!(status, 200);
-    assert!(closed.load(Ordering::SeqCst));
-    assert!(browser.is_none());
-    let (status, _) = end_discovery_in(&mut browser).await;
+    browser.as_mut().unwrap().account = Some("admin".into());
+    let (status, said) = end_discovery_in(&mut browser).await;
+    assert_eq!((status, said.as_str()), (200, v2_lib::ai_bridge::DISCOVERY_ENDED_KEPT));
+    assert!(!closed.load(Ordering::SeqCst), "ending the discovery closed its browser");
+    let b = browser.as_ref().expect("ending the discovery let its browser go");
+    assert!(b.discovery.is_none(), "the discovery is still going");
+    assert_eq!(b.account.as_deref(), Some("admin"), "its sign-in was dropped");
+    let (status, said) = end_discovery_in(&mut browser).await;
+    assert_eq!((status, said.as_str()), (200, "no discovery is going"));
+    assert!(!closed.load(Ordering::SeqCst));
+    let mut none: Option<FakeBrowser> = None;
+    let (status, _) = end_discovery_in(&mut none).await;
     assert_eq!(status, 200);
 
     let (mut theirs, closed) = slot(FakePage::default().driver(), None);
@@ -863,13 +877,13 @@ async fn a_case_marked_after_the_last_action_is_carried_into_the_replay() {
     assert_eq!(status, 200);
     assert!(!browser.as_ref().unwrap().discovery.as_ref().unwrap().no_save);
     save_case_77(dir.path(), true);
-    let ended = end_discovery_for_replay(&mut browser, dir.path());
+    let ended = end_discovery_for_replay(&mut browser, dir.path()).await;
     assert!(ended.ended && ended.no_save, "a case marked after the last action was not carried: {ended:?}");
     // A script that cannot be read counts as marked, as before an action.
     let (mut browser, _) = slot(FakePage::default().driver(), for_case(exploring("Leave"), 78));
     let marked = find_file(dir.path(), "case-77.json").expect("case 77's script is not on disk");
     std::fs::write(marked.with_file_name("case-78.json"), "not json").unwrap();
-    assert!(end_discovery_for_replay(&mut browser, dir.path()).no_save, "an unreadable script was not carried");
+    assert!(end_discovery_for_replay(&mut browser, dir.path()).await.no_save, "an unreadable script was not carried");
 }
 
 /// The file named `name` somewhere under `dir`.
@@ -908,8 +922,9 @@ async fn a_calls_no_save_never_lifts_the_discoverys_guard() {
     assert_eq!(b.guard_owner, Some(GuardOwner::Discovery));
 }
 
-/// Ending a discovery lifts its guard: one still going closes its browser,
-/// and the guard goes with it. The assistant's replay that ends a no_save
+/// Ending a discovery lifts its guard: its browser is kept, signed in, and
+/// unguarded, so the next replay of a case that may save is not stopped by
+/// a guard the discovery left. The assistant's replay that ends a no_save
 /// discovery is told so (`end_discovery_for_replay`), to guard itself, the
 /// discovery's last call. With no discovery going, ending lifts nothing: any
 /// other guard - the person's, a call's - is not a discovery's to lift.
@@ -918,23 +933,42 @@ async fn ending_a_discovery_lifts_its_guard() {
     use v2_lib::ai_bridge::end_discovery_for_replay;
     use v2_lib::browser::cdp::Driver;
     let dir = root_with_recipe_and_account();
-    // Going: the browser closes with its guard.
+    // Going: the browser is kept, and its guard lifted.
     let started = exploring("Leave").map(|s| DiscoveryState { no_save: true, ..s });
     let (mut browser, closed) = slot(leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/x"), started);
     let open = Action::Click { selector: "#open".into() };
     let (status, _) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &open, None, None).await;
     assert_eq!(status, 200);
     assert_eq!(browser.as_ref().unwrap().guard_owner, Some(GuardOwner::Discovery));
-    let (status, _) = end_discovery_in(&mut browser).await;
-    assert_eq!(status, 200);
-    assert!(closed.load(Ordering::SeqCst) && browser.is_none());
+    assert!(browser.as_ref().unwrap().d.is_guarding_saves());
+    let (status, said) = end_discovery_in(&mut browser).await;
+    assert_eq!((status, said.as_str()), (200, v2_lib::ai_bridge::DISCOVERY_ENDED_KEPT));
+    assert!(!closed.load(Ordering::SeqCst), "ending the discovery closed its browser");
+    let b = browser.as_ref().expect("ending the discovery let its browser go");
+    assert!(!b.d.is_guarding_saves(), "the discovery's guard outlived it");
+    assert_eq!((b.guarded_case, b.guard_owner.clone(), b.discovery.is_none()), (None, None, true));
+
+    // A guard the browser will not lift is never left behind with no
+    // discovery to end it: the browser is closed through its normal close.
+    let started = exploring("Leave").map(|s| DiscoveryState { no_save: true, ..s });
+    let refusing = ScriptedDriver::new(|method, _| match method {
+        "Fetch.disable" => Err(v2_lib::browser::cdp::CdpError::Protocol { method: method.into(), message: "busy".into() }),
+        _ => Ok(json!({})),
+    });
+    let (mut browser, closed) = slot(refusing, started);
+    browser.as_mut().unwrap().assistant = true;
+    browser.as_mut().unwrap().d.calls.push(("Fetch.enable".into(), json!({})));
+    browser.as_mut().unwrap().guard_owner = Some(GuardOwner::Discovery);
+    let (status, said) = end_discovery_in(&mut browser).await;
+    assert_eq!((status, said.as_str()), (200, "the discovery is over and its browser is closed"));
+    assert!(closed.load(Ordering::SeqCst) && browser.is_none(), "a guarded browser outlived its discovery");
 
     // The replay's end says whether the discovery it ended must not save.
     let started = exploring("Leave").map(|s| DiscoveryState { no_save: true, ..s });
     let (mut browser, _) = slot(FakePage::default().driver(), started);
-    assert!(end_discovery_for_replay(&mut browser, dir.path()).no_save, "a no_save discovery's end did not say so");
+    assert!(end_discovery_for_replay(&mut browser, dir.path()).await.no_save, "a no_save discovery's end did not say so");
     let (mut browser, _) = slot(FakePage::default().driver(), exploring("Leave"));
-    assert!(!end_discovery_for_replay(&mut browser, dir.path()).no_save);
+    assert!(!end_discovery_for_replay(&mut browser, dir.path()).await.no_save);
 
     // A call's guard, with no discovery going, is not a discovery's either.
     let mut d = FakePage::default().driver();
@@ -2542,8 +2576,15 @@ async fn ending_a_mapping_run_saves_and_returns_its_summary() {
     assert_eq!(load_summary(dir.path(), ORG, PROJECT), Ok(None), "kept before the run ended");
     let (status, body) = end_discovery_in(&mut browser).await;
     assert_eq!(status, 200, "{body}");
-    assert!(closed.load(Ordering::SeqCst), "the browser was left open");
-    assert!(browser.is_none());
+    assert!(!closed.load(Ordering::SeqCst), "ending the mapping run closed its browser");
+    assert!(browser.as_ref().is_some_and(|b| b.discovery.is_none()), "the run is still going");
+    assert_eq!(parsed(&body)["detail"], v2_lib::ai_bridge::DISCOVERY_ENDED_KEPT);
+    {
+        use v2_lib::browser::cdp::Driver;
+        let b = browser.as_ref().unwrap();
+        assert!(!b.d.is_guarding_saves(), "the mapping run's guard outlived it");
+        assert_eq!(b.guard_owner, None);
+    }
 
     let answered: MappingSummary = serde_json::from_value(parsed(&body)["summary"].clone()).expect("no summary");
     assert_eq!(answered.ran_at, started);
@@ -2575,7 +2616,11 @@ async fn ending_a_mapping_run_saves_and_returns_its_summary() {
     let other = root_with_recipe_and_account();
     let (mut browser, _) = slot(menu_app(true, "/hr/leave"), exploring("Leave"));
     let (status, body) = end_discovery_in(&mut browser).await;
-    assert_eq!((status, body.as_str()), (200, "the discovery is over and its browser is closed"));
+    assert_eq!((status, body.as_str()), (200, v2_lib::ai_bridge::DISCOVERY_ENDED_KEPT));
+    assert_eq!(
+        v2_lib::ai_bridge::DISCOVERY_ENDED_KEPT,
+        "the discovery is over; its browser stays open and signed in, for your next replay or discovery"
+    );
     assert_eq!(load_summary(other.path(), ORG, PROJECT), Ok(None));
 }
 
@@ -2977,8 +3022,9 @@ async fn a_refused_locator_is_counted_in_the_log_never_written_out() {
 
 /// The assistant's replay to a step, asked for while its discovery holds
 /// the browser, ends that discovery the way End discovery does - the map
-/// it filled is kept - and then replays: the end and the replay's open sit
-/// under the one session lock, with nothing between them.
+/// it filled is kept - and then replays in that same browser, still signed
+/// in: the end and the replay sit under the one session lock, with nothing
+/// between them.
 #[tokio::test]
 async fn a_replay_requested_during_a_discovery_ends_it_and_replays() {
     use v2_lib::ai_bridge::end_discovery_for_replay;
@@ -2988,19 +3034,20 @@ async fn a_replay_requested_during_a_discovery_ends_it_and_replays() {
         .unwrap();
     let (mut browser, closed) = slot(menu_app(true, "/hr/leave"), exploring("Leave"));
 
-    let ended = end_discovery_for_replay(&mut browser, dir.path());
+    let ended = end_discovery_for_replay(&mut browser, dir.path()).await;
     assert!(ended.ended, "the discovery was not ended");
     assert_eq!(ended.summary, None, "an ordinary discovery has no mapping summary");
-    assert!(browser.is_none() && closed.load(Ordering::SeqCst), "the discovery's browser is still open");
+    assert!(!closed.load(Ordering::SeqCst), "the replay closed the discovery's browser");
+    assert!(browser.as_ref().is_some_and(|b| b.discovery.is_none()), "the discovery is still going");
     let kept = mapped_area(dir.path(), "Leave").expect("ending the discovery lost its map");
     assert_eq!(kept.outcomes, vec!["click Apply: moved to /hr/leave".to_string()]);
 
     // Nothing to end: the person's own browser, or none, is left alone.
     let (mut theirs, theirs_closed) = slot(FakePage::default().driver(), None);
-    assert!(!end_discovery_for_replay(&mut theirs, dir.path()).ended);
+    assert!(!end_discovery_for_replay(&mut theirs, dir.path()).await.ended);
     assert!(theirs.is_some() && !theirs_closed.load(Ordering::SeqCst));
     let mut none: Option<FakeBrowser> = None;
-    assert_eq!(end_discovery_for_replay(&mut none, dir.path()), v2_lib::ai_bridge::DiscoveryEnded::default());
+    assert_eq!(end_discovery_for_replay(&mut none, dir.path()).await, v2_lib::ai_bridge::DiscoveryEnded::default());
 
     // In the app: the assistant's replay ends it under the lock, says so
     // to the window, and only then opens and replays.
@@ -3017,7 +3064,7 @@ async fn a_replay_requested_during_a_discovery_ends_it_and_replays() {
 }
 
 /// A mapping run ended by the assistant's replay keeps its summary, as
-/// End discovery would.
+/// End discovery would, and its browser for the replay.
 #[tokio::test]
 async fn a_mapping_run_ended_by_a_replay_saves_its_summary() {
     use v2_lib::ai_bridge::end_discovery_for_replay;
@@ -3029,8 +3076,8 @@ async fn a_mapping_run_ended_by_a_replay_saves_its_summary() {
         discover_area_in(&mut browser, dir.path(), ORG, PROJECT, "Leave Apply", "Leave", clicks, &quick()).await;
     assert_eq!(status, 200, "{body}");
 
-    let ended = end_discovery_for_replay(&mut browser, dir.path());
-    assert!(ended.ended && closed.load(Ordering::SeqCst));
+    let ended = end_discovery_for_replay(&mut browser, dir.path()).await;
+    assert!(ended.ended && !closed.load(Ordering::SeqCst) && browser.is_some());
     let kept = load_summary(dir.path(), ORG, PROJECT).unwrap().expect("the replay lost the run's summary");
     assert_eq!(kept.added, vec!["Leave Apply".to_string()]);
     assert_eq!(ended.summary, Some(kept), "the replay does not hand back the summary it kept");
@@ -4086,7 +4133,7 @@ async fn end_discovery_is_not_stuck_behind_a_long_batch() {
         .expect("End discovery waited behind the whole batch");
     let (status, ended) = end_discovery_in(&mut slot).await;
     assert_eq!(status, 200, "{ended}");
-    assert!(slot.is_none(), "the discovery's browser is still held");
+    assert!(slot.as_ref().is_some_and(|b| b.discovery.is_none()), "the discovery is still going");
     drop(slot);
     let (status, text) = batch.await.unwrap();
     assert_eq!(status, 409, "{text}");

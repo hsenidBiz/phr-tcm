@@ -35,6 +35,8 @@ struct HeldOne {
     closed: Arc<AtomicBool>,
     /// The assistant opened it (its replay); otherwise the person did.
     assistant: bool,
+    /// How often a discovery took it over (`DiscoveryBrowser::taken_over`).
+    taken_over: usize,
 }
 
 impl DiscoveryBrowser for HeldOne {
@@ -58,6 +60,9 @@ impl DiscoveryBrowser for HeldOne {
     fn opened_by_assistant(&mut self) -> bool {
         self.assistant
     }
+    fn taken_over(&mut self) {
+        self.taken_over += 1;
+    }
 }
 
 /// A driver whose browser has gone: every call is `Closed`.
@@ -78,6 +83,7 @@ fn held(alive: bool, discovery: Option<DiscoveryState>) -> (Option<HeldOne>, Arc
         alive,
         closed: closed.clone(),
         assistant: false,
+        taken_over: 0,
     };
     (Some(b), closed)
 }
@@ -402,32 +408,148 @@ async fn the_assistants_release_closes_the_browser_its_replay_left_open() {
     assert!(slot.is_some() && !closed.load(Ordering::SeqCst), "the person's browser was closed");
 }
 
-/// A discovery closes a live browser the assistant's replay left open and
-/// says so; one the person opened, or a discovery's own, still refuses it.
+/// A discovery takes over a live browser the assistant's replay left open,
+/// and says so: the browser is kept, signed in, its other tabs closed, the
+/// replay's stand and last page change forgotten and the replay's guard
+/// lifted (the discovery puts its own on as its start decides). One the
+/// person opened, or a discovery's own, still refuses it.
 #[tokio::test]
-async fn a_discovery_closes_the_browser_the_assistants_replay_left_open() {
-    use v2_lib::ai_bridge::{make_way_for_discovery, said_closed_left_open, CLOSED_LEFT_OPEN};
+async fn a_discovery_takes_over_the_browser_the_replay_left() {
+    use v2_lib::ai_bridge::{make_way_for_discovery, said_made_way, MadeWay, CLOSED_LEFT_OPEN, TOOK_OVER_LEFT_OPEN};
+    use v2_lib::browser::cdp::Driver;
+    use v2_lib::commands::autorun::GuardOwner;
+    // The replay's browser: signed in as admin, guarding its no_save case
+    // 77 for the replay's call, with a report tab its steps opened.
     let (mut slot, closed) = left_open_by_assistant(true, None);
-    assert_eq!(make_way_for_discovery(&mut slot).await, Ok(true));
-    assert!(slot.is_none() && closed.load(Ordering::SeqCst));
+    {
+        let b = slot.as_mut().unwrap();
+        b.account = Some("admin".into());
+        b.d.guard_saves(&[]).await.unwrap();
+        b.guarded_case = Some(77);
+        b.guard_owner = Some(GuardOwner::Call { case_id: Some(77) });
+        b.d.tabs.open.push("report".into());
+    }
+    assert_eq!(make_way_for_discovery(&mut slot).await, Ok(MadeWay::TookOver));
+    let b = slot.as_ref().expect("the replay's browser was closed");
+    assert!(!closed.load(Ordering::SeqCst), "the replay's browser was closed");
+    assert_eq!(b.d.tabs.closed_others, 1, "the replay's other tabs were left open");
+    assert!(b.d.tabs.open.is_empty());
+    assert_eq!(b.taken_over, 1, "the replay's stand and last page change were kept");
+    assert!(!b.d.is_guarding_saves(), "the replay's guard was kept for the discovery");
+    assert_eq!((b.guarded_case, b.guard_owner.clone()), (None, None));
+    assert_eq!(b.account.as_deref(), Some("admin"), "the sign-in was dropped");
 
+    // The person's own browser is never taken over.
     let (mut slot, closed) = held(true, None);
     assert_eq!(make_way_for_discovery(&mut slot).await, Err(busy_browser_sentence(false).to_string()));
-    assert!(slot.is_some() && !closed.load(Ordering::SeqCst));
+    let b = slot.as_ref().unwrap();
+    assert!(!closed.load(Ordering::SeqCst) && b.taken_over == 0 && b.d.tabs.closed_others == 0);
 
     let (mut slot, _) = left_open_by_assistant(true, discovering());
     assert_eq!(make_way_for_discovery(&mut slot).await, Err(busy_browser_sentence(true).to_string()));
-
-    let (mut slot, _) = held(false, None);
-    assert_eq!(make_way_for_discovery(&mut slot).await, Ok(false), "a gone browser is let go, not closed as left open");
+    assert_eq!(slot.as_ref().unwrap().taken_over, 0);
 
     // The answer says it: beside a start's JSON, before a refusal's text.
-    assert_eq!(CLOSED_LEFT_OPEN, "Closed the browser your replay left open.");
-    let (status, text) = said_closed_left_open(true, (200, r#"{"signed_in":true}"#.to_string()));
+    assert_eq!(TOOK_OVER_LEFT_OPEN, "Took over the browser your replay left open (its other tabs closed).");
+    let (status, text) = said_made_way(MadeWay::TookOver, (200, r#"{"signed_in":true}"#.to_string()));
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!((status, v["closed"].as_str()), (200, Some(CLOSED_LEFT_OPEN)));
-    assert_eq!(said_closed_left_open(true, (409, "no".into())), (409, format!("{CLOSED_LEFT_OPEN} no")));
-    assert_eq!(said_closed_left_open(false, (409, "no".into())), (409, "no".to_string()));
+    assert_eq!((status, v["took_over"].as_str(), v.get("closed")), (200, Some(TOOK_OVER_LEFT_OPEN), None));
+    assert_eq!(said_made_way(MadeWay::TookOver, (409, "no".into())), (409, format!("{TOOK_OVER_LEFT_OPEN} no")));
+    assert_eq!(CLOSED_LEFT_OPEN, "Closed the browser your replay left open.");
+    let (_, text) = said_made_way(MadeWay::Closed, (200, r#"{"signed_in":true}"#.to_string()));
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["closed"].as_str(), Some(CLOSED_LEFT_OPEN));
+    assert_eq!(said_made_way(MadeWay::Closed, (409, "no".into())), (409, format!("{CLOSED_LEFT_OPEN} no")));
+    assert_eq!(said_made_way(MadeWay::Free, (409, "no".into())), (409, "no".to_string()));
+}
+
+/// A replay's guard the browser will not lift is never carried into the
+/// discovery: the browser is closed through its normal close, as before,
+/// and the discovery opens a fresh one.
+#[tokio::test]
+async fn a_guard_that_will_not_lift_closes_the_replays_browser() {
+    use v2_lib::ai_bridge::{make_way_for_discovery, MadeWay};
+    use v2_lib::commands::autorun::GuardOwner;
+    let (mut slot, closed) = left_open_by_assistant(true, None);
+    {
+        let b = slot.as_mut().unwrap();
+        b.d = ScriptedDriver::new(|method, _| match method {
+            "Fetch.disable" => Err(CdpError::Protocol { method: method.into(), message: "busy".into() }),
+            _ => Ok(serde_json::json!({})),
+        });
+        b.d.calls.push(("Fetch.enable".into(), serde_json::json!({})));
+        b.guarded_case = Some(77);
+        b.guard_owner = Some(GuardOwner::Call { case_id: Some(77) });
+    }
+    assert_eq!(make_way_for_discovery(&mut slot).await, Ok(MadeWay::Closed));
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst), "a guarded browser was handed to the discovery");
+}
+
+/// A browser that has gone is still let go first, through its normal
+/// close: nothing is taken over, and the discovery opens a new one.
+#[tokio::test]
+async fn a_dead_browser_is_still_let_go() {
+    use v2_lib::ai_bridge::{make_way_for_discovery, MadeWay};
+    let (mut slot, closed) = left_open_by_assistant(false, None);
+    assert_eq!(make_way_for_discovery(&mut slot).await, Ok(MadeWay::Free), "a gone browser was taken over");
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst));
+    let (mut slot, closed) = held(false, None);
+    assert_eq!(make_way_for_discovery(&mut slot).await, Ok(MadeWay::Free));
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst));
+    let mut none: Option<HeldOne> = None;
+    assert_eq!(make_way_for_discovery(&mut none).await, Ok(MadeWay::Free));
+}
+
+/// The assistant's replay after its discovery ends the discovery and keeps
+/// the browser, signed in: a no_save discovery's guard stays on for that
+/// replay (it is the discovery's last call), and any other discovery's
+/// guard - a mapping run's - is lifted. The run's summary is kept.
+#[tokio::test]
+async fn a_replay_after_a_discovery_keeps_the_browser() {
+    use v2_lib::ai_bridge::end_discovery_for_replay;
+    use v2_lib::browser::cdp::Driver;
+    use v2_lib::commands::autorun::{GuardOwner, MappingRun};
+    let dir = tempfile::tempdir().unwrap();
+    let no_save = discovering().map(|s| DiscoveryState { no_save: true, ..s });
+    let (mut slot, closed) = left_open_by_assistant(true, no_save);
+    {
+        let b = slot.as_mut().unwrap();
+        b.account = Some("admin".into());
+        b.d.guard_saves(&[]).await.unwrap();
+        b.guard_owner = Some(GuardOwner::Discovery);
+    }
+    let ended = end_discovery_for_replay(&mut slot, dir.path()).await;
+    assert!(ended.ended && ended.no_save, "{ended:?}");
+    let b = slot.as_ref().expect("the discovery's browser was closed");
+    assert!(!closed.load(Ordering::SeqCst));
+    assert!(b.discovery.is_none(), "the discovery was not ended");
+    assert_eq!(b.account.as_deref(), Some("admin"), "the sign-in was dropped");
+    assert!(b.d.is_guarding_saves(), "a no_save discovery's guard was off before its last call");
+    assert_eq!(b.guard_owner, Some(GuardOwner::Discovery));
+
+    let mapping = discovering().map(|s| DiscoveryState { mapping: Some(MappingRun::new(&["Leave".to_string()])), ..s });
+    let (mut slot, closed) = left_open_by_assistant(true, mapping);
+    {
+        let b = slot.as_mut().unwrap();
+        b.d.guard_saves(&[]).await.unwrap();
+        b.guard_owner = Some(GuardOwner::Discovery);
+    }
+    let ended = end_discovery_for_replay(&mut slot, dir.path()).await;
+    assert!(ended.ended && !ended.no_save && ended.summary.is_some(), "{ended:?}");
+    let b = slot.as_ref().expect("the mapping run's browser was closed");
+    assert!(!closed.load(Ordering::SeqCst) && b.discovery.is_none());
+    assert!(!b.d.is_guarding_saves(), "the mapping run's guard outlived it into the replay");
+    assert_eq!(b.guard_owner, None);
+}
+
+/// The assistant's release is still the repair: it closes a discovery's
+/// browser, the discovery ended first, where ending it keeps the browser.
+#[tokio::test]
+async fn the_assistants_release_still_closes_a_discoverys_browser() {
+    let (mut slot, closed) = left_open_by_assistant(true, discovering());
+    let (status, said) = release_in_for_assistant(&mut slot).await;
+    assert_eq!((status, said.as_str()), (200, "the discovery is over and its browser is closed"));
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst), "release kept the discovery's browser");
 }
 
 /// Who opened the browser is marked where it opens, and the person's own

@@ -597,7 +597,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
 /// project whose recipe cannot be read is signed in as always, which says
 /// why.
 #[allow(clippy::too_many_arguments)]
-async fn signed_in_here<D: Driver>(
+pub async fn signed_in_here<D: Driver>(
     d: &mut D,
     root: &Path,
     organization: &str,

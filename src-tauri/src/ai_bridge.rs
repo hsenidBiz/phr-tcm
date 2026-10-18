@@ -3151,11 +3151,16 @@ pub trait DiscoveryBrowser {
         async { true }
     }
     /// Whether the assistant opened this browser (its replay, or a
-    /// discovery): its release and its discovery may close it. A test's
-    /// fake is the person's unless it says otherwise.
+    /// discovery): its release may close it, and its discovery may take it
+    /// over. A test's fake is the person's unless it says otherwise.
     fn opened_by_assistant(&mut self) -> bool {
         false
     }
+    /// A discovery took this browser over from the replay that left it
+    /// (`make_way_for_discovery`): no replay carries on from where it stood,
+    /// and no watched step names what happened before. Nothing to forget in
+    /// a test's fake unless it counts it.
+    fn taken_over(&mut self) {}
 }
 
 /// Said in place of an answer from a held browser that had gone: the app
@@ -3200,26 +3205,71 @@ pub async fn refuse_while_held<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Res
     }
 }
 
+/// What `make_way_for_discovery` did with the browser `slot` held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MadeWay {
+    /// None was held (or one that had gone was let go): the discovery opens
+    /// a new one.
+    Free,
+    /// The assistant's replay had left one open: the discovery took it over,
+    /// signed in as it was.
+    TookOver,
+    /// The replay's browser kept a guard it would not lift, so it was closed
+    /// through its normal close: the discovery opens a new one.
+    Closed,
+}
+
 /// Before a discovery opens in `slot`: a held browser that has gone is let
-/// go; a live one the assistant's replay left open (opened by the
-/// assistant, no discovery in it) is closed through its normal close, and
-/// the answer is true; any other live browser refuses it, with the busy
-/// sentence (`refuse_while_held`). A replay going never reaches here
+/// go first (`forget_gone_browser`). A live one the assistant's replay left
+/// open (opened by the assistant, no discovery in it, no guard of the
+/// person's) is taken over, sign-in and all: its tabs other than `main` are
+/// closed, the guard a call of the assistant's left is lifted - the
+/// discovery's start puts its own on as its rules say - and the replay's
+/// stand and last page change are forgotten (`DiscoveryBrowser::taken_over`).
+/// A guard the browser will not lift is never handed on: that browser is
+/// closed through its normal close, as before. Any other live browser - the
+/// person's, or a discovery's - refuses it with the busy sentence
+/// (`refuse_while_held`), untouched. A replay going never reaches here
 /// (`refuse_discovery_while_busy`).
-pub async fn make_way_for_discovery<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Result<bool, String> {
+pub async fn make_way_for_discovery<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Result<MadeWay, String> {
+    use crate::commands::autorun::GuardOwner;
     forget_gone_browser(slot).await;
-    let left_open = slot.as_mut().is_some_and(|b| b.parts().discovery.is_none() && b.opened_by_assistant());
-    if left_open {
-        close_browser_in(slot);
-        crate::applog::info("Auto Run: a discovery closed the browser the assistant's replay left open");
-        return Ok(true);
+    let left_open = slot.as_mut().is_some_and(|b| {
+        b.opened_by_assistant() && {
+            let p = b.parts();
+            p.discovery.is_none() && *p.guard_owner != Some(GuardOwner::Person)
+        }
+    });
+    if !left_open {
+        return refuse_while_held(slot).await.map(|()| MadeWay::Free);
     }
-    refuse_while_held(slot).await.map(|()| false)
+    let lifted = match slot.as_mut() {
+        Some(b) => {
+            let p = b.parts();
+            crate::browser::cdp::Driver::close_other_tabs(p.driver).await;
+            crate::commands::autorun::lift_guard_of(p.driver, p.guarded_case, p.guard_owner).await
+        }
+        None => true,
+    };
+    if !lifted {
+        close_browser_in(slot);
+        crate::applog::info("Auto Run: the browser the assistant's replay left open kept a guard it would not lift, so a discovery closed it");
+        return Ok(MadeWay::Closed);
+    }
+    if let Some(b) = slot.as_mut() {
+        b.taken_over();
+    }
+    crate::applog::info("Auto Run: a discovery took over the browser the assistant's replay left open");
+    Ok(MadeWay::TookOver)
 }
 
 /// Put before what a discovery start answers when it first closed the
-/// browser the assistant's replay left open.
+/// browser the assistant's replay left open (`MadeWay::Closed`).
 pub const CLOSED_LEFT_OPEN: &str = "Closed the browser your replay left open.";
+
+/// Put before what a discovery start answers when it took over the browser
+/// the assistant's replay left open (`MadeWay::TookOver`).
+pub const TOOK_OVER_LEFT_OPEN: &str = "Took over the browser your replay left open (its other tabs closed).";
 
 /// Does this answer from a held browser say the browser failed, rather
 /// than the page: a 503, or the words of a closed browser or a failed
@@ -3288,7 +3338,12 @@ fn without_typed(text: &str, action: &crate::browser::actions::Action) -> String
 
 /// Sign the browser a discovery just opened in as `account_key` (a KEY,
 /// never a login), and hand back where it landed: `{signed_in, detail,
-/// path, page}`, the path with no host or query. The discovery takes the
+/// path, page}`, the path with no host or query. A browser it took over
+/// from the assistant's replay that is still signed in as that account -
+/// the same checks a replay makes (`replay_to::signed_in_here`: the lease,
+/// the sign-in's cookies, a session not refused, the signed-in marker) -
+/// keeps its sign-in, and the page stays where the browser stood
+/// (`discovery_signed_in_already`); any other is signed in as it. The discovery takes the
 /// account and `area` once the sign-in arrives, and the landing page is
 /// filed under that area, explored by that account. A sign-in that does
 /// not arrive - or an account that cannot be signed in at all - closes
@@ -3312,13 +3367,41 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
         if p.discovery.is_none() {
             return (409, DISCOVERY_TAKEN_OVER.to_string());
         }
-        let signed =
-            crate::autorun::signin::sign_in_leased(p.driver, root, organization, project, key, p.lease, p.signed_in, timing)
-                .await;
+        let kept = crate::autorun::replay_to::signed_in_here(
+            p.driver,
+            root,
+            organization,
+            project,
+            key,
+            &*p.signed_in,
+            &*p.lease,
+            timing,
+        )
+        .await;
+        let signed = if kept {
+            crate::applog::info(format!("Auto Run discovery as {key}: signed in already, the sign-in is kept"));
+            Ok(discovery_signed_in_already(key))
+        } else {
+            match crate::autorun::signin::sign_in_leased(
+                p.driver,
+                root,
+                organization,
+                project,
+                key,
+                p.lease,
+                p.signed_in,
+                timing,
+            )
+            .await
+            {
+                Err(why) => Err(why),
+                Ok(out) if !out.ok => Err(out.detail),
+                Ok(out) => Ok(out.detail),
+            }
+        };
         match signed {
             Err(why) => why,
-            Ok(out) if !out.ok => out.detail,
-            Ok(out) => {
+            Ok(detail) => {
                 let area =
                     named(area).map(|a| crate::autorun::discovery_map::canonical_area(root, organization, project, &a));
                 let started_at =
@@ -3375,7 +3458,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     let (path, _) = current_page(p.driver).await;
                     let mut answer = serde_json::json!({
                         "signed_in": true,
-                        "detail": out.detail,
+                        "detail": detail,
                         "path": path,
                         "page": if status == 200 { page.as_str() } else { "" },
                     });
@@ -3402,6 +3485,12 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
     }
     crate::applog::info(format!("Auto Run discovery as {key} did not start; its browser is closed"));
     (409, failed)
+}
+
+/// A discovery start's `detail` when the browser it took over was signed in
+/// as its account already: nothing was signed in again.
+pub fn discovery_signed_in_already(key: &str) -> String {
+    format!("signed in already as {key}; the page is where the browser stood")
 }
 
 /// Switch a mapping run's save guard on, as a Must not save case's is
@@ -4351,25 +4440,105 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
     Ok(Discovered { outcome: tried.outcome, dialogs, writes, after })
 }
 
-/// End the discovery in `slot`: its browser is closed, and its guard
-/// (`GuardOwner::Discovery`) with it. A browser the person opened is left
-/// as it is, guard and all, and with nothing to end this is still an
-/// answer, not an error - ending twice is fine.
+/// Said by `end_autorun_discovery` once the discovery is over and its
+/// browser kept (`end_discovery_in`).
+pub const DISCOVERY_ENDED_KEPT: &str =
+    "the discovery is over; its browser stays open and signed in, for your next replay or discovery";
+
+/// Said once a discovery is over and its browser closed: by the assistant's
+/// release, and by an end whose guard would not lift.
+const DISCOVERY_ENDED_CLOSED: &str = "the discovery is over and its browser is closed";
+
+/// End the discovery in `slot` (`end_discovery_keeping`): its browser is
+/// kept, signed in, for the next replay or discovery, and its guard
+/// (`GuardOwner::Discovery`) is lifted. Any other guard - the person's, a
+/// call's - is not the discovery's to lift. With nothing to end this is
+/// still an answer, not an error - ending twice is fine.
 ///
 /// A mapping run's summary is kept first (`finish_mapping`), and the
 /// answer is `{detail, summary}`.
 pub async fn end_discovery_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
-    const ENDED: &str = "the discovery is over and its browser is closed";
-    match close_discovery(slot) {
-        Some(Some(summary)) => (200, serde_json::json!({ "detail": ENDED, "summary": summary }).to_string()),
-        Some(None) => (200, ENDED.to_string()),
+    match end_discovery_keeping(slot, true).await {
+        Some(ended) => {
+            let detail = if ended.kept { DISCOVERY_ENDED_KEPT } else { DISCOVERY_ENDED_CLOSED };
+            ended_answer(detail, ended.summary)
+        }
         None => (200, "no discovery is going".to_string()),
     }
 }
 
-/// The one way a discovery in `slot` ends: a mapping run's summary is kept
-/// (`finish_mapping`), then its browser is closed. `None` with no discovery
-/// going, else the mapping run's summary, if it was one.
+/// End the discovery in `slot` and close its browser, as the assistant's
+/// release does (`commands::autorun::release_in_for_assistant`): release is
+/// the repair for a broken browser, so it never keeps one. The answer is
+/// `end_discovery_in`'s, with the browser closed.
+pub fn end_discovery_closing<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
+    match close_discovery(slot) {
+        Some(summary) => ended_answer(DISCOVERY_ENDED_CLOSED, summary),
+        None => (200, "no discovery is going".to_string()),
+    }
+}
+
+/// A discovery's end, said: `{detail, summary}` for a mapping run, else
+/// the words.
+fn ended_answer(detail: &str, summary: Option<crate::autorun::mapping_summary::MappingSummary>) -> (u16, String) {
+    match summary {
+        Some(summary) => (200, serde_json::json!({ "detail": detail, "summary": summary }).to_string()),
+        None => (200, detail.to_string()),
+    }
+}
+
+/// How a discovery ended (`end_discovery_keeping`): the mapping run's
+/// summary, if it was one, and whether its browser was kept.
+struct Ended {
+    summary: Option<crate::autorun::mapping_summary::MappingSummary>,
+    kept: bool,
+}
+
+/// The way a discovery in `slot` ends and its browser stays: a mapping
+/// run's summary is kept (`finish_mapping`), the discovery is taken off the
+/// browser, and - when `lift` - the discovery's own guard
+/// (`GuardOwner::Discovery`) is lifted. The browser keeps its sign-in, its
+/// lease and its page. A guard that will not lift is never left behind with
+/// no discovery to end it: a browser the assistant opened is then closed
+/// through its normal close; one the person opened is never closed, and its
+/// guard stays on until the person's next step decides it. `None` with no
+/// discovery going.
+async fn end_discovery_keeping<B: DiscoveryBrowser>(slot: &mut Option<B>, lift: bool) -> Option<Ended> {
+    use crate::commands::autorun::GuardOwner;
+    if !slot.as_mut().is_some_and(|b| b.parts().discovery.is_some()) {
+        return None;
+    }
+    let summary = finish_mapping(slot);
+    let (lifted, assistants) = match slot.as_mut() {
+        Some(b) => {
+            let assistants = b.opened_by_assistant();
+            let p = b.parts();
+            *p.discovery = None;
+            let lifted = if lift && *p.guard_owner == Some(GuardOwner::Discovery) {
+                crate::commands::autorun::lift_guard_of(p.driver, p.guarded_case, p.guard_owner).await
+            } else {
+                true
+            };
+            (lifted, assistants)
+        }
+        None => (true, false),
+    };
+    if !lifted && assistants {
+        if let Some(browser) = slot.take() {
+            crate::browser::tree::blocking(|| browser.close());
+        }
+        crate::applog::info("Auto Run discovery ended; its guard would not lift, so its browser is closed");
+        return Some(Ended { summary, kept: false });
+    }
+    crate::applog::info("Auto Run discovery ended; its browser is kept, signed in");
+    Some(Ended { summary, kept: true })
+}
+
+/// A discovery in `slot` ends and its browser is closed: a mapping run's
+/// summary is kept (`finish_mapping`), then the browser goes. Only the
+/// assistant's release ends one this way now (`end_discovery_closing`).
+/// `None` with no discovery going, else the mapping run's summary, if it
+/// was one.
 fn close_discovery<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
 ) -> Option<Option<crate::autorun::mapping_summary::MappingSummary>> {
@@ -4419,23 +4588,27 @@ pub fn refuse_while_discovering<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Re
 }
 
 /// Before the assistant's replay to a step takes the browser in `slot`: a
-/// discovery holding it is ended exactly as End discovery ends it
-/// (`end_discovery_in`), so what it mapped is kept and a mapping run's
-/// summary is saved. Says whether one was ended, with that summary. Called
-/// under the session lock the replay then keeps while it opens and runs, so
-/// nothing takes the browser between the end and the replay. The person's
-/// own Replay to step still goes through `refuse_while_discovering`.
-pub fn end_discovery_for_replay<B: DiscoveryBrowser>(slot: &mut Option<B>, root: &std::path::Path) -> DiscoveryEnded {
+/// discovery holding it is ended as End discovery ends it
+/// (`end_discovery_keeping`), so what it mapped is kept, a mapping run's
+/// summary is saved, and the browser stays, signed in, for the replay. A
+/// no_save discovery's guard stays on - never off between the discovery and
+/// the replay that is its last call (`DiscoveryEnded::no_save`); any other
+/// discovery's guard (a mapping run's) is lifted. Says whether one was
+/// ended, with that summary. Called under the session lock the replay then
+/// keeps while it runs, so nothing takes the browser between the end and
+/// the replay. The person's own Replay to step still goes through
+/// `refuse_while_discovering`.
+pub async fn end_discovery_for_replay<B: DiscoveryBrowser>(slot: &mut Option<B>, root: &std::path::Path) -> DiscoveryEnded {
     // Decided as before each of its actions (`discovery_must_not_save`), so a
     // case marked after its last action counts too.
     let no_save = slot
         .as_mut()
         .and_then(|b| b.parts().discovery.as_ref().map(|s| discovery_must_not_save(root, s)))
         .unwrap_or(false);
-    match close_discovery(slot) {
-        Some(summary) => {
+    match end_discovery_keeping(slot, !no_save).await {
+        Some(ended) => {
             crate::applog::info("Auto Run: the assistant's replay to a step ended its discovery first");
-            DiscoveryEnded { ended: true, summary, no_save }
+            DiscoveryEnded { ended: true, summary: ended.summary, no_save }
         }
         None => DiscoveryEnded::default(),
     }
@@ -4828,8 +5001,8 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
         return (409, why);
     }
     let browser = browser.unwrap_or_else(|| crate::autorun::store::last_browser(&root));
-    let closed_left_open = match crate::commands::autorun::open_for_discovery(&browser, mapping, asked).await {
-        Ok(closed) => closed,
+    let made_way = match crate::commands::autorun::open_for_discovery(&browser, mapping, asked).await {
+        Ok(made_way) => made_way,
         Err(why) => return (409, why),
     };
     let mut slot = crate::commands::autorun::supervised().lock().await;
@@ -4850,7 +5023,7 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
     if slot.as_ref().is_some_and(|s| s.cdp.is_guarding_saves()) {
         crate::commands::autorun::answer_between_commands();
     }
-    said_closed_left_open(closed_left_open, answer)
+    said_made_way(made_way, answer)
 }
 
 /// The case a discovery call names (`case_id`, optional) and whether it
@@ -4909,20 +5082,22 @@ pub fn discovery_must_not_save(root: &std::path::Path, state: &crate::commands::
             .is_some_and(|id| crate::autorun::store::load_script(root, id).map_or(true, |s| s.is_some_and(|s| s.no_save)))
 }
 
-/// A discovery start's answer, saying first that it closed the browser the
-/// assistant's replay left open when it did: a `"closed"` field beside the
-/// JSON of one that started, the sentence before the text of one that did
-/// not.
-pub fn said_closed_left_open(closed: bool, (status, text): (u16, String)) -> (u16, String) {
-    if !closed {
-        return (status, text);
-    }
+/// A discovery start's answer, saying first what it made of the browser the
+/// assistant's replay left open (`MadeWay`): took it over (a `"took_over"`
+/// field) or closed it (a `"closed"` field) beside the JSON of one that
+/// started, the sentence before the text of one that did not.
+pub fn said_made_way(made_way: MadeWay, (status, text): (u16, String)) -> (u16, String) {
+    let (field, sentence) = match made_way {
+        MadeWay::Free => return (status, text),
+        MadeWay::TookOver => ("took_over", TOOK_OVER_LEFT_OPEN),
+        MadeWay::Closed => ("closed", CLOSED_LEFT_OPEN),
+    };
     match serde_json::from_str::<serde_json::Value>(&text) {
         Ok(mut v @ serde_json::Value::Object(_)) => {
-            v["closed"] = serde_json::json!(CLOSED_LEFT_OPEN);
+            v[field] = serde_json::json!(sentence);
             (status, v.to_string())
         }
-        _ => (status, format!("{CLOSED_LEFT_OPEN} {text}")),
+        _ => (status, format!("{sentence} {text}")),
     }
 }
 

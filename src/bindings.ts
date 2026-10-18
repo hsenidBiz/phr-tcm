@@ -423,10 +423,9 @@ export const commands = {
 	autoRunResetComponents: (organization: string, project: string) => typedError<string, string>(__TAURI_INVOKE("auto_run_reset_components", { organization, project })),
 	/**
 	 *  End Discovery on Auto Run's Setup card: ends the discovery under way the
-	 *  way the assistant's `end_autorun_discovery` does, closing its browser,
-	 *  and says so to the window. A browser the person opened is left alone,
-	 *  and with no discovery going this does nothing. Nothing is lost: the map
-	 *  keeps what was seen.
+	 *  way the assistant's `end_autorun_discovery` does, keeping its browser
+	 *  (Close browser closes it), and says so to the window. With no discovery
+	 *  going this does nothing. Nothing is lost: the map keeps what was seen.
 	 */
 	autoRunEndDiscovery: () => typedError<null, string>(__TAURI_INVOKE("auto_run_end_discovery")),
 	/**

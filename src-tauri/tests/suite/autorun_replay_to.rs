@@ -724,7 +724,7 @@ async fn a_no_save_discovery_stays_guarded_until_it_ends() {
     project(dir.path(), &script(three_steps()));
     let armed = Arc::new(AtomicBool::new(false));
     // The discovery, started with no_save and guarded from its sign-in on.
-    let (inner, _) = app();
+    let (inner, app) = app();
     let mut slot = supervised(SavesOnClick::new(inner, armed.clone()));
     let b = slot.as_mut().unwrap();
     b.discovery = Some(DiscoveryState {
@@ -739,12 +739,15 @@ async fn a_no_save_discovery_stays_guarded_until_it_ends() {
     });
     b.d.guard_saves(&[]).await.unwrap();
     b.guard_owner = Some(GuardOwner::Discovery);
-    // The assistant's replay ends it first, and the replay is guarded.
-    let ended = end_discovery_for_replay(&mut slot, dir.path());
+    // The assistant's replay ends it first, keeping its browser and its
+    // guard - never off between the discovery and the replay - and the
+    // replay is guarded.
+    let ended = end_discovery_for_replay(&mut slot, dir.path()).await;
     assert!(ended.ended && ended.no_save, "{ended:?}");
-    let (inner, app) = app();
-    let mut slot = supervised(SavesOnClick::new(inner, armed.clone()));
-    let b = slot.as_mut().unwrap();
+    let b = slot.as_mut().expect("the discovery's browser was closed");
+    assert!(b.discovery.is_none());
+    assert!(b.d.is_guarding_saves(), "the guard was lifted between the discovery and its last call");
+    assert!(b.d.inner.calls_to("Fetch.disable").is_empty());
     let end = assistant_replay(b, dir.path(), &armed, ended.no_save).await;
     let ReplayEnd::StoppedAt { phase, step, why, .. } = &end else { panic!("{end:?}") };
     assert_eq!((*phase, *step), (ReplayPhase::Step, 1), "{end:?}");
@@ -1585,6 +1588,90 @@ async fn another_account_signs_in() {
     signed_in_again(&end, &reused, &d, &app);
     assert!(!d.calls_to("Network.clearBrowserCookies").is_empty(), "the other sign-in was not cleared first");
     assert_eq!((account.as_deref(), held.account()), (Some("admin"), Some("admin")));
+}
+
+/// The replay's browser as a discovery that took it over sees it
+/// (`ai_bridge::discover_start_in`).
+struct Kept {
+    d: ScriptedDriver,
+    lease: Held,
+    account: Option<String>,
+    discovery: Option<v2_lib::commands::autorun::DiscoveryState>,
+    guarded_case: Option<i32>,
+    guard_owner: Option<GuardOwner>,
+}
+
+impl DiscoveryBrowser for Kept {
+    type D = ScriptedDriver;
+    fn parts(&mut self) -> DiscoveryParts<'_, ScriptedDriver> {
+        DiscoveryParts {
+            driver: &mut self.d,
+            lease: &mut self.lease,
+            signed_in: &mut self.account,
+            discovery: &mut self.discovery,
+            guarded_case: &mut self.guarded_case,
+            guard_owner: &mut self.guard_owner,
+        }
+    }
+    fn close(self) {}
+}
+
+/// A discovery just begun in a browser, before its sign-in.
+fn begun_discovery() -> Option<v2_lib::commands::autorun::DiscoveryState> {
+    Some(v2_lib::commands::autorun::DiscoveryState {
+        area: None,
+        account: None,
+        started_at: 1,
+        tried: Vec::new(),
+        mapping: None,
+        case_id: None,
+        no_save: false,
+        call_no_save: false,
+    })
+}
+
+/// A discovery that took over the browser a replay signed in as admin
+/// keeps that sign-in when it explores as admin - nothing cleared, no
+/// login - and signs in as its own account when that is another.
+#[tokio::test]
+async fn a_discovery_for_another_account_signs_in_as_it() {
+    use v2_lib::ai_bridge::{discover_start_in, discovery_signed_in_already};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let mut second = account();
+    second.key = "boss".into();
+    second.label = "Boss".into();
+    save_accounts(dir.path(), &[account(), second]).unwrap();
+    let (mut d, app, _jar) = jar_app();
+    let (mut account, mut held) = (None, Held::supervised());
+    signed_in_once(dir.path(), &mut d, &app, &mut account, &mut held).await;
+    let mut slot =
+        Some(Kept { d, lease: held, account, discovery: begun_discovery(), guarded_case: None, guard_owner: None });
+
+    // As admin: the replay's sign-in is kept.
+    let (status, out) = discover_start_in(&mut slot, dir.path(), "acme", "Web", "admin", Some("Leave"), &quick()).await;
+    assert_eq!(status, 200, "{out}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!((v["signed_in"].as_bool(), v["detail"].as_str()), (Some(true), Some(discovery_signed_in_already("admin").as_str())));
+    assert_eq!(discovery_signed_in_already("admin"), "signed in already as admin; the page is where the browser stood");
+    let b = slot.as_mut().expect("the browser was closed");
+    assert_eq!(sign_ins(&b.d), 0, "the discovery signed in again: {:?}", log(&app));
+    assert!(b.d.calls_to("Page.navigate").is_empty(), "a page was loaded: {:?}", log(&app));
+    assert_eq!(b.discovery.as_ref().and_then(|s| s.account.as_deref()), Some("admin"));
+    assert_eq!((b.account.as_deref(), b.lease.account()), (Some("admin"), Some("admin")));
+
+    // As boss: signed in as boss, the admin sign-in cleared first.
+    b.discovery = begun_discovery();
+    b.d.calls.clear();
+    let (status, out) = discover_start_in(&mut slot, dir.path(), "acme", "Web", "boss", Some("Leave"), &quick()).await;
+    assert_eq!(status, 200, "{out}");
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_ne!(v["detail"].as_str(), Some(discovery_signed_in_already("boss").as_str()));
+    let b = slot.as_ref().expect("the browser was closed");
+    assert_eq!(sign_ins(&b.d), 1, "{:?}", log(&app));
+    assert_eq!((b.account.as_deref(), b.lease.account()), (Some("boss"), Some("boss")));
+    assert_eq!(b.discovery.as_ref().and_then(|s| s.account.as_deref()), Some("boss"));
 }
 
 /// Review Focus 3: a session the application refused ("Cookie has been
