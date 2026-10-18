@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.11",
+    date: "2026-10-18",
+    items: [
+      "Auto Run discovery tells the assistant what the page showed after each click - a toast, an alert or a field message, including inside a frame - so it learns about a refusal on the same step instead of from a later wait.",
+      "When the application refuses a request a click sent, the action fails with the application's own message and its trace id, so the server log can be found. Saved cases that check a refusal on purpose still pass in unattended runs; a failed step now names the refusal that came before it.",
+      "Auto Run remembers the validation rules the application showed in each area, and the assistant's guide lists them before it starts, so the next assistant does not hit the same rule again. The assistant can also record or remove one.",
+    ],
+  },
+  {
     version: "2.2.3-beta.10",
     date: "2026-10-18",
     items: [
