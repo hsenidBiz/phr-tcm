@@ -81,6 +81,9 @@ export default function CaseEditor({
         // The current tags decide which PATCH op can actually REMOVE a
         // tag - Azure DevOps merges plain tag writes.
         original.tags,
+        // The prerequisites as Azure DevOps holds them: an unedited field
+        // stays out of the patch, and a Markdown field is written as one.
+        original.preconditions_stored ?? null,
       );
       if (r.status === "error") throw new Error(r.error);
       return sent;

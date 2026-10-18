@@ -136,7 +136,15 @@ export function diffCase(
       if (c.trim()) blankSkipped.push(name);
       continue;
     }
-    const equal = name === "Tags" ? tagsEqual(q, c) : q.trim() === c.trim();
+    // Preconditions equal to the field's old plain-text reading - what a
+    // draft saved before they were Markdown holds (`preconditions_legacy`)
+    // - are unchanged too: the save leaves them out by the same rule
+    // (`prereq_patch` in Rust).
+    const equal =
+      name === "Tags"
+        ? tagsEqual(q, c)
+        : q.trim() === c.trim() ||
+          (name === "Preconditions" && current.preconditions_legacy != null && q.trim() === current.preconditions_legacy.trim());
     if (!equal) fields.push({ name, old: c, new: q });
   }
 

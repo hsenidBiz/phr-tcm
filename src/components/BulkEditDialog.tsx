@@ -87,6 +87,8 @@ export default function BulkEditDialog({
           // The current tags decide which PATCH op can actually REMOVE a
           // tag - Azure DevOps merges plain tag writes.
           c.tags,
+          // Likewise the prerequisites: left alone unless this edit sets them.
+          c.preconditions_stored ?? null,
         );
         // The message is the actionable half. Counting the failures and
         // dropping WHY told the user "2 failed" about a selection of

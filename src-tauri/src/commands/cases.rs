@@ -69,6 +69,11 @@ pub async fn test_cases_by_ids(
 /// `original_tags` is System.Tags from that same TestCaseFull - without
 /// it a removed tag cannot actually be removed (ADO merges tag writes
 /// made with the plain `add` op; see `tags_write_ops`).
+///
+/// `original_preconditions` is the prerequisites field from that same
+/// TestCaseFull (`preconditions_stored`): with it a save that did not edit
+/// the field leaves it out, and a field stored as Markdown is written as
+/// Markdown - see `prereq_patch`.
 #[tauri::command]
 #[specta::specta]
 #[allow(clippy::too_many_arguments)]
@@ -81,6 +86,7 @@ pub async fn update_test_case(
     preconditions_ref: Option<String>,
     original_steps_xml: Option<String>,
     original_tags: Option<String>,
+    original_preconditions: Option<ado::StoredText>,
 ) -> Result<(), String> {
     let id = tc.update_id.ok_or("update_test_case requires update_id")?;
     tc.is_valid()?;
@@ -95,6 +101,7 @@ pub async fn update_test_case(
             preconditions_ref.as_deref(),
             original_steps_xml.as_deref(),
             original_tags.as_deref(),
+            original_preconditions.as_ref(),
             // This command IS the editor. A field the user emptied is meant
             // to be emptied in Azure DevOps - skipping it left the old value
             // there while the app reported the save as done.

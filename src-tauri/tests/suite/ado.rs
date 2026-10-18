@@ -347,7 +347,7 @@ async fn update_from_model_skips_blank_fields() {
     tc.preconditions = String::new();
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     client
-        .update_test_case_from_model("org", "proj", 55, &tc, Some("Custom.Module"), Some("Custom.Prec"), None, None, BlankPolicy::Skip)
+        .update_test_case_from_model("org", "proj", 55, &tc, Some("Custom.Module"), Some("Custom.Prec"), None, None, None, BlankPolicy::Skip)
         .await
         .unwrap();
 
@@ -422,7 +422,7 @@ async fn update_from_model_removes_a_tag_with_the_replace_op() {
         .update_test_case_from_model(
             "org", "proj", 55, &tc, None, None, None,
             Some("smoke; regression"),
-            BlankPolicy::Skip,
+            None, BlankPolicy::Skip,
         )
         .await
         .unwrap();
@@ -463,7 +463,7 @@ async fn update_from_model_writes_the_title() {
     tc.title = "Renamed by bulk import".into();
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     client
-        .update_test_case_from_model("org", "proj", 55, &tc, None, None, None, None, BlankPolicy::Skip)
+        .update_test_case_from_model("org", "proj", 55, &tc, None, None, None, None, None, BlankPolicy::Skip)
         .await
         .unwrap();
 
@@ -848,7 +848,7 @@ async fn preconditions_are_html_escaped_on_create_and_update() {
                 .map(|_| ())
         } else {
             client
-                .update_test_case_from_model("o", "p", 7, &tc, None, Some("Custom.Pre"), None, None, BlankPolicy::Skip)
+                .update_test_case_from_model("o", "p", 7, &tc, None, Some("Custom.Pre"), None, None, None, BlankPolicy::Skip)
                 .await
         };
         let sent = server.received_requests().await.unwrap();
@@ -888,7 +888,7 @@ async fn captured_patch(tc: &v2_lib::model::TestCase, original: Option<&str>) ->
         .mount(&server)
         .await;
     v2_lib::ado::AdoClient::with_base_url("t".into(), server.uri())
-        .update_test_case_from_model("o", "p", 55, tc, None, None, original, None, BlankPolicy::Skip)
+        .update_test_case_from_model("o", "p", 55, tc, None, None, original, None, None, BlankPolicy::Skip)
         .await
         .unwrap();
     String::from_utf8_lossy(&server.received_requests().await.unwrap()[0].body).to_string()
@@ -1092,7 +1092,7 @@ async fn the_editor_can_clear_a_field_but_an_import_still_cannot() {
                 // baseline a clear is deliberately not attempted - see
                 // tags_write_ops.)
                 Some("old-tag"),
-                policy,
+                None, policy,
             )
             .await
             .unwrap();
@@ -1152,7 +1152,7 @@ async fn a_field_of_only_spaces_counts_as_blank() {
     AdoClient::with_base_url("t".into(), server.uri())
         .update_test_case_from_model(
             "o", "p", 55, &spaces,
-            Some("Custom.Module"), Some("Custom.Pre"), None, None, BlankPolicy::Skip,
+            Some("Custom.Module"), Some("Custom.Pre"), None, None, None, BlankPolicy::Skip,
         )
         .await
         .unwrap();
@@ -1173,7 +1173,7 @@ async fn a_field_of_only_spaces_counts_as_blank() {
         .mount(&server2)
         .await;
     AdoClient::with_base_url("t".into(), server2.uri())
-        .update_test_case_from_model("o", "p", 55, &padded, None, None, None, None, BlankPolicy::Skip)
+        .update_test_case_from_model("o", "p", 55, &padded, None, None, None, None, None, BlankPolicy::Skip)
         .await
         .unwrap();
     let body2 =
@@ -1555,4 +1555,186 @@ async fn a_loaded_case_carries_the_old_reading_where_it_differs() {
     assert_eq!(old[0].expected, "Saved");
     assert_eq!(cases[1].steps[0].action, "Click Save");
     assert_eq!(cases[1].steps_legacy, None, "nothing sent twice for a plain case");
+}
+
+// ---------------------------------------------------------------------------
+// The List of Prerequisites: Markdown in TCM, rich-text HTML in Azure DevOps
+// ---------------------------------------------------------------------------
+
+/// The prerequisites ops of an update document: (op, value) per op on
+/// `/fields/Custom.Prec`.
+fn prereq_ops(ops: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    ops.iter().filter(|o| o["path"] == "/fields/Custom.Prec").map(|o| o["value"].clone()).collect()
+}
+
+/// One test case read back with `Custom.Prec` holding `value`, and the
+/// work item's `multilineFieldsFormat` when given.
+async fn read_prereq(value: &str, format: Option<serde_json::Value>) -> v2_lib::ado::TestCaseFull {
+    let server = MockServer::start().await;
+    let mut item = serde_json::json!({
+        "id": 301,
+        "fields": { "System.Title": "With prerequisites", "Custom.Prec": value }
+    });
+    if let Some(f) = format {
+        item["multilineFieldsFormat"] = f;
+    }
+    Mock::given(method("GET"))
+        .and(path("/org/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [item] })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let mut cases = client.get_test_cases_by_ids("org", &[301], None, Some("Custom.Prec")).await.unwrap();
+    cases.remove(0)
+}
+
+fn doc_client() -> AdoClient {
+    AdoClient::with_base_urls("tok".into(), "http://ado.invalid".into(), "http://ado.invalid".into())
+}
+
+#[test]
+fn prerequisites_are_written_as_html_lists_and_code() {
+    let md = "Before you start:\n\n- an **admin** account\n- the `Payroll` module\n\n```\nSELECT COUNT(*)\nFROM employees\n```";
+    let want = v2_lib::case_markdown::prereq_md_to_html(md);
+    assert!(want.contains("<ul><li>"), "{want}");
+    assert!(want.contains("<strong>admin</strong>"), "{want}");
+    assert!(want.contains("<code>Payroll</code>"), "{want}");
+    assert!(want.contains("<pre><code>SELECT COUNT(*)\nFROM employees</code></pre>"), "{want}");
+
+    let mut tc = sample_tc();
+    tc.preconditions = md.into();
+    let create = doc_client().create_test_case_doc("org", "proj", &tc, None, "", "", Some("Custom.Prec"), None);
+    assert_eq!(prereq_ops(&create), [serde_json::json!(want)], "a create writes the HTML");
+
+    // An update with no baseline writes it the same way.
+    let update = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, None, BlankPolicy::Skip);
+    assert_eq!(prereq_ops(&update), [serde_json::json!(want)]);
+
+    // Plain text is a paragraph, escaped, and no Markdown symbol reaches
+    // Azure DevOps.
+    tc.preconditions = "Logged out & a <cycleId> exists".into();
+    let create = doc_client().create_test_case_doc("org", "proj", &tc, None, "", "", Some("Custom.Prec"), None);
+    assert_eq!(prereq_ops(&create), [serde_json::json!("<p>Logged out &amp; a &lt;cycleId&gt; exists</p>")]);
+}
+
+/// Review Focus 3: a save that changed only the title never puts the
+/// prerequisites in the PATCH - whether the draft holds the field as read
+/// today (Markdown) or as TCM read it before (`html_to_text`).
+#[tokio::test]
+async fn a_title_only_edit_leaves_the_prerequisites_out() {
+    let html = "<div>Signed in as <b>admin</b></div><ul><li>one</li><li>two</li></ul><pre><code>SELECT 1</code></pre>";
+    let full = read_prereq(html, None).await;
+    let stored = full.preconditions_stored.clone().expect("the field as Azure DevOps holds it");
+    assert_eq!(stored.value, html);
+    assert!(!stored.markdown);
+    assert!(full.preconditions.contains("**admin**"), "read as Markdown: {:?}", full.preconditions);
+
+    let old_reading = v2_lib::steps_xml::html_to_text(html);
+    assert_eq!(full.preconditions_legacy.as_deref(), Some(old_reading.as_str()));
+    for draft in [full.preconditions.clone(), old_reading] {
+        let mut tc = sample_tc();
+        tc.title = "Only the title changed".into();
+        tc.preconditions = draft.clone();
+        for blanks in [BlankPolicy::Skip, BlankPolicy::Clear] {
+            let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), blanks);
+            assert!(prereq_ops(&ops).is_empty(), "draft {draft:?} rewrote the prerequisites: {ops:?}");
+            assert!(ops.iter().any(|o| o["path"] == "/fields/System.Title"));
+        }
+        // The queue's batch document follows the same rule.
+        tc.update_id = Some(301);
+        let req = v2_lib::commands::queue::queue_item_request(
+            &doc_client(), "org", "proj", 42, &tc, None, Some("Custom.Prec"), "", "", None, None, Some(&stored), 1,
+        )
+        .unwrap();
+        assert!(prereq_ops(req.body.as_array().unwrap()).is_empty(), "{}", req.body);
+    }
+
+    // A real edit is written, as HTML.
+    let mut tc = sample_tc();
+    tc.preconditions = format!("{}\n- three", full.preconditions);
+    let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), BlankPolicy::Skip);
+    let written = prereq_ops(&ops);
+    assert_eq!(written.len(), 1, "{ops:?}");
+    assert!(written[0].as_str().unwrap().contains("<li>three</li>"), "{written:?}");
+}
+
+/// What TCM wrote before Markdown: one `<div>` with the bullets typed in.
+#[tokio::test]
+async fn an_old_bulleted_value_reads_back_and_saves_unchanged() {
+    let html = "<div>\u{2022} a<br>\u{2022} b</div>";
+    let full = read_prereq(html, None).await;
+    assert_eq!(full.preconditions, "\u{2022} a\n\u{2022} b", "the bullets read back on their own lines");
+    let stored = full.preconditions_stored.clone().unwrap();
+    for draft in [full.preconditions.clone(), v2_lib::steps_xml::html_to_text(html)] {
+        let mut tc = sample_tc();
+        tc.preconditions = draft;
+        let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), BlankPolicy::Clear);
+        assert!(prereq_ops(&ops).is_empty(), "{ops:?}");
+    }
+    // The old writer's raw newlines are whitespace in HTML, but the text
+    // TCM held for it had the line breaks: still unchanged.
+    let typed = "<div>first line\nsecond line</div>";
+    let full = read_prereq(typed, None).await;
+    let mut tc = sample_tc();
+    tc.preconditions = "first line\nsecond line".into();
+    let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, full.preconditions_stored.as_ref(), BlankPolicy::Skip);
+    assert!(prereq_ops(&ops).is_empty(), "{ops:?}");
+}
+
+/// Someone converted the field to Markdown storage in Azure DevOps: TCM
+/// reads it and writes it as Markdown, never as HTML.
+#[tokio::test]
+async fn a_markdown_field_is_written_as_markdown() {
+    let md = "- an **admin** account\n- `SELECT 1`";
+    for format in ["Markdown", "markdown"] {
+        let full = read_prereq(md, Some(serde_json::json!({ "Custom.Prec": format }))).await;
+        assert_eq!(full.preconditions, md, "read as-is");
+        assert_eq!(full.preconditions_legacy, None);
+        let stored = full.preconditions_stored.clone().unwrap();
+        assert!(stored.markdown, "{format}");
+
+        let mut tc = sample_tc();
+        tc.preconditions = md.into();
+        let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), BlankPolicy::Skip);
+        assert!(prereq_ops(&ops).is_empty(), "unchanged stays out: {ops:?}");
+
+        tc.preconditions = format!("{md}\n- a **second** user");
+        let ops = doc_client().update_test_case_doc(&tc, None, Some("Custom.Prec"), None, None, Some(&stored), BlankPolicy::Skip);
+        assert_eq!(prereq_ops(&ops), [serde_json::json!(tc.preconditions)], "written as Markdown");
+    }
+    // Another field's format says nothing about this one.
+    let full = read_prereq("<p>a</p>", Some(serde_json::json!({ "System.Description": "Markdown" }))).await;
+    assert!(!full.preconditions_stored.unwrap().markdown);
+    assert_eq!(full.preconditions, "a");
+}
+
+#[test]
+fn a_blank_policy_still_applies() {
+    use v2_lib::ado::StoredText;
+    let held = StoredText { value: "<div>Logged out</div>".into(), markdown: false };
+    let empty = StoredText { value: String::new(), markdown: false };
+    let mut tc = sample_tc();
+    let ops = |tc: &v2_lib::model::TestCase, original: Option<&StoredText>, blanks| {
+        prereq_ops(&doc_client().update_test_case_doc(tc, None, Some("Custom.Prec"), None, None, original, blanks))
+    };
+    for blank in ["", "   "] {
+        tc.preconditions = blank.into();
+        // Skip: a blank is no opinion, whatever the work item holds.
+        assert!(ops(&tc, Some(&held), BlankPolicy::Skip).is_empty());
+        assert!(ops(&tc, None, BlankPolicy::Skip).is_empty());
+        // Clear: a blank empties the field...
+        assert_eq!(ops(&tc, Some(&held), BlankPolicy::Clear), [serde_json::json!("")]);
+        assert_eq!(ops(&tc, None, BlankPolicy::Clear), [serde_json::json!("")]);
+        // ...unless it is empty already.
+        assert!(ops(&tc, Some(&empty), BlankPolicy::Clear).is_empty());
+    }
+    // Content is written under either policy.
+    tc.preconditions = "Logged in".into();
+    for blanks in [BlankPolicy::Skip, BlankPolicy::Clear] {
+        assert_eq!(ops(&tc, Some(&held), blanks), [serde_json::json!("<p>Logged in</p>")]);
+    }
+    // A create never writes a blank.
+    tc.preconditions = "  ".into();
+    let create = doc_client().create_test_case_doc("org", "proj", &tc, None, "", "", Some("Custom.Prec"), None);
+    assert!(prereq_ops(&create).is_empty());
 }

@@ -52,7 +52,7 @@ fn a_create_writes_the_priority_the_case_sets() {
 #[test]
 fn an_update_leaves_priority_out_when_the_case_sets_none_whatever_the_blank_policy() {
     for blanks in [BlankPolicy::Skip, BlankPolicy::Clear] {
-        let ops = client().update_test_case_doc(&case("A", None), None, None, None, None, blanks);
+        let ops = client().update_test_case_doc(&case("A", None), None, None, None, None, None, blanks);
         assert!(priority_op(&ops).is_none(), "{blanks:?}: {ops:?}");
     }
 }
@@ -60,7 +60,7 @@ fn an_update_leaves_priority_out_when_the_case_sets_none_whatever_the_blank_poli
 #[test]
 fn an_update_writes_the_priority_when_the_case_sets_one() {
     for blanks in [BlankPolicy::Skip, BlankPolicy::Clear] {
-        let ops = client().update_test_case_doc(&case("A", Some(3)), None, None, None, None, blanks);
+        let ops = client().update_test_case_doc(&case("A", Some(3)), None, None, None, None, None, blanks);
         let op = priority_op(&ops).expect("priority op");
         assert_eq!(op["op"], "add");
         assert_eq!(op["value"], 3);

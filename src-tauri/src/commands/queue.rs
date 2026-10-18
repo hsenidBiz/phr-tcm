@@ -776,16 +776,34 @@ pub async fn submit_queue(
     // can actually REMOVE a tag depends on the current value - see
     // `tags_write_ops`. Without this baseline a dropped tag stays put.
     let mut tags_before: std::collections::HashMap<i32, String> = Default::default();
+    // The prerequisites field as ADO holds it, from the same read: an update
+    // that did not edit it leaves it out, and a field stored as Markdown is
+    // written as Markdown - see `prereq_patch`.
+    let mut prereq_before: std::collections::HashMap<i32, ado::StoredText> = Default::default();
     if let Ok(token) = get_fresh_token(&app).await {
         let client = ado::AdoClient::new(token);
         let update_ids: Vec<i32> = queue.iter().filter_map(|tc| tc.update_id).collect();
         if !update_ids.is_empty() {
-            match client
-                .get_test_cases_by_ids(&organization, &update_ids, None, None)
-                .await
-            {
+            let mut read = client
+                .get_test_cases_by_ids(&organization, &update_ids, None, preconditions_ref.as_deref())
+                .await;
+            // A prerequisites field the read refuses (Azure DevOps answers
+            // an unknown field with a 400) must not cost the steps and tags
+            // their baseline: read again without it, and the prerequisites
+            // are written as before.
+            if matches!(read, Err(ado::AdoError::Http { status: 400, .. })) && preconditions_ref.is_some() {
+                crate::applog::warn(
+                    "could not read the current prerequisites for the updates - reading without them",
+                );
+                read = client.get_test_cases_by_ids(&organization, &update_ids, None, None).await;
+            }
+            match read {
                 Ok(current) => {
                     tags_before = current.iter().map(|c| (c.id, c.tags.clone())).collect();
+                    prereq_before = current
+                        .iter()
+                        .filter_map(|c| Some((c.id, c.preconditions_stored.clone()?)))
+                        .collect();
                     steps_before = current.into_iter().map(|c| (c.id, c.steps_xml)).collect();
                 }
                 // Without a baseline the import's own steps are written, as
@@ -935,6 +953,7 @@ pub async fn submit_queue(
                         &effective_iteration,
                         tc.update_id.and_then(|id| steps_before.get(&id)).map(String::as_str),
                         tc.update_id.and_then(|id| tags_before.get(&id)).map(String::as_str),
+                        tc.update_id.and_then(|id| prereq_before.get(&id)),
                         i - chunk_start + 1,
                     ) {
                         Ok(req) => {
@@ -1157,6 +1176,7 @@ pub fn queue_item_request(
     iteration_path: &str,
     original_steps_xml: Option<&str>,
     original_tags: Option<&str>,
+    original_prereq: Option<&ado::StoredText>,
     temp_id: usize,
 ) -> Result<crate::ado::wit_batch::BatchRequest, String> {
     use crate::ado::wit_batch::{create_uri, temp_id_op, update_uri, BatchMethod, BatchRequest};
@@ -1171,6 +1191,7 @@ pub fn queue_item_request(
                 p_ref,
                 original_steps_xml,
                 original_tags,
+                original_prereq,
                 ado::BlankPolicy::Skip,
             )),
         },

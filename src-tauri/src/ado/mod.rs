@@ -85,7 +85,7 @@ pub struct WikiPage {
 }
 
 /// A fully-loaded Test Case for the editor: steps parsed from the XML blob,
-/// preconditions flattened to plain text. `id` doubles as update_id when the
+/// preconditions read as Markdown. `id` doubles as update_id when the
 /// editor saves.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct TestCaseFull {
@@ -113,10 +113,33 @@ pub struct TestCaseFull {
     /// the answer is no, leave the field out of the patch entirely.
     pub steps_xml: String,
     pub module_value: String,
+    /// The List of Prerequisites as Markdown: the field's HTML read back
+    /// (`case_markdown::prereq_html_to_md`), or its text as-is when the
+    /// work item stores the field as Markdown.
     pub preconditions: String,
+    /// The prerequisites as TCM read them before they were Markdown
+    /// (`steps_xml::html_to_text`), only when that differs from
+    /// `preconditions` - what a draft or cache saved before then holds, and
+    /// which a save counts as unchanged (see `steps_legacy`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preconditions_legacy: Option<String>,
+    /// The prerequisites field EXACTLY as Azure DevOps holds it, and its
+    /// storage format - what a save compares with to leave the field out
+    /// when it was not edited. `None` when no prerequisites field was read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preconditions_stored: Option<StoredText>,
     /// `Microsoft.VSTS.Common.Priority`, 1-4; `None` when the work item has
     /// none (or one outside the picklist).
     pub priority: Option<i32>,
+}
+
+/// A rich-text field as Azure DevOps holds it: its raw value, and whether
+/// the work item stores it as Markdown (`multilineFieldsFormat`) rather
+/// than HTML.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct StoredText {
+    pub value: String,
+    pub markdown: bool,
 }
 
 /// A test case's own words and the project it is in: each step's action

@@ -257,3 +257,17 @@ test("each field of a step is matched against either reading", () => {
   const edited = queued({ steps: [{ action: "Open the page Click Save", expected: "Saved and listed" }] });
   expect(diffCase(edited, cur).steps.changed).toBe(1);
 });
+
+test("preconditions saved before they were Markdown are no change", () => {
+  // Azure DevOps holds a bold word and a list; the draft holds the old
+  // plain-text reading. The save leaves the field out, so does the review.
+  const cur = current({
+    preconditions: "Signed in as **admin**\n\n- one\n- two",
+    preconditions_legacy: "Signed in as admin\n• one\n• two",
+  });
+  expect(diffCase(queued({ preconditions: "Signed in as admin\n• one\n• two" }), cur).noop).toBe(true);
+  expect(diffCase(queued({ preconditions: cur.preconditions }), cur).noop).toBe(true);
+  // A real edit still differs from both.
+  const edited = diffCase(queued({ preconditions: "Signed in as **admin**\n\n- one" }), cur);
+  expect(edited.fields.map((f) => f.name)).toContain("Preconditions");
+});
