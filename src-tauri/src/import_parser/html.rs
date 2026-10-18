@@ -5,6 +5,7 @@
 //! the README there). What is left here is the logic that assembles them
 //! around the data: escaping, grouping, and the markup for each case.
 
+use crate::case_markdown::Field;
 use crate::model::TestCase;
 
 /// Written entirely against the theme variables `webtheme` emits, so the
@@ -62,6 +63,22 @@ pub(crate) fn esc(text: &str) -> String {
 /// early and let the rest of the value run as markup).
 pub(crate) fn esc_attr(text: &str) -> String {
     esc(text).replace('\'', "&#39;")
+}
+
+/// One piece of test case text - a step's action or expected result, or
+/// the prerequisites - as the element that shows it.
+///
+/// The text is Markdown inside TCM, so the page shows it formatted
+/// (`markdown::case_text_to_html`: bold, lists and code show; raw HTML stays
+/// text) and keeps the Markdown as written in `data-md`. The page's search
+/// reads that attribute, because the rendering loses the markup and joins one
+/// line onto the next.
+fn case_text(tag: &str, class: &str, md: &str, field: Field) -> String {
+    format!(
+        "<{tag} class='{class}' data-md='{}'>{}</{tag}>",
+        esc_attr(md),
+        crate::markdown::case_text_to_html(md, field)
+    )
 }
 
 /// The bookmark on a case heading: where the review stopped. Browser-only -
@@ -488,13 +505,15 @@ pub fn export_queue_page_in(
         }
 
         // Every case shows a Prerequisites block, even when empty (v1 rule).
+        // Prerequisites are Markdown, shown formatted; the text as written
+        // stays on the element for the page's search (see case_text).
         let prereq = tc.preconditions.trim();
         let prereq_html = if prereq.is_empty() {
             "<span class='none'>None</span>".to_string()
         } else {
-            esc(prereq)
+            case_text("div", "pre-md", prereq, Field::Prereq)
         };
-        block.push(format!("<p class='pre'><b>Prerequisites:</b> {prereq_html}</p>"));
+        block.push(format!("<div class='pre'><b>Prerequisites:</b> {prereq_html}</div>"));
 
         // Reviewer notes: where this case came from in the spec. Open by
         // default - the whole reason the field exists is that matching a
@@ -566,10 +585,10 @@ pub fn export_queue_page_in(
             block.push("<table><tr><th>#</th><th>Action</th><th>Expected result</th></tr>".into());
             for (i, step) in tc.steps.iter().enumerate() {
                 block.push(format!(
-                    "<tr><td class='num'>{}</td><td class='action'>{}</td><td class='expected'>{}</td></tr>",
+                    "<tr><td class='num'>{}</td>{}{}</tr>",
                     i + 1,
-                    esc(&step.action),
-                    esc(&step.expected)
+                    case_text("td", "action", &step.action, Field::Step),
+                    case_text("td", "expected", &step.expected, Field::Step)
                 ));
             }
             block.push("</table>".into());

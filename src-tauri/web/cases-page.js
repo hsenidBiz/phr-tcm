@@ -205,6 +205,16 @@
         return Array.prototype.map.call(card.querySelectorAll(sel), function (e) { return e.textContent; }).join(' ');
       };
       var pre = card.querySelector('.pre');
+      // Case text is Markdown on this page: shown formatted, with what the
+      // author wrote kept in data-md. The search reads that source - the
+      // rendering drops the markup and joins one line to the next ("Save",
+      // a line break, "then" would read back as "Savethen"). An element
+      // without it (an older page) is read as shown.
+      var source = function (e) {
+        var md = e.getAttribute('data-md');
+        return md === null ? e.textContent : md;
+      };
+      var preBody = pre ? pre.querySelector('[data-md]') : null;
       // All fields: what the case says, not the page's labels around it -
       // so "Module" finds a case about modules, not every card with a row
       // called Module. Comment boxes count: they are the reviewer's text.
@@ -215,8 +225,8 @@
         // Both the bare key and the #-prefixed work item id, so "157957"
         // and "#157957" both match.
         id: (card.getAttribute('data-key') || '') + ' ' + text('.wid'),
-        pre: pre ? pre.textContent.replace(/^\s*Prerequisites:\s*/, '') : '',
-        steps: text('.action, .expected'),
+        pre: preBody ? source(preBody) : pre ? pre.textContent.replace(/^\s*Prerequisites:\s*/, '') : '',
+        steps: Array.prototype.map.call(card.querySelectorAll('.action, .expected'), source).join(' '),
         tags: text('.chip.tag'),
         module: text('.chip.module')
       };

@@ -117,6 +117,7 @@ mod browser_session;
 mod browser_snapshot;
 mod browser_tabs;
 mod bugreport;
+mod bugs;
 mod cache;
 mod case_markdown;
 mod case_priority;

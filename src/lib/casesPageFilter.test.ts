@@ -285,3 +285,35 @@ test("Show on cards is remembered for the next page", () => {
 // cases-page.js's outer IIFE at load time, the same guard casesPageMarks.test.ts
 // works around by never exercising it. It was verified by reading the code
 // (see the report for the exact lines) rather than by a unit here.
+
+// Case text is rendered HTML on the page, with the Markdown the author wrote
+// kept on the element. A search must read that source: the rendering joins
+// "Save" and the line after it into "Savethen", and drops the markup.
+test("steps and prerequisites are searched as the Markdown that was written", () => {
+  // Built before the search is wired: it reads its fields once, up front.
+  document.body.innerHTML = page()
+    .replace(
+      '<p class="pre"><b>Prerequisites:</b> A registered user</p>',
+      '<div class="pre"><b>Prerequisites:</b> <div class="case-md" data-md="- a user&#10;- the **admin** role"><ul><li>a user</li><li>the <strong>admin</strong> role</li></ul></div></div>',
+    )
+    .replace(
+      '<td class="action">Open the page</td>',
+      '<td class="action case-md" data-md="Click **Save**&#10;then close"><p>Click <strong>Save</strong><br>then close</p></td>',
+    );
+  hooks.__tcmWireSearch();
+
+  search("steps", "Click **Save**");
+  expect(shown()).toEqual(["101"]);
+  search("steps", "Save** then close");
+  expect(shown()).toEqual(["101"]);
+  search("steps", "Savethen");
+  expect(shown()).toEqual([]);
+  search("pre", "the **admin** role");
+  expect(shown()).toEqual(["101"]);
+  search("pre", "Prerequisites");
+  expect(shown()).toEqual([]);
+  // The rendered words are still found, and still highlighted.
+  search("steps", "close");
+  expect(shown()).toEqual(["101"]);
+  expect(hits()).toEqual(["close"]);
+});

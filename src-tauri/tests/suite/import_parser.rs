@@ -688,8 +688,8 @@ fn html_export_carries_cases_and_search() {
     }
     assert!(html.contains("id='tc-show-head'>Show on cards</div>"));
     assert!(html.contains("<span class='title'>"));
-    assert!(html.contains("<td class='action'>"));
-    assert!(html.contains("<td class='expected'>"));
+    assert!(html.contains("<td class='action' data-md='"));
+    assert!(html.contains("<td class='expected' data-md='"));
     assert!(html.contains("<span class='chip tag'>")); // this fixture carries tags
 }
 
@@ -1596,4 +1596,85 @@ fn a_bulk_edit_into_a_bom_file_keeps_its_specs_and_comments() {
     assert_eq!(doc["comments"], "whole-set note");
     assert_eq!(doc["owner_key"], 1);
     assert_eq!(doc["test_cases"][0]["title"], "A renamed");
+}
+
+/// Case text is Markdown inside TCM, so the review page shows it formatted
+/// (in the dialect of case_markdown.rs) and keeps the Markdown itself on the
+/// element for the page's own search to read.
+#[test]
+fn the_review_page_shows_case_text_formatted_and_keeps_its_markdown() {
+    let queue = vec![TestCase {
+        title: "Save a record".into(),
+        steps: vec![
+            Step {
+                action: "Click **Save**\nthen run:\n```sql\nSELECT COUNT(*) FROM t\n```".into(),
+                expected: "It says <cycleId> & is *saved*".into(),
+                shared: None,
+            },
+            Step { action: "<img src=x onerror=alert(1)>".into(), expected: String::new(), shared: None },
+        ],
+        tags: String::new(),
+        automation_status: String::new(),
+        module_value: String::new(),
+        preconditions: "- a user\n- the **admin** role".into(),
+        update_id: None,
+        priority: None,
+        comment: String::new(),
+        reviewer_notes: String::new(),
+        area: String::new(),
+        spec_order: None,
+        tester_order: None,
+        findings: vec![],
+        source: Default::default(),
+    }];
+    let path = tmp_path("case-markdown.html");
+    v2_lib::import_parser::export_queue_to_html(&queue, &path, "", None, &Default::default()).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+
+    // The bold shows, and the fence is code - not the asterisks and backticks.
+    assert!(html.contains("Click <strong>Save</strong><br>then run:"), "{html}");
+    assert!(html.contains("<pre><code>SELECT COUNT(*) FROM t\n</code></pre>"), "{html}");
+    assert!(html.contains("<em>saved</em>"), "{html}");
+    assert!(html.contains("<li>the <strong>admin</strong> role</li>"), "{html}");
+    // Raw HTML is text, never an element.
+    assert!(html.contains("&lt;cycleId&gt;"), "{html}");
+    assert!(!html.contains("<img src=x"), "{html}");
+
+    // The Markdown is kept verbatim on the element it renders into, so a
+    // search reads what the author wrote and not the rendering's joins.
+    assert!(
+        html.contains(
+            "<td class='action' data-md='Click **Save**\nthen run:\n```sql\nSELECT COUNT(*) FROM t\n```'>"
+        ),
+        "{html}"
+    );
+    assert!(html.contains(" data-md='It says &lt;cycleId&gt; &amp; is *saved*'"), "{html}");
+    assert!(html.contains(" data-md='- a user\n- the **admin** role'"), "{html}");
+    // A step with no expected result keeps an empty cell, as before.
+    assert!(html.contains("<td class='expected' data-md=''></td>"), "{html}");
+}
+
+#[test]
+fn a_case_without_prerequisites_still_says_none() {
+    let queue = vec![TestCase {
+        title: "Nothing needed".into(),
+        steps: vec![],
+        tags: String::new(),
+        automation_status: String::new(),
+        module_value: String::new(),
+        preconditions: "  \n ".into(),
+        update_id: None,
+        priority: None,
+        comment: String::new(),
+        reviewer_notes: String::new(),
+        area: String::new(),
+        spec_order: None,
+        tester_order: None,
+        findings: vec![],
+        source: Default::default(),
+    }];
+    let path = tmp_path("case-markdown-none.html");
+    v2_lib::import_parser::export_queue_to_html(&queue, &path, "", None, &Default::default()).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert!(html.contains("<b>Prerequisites:</b> <span class='none'>None</span>"), "{html}");
 }

@@ -153,3 +153,107 @@ fn a_code_block_keeps_its_line_breaks_and_escapes_its_contents() {
     assert!(html.contains("<pre><code>"));
     assert!(html.contains("if (a &lt; b) {\n"), "{html}");
 }
+
+// ---------------------------------------------------------------------------
+// Test case text: the review page shows it as the dialect of case_markdown.rs
+// ---------------------------------------------------------------------------
+
+use v2_lib::case_markdown::Field;
+use v2_lib::markdown::case_text_to_html;
+
+#[test]
+fn case_text_shows_bold_italic_lists_and_code() {
+    // A step is lines: no paragraph around it.
+    let html = case_text_to_html("Click **Save** and *close*", Field::Step);
+    assert_eq!(html, "Click <strong>Save</strong> and <em>close</em>");
+
+    let html = case_text_to_html("Run:\n```sql\nSELECT 1\n```", Field::Step);
+    assert_eq!(html, "Run:<pre><code>SELECT 1\n</code></pre>");
+
+    // A step has no lists: each item is a line, as Azure DevOps shows it.
+    let html = case_text_to_html("Do:\n- one\n- two with `x`\n\n1. first\n2) second", Field::Step);
+    assert_eq!(
+        html,
+        "Do:<br>• one<br>• two with <code>x</code><br><br>1. first<br>2) second"
+    );
+
+    // The prerequisites are paragraphs and real lists.
+    let html = case_text_to_html("Needs:\n\n- one\n- two with `x`", Field::Prereq);
+    assert_eq!(html, "<p>Needs:</p>\n<ul><li>one</li><li>two with <code>x</code></li></ul>\n");
+    let html = case_text_to_html("```\nSELECT 1\n```", Field::Prereq);
+    assert_eq!(html, "<pre><code>SELECT 1\n</code></pre>\n");
+}
+
+#[test]
+fn a_single_newline_is_a_line_break_as_in_azure_devops() {
+    assert_eq!(case_text_to_html("first\nsecond", Field::Step), "first<br>second");
+    assert_eq!(case_text_to_html("first\nsecond", Field::Prereq), "<p>first<br>second</p>\n");
+}
+
+#[test]
+fn case_text_is_plain_commonmark_so_old_text_never_renders_differently() {
+    for field in [Field::Step, Field::Prereq] {
+        let html = case_text_to_html("Status ~~old~~", field);
+        assert!(html.contains("~~old~~") && !html.contains("<del"), "{html}");
+        let html = case_text_to_html("a | b\n--- | ---\nc | d", field);
+        assert!(!html.contains("<table"), "{html}");
+        let html = case_text_to_html("- [ ] x", field);
+        assert!(html.contains("[ ] x") && !html.contains("<input"), "{html}");
+        let html = case_text_to_html("SELECT COUNT(*) FROM t WHERE a * b", field);
+        assert!(!html.contains("<em>") && !html.contains("<strong>"), "{html}");
+    }
+}
+
+#[test]
+fn raw_html_in_case_text_is_never_an_element() {
+    for field in [Field::Step, Field::Prereq] {
+        let html = case_text_to_html(
+            "<img src=x onerror=alert(1)>\n\nenter <cycleId> and <b>bold</b>\n\n<script>alert(2)</script>",
+            field,
+        );
+        for bad in ["<img", "<script", "<b>", "<cycleId>", "onerror"] {
+            assert!(!html.contains(bad), "{bad} must not be an element: {html}");
+        }
+        // A typed placeholder stays visible; an editor's tag leaves its text.
+        assert!(html.contains("enter &lt;cycleId&gt; and bold"), "{html}");
+    }
+}
+
+#[test]
+fn headings_links_images_quotes_and_rules_are_their_plain_text() {
+    for field in [Field::Step, Field::Prereq] {
+        let html = case_text_to_html(
+            "# Title\n\nsee [the spec](http://example.invalid/x) ![shot](http://example.invalid/i.png)\n\n> quoted\n\n---",
+            field,
+        );
+        for bad in ["<h1", "<a ", "<img", "<blockquote", "<hr"] {
+            assert!(!html.contains(bad), "{bad}: {html}");
+        }
+        for text in ["Title", "the spec", "shot", "quoted"] {
+            assert!(html.contains(text), "{text}: {html}");
+        }
+    }
+}
+
+#[test]
+fn a_step_keeps_every_blank_line_and_the_prerequisites_make_one_gap() {
+    // One <br> per line break, so a blank line is two and three stay three.
+    assert_eq!(case_text_to_html("a\n\nb", Field::Step), "a<br><br>b");
+    assert_eq!(case_text_to_html("a\n\n\n\nb", Field::Step), "a<br><br><br><br>b");
+    // Text, then a block: the block ends the line itself.
+    assert_eq!(case_text_to_html("a\n```\nx\n```\nb", Field::Step), "a<pre><code>x\n</code></pre>b");
+    assert_eq!(
+        case_text_to_html("a\n\n```\nx\n```\n\nb", Field::Step),
+        "a<br><br><pre><code>x\n</code></pre><br>b"
+    );
+    // The prerequisites are paragraphs: one gap however many blank lines.
+    assert_eq!(case_text_to_html("a\n\n\n\nb", Field::Prereq), "<p>a</p>\n<p>b</p>\n");
+}
+
+#[test]
+fn empty_case_text_renders_nothing() {
+    for field in [Field::Step, Field::Prereq] {
+        assert_eq!(case_text_to_html("", field), "");
+        assert_eq!(case_text_to_html("  \n\n ", field), "");
+    }
+}
