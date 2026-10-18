@@ -195,6 +195,19 @@ information in the slots the Playwright pipeline already reads; it never overrid
     be replaced by steps that create that state (or the reason must say why it is no longer
     needed); the repair cap counts it; a person can still see and revert it in the editor.
 
+## Full request and response capture (agreed 2026-10-18)
+
+29. **Keep the page's requests and responses whole during Auto Run, for the assistant.** Today
+    TCM keeps each request's method, path and status, and reads a body only for a refused request
+    or an `expect_response`. Keep, for the page's own XHR/fetch requests (same site, not polls),
+    the request body and the response body (capped), the status and the headers that matter
+    (content type, not cookies or authorization), with secrets redacted as `shown_body` does
+    (passwords, tokens, session values). A tool lets the assistant list them and read one in
+    full. Purpose (Avin): give the assistant more to go on, and let it build **API templates**
+    from the real requests it sees while discovering a new area, instead of guessing their
+    shape. Not exported; not a separate stealth browser (rejected 2026-10-18: it would bypass
+    TCM's save guard, seen check and session rules).
+
 ## Smaller
 
 - `save_autorun_script` through MCP drops `edits`, so repairs had to go through
