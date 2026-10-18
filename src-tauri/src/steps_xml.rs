@@ -23,11 +23,11 @@ use serde::{Deserialize, Serialize};
 /// exactly alike - there is no structural difference left to use. Matching
 /// against what the editor can actually produce is the only thing that
 /// separates them.
-const HTML_TAGS: [&str; 42] = [
+const HTML_TAGS: [&str; 44] = [
     "a", "b", "big", "blockquote", "br", "caption", "center", "code", "col", "colgroup", "dd",
     "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "li",
     "ol", "p", "pre", "s", "small", "span", "strike", "strong", "sub", "sup", "table", "tbody",
-    "td", "th", "thead", "tr",
+    "td", "th", "thead", "tr", "u", "ul",
 ];
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
@@ -53,7 +53,7 @@ fn escape_xml(text: &str) -> String {
 /// `<cycleId>` vanished from ADO's own view, and a typed `&lt;` came back as
 /// `<`. The parser already undoes both layers, and it reads older
 /// single-escaped steps the same as before.
-fn escape_html(text: &str) -> String {
+pub(crate) fn escape_html(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -502,7 +502,7 @@ pub fn build_steps_xml(steps: &[Step]) -> String {
 
 /// The index of the `>` that closes a real HTML tag opening at `open`, or
 /// `None` when this `<` is just a less-than sign.
-fn html_tag_end(c: &[char], open: usize) -> Option<usize> {
+pub(crate) fn html_tag_end(c: &[char], open: usize) -> Option<usize> {
     let mut i = open + 1;
     if i < c.len() && c[i] == '/' {
         i += 1;
@@ -553,7 +553,7 @@ fn html_tag_end(c: &[char], open: usize) -> Option<usize> {
 /// because a rich-text editor never emits one) is the residual ambiguity -
 /// the app cannot tell that from markup, and `validate_cases` warns about
 /// it instead.
-fn strip_tags(s: &str) -> String {
+pub(crate) fn strip_tags(s: &str) -> String {
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
     let mut i = 0;
@@ -579,7 +579,7 @@ pub fn contains_html_markup(text: &str) -> bool {
     (0..chars.len()).any(|i| chars[i] == '<' && html_tag_end(&chars, i).is_some())
 }
 
-fn collapse_ws(s: &str) -> String {
+pub(crate) fn collapse_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -756,7 +756,7 @@ pub fn html_to_text(html: &str) -> String {
 
 /// Minimal HTML entity unescape covering what ADO fields actually contain:
 /// the five XML entities, &nbsp;, and numeric references.
-fn unescape_html(s: &str) -> String {
+pub(crate) fn unescape_html(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     while let Some(pos) = rest.find('&') {
