@@ -423,7 +423,7 @@ pub async fn route(
         // browser: said at once rather than waited for.
         ("POST", "/autorun-discover-end") => match replay_is_holding_the_browser() {
             Some(going) => going,
-            None => crate::commands::autorun::end_discovery().await,
+            None => crate::commands::autorun::end_discovery(EndedBy::Assistant).await,
         },
         // Release: every Auto Run browser record the app holds is cleared
         // and the app's own browsers closed, for a browser held after it
@@ -3161,6 +3161,11 @@ pub trait DiscoveryBrowser {
     /// and no watched step names what happened before. Nothing to forget in
     /// a test's fake unless it counts it.
     fn taken_over(&mut self) {}
+    /// Which browser this is (Edge or Chrome), when known: a discovery that
+    /// names the other one does not take it over. A test's fake says none.
+    fn browser(&mut self) -> Option<crate::browser::launch::Browser> {
+        None
+    }
 }
 
 /// Said in place of an answer from a held browser that had gone: the app
@@ -3223,15 +3228,23 @@ pub enum MadeWay {
 /// go first (`forget_gone_browser`). A live one the assistant's replay left
 /// open (opened by the assistant, no discovery in it, no guard of the
 /// person's) is taken over, sign-in and all: its tabs other than `main` are
-/// closed, the guard a call of the assistant's left is lifted - the
-/// discovery's start puts its own on as its rules say - and the replay's
-/// stand and last page change are forgotten (`DiscoveryBrowser::taken_over`).
-/// A guard the browser will not lift is never handed on: that browser is
-/// closed through its normal close, as before. Any other live browser - the
-/// person's, or a discovery's - refuses it with the busy sentence
-/// (`refuse_while_held`), untouched. A replay going never reaches here
+/// closed, the dialogs the replay expected or saw are forgotten, and the
+/// replay's stand and last page change too (`DiscoveryBrowser::taken_over`).
+/// Its guard is never lifted here: a discovery that will be guarded
+/// (`guarded`: it must not save, or is a mapping run) takes the guard over
+/// as it is, its owner now the discovery's, with no moment unguarded; for
+/// any other, the replay's guard stays until the start has decided the
+/// sign-in (`discover_start_in`). One that is another browser than the one
+/// `wanted` (Edge or Chrome) is closed through its normal close instead, and
+/// a new one opened. Any other live browser - the person's, or a
+/// discovery's - refuses it with the busy sentence (`refuse_while_held`),
+/// untouched. A replay going never reaches here
 /// (`refuse_discovery_while_busy`).
-pub async fn make_way_for_discovery<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Result<MadeWay, String> {
+pub async fn make_way_for_discovery<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    wanted: Option<crate::browser::launch::Browser>,
+    guarded: bool,
+) -> Result<MadeWay, String> {
     use crate::commands::autorun::GuardOwner;
     forget_gone_browser(slot).await;
     let left_open = slot.as_mut().is_some_and(|b| {
@@ -3243,24 +3256,73 @@ pub async fn make_way_for_discovery<B: DiscoveryBrowser>(slot: &mut Option<B>) -
     if !left_open {
         return refuse_while_held(slot).await.map(|()| MadeWay::Free);
     }
-    let lifted = match slot.as_mut() {
-        Some(b) => {
-            let p = b.parts();
-            crate::browser::cdp::Driver::close_other_tabs(p.driver).await;
-            crate::commands::autorun::lift_guard_of(p.driver, p.guarded_case, p.guard_owner).await
-        }
-        None => true,
+    let other_browser = match (wanted, slot.as_mut().and_then(|b| b.browser())) {
+        (Some(wanted), Some(open)) => wanted != open,
+        _ => false,
     };
-    if !lifted {
+    if other_browser {
         close_browser_in(slot);
-        crate::applog::info("Auto Run: the browser the assistant's replay left open kept a guard it would not lift, so a discovery closed it");
+        crate::applog::info("Auto Run: a discovery asked for another browser than the one the assistant's replay left open, so it closed that one");
         return Ok(MadeWay::Closed);
     }
     if let Some(b) = slot.as_mut() {
+        let p = b.parts();
+        crate::browser::cdp::Driver::close_other_tabs(p.driver).await;
+        // Nothing the replay expected of a dialog, or saw, is the discovery's.
+        if let Some(book) = crate::browser::cdp::Driver::dialog_book(p.driver) {
+            book.disarm();
+            book.take_seen();
+        }
+        if guarded && crate::browser::cdp::Driver::is_guarding_saves(&*p.driver) {
+            *p.guard_owner = Some(GuardOwner::Discovery);
+            *p.guarded_case = None;
+        }
         b.taken_over();
     }
     crate::applog::info("Auto Run: a discovery took over the browser the assistant's replay left open");
     Ok(MadeWay::TookOver)
+}
+
+/// The guard a call of the assistant's left on a browser a discovery took
+/// over (`GuardOwner::Call`), lifted once the discovery's start has decided
+/// its sign-in: after going home in a browser already signed in, right
+/// before the sign-in otherwise. A discovery's own guard, or the person's,
+/// is not this to lift. One the browser will not lift stays on, still the
+/// call's, and the discovery's next call lifts it as it ends: saves stay
+/// stopped meanwhile, never let through.
+async fn lift_a_calls_guard<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    guarded_case: &mut Option<i32>,
+    owner: &mut Option<crate::commands::autorun::GuardOwner>,
+) {
+    if !d.is_guarding_saves() || !matches!(owner, None | Some(crate::commands::autorun::GuardOwner::Call { .. })) {
+        return;
+    }
+    if !crate::commands::autorun::lift_guard_of(d, guarded_case, owner).await {
+        crate::applog::warn("Auto Run discovery: the replay's guard would not lift yet; it stays on until the next call");
+    }
+}
+
+/// Go home in a browser a discovery took over already signed in
+/// (`nav::load_home`, which keeps the cookies and waits for the signed-in
+/// marker), so the replay's page is never filed under the discovery's area.
+/// False when it did not arrive: the discovery then signs in.
+async fn went_home<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    timing: &crate::browser::timing::Timing,
+) -> bool {
+    let recipe = match crate::autorun::recipe::load_effective_recipe(root, organization, project) {
+        Ok(recipe) => recipe,
+        Err(_) => return false,
+    };
+    let out = crate::autorun::nav::load_home(d, &crate::autorun::nav::Home::of(&recipe), timing).await;
+    if !out.ok {
+        crate::applog::info(format!("Auto Run discovery: going home in the kept browser failed ({}); it signs in", out.detail));
+    }
+    out.ok
 }
 
 /// Put before what a discovery start answers when it first closed the
@@ -3342,8 +3404,8 @@ fn without_typed(text: &str, action: &crate::browser::actions::Action) -> String
 /// from the assistant's replay that is still signed in as that account -
 /// the same checks a replay makes (`replay_to::signed_in_here`: the lease,
 /// the sign-in's cookies, a session not refused, the signed-in marker) -
-/// keeps its sign-in, and the page stays where the browser stood
-/// (`discovery_signed_in_already`); any other is signed in as it. The discovery takes the
+/// keeps its sign-in and goes home (`went_home`,
+/// `discovery_signed_in_already`); any other is signed in as it. The discovery takes the
 /// account and `area` once the sign-in arrives, and the landing page is
 /// filed under that area, explored by that account. A sign-in that does
 /// not arrive - or an account that cannot be signed in at all - closes
@@ -3377,7 +3439,9 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
             &*p.lease,
             timing,
         )
-        .await;
+        .await
+            && went_home(p.driver, root, organization, project, timing).await;
+        lift_a_calls_guard(p.driver, p.guarded_case, p.guard_owner).await;
         let signed = if kept {
             crate::applog::info(format!("Auto Run discovery as {key}: signed in already, the sign-in is kept"));
             Ok(discovery_signed_in_already(key))
@@ -3490,7 +3554,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
 /// A discovery start's `detail` when the browser it took over was signed in
 /// as its account already: nothing was signed in again.
 pub fn discovery_signed_in_already(key: &str) -> String {
-    format!("signed in already as {key}; the page is where the browser stood")
+    format!("signed in already as {key}; went to the home page")
 }
 
 /// Switch a mapping run's save guard on, as a Must not save case's is
@@ -4467,10 +4531,33 @@ pub async fn end_discovery_in<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16
     }
 }
 
-/// End the discovery in `slot` and close its browser, as the assistant's
-/// release does (`commands::autorun::release_in_for_assistant`): release is
-/// the repair for a broken browser, so it never keeps one. The answer is
-/// `end_discovery_in`'s, with the browser closed.
+/// Who ends a discovery (`end_discovery_as`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndedBy {
+    /// The person's End discovery on the Setup card: it closes the
+    /// assistant's discovery browser so Auto Run can run again.
+    Person,
+    /// The assistant's `end_autorun_discovery`: the browser stays, signed in,
+    /// for its next replay or discovery.
+    Assistant,
+}
+
+/// End the discovery in `slot` as `by` ends it: the assistant's end keeps
+/// the browser (`end_discovery_in`), the person's closes it
+/// (`end_discovery_closing`). A mapping run's summary is kept either way.
+pub async fn end_discovery_as<B: DiscoveryBrowser>(slot: &mut Option<B>, by: EndedBy) -> (u16, String) {
+    match by {
+        EndedBy::Assistant => end_discovery_in(slot).await,
+        EndedBy::Person => end_discovery_closing(slot),
+    }
+}
+
+/// End the discovery in `slot` and close its browser, as the person's End
+/// discovery and the assistant's release
+/// (`commands::autorun::release_in_for_assistant`) do: the person ends it
+/// so Auto Run can run again, and release is the repair for a broken
+/// browser, so neither keeps one. The answer is `end_discovery_in`'s, with
+/// the browser closed.
 pub fn end_discovery_closing<B: DiscoveryBrowser>(slot: &mut Option<B>) -> (u16, String) {
     match close_discovery(slot) {
         Some(summary) => ended_answer(DISCOVERY_ENDED_CLOSED, summary),
@@ -4535,8 +4622,8 @@ async fn end_discovery_keeping<B: DiscoveryBrowser>(slot: &mut Option<B>, lift: 
 }
 
 /// A discovery in `slot` ends and its browser is closed: a mapping run's
-/// summary is kept (`finish_mapping`), then the browser goes. Only the
-/// assistant's release ends one this way now (`end_discovery_closing`).
+/// summary is kept (`finish_mapping`), then the browser goes: the person's
+/// End discovery and the assistant's release (`end_discovery_closing`).
 /// `None` with no discovery going, else the mapping run's summary, if it
 /// was one.
 fn close_discovery<B: DiscoveryBrowser>(
@@ -5000,8 +5087,9 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
     if let Err(why) = crate::autorun::signin::prepare(&root, &ctx.org, &ctx.project, &account) {
         return (409, why);
     }
-    let browser = browser.unwrap_or_else(|| crate::autorun::store::last_browser(&root));
-    let made_way = match crate::commands::autorun::open_for_discovery(&browser, mapping, asked).await {
+    // None named: a browser the replay left is kept, whichever it is, and a
+    // new one is the one last chosen (`open_for_discovery`).
+    let made_way = match crate::commands::autorun::open_for_discovery(browser.as_deref(), mapping, asked).await {
         Ok(made_way) => made_way,
         Err(why) => return (409, why),
     };

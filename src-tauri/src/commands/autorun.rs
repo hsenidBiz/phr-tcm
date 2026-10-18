@@ -21,6 +21,9 @@ static SESSION: tokio::sync::Mutex<Option<Session>> = tokio::sync::Mutex::const_
 
 pub(crate) struct Session {
     pub(crate) browser: LaunchedBrowser,
+    /// Which browser it is, Edge or Chrome: a discovery that names the other
+    /// one opens that one rather than take this over.
+    pub(crate) kind: Browser,
     pub(crate) cdp: Cdp,
     /// The account last signed in as, in THIS browser. `None` until a
     /// sign-in succeeds. Written on every sign-in; nothing reads it yet -
@@ -471,21 +474,24 @@ pub(crate) fn refuse_discovery_while_busy() -> Result<(), String> {
 /// `mapping` makes it a mapping run, whose save guard goes on once it has
 /// signed in (`ai_bridge::discover_start_in`); so does the guard of a
 /// discovery for a case that must not save (`no_save`). A browser the
-/// assistant's own replay left open is taken over, signed in as it was
-/// (`ai_bridge::make_way_for_discovery`), whichever browser was named; one
-/// whose guard would not lift is closed, and a new one opened. Says which
-/// (`MadeWay`).
+/// assistant's own replay left open is taken over, signed in as it was and
+/// its guard handed on without a gap when the discovery is guarded too
+/// (`ai_bridge::make_way_for_discovery`) - unless `browser_name` names the
+/// other browser: that one is closed, and the one named opened. With none
+/// named a new browser is the one last chosen. Says which (`MadeWay`).
 pub(crate) async fn open_for_discovery(
-    browser_name: &str,
+    browser_name: Option<&str>,
     mapping: Option<MappingRun>,
     no_save: DiscoveryFor,
 ) -> Result<crate::ai_bridge::MadeWay, String> {
     use crate::ai_bridge::MadeWay;
     refuse_discovery_while_busy()?;
+    let wanted = browser_name.map(Browser::from_name);
+    let guarded = mapping.is_some() || no_save.no_save;
     let mut slot = SESSION.lock().await;
     // Refused only for a browser that is really there: one that has gone
     // is let go, and the discovery opens.
-    let made_way = crate::ai_bridge::make_way_for_discovery(&mut slot).await;
+    let made_way = crate::ai_bridge::make_way_for_discovery(&mut slot, wanted, guarded).await;
     publish_discovery(&slot);
     let made_way = made_way?;
     if made_way == MadeWay::Closed {
@@ -493,7 +499,8 @@ pub(crate) async fn open_for_discovery(
     }
     if made_way != MadeWay::TookOver {
         let root = store::configured_root().ok_or_else(|| NO_DATA_DIRECTORY.to_string())?;
-        open_into(Ok(root), &mut slot, Browser::from_name(browser_name), OpenedBy::Assistant).await?;
+        let which = wanted.unwrap_or_else(|| Browser::from_name(&store::last_browser(&root)));
+        open_into(Ok(root), &mut slot, which, OpenedBy::Assistant).await?;
     }
     if let Some(session) = slot.as_mut() {
         session.discovery = Some(DiscoveryState {
@@ -511,10 +518,12 @@ pub(crate) async fn open_for_discovery(
     Ok(made_way)
 }
 
-/// End the discovery under way, keeping its browser signed in for the next
-/// replay or discovery (`ai_bridge::end_discovery_in`), its guard lifted.
-/// With no discovery going this does nothing.
-pub(crate) async fn end_discovery() -> (u16, String) {
+/// End the discovery under way as `by` ends it (`ai_bridge::end_discovery_as`):
+/// the assistant's `end_autorun_discovery` keeps its browser signed in for
+/// its next replay or discovery, its guard lifted; the person's End
+/// discovery closes it so Auto Run can run again. With no discovery going
+/// this does nothing.
+pub(crate) async fn end_discovery(by: crate::ai_bridge::EndedBy) -> (u16, String) {
     // A batch of actions holding the browser gives way before its next
     // action, so this is not kept waiting behind it.
     crate::ai_bridge::stop_batch();
@@ -524,19 +533,24 @@ pub(crate) async fn end_discovery() -> (u16, String) {
     if gone {
         return (200, DISCOVERY_BROWSER_HAD_GONE.to_string());
     }
-    let answer = crate::ai_bridge::end_discovery_in(&mut slot).await;
+    let held = slot.is_some();
+    let answer = crate::ai_bridge::end_discovery_as(&mut slot, by).await;
     publish_discovery(&slot);
+    if held && slot.is_none() {
+        tell_panes_closed();
+    }
     answer
 }
 
-/// End Discovery on Auto Run's Setup card: ends the discovery under way the
-/// way the assistant's `end_autorun_discovery` does, keeping its browser
-/// (Close browser closes it), and says so to the window. With no discovery
-/// going this does nothing. Nothing is lost: the map keeps what was seen.
+/// End Discovery on Auto Run's Setup card: the person closes the
+/// assistant's discovery browser so Auto Run can run again
+/// (`ai_bridge::EndedBy::Person`), and the window is told. With no
+/// discovery going this does nothing. Nothing is lost: the map keeps what
+/// was seen, and a mapping run's summary is kept.
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_end_discovery() -> Result<(), String> {
-    end_discovery().await;
+    end_discovery(crate::ai_bridge::EndedBy::Person).await;
     Ok(())
 }
 
@@ -856,6 +870,9 @@ impl crate::ai_bridge::DiscoveryBrowser for Session {
         self.used_otherwise();
         note_session_use();
     }
+    fn browser(&mut self) -> Option<Browser> {
+        Some(self.kind)
+    }
 }
 
 /// Open the supervised browser into `slot`, closing one already there,
@@ -917,6 +934,7 @@ async fn open_into(
     };
     *slot = Some(Session {
         browser,
+        kind: which,
         cdp,
         account: None,
         lease: crate::autorun::lease::Held::supervised(),

@@ -37,6 +37,8 @@ struct HeldOne {
     assistant: bool,
     /// How often a discovery took it over (`DiscoveryBrowser::taken_over`).
     taken_over: usize,
+    /// Which browser it is, when the test says.
+    kind: Option<v2_lib::browser::launch::Browser>,
 }
 
 impl DiscoveryBrowser for HeldOne {
@@ -63,6 +65,9 @@ impl DiscoveryBrowser for HeldOne {
     fn taken_over(&mut self) {
         self.taken_over += 1;
     }
+    fn browser(&mut self) -> Option<v2_lib::browser::launch::Browser> {
+        self.kind
+    }
 }
 
 /// A driver whose browser has gone: every call is `Closed`.
@@ -84,6 +89,7 @@ fn held(alive: bool, discovery: Option<DiscoveryState>) -> (Option<HeldOne>, Arc
         closed: closed.clone(),
         assistant: false,
         taken_over: 0,
+        kind: None,
     };
     (Some(b), closed)
 }
@@ -295,7 +301,7 @@ fn every_refusal_for_a_held_browser_asks_first_whether_it_is_alive() {
         let rest = &source[at..];
         &rest[..rest.find("\n}\n").unwrap_or(rest.len())]
     };
-    assert!(body("pub(crate) async fn open_for_discovery").contains("make_way_for_discovery(&mut slot)"));
+    assert!(body("pub(crate) async fn open_for_discovery").contains("make_way_for_discovery(&mut slot, wanted, guarded)"));
     assert!(body("pub async fn auto_run_open_browser").contains("let_go_if_gone(&mut slot)"));
     assert!(body("async fn open_if_none").contains("let_go_if_gone(slot)"));
     assert!(body("pub(crate) async fn replay_supervised").contains("let_go_if_gone(&mut slot)"));
@@ -408,45 +414,58 @@ async fn the_assistants_release_closes_the_browser_its_replay_left_open() {
     assert!(slot.is_some() && !closed.load(Ordering::SeqCst), "the person's browser was closed");
 }
 
+/// The replay's browser as a takeover finds it: signed in as admin,
+/// guarding its no_save case 77 for the replay's call, with a report tab
+/// its steps opened, a dialog it expected and one it saw.
+async fn replays_browser() -> (Option<HeldOne>, Arc<AtomicBool>) {
+    use v2_lib::browser::cdp::Driver;
+    use v2_lib::browser::actions::DialogAnswer;
+    use v2_lib::browser::dialogs::plan_of;
+    use v2_lib::commands::autorun::GuardOwner;
+    let (mut slot, closed) = left_open_by_assistant(true, None);
+    let b = slot.as_mut().unwrap();
+    b.account = Some("admin".into());
+    b.d.guard_saves(&[]).await.unwrap();
+    b.guarded_case = Some(77);
+    b.guard_owner = Some(GuardOwner::Call { case_id: Some(77) });
+    b.d.tabs.open.push("report".into());
+    b.d.book.arm(vec![plan_of(1, DialogAnswer::Accept, &None), plan_of(2, DialogAnswer::Dismiss, &None)]);
+    b.d.book.opened("alert", "Saved");
+    (slot, closed)
+}
+
 /// A discovery takes over a live browser the assistant's replay left open,
 /// and says so: the browser is kept, signed in, its other tabs closed, the
-/// replay's stand and last page change forgotten and the replay's guard
-/// lifted (the discovery puts its own on as its start decides). One the
-/// person opened, or a discovery's own, still refuses it.
+/// dialogs the replay expected or saw forgotten, and the replay's stand and
+/// last page change too. An unguarded discovery leaves the replay's guard
+/// to its start (lifted once the sign-in is decided). One the person
+/// opened, or a discovery's own, still refuses it.
 #[tokio::test]
 async fn a_discovery_takes_over_the_browser_the_replay_left() {
     use v2_lib::ai_bridge::{make_way_for_discovery, said_made_way, MadeWay, CLOSED_LEFT_OPEN, TOOK_OVER_LEFT_OPEN};
     use v2_lib::browser::cdp::Driver;
     use v2_lib::commands::autorun::GuardOwner;
-    // The replay's browser: signed in as admin, guarding its no_save case
-    // 77 for the replay's call, with a report tab its steps opened.
-    let (mut slot, closed) = left_open_by_assistant(true, None);
-    {
-        let b = slot.as_mut().unwrap();
-        b.account = Some("admin".into());
-        b.d.guard_saves(&[]).await.unwrap();
-        b.guarded_case = Some(77);
-        b.guard_owner = Some(GuardOwner::Call { case_id: Some(77) });
-        b.d.tabs.open.push("report".into());
-    }
-    assert_eq!(make_way_for_discovery(&mut slot).await, Ok(MadeWay::TookOver));
+    let (mut slot, closed) = replays_browser().await;
+    assert_eq!(make_way_for_discovery(&mut slot, None, false).await, Ok(MadeWay::TookOver));
     let b = slot.as_ref().expect("the replay's browser was closed");
     assert!(!closed.load(Ordering::SeqCst), "the replay's browser was closed");
     assert_eq!(b.d.tabs.closed_others, 1, "the replay's other tabs were left open");
     assert!(b.d.tabs.open.is_empty());
+    assert!(!b.d.book.is_armed() && b.d.book.seen().is_empty(), "the replay's dialogs were handed to the discovery");
     assert_eq!(b.taken_over, 1, "the replay's stand and last page change were kept");
-    assert!(!b.d.is_guarding_saves(), "the replay's guard was kept for the discovery");
-    assert_eq!((b.guarded_case, b.guard_owner.clone()), (None, None));
     assert_eq!(b.account.as_deref(), Some("admin"), "the sign-in was dropped");
+    // Not lifted here: the start lifts it once it has decided the sign-in.
+    assert!(b.d.is_guarding_saves() && b.d.calls_to("Fetch.disable").is_empty());
+    assert_eq!((b.guarded_case, b.guard_owner.clone()), (Some(77), Some(GuardOwner::Call { case_id: Some(77) })));
 
     // The person's own browser is never taken over.
     let (mut slot, closed) = held(true, None);
-    assert_eq!(make_way_for_discovery(&mut slot).await, Err(busy_browser_sentence(false).to_string()));
+    assert_eq!(make_way_for_discovery(&mut slot, None, false).await, Err(busy_browser_sentence(false).to_string()));
     let b = slot.as_ref().unwrap();
     assert!(!closed.load(Ordering::SeqCst) && b.taken_over == 0 && b.d.tabs.closed_others == 0);
 
     let (mut slot, _) = left_open_by_assistant(true, discovering());
-    assert_eq!(make_way_for_discovery(&mut slot).await, Err(busy_browser_sentence(true).to_string()));
+    assert_eq!(make_way_for_discovery(&mut slot, None, true).await, Err(busy_browser_sentence(true).to_string()));
     assert_eq!(slot.as_ref().unwrap().taken_over, 0);
 
     // The answer says it: beside a start's JSON, before a refusal's text.
@@ -463,26 +482,78 @@ async fn a_discovery_takes_over_the_browser_the_replay_left() {
     assert_eq!(said_made_way(MadeWay::Free, (409, "no".into())), (409, "no".to_string()));
 }
 
-/// A replay's guard the browser will not lift is never carried into the
-/// discovery: the browser is closed through its normal close, as before,
-/// and the discovery opens a fresh one.
+/// A discovery that will be guarded - started with no_save, or a mapping
+/// run - takes the replay's guard over as it is: never lifted, not for a
+/// moment, its owner now the discovery's.
 #[tokio::test]
-async fn a_guard_that_will_not_lift_closes_the_replays_browser() {
+async fn a_guarded_discovery_takes_the_replays_guard_over_without_lifting_it() {
     use v2_lib::ai_bridge::{make_way_for_discovery, MadeWay};
+    use v2_lib::browser::cdp::Driver;
     use v2_lib::commands::autorun::GuardOwner;
-    let (mut slot, closed) = left_open_by_assistant(true, None);
-    {
-        let b = slot.as_mut().unwrap();
-        b.d = ScriptedDriver::new(|method, _| match method {
-            "Fetch.disable" => Err(CdpError::Protocol { method: method.into(), message: "busy".into() }),
-            _ => Ok(serde_json::json!({})),
-        });
-        b.d.calls.push(("Fetch.enable".into(), serde_json::json!({})));
-        b.guarded_case = Some(77);
-        b.guard_owner = Some(GuardOwner::Call { case_id: Some(77) });
+    let (mut slot, _) = replays_browser().await;
+    assert_eq!(make_way_for_discovery(&mut slot, None, true).await, Ok(MadeWay::TookOver));
+    let b = slot.as_ref().unwrap();
+    assert!(b.d.is_guarding_saves(), "the guard went off for the takeover");
+    assert!(b.d.calls_to("Fetch.disable").is_empty(), "the guard was stopped and put back");
+    assert_eq!((b.guarded_case, b.guard_owner.clone()), (None, Some(GuardOwner::Discovery)));
+}
+
+/// A discovery that names the other browser (Edge or Chrome) than the one
+/// the replay left closes that one, and opens the one it named; naming the
+/// same one, or none, keeps it.
+#[tokio::test]
+async fn a_discovery_naming_the_other_browser_closes_the_replays() {
+    use v2_lib::ai_bridge::{make_way_for_discovery, MadeWay};
+    use v2_lib::browser::launch::Browser;
+    let edge = || async {
+        let (mut slot, closed) = replays_browser().await;
+        slot.as_mut().unwrap().kind = Some(Browser::Edge);
+        (slot, closed)
+    };
+    let (mut slot, closed) = edge().await;
+    assert_eq!(make_way_for_discovery(&mut slot, Some(Browser::Chrome), false).await, Ok(MadeWay::Closed));
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst), "Edge was taken over for a discovery in Chrome");
+    for wanted in [Some(Browser::Edge), None] {
+        let (mut slot, closed) = edge().await;
+        assert_eq!(make_way_for_discovery(&mut slot, wanted, false).await, Ok(MadeWay::TookOver), "{wanted:?}");
+        assert!(slot.is_some() && !closed.load(Ordering::SeqCst));
     }
-    assert_eq!(make_way_for_discovery(&mut slot).await, Ok(MadeWay::Closed));
-    assert!(slot.is_none() && closed.load(Ordering::SeqCst), "a guarded browser was handed to the discovery");
+    // The person's browser is refused, whichever is named.
+    let (mut slot, closed) = held(true, None);
+    slot.as_mut().unwrap().kind = Some(Browser::Edge);
+    assert!(make_way_for_discovery(&mut slot, Some(Browser::Chrome), false).await.is_err());
+    assert!(slot.is_some() && !closed.load(Ordering::SeqCst));
+}
+
+/// The person's End discovery closes the assistant's discovery browser so
+/// Auto Run can run again (the mapping run's summary kept); the
+/// assistant's end_autorun_discovery keeps it, signed in.
+#[tokio::test]
+async fn the_persons_end_closes_the_discovery_browser_and_the_assistants_keeps_it() {
+    use v2_lib::ai_bridge::{end_discovery_as, EndedBy, DISCOVERY_ENDED_KEPT};
+    use v2_lib::commands::autorun::MappingRun;
+    let mapping = discovering().map(|s| DiscoveryState { mapping: Some(MappingRun::new(&["Leave".to_string()])), ..s });
+    let (mut slot, closed) = left_open_by_assistant(true, mapping);
+    let (status, said) = end_discovery_as(&mut slot, EndedBy::Person).await;
+    assert_eq!(status, 200, "{said}");
+    let v: serde_json::Value = serde_json::from_str(&said).expect("no summary");
+    assert_eq!(v["detail"], "the discovery is over and its browser is closed");
+    assert!(v["summary"].is_object(), "{said}");
+    assert!(slot.is_none() && closed.load(Ordering::SeqCst), "the person's End discovery kept the browser");
+
+    let (mut slot, closed) = left_open_by_assistant(true, discovering());
+    let (status, said) = end_discovery_as(&mut slot, EndedBy::Assistant).await;
+    assert_eq!((status, said.as_str()), (200, DISCOVERY_ENDED_KEPT));
+    assert!(slot.as_ref().is_some_and(|b| b.discovery.is_none()) && !closed.load(Ordering::SeqCst));
+
+    // In the app: the Setup card's button is the person's, the bridge's
+    // end_autorun_discovery the assistant's.
+    let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+    let button = &source[source.find("pub async fn auto_run_end_discovery").unwrap()..];
+    assert!(button[..button.find("\n}\n").unwrap()].contains("end_discovery(crate::ai_bridge::EndedBy::Person)"));
+    let bridge = include_str!("../../src/ai_bridge.rs").replace("\r\n", "\n");
+    let route = &bridge[bridge.find("(\"POST\", \"/autorun-discover-end\")").unwrap()..];
+    assert!(route[..route.find("},").unwrap()].contains("end_discovery(EndedBy::Assistant)"));
 }
 
 /// A browser that has gone is still let go first, through its normal
@@ -491,13 +562,13 @@ async fn a_guard_that_will_not_lift_closes_the_replays_browser() {
 async fn a_dead_browser_is_still_let_go() {
     use v2_lib::ai_bridge::{make_way_for_discovery, MadeWay};
     let (mut slot, closed) = left_open_by_assistant(false, None);
-    assert_eq!(make_way_for_discovery(&mut slot).await, Ok(MadeWay::Free), "a gone browser was taken over");
+    assert_eq!(make_way_for_discovery(&mut slot, None, false).await, Ok(MadeWay::Free), "a gone browser was taken over");
     assert!(slot.is_none() && closed.load(Ordering::SeqCst));
     let (mut slot, closed) = held(false, None);
-    assert_eq!(make_way_for_discovery(&mut slot).await, Ok(MadeWay::Free));
+    assert_eq!(make_way_for_discovery(&mut slot, None, false).await, Ok(MadeWay::Free));
     assert!(slot.is_none() && closed.load(Ordering::SeqCst));
     let mut none: Option<HeldOne> = None;
-    assert_eq!(make_way_for_discovery(&mut none).await, Ok(MadeWay::Free));
+    assert_eq!(make_way_for_discovery(&mut none, None, false).await, Ok(MadeWay::Free));
 }
 
 /// The assistant's replay after its discovery ends the discovery and keeps

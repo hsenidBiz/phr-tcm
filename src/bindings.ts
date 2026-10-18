@@ -422,10 +422,11 @@ export const commands = {
 	 */
 	autoRunResetComponents: (organization: string, project: string) => typedError<string, string>(__TAURI_INVOKE("auto_run_reset_components", { organization, project })),
 	/**
-	 *  End Discovery on Auto Run's Setup card: ends the discovery under way the
-	 *  way the assistant's `end_autorun_discovery` does, keeping its browser
-	 *  (Close browser closes it), and says so to the window. With no discovery
-	 *  going this does nothing. Nothing is lost: the map keeps what was seen.
+	 *  End Discovery on Auto Run's Setup card: the person closes the
+	 *  assistant's discovery browser so Auto Run can run again
+	 *  (`ai_bridge::EndedBy::Person`), and the window is told. With no
+	 *  discovery going this does nothing. Nothing is lost: the map keeps what
+	 *  was seen, and a mapping run's summary is kept.
 	 */
 	autoRunEndDiscovery: () => typedError<null, string>(__TAURI_INVOKE("auto_run_end_discovery")),
 	/**

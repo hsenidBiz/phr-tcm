@@ -2346,8 +2346,9 @@ async fn open_browser_is_refused_while_discovery_holds_the_browser() {
     assert!(busy_browser_sentence(true).contains("End discovery"), "{}", busy_browser_sentence(true));
 }
 
-/// Finding 4: End discovery ends the discovery the way
-/// `/autorun-discover-end` does, and is fine with nothing to end.
+/// Finding 4: End discovery ends the discovery through the same ending as
+/// `/autorun-discover-end`, as the person - who closes the browser so Auto
+/// Run can run again (`EndedBy::Person`) - and is fine with nothing to end.
 #[tokio::test]
 async fn the_end_discovery_command_ends_like_the_route() {
     let _g = crate::serial::autorun();
@@ -2357,7 +2358,10 @@ async fn the_end_discovery_command_ends_like_the_route() {
     assert!(!v2_lib::commands::autorun::auto_run_discovery_active());
     let source = include_str!("../../src/commands/autorun.rs");
     let cmd = &source[source.find("pub async fn auto_run_end_discovery").unwrap()..];
-    assert!(cmd[..cmd.find('}').unwrap()].contains("end_discovery().await"), "not the route's own ending");
+    assert!(
+        cmd[..cmd.find('}').unwrap()].contains("end_discovery(crate::ai_bridge::EndedBy::Person).await"),
+        "not the route's own ending, as the person"
+    );
 }
 
 // ------------------------------------------------- trying a component
@@ -4143,7 +4147,7 @@ async fn end_discovery_is_not_stuck_behind_a_long_batch() {
     // to give way before it waits for the browser.
     let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
     for start in [
-        "pub(crate) async fn end_discovery()",
+        "pub(crate) async fn end_discovery(",
         "pub async fn auto_run_close_browser()",
         "pub async fn release_autorun_browsers()",
         "pub async fn release_for_assistant()",
