@@ -1015,14 +1015,21 @@ fn every_other_use_of_the_browser_clears_the_stand() {
     };
     for f in ["pub async fn auto_run_step", "pub async fn auto_run_check_preconditions", "pub async fn make_way_for_setup", "pub async fn auto_run_sign_in"] {
         let b = body(&source, f);
-        assert!(b.contains("replay_stand = None;"), "{f} does not clear the stand");
+        assert!(b.contains("replay_stand = None;") || b.contains("used_otherwise();"), "{f} does not clear the stand");
         assert!(b.contains("note_session_use();"), "{f} is not counted as a use");
     }
     for f in ["pub async fn auto_run_step", "pub async fn auto_run_check_preconditions", "pub async fn auto_run_sign_in"] {
         assert!(body(&source, f).contains("opened_by = OpenedBy::Person;"), "{f} does not make the browser the person's");
     }
     let try_body = body(&bridge, "async fn autorun_try(");
-    assert!(try_body.contains("session.replay_stand = None;") && try_body.contains("note_session_use()"), "a try is not a use");
+    assert!(
+        (try_body.contains("session.replay_stand = None;") || try_body.contains("session.used_otherwise();"))
+            && try_body.contains("note_session_use()"),
+        "a try is not a use"
+    );
+    // `used_otherwise` is what most uses call: it must still clear the stand.
+    let used = body(&source, "pub(crate) fn used_otherwise(");
+    assert!(used.contains("self.replay_stand = None;"), "{used}");
     assert!(body(&source, "async fn open_into").contains("replay_stand: None,"), "a new browser starts with a stand");
     let replay = body(&source, "pub(crate) async fn replay_supervised");
     assert!(replay.contains("let stand = session.replay_stand.take();"), "{replay}");
