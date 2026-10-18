@@ -116,6 +116,10 @@ pub struct ScriptedDriver {
     /// The page sends a save the guard stops as the first call this says
     /// yes to is made: the sentence is taken next. Fires once.
     pub block_when: Option<(SaysYes, String)>,
+    /// Events that appear once the first call this says yes to is made:
+    /// how a test says "the page sent this between two particular reads".
+    /// Fires once.
+    pub events_when: Option<(SaysYes, Vec<Event>)>,
     /// Events that arrive while the driver idles, once it has idled this
     /// many ms since a call to the named method: how a test says "the save
     /// was answered 150 ms after the click". Each fires once.
@@ -214,6 +218,7 @@ impl ScriptedDriver {
             deferred: std::collections::HashMap::new(),
             block_on_collect: None,
             block_when: None,
+            events_when: None,
             on_idle_after_call: vec![],
             arriving: vec![],
             mark_ring: None,
@@ -328,6 +333,9 @@ impl Driver for ScriptedDriver {
             if m == method {
                 fired.push(ev.clone());
             }
+        }
+        if self.events_when.as_mut().is_some_and(|(says, _)| says(method, &params)) {
+            fired.extend(self.events_when.take().map(|(_, events)| events).unwrap_or_default());
         }
         for ev in fired {
             self.page_errors.observe(&ev);

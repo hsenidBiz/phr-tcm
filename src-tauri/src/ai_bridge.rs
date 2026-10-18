@@ -3533,6 +3533,13 @@ impl Heard {
         self.take_late();
     }
 
+    /// Before a batch's next action: the requests the application refused
+    /// the last action that changed the page since its own reads.
+    async fn look_for_refusals<D: crate::browser::cdp::Driver>(&mut self, d: &mut D) {
+        self.noted.look_for_refusals(d).await;
+        self.take_late();
+    }
+
     fn of(&self, at: usize) -> Answered {
         self.answers.get(at).cloned().unwrap_or_default()
     }
@@ -3788,9 +3795,9 @@ fn draft_for<'a>(
 /// answer (`discover_action_in`'s JSON): ok or failed with the detail, the
 /// dialogs it raised, the writes it set off (method and path only), the
 /// page path when it changed, whether its own page read failed, where its
-/// picture is, and - for one that worked - what the page answered it
-/// (`page_said`, `app_refused`). A failed action's detail already says
-/// what the page answered, so nothing is added to it.
+/// picture is, and what the page answered it (`page_said`, `app_refused`).
+/// A failed action's detail already names its refusal, so only what the
+/// page showed it and the detail does not say is added.
 fn batch_line(n: usize, action: &crate::browser::actions::Action, v: &serde_json::Value, last_path: &mut Option<String>) -> String {
     let ok = v["ok"].as_bool().unwrap_or(false);
     let detail = v["detail"].as_str().map(str::trim).filter(|d| !d.is_empty());
@@ -3823,10 +3830,13 @@ fn batch_line(n: usize, action: &crate::browser::actions::Action, v: &serde_json
         if let Some(first) = refused.first() {
             said.push_str(&format!("; {}", crate::autorun::refusals::app_refused_line(first)));
         }
-        let shown: Vec<crate::browser::page_messages::PageMessage> =
-            serde_json::from_value(v["page_said"].clone()).unwrap_or_default();
-        if !shown.is_empty() {
-            said.push_str(&format!("; {}", crate::autorun::runner::page_showed_note(&shown)));
+    }
+    let shown: Vec<crate::browser::page_messages::PageMessage> =
+        serde_json::from_value(v["page_said"].clone()).unwrap_or_default();
+    if !shown.is_empty() {
+        let note = crate::autorun::runner::page_showed_note(&shown);
+        if ok || !detail.is_some_and(|d| d.contains(&note)) {
+            said.push_str(&format!("; {note}"));
         }
     }
     format!("{n}. {}: {said}", if ok { "ok" } else { "failed" })
@@ -3863,6 +3873,15 @@ fn points_back(actions: &[crate::browser::actions::Action], heard: &Heard, faile
     let (k, said) = (0..failed).rev().map(|k| (k, heard.of(k).said)).find(|(_, said)| !said.is_empty())?;
     let what = actions.get(k).map(describe_action).unwrap_or_default();
     Some(format!("After action {} ({what}) {}.", k + 1, crate::autorun::runner::page_showed_note(&said)))
+}
+
+/// The first action of a batch that worked and was refused once it had
+/// ended (from 0): a refusal found within its own reads would have failed it.
+fn refused_once_ended(rows: &[Row], heard: &Heard) -> Option<usize> {
+    rows.iter().find_map(|row| match row {
+        Row::Ran(k, v) if v["ok"].as_bool() == Some(true) && !heard.of(*k).refused.is_empty() => Some(*k),
+        _ => None,
+    })
 }
 
 /// One line of a batch's answer, before the batch is done: said as it is,
@@ -4012,11 +4031,26 @@ async fn discover_actions_heard<B: DiscoveryBrowser>(
     let mut ran = 0;
     // The action the batch stopped at, and its detail.
     let mut stopped_at = None;
+    // An action that worked, refused once it had ended, and how many were
+    // then not run.
+    let mut refused_after = None;
     for (i, action) in actions.iter().enumerate() {
         if stop.swap(false, std::sync::atomic::Ordering::SeqCst) {
             let mut lines = batch_rows(actions, &rows, heard);
             lines.push(ended_line(actions.len() - i));
             return (409, lines.join("\n"));
+        }
+        // A refused request stops the batch even when it was answered after
+        // the action that sent it had ended (past the answer wait, or sent
+        // after its own reads): the next action does not run.
+        if stop_on_failure && i > 0 {
+            if let Some(b) = slot.as_mut() {
+                heard.look_for_refusals(b.parts().driver).await;
+            }
+            if let Some(k) = refused_once_ended(&rows, heard) {
+                refused_after = Some((k, actions.len() - i));
+                break;
+            }
         }
         let (status, body) =
             discover_action_heard(slot, root, organization, project, action, draft_for(action, draft), None, heard, i, false)
@@ -4055,11 +4089,15 @@ async fn discover_actions_heard<B: DiscoveryBrowser>(
     }
     let mut lines = batch_rows(actions, &rows, heard);
     let back = stopped_at.and_then(|(i, detail)| points_back(actions, heard, i, &detail));
-    match (ran < actions.len(), back) {
-        (true, Some(back)) => lines.push(format!("{} {back}", not_run_line(actions.len() - ran))),
-        (true, None) => lines.push(not_run_line(actions.len() - ran)),
-        (false, Some(back)) => lines.push(back),
-        (false, None) => {}
+    match (refused_after, ran < actions.len(), back) {
+        (Some((k, n)), _, _) => {
+            let what = actions.get(k).map(describe_action).unwrap_or_default();
+            lines.push(format!("Stopped: the app refused action {} ({what}) after it ended: {n} not run.", k + 1));
+        }
+        (None, true, Some(back)) => lines.push(format!("{} {back}", not_run_line(actions.len() - ran))),
+        (None, true, None) => lines.push(not_run_line(actions.len() - ran)),
+        (None, false, Some(back)) => lines.push(back),
+        (None, false, None) => {}
     }
     if blocked > 0 {
         lines.push(format!("Saves blocked by {blocked_by}: {blocked}."));

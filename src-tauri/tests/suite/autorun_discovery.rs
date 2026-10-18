@@ -4165,3 +4165,84 @@ async fn the_last_action_is_read_once_more_before_the_answer() {
     let reads = browser.as_ref().unwrap().d.calls_to("Runtime.evaluate").iter().filter(|p| p["expression"] == read_js).count();
     assert_eq!(reads, 3, "before, after, and once more at the end");
 }
+
+/// The page sends a save the application refuses only once the first
+/// action's own reads are done - as the discovery reads the page's live
+/// notes after it - so the refusal is found after that action ended.
+fn refused_after_the_first_action(d: &mut ScriptedDriver) {
+    let url = "https://hr.example.internal/api/eval-rules";
+    let event = |method: &str, params: Value| Event { method: method.into(), params };
+    let events = vec![
+        event(
+            "Network.requestWillBeSent",
+            json!({ "requestId": "late-1", "type": "XHR", "documentURL": "https://hr.example.internal/hr/leave/first",
+                    "request": { "url": url, "method": "POST" } }),
+        ),
+        event(
+            "Network.responseReceived",
+            json!({ "requestId": "late-1", "response": { "status": 400, "url": url, "mimeType": "application/json" } }),
+        ),
+        event("Network.loadingFinished", json!({ "requestId": "late-1" })),
+    ];
+    // The live notes are read once before the action and once after it.
+    let mut notes_read = 0;
+    let after_the_action = move |method: &str, params: &Value| {
+        if method == "Runtime.evaluate" && params["expression"].as_str().is_some_and(|e| e.contains("[role=alert]")) {
+            notes_read += 1;
+        }
+        notes_read == 2
+    };
+    d.events_when = Some((Box::new(after_the_action), events));
+}
+
+/// A refusal found only after an action that worked had ended still stops
+/// the batch before the next action, and says which action it was. The
+/// action's line stays ok, with the refusal on it.
+#[tokio::test]
+async fn a_refusal_found_after_an_action_ended_stops_the_batch() {
+    let dir = root_with_recipe_and_account();
+    let mut d = telling_page(|_, _| vec![], usize::MAX);
+    refused_after_the_first_action(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let actions = [click("#a"), click("#b"), click("#c")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(lines[0].starts_with("1. ok: ") && lines[0].contains(r#"; the app refused: "Weightage must total 100.""#), "{text}");
+    assert_eq!(
+        lines[1],
+        format!("Stopped: the app refused action 1 ({}) after it ended: 2 not run.", describe_action(&click("#a")))
+    );
+    let b = browser.as_ref().unwrap();
+    let released = b.d.calls_to("Input.dispatchMouseEvent").iter().filter(|p| p["type"] == "mouseReleased").count();
+    assert_eq!(released, 1, "an action after the refusal ran");
+
+    // A single action's answer names it, and stays ok.
+    let mut d = telling_page(|_, _| vec![], usize::MAX);
+    refused_after_the_first_action(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click("#a"), None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let v = parsed(&body);
+    assert_eq!(v["ok"], true, "{body}");
+    assert_eq!(v["app_refused"][0]["status"], 400, "{body}");
+}
+
+/// What the page showed a failed action that its detail does not say is
+/// still on its line.
+#[tokio::test]
+async fn a_failed_action_says_what_the_page_showed_it() {
+    let dir = root_with_recipe_and_account();
+    let late = |clicks: usize, reads: usize| if clicks >= 1 && reads >= 1 { vec!["Weightage must total 100."] } else { vec![] };
+    let mut d = telling_page(late, usize::MAX);
+    first_click_is_refused(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let (status, text) =
+        discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &[click("#save"), click("#b")], None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert!(lines[0].starts_with("1. failed: the app refused: "), "{text}");
+    assert!(lines[0].ends_with(r#"; the page showed: "Weightage must total 100.""#), "{text}");
+    assert_eq!(lines[0].matches("the page showed").count(), 1, "{text}");
+}

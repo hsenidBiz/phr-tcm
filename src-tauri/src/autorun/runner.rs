@@ -512,10 +512,23 @@ impl Noted {
     /// of a discovery call), with no wait. What is new comes back through
     /// `take_late`.
     pub async fn look_again<D: Driver>(&mut self, d: &mut D) {
+        self.look(d, true).await;
+    }
+
+    /// Look for requests the application refused the last action that
+    /// changed the page since its own reads - the network record only, no
+    /// read of the page - for a caller deciding whether to go on (a
+    /// discovery batch before its next action). What is found comes back
+    /// through `take_late`.
+    pub async fn look_for_refusals<D: Driver>(&mut self, d: &mut D) {
+        self.look(d, false).await;
+    }
+
+    async fn look<D: Driver>(&mut self, d: &mut D, messages: bool) {
         let Some(last) = self.last.as_mut() else {
             return;
         };
-        let said = if last.replaces_page {
+        let said = if last.replaces_page || !messages {
             Vec::new()
         } else {
             let now = read_page_messages(d).await;
