@@ -4,9 +4,19 @@
 //!
 //! Saved beside the project's other files as `<slug>-map.json`. It keeps
 //! page PATHS (no host, query or fragment) and locators only - never a page
-//! URL, a typed value or any text that came from a record. An area whose
+//! URL, a typed value or any text that came from a record - except an
+//! area's `refusals`, which keep the application's words as it showed them,
+//! record values included (the test environment's data). An area whose
 //! `explored_at` is old, or which has failed since, is stale and wants
 //! exploring again. `""` is the bucket for sightings that belong to no area.
+//!
+//! An area's `refusals` are the application's validation rules as Auto Run
+//! met them: a request the application refused, or a message the page
+//! showed that a failure then followed. Each is kept once per page and
+//! message (`remember_refusal`), with the action that caused it, and never
+//! a trace id, a status or an address. They are rules of the application,
+//! not of the map, so exploring the area again keeps them; at most
+//! `MAX_RULES_PER_AREA` are kept, the least recently seen going first.
 //!
 //! Each area also keeps its `sightings`: every distinct link it has seen,
 //! once each by its key (`SeenKey`), with when it was last seen. A page's
@@ -99,6 +109,10 @@ pub struct AreaMap {
     /// none.
     #[serde(default)]
     pub wholes: Vec<WholeSighting>,
+    /// The application's rules met in the area (see the module's notes). A
+    /// map written before these were kept has none.
+    #[serde(default)]
+    pub refusals: Vec<RefusalRule>,
     /// The links the area's saved scripts use, as written: read in memory
     /// by the seen check (`seen_check::add_saved_scripts`), never saved.
     #[serde(skip)]
@@ -968,6 +982,199 @@ pub fn mark_failed(root: &Path, org: &str, project: &str, area: &str) -> Result<
 pub fn forget_area(root: &Path, org: &str, project: &str, area: &str) -> Result<(), String> {
     let key = area_key(area);
     update(root, org, project, |map| map.areas.retain(|a| area_key(&a.area) != key))
+}
+
+// ------------------------------------------ the application's refusals
+
+/// The most rules one area keeps: past it, the least recently seen goes.
+pub const MAX_RULES_PER_AREA: usize = 30;
+
+/// One of the application's rules, as Auto Run met it in an area (see the
+/// module's notes).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct RefusalRule {
+    /// The page it was met on (`page_path`).
+    pub page: String,
+    /// The page's wizard step then, when it shows one: a wizard keeps one
+    /// address for every step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
+    /// The action that caused it, in a few words (`ai_bridge::describe_action`).
+    pub after: String,
+    /// The application's words, as it showed them.
+    pub message: String,
+    pub source: RuleSource,
+    /// The case whose replay or run met it, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub case_id: Option<i32>,
+    /// When it was first met, in milliseconds since the epoch.
+    #[specta(type = f64)]
+    pub first_seen: u64,
+    /// When it was last met, in milliseconds since the epoch.
+    #[specta(type = f64)]
+    pub last_seen: u64,
+    /// How many times it was met.
+    pub count: u32,
+}
+
+/// Who met a rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleSource {
+    /// A discovery, or an assistant's try.
+    Discovery,
+    /// A replay or a run, in a step that failed.
+    Run,
+    /// The assistant, which judged a message the page showed to be one.
+    Assistant,
+}
+
+/// A message as rules are told apart by: white space collapsed, case
+/// folded.
+fn rule_key(message: &str) -> String {
+    message.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// A message as a rule keeps it: white space collapsed, and at most as
+/// long as a message the page is read for.
+fn kept_message(message: &str) -> String {
+    let collapsed = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(crate::browser::page_messages::MAX_MESSAGE_CHARS).collect()
+}
+
+/// Keep `rule` in `area`'s entry, made when there is none (callers make
+/// the name canonical, `canonical_area`). One met before on the same page
+/// with the same message (`rule_key`) counts once more and takes the newer
+/// action and step. Past `MAX_RULES_PER_AREA` the least recently seen
+/// goes. A rule with no area, or no words, is never kept: the guide never
+/// shows the bucket for no area.
+pub fn remember_refusal(map: &mut DiscoveryMap, area: &str, rule: RefusalRule) {
+    let message = kept_message(&rule.message);
+    if area_key(area).is_empty() || message.is_empty() {
+        return;
+    }
+    let key = rule_key(&message);
+    let a = area_mut(map, area);
+    match a.refusals.iter_mut().find(|r| r.page == rule.page && rule_key(&r.message) == key) {
+        Some(r) => {
+            r.first_seen = r.first_seen.min(rule.first_seen);
+            r.last_seen = r.last_seen.max(rule.last_seen);
+            r.count = r.count.saturating_add(1);
+            r.after = rule.after;
+            r.step = rule.step;
+        }
+        None => a.refusals.push(RefusalRule { message, count: rule.count.max(1), ..rule }),
+    }
+    let over = a.refusals.len().saturating_sub(MAX_RULES_PER_AREA);
+    for _ in 0..over {
+        // The least recently seen, the earliest kept among equals.
+        let oldest = (0..a.refusals.len()).min_by_key(|&i| (a.refusals[i].last_seen, i)).expect("over the cap");
+        a.refusals.remove(oldest);
+    }
+}
+
+/// Take out of `area` the rules with this message (`rule_key`): on `page`
+/// only, or on every page when it is `None`. Says whether any went.
+pub fn forget_refusal(map: &mut DiscoveryMap, area: &str, page: Option<&str>, message: &str) -> bool {
+    let (area, key) = (area_key(area), rule_key(message));
+    let Some(a) = map.areas.iter_mut().find(|a| area_key(&a.area) == area) else {
+        return false;
+    };
+    let before = a.refusals.len();
+    a.refusals.retain(|r| rule_key(&r.message) != key || page.is_some_and(|p| r.page != p));
+    a.refusals.len() != before
+}
+
+/// The rules kept in `area`, the most recently seen first.
+pub fn rules_of<'a>(map: &'a DiscoveryMap, area: &str) -> Vec<&'a RefusalRule> {
+    let key = area_key(area);
+    let mut rules: Vec<(usize, &RefusalRule)> =
+        map.areas.iter().filter(|a| area_key(&a.area) == key).flat_map(|a| a.refusals.iter()).enumerate().collect();
+    rules.sort_by_key(|&(i, r)| (std::cmp::Reverse(r.last_seen), std::cmp::Reverse(i)));
+    rules.into_iter().map(|(_, r)| r).collect()
+}
+
+/// What the page answered one action, as the rules it teaches are read
+/// from it (`rules_from`).
+#[derive(Debug, Clone, Default)]
+pub struct ActionAnswer {
+    /// The page the action ran on (`page_path`).
+    pub page: String,
+    /// The page's wizard step after it, when it shows one.
+    pub step: Option<String>,
+    /// The action in a few words (`ai_bridge::describe_action`).
+    pub after: String,
+    pub said: Vec<crate::browser::page_messages::PageMessage>,
+    pub refused: Vec<crate::autorun::refusals::RefusedRequest>,
+    /// The action failed, for a reason the page gave: what the page showed
+    /// after an action before it was then a refusal.
+    pub failed: bool,
+}
+
+/// The rules a discovery call, a try or a failed step teaches, from what
+/// the page answered each of its actions in order: every request the
+/// application refused, by its message (never its trace id, status or
+/// address), and every message the page showed after an action that a
+/// failure then followed. A message with no failure after it is never one
+/// on its own: it may as well have been "Saved".
+pub fn rules_from(answers: &[ActionAnswer], source: RuleSource, case_id: Option<i32>, now: u64) -> Vec<RefusalRule> {
+    let last_failure = answers.iter().rposition(|a| a.failed);
+    let mut out = Vec::new();
+    for (i, a) in answers.iter().enumerate() {
+        let followed = last_failure.is_some_and(|f| i < f);
+        let said = a.said.iter().filter(|_| followed).map(|m| m.text.as_str());
+        // The same words twice from one action are one rule, met once.
+        let mut met: Vec<String> = Vec::new();
+        for message in a.refused.iter().map(|r| r.message.as_str()).chain(said) {
+            let key = rule_key(message);
+            if key.is_empty() || met.contains(&key) {
+                continue;
+            }
+            met.push(key);
+            out.push(RefusalRule {
+                page: a.page.clone(),
+                step: a.step.clone(),
+                after: a.after.clone(),
+                message: message.to_string(),
+                source,
+                case_id,
+                first_seen: now,
+                last_seen: now,
+                count: 1,
+            });
+        }
+    }
+    out
+}
+
+/// Keep `rules` in `area` of the map, in one load, change and write.
+/// Nothing is written for no area or no rules.
+pub fn remember_refusals(root: &Path, org: &str, project: &str, area: &str, rules: Vec<RefusalRule>) -> Result<(), String> {
+    let area = canonical_area(root, org, project, area);
+    if area.is_empty() || rules.is_empty() {
+        return Ok(());
+    }
+    update(root, org, project, |map| {
+        for rule in rules {
+            remember_refusal(map, &area, rule);
+        }
+    })
+}
+
+/// `remember_refusals` for an action or a run that goes on whatever comes
+/// of it: a map that could not be written is said in the log - how many
+/// rules, and the area, never their words - and nothing fails. No project,
+/// no area or no rules keeps nothing.
+pub fn remember_refusals_logged(root: &Path, org: &str, project: &str, area: Option<&str>, rules: Vec<RefusalRule>) {
+    let area = area.unwrap_or("").trim();
+    if project.trim().is_empty() || area.is_empty() || rules.is_empty() {
+        return;
+    }
+    let n = rules.len();
+    if remember_refusals(root, org, project, area, rules).is_err() {
+        let what = if n == 1 { "1 rule".to_string() } else { format!("{n} rules") };
+        crate::applog::warn(format!("Discovery map: {what} the application showed in {area} could not be kept"));
+    }
 }
 
 /// Never explored, failed since, or explored more than 30 days ago.

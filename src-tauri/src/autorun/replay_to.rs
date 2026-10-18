@@ -585,6 +585,7 @@ async fn run_steps<D: Driver>(
     // failure names what the page answered the step before. A replay keeps
     // no step records, so what came late is said only there.
     let mut noted = runner::Noted::default();
+    noted.in_case(script.area.as_deref());
     for (at, step) in script.steps.iter().filter(|s| in_range(s.step_number)).enumerate() {
         let k = step.step_number;
         if stopped() {
@@ -641,6 +642,13 @@ async fn run_steps<D: Driver>(
                     last.screenshot = runner::picture(d, root).await;
                 }
             }
+        }
+        // A step that failed teaches the application's rules, under the
+        // area the case is in, with what came late for the step before.
+        if outcomes.iter().any(|o| !o.ok) {
+            let late = noted.take_late();
+            runner::remember_failed_step(d, root, organization, project, step, &outcomes, &late, noted.area(), script.case_id)
+                .await;
         }
         if let Some(mut why) = outcomes.iter().find(|o| !o.ok).map(|o| o.detail.clone()) {
             if let Some(other) = guarding_other.filter(|_| crate::browser::save_guard::is_blocked(&why)) {

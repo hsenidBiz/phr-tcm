@@ -4246,3 +4246,74 @@ async fn a_failed_action_says_what_the_page_showed_it() {
     assert!(lines[0].ends_with(r#"; the page showed: "Weightage must total 100.""#), "{text}");
     assert_eq!(lines[0].matches("the page showed").count(), 1, "{text}");
 }
+
+// ------------------------------------------- what the app refused, kept
+
+use v2_lib::autorun::discovery_map::{rules_of, RuleSource};
+
+/// A request the application refused in a discovery is kept as a rule of
+/// the discovery's area: the application's words, the page it ran on and
+/// the action - never its trace id, status or address.
+#[tokio::test]
+async fn a_refused_request_in_discovery_is_remembered_without_its_trace_id() {
+    let dir = root_with_recipe_and_account();
+    let mut d = telling_page(|_, _| vec![], usize::MAX);
+    first_click_is_refused(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let actions = [press_tab(), click("#save"), click("#b")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let file = std::fs::read_to_string(map_path(dir.path(), ORG, PROJECT)).unwrap();
+    assert!(file.contains("Weightage must total 100."), "{file}");
+    assert!(!file.contains("00-4bf9-00"), "{file}");
+    assert!(!file.contains("hr.example.internal") && !file.contains('?'), "{file}");
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    let rules = rules_of(&map, "Leave");
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].page, "/hr/leave/start");
+    assert_eq!(rules[0].after, describe_action(&click("#save")));
+    assert_eq!((rules[0].source, rules[0].count), (RuleSource::Discovery, 1));
+
+    // The same refusal again is the same rule, seen twice.
+    let mut d = telling_page(|_, _| vec![], usize::MAX);
+    first_click_is_refused(&mut d);
+    let (mut browser, _) = slot(d, exploring("Leave"));
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &click("#save"), None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    let rules = rules_of(&map, "Leave");
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].count, 2);
+}
+
+/// A message on its own is never taken for a rule: a success toast is
+/// not kept, whatever came after it.
+#[tokio::test]
+async fn a_success_toast_alone_is_never_remembered() {
+    let dir = root_with_recipe_and_account();
+    let saved = |clicks: usize, _| if clicks >= 1 { vec!["Saved."] } else { vec![] };
+    let (mut browser, _) = slot(telling_page(saved, usize::MAX), exploring("Leave"));
+    let actions = [click("#a"), click("#b"), click("#c")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    assert!(map.areas.iter().all(|a| a.refusals.is_empty()), "{:?}", map.areas.iter().map(|a| &a.refusals).collect::<Vec<_>>());
+}
+
+/// A message followed by a failure in the same batch is kept: the
+/// failure is the evidence it was a refusal.
+#[tokio::test]
+async fn a_message_followed_by_a_failure_is_remembered() {
+    let dir = root_with_recipe_and_account();
+    let shows = |clicks: usize, _| if clicks >= 1 { vec![NO_COMPONENT] } else { vec![] };
+    let (mut browser, _) = slot(telling_page(shows, 1), exploring("Leave"));
+    let actions = [click("#save"), expect_goals(), click("#b")];
+    let (status, text) = discover_actions_in(&mut browser, dir.path(), ORG, PROJECT, &actions, None, None, true, &no_stop()).await;
+    assert_eq!(status, 200, "{text}");
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    let rules = rules_of(&map, "Leave");
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].message, NO_COMPONENT);
+    assert_eq!(rules[0].page, "/hr/leave/start");
+    assert_eq!(rules[0].after, describe_action(&click("#save")));
+}

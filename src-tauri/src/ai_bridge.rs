@@ -3458,11 +3458,12 @@ fn count_blocked_writes<D: crate::browser::cdp::Driver>(
 }
 
 /// What one action a discovery ran did: its outcome, the dialog it raised,
-/// the writes the page sent and the path it ended on.
+/// the writes the page sent, and the paths it began and ended on.
 struct Discovered {
     outcome: crate::browser::actions::ActionOutcome,
     dialogs: Vec<String>,
     writes: Vec<serde_json::Value>,
+    before: String,
     after: String,
 }
 
@@ -3473,6 +3474,11 @@ struct Discovered {
 /// action's own reads is still put on it, and a later failure names it.
 /// Each action runs as a step of its own, so the steps `noted` numbers are
 /// mapped back to the call's actions.
+///
+/// It also keeps, for each of those steps, what the application's rules
+/// are read from (`discovery_map::rules_from`): the page the action ran
+/// on, the action and what the page answered it. The call keeps them once,
+/// when it is over (`remember`).
 #[derive(Default)]
 struct Heard {
     noted: crate::autorun::runner::Noted,
@@ -3480,6 +3486,11 @@ struct Heard {
     owners: Vec<usize>,
     /// Everything the page answered each of the call's actions so far.
     answers: Vec<Answered>,
+    /// What the page answered each step `noted` numbered, by that number.
+    spots: Vec<crate::autorun::discovery_map::ActionAnswer>,
+    /// The discovery's area and case, as the call found them.
+    area: Option<String>,
+    case_id: Option<i32>,
 }
 
 /// What the page answered one action of a discovery call.
@@ -3494,6 +3505,7 @@ impl Heard {
     fn begin(&mut self, at: usize) {
         self.noted.step = self.owners.len();
         self.owners.push(at);
+        self.spots.push(Default::default());
     }
 
     fn add(
@@ -3512,18 +3524,46 @@ impl Heard {
     }
 
     /// What the step action `at` just ran answered it, and what came late
-    /// for the call's earlier actions.
-    fn ran(&mut self, at: usize, outcome: &crate::browser::actions::ActionOutcome) {
+    /// for the call's earlier actions. `one` is the action the step ran (a
+    /// component's own), on the page at `page`.
+    fn ran(
+        &mut self,
+        at: usize,
+        outcome: &crate::browser::actions::ActionOutcome,
+        one: &crate::browser::actions::Action,
+        page: &str,
+    ) {
         self.add(at, outcome.page_said.clone(), outcome.refused.clone());
+        if let Some(spot) = self.spots.get_mut(self.noted.step) {
+            spot.page = if page.is_empty() { String::new() } else { crate::autorun::discovery_map::page_path(page) };
+            spot.step = outcome.page_step.clone();
+            spot.after = describe_action(one);
+            spot.said.extend(outcome.page_said.iter().cloned());
+            spot.refused.extend(outcome.refused.iter().cloned());
+            spot.failed = !outcome.ok && !outcome.harness;
+        }
         self.take_late();
     }
 
     fn take_late(&mut self) {
         for late in self.noted.take_late() {
+            if let Some(spot) = self.spots.get_mut(late.step) {
+                spot.said.extend(late.page_said.iter().cloned());
+                spot.refused.extend(late.refused.iter().cloned());
+            }
             if let Some(&at) = self.owners.get(late.step) {
                 self.add(at, late.page_said, late.refused);
             }
         }
+    }
+
+    /// The call is over: what it taught of the application's rules is kept
+    /// under the discovery's area, in one write - a map that could not be
+    /// written fails nothing.
+    fn remember(&self, root: &std::path::Path, organization: &str, project: &str) {
+        use crate::autorun::discovery_map::{remember_refusals_logged, rules_from, RuleSource};
+        let rules = rules_from(&self.spots, RuleSource::Discovery, self.case_id, crate::autorun::sessions::now_ms());
+        remember_refusals_logged(root, organization, project, self.area.as_deref(), rules);
     }
 
     /// The call's last action has no next one to read the page for it: the
@@ -3603,6 +3643,7 @@ pub async fn discover_action_in<B: DiscoveryBrowser>(
 ) -> (u16, String) {
     let mut heard = Heard::default();
     let answer = discover_action_heard(slot, root, organization, project, action, draft, area, &mut heard, 0, true).await;
+    heard.remember(root, organization, project);
     heard.forget(slot);
     answer
 }
@@ -3643,6 +3684,8 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
         state.area = Some(crate::autorun::discovery_map::canonical_area(root, organization, project, &moved));
     }
     let area_name = state.area.clone();
+    heard.area = area_name.clone();
+    heard.case_id = state.case_id;
     let mapping = state.mapping.is_some();
     // Once a discovery must not save, it stays so (`DiscoveryState::no_save`).
     let must_not_save = discovery_must_not_save(root, state);
@@ -3681,7 +3724,7 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
             Ok(ran) => ran,
             Err(refused) => return refused,
         };
-        heard.ran(at, &ran.outcome);
+        heard.ran(at, &ran.outcome, one, &ran.before);
         // A component that fails on its first action says where the
         // browser is: most often it stands on another screen.
         if component.is_some() && i == 0 && !ran.outcome.ok {
@@ -3997,6 +4040,7 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
     let answer =
         discover_actions_heard(slot, root, organization, project, actions, draft, area, stop_on_failure, stop, &mut heard)
             .await;
+    heard.remember(root, organization, project);
     heard.forget(slot);
     answer
 }
@@ -4239,7 +4283,7 @@ async fn discover_one<D: crate::browser::cdp::Driver>(
             unrecorded(&why);
         }
     }
-    Ok(Discovered { outcome: tried.outcome, dialogs, writes, after })
+    Ok(Discovered { outcome: tried.outcome, dialogs, writes, before, after })
 }
 
 /// End the discovery in `slot`: its browser is closed. A browser the
@@ -5802,10 +5846,11 @@ async fn try_in_area<D: crate::browser::cdp::Driver>(
     action: &crate::browser::actions::Action,
 ) -> (u16, String) {
     let tried = try_action(d, account, lease, root, organization, project, case_id, discovery_area, false, action, None).await;
-    let (outcome, steps) = match tried {
-        Ok(tried) => (tried.outcome, tried.steps),
+    let (outcome, steps, answered) = match tried {
+        Ok(tried) => (tried.outcome, tried.steps, tried.answered),
         Err(refused) => return refused,
     };
+    remember_tried(d, root, organization, project, discovery_area, case_id, &answered).await;
     let mut text = format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
     if let Some(shot) = &outcome.screenshot {
         text.push_str(&format!(" (picture: {})", crate::autorun::store::shot_path(root, shot).display()));
@@ -5832,6 +5877,56 @@ struct Tried {
     steps: Vec<(String, crate::browser::actions::ActionOutcome)>,
     outcome: crate::browser::actions::ActionOutcome,
     dialog: Option<crate::autorun::StepDialog>,
+    /// Each action the try carried out - a component's own, or the one -
+    /// described, with its own outcome: what the page answered each.
+    answered: Vec<(String, crate::browser::actions::ActionOutcome)>,
+}
+
+/// What a try teaches of the application's rules, kept as a discovery's
+/// (`discovery_map::rules_from`) under the area its sightings go to
+/// (`recording_area`): every request the application refused its actions
+/// up to the first that failed, and what the page showed after the ones
+/// before that failure. Only a try with something to keep reads the page
+/// it is on, which a refused action leaves where it was; with no area
+/// known nothing is kept, and a map that could not be written fails
+/// nothing.
+async fn remember_tried<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    discovery_area: Option<&str>,
+    case_id: i32,
+    answered: &[(String, crate::browser::actions::ActionOutcome)],
+) {
+    use crate::autorun::discovery_map::{page_path, remember_refusals_logged, rules_from, ActionAnswer, RuleSource};
+    // What the first failure stopped was never carried out.
+    let ran = answered.iter().position(|(_, o)| !o.ok).map_or(answered.len(), |i| i + 1);
+    let answers: Vec<ActionAnswer> = answered[..ran]
+        .iter()
+        .map(|(what, o)| ActionAnswer {
+            step: o.page_step.clone(),
+            after: what.clone(),
+            said: o.page_said.clone(),
+            refused: o.refused.clone(),
+            failed: !o.ok && !o.harness,
+            ..Default::default()
+        })
+        .collect();
+    let case = (case_id != 0).then_some(case_id);
+    let mut rules = rules_from(&answers, RuleSource::Discovery, case, crate::autorun::sessions::now_ms());
+    if rules.is_empty() || project.trim().is_empty() {
+        return;
+    }
+    let Some(area) = recording_area(root, discovery_area, case) else {
+        return;
+    };
+    let page = current_page(d).await.0;
+    let page = if page.is_empty() { page } else { page_path(&page) };
+    for rule in &mut rules {
+        rule.page = page.clone();
+    }
+    remember_refusals_logged(root, organization, project, Some(&area), rules);
 }
 
 /// One action, carried out by the runner's own step loop as a step of one
@@ -5962,6 +6057,10 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         }
         _ => Vec::new(),
     };
+    let answered = match (&steps[..], outcomes.first()) {
+        ([], Some(o)) => vec![(describe_action(action), o.clone())],
+        _ => steps.clone(),
+    };
     let outcome = if steps.is_empty() {
         let Some(outcome) = outcomes.into_iter().next() else {
             return Err((500, "the action produced no outcome".to_string()));
@@ -6001,7 +6100,7 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         }
         record_matched_targets(&at, &started_on, &matched);
     }
-    Ok(Tried { outcome, dialog: run.dialog, steps })
+    Ok(Tried { outcome, dialog: run.dialog, steps, answered })
 }
 
 /// A run's failed cases, as text an assistant can act on - and, when it

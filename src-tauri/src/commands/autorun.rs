@@ -1192,6 +1192,9 @@ pub async fn auto_run_step(
     // earlier step's action caused late is said only in a failure's words.
     session.noted.step = session.noted.step.wrapping_add(1);
     session.noted.take_late();
+    // The area the case is in: its script's, unless a `return_to_area` of
+    // an earlier step took it elsewhere.
+    session.noted.in_case(saved.as_ref().and_then(|s| s.area.as_deref()));
     crate::autorun::runner::supervised_step_begins(&mut session.cdp, &mut session.tabs_case, case_id, first_step).await;
     guard_supervised(session, &root, &organization, &project, case_id, true).await?;
     // A watched run makes no trip of its own: a bare `return_to_area` builds
@@ -1230,7 +1233,26 @@ pub async fn auto_run_step(
         &mut run,
     )
     .await?;
-    Ok(StepRun { outcomes, tab: run.tab.take(), dialog: run.dialog.take(), page_errors_seen: run.page_errors_seen })
+    let (tab, dialog, page_errors_seen) = (run.tab.take(), run.dialog.take(), run.page_errors_seen);
+    drop(run);
+    // A step that failed teaches the application's rules, with what came
+    // late for the step before (`runner::remember_failed_step`).
+    if outcomes.iter().any(|o| !o.ok) {
+        let late = session.noted.take_late();
+        crate::autorun::runner::remember_failed_step(
+            &mut session.cdp,
+            &root,
+            &organization,
+            &project,
+            &step,
+            &outcomes,
+            &late,
+            session.noted.area(),
+            case_id,
+        )
+        .await;
+    }
+    Ok(StepRun { outcomes, tab, dialog, page_errors_seen })
 }
 
 /// Replay case `case_id`'s saved steps 1 to `step` - 1 in the supervised

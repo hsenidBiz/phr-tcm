@@ -508,6 +508,7 @@ async fn run_case_in<D: Driver>(
     // The case's last action that changed the page, carried from step to
     // step: a failure names what the page answered the step before.
     let mut noted = runner::Noted::default();
+    noted.in_case(script.area.as_deref());
     let stepping = Instant::now();
     for step in &script.steps {
         if skip.is_none() && cancel.load(Ordering::SeqCst) {
@@ -591,7 +592,12 @@ async fn run_case_in<D: Driver>(
             skip = Some(AFTER_FAILED_STEP);
         }
         // What the page answered an earlier step's action after it ended.
-        runner::credit_late(&mut steps, noted.take_late());
+        let late = noted.take_late();
+        // A step that failed teaches the application's rules, under the
+        // area the case is in: once per case, as the case stops there.
+        runner::remember_failed_step(d, root, organization, project, step, &outcomes, &late, noted.area(), script.case_id)
+            .await;
+        runner::credit_late(&mut steps, late);
         steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot: None, downloads: Vec::new(), tab, dialog, components, duration_ms: Some(ms(asked_at.elapsed())) });
         page_errors_seen += seen_errors;
         if let Some(p) = picture {

@@ -1609,3 +1609,56 @@ async fn a_watched_step_after_another_use_names_nothing_from_before_it() {
     assert!(!five[0].detail.contains(" - after "), "{}", five[0].detail);
     assert!(noted.take_late().is_empty());
 }
+
+/// A step that fails in a run teaches the application's rules: the
+/// refusal and the message the step before's save got are kept under the
+/// case's area, as a run's - and a step that passed teaches nothing.
+#[tokio::test]
+async fn a_failed_step_remembers_what_the_step_before_was_refused() {
+    use v2_lib::autorun::discovery_map::{load_map, rules_of, RuleSource};
+    use v2_lib::autorun::runner::{remember_failed_step, Noted};
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = said_page(vec![vec![], vec![], vec!["Weightage must total 100."]], true);
+    click_saves_late(&mut d, 20);
+    let mut noted = Noted::default();
+    noted.in_case(Some("Eval Rules"));
+    let save = json!([{ "kind": "click", "selector": { "css": "#save" } }]);
+    let three = run_noted(&mut d, save.clone(), &mut noted, 0).await;
+    let late = noted.take_late();
+    remember_failed_step(&mut d, dir.path(), "Acme", "Web", &tab_step(save), &three, &late, noted.area(), 7).await;
+    assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty(), "a step that passed was remembered");
+    let wait = json!([{ "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }]);
+    let four = run_noted(&mut d, wait.clone(), &mut noted, 1).await;
+    assert!(!four[0].ok, "{:?}", four[0]);
+    let late = noted.take_late();
+    assert_eq!(late.len(), 1, "{late:?}");
+    remember_failed_step(&mut d, dir.path(), "Acme", "Web", &tab_step(wait), &four, &late, noted.area(), 7).await;
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let rules = rules_of(&map, "Eval Rules");
+    let mut messages: Vec<&str> = rules.iter().map(|r| r.message.as_str()).collect();
+    messages.sort();
+    assert_eq!(messages, ["One or more validation errors occurred.", "Weightage must total 100."], "{rules:?}");
+    let click = v2_lib::ai_bridge::describe_action(&serde_json::from_value(json!({ "kind": "click", "selector": { "css": "#save" } })).unwrap());
+    assert!(rules.iter().all(|r| r.after == click && r.source == RuleSource::Run && r.case_id == Some(7)), "{rules:?}");
+    let file = std::fs::read_to_string(v2_lib::autorun::discovery_map::map_path(dir.path(), "Acme", "Web")).unwrap();
+    assert!(!file.contains("00-4bf9-00") && !file.contains("eval-rules"), "{file}");
+}
+
+/// With no area known, a failed step is not remembered anywhere.
+#[tokio::test]
+async fn a_failed_step_with_no_area_is_not_remembered() {
+    use v2_lib::autorun::runner::{remember_failed_step, Noted};
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = said_page(vec![vec![]], true);
+    click_is_refused(&mut d);
+    let mut noted = Noted::default();
+    noted.in_case(None);
+    let steps = json!([
+        { "kind": "click", "selector": { "css": "#save" } },
+        { "kind": "wait_for", "selector": { "css": "#goals" }, "timeout_ms": 100 }
+    ]);
+    let out = run_noted(&mut d, steps.clone(), &mut noted, 0).await;
+    assert!(out[0].ok && !out[0].refused.is_empty() && !out[1].ok, "{out:?}");
+    remember_failed_step(&mut d, dir.path(), "Acme", "Web", &tab_step(steps), &out, &[], noted.area(), 7).await;
+    assert!(!v2_lib::autorun::discovery_map::map_path(dir.path(), "Acme", "Web").exists());
+}

@@ -988,3 +988,127 @@ fn a_text_line_is_never_counted_as_one_by_a_read() {
     let edit = area.sightings.iter().find(|s| s.key == role_key("button", "Edit")).unwrap();
     assert_eq!(edit.matched, 1, "a control line of the same whole read is counted");
 }
+
+// ------------------------------------------ the application's refusals
+
+use v2_lib::autorun::discovery_map::{
+    forget_refusal, remember_refusal, remember_refusals, rules_of, DiscoveryMap, RefusalRule, RuleSource,
+    MAX_RULES_PER_AREA,
+};
+
+fn rule(page: &str, message: &str, at: u64) -> RefusalRule {
+    RefusalRule {
+        page: page.to_string(),
+        step: None,
+        after: "click css #save".to_string(),
+        message: message.to_string(),
+        source: RuleSource::Discovery,
+        case_id: None,
+        first_seen: at,
+        last_seen: at,
+        count: 1,
+    }
+}
+
+/// The same message on the same page is one rule: seen again, it counts
+/// once more and takes the newer action and step.
+#[test]
+fn a_repeat_counts_and_moves_last_seen() {
+    let mut map = DiscoveryMap::default();
+    remember_refusal(&mut map, "Eval Rules", rule("/eval/rules", "At least one component must be enabled.", 10));
+    let mut again = rule("/eval/rules", "  at least ONE component\n must be enabled. ", 50);
+    again.after = "click \"Save & Continue\"".to_string();
+    again.step = Some("Assessment Components".to_string());
+    remember_refusal(&mut map, "eval rules", again);
+    // Another page is another rule.
+    remember_refusal(&mut map, "Eval Rules", rule("/eval/other", "At least one component must be enabled.", 60));
+    assert_eq!(map.areas.len(), 1, "{map:?}");
+    let rules = &map.areas[0].refusals;
+    assert_eq!(rules.len(), 2, "{rules:?}");
+    let r = &rules[0];
+    assert_eq!((r.first_seen, r.last_seen, r.count), (10, 50, 2));
+    assert_eq!(r.message, "At least one component must be enabled.", "the first wording is kept");
+    assert_eq!(r.after, "click \"Save & Continue\"");
+    assert_eq!(r.step.as_deref(), Some("Assessment Components"));
+    let newest: Vec<&str> = rules_of(&map, "EVAL RULES").iter().map(|r| r.page.as_str()).collect();
+    assert_eq!(newest, ["/eval/other", "/eval/rules"], "most recently seen first");
+}
+
+/// An area keeps at most thirty rules: the one seen longest ago goes.
+#[test]
+fn the_thirty_first_rule_drops_the_least_recently_seen() {
+    let mut map = DiscoveryMap::default();
+    for i in 0..MAX_RULES_PER_AREA as u64 {
+        remember_refusal(&mut map, "A", rule("/p", &format!("rule {i}"), 100 + i));
+    }
+    // Rule 0 is seen again, so rule 1 is now the one seen longest ago.
+    remember_refusal(&mut map, "A", rule("/p", "rule 0", 500));
+    remember_refusal(&mut map, "A", rule("/p", "rule new", 600));
+    let messages: Vec<&str> = map.areas[0].refusals.iter().map(|r| r.message.as_str()).collect();
+    assert_eq!(messages.len(), MAX_RULES_PER_AREA);
+    assert!(!messages.contains(&"rule 1"), "{messages:?}");
+    assert!(messages.contains(&"rule 0") && messages.contains(&"rule new"), "{messages:?}");
+}
+
+/// A rule belongs to an area: one with none is never kept.
+#[test]
+fn a_rule_never_goes_to_the_unattributed_bucket() {
+    let mut map = DiscoveryMap::default();
+    remember_refusal(&mut map, "", rule("/p", "Name is required.", 1));
+    remember_refusal(&mut map, "   ", rule("/p", "Name is required.", 1));
+    assert!(map.areas.is_empty(), "{map:?}");
+    let dir = tempfile::tempdir().unwrap();
+    remember_refusals(dir.path(), "Acme", "Web", "", vec![rule("/p", "Name is required.", 1)]).unwrap();
+    assert!(load_map(dir.path(), "Acme", "Web").unwrap().areas.is_empty());
+}
+
+/// Exploring an area again replaces what its pages hold, never the
+/// application's rules.
+#[test]
+fn a_re_exploration_keeps_the_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, Some(1000), 1000).unwrap();
+    remember_refusals(dir.path(), "Acme", "Web", "A", vec![rule("/p", "Name is required.", 1100)]).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Next")], None, Some(2000), 2000).unwrap();
+    assert_eq!(names_on(dir.path(), "/p"), ["Next"]);
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let rules = rules_of(&map, "A");
+    assert_eq!(rules.len(), 1, "{map:?}");
+    assert_eq!(rules[0].message, "Name is required.");
+}
+
+/// A map written before rules were kept reads with none, and a rule's
+/// step and case are left out of the file when there are none.
+#[test]
+fn a_map_written_before_rules_reads_with_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = map_path(dir.path(), "Acme", "Web");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let old = serde_json::json!({ "areas": [{ "area": "A", "explored_at": 5, "account": null, "failed_since": false,
+        "pages": [], "outcomes": [], "writes": [] }] });
+    std::fs::write(&path, old.to_string()).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    assert!(map.areas[0].refusals.is_empty());
+    remember_refusals(dir.path(), "Acme", "Web", "A", vec![rule("/p", "Name is required.", 7)]).unwrap();
+    let file: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let saved = &file["areas"][0]["refusals"][0];
+    assert_eq!(saved["source"], "discovery");
+    assert!(saved.get("step").is_none() && saved.get("case_id").is_none(), "{saved}");
+    assert_eq!(load_map(dir.path(), "Acme", "Web").unwrap().areas[0].explored_at, Some(5));
+}
+
+/// A rule that no longer holds can be taken out: by its message, on one
+/// page or on every page of the area.
+#[test]
+fn a_rule_is_forgotten_by_its_message() {
+    let mut map = DiscoveryMap::default();
+    remember_refusal(&mut map, "A", rule("/p", "Name is required.", 1));
+    remember_refusal(&mut map, "A", rule("/q", "Name is required.", 2));
+    assert!(!forget_refusal(&mut map, "A", Some("/r"), "Name is required."));
+    assert!(forget_refusal(&mut map, "a", Some("/p"), "name IS required."));
+    assert_eq!(rules_of(&map, "A").len(), 1);
+    assert!(forget_refusal(&mut map, "A", None, "Name is required."));
+    assert!(rules_of(&map, "A").is_empty());
+    assert!(!forget_refusal(&mut map, "Nowhere", None, "Name is required."));
+    assert_eq!(map.areas.len(), 1, "forgetting made no area");
+}

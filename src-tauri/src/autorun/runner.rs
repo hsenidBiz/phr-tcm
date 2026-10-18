@@ -489,6 +489,13 @@ pub struct Noted {
     pub step: usize,
     last: Option<Changed>,
     late: Vec<LateAnswer>,
+    /// The case's own area (its script's), where a bare `return_to_area`
+    /// takes it back to.
+    home: Option<String>,
+    /// The area the case is in now, as far as is known: its own, until a
+    /// `return_to_area` that worked takes it to another. What a failed
+    /// step teaches is kept under it (`remember_failed_step`).
+    area: Option<String>,
 }
 
 impl Noted {
@@ -505,6 +512,29 @@ impl Noted {
             d.net_unmark(last.mark);
         }
         self.late.clear();
+        self.home = None;
+        self.area = None;
+    }
+
+    /// The case runs, or goes on running, in `area` (its script's): the
+    /// area it is in starts there, unless a `return_to_area` of this case
+    /// has already taken it elsewhere.
+    pub fn in_case(&mut self, area: Option<&str>) {
+        self.home = area.map(str::trim).filter(|a| !a.is_empty()).map(str::to_string);
+        if self.area.is_none() {
+            self.area = self.home.clone();
+        }
+    }
+
+    /// The area the case is in now, when it is known.
+    pub fn area(&self) -> Option<&str> {
+        self.area.as_deref()
+    }
+
+    /// A `return_to_area` that worked: the case is now in the area it
+    /// names, or back in its own.
+    fn went_to(&mut self, named: Option<&str>) {
+        self.area = named.map(str::to_string).or_else(|| self.home.clone());
     }
 
     /// Read once more what the page answered the last action that changed
@@ -563,6 +593,8 @@ struct Changed {
     /// Everything reported on it so far.
     said: Vec<PageMessage>,
     refused: Vec<RefusedRequest>,
+    /// The page's step indicator after it, when it has one.
+    page_step: Option<String>,
 }
 
 /// What the page answered an action of an earlier step after that step
@@ -575,6 +607,11 @@ pub struct LateAnswer {
     pub action: usize,
     pub page_said: Vec<PageMessage>,
     pub refused: Vec<RefusedRequest>,
+    /// The action in a few words (`ai_bridge::describe_action`), and the
+    /// page's step indicator after it: for a caller that keeps no record
+    /// of that step and remembers what it was refused.
+    pub what: String,
+    pub page_step: Option<String>,
 }
 
 /// Put each late answer on the outcome it belongs to, in the case's step
@@ -585,6 +622,81 @@ pub fn credit_late(steps: &mut [super::StepRecord], late: Vec<LateAnswer>) {
             add_answer(o, l.page_said, l.refused);
         }
     }
+}
+
+/// What a step that failed in a replay or a run teaches of the
+/// application's rules, kept in the discovery map under `area` - the area
+/// the case is in (`Noted::area`) - as a run's: the requests the
+/// application refused the step's actions up to the failure, and the
+/// messages the page showed after the last action before it that the page
+/// answered - the step before's last, when its answer came late (`late`,
+/// as `Noted::take_late` handed it back). A step that passed, no area, or
+/// nothing to keep keeps nothing; a failure of the browser or a Stop is no
+/// evidence that a message was a refusal. The page is the one the browser
+/// is on now: a refused save leaves the page where it was, and only a step
+/// that has something to keep reads it. A map that could not be written is
+/// only logged.
+#[allow(clippy::too_many_arguments)]
+pub async fn remember_failed_step<D: Driver>(
+    d: &mut D,
+    root: &Path,
+    organization: &str,
+    project: &str,
+    step: &StepScript,
+    outcomes: &[ActionOutcome],
+    late: &[LateAnswer],
+    area: Option<&str>,
+    case_id: i32,
+) {
+    use super::discovery_map::{page_path, remember_refusals_logged, rules_from, ActionAnswer, RuleSource};
+    let Some(failed) = outcomes.iter().position(|o| !o.ok) else {
+        return;
+    };
+    if area.is_none_or(|a| a.trim().is_empty()) || project.trim().is_empty() {
+        return;
+    }
+    let telling = !outcomes[failed].harness && outcomes[failed].detail != AFTER_STOP;
+    // The outcomes are the expanded actions': a component's own.
+    let actions: Vec<Action> = match components::expand_step(root, organization, project, &step.actions) {
+        Ok((expanded, _)) => expanded.into_iter().map(|(a, _)| a).collect(),
+        Err(_) => step.actions.clone(),
+    };
+    let mut answers: Vec<ActionAnswer> = late
+        .iter()
+        .map(|l| ActionAnswer {
+            step: l.page_step.clone(),
+            after: l.what.clone(),
+            said: l.page_said.clone(),
+            refused: l.refused.clone(),
+            ..Default::default()
+        })
+        .collect();
+    answers.extend(outcomes[..=failed].iter().enumerate().map(|(i, o)| ActionAnswer {
+        step: o.page_step.clone(),
+        after: actions.get(i).map(crate::ai_bridge::describe_action).unwrap_or_default(),
+        said: o.page_said.clone(),
+        refused: o.refused.clone(),
+        failed: i == failed && telling,
+        ..Default::default()
+    }));
+    // Of the messages, only the last action's before the failure that the
+    // page answered with one: the one the failure's own words name.
+    let named = answers[..answers.len() - 1].iter().rposition(|a| !a.said.is_empty());
+    for (i, a) in answers.iter_mut().enumerate() {
+        if Some(i) != named {
+            a.said.clear();
+        }
+    }
+    let mut rules = rules_from(&answers, RuleSource::Run, Some(case_id), super::sessions::now_ms());
+    if rules.is_empty() {
+        return;
+    }
+    let page = crate::ai_bridge::current_page(d).await.0;
+    let page = if page.is_empty() { page } else { page_path(&page) };
+    for rule in &mut rules {
+        rule.page = page.clone();
+    }
+    remember_refusals_logged(root, organization, project, area, rules);
 }
 
 /// Add what the page answered an action to its outcome.
@@ -618,7 +730,14 @@ fn credit_answer(
             add_answer(o, said, refused);
         }
     } else {
-        late.push(LateAnswer { step: to.step, action: to.action, page_said: said, refused });
+        late.push(LateAnswer {
+            step: to.step,
+            action: to.action,
+            page_said: said,
+            refused,
+            what: to.what.clone(),
+            page_step: to.page_step.clone(),
+        });
     }
 }
 
@@ -1198,7 +1317,7 @@ async fn run_expanded<D: Driver>(
                 }
                 let refused = refused_with_ids(d, action_mark, &own).await;
                 outcome.refused = refused.iter().map(|(_, r)| r.clone()).collect();
-                outcome.page_step = after.step;
+                outcome.page_step = after.step.clone();
                 // A try fails on it, like a target that is not there. What a
                 // dialog nobody expected left on its words stays.
                 if run.refusals_fail && outcome.ok && !outcome.refused.is_empty() {
@@ -1219,6 +1338,7 @@ async fn run_expanded<D: Driver>(
                     replaces_page: replaces,
                     said: outcome.page_said.clone(),
                     refused: outcome.refused.clone(),
+                    page_step: after.step,
                 });
             } else {
                 d.net_unmark(action_mark);
@@ -1273,6 +1393,10 @@ async fn run_expanded<D: Driver>(
             outcome.screenshot = picture(d, root).await;
         }
         blocked = blocked.or(stops_the_step(&outcome));
+        // The area the case is in from here, for what a failure teaches.
+        if outcome.ok && matches!(action, Action::ReturnToArea { .. }) {
+            noted.went_to(action.area_named());
+        }
         out.push(outcome);
     }
     // Judging a dialog answers it, which changes the page.
