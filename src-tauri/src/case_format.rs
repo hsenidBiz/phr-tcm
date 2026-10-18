@@ -165,6 +165,30 @@ fn lines_outside_fences(text: &str) -> Vec<(&str, bool)> {
     out
 }
 
+/// The text outside fences as paragraphs, each its lines joined by a
+/// space: a blank line or a fence ends one.
+fn paragraphs(lines: &[(&str, bool)]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for (line, after_blank) in lines {
+        if line.trim().is_empty() || *after_blank {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+        }
+        if !line.trim().is_empty() {
+            if !cur.is_empty() {
+                cur.push(' ');
+            }
+            cur.push_str(line.trim());
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
 fn scan(text: &str) -> Scan {
     let mut s = Scan::default();
 
@@ -215,10 +239,17 @@ fn scan(text: &str) -> Scan {
     }
 
     // What the lines say, outside any fence.
-    for (line, after_blank) in lines_outside_fences(text) {
-        if sql_line().is_match(line) {
-            s.sql.push(excerpt(line));
+    let lines = lines_outside_fences(text);
+    for para in paragraphs(&lines) {
+        // A query may run over several lines (SELECT on one, FROM on the
+        // next), so it is matched on the paragraph, with inline code
+        // blanked out: a query in backticks is kept as typed.
+        let plain = without_code_spans(&para);
+        if let Some(m) = sql_line().find(&plain) {
+            s.sql.push(excerpt(&plain[m.start()..]));
         }
+    }
+    for (line, after_blank) in lines {
         if after_blank && link_definition().is_match(line) {
             s.eaten.push(format!(
                 "a link definition (`{}` reads as [ref]: url and is dropped)",
@@ -239,7 +270,14 @@ fn scan(text: &str) -> Scan {
 /// The warnings for one case's text. `index` is the case's number in the
 /// draft (from 1); only steps with text of their own are looked at (a
 /// Shared Steps reference has none).
-pub fn formatting_warnings(index: usize, tc: &TestCase) -> Vec<String> {
+///
+/// `new_case` is a case without an id. A case being updated holds text
+/// read back from Azure DevOps, which is plain text escaped to be safe, so
+/// a heading, table, link, image, run of emphasis or mostly-bold step can
+/// only be formatting somebody typed, and those are reported for every
+/// case. An SQL line outside a fence, a backslash or a leading `>` can be
+/// the plain text already there, so those are reported for new cases only.
+pub fn formatting_warnings(index: usize, tc: &TestCase, new_case: bool) -> Vec<String> {
     let mut places: Vec<(String, bool, Scan)> = Vec::new();
     let mut step_spans: Vec<(usize, usize)> = Vec::new();
     for (n, st) in tc.steps.iter().enumerate() {
@@ -304,6 +342,10 @@ pub fn formatting_warnings(index: usize, tc: &TestCase) -> Vec<String> {
             "{head}: {at} is mostly bold. Bold is for the one value or control a step turns on; \
              write the rest as plain text."
         ));
+    }
+
+    if !new_case {
+        return out;
     }
 
     let at = places

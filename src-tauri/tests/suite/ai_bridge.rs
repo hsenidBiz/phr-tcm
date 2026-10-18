@@ -4662,13 +4662,54 @@ async fn characters_markdown_would_change_warn_and_say_to_use_backticks() {
 #[tokio::test]
 async fn an_unchanged_old_case_raises_no_formatting_warning() {
     // A case with an id is an update. validate_cases has no copy of its
-    // current text to compare with, so it holds back every formatting
-    // warning from it: text a developer already has in Azure DevOps is
-    // never flagged as if the assistant had just written it.
-    let mut case = one_step("# Open the page\nSELECT * FROM Leave WHERE Id = 4", "**a** **b** **c** **d**");
+    // current text, so it holds back the warnings that plain text read
+    // back from Azure DevOps could trigger (an SQL line outside a fence, a
+    // backslash, a leading >, a --- line): text the developer already has
+    // is never flagged as if the assistant had just written it.
+    let mut case = one_step(
+        "Run SELECT * FROM Leave WHERE Id = 4\n> a note\n\\\\fileserver\\share\n---",
+        "It works.",
+    );
     case["id"] = serde_json::json!(155170);
     let all = warnings_for(case).await;
-    assert!(!all.contains("heading") && !all.contains("SQL") && !all.contains("bold or italic"), "{all}");
+    assert_eq!(all, "", "{all}");
+}
+
+#[tokio::test]
+async fn a_case_with_an_id_still_warns_about_formatting_somebody_typed() {
+    // Text read back from Azure DevOps is escaped, so these can only be
+    // formatting that was typed: they are reported on an update too.
+    let cases = [
+        (one_step("# Open the page", "It opens."), "heading"),
+        (one_step("Open the page.", "| a | b |\n| --- | --- |\n| 1 | 2 |"), "table"),
+        (one_step("Open [the page](https://example.com).", "It opens."), "link"),
+        (one_step("Open the page.", "![logo](logo.png)"), "image"),
+        (one_step("**a** **b** **c** **d**", "It opens."), "bold or italic"),
+        (one_step("**Open the leave request page and check the balance**", "It opens."), "mostly bold"),
+    ];
+    for (mut case, what) in cases {
+        case["id"] = serde_json::json!(155170);
+        let all = warnings_for(case).await;
+        assert!(all.contains(what), "{what}: {all}");
+    }
+}
+
+#[tokio::test]
+async fn a_query_over_several_lines_is_caught_and_a_query_in_backticks_is_not() {
+    let all = warnings_for(one_step("Run the following query.\nSELECT *\nFROM Leave\nWHERE Id = 4", "It works.")).await;
+    assert!(all.contains("step 1 action") && all.contains("SQL"), "{all}");
+
+    let mut case = one_step("Open the page.", "It opens.");
+    case["preconditions"] = serde_json::json!("The table holds one row:\nUPDATE Leave\nSET Status = 1");
+    let all = warnings_for(case).await;
+    assert!(all.contains("preconditions") && all.contains("SQL"), "{all}");
+
+    // A fence between SELECT and FROM splits them into two pieces of text.
+    let ok = warnings_for(one_step("Run SELECT 1.\n\n```\nx\n```\n\nThen read FROM the list.", "It works.")).await;
+    assert!(!ok.contains("SQL"), "{ok}");
+
+    let ok = warnings_for(one_step("Run `SELECT * FROM Leave WHERE Id = 4` and read the row.", "It works.")).await;
+    assert!(!ok.contains("SQL"), "{ok}");
 }
 
 #[tokio::test]

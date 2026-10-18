@@ -8930,14 +8930,16 @@ async fn validate_json(
                     ));
                 }
 
-                // How the text is formatted. A case with an id is an
-                // update, and validate has no copy of its current text to
-                // compare with, so text the developer already holds is
-                // never flagged as the assistant's: only new cases are
-                // looked at (see `case_format`).
-                if tc.update_id.is_none() {
-                    warnings.extend(crate::case_format::formatting_warnings(i + 1, tc));
-                }
+                // How the text is formatted. validate has no copy of an
+                // updated case's current text to compare with, so a case
+                // with an id gets only the warnings that plain text read
+                // back from Azure DevOps can never trigger (see
+                // `case_format::formatting_warnings`).
+                warnings.extend(crate::case_format::formatting_warnings(
+                    i + 1,
+                    tc,
+                    tc.update_id.is_none(),
+                ));
 
                 // A negative folded into its positive is covered but not
                 // visible: nobody auditing by title can see it was tested.
