@@ -3082,6 +3082,7 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
         return (409, why);
     }
     let discovery_area = session.discovery.as_ref().and_then(|s| s.area.clone());
+    let account_before = session.account.clone();
     let answer = try_for_case(
         &mut session.cdp,
         &mut session.tabs_case,
@@ -3095,6 +3096,10 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
         &action,
     )
     .await;
+    // A try that signed in, or ended the session (`expire_session`), is
+    // heard by the panes, as a replay's is.
+    let changed = crate::autorun::replay_to::signed_in_event(&account_before, &session.account);
+    crate::commands::autorun::tell_panes(changed);
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery(&slot);
     answer
@@ -3229,26 +3234,42 @@ pub enum MadeWay {
     Closed,
 }
 
+/// Where a guarded discovery reads its save words from (`nav::load_nav`):
+/// the project it explores. `make_way_for_discovery` arms the discovery's
+/// guard with them when it takes a browser over.
+#[derive(Debug, Clone, Copy)]
+pub struct GuardFrom<'a> {
+    pub root: &'a std::path::Path,
+    pub organization: &'a str,
+    pub project: &'a str,
+}
+
 /// Before a discovery opens in `slot`: a held browser that has gone is let
 /// go first (`forget_gone_browser`). A live one the assistant's replay left
 /// open (opened by the assistant, no discovery in it, no guard of the
 /// person's) is taken over, sign-in and all: its tabs other than `main` are
 /// closed, the dialogs the replay expected or saw are forgotten, and the
 /// replay's stand and last page change too (`DiscoveryBrowser::taken_over`).
-/// Its guard is never lifted here: a discovery that will be guarded
-/// (`guarded`: it must not save, or is a mapping run) takes the guard over
-/// as it is, its owner now the discovery's, with no moment unguarded; for
-/// any other, the replay's guard stays until the start has decided the
-/// sign-in (`discover_start_in`). One that is another browser than the one
-/// `wanted` (Edge or Chrome) is closed through its normal close instead, and
-/// a new one opened. Any other live browser - the person's, or a
-/// discovery's - refuses it with the busy sentence (`refuse_while_held`),
+/// Its guard is never lifted here. A discovery that will be guarded
+/// (`guarded`: it must not save, or is a mapping run, with where its save
+/// words are) has its guard on before this returns, still under the lock
+/// the caller took: the replay's guard taken over as it is, or - with none
+/// on - the discovery's own armed now (`guard_a_no_save_discovery`), its
+/// owner the discovery's either way. So no call that takes the lock between
+/// the takeover and the start (`discover_start_in`) finds the browser
+/// unguarded with a no_save discovery on record. A guard that will not go
+/// on refuses the discovery with its sentence, the browser left as the
+/// replay left it. For any other discovery, the replay's guard stays until
+/// the start has decided the sign-in. One that is another browser than the
+/// one `wanted` (Edge or Chrome) is closed through its normal close
+/// instead, and a new one opened. Any other live browser - the person's, or
+/// a discovery's - refuses it with the busy sentence (`refuse_while_held`),
 /// untouched. A replay going never reaches here
 /// (`refuse_discovery_while_busy`).
 pub async fn make_way_for_discovery<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
     wanted: Option<crate::browser::launch::Browser>,
-    guarded: bool,
+    guarded: Option<GuardFrom<'_>>,
 ) -> Result<MadeWay, String> {
     use crate::commands::autorun::GuardOwner;
     forget_gone_browser(slot).await;
@@ -3272,15 +3293,18 @@ pub async fn make_way_for_discovery<B: DiscoveryBrowser>(
     }
     if let Some(b) = slot.as_mut() {
         let p = b.parts();
+        // First the guard, before the browser is touched: one that will not
+        // go on leaves it as the replay left it.
+        if let Some(from) = guarded {
+            guard_a_no_save_discovery(p.driver, true, from.root, from.organization, from.project).await?;
+            *p.guarded_case = None;
+            crate::commands::autorun::claim_guard(p.guard_owner, GuardOwner::Discovery);
+        }
         crate::browser::cdp::Driver::close_other_tabs(p.driver).await;
         // Nothing the replay expected of a dialog, or saw, is the discovery's.
         if let Some(book) = crate::browser::cdp::Driver::dialog_book(p.driver) {
             book.disarm();
             book.take_seen();
-        }
-        if guarded && crate::browser::cdp::Driver::is_guarding_saves(&*p.driver) {
-            *p.guard_owner = Some(GuardOwner::Discovery);
-            *p.guarded_case = None;
         }
         b.taken_over();
     }
@@ -3293,8 +3317,9 @@ pub async fn make_way_for_discovery<B: DiscoveryBrowser>(
 /// its sign-in: after going home in a browser already signed in, right
 /// before the sign-in otherwise. A discovery's own guard, or the person's,
 /// is not this to lift. One the browser will not lift stays on, still the
-/// call's, and the discovery's next call lifts it as it ends: saves stay
-/// stopped meanwhile, never let through.
+/// call's: no discovery call lifts it as it ends (each lifts only the guard
+/// it put on itself), so it stays until a later replay lifts it (or a reset
+/// or release does). Saves stay stopped meanwhile, never let through.
 async fn lift_a_calls_guard<D: crate::browser::cdp::Driver>(
     d: &mut D,
     guarded_case: &mut Option<i32>,
@@ -3304,7 +3329,7 @@ async fn lift_a_calls_guard<D: crate::browser::cdp::Driver>(
         return;
     }
     if !crate::commands::autorun::lift_guard_of(d, guarded_case, owner).await {
-        crate::applog::warn("Auto Run discovery: the replay's guard would not lift yet; it stays on until the next call");
+        crate::applog::warn("Auto Run discovery: the replay's guard would not lift yet; it stays on until a later replay lifts it");
     }
 }
 
@@ -3498,6 +3523,7 @@ pub async fn discover_start_in<B: DiscoveryBrowser>(
                     case_id,
                     no_save,
                     call_no_save: false,
+                    call_case_id: None,
                 };
                 let must_not_save = discovery_must_not_save(root, &state);
                 *p.discovery = Some(crate::commands::autorun::DiscoveryState { no_save: must_not_save, ..state });
@@ -3845,6 +3871,7 @@ async fn end_call_guard<B: DiscoveryBrowser>(slot: &mut Option<B>, root: &std::p
         return;
     };
     let said = std::mem::take(&mut state.call_no_save);
+    state.call_case_id = None;
     if !said || was_guarding || state.mapping.is_some() || discovery_must_not_save(root, state) {
         return;
     }
@@ -3899,7 +3926,9 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     let discovery_guarded = discovery_must_not_save(root, state);
     state.no_save = discovery_guarded;
     let must_not_save = discovery_guarded || state.call_no_save;
-    let case_id = state.case_id;
+    // A call's own guard is for the case that call named, not the
+    // discovery's.
+    let call_case_id = state.call_case_id;
     let d = p.driver;
     let runs: Vec<&crate::browser::actions::Action> = match &component {
         Some((_, actions)) => actions.iter().collect(),
@@ -3913,7 +3942,7 @@ async fn discover_action_heard<B: DiscoveryBrowser>(
     if discovery_guarded {
         crate::commands::autorun::claim_guard(p.guard_owner, crate::commands::autorun::GuardOwner::Discovery);
     } else if must_not_save {
-        crate::commands::autorun::claim_guard(p.guard_owner, crate::commands::autorun::GuardOwner::Call { case_id });
+        crate::commands::autorun::claim_guard(p.guard_owner, crate::commands::autorun::GuardOwner::Call { case_id: call_case_id });
     }
     let reports_blocks = must_not_save && !mapping;
     let mut blocked_writes = if reports_blocks { take_no_save_blocks(d, &runs) } else { Vec::new() };
@@ -5094,8 +5123,10 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
         return (409, why);
     }
     // None named: a browser the replay left is kept, whichever it is, and a
-    // new one is the one last chosen (`open_for_discovery`).
-    let made_way = match crate::commands::autorun::open_for_discovery(browser.as_deref(), mapping, asked).await {
+    // new one is the one last chosen (`open_for_discovery`). A guarded
+    // discovery's guard is on in a browser it took over before the lock goes.
+    let from = GuardFrom { root: &root, organization: &ctx.org, project: &ctx.project };
+    let made_way = match crate::commands::autorun::open_for_discovery(browser.as_deref(), mapping, asked, from).await {
         Ok(made_way) => made_way,
         Err(why) => return (409, why),
     };
@@ -5150,16 +5181,18 @@ pub fn discovery_for(root: &std::path::Path, body: &str) -> Result<crate::comman
 
 /// Put what a discovery call named (`discovery_for`) on the discovery in
 /// `slot`, for that call: when it said `no_save` (or named a case marked
-/// so), that call is guarded (`DiscoveryState::call_no_save`) - the
-/// discovery does not become one that must not save. The first case named
-/// is the one it explores for, and a case marked `no_save` keeps its
-/// discovery guarded from then on (`discovery_must_not_save`). Nothing to do
-/// with no discovery going.
+/// so), that call is guarded (`DiscoveryState::call_no_save`), for the case
+/// the call named (`DiscoveryState::call_case_id`) - the discovery does not
+/// become one that must not save. The first case named is the one it
+/// explores for, and a case marked `no_save` keeps its discovery guarded
+/// from then on (`discovery_must_not_save`). Nothing to do with no
+/// discovery going.
 pub fn mark_discovery_for<B: DiscoveryBrowser>(slot: &mut Option<B>, asked: crate::commands::autorun::DiscoveryFor) {
     let Some(state) = slot.as_mut().and_then(|b| b.parts().discovery.as_mut()) else {
         return;
     };
     state.call_no_save = asked.no_save;
+    state.call_case_id = asked.case_id;
     if state.case_id.is_none() {
         state.case_id = asked.case_id;
     }

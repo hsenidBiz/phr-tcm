@@ -538,6 +538,7 @@ export default function RunPane({
         return;
       }
       const own = ownAccount.current;
+      const wasOpen = openedRef.current;
       if (isOpen && !openedRef.current) {
         const launch = launchRef.current + 1;
         signedFor.current = launch;
@@ -550,6 +551,12 @@ export default function RunPane({
       if (account && own !== "" && account !== own) {
         mustSignIn.current = true;
         setResign(`the Auto Run browser was signed in as ${account} by a replay - sign in again before the next step`);
+      }
+      // Its sign-in was forgotten under this pane (a reset that found it
+      // gone, a step that ended the session): nobody is signed in now.
+      if (!account && wasOpen && own !== "") {
+        mustSignIn.current = true;
+        setResign("the Auto Run browser is no longer signed in - sign in again before the next step");
       }
     });
     return () => {

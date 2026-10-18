@@ -948,11 +948,10 @@ unchanged. The sign-in is not checked: it is the app's own.
 How long the guard lasts depends on what set it. A discovery started with
 `no_save`, or for a case marked `no_save`, keeps its saves stopped until it
 ends. `no_save: true` on one discovery action or batch lasts for that call
-only. A case's mark applies to every replay, try and discovery call that names
-the case. A discovery call that names a case marked `no_save` is guarded for
-that call only, unless the discovery is for that case (it started with it, or
-it was the first case named). Name the `case_id` on every discovery call for a
-`no_save` case. The replay that ends a guarded discovery is guarded too, for
+only. A call that names a marked case (a replay, a try or a discovery call) is
+guarded for that call, and every call when the discovery is for that case (it
+started with it, or it was the first case named). Name the `case_id` on every
+discovery call for a `no_save` case. The replay that ends a guarded discovery is guarded too, for
 that replay only; the next replay of a case that may save is not guarded.
 
 When the page tries to save, the case fails at once with:
@@ -1822,8 +1821,9 @@ with the case and its failing step, runs that case's saved steps before it
 in the supervised browser and stops there. Its answer carries the page, so
 you can try the step with `try_autorun_action` at once. No browser needs to
 be open: the app opens one, signs in as the case's account and goes to its
-area (a browser already signed in as that account goes straight there). A discovery of yours still open is ended first, keeping what it
-mapped, and the answer says so; start a new one to explore again.
+area (a browser already signed in as that account goes straight there). A
+discovery of yours still open is ended first, keeping what it mapped, and
+the answer says so; start a new one to explore again.
 
 - You may replay without asking the person. A script marked must not save
   replays at once too, its saves stopped throughout.
@@ -1832,9 +1832,11 @@ mapped, and the answer says so; start a new one to explore again.
 - The replay leaves the Auto Run browser open on that step, and its answer
   says so. It stays signed in: your next replay of a case with the same account
   goes straight to its area ("Signed in already: went to <area>."), and
-  `start_autorun_discovery` takes it over as it is. Until you start a discovery,
-  discovery actions, component saves and template runs as the case's account are
-  refused. Do not release the browser between replays:
+  `start_autorun_discovery` takes it over (its other tabs closed, then home).
+  Until you start a discovery, discovery actions and component saves are
+  refused; template runs as the case's account stay refused until
+  `release_autorun_browser` frees it, as a discovery keeps the sign-in. Do not
+  release the browser between replays:
   `release_autorun_browser` is only for a broken one (frozen, wrong account,
   session gone, "the browser did not answer"), and `reset_autorun_browser` gives
   a clean page with the sign-in kept.

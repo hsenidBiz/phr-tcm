@@ -720,7 +720,14 @@ fn the_guide_teaches_replaying_to_the_failing_step() {
     assert!(flat.contains("carries on from where your last replay of it stood"), "{flat}");
     assert!(flat.contains("\"Carried on from step K\" or \"Started from the beginning\""), "{flat}");
     assert!(flat.contains("Do not release the browser between replays"), "{flat}");
-    assert!(flat.contains("`start_autorun_discovery` takes it over as it is"), "{flat}");
+    assert!(flat.contains("`start_autorun_discovery` takes it over (its other tabs closed, then home)"), "{flat}");
+    assert!(!flat.contains("takes it over as it is"), "{flat}");
+    // A takeover keeps the account's lease: template runs as it stay
+    // refused until release, not until a discovery starts.
+    assert!(
+        flat.contains("template runs as the case's account stay refused until `release_autorun_browser` frees it"),
+        "{flat}"
+    );
     assert!(flat.contains("\"Signed in already: went to <area>.\""), "{flat}");
     assert!(!flat.contains("starting a discovery closes it"), "{flat}");
     assert!(flat.contains("Never replay past the failing step to \"see what happens\"."), "{flat}");
@@ -1333,8 +1340,7 @@ fn the_guide_says_how_long_must_not_save_lasts() {
     for said in [
         "A discovery started with `no_save`, or for a case marked `no_save`, keeps its saves stopped until it ends.",
         "`no_save: true` on one discovery action or batch lasts for that call only.",
-        "A case's mark applies to every replay, try and discovery call that names the case.",
-        "A discovery call that names a case marked `no_save` is guarded for that call only",
+        "A call that names a marked case (a replay, a try or a discovery call) is guarded for that call, and every call when the discovery is for that case",
         "Name the `case_id` on every discovery call for a `no_save` case",
         "The replay that ends a guarded discovery is guarded too, for that replay only",
     ] {

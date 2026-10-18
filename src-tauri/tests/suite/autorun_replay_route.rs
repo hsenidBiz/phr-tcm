@@ -592,7 +592,12 @@ async fn a_replay_that_leaves_the_browser_open_says_what_it_blocks() {
     let mine = LeftOpen { account: Some("admin".into()), by_assistant: true };
     assert_eq!(
         left_open_line(&mine),
-        "The Auto Run browser stays open on this step, signed in: discovery actions, component saves and template runs as admin are refused until start_autorun_discovery takes it over as it is. Do not release it between replays; release_autorun_browser is for a broken browser."
+        "The Auto Run browser stays open on this step, signed in: discovery actions and component saves are refused until start_autorun_discovery takes it over, and template runs as admin until release_autorun_browser frees it (a discovery keeps its sign-in). Do not release it between replays; release_autorun_browser is for a broken browser."
+    );
+    let nobody = LeftOpen { account: None, by_assistant: true };
+    assert_eq!(
+        left_open_line(&nobody),
+        "The Auto Run browser stays open on this step: discovery actions and component saves are refused until start_autorun_discovery takes it over. Do not release it between replays; release_autorun_browser is for a broken browser."
     );
     let theirs = LeftOpen { account: None, by_assistant: false };
     assert_eq!(

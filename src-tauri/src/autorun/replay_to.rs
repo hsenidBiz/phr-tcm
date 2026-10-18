@@ -131,14 +131,15 @@ pub fn opened_event(had_browser: bool) -> Option<crate::events::AutorunSessionCh
     (!had_browser).then_some(crate::events::AutorunSessionChanged { opened: true, account: None })
 }
 
-/// What the panes hear once a replay has signed the browser in: the
-/// account key it holds now, when that is not the one it held `before`.
+/// What the panes hear once something changed the browser's sign-in - a
+/// replay signed it in, or its sign-in was forgotten (a step's
+/// `expire_session`, a reset that found it gone): the account key it holds
+/// now (`None`: nobody), when that is not the one it held `before`.
 pub fn signed_in_event(
     before: &Option<String>,
     after: &Option<String>,
 ) -> Option<crate::events::AutorunSessionChanged> {
-    (after.is_some() && after != before)
-        .then(|| crate::events::AutorunSessionChanged { opened: true, account: after.clone() })
+    (after != before).then(|| crate::events::AutorunSessionChanged { opened: true, account: after.clone() })
 }
 
 /// Why a replay stopped when its page tried to save while the browser was
@@ -159,17 +160,25 @@ pub struct LeftOpen {
 /// The line an assistant's replay answer gains when the browser stays
 /// open: what that blocks, and how it is freed.
 pub fn left_open_line(left: &LeftOpen) -> String {
+    if left.by_assistant {
+        // A discovery taking it over keeps its sign-in, and so the account's
+        // lease: template runs as that account wait for the release.
+        let (signed, templates) = match &left.account {
+            Some(key) => (
+                ", signed in",
+                format!(", and template runs as {key} until release_autorun_browser frees it (a discovery keeps its sign-in)"),
+            ),
+            None => ("", String::new()),
+        };
+        return format!(
+            "The Auto Run browser stays open on this step{signed}: discovery actions and component saves are refused until start_autorun_discovery takes it over{templates}. Do not release it between replays; release_autorun_browser is for a broken browser."
+        );
+    }
     let blocked = match &left.account {
         Some(key) => format!("discovery actions, component saves and template runs as {key}"),
         None => "discovery actions and component saves".to_string(),
     };
-    if left.by_assistant {
-        format!(
-            "The Auto Run browser stays open on this step, signed in: {blocked} are refused until start_autorun_discovery takes it over as it is. Do not release it between replays; release_autorun_browser is for a broken browser."
-        )
-    } else {
-        format!("The person's Auto Run browser stays open on this step: {blocked} are refused until the person closes it.")
-    }
+    format!("The person's Auto Run browser stays open on this step: {blocked} are refused until the person closes it.")
 }
 
 /// A step the replay ran outside `main`: the tab it ran in, as a live
@@ -644,6 +653,8 @@ impl Reuse {
 /// Said when a browser already signed in stopped a save (`sentence`, the
 /// guard's) on its way to `area`, before the case signed in again.
 pub fn save_stopped_line(area: &str, sentence: &str) -> String {
+    // One dot, whether or not the sentence brought its own.
+    let sentence = sentence.trim_end().trim_end_matches('.');
     format!("Signed in already, but on the way to {area}: {sentence}. Signed in again and went once more.")
 }
 

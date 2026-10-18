@@ -1160,6 +1160,42 @@ test("a replay that signs the browser in as another account is said, and this ca
   await waitFor(() => expect(order).toEqual(["sign in", "sign in", "step", "step"]));
 });
 
+test("a sign-in forgotten under the pane is said, and this case signs in again before its next step", async () => {
+  const order: string[] = [];
+  mockIPC(
+    (cmd) => {
+      if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS, account: "hr.admin" };
+      if (cmd === "auto_run_sign_in") {
+        order.push("sign in");
+        return OK;
+      }
+      if (cmd === "auto_run_step") {
+        order.push("step");
+        return { outcomes: [{ ok: true, detail: "ok" }], tab: null };
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  renderPane([{ id: 1, title: "Valid login" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  await waitFor(() => expect(order).toEqual(["sign in"]));
+  const run = await screen.findByRole("button", { name: "Run step 1" });
+  await waitFor(() => expect(run).toBeEnabled());
+
+  // The assistant's reset found the sign-in gone, or a step ended the session.
+  const { emit } = await import("@tauri-apps/api/event");
+  await act(async () => {
+    await emit("autorun-session-changed", { opened: true, account: null });
+  });
+  expect(
+    await screen.findByText("the Auto Run browser is no longer signed in - sign in again before the next step"),
+  ).toBeInTheDocument();
+
+  fireEvent.click(run);
+  await waitFor(() => expect(order).toEqual(["sign in", "sign in", "step"]));
+});
+
 /** Three cases; the plan has a reset before case 2. */
 const RESET_PLAN = {
   order: [1, 2, 3],

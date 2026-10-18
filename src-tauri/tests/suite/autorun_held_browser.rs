@@ -113,6 +113,7 @@ fn discovering() -> Option<DiscoveryState> {
         case_id: None,
         no_save: false,
         call_no_save: false,
+        call_case_id: None,
     })
 }
 
@@ -302,6 +303,9 @@ fn every_refusal_for_a_held_browser_asks_first_whether_it_is_alive() {
         &rest[..rest.find("\n}\n").unwrap_or(rest.len())]
     };
     assert!(body("pub(crate) async fn open_for_discovery").contains("make_way_for_discovery(&mut slot, wanted, guarded)"));
+    // A guarded discovery hands the takeover where its save words are, so
+    // its guard goes on under this same lock.
+    assert!(body("pub(crate) async fn open_for_discovery").contains("(mapping.is_some() || no_save.no_save).then_some(from)"));
     assert!(body("pub async fn auto_run_open_browser").contains("let_go_if_gone(&mut slot)"));
     assert!(body("async fn open_if_none").contains("let_go_if_gone(slot)"));
     assert!(body("pub(crate) async fn replay_supervised").contains("let_go_if_gone(&mut slot)"));
@@ -446,7 +450,7 @@ async fn a_discovery_takes_over_the_browser_the_replay_left() {
     use v2_lib::browser::cdp::Driver;
     use v2_lib::commands::autorun::GuardOwner;
     let (mut slot, closed) = replays_browser().await;
-    assert_eq!(make_way_for_discovery(&mut slot, None, false).await, Ok(MadeWay::TookOver));
+    assert_eq!(make_way_for_discovery(&mut slot, None, None).await, Ok(MadeWay::TookOver));
     let b = slot.as_ref().expect("the replay's browser was closed");
     assert!(!closed.load(Ordering::SeqCst), "the replay's browser was closed");
     assert_eq!(b.d.tabs.closed_others, 1, "the replay's other tabs were left open");
@@ -460,12 +464,12 @@ async fn a_discovery_takes_over_the_browser_the_replay_left() {
 
     // The person's own browser is never taken over.
     let (mut slot, closed) = held(true, None);
-    assert_eq!(make_way_for_discovery(&mut slot, None, false).await, Err(busy_browser_sentence(false).to_string()));
+    assert_eq!(make_way_for_discovery(&mut slot, None, None).await, Err(busy_browser_sentence(false).to_string()));
     let b = slot.as_ref().unwrap();
     assert!(!closed.load(Ordering::SeqCst) && b.taken_over == 0 && b.d.tabs.closed_others == 0);
 
     let (mut slot, _) = left_open_by_assistant(true, discovering());
-    assert_eq!(make_way_for_discovery(&mut slot, None, true).await, Err(busy_browser_sentence(true).to_string()));
+    assert_eq!(make_way_for_discovery(&mut slot, None, Some(guard_from(Path::new(".")))).await, Err(busy_browser_sentence(true).to_string()));
     assert_eq!(slot.as_ref().unwrap().taken_over, 0);
 
     // The answer says it: beside a start's JSON, before a refusal's text.
@@ -491,11 +495,69 @@ async fn a_guarded_discovery_takes_the_replays_guard_over_without_lifting_it() {
     use v2_lib::browser::cdp::Driver;
     use v2_lib::commands::autorun::GuardOwner;
     let (mut slot, _) = replays_browser().await;
-    assert_eq!(make_way_for_discovery(&mut slot, None, true).await, Ok(MadeWay::TookOver));
+    assert_eq!(make_way_for_discovery(&mut slot, None, Some(guard_from(Path::new(".")))).await, Ok(MadeWay::TookOver));
     let b = slot.as_ref().unwrap();
     assert!(b.d.is_guarding_saves(), "the guard went off for the takeover");
     assert!(b.d.calls_to("Fetch.disable").is_empty(), "the guard was stopped and put back");
     assert_eq!((b.guarded_case, b.guard_owner.clone()), (None, Some(GuardOwner::Discovery)));
+}
+
+/// Where a guarded discovery in these tests reads its save words from:
+/// `root`, which holds no areas file, so only the built-in words.
+fn guard_from(root: &Path) -> v2_lib::ai_bridge::GuardFrom<'_> {
+    v2_lib::ai_bridge::GuardFrom { root, organization: "acme", project: "Web" }
+}
+
+/// The final review's Important finding: a no_save (or mapping) discovery
+/// taking over an UNGUARDED replay browser, signed in, had no guard on from
+/// the takeover until its start ran - and `open_for_discovery` lets the
+/// lock go in between, so a parallel try could save with a no_save
+/// discovery on record. The guard is now on when the takeover returns,
+/// still under the lock it was taken under, and it is the discovery's. An
+/// unguarded discovery arms nothing. A guard that will not go on refuses
+/// the discovery and leaves the replay's browser as it was.
+#[tokio::test]
+async fn a_guarded_discovery_arms_its_guard_when_it_takes_over_an_unguarded_browser() {
+    use v2_lib::ai_bridge::{make_way_for_discovery, MadeWay};
+    use v2_lib::browser::cdp::Driver;
+    use v2_lib::commands::autorun::GuardOwner;
+    let root = tempfile::tempdir().unwrap();
+    let unguarded = || {
+        let (mut slot, closed) = left_open_by_assistant(true, None);
+        slot.as_mut().unwrap().account = Some("admin".into());
+        (slot, closed)
+    };
+
+    let (mut slot, _) = unguarded();
+    assert!(!slot.as_ref().unwrap().d.is_guarding_saves());
+    assert_eq!(make_way_for_discovery(&mut slot, None, Some(guard_from(root.path()))).await, Ok(MadeWay::TookOver));
+    let b = slot.as_ref().unwrap();
+    assert!(b.d.is_guarding_saves(), "the takeover returned, and the lock with it, with no guard on");
+    assert_eq!((b.guarded_case, b.guard_owner.clone()), (None, Some(GuardOwner::Discovery)));
+    assert_eq!(b.account.as_deref(), Some("admin"), "the sign-in was dropped");
+
+    // An unguarded discovery leaves the browser unguarded.
+    let (mut slot, _) = unguarded();
+    assert_eq!(make_way_for_discovery(&mut slot, None, None).await, Ok(MadeWay::TookOver));
+    let b = slot.as_ref().unwrap();
+    assert!(!b.d.is_guarding_saves() && b.d.calls_to("Fetch.enable").is_empty());
+    assert_eq!(b.guard_owner, None);
+
+    // A guard that will not go on: refused, nothing taken over or closed.
+    let (mut slot, closed) = unguarded();
+    let d = std::mem::replace(&mut slot.as_mut().unwrap().d, ScriptedDriver::new(|_, _| Ok(serde_json::json!({}))));
+    slot.as_mut().unwrap().d = d.answering_first(|method, _| {
+        (method == "Network.setBypassServiceWorker")
+            .then(|| Err(CdpError::Protocol { method: method.into(), message: "busy".into() }))
+    });
+    let refused = make_way_for_discovery(&mut slot, None, Some(guard_from(root.path()))).await;
+    let why = refused.expect_err("a discovery that could not be guarded took the browser over");
+    assert!(why.starts_with(v2_lib::browser::save_guard::SETUP_FAILED), "{why}");
+    let b = slot.as_ref().expect("the replay's browser was let go");
+    assert!(!closed.load(Ordering::SeqCst));
+    assert_eq!((b.taken_over, b.d.tabs.closed_others), (0, 0), "a refused takeover still took the browser over");
+    assert!(!b.d.is_guarding_saves());
+    assert_eq!(b.guard_owner, None);
 }
 
 /// A discovery that names the other browser (Edge or Chrome) than the one
@@ -511,17 +573,17 @@ async fn a_discovery_naming_the_other_browser_closes_the_replays() {
         (slot, closed)
     };
     let (mut slot, closed) = edge().await;
-    assert_eq!(make_way_for_discovery(&mut slot, Some(Browser::Chrome), false).await, Ok(MadeWay::Closed));
+    assert_eq!(make_way_for_discovery(&mut slot, Some(Browser::Chrome), None).await, Ok(MadeWay::Closed));
     assert!(slot.is_none() && closed.load(Ordering::SeqCst), "Edge was taken over for a discovery in Chrome");
     for wanted in [Some(Browser::Edge), None] {
         let (mut slot, closed) = edge().await;
-        assert_eq!(make_way_for_discovery(&mut slot, wanted, false).await, Ok(MadeWay::TookOver), "{wanted:?}");
+        assert_eq!(make_way_for_discovery(&mut slot, wanted, None).await, Ok(MadeWay::TookOver), "{wanted:?}");
         assert!(slot.is_some() && !closed.load(Ordering::SeqCst));
     }
     // The person's browser is refused, whichever is named.
     let (mut slot, closed) = held(true, None);
     slot.as_mut().unwrap().kind = Some(Browser::Edge);
-    assert!(make_way_for_discovery(&mut slot, Some(Browser::Chrome), false).await.is_err());
+    assert!(make_way_for_discovery(&mut slot, Some(Browser::Chrome), None).await.is_err());
     assert!(slot.is_some() && !closed.load(Ordering::SeqCst));
 }
 
@@ -562,13 +624,13 @@ async fn the_persons_end_closes_the_discovery_browser_and_the_assistants_keeps_i
 async fn a_dead_browser_is_still_let_go() {
     use v2_lib::ai_bridge::{make_way_for_discovery, MadeWay};
     let (mut slot, closed) = left_open_by_assistant(false, None);
-    assert_eq!(make_way_for_discovery(&mut slot, None, false).await, Ok(MadeWay::Free), "a gone browser was taken over");
+    assert_eq!(make_way_for_discovery(&mut slot, None, None).await, Ok(MadeWay::Free), "a gone browser was taken over");
     assert!(slot.is_none() && closed.load(Ordering::SeqCst));
     let (mut slot, closed) = held(false, None);
-    assert_eq!(make_way_for_discovery(&mut slot, None, false).await, Ok(MadeWay::Free));
+    assert_eq!(make_way_for_discovery(&mut slot, None, None).await, Ok(MadeWay::Free));
     assert!(slot.is_none() && closed.load(Ordering::SeqCst));
     let mut none: Option<HeldOne> = None;
-    assert_eq!(make_way_for_discovery(&mut none, None, false).await, Ok(MadeWay::Free));
+    assert_eq!(make_way_for_discovery(&mut none, None, None).await, Ok(MadeWay::Free));
 }
 
 /// The assistant's replay after its discovery ends the discovery and keeps

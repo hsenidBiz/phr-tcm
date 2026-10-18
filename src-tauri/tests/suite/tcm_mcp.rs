@@ -1501,7 +1501,7 @@ fn the_replay_tool_rides_with_the_auto_run_tools() {
     assert!(d.contains("Do not release it between replays"), "{d}");
     assert!(d.contains("release_autorun_browser is for a broken browser"), "{d}");
     assert!(d.contains("goes straight to the area (\"Signed in already: went to <area>.\")"), "{d}");
-    assert!(d.contains("start_autorun_discovery takes the browser over as it is"), "{d}");
+    assert!(d.contains("start_autorun_discovery takes the browser over (its other tabs closed) and goes home"), "{d}");
     assert!(!d.contains("closes a browser your replay opened"), "{d}");
     assert!(d.contains("carries on from there; the answer starts with Carried on from step K, or Started from the beginning"), "{d}");
     assert!(d.contains("never past it"), "{d}");
@@ -1534,11 +1534,25 @@ fn the_descriptions_keep_the_browser_between_replays() {
     assert!(!start.contains("is closed first, and the answer says"), "{start}");
     assert!(start.contains("until the discovery ends"), "{start}");
 
+    // Not only the person's button closes it: release does, and so does an
+    // end whose guard will not lift.
     let end = desc("end_autorun_discovery");
-    assert!(end.contains("Only the person's End discovery button closes it"), "{end}");
+    assert!(!end.contains("Only the person's End discovery button closes it"), "{end}");
+    assert!(end.contains("the person's End discovery button, release_autorun_browser"), "{end}");
+    assert!(end.contains("an end whose save guard will not lift"), "{end}");
 
+    // A takeover closes the other tabs and goes home, as the start says.
     let replay = desc("replay_autorun_to_step");
     assert!(!replay.contains("so does start_autorun_discovery"), "{replay}");
+    assert!(!replay.contains("as it is"), "{replay}");
+    assert!(replay.contains("start_autorun_discovery takes the browser over (its other tabs closed) and goes home"), "{replay}");
+
+    // A batch's guard lasts as its parameters say.
+    let batch = desc("discover_autorun_actions");
+    assert!(
+        batch.contains("A guard this call's own `case_id` or `no_save` sets lasts for this call only; one the discovery started with lasts until it ends."),
+        "{batch}"
+    );
 
     for name in ["discover_autorun_action", "discover_autorun_actions", "start_autorun_discovery"] {
         let props = &tool(name)["inputSchema"]["properties"];

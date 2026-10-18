@@ -39,7 +39,7 @@ pub(crate) struct Session {
     pub(crate) guarded_case: Option<i32>,
     /// Who the save guard on this browser belongs to (`GuardOwner`), and so
     /// how long it lasts; `None` while nothing guards it. Cleared with the
-    /// guard (`lift_guard`), and gone with the browser.
+    /// guard (`lift_guard_of`), and gone with the browser.
     pub(crate) guard_owner: Option<GuardOwner>,
     /// The Auto Run folder whose `downloads/supervised` this browser saves
     /// into, emptied once it closes. `None` when downloads could not be
@@ -187,15 +187,6 @@ pub async fn lift_guard_of<D: Driver>(d: &mut D, guarded_case: &mut Option<i32>,
     true
 }
 
-/// `lift_guard_of` on the supervised session's browser, for a use that
-/// takes the browser over or cleans it (a discovery taking over the
-/// replay's browser, the assistant's reset), not yet called. False when the
-/// browser refused the lift and is still guarded.
-#[allow(dead_code)]
-pub(crate) async fn lift_guard(session: &mut Session) -> bool {
-    lift_guard_of(&mut session.cdp, &mut session.guarded_case, &mut session.guard_owner).await
-}
-
 /// A discovery under way in the supervised browser: the area it explores
 /// and the account KEY it explores as (never a login). Both are `None` from
 /// the moment the browser opens for a discovery until its sign-in arrives.
@@ -226,6 +217,10 @@ pub struct DiscoveryState {
     /// when it ends unless the discovery itself must not save
     /// (`GuardOwner::Call`). Set by every discovery call, for that call only.
     pub call_no_save: bool,
+    /// The case the call under way named (`case_id`), which may not be the
+    /// one the discovery is for: the guard that call puts on is that case's
+    /// (`GuardOwner::Call`). Set by every discovery call, for that call only.
+    pub call_case_id: Option<i32>,
 }
 
 /// The case a discovery is for, as its start named it, and whether it must
@@ -474,20 +469,24 @@ pub(crate) fn refuse_discovery_while_busy() -> Result<(), String> {
 /// `mapping` makes it a mapping run, whose save guard goes on once it has
 /// signed in (`ai_bridge::discover_start_in`); so does the guard of a
 /// discovery for a case that must not save (`no_save`). A browser the
-/// assistant's own replay left open is taken over, signed in as it was and
-/// its guard handed on without a gap when the discovery is guarded too
-/// (`ai_bridge::make_way_for_discovery`) - unless `browser_name` names the
-/// other browser: that one is closed, and the one named opened. With none
-/// named a new browser is the one last chosen. Says which (`MadeWay`).
+/// assistant's own replay left open is taken over, signed in as it was
+/// (`ai_bridge::make_way_for_discovery`); a guarded discovery's guard is on
+/// in it before this lets the lock go - the replay's handed on without a
+/// gap, or the discovery's own armed with `from`'s save words - so no call
+/// between here and the start finds it unguarded. Unless `browser_name`
+/// names the other browser: that one is closed, and the one named opened.
+/// With none named a new browser is the one last chosen. Says which
+/// (`MadeWay`).
 pub(crate) async fn open_for_discovery(
     browser_name: Option<&str>,
     mapping: Option<MappingRun>,
     no_save: DiscoveryFor,
+    from: crate::ai_bridge::GuardFrom<'_>,
 ) -> Result<crate::ai_bridge::MadeWay, String> {
     use crate::ai_bridge::MadeWay;
     refuse_discovery_while_busy()?;
     let wanted = browser_name.map(Browser::from_name);
-    let guarded = mapping.is_some() || no_save.no_save;
+    let guarded = (mapping.is_some() || no_save.no_save).then_some(from);
     let mut slot = SESSION.lock().await;
     // Refused only for a browser that is really there: one that has gone
     // is let go, and the discovery opens.
@@ -512,6 +511,7 @@ pub(crate) async fn open_for_discovery(
             case_id: no_save.case_id,
             no_save: no_save.no_save,
             call_no_save: false,
+            call_case_id: None,
         });
     }
     publish_discovery(&slot);
@@ -1125,6 +1125,16 @@ pub(crate) fn tell_panes_closed() {
     }
 }
 
+/// Tell the panes of a change to the supervised browser (`changed`, when
+/// there is one), as `tell_panes_closed` tells them it went. Nothing to tell
+/// in the test binaries, which set up no window.
+pub(crate) fn tell_panes(changed: Option<crate::events::AutorunSessionChanged>) {
+    use tauri_specta::Event as _;
+    if let (Some(app), Some(changed)) = (DISCOVERY_EVENTS.get(), changed) {
+        let _ = changed.emit(app);
+    }
+}
+
 /// What Release says it did: whether it let a held Auto Run browser go
 /// (`held`), how many other browsers of the app's own it found running
 /// (`others`), and how many of those would not end (`left`).
@@ -1258,12 +1268,17 @@ pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, Str
         return (503, NO_DATA_DIRECTORY.to_string());
     };
     let held = slot.is_some();
+    let account_before = slot.as_ref().and_then(|s| s.account.clone());
     let timing = crate::browser::timing::Timing::supervised();
     let answer = reset_in_for_assistant(&mut slot, &root, organization, project, &timing).await;
     let answer = crate::ai_bridge::let_go_if_silent(&mut slot, answer).await;
     publish_discovery(&slot);
     if held && slot.is_none() {
         tell_panes_closed();
+    } else if let Some(s) = slot.as_ref() {
+        // A sign-in the reset found gone is forgotten: the panes hear that
+        // nobody is signed in now, as they hear a replay's sign-in.
+        tell_panes(crate::autorun::replay_to::signed_in_event(&account_before, &s.account));
     }
     // A guard the browser would not lift pauses every request: the browser
     // is answered between the assistant's calls too.
@@ -1365,7 +1380,7 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
             if lifted {
                 SIGN_IN_GONE_AT_RESET.to_string()
             } else {
-                format!("{SIGN_IN_GONE_AT_RESET} The {GUARD_STILL_ON_AT_RESET}.")
+                format!("{SIGN_IN_GONE_AT_RESET} {GUARD_STILL_ON_SENTENCE}")
             }
         }
     };
@@ -1375,6 +1390,10 @@ pub async fn reset_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowser>(
 /// Said in place of "guard lifted" when the browser would not lift it: saves
 /// stay stopped, and a later call lifts it.
 pub const GUARD_STILL_ON_AT_RESET: &str = "guard still on (it would not lift yet)";
+
+/// `GUARD_STILL_ON_AT_RESET` as a sentence of its own, after the reset's
+/// sign-in-gone sentence.
+pub const GUARD_STILL_ON_SENTENCE: &str = "The guard is still on (it would not lift yet).";
 
 /// What the reset says when it cleaned the browser but the home page did not
 /// open (`detail`, from `nav::load_home`): what it did first, then why not.

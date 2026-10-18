@@ -151,6 +151,7 @@ fn opened_for_discovery() -> Option<DiscoveryState> {
         case_id: None,
         no_save: false,
         call_no_save: false,
+        call_case_id: None,
     })
 }
 
@@ -164,6 +165,7 @@ fn exploring(area: &str) -> Option<DiscoveryState> {
         case_id: None,
         no_save: false,
         call_no_save: false,
+        call_case_id: None,
     })
 }
 
@@ -922,6 +924,35 @@ async fn a_calls_no_save_never_lifts_the_discoverys_guard() {
     assert_eq!(b.guard_owner, Some(GuardOwner::Discovery));
 }
 
+/// A call's guard is tagged with the case THAT call named, not the case the
+/// discovery is for: in a discovery for case 5 (not marked), a call naming
+/// case 77 (marked `no_save`) is guarded for case 77. Seen when the
+/// browser will not lift the call's guard as the call ends, so it stays.
+#[tokio::test]
+async fn a_calls_guard_is_tagged_with_the_calls_own_case() {
+    use v2_lib::ai_bridge::{discovery_for, mark_discovery_for};
+    let dir = root_with_recipe_and_account();
+    save_case_77(dir.path(), true);
+    let d = leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/list").answering_first(
+        |method, _| {
+            (method == "Fetch.disable").then(|| {
+                Err(v2_lib::browser::cdp::CdpError::Protocol { method: method.into(), message: "busy".into() })
+            })
+        },
+    );
+    let (mut browser, _) = slot(d, for_case(exploring("Leave"), 5));
+    mark_discovery_for(&mut browser, discovery_for(dir.path(), &json!({ "case_id": 77 }).to_string()).unwrap());
+    let open = Action::Click { selector: "#open".into() };
+    let (status, body) = discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &open, None, None).await;
+    assert_eq!(status, 200, "{body}");
+    let b = browser.as_ref().unwrap();
+    // (The fake records a refused Fetch.disable as sent, so it is asked
+    // whether the guard went on, not whether it is on now.)
+    assert!(!b.d.calls_to("Fetch.enable").is_empty(), "the call ran unguarded");
+    assert_eq!(b.discovery.as_ref().unwrap().case_id, Some(5), "the call's case became the discovery's");
+    assert_eq!(b.guard_owner, Some(GuardOwner::Call { case_id: Some(77) }), "the call's guard names the wrong case");
+}
+
 /// Ending a discovery lifts its guard: its browser is kept, signed in, and
 /// unguarded, so the next replay of a case that may save is not stopped by
 /// a guard the discovery left. The assistant's replay that ends a no_save
@@ -1195,6 +1226,7 @@ async fn a_discovery_page_read_stamps_explored_at_and_the_account_key() {
         case_id: None,
         no_save: false,
         call_no_save: false,
+        call_case_id: None,
     };
     let at = discovery_sighting(dir.path(), ORG, PROJECT, Some(&state), None, Some("manager"))
         .expect("a project is chosen, so there is somewhere to file it");

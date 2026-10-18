@@ -736,6 +736,7 @@ async fn a_no_save_discovery_stays_guarded_until_it_ends() {
         case_id: None,
         no_save: true,
         call_no_save: false,
+        call_case_id: None,
     });
     b.d.guard_saves(&[]).await.unwrap();
     b.guard_owner = Some(GuardOwner::Discovery);
@@ -1024,9 +1025,30 @@ fn the_panes_hear_a_browser_a_replay_opened_and_the_account_it_signed_in() {
     assert_eq!(signed_in_event(&none, &admin), Some(AutorunSessionChanged { opened: true, account: admin.clone() }));
     assert_eq!(signed_in_event(&clerk, &admin), Some(AutorunSessionChanged { opened: true, account: admin.clone() }));
     assert_eq!(signed_in_event(&admin, &admin), None, "the same account is no news");
-    assert_eq!(signed_in_event(&admin, &none), None);
+    assert_eq!(signed_in_event(&none, &none), None, "nobody signed in still is no news");
+    // A sign-in forgotten (a step's expire_session, a reset that found it
+    // gone) is news too: the browser is open with nobody signed in.
+    assert_eq!(signed_in_event(&admin, &none), Some(AutorunSessionChanged { opened: true, account: None }));
     let json = serde_json::to_value(signed_in_event(&none, &admin).unwrap()).unwrap();
     assert_eq!(json, json!({ "opened": true, "account": "admin" }));
+    // Both the replay and the assistant's reset tell the panes.
+    let source = include_str!("../../src/commands/autorun.rs").replace("\r\n", "\n");
+    for name in ["pub(crate) async fn replay_supervised", "pub async fn reset_for_assistant"] {
+        let at = source.find(name).unwrap_or_else(|| panic!("{name} is gone"));
+        let body = &source[at..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        assert!(body.contains("signed_in_event("), "{name} never tells the panes of the account it leaves");
+    }
+}
+
+/// The reuse trip's stopped-save line ends the guard's sentence with one
+/// dot, whether or not that sentence brought its own.
+#[test]
+fn a_save_stopped_line_never_doubles_the_dot() {
+    use v2_lib::autorun::replay_to::save_stopped_line;
+    let want = "Signed in already, but on the way to Leave: it was stopped. Signed in again and went once more.";
+    assert_eq!(save_stopped_line("Leave", "it was stopped"), want);
+    assert_eq!(save_stopped_line("Leave", "it was stopped."), want);
 }
 
 // ---- tabs -------------------------------------------------------------------
@@ -1643,6 +1665,7 @@ fn begun_discovery() -> Option<v2_lib::commands::autorun::DiscoveryState> {
         case_id: None,
         no_save: false,
         call_no_save: false,
+        call_case_id: None,
     })
 }
 
@@ -1716,7 +1739,7 @@ async fn guarded_replays_browser(root: &Path) -> (Option<Kept>, common::MenuApp)
 /// discovery's after.
 #[tokio::test]
 async fn a_no_save_discovery_takes_over_the_guard_with_no_gap() {
-    use v2_lib::ai_bridge::{discover_start_in, make_way_for_discovery, MadeWay};
+    use v2_lib::ai_bridge::{discover_start_in, make_way_for_discovery, GuardFrom, MadeWay};
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps()));
@@ -1726,7 +1749,8 @@ async fn a_no_save_discovery_takes_over_the_guard_with_no_gap() {
     for key in ["admin", "boss"] {
         let (mut slot, app) = guarded_replays_browser(dir.path()).await;
         slot.as_mut().unwrap().d.calls.clear();
-        assert_eq!(make_way_for_discovery(&mut slot, None, true).await, Ok(MadeWay::TookOver));
+        let from = GuardFrom { root: dir.path(), organization: "acme", project: "Web" };
+        assert_eq!(make_way_for_discovery(&mut slot, None, Some(from)).await, Ok(MadeWay::TookOver));
         slot.as_mut().unwrap().discovery = begun_discovery().map(|s| v2_lib::commands::autorun::DiscoveryState { no_save: true, ..s });
         let (status, out) = discover_start_in(&mut slot, dir.path(), "acme", "Web", key, Some("Leave"), &quick()).await;
         assert_eq!(status, 200, "{key}: {out} {:?}", log(&app));
@@ -1740,7 +1764,7 @@ async fn a_no_save_discovery_takes_over_the_guard_with_no_gap() {
 
 /// An unguarded discovery lifts the replay's guard once its start has
 /// decided the sign-in; a lift the browser refuses leaves the guard on,
-/// still the call's (the next call lifts it): saves stay stopped, and the
+/// still the call's (a later replay lifts it): saves stay stopped, and the
 /// discovery starts.
 #[tokio::test]
 async fn an_unguarded_discovery_lifts_the_replays_guard_or_keeps_it_on() {
@@ -1749,7 +1773,7 @@ async fn an_unguarded_discovery_lifts_the_replays_guard_or_keeps_it_on() {
     let dir = tempfile::tempdir().unwrap();
     project(dir.path(), &script(three_steps()));
     let (mut slot, _app) = guarded_replays_browser(dir.path()).await;
-    assert_eq!(make_way_for_discovery(&mut slot, None, false).await, Ok(MadeWay::TookOver));
+    assert_eq!(make_way_for_discovery(&mut slot, None, None).await, Ok(MadeWay::TookOver));
     slot.as_mut().unwrap().discovery = begun_discovery();
     let (status, out) = discover_start_in(&mut slot, dir.path(), "acme", "Web", "admin", Some("Leave"), &quick()).await;
     assert_eq!(status, 200, "{out}");
@@ -1764,7 +1788,7 @@ async fn an_unguarded_discovery_lifts_the_replays_guard_or_keeps_it_on() {
     slot.as_mut().unwrap().d = refusing.answering_first(|method, _| {
         (method == "Fetch.disable").then(|| Err(CdpError::Protocol { method: method.into(), message: "busy".into() }))
     });
-    assert_eq!(make_way_for_discovery(&mut slot, None, false).await, Ok(MadeWay::TookOver));
+    assert_eq!(make_way_for_discovery(&mut slot, None, None).await, Ok(MadeWay::TookOver));
     slot.as_mut().unwrap().discovery = begun_discovery();
     let (status, out) = discover_start_in(&mut slot, dir.path(), "acme", "Web", "admin", Some("Leave"), &quick()).await;
     assert_eq!(status, 200, "{out}");
@@ -2213,4 +2237,27 @@ async fn a_reset_whose_guard_will_not_lift_says_it_is_still_on() {
     assert_ne!(said, reset_sentence("admin"));
     let b = slot.as_ref().unwrap();
     assert_eq!((b.guarded_case, b.guard_owner.clone()), (Some(ID), Some(GuardOwner::Call { case_id: Some(ID) })), "a refused lift forgot the guard");
+}
+
+/// A reset whose sign-in has gone and whose guard will not lift says both,
+/// as a sentence: "The guard is still on", never "The guard still on".
+#[tokio::test]
+async fn a_reset_whose_sign_in_has_gone_and_guard_stays_says_so_as_a_sentence() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, SIGN_IN_GONE_AT_RESET};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, jar) = left_by_a_replay(dir.path()).await;
+    jar.now.lock().unwrap().clear();
+    answering_first(slot.as_mut().unwrap(), |method, _| {
+        (method == "Fetch.disable").then(|| Err(CdpError::Protocol { method: "Fetch.disable".into(), message: "busy".into() }))
+    });
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!(
+        (status, said.as_str()),
+        (200, format!("{SIGN_IN_GONE_AT_RESET} The guard is still on (it would not lift yet).").as_str()),
+        "{:?}",
+        log(&app)
+    );
+    assert_eq!(slot.as_ref().unwrap().account, None);
 }
