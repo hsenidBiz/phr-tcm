@@ -75,11 +75,13 @@ fn step_text(text: &str) -> String {
 
 /// One `<step>` element built from a step's Markdown.
 fn step_node(id: &str, step: &Step) -> String {
+    step_element(id, step_type(&step.expected), &step_text(&step.action), &step_text(&step.expected))
+}
+
+/// One `<step>` element from its two fields as they go into the XML.
+fn step_element(id: &str, ty: &str, action: &str, expected: &str) -> String {
     format!(
-        "<step id=\"{id}\" type=\"{}\"><parameterizedString isformatted=\"true\">{}</parameterizedString><parameterizedString isformatted=\"true\">{}</parameterizedString></step>",
-        step_type(&step.expected),
-        step_text(&step.action),
-        step_text(&step.expected),
+        "<step id=\"{id}\" type=\"{ty}\"><parameterizedString isformatted=\"true\">{action}</parameterizedString><parameterizedString isformatted=\"true\">{expected}</parameterizedString></step>"
     )
 }
 
@@ -282,7 +284,7 @@ fn merge_into(original: &str, steps: &[Step]) -> Option<String> {
     // The original's steps as the HTML each field holds, so a step counts
     // as the same when it is unchanged by the rule `steps_unchanged` uses -
     // an old one-line copy of a step that has line breaks included.
-    let old = parse_steps_html(original);
+    let old = old_steps(original);
     let lines_up = old.len() == doc.nodes.len()
         && old
             .iter()
@@ -388,7 +390,19 @@ fn merge_into(original: &str, steps: &[Step]) -> Option<String> {
                 body.push_str(&original[node.open_end..node.end]);
             }
             Some(i) if !doc.nodes[i].id.trim().is_empty() => {
-                body.push_str(&step_node(doc.nodes[i].id.trim(), s));
+                // An edit in place. A field the edit left unchanged keeps
+                // the original's HTML: rebuilding it from the draft would
+                // re-send an old copy's `a*b*c` as italics, or its `&lt;`
+                // as `<`, and drop formatting nobody touched.
+                let field = |new: &str, of: &OldField| {
+                    if of.unchanged(new) { escape_xml(&of.html) } else { step_text(new) }
+                };
+                body.push_str(&step_element(
+                    doc.nodes[i].id.trim(),
+                    step_type(&s.expected),
+                    &field(&s.action, &old[i].action),
+                    &field(&s.expected, &old[i].expected),
+                ));
             }
             _ => {
                 next += 1;
@@ -623,29 +637,70 @@ pub fn parse_steps_text(xml_str: &str) -> Vec<Step> {
     read_steps(xml_str, |html| crate::case_markdown::legacy_text(html, crate::case_markdown::Field::Step))
 }
 
-/// The steps with each field the HTML Azure DevOps holds, one escaping
-/// layer (the XML's) undone.
-fn parse_steps_html(xml_str: &str) -> Vec<Step> {
-    read_steps(xml_str, str::to_string)
+/// Both readings of the Steps XML from one parse: `parse_steps_xml`'s
+/// and `parse_steps_text`'s, index-aligned.
+pub fn parse_steps_readings(xml_str: &str) -> (Vec<Step>, Vec<Step>) {
+    let old = old_steps(xml_str);
+    let read = |pick: fn(&OldField) -> &String| -> Vec<Step> {
+        old.iter()
+            .map(|o| Step { action: pick(&o.action).clone(), expected: pick(&o.expected).clone(), shared: o.shared })
+            .collect()
+    };
+    (read(|f| &f.md), read(|f| &f.legacy))
 }
 
-/// Whether `new` says what the original `old` (read by `parse_steps_html`)
-/// says: the same shared reference, or each field unchanged by
-/// `case_markdown::unchanged`.
-fn same_text(old: &Step, new: &Step) -> bool {
-    use crate::case_markdown::{unchanged, Field};
-    old.shared == new.shared
-        && unchanged(&new.action, &old.action, Field::Step)
-        && unchanged(&new.expected, &old.expected, Field::Step)
+/// One field of an original step: the HTML Azure DevOps holds (the XML's
+/// escaping undone) and the two readings a new text may equal and still be
+/// unchanged - worked out once per field, not once per comparison.
+struct OldField {
+    html: String,
+    md: String,
+    legacy: String,
+}
+
+impl OldField {
+    fn of(html: String) -> OldField {
+        use crate::case_markdown::{legacy_text, step_html_to_md, Field};
+        OldField { md: step_html_to_md(&html), legacy: legacy_text(&html, Field::Step), html }
+    }
+
+    /// `case_markdown::unchanged` for this field, with its readings at hand.
+    fn unchanged(&self, new: &str) -> bool {
+        new == self.md || new == self.legacy
+    }
+}
+
+/// An original step, its fields ready to compare.
+struct OldStep {
+    shared: Option<i32>,
+    action: OldField,
+    expected: OldField,
+}
+
+/// The original's steps, one per top-level node, from one parse.
+fn old_steps(xml_str: &str) -> Vec<OldStep> {
+    read_steps(xml_str, str::to_string)
+        .into_iter()
+        .map(|s| OldStep { shared: s.shared, action: OldField::of(s.action), expected: OldField::of(s.expected) })
+        .collect()
+}
+
+/// Whether `new` says what the original `old` says: the same shared
+/// reference, and each field unchanged (`OldField::unchanged`).
+fn same_text(old: &OldStep, new: &Step) -> bool {
+    old.shared == new.shared && old.action.unchanged(&new.action) && old.expected.unchanged(&new.expected)
 }
 
 /// Whether saving `steps` over the Steps field `xml` changes no step's
-/// text: as many steps, each equal to its field read as Markdown or to what
-/// the old reader made of it (`parse_steps_text`). A stale one-line copy of
-/// a step Azure DevOps holds with line breaks or bold is unchanged; adding
-/// or removing a line break, a bold or a word is an edit.
+/// text: as many steps, each field equal to the field read as Markdown or
+/// to what the old reader made of it (`parse_steps_text`). A stale
+/// one-line copy of a step Azure DevOps holds with line breaks or bold is
+/// unchanged. Adding a line break, a bold or a word is an edit. An edit
+/// whose result IS the old one-line text - taking a step's line breaks and
+/// bold out again - is not saved: it cannot be told from an old copy, and
+/// the spec's rule accepts that.
 pub fn steps_unchanged(xml: &str, steps: &[Step]) -> bool {
-    let old = parse_steps_html(xml);
+    let old = old_steps(xml);
     old.len() == steps.len() && old.iter().zip(steps).all(|(o, n)| same_text(o, n))
 }
 

@@ -243,3 +243,17 @@ test("a draft saved before steps kept their lines is no change", () => {
   const edited = diffCase(queued({ steps: [{ action: "Open the page\nClick Save", expected: "Saved" }] }), cur);
   expect(edited.steps.changed).toBe(1);
 });
+
+test("each field of a step is matched against either reading", () => {
+  // The action is today's reading, the expected the old one-line copy: no
+  // change, as the save sees it field by field.
+  const cur = current({
+    steps: [{ action: "Open the page\n**Click Save**", expected: "Saved\nListed" }],
+    steps_legacy: [{ action: "Open the page Click Save", expected: "Saved Listed" }],
+  });
+  const mixed = queued({ steps: [{ action: "Open the page\n**Click Save**", expected: "Saved Listed" }] });
+  expect(diffCase(mixed, cur).noop).toBe(true);
+  // One field really edited: a change.
+  const edited = queued({ steps: [{ action: "Open the page Click Save", expected: "Saved and listed" }] });
+  expect(diffCase(edited, cur).steps.changed).toBe(1);
+});

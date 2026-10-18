@@ -918,20 +918,20 @@ fn an_id_out_of_range_or_fractional_is_refused_not_rounded() {
     }
 }
 
-/// An AI-written draft happily puts a line break inside a step. Azure
-/// DevOps stores steps in a single-line HTML field and the app's own step
-/// editor is a one-line input, so that layout was never going to survive -
-/// it just used to disappear without anyone saying so, and the text came
-/// back from Azure DevOps looking edited. Fold it here, and say so.
+/// A step keeps its line breaks: step text is Markdown, and Azure DevOps
+/// holds a step's lines as `<BR/>` - a query on its own lines, a list.
+/// They used to be folded onto one line here, with a warning, when a step
+/// could hold only one line. Now they are kept, every flavour as `\n`,
+/// and nothing is said - there is nothing to warn about.
 #[test]
-fn a_step_that_spans_lines_is_folded_and_the_author_is_told() {
+fn a_step_that_spans_lines_keeps_its_lines_without_a_warning() {
     let path = tmp_path("wrapped-steps.json");
     let json = serde_json::json!([{
         "title": "Multi-line draft",
         "steps": [
             { "action": "Open Settings\nthen the Payments tab", "expected": "The tab opens" },
             { "action": "Save", "expected": "A toast appears:\r\n  'Saved'" },
-            { "action": "Close", "expected": "It closes" }
+            { "action": "Run the following query.\n```sql\nSELECT 1\nFROM t\n```", "expected": "It closes" }
         ]
     }]);
     std::fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
@@ -939,15 +939,25 @@ fn a_step_that_spans_lines_is_folded_and_the_author_is_told() {
     let (cases, warnings) = (parsed.cases, parsed.warnings);
     let _ = std::fs::remove_file(&path);
 
-    assert_eq!(cases[0].steps[0].action, "Open Settings then the Payments tab");
-    assert_eq!(cases[0].steps[1].expected, "A toast appears: 'Saved'");
-    // The untouched step keeps its exact text - folding is not a reformat.
+    assert_eq!(cases[0].steps[0].action, "Open Settings\nthen the Payments tab");
+    assert_eq!(cases[0].steps[1].expected, "A toast appears:\n  'Saved'");
+    assert_eq!(cases[0].steps[2].action, "Run the following query.\n```sql\nSELECT 1\nFROM t\n```");
     assert_eq!(cases[0].steps[2].expected, "It closes");
+    assert!(warnings.iter().all(|w| !w.contains("line breaks") && !w.contains("several lines")), "got {warnings:?}");
 
-    // One warning for the case, not one per offending step.
-    let folded: Vec<_> = warnings.iter().filter(|w| w.contains("line breaks")).collect();
-    assert_eq!(folded.len(), 1, "got {warnings:?}");
-    assert!(folded[0].contains("Multi-line draft"));
+    // The same in a spreadsheet row, where a cell holds the line break.
+    let rows = vec![(2, row(&[("TestCaseName", "Sheet draft"), ("StepNumber", "1"), ("StepAction", "Open Settings\r\nthen Payments"), ("StepExpected", "Shown")]))];
+    let (sheet, sheet_warnings) = parse_rows(&rows, &headers()).unwrap();
+    assert_eq!(sheet[0].steps[0].action, "Open Settings\nthen Payments");
+    assert!(sheet_warnings.iter().all(|w| !w.contains("several lines")), "got {sheet_warnings:?}");
+
+    // The review page still shows each step, lines and all.
+    let page = tmp_path("wrapped-steps.html");
+    export_queue_to_html(&cases, &page, "", None, &Default::default()).unwrap();
+    let html = std::fs::read_to_string(&page).unwrap();
+    let _ = std::fs::remove_file(&page);
+    assert!(html.contains("Open Settings") && html.contains("then the Payments tab"), "steps shown");
+    assert!(html.contains("SELECT 1"), "the query shown");
 }
 
 /// Findings render under their case in a block of their own, kind first,

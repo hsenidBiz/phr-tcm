@@ -691,7 +691,8 @@ fn a_real_edit_adding_line_breaks_is_saved() {
     assert!(!steps_unchanged(&one_line, &edited), "lines and bold are an edit");
     let merged = merge_steps_xml(&one_line, &edited).unwrap();
     assert!(merged.contains("Open the page&lt;BR/&gt;Click &lt;B&gt;Save&lt;/B&gt;"), "{merged}");
-    // Taking the line breaks out of a step that has them is an edit too.
+    // Taking the line breaks out of a step that has them, keeping its bold,
+    // is an edit too (taking out both is the old copy - see below).
     let flat = vec![step("Open the page **Click Save**", "Saved The list shows it"), step("Wait", "")];
     assert!(!steps_unchanged(LINED, &flat));
     // So is a different number of steps, or a shared step in a step's place.
@@ -710,4 +711,64 @@ fn plain_texts_drop_the_markdown() {
         vec!["Open the page Click Save", "Saved The list shows it", "Wait", ""]
     );
     assert_eq!(plain_texts(&[step(r"COUNT(\*) & <cycleId>", "")]), vec!["COUNT(*) & <cycleId>", ""]);
+}
+
+/// Two steps whose expected results an old copy holds differently from
+/// today's reading: `a*b*c` (Markdown would make the `b` italic) and a
+/// literal `&lt;` (Markdown would make it `<`).
+const OLD_COPY: &str = concat!(
+    "<steps id=\"0\" last=\"3\">",
+    "<step id=\"2\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">Open</parameterizedString>",
+    "<parameterizedString isformatted=\"true\">a*b*c and 3 &amp;lt; 5</parameterizedString></step>",
+    "<step id=\"3\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">Look</parameterizedString>",
+    "<parameterizedString isformatted=\"true\">Reads &amp;amp;lt; literally</parameterizedString></step>",
+    "</steps>"
+);
+
+/// An edit to one field of a step rewrites that field only. The other
+/// keeps the HTML Azure DevOps holds: rebuilt from an old copy's text it
+/// would come back as italics, or as `<`.
+#[test]
+fn an_edit_to_one_field_keeps_the_other_fields_html() {
+    use v2_lib::steps_xml::{merge_steps_xml, parse_steps_text};
+    for draft in [parse_steps_text(OLD_COPY), parse_steps_xml(OLD_COPY)] {
+        let mut draft = draft;
+        draft[0].action = "Open the page".into();
+        draft[1].action = "Look again".into();
+        let merged = merge_steps_xml(OLD_COPY, &draft).unwrap();
+        assert!(
+            merged.contains("<step id=\"2\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">Open the page</parameterizedString><parameterizedString isformatted=\"true\">a*b*c and 3 &amp;lt; 5</parameterizedString></step>"),
+            "{merged}"
+        );
+        assert!(
+            merged.contains("<step id=\"3\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">Look again</parameterizedString><parameterizedString isformatted=\"true\">Reads &amp;amp;lt; literally</parameterizedString></step>"),
+            "{merged}"
+        );
+        assert!(!merged.contains("&lt;I&gt;"), "no italics: {merged}");
+        assert_eq!(parse_steps_text(&merged)[1].expected, "Reads &lt; literally");
+    }
+    // A field that did change is written from its Markdown.
+    let mut both = parse_steps_xml(OLD_COPY);
+    both[0].expected = "**Shown**".into();
+    let merged = merge_steps_xml(OLD_COPY, &both).unwrap();
+    assert!(merged.contains(">Open</parameterizedString><parameterizedString isformatted=\"true\">&lt;B&gt;Shown&lt;/B&gt;<"), "{merged}");
+}
+
+/// One parse gives both readings, each the same as its own reader's.
+#[test]
+fn both_readings_come_from_one_parse() {
+    use v2_lib::steps_xml::{parse_steps_readings, parse_steps_text};
+    for xml in [LINED, OLD_COPY, WITH_SHARED, RICH, "", "<steps><step"] {
+        assert_eq!(parse_steps_readings(xml), (parse_steps_xml(xml), parse_steps_text(xml)), "{xml:?}");
+    }
+}
+
+/// The spec's rule has one blind spot, accepted: an edit whose result is
+/// the old one-line text - the line breaks and the bold taken out again -
+/// reads as an old copy and is not saved.
+#[test]
+fn an_edit_back_to_the_one_line_text_is_not_saved() {
+    use v2_lib::steps_xml::steps_unchanged;
+    let flat = vec![step("Open the page Click Save", "Saved The list shows it"), step("Wait", "")];
+    assert!(steps_unchanged(LINED, &flat));
 }

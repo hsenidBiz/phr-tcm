@@ -993,6 +993,9 @@ impl AdoClient {
             for w in fetched["value"].as_array().cloned().unwrap_or_default() {
                 let f = &w["fields"];
                 let str_of = |key: &str| f[key].as_str().unwrap_or_default().to_string();
+                let steps_xml = str_of("Microsoft.VSTS.TCM.Steps");
+                // Both readings from one parse of the field.
+                let (steps, legacy) = crate::steps_xml::parse_steps_readings(&steps_xml);
                 cases.push(TestCaseFull {
                     id: w["id"].as_i64().unwrap_or_default() as i32,
                     title: str_of("System.Title"),
@@ -1002,14 +1005,10 @@ impl AdoClient {
                         if s.is_empty() { "Not Automated".to_string() } else { s }
                     },
                     priority: parse_priority(&f["Microsoft.VSTS.Common.Priority"]),
-                    steps: crate::steps_xml::parse_steps_xml(&str_of("Microsoft.VSTS.TCM.Steps")),
-                    steps_legacy: {
-                        let xml = str_of("Microsoft.VSTS.TCM.Steps");
-                        let old = crate::steps_xml::parse_steps_text(&xml);
-                        (old != crate::steps_xml::parse_steps_xml(&xml)).then_some(old)
-                    },
-                    step_ids: crate::steps_xml::parse_step_ids(&str_of("Microsoft.VSTS.TCM.Steps")),
-                    steps_xml: str_of("Microsoft.VSTS.TCM.Steps"),
+                    steps_legacy: (legacy != steps).then_some(legacy),
+                    steps,
+                    step_ids: crate::steps_xml::parse_step_ids(&steps_xml),
+                    steps_xml,
                     module_value: module_ref.map(str_of).unwrap_or_default(),
                     preconditions: preconditions_ref
                         .map(|p| crate::steps_xml::html_to_text(&str_of(p)))

@@ -46,6 +46,14 @@ export function sameStep(a: Step, b: Step): boolean {
   return a.action === b.action && a.expected === b.expected && (a.shared ?? null) === (b.shared ?? null);
 }
 
+/** A queued step the save leaves alone: the same Shared Steps reference,
+ * and each field equal to the current step's field or to its one-line
+ * reading `old` - field by field, as `steps_unchanged` in Rust. */
+function unchangedStep(q: Step, c: Step, old: Step | undefined): boolean {
+  const field = (k: "action" | "expected") => q[k] === c[k] || (old != null && q[k] === old[k]);
+  return (q.shared ?? null) === (c.shared ?? null) && field("action") && field("expected");
+}
+
 /** Each top-level node's `type` in document order, from the raw Steps XML
  * the server holds - "" for a Shared Steps reference, whose nested steps
  * are part of it and never counted. Mirrors `parse_step_types` in Rust.
@@ -133,10 +141,11 @@ export function diffCase(
   }
 
   // Steps compare positionally: index-by-index changed, extras added or
-  // removed. A queued step equal to the step as read now, or to the
-  // one-line reading a draft saved before steps kept their lines holds
-  // (`steps_legacy`), is unchanged - the save leaves it alone by the same
-  // rule (`steps_unchanged` in Rust), so the review must not promise it.
+  // removed. A queued step whose every field equals that field as read now
+  // or its one-line reading - what a draft saved before steps kept their
+  // lines holds (`steps_legacy`) - is unchanged: the save leaves it alone
+  // by the same rule, field by field (`steps_unchanged` in Rust), so the
+  // review must not promise it.
   const detail: CaseDiff["steps"]["detail"] = [];
   const max = Math.max(queued.steps.length, current.steps.length);
   for (let i = 0; i < max; i++) {
@@ -145,7 +154,7 @@ export function diffCase(
     const old = current.steps_legacy?.[i];
     if (q && !c) detail.push({ index: i, kind: "added", new: q });
     else if (!q && c) detail.push({ index: i, kind: "removed", old: c });
-    else if (q && c && !sameStep(q, c) && !(old && sameStep(q, old))) {
+    else if (q && c && !unchangedStep(q, c, old)) {
       detail.push({ index: i, kind: "changed", old: c, new: q });
     }
   }

@@ -344,6 +344,34 @@ fn duplicates_empty_steps_and_stray_values_are_cleaned_up() {
     assert_eq!(out[0].automation_status, "Not Automated");
 }
 
+/// A step keeps its lines through the optimizer: step text is Markdown,
+/// and a query on its own lines or a list reaches Azure DevOps as lines.
+/// Only trailing spaces and blank edges go; a one-line step is tidied as
+/// before, and an expected result of several lines is not trimmed as
+/// sentences (that would run its lines together).
+#[test]
+fn the_optimizer_keeps_a_steps_line_breaks() {
+    let query = "Run the following query.\n```sql\nSELECT 1   \nFROM t\n```\n";
+    let (out, _) = optimize(
+        vec![case(
+            "Lines",
+            "M",
+            "",
+            vec![
+                step(query, "\u{2022} The row is shown\r\n\u{2022} Verify that the total updates"),
+                step("Click   Save", "Verify that the invoice is saved"),
+            ],
+        )],
+        None,
+    );
+    let steps = &out[0].steps;
+    let lines = steps.iter().find(|s| s.action.starts_with("Run the following")).expect("kept");
+    assert_eq!(lines.action, "Run the following query.\n```sql\nSELECT 1\nFROM t\n```");
+    assert_eq!(lines.expected, "\u{2022} The row is shown\n\u{2022} Verify that the total updates");
+    let one = steps.iter().find(|s| s.action == "Click Save").expect("tidied as before");
+    assert_eq!(one.expected, "The invoice is saved.", "a one-line expected is still trimmed");
+}
+
 // ---------------------------------------------------------------- transform
 
 fn ops(json: serde_json::Value) -> Vec<v2_lib::transform::Operation> {
