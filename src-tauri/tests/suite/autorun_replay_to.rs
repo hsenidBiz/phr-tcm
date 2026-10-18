@@ -20,7 +20,9 @@ use v2_lib::autorun::replay_to::{
     ReplayAnswer, ReplayEnd, ReplayPhase, ReplayRequest, ALREADY_RUNNING, CANCEL,
 };
 use v2_lib::ai_bridge::{DiscoveryBrowser, DiscoveryParts};
-use v2_lib::commands::autorun::{guard_before_replay, guard_for_case, settle_guard_owner, GuardOwner, ReplayBy};
+use v2_lib::commands::autorun::{
+    guard_before_replay, guard_for_case, settle_guard_owner, settle_replay_guard, GuardOwner, ReplayBy,
+};
 use v2_lib::autorun::runner::NEEDS_SCRIPT_AREA;
 use v2_lib::autorun::{store, CaseScript};
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
@@ -671,8 +673,9 @@ fn supervised(d: SavesOnClick) -> Option<Supervised> {
 /// An assistant's replay of case `ID` to step 2 in `b`, as `replay_supervised`
 /// runs one: the guard put where it must be first (`guard_before_replay`,
 /// `ended_no_save` being whether the replay ended a no_save discovery), the
-/// replay with the `may_lift` that gave, and the guard's owner settled after.
-/// The page tries to save at step 1.
+/// replay with the `may_lift` that gave, and the guard's owner settled after
+/// with no discovery running (`settle_replay_guard`). The page tries to save
+/// at step 1.
 async fn assistant_replay(b: &mut Supervised, root: &Path, armed: &Arc<AtomicBool>, ended_no_save: bool) -> ReplayEnd {
     let may_lift = match guard_before_replay(&mut b.d, &mut b.guard_owner, ended_no_save, ReplayBy::Assistant, root, "acme", "Web").await {
         Ok(may_lift) => may_lift,
@@ -701,18 +704,19 @@ async fn assistant_replay(b: &mut Supervised, root: &Path, armed: &Arc<AtomicBoo
     )
     .await;
     b.account = account;
-    settle_guard_owner(&b.d, b.guarded_case, &mut b.guard_owner, ID, ReplayBy::Assistant.owns_as(ID));
+    settle_replay_guard(&b.d, b.guarded_case, &mut b.guard_owner, ID, ReplayBy::Assistant, false);
     end
 }
 
 /// Review Focus 1. A no_save discovery is running and the assistant replays
 /// a case NOT marked no_save: the replay ends the discovery to take the
-/// browser, and the discovery's guard stays on - the page's save at step 1
-/// is stopped, and a second replay is guarded too. Only
-/// `end_autorun_discovery` lifts it; the next replay then saves.
+/// browser, and is the discovery's last call - the guard stays on for it, so
+/// the page's save at step 1 is stopped. The discovery has ended with it:
+/// the guard is that replay's call's after, and the second replay of the
+/// unmarked case lifts it and may save.
 #[tokio::test]
 async fn a_no_save_discovery_stays_guarded_until_it_ends() {
-    use v2_lib::ai_bridge::{end_discovery_for_replay, end_discovery_in, DISCOVERY_GUARD_LIFTED};
+    use v2_lib::ai_bridge::end_discovery_for_replay;
     use v2_lib::commands::autorun::DiscoveryState;
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
@@ -735,7 +739,7 @@ async fn a_no_save_discovery_stays_guarded_until_it_ends() {
     b.d.guard_saves(&[]).await.unwrap();
     b.guard_owner = Some(GuardOwner::Discovery);
     // The assistant's replay ends it first, and the replay is guarded.
-    let ended = end_discovery_for_replay(&mut slot);
+    let ended = end_discovery_for_replay(&mut slot, dir.path());
     assert!(ended.ended && ended.no_save, "{ended:?}");
     let (inner, app) = app();
     let mut slot = supervised(SavesOnClick::new(inner, armed.clone()));
@@ -747,21 +751,28 @@ async fn a_no_save_discovery_stays_guarded_until_it_ends() {
     assert_eq!((b.d.stopped, b.d.sent), (1, 0), "a save got through inside a no_save discovery");
     assert!(clicked(&app, "#s1"));
     assert!(b.d.is_guarding_saves());
-    assert_eq!(b.guard_owner, Some(GuardOwner::Discovery));
-    // A second replay in that browser is still guarded.
-    let end = assistant_replay(b, dir.path(), &armed, false).await;
-    assert!(matches!(end, ReplayEnd::StoppedAt { .. }), "{end:?}");
-    assert_eq!((b.d.stopped, b.d.sent), (2, 0));
-    // end_autorun_discovery lifts it, keeping the browser.
-    let (status, said) = end_discovery_in(&mut slot).await;
-    assert_eq!((status, said.as_str()), (200, DISCOVERY_GUARD_LIFTED));
-    let b = slot.as_mut().expect("ending the discovery's guard closed the browser");
-    assert!(!b.d.is_guarding_saves());
-    assert_eq!(b.guard_owner, None);
-    // The next replay may save.
+    assert_eq!(b.guard_owner, Some(GuardOwner::Call { case_id: None }), "the guard outlived its discovery");
+    // The second replay of the unmarked case lifts it, and may save.
     let end = assistant_replay(b, dir.path(), &armed, false).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
-    assert_eq!((b.d.stopped, b.d.sent), (2, 1), "the replay after the end was still guarded");
+    assert_eq!((b.d.stopped, b.d.sent), (1, 1), "the replay after the discovery's was still guarded");
+    assert!(!b.d.is_guarding_saves());
+    assert_eq!((b.guarded_case, b.guard_owner.clone()), (None, None));
+}
+
+/// A replay while a no_save discovery still runs stays under its guard: the
+/// owner is the discovery's after it settles, and no later replay may lift it.
+#[test]
+fn a_replay_while_the_no_save_discovery_runs_stays_guarded() {
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
+    d.calls.push(("Fetch.enable".into(), json!({})));
+    let mut owner = Some(GuardOwner::Discovery);
+    settle_replay_guard(&d, None, &mut owner, ID, ReplayBy::Assistant, true);
+    assert_eq!(owner, Some(GuardOwner::Discovery));
+    assert!(!ReplayBy::Assistant.may_lift(owner.as_ref()));
+    settle_replay_guard(&d, None, &mut owner, ID, ReplayBy::Assistant, false);
+    assert_eq!(owner, Some(GuardOwner::Call { case_id: None }), "the guard outlived its discovery");
+    assert!(ReplayBy::Assistant.may_lift(owner.as_ref()));
 }
 
 /// The assistant's own guard for another case - its replay or try of
@@ -1291,20 +1302,17 @@ fn every_other_use_of_the_browser_clears_the_stand() {
 /// from the beginning, and settles the owner once the replay is over.
 #[test]
 fn the_replay_puts_the_guard_where_its_owner_says() {
-    let norm = |s: &str| s.replace("
-", "
-");
+    let norm = |s: &str| s.replace("\r\n", "\n");
     let source = norm(include_str!("../../src/commands/autorun.rs"));
     let replay = &source[source.find("pub(crate) async fn replay_supervised").unwrap()..];
-    let replay = &replay[..replay.find("
-}
-").unwrap()];
+    let replay = &replay[..replay.find("\n}\n").unwrap()];
     let before = replay.find("guard_before_replay(").expect("the replay does not put the guard first");
     let call = &replay[before..before + replay[before..].find(".await").unwrap()];
     assert!(call.contains("discovery.no_save,"), "a no_save discovery's guard is not carried: {call}");
     let carry = replay.find("replay_to::carry_on(").unwrap();
     let traced = replay.find("replay_to::replay_to_traced(").unwrap();
-    let settled = replay.find("settle_guard_owner(").expect("the owner is not settled after");
+    let settled = replay.find("settle_replay_guard(").expect("the owner is not settled after");
+    assert!(replay.contains("let discovering = session.discovery.is_some();"), "{replay}");
     assert!(before < carry && before < traced && traced < settled, "{replay}");
     assert!(!replay.contains("by.may_lift(),"), "the replay's may_lift ignores the guard's owner");
 }

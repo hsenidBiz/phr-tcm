@@ -332,8 +332,9 @@ async fn the_replay_answer_says_the_discovery_was_ended() {
     assert_eq!(v["sentence"], ready);
 }
 
-/// A replay that ended a no_save discovery says its guard stays on, and
-/// what lifts it.
+/// A replay that ended a no_save discovery says its guard stayed on for
+/// this replay, and why, and that the next replay that may save is not
+/// guarded.
 #[tokio::test]
 async fn the_replay_answer_says_a_no_save_discoverys_guard_stays_on() {
     use v2_lib::ai_bridge::DISCOVERY_GUARD_KEPT;
@@ -343,7 +344,7 @@ async fn the_replay_answer_says_a_no_save_discoverys_guard_stays_on() {
     project(dir.path(), &script(false));
     assert_eq!(
         DISCOVERY_GUARD_KEPT,
-        "Its no_save guard stays on: nothing saves in this browser until you call end_autorun_discovery."
+        "Its save guard stayed on for this replay, because the discovery was started without saving; your next replay of a case that may save is not guarded."
     );
     let ready = "Started from the beginning. Replayed case 77 to step 3 - the browser is on the page before step 3 runs";
     let host = leak(FakeHost { discovering: true, no_save: true, ..FakeHost::ready() });
