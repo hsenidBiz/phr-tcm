@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.12",
+    date: "2026-10-18",
+    items: [
+      "Auto Run replays no longer sign in again every time: a replay in a browser already signed in as its account goes straight to the case's area. Moving between exploring and replaying keeps the browser and its sign-in.",
+      "The assistant has a reset for the Auto Run browser: it closes extra tabs, clears dialogs and goes home without signing out.",
+      "A save guard now lasts only as long as the discovery or call that set it, so a later replay that saves is no longer blocked. Your End discovery button on the Setup card still closes the assistant's browser.",
+    ],
+  },
+  {
     version: "2.2.3-beta.11",
     date: "2026-10-18",
     items: [
