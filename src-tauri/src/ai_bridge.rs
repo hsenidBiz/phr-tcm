@@ -8930,6 +8930,15 @@ async fn validate_json(
                     ));
                 }
 
+                // How the text is formatted. A case with an id is an
+                // update, and validate has no copy of its current text to
+                // compare with, so text the developer already holds is
+                // never flagged as the assistant's: only new cases are
+                // looked at (see `case_format`).
+                if tc.update_id.is_none() {
+                    warnings.extend(crate::case_format::formatting_warnings(i + 1, tc));
+                }
+
                 // A negative folded into its positive is covered but not
                 // visible: nobody auditing by title can see it was tested.
                 //
@@ -9718,9 +9727,9 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         - AVOID unnecessary adjectives and adverbs.\n\
         - AVOID hashtags.\n\
         - AVOID semicolons.\n\
-        - AVOID markdown and asterisks in titles, steps, expected results and\n\
-        preconditions (reviewer_notes is the one field rendered as markdown,\n\
-        and it needs none).\n\
+        - AVOID markdown and asterisks in titles (reviewer_notes is rendered as\n\
+        markdown and needs none). Steps, expected results and preconditions\n\
+        follow the Formatting section.\n\
         - AVOID these words: can, may, just, that, very, really, literally,\n\
         actually, certainly, probably, basically, could, maybe, delve, embark,\n\
         enlightening, esteemed, shed light, craft, crafting, imagine, realm,\n\
@@ -9740,6 +9749,18 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         word \"save\" from the button \"Save\".\n\n\
         IMPORTANT: review every case before handing it back and make sure\n\
         there are no em dashes.\n\n\
+        ## Formatting\n\
+        Steps and preconditions are Markdown. Use formatting only where it helps\n\
+        reading; never excessively. In a step, bold the one value or control it\n\
+        turns on, such as the **Save** button. Use a list in the preconditions\n\
+        for several conditions. Put any SQL or code in a fenced block: a lead-in\n\
+        sentence such as \"Run the following query.\", then the query in a\n\
+        ```sql fence. In a step its lines stay plain lines in Azure DevOps; in\n\
+        the preconditions it shows as code. A step keeps bold, italic and line\n\
+        breaks, a few bold words at most; never headings, tables, links,\n\
+        images or emphasis on a whole sentence. Text Markdown would change\n\
+        (`\\\\server`, a line starting with `>`, a `---` line, `__init__`) goes in\n\
+        backticks.\n\n\
         ## area\n\
         Give every case an `area`: where it sits on the page or in the\n\
         feature, as a path with `/` between the levels, page or screen\n\
