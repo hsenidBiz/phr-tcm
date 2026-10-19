@@ -133,6 +133,8 @@ impl crate::ai_bridge::ReplayHost for AppReplayHost {
                     left_open,
                     from,
                     reuse,
+                    // Read once the replay has let the browser go.
+                    overrides: crate::commands::autorun::overrides_now(),
                 })
         })
     }

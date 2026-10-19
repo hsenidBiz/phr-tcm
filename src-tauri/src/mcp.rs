@@ -719,6 +719,37 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["name"]),
         },
         {
+            "name": "set_autorun_headers",
+            "description": "Send extra request headers with every request of the Auto Run browser you opened (your discovery or replay) - every tab, and any tab the page opens - to test an edge case such as a feature header or another language. Merged into the headers already set; `null` removes one you set. Never cookie, authorization, proxy-authorization or host. The save guard is not touched: a blocked save stays blocked. They stay until you remove them, or reset_autorun_browser, clear_autorun_cookies or a release takes them away, and every try, discovery and replay answer ends naming them (\"Changed for testing: header ...\"). Refused in the person's browser and while a replay runs.",
+            "inputSchema": schema(serde_json::json!({
+                "headers": { "type": "object", "additionalProperties": { "type": ["string", "null"] }, "description": "Header name to value, or to null to remove a header you set." },
+            }), &["headers"]),
+        },
+        {
+            "name": "get_autorun_cookies",
+            "description": "The cookies the Auto Run browser holds for a site - the page's own, or `url`'s - whatever their path: name, domain, path, expiry, flags (http_only, secure, same_site), size, and the value. The sign-in's cookies (HttpOnly, the sign-in and anti-forgery cookies, names like a secret) show their value as (hidden). `set_for_testing` marks the ones you set. A read: works in the person's browser too.",
+            "inputSchema": schema(serde_json::json!({
+                "url": { "type": "string", "description": "Optional: an http or https address whose site's cookies to read. Left out, the page's." },
+            }), &[]),
+        },
+        {
+            "name": "set_autorun_cookie",
+            "description": "Set one cookie on the page's own site in the Auto Run browser you opened, to test an edge case (culture, tenant, a feature flag). Never the sign-in's cookies: an HttpOnly one, .ASPXAUTH, .AspNetCore.*, ASP.NET_SessionId, __RequestVerificationToken*, or a name like a secret (session, auth, token, password, secret, cookie) - those are refused. It stays until reset_autorun_browser (which deletes only the cookies you set), clear_autorun_cookies or a release, and every try, discovery and replay answer ends naming it. Refused in the person's browser and while a replay runs.",
+            "inputSchema": schema(serde_json::json!({
+                "name": { "type": "string", "description": "The cookie's name." },
+                "value": { "type": "string", "description": "Its value: one line, no ;." },
+                "path": { "type": "string", "description": "Optional: its path, / by default." },
+                "expires": { "type": "number", "description": "Optional: when it expires, in seconds since 1970. Left out, it lasts for the browser's session." },
+                "secure": { "type": "boolean", "description": "Optional: sent only over https." },
+                "same_site": { "type": "string", "enum": ["Strict", "Lax", "None"], "description": "Optional: its SameSite rule (None needs secure)." },
+            }), &["name", "value"]),
+        },
+        {
+            "name": "clear_autorun_cookies",
+            "description": "Sign out for real in the Auto Run browser you opened: delete every cookie of the page's site (the sign-in's included), forget the signed-in account and let its lease go, and take away your test headers. The next replay signs in again; a discovery going keeps going, signed out. Refused in the person's browser and while a replay runs.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
             "name": "get_api_template_guide",
             "description": "How to build an API template - a saved, proven sequence of the application's own requests that writes test data (creates a cycle, moves a record to a state) far faster than clicking through the screens. Returns the format and its rules, the placeholder and capture syntax, and the workflow: read the module's code for each request, find real values with db_query, then prove. Also names this project's account keys and the sign-in recipe's origin, so you never guess an account or a host. Read it before your first prove_api_template.",
             "inputSchema": schema(serde_json::json!({}), &[]),
@@ -1301,6 +1332,12 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "get_autorun_capture" => call("GET", "/autorun-capture", ""),
         "export_autorun_requests" => call("POST", "/autorun-requests-export", &args.to_string()),
         "import_autorun_requests" => call("POST", "/autorun-requests-import", &args.to_string()),
+        // Test headers and cookies: each route reads its own named fields
+        // out of the body, so the arguments object travels whole.
+        "set_autorun_headers" => call("POST", "/autorun-headers", &args.to_string()),
+        "get_autorun_cookies" => call("POST", "/autorun-cookies", &args.to_string()),
+        "set_autorun_cookie" => call("POST", "/autorun-cookie", &args.to_string()),
+        "clear_autorun_cookies" => call("POST", "/autorun-cookies-clear", &args.to_string()),
         "get_autorun_page" => {
             let mut params: Vec<String> = Vec::new();
             if let Some(n) = args["limit"].as_u64() {

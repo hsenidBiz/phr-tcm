@@ -705,6 +705,9 @@ pub struct Cdp<T: Transport = WsTransport> {
     capture: Option<super::net_capture::NetCapture>,
     /// No body is read before this (`BODY_READ_PAUSE`).
     capture_pause: Option<Instant>,
+    /// The test headers the assistant set (`set_extra_headers`), sent on
+    /// every tab: a tab the page opens later is given them before it runs.
+    extra_headers: std::collections::BTreeMap<String, String>,
 }
 
 /// A browser's downloads: the folder they land in, and every download in
@@ -886,6 +889,7 @@ impl<T: Transport> Cdp<T> {
             context: None,
             capture: None,
             capture_pause: None,
+            extra_headers: std::collections::BTreeMap::new(),
         }
     }
 
@@ -1114,6 +1118,29 @@ impl<T: Transport> Cdp<T> {
                 .filter(|t| t.guard.is_none() && !asked.contains(&t.session_id))
                 .map(|t| t.session_id.clone())
                 .collect();
+        }
+        Ok(())
+    }
+
+    /// Send `headers` with every request of every tab - each one open now,
+    /// and each one the page opens later (`on_attached`) - in place of the
+    /// set sent before; an empty set sends none. One merged set for the
+    /// whole browser (`Network.setExtraHTTPHeaders`, per tab). Never
+    /// `Fetch`: the save guard's interception is not touched, so a guarded
+    /// save stays stopped. A tab other than `main` that closed meanwhile is
+    /// skipped; any other refusal is `Err`, the tabs asked before it
+    /// already sending the new set.
+    pub async fn set_extra_headers(&mut self, headers: &std::collections::BTreeMap<String, String>) -> Result<(), CdpError> {
+        self.extra_headers = headers.clone();
+        let params = serde_json::json!({ "headers": headers });
+        let sessions: Vec<String> = self.tabs.iter().map(|t| t.session_id.clone()).collect();
+        for s in sessions {
+            let limit = self.limit_now();
+            match self.call_on(Some(s.clone()), "Network.setExtraHTTPHeaders", params.clone(), limit).await {
+                Ok(_) => {}
+                Err(CdpError::Closed) if s != self.main && !self.has_tab(&s) => {}
+                Err(e) => return Err(e),
+            }
         }
         Ok(())
     }
@@ -1709,6 +1736,12 @@ impl<T: Transport> Cdp<T> {
             ("Page.setLifecycleEventsEnabled", serde_json::json!({ "enabled": true })),
         ] {
             self.queue(s, method, params, Some(SetupStep::Watch(method)));
+        }
+        // The assistant's test headers, after the tab's Network domain is on
+        // and before it runs: its first request carries them too.
+        if !self.extra_headers.is_empty() {
+            let headers = serde_json::json!({ "headers": self.extra_headers });
+            self.queue(s, "Network.setExtraHTTPHeaders", headers, None);
         }
         for (_, params) in self.seeds.clone() {
             self.queue(s, "Page.addScriptToEvaluateOnNewDocument", params, None);
@@ -2803,6 +2836,15 @@ pub trait Driver {
     fn stop_guarding_saves(&mut self) -> impl Future<Output = Result<(), CdpError>> {
         async move { self.call("Fetch.disable", serde_json::json!({})).await.map(|_| ()) }
     }
+    /// See `Cdp::set_extra_headers`. A driver with one tab of its own (a
+    /// test's fake) is asked once, like any other call.
+    fn set_extra_headers(
+        &mut self,
+        headers: &std::collections::BTreeMap<String, String>,
+    ) -> impl Future<Output = Result<(), CdpError>> {
+        let params = serde_json::json!({ "headers": headers });
+        async move { self.call("Network.setExtraHTTPHeaders", params).await.map(|_| ()) }
+    }
     /// See `Cdp::is_guarding_saves`. A driver with no guard of its own
     /// never is.
     fn is_guarding_saves(&self) -> bool {
@@ -3009,6 +3051,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     async fn stop_guarding_saves(&mut self) -> Result<(), CdpError> {
         Cdp::stop_guarding_saves(self).await
+    }
+    async fn set_extra_headers(&mut self, headers: &std::collections::BTreeMap<String, String>) -> Result<(), CdpError> {
+        Cdp::set_extra_headers(self, headers).await
     }
     fn is_guarding_saves(&self) -> bool {
         Cdp::is_guarding_saves(self)

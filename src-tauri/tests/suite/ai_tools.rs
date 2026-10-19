@@ -594,7 +594,11 @@ fn each_tool_belongs_to_its_module() {
             "set_autorun_capture",
             "get_autorun_capture",
             "export_autorun_requests",
-            "import_autorun_requests"
+            "import_autorun_requests",
+            "set_autorun_headers",
+            "get_autorun_cookies",
+            "set_autorun_cookie",
+            "clear_autorun_cookies"
         ]
     );
     assert_eq!(

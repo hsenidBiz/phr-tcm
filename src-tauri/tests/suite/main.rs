@@ -64,6 +64,7 @@ mod autorun_held_browser;
 mod autorun_lease;
 mod autorun_marks;
 mod autorun_one_browser;
+mod autorun_overrides;
 mod autorun_nav;
 mod autorun_network;
 mod autorun_network_pause;

@@ -172,6 +172,26 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Load a HAR file from the app's captures folder as a read-only set.",
   },
   {
+    name: "set_autorun_headers",
+    label: "Set test headers",
+    summary: "Extra request headers for the assistant's Auto Run browser, to test an edge case; named in every answer until reset.",
+  },
+  {
+    name: "get_autorun_cookies",
+    label: "Read cookies",
+    summary: "The Auto Run browser's cookies for a site, with the sign-in's values hidden.",
+  },
+  {
+    name: "set_autorun_cookie",
+    label: "Set a test cookie",
+    summary: "One cookie that is not the sign-in's, on the page's site in the assistant's Auto Run browser.",
+  },
+  {
+    name: "clear_autorun_cookies",
+    label: "Sign out by clearing cookies",
+    summary: "Delete the site's cookies in the assistant's Auto Run browser: a real sign-out.",
+  },
+  {
     name: "get_autorun_failures",
     label: "Auto Run failures",
     summary: "What failed in a run on this machine, and when the script must be left alone.",
@@ -389,6 +409,10 @@ export const AUTORUN_TOOLS = [
   "get_autorun_capture",
   "export_autorun_requests",
   "import_autorun_requests",
+  "set_autorun_headers",
+  "get_autorun_cookies",
+  "set_autorun_cookie",
+  "clear_autorun_cookies",
 ] as const;
 
 export const API_TEMPLATE_TOOLS = [
@@ -513,6 +537,10 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "get_autorun_capture",
     "export_autorun_requests",
     "import_autorun_requests",
+    "set_autorun_headers",
+    "get_autorun_cookies",
+    "set_autorun_cookie",
+    "clear_autorun_cookies",
   ],
   // Building an API template is one job too: read the format, see what
   // is saved, prove a draft, run it. A list with no way to run what it
