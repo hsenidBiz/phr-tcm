@@ -63,6 +63,7 @@ pub mod tree;
 pub mod cdp;
 pub mod page_log;
 pub mod net_record;
+pub mod net_capture;
 pub mod save_guard;
 pub mod downloads;
 pub mod timing;

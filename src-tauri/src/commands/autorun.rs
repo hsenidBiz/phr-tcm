@@ -922,6 +922,9 @@ async fn open_into(
     if let Err(e) = crate::browser::page_log::watch(&mut cdp).await {
         crate::applog::warn(format!("auto-run: the page log could not be switched on: {e}"));
     }
+    // The page's own requests and responses, for the assistant to read
+    // while this browser is open (`net_capture`); gone when it closes.
+    cdp.capture_requests();
     // Downloads are kept while this browser is open, in a folder emptied
     // as it opens and as it closes: they belong to no run. Losing them is
     // no reason not to open the browser either.

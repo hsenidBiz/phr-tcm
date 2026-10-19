@@ -147,6 +147,7 @@ mod markdown;
 mod mcp;
 mod mentions;
 mod modules;
+mod net_capture;
 mod net_record;
 mod note_server;
 mod optimize;

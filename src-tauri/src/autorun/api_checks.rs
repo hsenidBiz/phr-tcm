@@ -129,7 +129,7 @@ impl Body {
 /// in any case: `access_token`, `Password`, `sessionId`, `Set-Cookie`.
 const SECRET_WORDS: [&str; 6] = ["token", "password", "secret", "authorization", "cookie", "session"];
 
-fn secret_key(key: &str) -> bool {
+pub(crate) fn secret_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
     SECRET_WORDS.iter().any(|w| key.contains(w))
 }

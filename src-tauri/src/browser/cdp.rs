@@ -336,6 +336,10 @@ const DISPOSE_LIMIT: Duration = Duration::from_secs(5);
 /// needed is let go (`net_unmark`), so the ones still held are not pushed
 /// out by marks taken after them.
 pub const MAX_NET_MARKS: usize = 16;
+/// How many captured bodies one drain reads (`read_captured_bodies`).
+const MAX_BODY_READS: usize = 8;
+/// How long one body read may take.
+const BODY_READ_LIMIT: Duration = Duration::from_secs(2);
 
 impl Tab {
     /// Note which document is which: a document loaded, or a request sent
@@ -690,6 +694,9 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// (`drive_new_context`), until it is disposed (`dispose_context`).
     /// While set, a page in any other context is never one of its tabs.
     context: Option<String>,
+    /// The page's own requests and responses, for the assistant to read
+    /// (`capture_requests`): `None` unless this is the supervised browser.
+    capture: Option<super::net_capture::NetCapture>,
 }
 
 /// A browser's downloads: the folder they land in, and every download in
@@ -869,6 +876,7 @@ impl<T: Transport> Cdp<T> {
             dialogs_open: 0,
             page_errors: super::page_errors::PageErrorBook::default(),
             context: None,
+            capture: None,
         }
     }
 
@@ -1413,7 +1421,8 @@ impl<T: Transport> Cdp<T> {
     pub async fn idle(&mut self, wait: Duration) {
         // An armed `expect_dialog` is waiting on a dialog: it is read, and
         // answered, the moment it opens.
-        if self.wants_reading() || self.downloads.is_some() || self.book.is_armed() {
+        let bodies_waiting = self.capture.as_ref().is_some_and(|c| c.queued_reads() > 0);
+        if self.wants_reading() || self.downloads.is_some() || self.book.is_armed() || bodies_waiting {
             self.pump(wait).await;
         } else {
             tokio::time::sleep(wait).await;
@@ -1429,6 +1438,7 @@ impl<T: Transport> Cdp<T> {
             tokio::time::sleep(wait).await;
             return;
         }
+        self.read_captured_bodies().await;
         loop {
             if self.resolve_parked().await.is_err() {
                 tokio::time::sleep(until.saturating_duration_since(Instant::now())).await;
@@ -1461,6 +1471,9 @@ impl<T: Transport> Cdp<T> {
                         tokio::time::sleep(until.saturating_duration_since(Instant::now())).await;
                         return;
                     }
+                    // A body is read as soon as its request finished: the
+                    // browser may drop it later.
+                    self.read_captured_bodies().await;
                 }
             }
         }
@@ -2133,6 +2146,9 @@ impl<T: Transport> Cdp<T> {
         if !self.has_tab(&session) {
             return Err(self.gone(&session));
         }
+        // Bodies of requests that finished since the last read, before the
+        // call moves the page on (a navigation drops them).
+        self.read_captured_bodies().await;
         let seeding = method == "Page.addScriptToEvaluateOnNewDocument";
         let unseeding = method == "Page.removeScriptToEvaluateOnNewDocument";
         let seed = if seeding || unseeding { Some(params.clone()) } else { None };
@@ -2376,6 +2392,10 @@ impl<T: Transport> Cdp<T> {
         // The record sees every event first and never claims one, so the
         // page log below is fed exactly as before.
         tab.net_record.observe(&ev);
+        // The capture asks the record what it just noted (type, site, poll).
+        if let Some(c) = self.capture.as_mut().filter(|_| ev.method.starts_with("Network.")) {
+            c.observe(&tab.session_id, tab.name.as_deref().unwrap_or(""), &ev, &tab.net_record);
+        }
         // Network and console events go to the page log, never into the
         // buffer: a page volunteers thousands, and they would push out the
         // load event a navigation is about to wait for.
@@ -2427,6 +2447,10 @@ impl<T: Transport> Cdp<T> {
                         let i = at.expect("checked above");
                         self.tabs[i].observe_documents(&ev);
                         self.tabs[i].net_record.observe(&ev);
+                        if let Some(c) = self.capture.as_mut().filter(|_| ev.method.starts_with("Network.")) {
+                            let tab = &self.tabs[i];
+                            c.observe(&tab.session_id, tab.name.as_deref().unwrap_or(""), &ev, &tab.net_record);
+                        }
                         let owner = self.download_owner(session.as_deref(), &ev);
                         self.follow_download(&ev, &owner);
                         return Ok(ev);
@@ -2536,6 +2560,50 @@ impl<T: Transport> Cdp<T> {
         let (_, each) = marks.1.iter().find(|(id, _)| *id == mark)?;
         // A tab opened after the mark: all it did came after it.
         Some(t.net_record.since(each.get(&t.session_id).copied().unwrap_or(0)))
+    }
+
+    /// Keep the page's own requests and responses from now on, for the
+    /// assistant (`net_capture`). Only the supervised browser asks; asked
+    /// again, what is kept stays.
+    pub fn capture_requests(&mut self) {
+        self.capture.get_or_insert_with(Default::default);
+    }
+
+    /// What was captured, unless this browser does not capture.
+    pub fn capture(&self) -> Option<&super::net_capture::NetCapture> {
+        self.capture.as_ref()
+    }
+
+    pub fn capture_mut(&mut self) -> Option<&mut super::net_capture::NetCapture> {
+        self.capture.as_mut()
+    }
+
+    /// Read the bodies the capture is waiting on, at most
+    /// `MAX_BODY_READS` of them, each on the tab it came from. Called only
+    /// where no call of this connection waits on its answer (`pump`, the
+    /// start of `call_within`), so a read never takes another call's reply.
+    /// A body the browser no longer holds, or a tab that closed, is
+    /// `Dropped`; a browser that stops answering ends the reading, and the
+    /// rest wait for the next time.
+    async fn read_captured_bodies(&mut self) {
+        for _ in 0..MAX_BODY_READS {
+            let Some(read) = self.capture.as_mut().and_then(|c| c.next_read()) else {
+                return;
+            };
+            let answer = if self.has_tab(&read.session) {
+                let params = serde_json::json!({ "requestId": read.request_id });
+                self.call_on(Some(read.session.clone()), read.method, params, BODY_READ_LIMIT).await
+            } else {
+                Err(CdpError::Closed)
+            };
+            let silent = matches!(answer, Err(CdpError::Timeout { .. } | CdpError::Transport(_)));
+            if let Some(c) = self.capture.as_mut() {
+                c.answered(&read, answer.as_ref().ok());
+            }
+            if silent {
+                return;
+            }
+        }
     }
 
     /// Run an expression in the page and return the raw DevTools result.
@@ -2710,6 +2778,14 @@ pub trait Driver {
     fn page_error_book(&mut self) -> Option<&mut super::page_errors::PageErrorBook> {
         None
     }
+    /// The page's captured requests (`Cdp::capture_requests`); `None` when
+    /// this driver does not capture.
+    fn capture(&self) -> Option<&super::net_capture::NetCapture> {
+        None
+    }
+    fn capture_mut(&mut self) -> Option<&mut super::net_capture::NetCapture> {
+        None
+    }
     /// See `Cdp::idle`: a wait loop's pause between two looks.
     fn idle(&mut self, wait: Duration) -> impl Future<Output = ()> {
         tokio::time::sleep(wait)
@@ -2820,6 +2896,12 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn page_error_book(&mut self) -> Option<&mut super::page_errors::PageErrorBook> {
         Some(&mut self.page_errors)
+    }
+    fn capture(&self) -> Option<&super::net_capture::NetCapture> {
+        self.capture.as_ref()
+    }
+    fn capture_mut(&mut self) -> Option<&mut super::net_capture::NetCapture> {
+        self.capture.as_mut()
     }
     fn take_dialogs(&mut self) -> Vec<String> {
         Cdp::take_dialogs(self)
