@@ -79,6 +79,36 @@ computed value (`getComputedStyle`) with the same wait and retry as the other `e
 colours compared after normalising to `rgb()`/`rgba()`. The seen check treats its target like
 any check's. Guide and the script editor list it.
 
+## Decisions after the builder check (my calls)
+
+1. **Lifetime of headers and cookies the assistant sets.** They last until the assistant removes
+   them, or `reset_autorun_browser`, `clear_autorun_cookies` or release - not per call (a
+   standalone tool whose effect expired at once would be useless). TCM records what it set
+   (`Session.overrides`: header names and values, cookie names). While any are set, every try,
+   discovery and replay answer ends with "Changed for testing: header X, cookie Y" so a result
+   is never mistaken for a normal run; a replay that passes with overrides says "passed with
+   these changes in place" instead of plain "passed". Reset removes the headers it set and
+   deletes the cookies it set (only those).
+2. **Which cookies are protected.** A cookie may not be set or deleted by name when it is the
+   sign-in's: an `HttpOnly` cookie, one whose name matches `.ASPXAUTH`, `.AspNetCore.*`,
+   `ASP.NET_SessionId`, `__RequestVerificationToken*`, or the secret words (session, auth, token,
+   password, secret, cookie). Any other cookie - culture, tenant, feature flags - may be set,
+   even if it existed at sign-in. Same rule with or without a cookie fingerprint.
+3. **Redaction for these tools.** A capture-specific redaction built on the existing one: JSON
+   keys with the secret words hidden (as `shown_body`), form-urlencoded and multipart fields with
+   the secret words hidden, query parameters with the secret words hidden; addresses inside
+   bodies kept (templates need them); no 500-character cut (bodies are paged instead). The
+   sign-in's own requests are captured with those fields hidden. The HAR export uses the same
+   redaction and keeps queries (minus secret parameters); it is written only to TCM's own
+   `captures` folder.
+4. **The person's browser.** The read tools work in any supervised browser. The acting tools
+   (`set_autorun_headers`, `set_autorun_cookie`, `clear_autorun_cookies`) refuse (409) in the
+   person's browser (`OpenedBy::Person`) or while a watched run is going, as release does. A
+   clear in the assistant's browser keeps a running discovery going (it is now signed out),
+   sets `Session.account` and the fingerprint to none, and lets the account's lease go.
+5. **Switches.** They are plain Auto Run tools, each switchable per environment like every
+   other tool; no extra switch.
+
 ## Anti-goals
 
 - A secret (password, token, session cookie value, authorization) shown to the assistant,
