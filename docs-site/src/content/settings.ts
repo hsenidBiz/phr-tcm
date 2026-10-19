@@ -70,7 +70,7 @@ export const settings: Screen = {
       group: "appearance",
       locate: { role: "button", name: "Theme Light" },
       name: "Theme",
-      does: "Changes the whole app's colours: Light, Slate, Midnight, Graphite, Ocean or OLED.",
+      does: "Changes the whole app's colours: Light, Slate, Midnight, Graphite, Ocean or Onyx.",
     },
     {
       id: "theme-system",
