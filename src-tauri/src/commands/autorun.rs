@@ -1350,7 +1350,8 @@ pub const NO_BROWSER_OPEN: &str = "No browser is open.";
 
 /// Said by the assistant's reset while a replay holds the browser: a reset
 /// never stops one.
-pub const REPLAY_RUNNING_AT_RESET: &str = "A replay is running: try again when it has finished.";
+pub const REPLAY_RUNNING_AT_RESET: &str =
+    "A replay is running: try again when it has finished, or stop it first with stop_autorun_replay.";
 
 /// Said by the assistant's reset when the home page no longer holds the
 /// app's sign-in: the account and its cookies' print are forgotten.

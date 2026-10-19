@@ -1072,6 +1072,7 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
     "set_autorun_headers",
     "set_autorun_order",
     "start_autorun_discovery",
+    "stop_autorun_replay",
     "try_autorun_action",
   ]);
 });

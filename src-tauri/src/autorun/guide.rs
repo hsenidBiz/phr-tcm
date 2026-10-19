@@ -1039,6 +1039,9 @@ Otherwise it is Blocked before step 1, and never signs in, with one of:
     precondition could not be checked: the check for Publish could not be run - see the activity folder in Settings, Logs
     preconditions need a database chosen on the AI Bridge tab
 
+A check that could not be run (the database did not answer, say over a
+VPN that dropped) is tried once more after 3 seconds before it blocks.
+
 A case Blocked by a precondition has nothing to repair: build the record,
 or tell the person it is missing.
 
@@ -1914,6 +1917,8 @@ the answer says so; start a new one to explore again.
 - A replay still going after about 45 seconds answers "still running, now
   at step N of M". Call `replay_autorun_to_step` again with the same case
   and step to keep waiting on that same replay; it is never started twice.
+- A failed action ends a replay at once. To end one you no longer need,
+  call `stop_autorun_replay`: it stops before the next action and says where.
 
 Its `STOP:` lines are final, and mean the script must not be touched at
 all:

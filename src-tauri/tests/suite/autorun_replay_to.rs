@@ -323,8 +323,9 @@ async fn a_stop_mid_replay_ends_it_before_the_next_step() {
     project(dir.path(), &script(three_steps()));
     let (mut d, app) = app();
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    // Asked as step 2 is about to run: heard before its first action.
     let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |k, _| {
-        if k == 1 {
+        if k == 2 {
             cancel.store(true, Ordering::SeqCst);
         }
     })
@@ -332,6 +333,93 @@ async fn a_stop_mid_replay_ends_it_before_the_next_step() {
     assert_eq!(end, ReplayEnd::Stopped { step: 2 });
     assert_eq!(end.sentence(), "the replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)");
     assert!(clicked(&app, "#s1") && !clicked(&app, "#s2"), "{:?}", log(&app));
+}
+
+/// A browser that sets `cancel` once `what` has been clicked: a stop asked
+/// for while a step's action runs.
+struct StopsAfterClick {
+    inner: ScriptedDriver,
+    app: common::MenuApp,
+    what: &'static str,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Driver for StopsAfterClick {
+    async fn call(&mut self, method: &str, params: Value) -> Result<Value, CdpError> {
+        let answer = self.inner.call(method, params).await;
+        if clicked(&self.app, self.what) {
+            self.cancel.store(true, Ordering::SeqCst);
+        }
+        answer
+    }
+    async fn wait_event(&mut self, method: &str, limit: Duration) -> Result<Event, CdpError> {
+        self.inner.wait_event(method, limit).await
+    }
+    fn forget_events(&mut self) {
+        self.inner.forget_events();
+    }
+    fn take_dialogs(&mut self) -> Vec<String> {
+        self.inner.take_dialogs()
+    }
+    fn set_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        self.inner.set_deadline(deadline);
+    }
+}
+
+/// Row 33: a stop asked for while a step's action runs ends the replay
+/// before that step's next action - never only once the whole step has
+/// run. The step's later actions are not carried out.
+#[tokio::test]
+async fn a_stop_during_an_action_ends_the_replay_before_the_steps_next_action() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let steps = json!([
+        { "step_number": 1, "actions": [click("#s1")] },
+        { "step_number": 2, "actions": [click("#a"), click("#b"), click("#c")] },
+        { "step_number": 3, "actions": [click("#s3")] }
+    ]);
+    project(dir.path(), &script(steps));
+    let (inner, app) = app();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let watched = common::MenuApp { log: app.log.clone(), path: app.path.clone() };
+    let mut d = StopsAfterClick { inner, app: watched, what: "#a", cancel: cancel.clone() };
+    let (mut account, mut guarded) = (None, None);
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Stopped { step: 2 });
+    assert!(clicked(&app, "#s1") && clicked(&app, "#a"), "{:?}", log(&app));
+    assert!(!clicked(&app, "#b") && !clicked(&app, "#c"), "the step ran on after the stop: {:?}", log(&app));
+    assert!(!clicked(&app, "#s3"), "{:?}", log(&app));
+}
+
+/// Row 33: a failed action ends the replay at once - the rest of its step
+/// is never carried out (so never waits out its timeouts), and no later
+/// step runs.
+#[tokio::test]
+async fn a_failed_action_ends_the_replay_at_once() {
+    use v2_lib::autorun::runner::AFTER_ACTION_FAILED;
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let steps = json!([
+        { "step_number": 1, "actions": [click("#s1")] },
+        { "step_number": 2, "actions": [
+            { "kind": "check_text", "value": "no" },
+            { "kind": "expect_visible", "selector": { "css": "#never" }, "timeout_ms": 60000 },
+            click("#b")
+        ] },
+        { "step_number": 3, "actions": [click("#s3")] }
+    ]);
+    project(dir.path(), &script(steps));
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let began = std::time::Instant::now();
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    let ReplayEnd::StoppedAt { phase, step, outcomes, .. } = &end else { panic!("{end:?}") };
+    assert_eq!((*phase, *step), (ReplayPhase::Step, 2));
+    assert!(!outcomes[0].ok, "{outcomes:?}");
+    assert_eq!(outcomes[1].detail, AFTER_ACTION_FAILED);
+    assert_eq!(outcomes[2].detail, AFTER_ACTION_FAILED);
+    assert!(began.elapsed() < Duration::from_secs(20), "a later action waited out its timeout");
+    assert!(!clicked(&app, "#b") && !clicked(&app, "#s3"), "{:?}", log(&app));
 }
 
 /// A browser that dies - the person closed its window - once `dead` is set.

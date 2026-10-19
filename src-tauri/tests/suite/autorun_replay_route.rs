@@ -81,6 +81,10 @@ struct FakeHost {
     /// The replay runs on until this is notified (a slow replay); `None`
     /// ends it at once.
     release: Option<tokio::sync::Notify>,
+    /// The replay holds the one replay slot, as the app's does, and runs
+    /// on action 1 of step 2 until it is asked to stop (`replay_to::CANCEL`);
+    /// then it ends as stopped at step 2.
+    until_stopped: bool,
     /// The browser the replay leaves open, as the app says it.
     left_open: Option<v2_lib::autorun::replay_to::LeftOpen>,
     /// Where the app says the replay started.
@@ -102,6 +106,7 @@ impl FakeHost {
             no_save: false,
             open_failed: None,
             release: None,
+            until_stopped: false,
             left_open: None,
             from: v2_lib::autorun::replay_to::ReplayFrom::Beginning,
             reuse: Default::default(),
@@ -125,6 +130,27 @@ impl ReplayHost for FakeHost {
     ) -> HostFuture<'_, Result<AssistantReplay, String>> {
         Box::pin(async move {
             self.replays.lock().unwrap().push((organization, project, req));
+            if self.until_stopped {
+                use std::sync::atomic::Ordering;
+                use v2_lib::autorun::replay_to::{note_progress, OneReplay, ACTIONS, CANCEL};
+                let _one = OneReplay::claim().expect("a replay was already going");
+                note_progress(2, 2);
+                let action: v2_lib::browser::actions::Action =
+                    serde_json::from_value(json!({ "kind": "click", "selector": { "css": "#s2" } })).unwrap();
+                ACTIONS.began(1, 1, &action);
+                while !CANCEL.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                ACTIONS.ended(true);
+                return Ok(AssistantReplay {
+                    end: ReplayEnd::Stopped { step: 2 },
+                    discovery: DiscoveryEnded::default(),
+                    left_open: self.left_open.clone(),
+                    from: self.from,
+                    reuse: self.reuse.clone(),
+                    overrides: self.overrides.clone(),
+                });
+            }
             if let Some(release) = &self.release {
                 v2_lib::autorun::replay_to::note_progress(2, 2);
                 release.notified().await;
@@ -627,6 +653,141 @@ async fn the_answer_of_a_replay_that_ended_unwatched_goes_to_the_next_call() {
     assert_eq!(status, 200, "{text}");
     assert!(text.contains("Replayed case 77 to step 3"), "{text}");
     assert_eq!(host.replays().len(), 1);
+}
+
+// ---- stopping a replay (stop_autorun_replay) ---------------------------------
+
+/// Row 33: the assistant's replay still going is stopped on request. The
+/// call sets the replay's own stop (the one the person's Stop sets), waits
+/// for it to end, and answers its sentence alone - stopped on request,
+/// after which action of which step - with no page. The slot is free
+/// again: the next replay starts afresh.
+#[tokio::test]
+async fn a_replay_going_is_stopped_on_request_and_says_where() {
+    use v2_lib::ai_bridge::autorun_replay_stop_with;
+    let _a = crate::serial::autorun();
+    // The replay's step and action are process-wide: a replay of
+    // `autorun_replay_to` (under the leases lock) would move them.
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let host = leak(FakeHost { until_stopped: true, ..FakeHost::ready() });
+    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, Duration::from_millis(50)).await;
+    assert_eq!(status, 202, "the replay should still be going");
+
+    let (status, text) = autorun_replay_stop_with(WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v,
+        json!({ "sentence": "Started from the beginning. The replay of case 77 was stopped on request after action 1 of step 2" })
+    );
+    assert!(!v2_lib::autorun::replay_to::is_running());
+
+    // Nothing runs now, and the answer was taken: the next replay is new.
+    let (status, _) = autorun_replay_stop_with(WAIT).await;
+    assert_eq!(status, 404);
+    let again = leak(FakeHost::ready());
+    let (status, _) = autorun_replay_with(&ctx(), &body(3), again, WAIT).await;
+    assert_eq!(status, 200);
+    assert_eq!(again.replays().len(), 1, "the stopped replay's answer was handed over again");
+}
+
+/// Where the stop was heard, said from the step and action the replay was
+/// on: after an action, before a step's first action, or before step 1.
+#[test]
+fn a_stop_on_request_says_after_which_action_of_which_step() {
+    use v2_lib::autorun::replay_to::stopped_on_request;
+    assert_eq!(stopped_on_request(77, 2, 3), "the replay of case 77 was stopped on request after action 3 of step 2");
+    assert_eq!(stopped_on_request(77, 2, 0), "the replay of case 77 was stopped on request before step 2's first action");
+    assert_eq!(
+        stopped_on_request(77, 0, 0),
+        "the replay of case 77 was stopped on request before step 1, while the case was made ready (its preconditions, sign-in or trip to its area)"
+    );
+}
+
+/// With no replay going there is nothing to stop: 404, and nothing is
+/// asked to stop. A replay that already ended says how to collect its
+/// answer.
+#[tokio::test]
+async fn stopping_with_no_replay_going_answers_404() {
+    use v2_lib::ai_bridge::{autorun_replay_stop_with, NO_REPLAY_RUNNING};
+    use v2_lib::autorun::replay_to::CANCEL;
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    // A replay of another test may have left its answer: taken first.
+    let _ = autorun_replay_with(&ctx(), &body(3), leak(FakeHost::ready()), WAIT).await;
+    CANCEL.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(autorun_replay_stop_with(WAIT).await, (404, NO_REPLAY_RUNNING.to_string()));
+    assert!(!CANCEL.load(std::sync::atomic::Ordering::SeqCst), "a stop was asked with nothing going");
+    assert_eq!(NO_REPLAY_RUNNING, "no replay is running - there is nothing to stop");
+    // Through the bridge's route table too.
+    let answer = route(&ctx(), None, "POST", "/autorun-replay-stop", "{}", "1.0.0").await;
+    assert_eq!(answer.0, 404, "{}", answer.1);
+
+    // Ended, its answer not yet collected: said, and kept for the replay call.
+    let host = slow();
+    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, Duration::from_millis(30)).await;
+    assert_eq!(status, 202);
+    host.release.as_ref().unwrap().notify_one();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (status, text) = autorun_replay_stop_with(WAIT).await;
+    assert_eq!(status, 404, "{text}");
+    assert!(text.contains("call replay_autorun_to_step with case 77 and step 3 for its answer"), "{text}");
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(host.replays().len(), 1);
+}
+
+/// The person's own replay is theirs to stop: refused, and never asked to
+/// stop.
+#[tokio::test]
+async fn the_persons_replay_is_not_stopped_by_the_assistant() {
+    use v2_lib::ai_bridge::{autorun_replay_stop_with, PERSONS_REPLAY_GOING};
+    use v2_lib::autorun::replay_to::CANCEL;
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let _ = autorun_replay_with(&ctx(), &body(3), leak(FakeHost::ready()), WAIT).await;
+    let persons = OneReplay::claim().unwrap();
+    assert_eq!(autorun_replay_stop_with(WAIT).await, (409, PERSONS_REPLAY_GOING.to_string()));
+    assert!(!CANCEL.load(std::sync::atomic::Ordering::SeqCst), "the person's replay was asked to stop");
+    drop(persons);
+}
+
+/// A replay that has not heard the stop within the call's wait (an action
+/// still waiting on the page) answers 202: asked to stop, where it is, and
+/// how to keep waiting. Asked again once it ends, the call takes its answer.
+#[tokio::test]
+async fn a_stop_not_heard_within_the_wait_says_it_was_asked_and_how_to_wait() {
+    use v2_lib::ai_bridge::autorun_replay_stop_with;
+    let _a = crate::serial::autorun();
+    // The replay's step and action are process-wide: a replay of
+    // `autorun_replay_to` (under the leases lock) would move them.
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let host = slow();
+    let (status, _) = autorun_replay_with(&ctx(), &body(3), host, Duration::from_millis(30)).await;
+    assert_eq!(status, 202);
+    let (status, text) = autorun_replay_stop_with(Duration::from_millis(50)).await;
+    assert_eq!(status, 202, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["status"], "stopping", "{v}");
+    assert_eq!(
+        v["sentence"],
+        "asked to stop: the replay of case 77 to step 3 ends once the action it is on finishes (now at step 2 of 2) - call stop_autorun_replay again to wait for it"
+    );
+    assert!(v2_lib::autorun::replay_to::CANCEL.load(std::sync::atomic::Ordering::SeqCst));
+    host.release.as_ref().unwrap().notify_one();
+    let (status, text) = autorun_replay_stop_with(WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(text.contains("Replayed case 77 to step 3"), "{text}");
 }
 
 // ---- the browser a replay leaves open ---------------------------------------

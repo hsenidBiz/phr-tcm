@@ -110,6 +110,82 @@ fn a_check_that_could_not_run_blocks_in_the_gates_words_with_no_sql_or_error_tex
     for leak in ["SELECT", "Login failed", "db01", "tcp:"] {
         assert!(!out.contains(leak), "{leak} in {out}");
     }
+    // Tried once more (after `RETRY_AFTER`) before it blocks: twice in all.
+    assert_eq!(db.calls().len(), 2, "a check that could not run is tried once more");
+}
+
+/// A database that cannot be reached for its first `fails` reads (a VPN
+/// link that flapped), then answers `then`.
+struct Flaky {
+    fails: usize,
+    then: Result<bool, String>,
+    calls: std::sync::Mutex<usize>,
+}
+
+impl Flaky {
+    fn new(fails: usize, then: Result<bool, String>) -> Self {
+        Flaky { fails, then, calls: std::sync::Mutex::new(0) }
+    }
+    fn calls(&self) -> usize {
+        *self.calls.lock().unwrap()
+    }
+}
+
+impl v2_lib::api_templates::gate::StageDb for Flaky {
+    fn label(&self) -> String {
+        "flaky-server/flaky-db".to_string()
+    }
+    async fn read(&self, _sql: &str) -> Result<bool, String> {
+        let failing = {
+            let mut n = self.calls.lock().unwrap();
+            *n += 1;
+            *n <= self.fails
+        };
+        if failing {
+            Err("TCP Provider: No connection could be made".to_string())
+        } else {
+            self.then.clone()
+        }
+    }
+}
+
+/// Row 61: a check that could not be RUN (the database did not answer) is
+/// tried once more after the retry wait, and the second answer decides. One
+/// that ran and said "not done" is never asked again; a check failing
+/// twice still blocks with the could-not-be-checked sentence.
+#[test]
+fn a_check_that_could_not_run_is_tried_once_more_before_it_blocks() {
+    use std::time::{Duration, Instant};
+    use v2_lib::autorun::preconditions::{check_all_within, RETRY_AFTER};
+    let _g = crate::serial::activity_log();
+    assert_eq!(RETRY_AFTER, Duration::from_secs(3));
+    let short = Duration::from_millis(40);
+
+    let db = Flaky::new(1, Ok(true));
+    let began = Instant::now();
+    assert_eq!(block(check_all_within(&db, &[cycle_flow()], &[publish(None)], short)), Ok(()));
+    assert_eq!(db.calls(), 2, "the second try's answer is the one taken");
+    assert!(began.elapsed() >= short, "the second try came before the wait");
+
+    let db = Flaky::new(1, Ok(false));
+    assert_eq!(
+        block(check_all_within(&db, &[cycle_flow()], &[publish(None)], short)),
+        Err("precondition not met: Publish for 274 (Performance cycle wizard)".to_string())
+    );
+    assert_eq!(db.calls(), 2);
+
+    // Not met is an answer: never tried again.
+    let db = Flaky::new(0, Ok(false));
+    assert!(block(check_all_within(&db, &[cycle_flow()], &[publish(None)], short)).is_err());
+    assert_eq!(db.calls(), 1, "a check that ran and said not done was asked again");
+
+    // Twice unreachable: blocked, in the gate's words.
+    let db = Flaky::new(2, Ok(true));
+    assert_eq!(
+        block(check_all_within(&db, &[cycle_flow()], &[publish(None)], short)),
+        Err("precondition could not be checked: the check for Publish could not be run - see the activity folder in Settings, Logs".to_string())
+    );
+    assert_eq!(db.calls(), 2, "tried once more, never a third time");
 }
 
 #[test]
@@ -389,6 +465,7 @@ fn the_guide_teaches_preconditions() {
         "list_api_templates",
         "precondition not met: Publish for 274 (Performance cycle wizard) - the case opens a published cycle",
         "precondition could not be checked: the check for Publish could not be run - see the activity folder in Settings, Logs",
+        "is tried once more after 3 seconds",
         NEED_DB,
         NOT_CHECKED,
         "follow the Database Read Access switch",

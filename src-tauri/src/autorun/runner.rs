@@ -421,6 +421,11 @@ pub struct InRun<'a> {
     /// at its next look once it is set. `None` in a watched run or a try,
     /// where nothing waits that long unasked.
     pub cancel: Option<&'a AtomicBool>,
+    /// The Stop is heard before each action too, not only inside the
+    /// step's waits: a replay to a step, which the person's Stop and the
+    /// assistant's `stop_autorun_replay` end before the step's next action.
+    /// An unattended run hears its Stop between steps and in its waits.
+    pub stop_before_each_action: bool,
     /// Set by the step: the moment it began, as its `expect_download` takes
     /// it (after reading what the browser had already sent). The step's
     /// record dates its downloads from the same moment.
@@ -1141,6 +1146,13 @@ async fn run_expanded<D: Driver>(
     for (index, action) in step.actions.iter().enumerate() {
         if let Some(why) = blocked {
             out.push(ActionOutcome::failed(why));
+            continue;
+        }
+        // A Stop asked while the action before ran: this one and the rest
+        // of the step are not carried out.
+        if run.stop_before_each_action && run.cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+            out.push(ActionOutcome::failed(AFTER_STOP));
+            blocked = Some(AFTER_STOP);
             continue;
         }
         // A save stopped before this action began - while the page loaded,

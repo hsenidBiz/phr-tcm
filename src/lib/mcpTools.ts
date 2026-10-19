@@ -77,6 +77,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Replay a case's saved steps up to the failing one, asking you first when its script must not save.",
   },
   {
+    name: "stop_autorun_replay",
+    label: "Stop a replay",
+    summary: "Stop the assistant's replay that is still going, before its next action, and say where it stopped.",
+  },
+  {
     name: "start_autorun_discovery",
     label: "Start exploring",
     summary: "Open the Auto Run browser and sign in as a saved account, so the assistant can explore the live app.",
@@ -386,6 +391,7 @@ export const AUTORUN_TOOLS = [
   "probe_autorun_locator",
   "try_autorun_action",
   "replay_autorun_to_step",
+  "stop_autorun_replay",
   "start_autorun_discovery",
   "discover_autorun_action",
   "discover_autorun_actions",
@@ -515,6 +521,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "probe_autorun_locator",
     "try_autorun_action",
     "replay_autorun_to_step",
+    "stop_autorun_replay",
     "start_autorun_discovery",
     "discover_autorun_action",
     "discover_autorun_actions",

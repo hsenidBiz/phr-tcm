@@ -245,6 +245,44 @@ pub fn stop() {
     CANCEL.store(true, Ordering::SeqCst);
 }
 
+/// Whether the replay going was asked to stop by the assistant's
+/// `stop_autorun_replay` (`stop_on_request`), not by the person's Stop,
+/// Close or Release. Cleared by a claim, and when the assistant starts a
+/// replay (`forget_stop_request`).
+static ON_REQUEST: AtomicBool = AtomicBool::new(false);
+
+/// The assistant's `stop_autorun_replay`: the same stop as `stop`, noted
+/// as asked for, so the replay's answer says it was stopped on request.
+pub fn stop_on_request() {
+    ON_REQUEST.store(true, Ordering::SeqCst);
+    stop();
+}
+
+/// Whether the replay that ended last was asked to stop by the assistant.
+pub fn stop_was_requested() -> bool {
+    ON_REQUEST.load(Ordering::SeqCst)
+}
+
+/// A new replay of the assistant's starts with no stop asked of it.
+pub fn forget_stop_request() {
+    ON_REQUEST.store(false, Ordering::SeqCst);
+}
+
+/// What the assistant's replay that `stop_autorun_replay` stopped answers:
+/// where the stop was heard, from the step it was on (`at`, 0 before step
+/// 1) and the last action of that step to begin (`action`, from 1; 0 when
+/// none had). Said alone, with no page.
+pub fn stopped_on_request(case_id: i32, at: i32, action: usize) -> String {
+    let front = format!("the replay of case {case_id} was stopped on request");
+    match (at, action) {
+        (at, 0) if at > 0 => format!("{front} before step {at}'s first action"),
+        (at, n) if at > 0 => format!("{front} after action {n} of step {at}"),
+        _ => format!(
+            "{front} before step 1, while the case was made ready (its preconditions, sign-in or trip to its area)"
+        ),
+    }
+}
+
 /// The one replay going. Taking it clears an earlier stop; dropping it - an
 /// end, an error or a panic - frees the slot.
 pub struct OneReplay(());
@@ -255,6 +293,7 @@ impl OneReplay {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| ALREADY_RUNNING.to_string())?;
         CANCEL.store(false, Ordering::SeqCst);
+        ON_REQUEST.store(false, Ordering::SeqCst);
         PROGRESS.store(0, Ordering::SeqCst);
         ACTIONS.reset();
         Ok(OneReplay(()))
@@ -737,6 +776,7 @@ async fn run_steps<D: Driver>(
         noted.take_late();
         let mut in_run = InRun {
             cancel: Some(cancel),
+            stop_before_each_action: true,
             areas: Some(&areas),
             files: Some(&files),
             fail_on_unexpected_dialog: script.fail_on_unexpected_dialog,

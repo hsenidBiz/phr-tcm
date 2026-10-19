@@ -1671,3 +1671,21 @@ fn the_guide_teaches_expect_style() {
     assert!(seen[..400].contains("`expect_style`"), "the seen-check list never names expect_style");
     assert!(!line.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }
+
+/// Row 33: the replay part says a failed action ends a replay at once, and
+/// how to stop one no longer needed - in the replay part, never the quick
+/// rules (they are at their cap).
+#[test]
+fn the_replay_part_teaches_stopping_a_replay() {
+    let g = autorun_guide();
+    let part = g.split_once("## Repairing a script that failed").expect("no replay part").1;
+    let part = part.split("\n## ").next().unwrap();
+    let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(flat.contains("A failed action ends a replay at once."), "{flat}");
+    assert!(
+        flat.contains("call `stop_autorun_replay`: it stops before the next action and says where."),
+        "{flat}"
+    );
+    let quick = autorun_guide().split("\n## ").next().unwrap().to_string();
+    assert!(!quick.contains("stop_autorun_replay"), "the quick rules are at their cap");
+}

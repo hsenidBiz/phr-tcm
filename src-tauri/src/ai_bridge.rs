@@ -467,6 +467,9 @@ pub async fn route(
         ("POST", "/autorun-reset") => crate::commands::autorun::reset_for_assistant(&ctx.org, &ctx.project).await,
         ("POST", "/autorun-discover-area") => autorun_discover_area(ctx, body).await,
         ("POST", "/autorun-replay") => without_page(autorun_replay(ctx, body).await, body),
+        // The assistant's replay going, stopped through the same stop the
+        // person's Stop sets, and its answer once it has ended.
+        ("POST", "/autorun-replay-stop") => autorun_replay_stop_with(REPLAY_ANSWER_WAIT).await,
         ("GET", "/autorun-failures") => autorun_failures(ctx, target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         ("POST", "/autorun-quirk-retire") => autorun_quirk_retire(ctx, body),
@@ -3526,7 +3529,7 @@ fn call_the_replay_going() -> String {
 /// browser: a release never stops a replay, so it says how to wait for it.
 pub fn replay_going_for_a_release() -> String {
     format!(
-        "a replay is going and holds the browser, and a release never stops one - {} to wait for it, then release",
+        "a replay is going and holds the browser, and a release never stops one - {} to wait for it, or stop_autorun_replay to stop it, then release",
         call_the_replay_going()
     )
 }
@@ -6883,6 +6886,7 @@ async fn replay_answer_with(
             _ => {
                 let saved_at = script_saved_at(&root, case_id);
                 *slot = Some(AssistantRun { id, case_id, step, saved_at, answer: answer.clone() });
+                replay_to::forget_stop_request();
                 None
             }
         }
@@ -6903,6 +6907,69 @@ async fn replay_answer_with(
         let _ = tx.send(Some(done));
     });
     wait_for_replay(answer, id, case_id, step, wait).await
+}
+
+/// Said by `stop_autorun_replay` when no replay is going.
+pub const NO_REPLAY_RUNNING: &str = "no replay is running - there is nothing to stop";
+
+/// Said by `stop_autorun_replay` while the replay going is the person's own.
+pub const PERSONS_REPLAY_GOING: &str =
+    "the replay going is the person's own - only they can stop it, with Stop in the Auto Run pane";
+
+/// Said by `stop_autorun_replay` when the assistant's last replay has
+/// already ended, its answer not yet collected.
+pub fn replay_already_ended(case_id: i32, step: i32) -> String {
+    format!(
+        "{NO_REPLAY_RUNNING}: the replay of case {case_id} to step {step} has ended - call replay_autorun_to_step with case {case_id} and step {step} for its answer"
+    )
+}
+
+/// The 202 `stop_autorun_replay` answers when the replay has not ended
+/// within the call's wait: it was asked to stop, and hears it once the
+/// action it is on finishes (an action's own wait for the page runs out
+/// first).
+pub fn replay_stopping_answer(case_id: i32, step: i32) -> serde_json::Value {
+    let (at, of) = crate::autorun::replay_to::progress();
+    let action = crate::autorun::replay_to::action_now();
+    let mut now = if at > 0 {
+        format!("now at step {at} of {of}")
+    } else {
+        "now signing in and going to the case's area".to_string()
+    };
+    if at > 0 && action.index > 0 {
+        now.push_str(&format!(", on action {} of {}", action.index, action.of));
+    }
+    let sentence = format!(
+        "asked to stop: the replay of case {case_id} to step {step} ends once the action it is on finishes ({now}) - call stop_autorun_replay again to wait for it"
+    );
+    serde_json::json!({ "status": "stopping", "sentence": sentence, "step": at, "of": of })
+}
+
+/// `/autorun-replay-stop`, the assistant's `stop_autorun_replay`, waiting
+/// up to `wait` for the replay to end. Its replay still going is asked to
+/// stop through the replay's own stop (`replay_to::stop_on_request`, the
+/// one the person's Stop sets), which every replay hears before each
+/// action, before each step and inside its waits; the answer is then the
+/// replay's own, taken as `replay_autorun_to_step` takes it: stopped on
+/// request, after which action of which step, with no page - or, had it
+/// already stopped at a failing step, that failure with its page. Not
+/// ended within `wait`: 202 (`replay_stopping_answer`). No replay going:
+/// 404; the person's own: 409, never stopped.
+pub async fn autorun_replay_stop_with(wait: std::time::Duration) -> (u16, String) {
+    let mine = assistant_run().as_ref().map(|r| (r.answer.clone(), r.id, r.case_id, r.step));
+    match mine {
+        Some((answer, id, case_id, step)) if answer.borrow().is_none() => {
+            crate::autorun::replay_to::stop_on_request();
+            crate::applog::info(format!("Auto Run replay of case {case_id} to step {step}: the assistant asked it to stop"));
+            match wait_for_replay(answer, id, case_id, step, wait).await {
+                (202, _) => (202, replay_stopping_answer(case_id, step).to_string()),
+                done => done,
+            }
+        }
+        _ if crate::autorun::replay_to::is_running() => (409, PERSONS_REPLAY_GOING.to_string()),
+        Some((_, _, case_id, step)) => (404, replay_already_ended(case_id, step)),
+        None => (404, NO_REPLAY_RUNNING.to_string()),
+    }
 }
 
 /// `s` with its first letter a capital, as a sentence after another one.
@@ -6933,10 +7000,20 @@ async fn run_assistant_replay(
     // already there (then nothing ran, and that is all there is to say).
     // A browser signed in already says so next, where a sign-in would be.
     let reused = reuse.said().map(|line| format!("{line} ")).unwrap_or_default();
+    // Stopped by stop_autorun_replay: said as stopped on request, after the
+    // last action to begin of the step it was on.
+    let ended = match &end {
+        ReplayEnd::Stopped { .. } if crate::autorun::replay_to::stop_was_requested() => {
+            let (at, _) = crate::autorun::replay_to::progress();
+            let action = crate::autorun::replay_to::action_now();
+            crate::autorun::replay_to::stopped_on_request(case_id, at, action.index)
+        }
+        _ => end.sentence(),
+    };
     let said = match (&end, from) {
         (ReplayEnd::Refused(_) | ReplayEnd::Blocked(_), _) => end.sentence(),
         (_, ReplayFrom::AlreadyThere) => from.said(case_id, step),
-        _ => format!("{} {reused}{}", from.said(case_id, step), capitalised(&end.sentence())),
+        _ => format!("{} {reused}{}", from.said(case_id, step), capitalised(&ended)),
     };
     // Said before that when the replay ended the assistant's own discovery,
     // with the guard a no_save one leaves on.

@@ -105,11 +105,28 @@ pub fn not_met(stage_title: &str, value: &Value, flow_title: &str, why: Option<&
     out
 }
 
+/// How long a check that could not be run (the database did not answer:
+/// a VPN link that dropped for a moment) waits before it is tried once
+/// more. A check that ran and said "not done" is never tried again.
+pub const RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Asks each precondition's stage check, in order, and stops at the first
 /// that is not met or could not run. `Err` is the Blocked sentence. The
 /// value goes into each check through the flow's own typed substitution
-/// (`flow::substitute_check`), never pasted.
+/// (`flow::substitute_check`), never pasted. A check that could not be run
+/// is tried once more after `RETRY_AFTER`, and that answer decides.
 pub async fn check_all<D: StageDb>(db: &D, flows: &[Flow], preconditions: &[Precondition]) -> Result<(), String> {
+    check_all_within(db, flows, preconditions, RETRY_AFTER).await
+}
+
+/// `check_all` with the wait before the second try given, so a test need
+/// not wait 3 seconds to see one.
+pub async fn check_all_within<D: StageDb>(
+    db: &D,
+    flows: &[Flow],
+    preconditions: &[Precondition],
+    retry_after: std::time::Duration,
+) -> Result<(), String> {
     let found = problems(flows, preconditions);
     if !found.is_empty() {
         return Err(format!("{COULD_NOT}: {}", found.join("; ")));
@@ -119,7 +136,17 @@ pub async fn check_all<D: StageDb>(db: &D, flows: &[Flow], preconditions: &[Prec
         // Both found: `problems` above refused anything else.
         let Some(flow) = flows.iter().find(|f| f.id == p.flow) else { continue };
         let Some(stage) = flow.stages.iter().find(|s| s.id == p.stage) else { continue };
-        match gate::stage_state(db, flow, stage, &p.value, &why).await {
+        let mut state = gate::stage_state(db, flow, stage, &p.value, &why).await;
+        if state == StageState::CouldNotRun {
+            crate::applog::info(format!(
+                "Auto Run preconditions: the check for {} could not be run - trying once more in {} s",
+                stage.title,
+                retry_after.as_secs_f32()
+            ));
+            tokio::time::sleep(retry_after).await;
+            state = gate::stage_state(db, flow, stage, &p.value, &why).await;
+        }
+        match state {
             StageState::Done => {}
             StageState::NotDone => return Err(not_met(&stage.title, &p.value, &flow.title, p.why.as_deref())),
             StageState::CouldNotRun => return Err(format!("{COULD_NOT}: {}", gate::could_not_run(stage))),
