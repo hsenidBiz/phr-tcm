@@ -87,6 +87,26 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
+    /// The one element's computed style `property` (`getComputedStyle`,
+    /// written as CSS writes it) is `equals`, holds `contains`, or is
+    /// anything but `not_equals` - exactly one of the three. A colour is
+    /// compared as the `rgb()`/`rgba()` the browser reports, however it is
+    /// written; any other value trimmed and, unless quoted, ignoring case
+    /// (`style`). Retried like `expect_text`, and a transition or a finite
+    /// animation still changing the property is waited out
+    /// (`expect::READ_STYLE_JS`).
+    ExpectStyle {
+        selector: Target,
+        property: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        contains: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        not_equals: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
     /// The one element can be used: not disabled (`expect::DISABLED_JS`).
     ExpectEnabled {
         selector: Target,
@@ -1137,6 +1157,18 @@ impl Action {
                 }
                 selector.validate()
             }
+            Action::ExpectStyle { selector, property, equals, contains, not_equals, .. } => {
+                if let Some(why) = super::style::property_problem(property) {
+                    return Err(why);
+                }
+                if [equals.is_some(), contains.is_some(), not_equals.is_some()].iter().filter(|g| **g).count() != 1 {
+                    return Err(STYLE_NEEDS_ONE.to_string());
+                }
+                if contains.as_deref().is_some_and(|c| c.trim().is_empty()) {
+                    return Err("expect_style has an empty contains - everything contains nothing".to_string());
+                }
+                selector.validate()
+            }
             Action::CheckText { value } if value.trim().is_empty() => {
                 Err("check_text has an empty value".to_string())
             }
@@ -1353,6 +1385,7 @@ impl Action {
             | Action::ExpectContainsText { selector, .. }
             | Action::ExpectCount { selector, .. }
             | Action::ExpectAttribute { selector, .. }
+            | Action::ExpectStyle { selector, .. }
             | Action::ExpectEnabled { selector, .. }
             | Action::ExpectDisabled { selector, .. }
             | Action::ExpectChecked { selector, .. }
@@ -1400,6 +1433,7 @@ impl Action {
             | Action::ExpectContainsText { selector, .. }
             | Action::ExpectCount { selector, .. }
             | Action::ExpectAttribute { selector, .. }
+            | Action::ExpectStyle { selector, .. }
             | Action::ExpectEnabled { selector, .. }
             | Action::ExpectDisabled { selector, .. }
             | Action::ExpectChecked { selector, .. }
@@ -1464,6 +1498,7 @@ impl Action {
                 | Action::ExpectContainsText { .. }
                 | Action::ExpectCount { .. }
                 | Action::ExpectAttribute { .. }
+                | Action::ExpectStyle { .. }
                 | Action::ExpectEnabled { .. }
                 | Action::ExpectDisabled { .. }
                 | Action::ExpectChecked { .. }
@@ -1488,6 +1523,9 @@ pub const ATTRIBUTE_EQUALS_OR_ABSENT: &str =
 /// `expect_attribute` given neither.
 pub const ATTRIBUTE_NEEDS_ONE: &str =
     "expect_attribute needs \"equals\" (the value it must have) or \"absent\": true (it must not be there)";
+/// `expect_style` given none, or more than one, of its comparisons.
+pub const STYLE_NEEDS_ONE: &str =
+    "expect_style takes exactly one of \"equals\", \"contains\" or \"not_equals\"";
 
 /// What `navigate`, and `open_tab` after it, say about an address that is
 /// not one a browser can be sent to.
@@ -1823,6 +1861,17 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 Some(equals) => Check::Attribute { name, equals },
                 None => Check::NoAttribute { name },
             };
+            expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectStyle { selector, property, equals, contains, not_equals, timeout_ms } => {
+            // `validate` holds the three to exactly one.
+            let want = match (equals, contains, not_equals) {
+                (Some(w), _, _) => super::style::Want::Equals(w),
+                (_, Some(w), _) => super::style::Want::Contains(w),
+                (_, _, Some(w)) => super::style::Want::NotEquals(w),
+                _ => return ActionOutcome::failed(STYLE_NEEDS_ONE),
+            };
+            let check = Check::Style { property: property.trim(), want };
             expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
         }
         Action::ExpectEnabled { selector, timeout_ms } => {

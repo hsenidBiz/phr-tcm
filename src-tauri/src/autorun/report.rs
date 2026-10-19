@@ -97,6 +97,15 @@ pub fn action_words(action: &Action) -> String {
         Action::ExpectAttribute { selector, name, equals: None, .. } => {
             format!("expect {} to have no {name}", selector.describe())
         }
+        Action::ExpectStyle { selector, property, equals, contains, not_equals, .. } => {
+            let how = match (equals, contains, not_equals) {
+                (Some(v), _, _) => format!("to be \"{v}\""),
+                (_, Some(v), _) => format!("to contain \"{v}\""),
+                (_, _, Some(v)) => format!("not to be \"{v}\""),
+                _ => "to be checked".to_string(),
+            };
+            format!("expect {}'s {} {how}", selector.describe(), property.trim())
+        }
         Action::ExpectEnabled { selector, .. } => format!("expect {} to be enabled", selector.describe()),
         Action::ExpectDisabled { selector, .. } => format!("expect {} to be disabled", selector.describe()),
         Action::ExpectChecked { selector, checked, .. } => {

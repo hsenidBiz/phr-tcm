@@ -3030,6 +3030,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::ExpectText { selector, .. }
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectAttribute { selector, .. }
+        | Action::ExpectStyle { selector, .. }
         | Action::ExpectEnabled { selector, .. }
         | Action::ExpectDisabled { selector, .. }
         | Action::ExpectChecked { selector, .. }
@@ -3557,6 +3558,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
+        | Action::ExpectStyle { selector, .. }
         | Action::ExpectEnabled { selector, .. }
         | Action::ExpectDisabled { selector, .. }
         | Action::ExpectChecked { selector, .. }

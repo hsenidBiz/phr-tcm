@@ -3867,3 +3867,36 @@ async fn an_element_is_inspected_without_touching_the_page() {
     assert!(names.contains(&"document"), "{text}");
     assert!(v["listeners"]["ancestors_stopped"].is_string(), "{text}");
 }
+
+/// `expect_style` against a real page: the computed value, colours written
+/// any way, a custom property, a quoted font family; a transition is
+/// waited out (a `not_equals` read mid-fade would otherwise pass on an
+/// in-between colour); an endless animation is not waited for.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn expect_style_reads_the_computed_style() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-style.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let style = |css: &str, property: &str, how: &str, value: &str| {
+        json!({ "kind": "expect_style", "selector": { "css": css }, "property": property, how: value, "timeout_ms": 3000 })
+    };
+    must(run(&mut live, style("#plain", "color", "equals", "red")).await);
+    must(run(&mut live, style("#plain", "color", "equals", "#f00")).await);
+    must(run(&mut live, style("#plain", "background-color", "equals", "rgba(255, 0, 0, 0.5)")).await);
+    must(run(&mut live, style("#plain", "display", "not_equals", "none")).await);
+    must(run(&mut live, style("#plain", "box-shadow", "contains", "black")).await);
+    must(run(&mut live, style("#plain", "font-family", "contains", "Arial")).await);
+    must(run(&mut live, style("#plain", "--brand", "equals", "#112233")).await);
+    let quick = json!({ "kind": "expect_style", "selector": { "css": "#plain" }, "property": "color", "equals": "blue", "timeout_ms": 300 });
+    refused(run(&mut live, quick).await, "#plain color is rgb(255, 0, 0), expected rgb(0, 0, 255)");
+
+    // The fade runs 1.5 s: read at once it is neither black nor blue.
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#go" } })).await);
+    let out = run(&mut live, style("#fade", "color", "not_equals", "blue")).await;
+    refused(out, "expected anything but rgb(0, 0, 255)");
+    must(run(&mut live, style("#fade", "color", "equals", "blue")).await);
+
+    // An endless animation never settles: its value is read as it is.
+    must(run(&mut live, style("#pulse", "color", "contains", "rgb(")).await);
+}

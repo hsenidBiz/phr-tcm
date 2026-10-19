@@ -2503,3 +2503,19 @@ fn a_placeholder_whole_passes_at_save_and_at_run_time() {
     let saved = one_step("Cycles", serde_json::json!([click(serde_json::json!({ "role": "button", "name": "{{setup.label}}", "exact": true }))]));
     assert_eq!(check_seen(&named, &none(), &saved, &[], None), Err(only_placeholder(1, "button \"{{setup.label}}\"")));
 }
+
+/// `expect_style` reads one element's computed style: its target is held
+/// to a check's rule - a locator seen matching one passes, one seen only
+/// matching several is refused, as for `expect_attribute`.
+#[test]
+fn a_style_check_takes_a_seen_target_like_any_check() {
+    let style = serde_json::json!({ "kind": "expect_style", "selector": { "css": NOT_THE_DRAFT }, "property": "color", "equals": "red" });
+    let s = one_step("Cycles", serde_json::json!([style.clone()]));
+    let one = sighted_matching("Cycles", css(NOT_THE_DRAFT), 1);
+    assert_eq!(check_seen(&one, &none(), &s, &[], None), Ok(()));
+    let two = sighted_matching("Cycles", css(NOT_THE_DRAFT), 2);
+    let described = Target::One(css(NOT_THE_DRAFT)).describe();
+    assert_eq!(check_seen(&two, &none(), &s, &[], None), Err(many_refusal(1, &described)));
+    let empty = DiscoveryMap::default();
+    assert_eq!(check_seen(&empty, &none(), &s, &[], None), Err(refusal_as(1, &described, "expect_style")));
+}

@@ -28,6 +28,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_contains_text",
     "expect_count",
     "expect_attribute",
+    "expect_style",
     "expect_enabled",
     "expect_disabled",
     "expect_checked",
@@ -224,6 +225,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_contains_text", "selector": ..., "value": "..." }`
 - `{ "kind": "expect_count", "selector": ..., "equals": 3 }`
 - `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute
+- `{ "kind": "expect_style", "selector": ..., "property": "color", "equals": "red" }` - the element's computed style (what the browser draws after every stylesheet), with exactly one of `equals`, `contains` or `not_equals`. A colour is compared as the rgb() the browser reports, however it is written (`red`, `#f00`, `rgb(255 0 0)`, `hsl(0, 100%, 50%)`); any other value ignores case and surrounding spaces (not inside quotes). Write the property as CSS does (`background-color`, never `backgroundColor`). A transition or animation still changing that property is waited out
 - `{ "kind": "expect_enabled", "selector": ... }` - the element can be used
 - `{ "kind": "expect_checked", "selector": ..., "checked": true }` - the checkbox or radio is ticked (`"checked": false`: it is not), read from its live state, which follows clicks; any other element answers by its `aria-checked`, and a partly ticked box (`mixed`) is neither. `checked` is true when left out
 - `{ "kind": "expect_disabled", "selector": ... }` - the element is disabled: its `disabled` property is set, it or an element around it has `aria-disabled="true"`, or it is a form control (button, input, select, textarea) a disabled fieldset holds outside that fieldset's first legend; a link in a disabled fieldset is not disabled. A click waits out the same rule
@@ -1491,7 +1493,7 @@ What a save checks:
   elements. Every other use needs a locator seen matching exactly one: an
   action (click, fill, upload, press_key, drag), the selector a
   `when_visible` waits for, and the checks that read one element (`expect_visible`, `expect_text`,
-  `expect_contains_text`, `expect_attribute`, `expect_enabled`,
+  `expect_contains_text`, `expect_attribute`, `expect_style`, `expect_enabled`,
   `expect_disabled`, `expect_checked`, `expect_focused`, and the table checks, whose table
   must be one). A locator never seen matching
   anything is refused for every use, `expect_hidden` included: probe it

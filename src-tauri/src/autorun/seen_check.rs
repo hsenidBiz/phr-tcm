@@ -113,7 +113,7 @@
 //! needs one seen matching exactly one: an action that acts on the element
 //! (click, fill, select, check, upload, press, drag, ...), and the checks
 //! whose run reads one element and fails on several (`expect_visible`,
-//! `expect_text`, `expect_contains_text`, `expect_attribute`,
+//! `expect_text`, `expect_contains_text`, `expect_attribute`, `expect_style`,
 //! `expect_enabled`, `expect_disabled`, `expect_checked`, `expect_focused`, and the table
 //! checks `expect_row`, `expect_no_row`,
 //! `expect_sorted` and `expect_row_count`, whose table must be one), as
@@ -330,6 +330,7 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::ExpectText { .. }
         | Action::ExpectContainsText { .. }
         | Action::ExpectAttribute { .. }
+        | Action::ExpectStyle { .. }
         | Action::ExpectEnabled { .. }
         | Action::ExpectDisabled { .. }
         | Action::ExpectChecked { .. }
@@ -654,6 +655,7 @@ fn is_check(action: &Action) -> bool {
             | Action::ExpectContainsText { .. }
             | Action::ExpectCount { .. }
             | Action::ExpectAttribute { .. }
+            | Action::ExpectStyle { .. }
             | Action::ExpectEnabled { .. }
             | Action::ExpectDisabled { .. }
             | Action::ExpectChecked { .. }

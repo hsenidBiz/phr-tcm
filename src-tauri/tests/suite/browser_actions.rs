@@ -628,6 +628,7 @@ fn only_checks_and_expectations_are_checks() {
         Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
         Action::ExpectCount { selector: "s".into(), equals: 1, timeout_ms: None },
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), absent: false, timeout_ms: None },
+        serde_json::from_value(json!({ "kind": "expect_style", "selector": "s", "property": "color", "equals": "red" })).unwrap(),
         Action::ExpectEnabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectDisabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectChecked { selector: "s".into(), checked: true, timeout_ms: None },
@@ -674,6 +675,7 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_contains_text"
                 | "expect_count"
                 | "expect_attribute"
+                | "expect_style"
                 | "expect_enabled"
                 | "expect_disabled"
                 | "expect_checked"
@@ -963,4 +965,222 @@ async fn the_driver_alone_never_checks_a_download() {
     let out = execute_with(&mut d, &a, &quick()).await;
     assert!(!out.ok && out.detail.contains("runner"), "{}", out.detail);
     assert!(d.calls.is_empty());
+}
+
+// ---- expect_style ----------------------------------------------------------
+
+/// An `expect_style` on `#save`'s `property`, with the rest of its keys.
+fn style_check(property: &str, rest: serde_json::Value) -> Action {
+    let mut v = json!({ "kind": "expect_style", "selector": { "css": "#save" }, "property": property });
+    v.as_object_mut().unwrap().extend(rest.as_object().unwrap().clone());
+    serde_json::from_value(v).unwrap()
+}
+
+/// A page whose style reads answer these `(value, still changing)` pairs,
+/// in turn; the last repeats.
+fn styled(answers: &[(&str, bool)]) -> FakePage {
+    FakePage {
+        styles: answers.iter().map(|(v, moving)| json!({ "value": v, "moving": moving })).collect(),
+        ..FakePage::default()
+    }
+}
+
+#[tokio::test]
+async fn expect_style_equals_passes_and_fails_naming_the_property_and_both_values() {
+    let red = style_check("color", json!({ "equals": "rgb(255, 0, 0)" }));
+    let mut d = styled(&[("rgb(255, 0, 0)", false)]).driver();
+    let out = execute_with(&mut d, &red, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "#save has color rgb(255, 0, 0)");
+
+    let mut d = styled(&[("rgb(0, 0, 0)", false)]).driver();
+    let out = execute_with(&mut d, &red, &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(out.detail, "waited 300ms: #save color is rgb(0, 0, 0), expected rgb(255, 0, 0)");
+}
+
+/// However a colour is written, it is compared as the rgb() the browser
+/// reports: a name, any hex form, rgb() or rgba() with commas or spaces,
+/// and hsl().
+#[tokio::test]
+async fn red_equals_rgb_255_0_0_however_it_is_written() {
+    for want in [
+        "red",
+        "RED",
+        "#f00",
+        "#FF0000",
+        "#ff0000ff",
+        "#f00f",
+        "rgb(255,0,0)",
+        "rgba(255, 0, 0, 1)",
+        "rgb(255 0 0)",
+        "rgb(100% 0% 0% / 100%)",
+        "hsl(0, 100%, 50%)",
+        " red ",
+    ] {
+        let mut d = styled(&[("rgb(255, 0, 0)", false)]).driver();
+        let out = execute_with(&mut d, &style_check("color", json!({ "equals": want })), &quick()).await;
+        assert!(out.ok, "{want}: {}", out.detail);
+    }
+    let mut d = styled(&[("rgb(255, 0, 0)", false)]).driver();
+    let out = execute_with(&mut d, &style_check("color", json!({ "equals": "maroon" })), &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("color is rgb(255, 0, 0), expected rgb(128, 0, 0)"), "{}", out.detail);
+
+    // Transparency: the browser's rgba() and a hex with alpha agree.
+    let mut d = styled(&[("rgba(255, 0, 0, 0.5)", false)]).driver();
+    assert!(execute_with(&mut d, &style_check("background-color", json!({ "equals": "#ff000080" })), &quick()).await.ok);
+    let mut d = styled(&[("rgba(0, 0, 0, 0)", false)]).driver();
+    assert!(execute_with(&mut d, &style_check("background-color", json!({ "equals": "transparent" })), &quick()).await.ok);
+}
+
+#[tokio::test]
+async fn expect_style_contains_passes_and_fails() {
+    let shadow = "rgb(0, 0, 0) 0px 1px 2px 0px";
+    for want in ["2px", "black", "#000"] {
+        let mut d = styled(&[(shadow, false)]).driver();
+        let out = execute_with(&mut d, &style_check("box-shadow", json!({ "contains": want })), &quick()).await;
+        assert!(out.ok, "{want}: {}", out.detail);
+    }
+    let mut d = styled(&[(shadow, false)]).driver();
+    let out = execute_with(&mut d, &style_check("box-shadow", json!({ "contains": "3px" })), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.ends_with(&format!("#save box-shadow is {shadow}, expected it to contain 3px")), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn expect_style_not_equals_passes_when_the_value_differs() {
+    let mut d = styled(&[("none", false)]).driver();
+    let out = execute_with(&mut d, &style_check("display", json!({ "not_equals": "block" })), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "#save has display none, not block");
+
+    // Keywords ignore case; a colour is compared as rgb().
+    let mut d = styled(&[("none", false)]).driver();
+    let out = execute_with(&mut d, &style_check("display", json!({ "not_equals": "NONE" })), &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("#save display is none, expected anything but NONE"), "{}", out.detail);
+    let mut d = styled(&[("rgb(255, 0, 0)", false)]).driver();
+    let out = execute_with(&mut d, &style_check("color", json!({ "not_equals": "red" })), &quick()).await;
+    assert!(
+        !out.ok && out.detail.ends_with("color is rgb(255, 0, 0), expected anything but rgb(255, 0, 0)"),
+        "{}",
+        out.detail
+    );
+}
+
+/// A value read mid-transition is the transition's, not the page's: the
+/// check looks again until the property stops changing, within its
+/// timeout - and a `not_equals` never passes on an in-between colour.
+#[tokio::test]
+async fn expect_style_waits_for_a_transition_to_settle() {
+    let mut d = styled(&[("rgb(40, 0, 0)", true), ("rgb(200, 0, 0)", true), ("rgb(255, 0, 0)", false)]).driver();
+    let out = execute_with(&mut d, &style_check("color", json!({ "equals": "red" })), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+
+    let mut d = styled(&[("rgb(10, 0, 0)", true), ("rgb(0, 0, 0)", false)]).driver();
+    let out = execute_with(&mut d, &style_check("color", json!({ "not_equals": "black" })), &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("expected anything but rgb(0, 0, 0)"), "{}", out.detail);
+
+    // Still changing when the time runs out: said so, with the value so far.
+    let mut d = styled(&[("rgb(9, 0, 0)", true)]).driver();
+    let out = execute_with(&mut d, &style_check("color", json!({ "equals": "red", "timeout_ms": 50 })), &quick()).await;
+    assert_eq!(out.detail, "waited 50ms: #save color is still changing (rgb(9, 0, 0) so far)");
+}
+
+#[test]
+fn expect_style_takes_exactly_one_comparison_and_a_css_property_name() {
+    use v2_lib::browser::actions::STYLE_NEEDS_ONE;
+    let bad = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate().unwrap_err();
+    let base = |rest: serde_json::Value| {
+        let mut v = json!({ "kind": "expect_style", "selector": "#s", "property": "color" });
+        v.as_object_mut().unwrap().extend(rest.as_object().unwrap().clone());
+        v
+    };
+    assert_eq!(bad(base(json!({}))), STYLE_NEEDS_ONE);
+    assert_eq!(bad(base(json!({ "equals": "red", "contains": "r" }))), STYLE_NEEDS_ONE);
+    assert_eq!(bad(base(json!({ "equals": "red", "not_equals": "blue" }))), STYLE_NEEDS_ONE);
+    assert!(bad(base(json!({ "contains": " " }))).contains("empty"));
+    assert!(bad(json!({ "kind": "expect_style", "selector": "#s", "property": " ", "equals": "x" })).contains("empty property"));
+    let camel = bad(json!({ "kind": "expect_style", "selector": "#s", "property": "backgroundColor", "equals": "red" }));
+    assert!(camel.contains("\"background-color\""), "{camel}");
+    assert!(bad(json!({ "kind": "expect_style", "selector": "#s", "property": "color;x", "equals": "red" })).contains("not a CSS property"));
+    assert!(bad(json!({ "kind": "expect_style", "selector": {}, "property": "color", "equals": "red" })).contains("role, text or css"));
+    for good in [
+        base(json!({ "equals": "red" })),
+        base(json!({ "contains": "0px" })),
+        base(json!({ "not_equals": "none" })),
+        json!({ "kind": "expect_style", "selector": "#s", "property": "--brand-Colour", "equals": "#123" }),
+        json!({ "kind": "expect_style", "selector": "#s", "property": "-webkit-line-clamp", "equals": "2" }),
+    ] {
+        let a: Action = serde_json::from_value(good.clone()).unwrap();
+        assert_eq!(a.validate(), Ok(()), "{good}");
+        // Only what was given is written back.
+        assert_eq!(serde_json::to_value(&a).unwrap(), good);
+    }
+}
+
+/// The colour rule on its own: the CSS basic colours and `transparent`,
+/// every hex form, rgb()/rgba() with commas, spaces, a slash or percents,
+/// and hsl(); anything else is not a colour.
+#[test]
+fn colours_normalise_to_rgb_or_rgba() {
+    use v2_lib::browser::style::colour;
+    let named = [
+        ("black", "rgb(0, 0, 0)"),
+        ("silver", "rgb(192, 192, 192)"),
+        ("gray", "rgb(128, 128, 128)"),
+        ("grey", "rgb(128, 128, 128)"),
+        ("white", "rgb(255, 255, 255)"),
+        ("maroon", "rgb(128, 0, 0)"),
+        ("red", "rgb(255, 0, 0)"),
+        ("purple", "rgb(128, 0, 128)"),
+        ("fuchsia", "rgb(255, 0, 255)"),
+        ("green", "rgb(0, 128, 0)"),
+        ("lime", "rgb(0, 255, 0)"),
+        ("olive", "rgb(128, 128, 0)"),
+        ("yellow", "rgb(255, 255, 0)"),
+        ("navy", "rgb(0, 0, 128)"),
+        ("blue", "rgb(0, 0, 255)"),
+        ("teal", "rgb(0, 128, 128)"),
+        ("aqua", "rgb(0, 255, 255)"),
+        ("orange", "rgb(255, 165, 0)"),
+        ("transparent", "rgba(0, 0, 0, 0)"),
+    ];
+    for (name, rgb) in named {
+        assert_eq!(colour(name).as_deref(), Some(rgb), "{name}");
+    }
+    for (written, rgb) in [
+        ("#abc", "rgb(170, 187, 204)"),
+        ("#ABCD", "rgba(170, 187, 204, 0.867)"),
+        ("#1a2b3c", "rgb(26, 43, 60)"),
+        ("#1a2b3c80", "rgba(26, 43, 60, 0.5)"),
+        ("#00000000", "rgba(0, 0, 0, 0)"),
+        ("rgb(1,2,3)", "rgb(1, 2, 3)"),
+        ("rgba(1, 2, 3, 0.25)", "rgba(1, 2, 3, 0.25)"),
+        ("rgba(1 2 3 / 25%)", "rgba(1, 2, 3, 0.25)"),
+        ("RGB( 1 , 2 , 3 )", "rgb(1, 2, 3)"),
+        ("rgb(300, -5, 12.6)", "rgb(255, 0, 13)"),
+        ("rgb(50%, 0%, 100%)", "rgb(128, 0, 255)"),
+        ("rgba(0, 0, 0, 1)", "rgb(0, 0, 0)"),
+        ("hsl(120, 100%, 25%)", "rgb(0, 128, 0)"),
+        ("hsl(240deg 100% 50% / 0.5)", "rgba(0, 0, 255, 0.5)"),
+        ("hsla(0.5turn, 100%, 50%, 1)", "rgb(0, 255, 255)"),
+    ] {
+        assert_eq!(colour(written).as_deref(), Some(rgb), "{written}");
+    }
+    for not_one in ["", "none", "block", "#12", "#ggg", "rgb(1, 2)", "rgb(1, 2, 3, 4, 5)", "2px solid red", "url(#a)", "rebecca"] {
+        assert_eq!(colour(not_one), None, "{not_one}");
+    }
+}
+
+/// Values that are not colours: trimmed, spaces collapsed, case ignored -
+/// except inside quotes, where the case is the page's text.
+#[test]
+fn other_style_values_compare_trimmed_and_ignoring_the_case_of_keywords() {
+    use v2_lib::browser::style::{judge, Want};
+    assert!(judge("display", "block", Want::Equals(" Block ")).is_ok());
+    assert!(judge("font-family", "\"Segoe UI\", Arial", Want::Equals("\"Segoe UI\",  Arial")).is_ok());
+    assert!(judge("content", "\"Hello\"", Want::Equals("\"hello\"")).is_err());
+    assert!(judge("font-family", "\"Segoe UI\", Arial", Want::Contains("arial")).is_err(), "quoted: the case is the page's");
+    assert!(judge("transition", "color 0.2s ease 0s", Want::Contains("COLOR 0.2S")).is_ok());
+    assert_eq!(judge("--x", "", Want::Equals("1")).unwrap_err(), "--x is (empty), expected 1");
 }

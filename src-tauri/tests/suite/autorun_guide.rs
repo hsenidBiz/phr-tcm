@@ -36,6 +36,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
         Action::ExpectCount { selector: "s".into(), equals: 1, timeout_ms: None },
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), absent: false, timeout_ms: None },
+        serde_json::from_value(serde_json::json!({ "kind": "expect_style", "selector": "s", "property": "color", "equals": "red" })).unwrap(),
         Action::ExpectEnabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectDisabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectChecked { selector: "s".into(), checked: true, timeout_ms: None },
@@ -1588,4 +1589,19 @@ fn the_guide_teaches_the_applications_refusals() {
     ] {
         assert!(g.contains(phrase), "the guide never says {phrase:?}");
     }
+}
+
+/// `expect_style` is in the vocabulary with its three comparisons, how a
+/// colour is compared, and that a property is written as CSS writes it.
+#[test]
+fn the_guide_teaches_expect_style() {
+    let g = autorun_guide();
+    let line = g.lines().find(|l| l.contains("\"kind\": \"expect_style\"")).expect("no expect_style line in the vocabulary");
+    for term in ["\"property\"", "`equals`", "`contains`", "`not_equals`", "computed", "rgb()", "background-color", "transition"] {
+        assert!(line.contains(term), "the expect_style line never says {term}: {line}");
+    }
+    // It reads one element, so the seen-check section lists it with those.
+    let seen = g.split("checks that read one element").nth(1).expect("no seen-check list");
+    assert!(seen[..400].contains("`expect_style`"), "the seen-check list never names expect_style");
+    assert!(!line.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }

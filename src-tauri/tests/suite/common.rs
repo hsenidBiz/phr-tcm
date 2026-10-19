@@ -17,7 +17,7 @@ use v2_lib::browser::cdp::{
 use v2_lib::browser::dialogs::DialogBook;
 use v2_lib::browser::page_errors::PageErrorBook;
 use v2_lib::browser::downloads::DownloadEntry;
-use v2_lib::browser::expect::{CHECKED_JS, DISABLED_JS, READ_ATTR_JS, READ_TEXT_JS};
+use v2_lib::browser::expect::{CHECKED_JS, DISABLED_JS, READ_ATTR_JS, READ_STYLE_JS, READ_TEXT_JS};
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
 use v2_lib::browser::net_record::{NetEntry, NetRecord};
@@ -680,6 +680,9 @@ pub struct FakePage {
     pub disabled_why: &'static str,
     /// What `CHECKED_JS` answers: "true", "false", "mixed", or None.
     pub checked: Option<&'static str>,
+    /// What `READ_STYLE_JS` answers, in turn (`{ value, moving }`); the
+    /// last repeats.
+    pub styles: Vec<Value>,
     /// How many `Runtime.getProperties` / `PROBE_JS` / `READ_TEXT_JS` calls
     /// `answer` has already replied to. `Cell`, not a plain field, so
     /// `answer` can take `&self` - letting a test hold onto a `FakePage`
@@ -691,6 +694,8 @@ pub struct FakePage {
     pub looks: Cell<usize>,
     pub probed: Cell<usize>,
     pub read: Cell<usize>,
+    /// How many `READ_STYLE_JS` calls have been answered.
+    pub styled: Cell<usize>,
     /// Was the last locator function `LEGACY_JS`? Its next element list
     /// then holds the first match only, as the real one returns.
     pub legacy_next: Cell<bool>,
@@ -713,9 +718,11 @@ impl Default for FakePage {
             attribute: None,
             disabled_why: "",
             checked: None,
+            styles: vec![json!({ "value": "rgb(0, 0, 0)", "moving": false })],
             looks: Cell::new(0),
             probed: Cell::new(0),
             read: Cell::new(0),
+            styled: Cell::new(0),
             legacy_next: Cell::new(false),
         }
     }
@@ -769,6 +776,11 @@ impl FakePage {
             "Runtime.callFunctionOn" if f == READ_ATTR_JS => json!({ "result": { "value": self.attribute } }),
             "Runtime.callFunctionOn" if f == DISABLED_JS => json!({ "result": { "value": self.disabled_why } }),
             "Runtime.callFunctionOn" if f == CHECKED_JS => json!({ "result": { "value": self.checked } }),
+            "Runtime.callFunctionOn" if f == READ_STYLE_JS => {
+                let i = self.styled.get().min(self.styles.len() - 1);
+                self.styled.set(self.styled.get() + 1);
+                json!({ "result": { "value": self.styles[i] } })
+            }
             // Any locator function: an array of elements.
             "Runtime.callFunctionOn" => json!({ "result": { "objectId": "arr" } }),
             "Runtime.getProperties" => {

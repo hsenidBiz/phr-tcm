@@ -1063,6 +1063,7 @@ fn every_action_kind_says_whether_it_changes_the_page() {
         (json!({ "kind": "expect_contains_text", "selector": css, "value": "v" }), false),
         (json!({ "kind": "expect_count", "selector": css, "equals": 1 }), false),
         (json!({ "kind": "expect_attribute", "selector": css, "name": "n", "equals": "v" }), false),
+        (json!({ "kind": "expect_style", "selector": css, "property": "color", "equals": "red" }), false),
         (json!({ "kind": "expect_enabled", "selector": css }), false),
         (json!({ "kind": "expect_disabled", "selector": css }), false),
         (json!({ "kind": "expect_checked", "selector": css, "checked": true }), false),

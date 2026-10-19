@@ -406,3 +406,27 @@ fn refusals_of_one_request_are_one_pattern_whatever_failed_after() {
     let section = patterns_section(&found);
     assert!(section.contains("the application refused the action: POST /api/eval-rules (in 2 cases)"), "{section}");
 }
+
+/// A style check's failure is its own class, read from the check's own
+/// sentence with or without the target in front; a property still
+/// changing when the time ran out is something still moving. A downloaded
+/// cell's mismatch (`b2 is "x", expected "y"`) is not a style.
+#[test]
+fn a_style_mismatch_is_its_own_class() {
+    let save = "button \"Save\"";
+    for (detail, want) in [
+        ("waited 5000ms: button \"Save\" color is rgb(0, 0, 0), expected rgb(255, 0, 0)", ErrorClass::StyleMismatch),
+        ("waited 5000ms: button \"Save\" box-shadow is none, expected it to contain 3px", ErrorClass::StyleMismatch),
+        ("waited 5000ms: button \"Save\" display is none, expected anything but none", ErrorClass::StyleMismatch),
+        ("waited 5000ms: button \"Save\" --brand is (empty), expected 1", ErrorClass::StyleMismatch),
+        ("waited 5000ms: button \"Save\" color is still changing (rgb(9, 0, 0) so far)", ErrorClass::StillMoving),
+    ] {
+        assert_eq!(classify(detail, Some(save)), want, "with the target: {detail}");
+        assert_eq!(classify(detail, None), want, "without the target: {detail}");
+    }
+    assert_ne!(classify("b2 is \"x\", expected \"y\"", None), ErrorClass::StyleMismatch);
+    assert_eq!(ErrorClass::StyleMismatch.key(), "style_mismatch");
+    assert_eq!(ErrorClass::StyleMismatch.label(), "a different style");
+    let style: Action = serde_json::from_value(serde_json::json!({ "kind": "expect_style", "selector": { "role": "button", "name": "Save" }, "property": "color", "equals": "red" })).unwrap();
+    assert_eq!(action_target(&style).as_deref(), Some(save));
+}
