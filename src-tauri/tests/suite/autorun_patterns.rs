@@ -33,7 +33,7 @@ fn failed_case(case_id: i32, step_number: i32, detail: &str) -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
-        page_errors_seen: 0, phases: None,
+        page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
 
@@ -43,7 +43,7 @@ fn script(case_id: i32, step_number: i32, action: Action) -> CaseScript {
         title: format!("case {case_id}"),
         account: None,
         area: None,
-        steps: vec![StepScript { step_number, actions: vec![action], unchecked: None }],
+        steps: vec![StepScript { step_number, actions: vec![action], unchecked: None, cleanup: false }],
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
@@ -205,7 +205,7 @@ fn a_failure_in_one_case_only_is_no_pattern() {
         components: Vec::new(), duration_ms: None,
     });
     let mut s = script(11, 2, click("Save"));
-    s.steps.push(StepScript { step_number: 3, actions: vec![click("Save")], unchecked: None });
+    s.steps.push(StepScript { step_number: 3, actions: vec![click("Save")], unchecked: None, cleanup: false });
     let r = run(vec![one, failed_case(12, 2, "waited 5000ms: button \"Other\" not found")]);
     assert!(find_patterns(&r, &[s, script(12, 2, click("Other"))]).is_empty());
 }

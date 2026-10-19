@@ -56,7 +56,7 @@ fn minimal_case(case_id: i32) -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
-        page_errors_seen: 0, phases: None,
+        page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
 
@@ -75,7 +75,7 @@ fn empty_case() -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
-        page_errors_seen: 0, phases: None,
+        page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
 
@@ -205,7 +205,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 account: Some("hr.admin".to_string()),
                 retried: None,
                 notice: None,
-                page_errors_seen: 0, phases: None,
+                page_errors_seen: 0, phases: None, cleanup: None,
             },
             CaseRecord {
                 case_id: 8,
@@ -234,7 +234,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 account: None,
                 retried: None,
                 notice: None,
-                page_errors_seen: 0, phases: None,
+                page_errors_seen: 0, phases: None, cleanup: None,
             },
             CaseRecord {
                 case_id: 9,
@@ -248,7 +248,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
                 account: None,
                 retried: None,
                 notice: None,
-                page_errors_seen: 0, phases: None,
+                page_errors_seen: 0, phases: None, cleanup: None,
             },
         ],
         mode: String::new(),
@@ -264,11 +264,12 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
         account: Some("hr.admin".to_string()),
         area: None,
         steps: vec![
-            StepScript { step_number: 2, actions: vec![save_button()], unchecked: None },
+            StepScript { step_number: 2, actions: vec![save_button()], unchecked: None, cleanup: false },
             StepScript {
                 step_number: 3,
                 actions: vec![Action::Click { selector: "text=Confirm".into() }],
                 unchecked: None,
+                cleanup: false,
             },
         ],
         repairs: 1,
@@ -386,6 +387,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
             step_number: 1,
             actions: vec![Action::Fill { selector: "#password".into(), value: "correct horse battery staple".to_string() }],
             unchecked: None,
+            cleanup: false,
         }],
         repairs: 0,
         last_repair: None,
@@ -499,7 +501,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
         title: "A case".to_string(),
         account: None,
         area: None,
-        steps: vec![StepScript { step_number: 1, actions: vec![], unchecked: None }],
+        steps: vec![StepScript { step_number: 1, actions: vec![], unchecked: None, cleanup: false }],
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
@@ -630,7 +632,7 @@ fn describe_failures_names_the_scripts_area_when_it_has_one() {
         title: "A case".to_string(),
         account: Some("hr.admin".to_string()),
         area: Some("Manage Cycle".to_string()),
-        steps: vec![StepScript { step_number: 1, actions: vec![save_button()], unchecked: None }],
+        steps: vec![StepScript { step_number: 1, actions: vec![save_button()], unchecked: None, cleanup: false }],
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
@@ -917,4 +919,20 @@ fn newest_run_context_names_the_run_read_and_the_others() {
     );
     let (_, none) = newest_run_context(&runs[1], &[], &runs[1..], NOW);
     assert_eq!(none, None);
+}
+
+/// #46: a failed case whose clean-up failed too says so, after its steps.
+#[test]
+fn a_failed_clean_up_is_said_after_the_failed_steps() {
+    let run: LocalRun = serde_json::from_value(serde_json::json!({
+        "id": "run-1", "pbi_id": 1, "started_at": "1", "cases": [{
+            "case_id": 5, "title": "Add a rating", "verdict": "", "note": "",
+            "proposed": "Failed", "reason": "step 1: button \"Save\" not found",
+            "steps": [{ "step_number": 1, "outcomes": [{ "ok": false, "detail": "button \"Save\" not found" }] }],
+            "cleanup": { "step_number": 2, "outcomes": [{ "ok": false, "detail": "button \"Delete\" not found" }] }
+        }]
+    }))
+    .unwrap();
+    let out = describe_failures(&run, &[]);
+    assert!(out.ends_with("clean-up: button \"Delete\" not found"), "{out}");
 }

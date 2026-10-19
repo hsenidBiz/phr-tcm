@@ -274,6 +274,10 @@ fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, c
     for step in &case.steps {
         describe_step(step, script, components, root, &mut lines);
     }
+    // The clean-up is no step of the case: only its failure is said.
+    if let Some(line) = case.cleanup_line() {
+        lines.push(line);
+    }
 
     if !case.note.is_empty() {
         lines.push(format!("note from the person: {}", case.note));

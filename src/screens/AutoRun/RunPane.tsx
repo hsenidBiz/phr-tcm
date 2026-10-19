@@ -567,6 +567,20 @@ export default function RunPane({
 
   /** The verdict in front of the person right now, as a record. */
   const pageErrorsSeen = Object.values(stepPageErrors).reduce((sum, n) => sum + n, 0);
+  /** A step as the record keeps it: what it did, or that the replay ran it. */
+  const stepRecord = (s: { step_number: number }) => ({
+    step_number: s.step_number,
+    // A step the replay ran has no outcomes of its own to keep: it is
+    // saved as replayed, never as an empty step.
+    outcomes:
+      results[s.step_number] ??
+      (s.step_number < replayedTo ? [{ ok: true, detail: REPLAYED_OUTCOME }] : []),
+    ...(stepTabs[s.step_number] ? { tab: stepTabs[s.step_number] } : {}),
+    ...(stepDialogs[s.step_number] ? { dialog: stepDialogs[s.step_number] } : {}),
+  });
+  // The clean-up is no step of the case: kept apart, as an unattended run
+  // keeps it, and never sent as a step.
+  const tidy = script.data?.steps.find((s) => s.cleanup === true);
   const currentRecord = (): CaseRecord => ({
     case_id: caseId,
     title,
@@ -578,17 +592,9 @@ export default function RunPane({
       ...[SIGN_IN_STEP, MODULE_STEP].flatMap((n) =>
         results[n] ? [{ step_number: n, outcomes: results[n] }] : [],
       ),
-      ...(script.data?.steps ?? []).map((s) => ({
-        step_number: s.step_number,
-        // A step the replay ran has no outcomes of its own to keep: it is
-        // saved as replayed, never as an empty step.
-        outcomes:
-          results[s.step_number] ??
-          (s.step_number < replayedTo ? [{ ok: true, detail: REPLAYED_OUTCOME }] : []),
-        ...(stepTabs[s.step_number] ? { tab: stepTabs[s.step_number] } : {}),
-        ...(stepDialogs[s.step_number] ? { dialog: stepDialogs[s.step_number] } : {}),
-      })),
+      ...(script.data?.steps ?? []).filter((s) => s.cleanup !== true).map(stepRecord),
     ],
+    ...(tidy ? { cleanup: stepRecord(tidy) } : {}),
     // A case its preconditions blocked says so the way an unattended run
     // does: proposed Blocked, with the sentence. The verdict stays theirs.
     ...(pre.state === "blocked" ? { proposed: "Blocked", reason: pre.reason } : {}),
@@ -954,7 +960,9 @@ export default function RunPane({
                     className={cn("rounded-md border p-2", next ? "border-accent" : "border-border")}
                   >
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-muted">Step {s.step_number}</span>
+                      <span className="text-xs font-medium text-muted">
+                        {s.cleanup === true ? "Clean-up" : `Step ${s.step_number}`}
+                      </span>
                       <span className="text-[11px] text-faint">
                         {s.actions.length} action{s.actions.length === 1 ? "" : "s"}
                       </span>
@@ -970,7 +978,7 @@ export default function RunPane({
                         disabled={busy || pre.state !== "idle"}
                         onClick={() => runStep(s.step_number)}
                       >
-                        Run step {s.step_number}
+                        {s.cleanup === true ? "Run clean-up" : `Run step ${s.step_number}`}
                       </Button>
                     </div>
                     {outcomeLines(results[s.step_number] ?? [])}

@@ -290,6 +290,16 @@ A step may carry `"unchecked": "<why>"` when its expected result
 genuinely cannot be checked (a PDF preview, an email). Use it rarely, say
 why in one sentence, and never to skip a check you could write.
 
+A script may end with one clean-up step that removes what the case made:
+`{ "step_number": <the case's last step + 1>, "cleanup": true, "unchecked": "<what it removes>", "actions": [ ... ] }`.
+It is no step of the case: it is the script's last, numbered right after
+the case's last step, and checks nothing. It runs after the case's last
+step and also after a step that failed (the steps between still do not
+run), never when the run was stopped. Its failure is said on its own line,
+`clean-up: ...`, and never fails the case. A replay runs it only when
+asked for a step past it. Its locators must have been seen like any
+step's, and every other run rule (Must not save included) applies to it.
+
 Every `expect_` action looks again until it holds, for up to 10 seconds
 (add `"timeout_ms"` to change that), and a failure says what it actually
 saw. Prefer them to `check_text`, which looks once and cannot tell you

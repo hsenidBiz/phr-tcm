@@ -535,12 +535,16 @@ function ReadableScript({
         <p className="text-muted">No actions yet. Press Edit script to write them.</p>
       ) : (
         groups.map((s, i) => {
-          const own = steps[s.step_number - 1];
+          // The clean-up is no step of the case: named for what it is, with
+          // no case text beside it.
+          const tidy = s.cleanup === true;
+          const own = tidy ? undefined : steps[s.step_number - 1];
+          const label = tidy ? "Clean-up" : `Step ${s.step_number}`;
           const actions: unknown[] | null = Array.isArray(s.actions) ? s.actions : null;
           return (
-            <section key={`${i}-${s.step_number}`} aria-label={`Step ${s.step_number}`} className="space-y-1">
+            <section key={`${i}-${s.step_number}`} aria-label={label} className="space-y-1">
               <h3 className="text-xs font-medium text-text">
-                <span className="text-faint">Step {s.step_number}</span>
+                <span className="text-faint">{label}</span>
                 {own && (
                   <>
                     {" "}

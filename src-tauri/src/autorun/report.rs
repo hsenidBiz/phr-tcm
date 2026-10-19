@@ -375,14 +375,15 @@ fn seconds(ms: u64) -> String {
 /// outcome as a line marked with a tick or a cross and the sentence the run
 /// recorded (never anything from the script), then the step's picture and
 /// any picture an action took on failing. A picture named twice in one step
-/// is shown once.
+/// is shown once. The case's clean-up comes last, named Clean-up.
 fn steps_block(case: &CaseRecord, exists: &dyn Fn(&str) -> bool) -> String {
     if case.steps.is_empty() {
         return "<p class=\"note\">No steps were recorded for this case.</p>".to_string();
     }
     let mut h = String::new();
-    for step in &case.steps {
-        let label = step_label(step.step_number);
+    let labelled = case.steps.iter().map(|s| (step_label(s.step_number), s));
+    let tidy = case.cleanup.iter().map(|s| (super::CLEANUP_LABEL.to_string(), s));
+    for (label, step) in labelled.chain(tidy) {
         h.push_str("<div class=\"step\">");
         // How long the step took, when the run timed it.
         let took = step.duration_ms.map(|ms| format!(" <span class=\"took\">{}</span>", seconds(ms))).unwrap_or_default();
@@ -478,6 +479,11 @@ fn case_section(
     // Something the run skipped for this case, and the case went on.
     if let Some(notice) = &case.notice {
         h.push_str(&format!("<p><strong>Notice:</strong> {}</p>", esc(notice)));
+    }
+    // A clean-up that failed, whatever the case's own verdict.
+    if let Some(line) = case.cleanup_line() {
+        let what = line.strip_prefix("clean-up: ").unwrap_or(&line);
+        h.push_str(&format!("<p><strong>Clean-up:</strong> {}</p>", esc(&scrub_urls(what))));
     }
     if !case.note.is_empty() {
         h.push_str(&format!("<p><strong>Note:</strong> {}</p>", esc(&case.note)));

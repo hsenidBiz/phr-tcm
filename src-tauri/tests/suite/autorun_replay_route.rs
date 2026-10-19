@@ -114,7 +114,7 @@ impl FakeHost {
         }
     }
     fn ready() -> Self {
-        Self::ending(ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None })
+        Self::ending(ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None })
     }
     fn replays(&self) -> Vec<ReplayRequest> {
         self.replays.lock().unwrap().iter().map(|r| r.2.clone()).collect()
@@ -1131,7 +1131,7 @@ async fn a_replay_that_passes_with_test_changes_says_so_and_after_a_reset_is_pla
     let mut after = changed;
     assert!(undo(&mut d, &mut after).await.is_empty());
     assert!(after.is_empty(), "{after:?}");
-    let mut ready = FakeHost::ending(ReplayEnd::Ready { case_id: ID, step: 1, notice: None, whole: None });
+    let mut ready = FakeHost::ending(ReplayEnd::Ready { case_id: ID, step: 1, notice: None, whole: None, cleanup: None });
     ready.overrides = after;
     let (status, text) = autorun_replay_with(&ctx(), &body(1), leak(ready), WAIT).await;
     assert_eq!(status, 200, "{text}");

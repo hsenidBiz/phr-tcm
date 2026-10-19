@@ -70,6 +70,7 @@ fn run_failing_step_1(started_at: u64) -> LocalRun {
             notice: None,
             page_errors_seen: 0,
             phases: None,
+            cleanup: None,
         }],
         mode: String::new(),
         published: None,
@@ -99,7 +100,7 @@ fn a_failing_replay_is_kept_and_a_replay_that_reaches_its_step_lets_it_go() {
 
     note(dir.path(), ID, "Leave request", 3, &ReplayEnd::Stopped { step: 2 }, None, 6);
     assert_eq!(load(dir.path(), ID).map(|r| r.at), Some(5), "a stop replaced the failure");
-    note(dir.path(), ID, "Leave request", 3, &ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, None, 7);
+    note(dir.path(), ID, "Leave request", 3, &ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, None, 7);
     assert!(load(dir.path(), ID).is_none(), "a replay that reached its step kept the old failure");
 }
 

@@ -56,12 +56,16 @@ pub enum ReplayEnd {
     /// `notice` is said beside it: the preconditions were not checked.
     /// `whole` is how many steps the case has, when `step` is past its last:
     /// the whole case ran, and the browser is on the page its last step left.
+    /// `cleanup`, beside a `whole`, says whether the script's clean-up step
+    /// ran too (only a replay past it runs it); `None` without a clean-up.
     Ready {
         case_id: i32,
         step: i32,
         notice: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         whole: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cleanup: Option<bool>,
     },
     /// The replay failed in `phase`: step `step` when it is `Step`; the
     /// case's sign-in or its trip to the area before step 1 otherwise (then
@@ -92,9 +96,18 @@ impl ReplayEnd {
     /// What the pane, and the assistant, are told.
     pub fn sentence(&self) -> String {
         match self {
-            ReplayEnd::Ready { case_id, whole: Some(all), .. } => {
+            ReplayEnd::Ready { case_id, step, whole: Some(all), cleanup, .. } => {
                 let steps = if *all == 1 { "its 1 step".to_string() } else { format!("all {all} steps") };
-                format!("replayed the whole of case {case_id} ({steps}) - the browser is on the page its last step left")
+                match cleanup {
+                    Some(true) => format!(
+                        "replayed the whole of case {case_id} ({steps} and its clean-up) - the browser is on the page its clean-up left"
+                    ),
+                    Some(false) => format!(
+                        "replayed the whole of case {case_id} ({steps}; its clean-up did not run - replay to step {} to run it too) - the browser is on the page its last step left",
+                        step + 1
+                    ),
+                    None => format!("replayed the whole of case {case_id} ({steps}) - the browser is on the page its last step left"),
+                }
             }
             ReplayEnd::Ready { case_id, step, .. } => {
                 format!("replayed case {case_id} to step {step} - the browser is on the page before step {step} runs")
@@ -646,7 +659,7 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
     {
         return stopped;
     }
-    ReplayEnd::Ready { case_id: id, step: n, notice: checked.notice, whole: whole_case(&script, n) }
+    ReplayEnd::Ready { case_id: id, step: n, notice: checked.notice, whole: whole_case(&script, n), cleanup: cleanup_ran(&script, n) }
 }
 
 /// Is the supervised browser `d` already signed in as `key`, the case's
@@ -722,11 +735,21 @@ pub fn signed_in_already_line(area: &str) -> String {
     format!("Signed in already: went to {area}.")
 }
 
-/// How many steps `script` has when `step` is past its last, so a replay to
-/// it ran the whole case; `None` otherwise.
+/// How many steps of the case `script` has when `step` is past its last, so
+/// a replay to it ran the whole case; `None` otherwise. The clean-up step is
+/// not one of them.
 pub fn whole_case(script: &CaseScript, step: i32) -> Option<i32> {
-    let last = script.steps.iter().map(|s| s.step_number).max().unwrap_or(0);
-    (step > last).then(|| i32::try_from(script.steps.len()).unwrap_or(i32::MAX))
+    let last = script.case_steps().map(|s| s.step_number).max().unwrap_or(0);
+    (step > last).then(|| i32::try_from(script.case_steps().count()).unwrap_or(i32::MAX))
+}
+
+/// Whether a replay to `step` that ran the whole case ran its clean-up too:
+/// only one past the clean-up does. `None` when it did not run the whole
+/// case or the script has no clean-up.
+pub fn cleanup_ran(script: &CaseScript, step: i32) -> Option<bool> {
+    let tidy = script.cleanup_step()?;
+    whole_case(script, step)?;
+    Some(step > tidy.step_number)
 }
 
 /// Run case `script`'s steps `from` to `n` - 1, in its order, in the
@@ -755,7 +778,7 @@ async fn run_steps<D: Driver>(
     let in_range = |k: i32| k >= from && k < n;
     // The other areas their `return_to_area` actions name are read once,
     // before the first.
-    let names = runner::named_areas(script.steps.iter().filter(|s| in_range(s.step_number)).flat_map(|s| s.actions.iter()));
+    let names = runner::named_areas(script.in_run_order().filter(|s| in_range(s.step_number)).flat_map(|s| s.actions.iter()));
     let areas = runner::area_routes(root, organization, project, &names);
     // The recipe and the areas file each step looks at: read once, and
     // again only when one changed.
@@ -767,7 +790,9 @@ async fn run_steps<D: Driver>(
     // no step records, so what came late is said only there.
     let mut noted = runner::Noted::default();
     noted.in_case(script.area.as_deref());
-    for (at, step) in script.steps.iter().filter(|s| in_range(s.step_number)).enumerate() {
+    // The case's steps, then its clean-up: a replay past the clean-up runs
+    // it last, and only once every step before it passed.
+    for (at, step) in script.in_run_order().filter(|s| in_range(s.step_number)).enumerate() {
         let k = step.step_number;
         if stopped() {
             return Some(ReplayEnd::Stopped { step: k });
@@ -1025,5 +1050,5 @@ pub async fn carry_on<D: Driver>(
     {
         return stopped;
     }
-    ReplayEnd::Ready { case_id: id, step: n, notice: None, whole: whole_case(&script, n) }
+    ReplayEnd::Ready { case_id: id, step: n, notice: None, whole: whole_case(&script, n), cleanup: cleanup_ran(&script, n) }
 }

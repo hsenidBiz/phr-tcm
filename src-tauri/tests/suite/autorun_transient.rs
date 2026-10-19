@@ -55,7 +55,7 @@ fn failed_at_2(proposed: &str, failed: ActionOutcome) -> CaseRecord {
         account: None,
         retried: None,
         notice: None,
-        page_errors_seen: 0, phases: None,
+        page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
 

@@ -45,12 +45,13 @@ pub const SETUP_KEPT: &str =
 /// A step's actions as the text the gate compares. Order matters (a
 /// reordered script is a different script); JSON formatting does not. The
 /// `unchecked` reason is folded in too, so changing just the reason still
-/// counts as a change to the step.
+/// counts as a change to the step, and so is whether it is the clean-up.
 pub fn step_signature(step: &StepScript) -> String {
     format!(
-        "{}|{}",
+        "{}|{}{}",
         serde_json::to_string(&step.actions).unwrap_or_default(),
-        step.unchecked.as_deref().unwrap_or("")
+        step.unchecked.as_deref().unwrap_or(""),
+        if step.cleanup { "|cleanup" } else { "" }
     )
 }
 

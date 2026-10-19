@@ -2326,6 +2326,7 @@ async fn protected_shots_survive_the_end_of_run_prune() {
         notice: None,
         page_errors_seen: 0,
         phases: None,
+        cleanup: None,
     });
     store::save_run(root, &earlier).unwrap();
     store::save_script(root, &one_check(None)).unwrap();
@@ -2648,4 +2649,107 @@ async fn a_save_read_as_a_last_manual_steps_picture_is_finished_fails_the_case()
     let details: Vec<&str> = rec.steps[0].outcomes.iter().map(|o| o.detail.as_str()).collect();
     assert_eq!(details, vec![LATE_SAVE], "{rec:?}");
     assert_eq!(rec.proposed, "Failed", "{rec:?}");
+}
+
+// ---- #46/#47: the clean-up step ---------------------------------------------
+
+/// Case 1: steps 1-3 (`check_text` with the values given, "yes" passing on
+/// `checking_driver`), then a clean-up step 4 checking `tidy` - a raw write,
+/// so the clean-up's own failure can be made without a page.
+fn with_cleanup(steps: [&str; 3], tidy: &str) -> CaseScript {
+    script(
+        1,
+        None,
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "check_text", "value": steps[0] }] },
+            { "step_number": 2, "actions": [{ "kind": "check_text", "value": steps[1] }] },
+            { "step_number": 3, "actions": [{ "kind": "check_text", "value": steps[2] }] },
+            { "step_number": 4, "actions": [{ "kind": "check_text", "value": tidy }], "cleanup": true, "unchecked": "tidy" },
+        ]),
+    )
+}
+
+async fn run_alone(root: &Path, case: &CaseScript) -> (LocalRun, FakeBrowsers) {
+    store::save_script(root, case).unwrap();
+    let mut browsers = browsers_of(vec![checking_driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "case 1".to_string())], &quick(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    (run, browsers)
+}
+
+#[tokio::test]
+async fn the_clean_up_runs_after_the_last_case_step_and_is_not_one_of_its_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let (run, browsers) = run_alone(dir.path(), &with_cleanup(["yes", "yes", "yes"], "yes")).await;
+    let rec = &run.cases[0];
+    assert_eq!(rec.proposed, "Passed");
+    assert_eq!(rec.reason, "every action of 3 steps passed");
+    assert!(rec.steps.iter().all(|s| s.step_number != 4), "the clean-up is no step of the case: {:?}", rec.steps);
+    let tidy = rec.cleanup.as_ref().expect("the clean-up is recorded on its own");
+    assert_eq!(tidy.step_number, 4);
+    assert!(tidy.outcomes.iter().all(|o| o.ok), "{:?}", tidy.outcomes);
+    assert_eq!(rec.cleanup_line(), None);
+    assert_eq!(browsers.returned[0].calls_to("Runtime.callFunctionOn").len(), 4, "three steps and the clean-up ran");
+}
+
+#[tokio::test]
+async fn the_clean_up_runs_after_a_failed_step_and_the_steps_between_do_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let (run, browsers) = run_alone(dir.path(), &with_cleanup(["yes", "no", "yes"], "yes")).await;
+    let rec = &run.cases[0];
+    assert_eq!(rec.proposed, "Failed");
+    assert!(rec.reason.starts_with("step 2:"), "{}", rec.reason);
+    let step3 = rec.steps.iter().find(|s| s.step_number == 3).unwrap();
+    assert!(step3.outcomes.iter().all(|o| o.detail == "not run: an earlier step of this case failed"), "{:?}", step3.outcomes);
+    let tidy = rec.cleanup.as_ref().unwrap();
+    assert!(tidy.outcomes.iter().all(|o| o.ok), "the clean-up ran after the failure: {:?}", tidy.outcomes);
+    assert_eq!(browsers.returned[0].calls_to("Runtime.callFunctionOn").len(), 3, "steps 1, 2 and the clean-up ran");
+}
+
+#[tokio::test]
+async fn a_failed_clean_up_never_fails_a_passed_case_and_is_said_on_its_own_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let (run, _) = run_alone(dir.path(), &with_cleanup(["yes", "yes", "yes"], "no")).await;
+    let rec = &run.cases[0];
+    assert_eq!(rec.proposed, "Passed");
+    assert_eq!(rec.reason, "every action of 3 steps passed, but its clean-up failed");
+    let line = rec.cleanup_line().expect("the clean-up's failure is said");
+    assert!(line.starts_with("clean-up: "), "{line}");
+    assert!(!line.contains("not run"), "{line}");
+}
+
+#[tokio::test]
+async fn a_failed_clean_up_after_a_failed_step_leaves_the_failure_as_it_was() {
+    let dir = tempfile::tempdir().unwrap();
+    let (run, _) = run_alone(dir.path(), &with_cleanup(["no", "yes", "yes"], "no")).await;
+    let rec = &run.cases[0];
+    assert_eq!(rec.proposed, "Failed");
+    assert!(rec.reason.starts_with("step 1:"), "{}", rec.reason);
+    assert!(rec.cleanup_line().is_some_and(|l| l.starts_with("clean-up: ")));
+}
+
+#[tokio::test]
+async fn a_stopped_run_does_not_run_the_clean_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &with_cleanup(["yes", "yes", "yes"], "yes")).unwrap();
+    let mut browsers = browsers_of(vec![checking_driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "case 1".to_string())], &quick(), &cancel, &mut |e: ReplayProgress| {
+        if e.phase == "step" && e.step_number == 2 {
+            cancel.store(true, Ordering::SeqCst);
+        }
+    })
+    .await
+    .unwrap();
+    let rec = &run.cases[0];
+    assert_eq!(rec.reason, "stopped before it finished");
+    let tidy = rec.cleanup.as_ref().unwrap();
+    assert!(tidy.outcomes.iter().all(|o| o.detail == "not run: the run was stopped"), "{:?}", tidy.outcomes);
+    assert_eq!(rec.cleanup_line(), None, "a clean-up that never ran did not fail");
+    assert!(browsers.returned[0].calls_to("Runtime.callFunctionOn").len() <= 2, "nothing past step 2 ran");
 }

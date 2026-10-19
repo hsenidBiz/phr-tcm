@@ -1034,3 +1034,33 @@ test("while discovery holds the browser, Replay to step is off and says why", as
   fireEvent.click(replay);
   expect(onReplay).not.toHaveBeenCalled();
 });
+
+test("a case's clean-up is listed last as the Clean-up, and its failure is said under the case", async () => {
+  const run = {
+    ...RUN,
+    cases: [
+      {
+        ...RUN.cases[1],
+        reason: "every action of 2 steps passed, but its clean-up failed",
+        cleanup: { step_number: 3, outcomes: [{ ok: false, detail: 'button "Delete" not found' }] },
+      },
+    ],
+  };
+  renderReview(run);
+  await screen.findByText(/proposed: passed/i);
+  const card = caseCard(202);
+  expect(within(card).getByText('Clean-up: button "Delete" not found')).toHaveClass("text-warning");
+  fireEvent.click(within(card).getByRole("button", { name: "Show steps" }));
+  expect(within(card).getByText("Clean-up")).toBeInTheDocument();
+  expect(within(card).queryByText("Step 3")).not.toBeInTheDocument();
+});
+
+test("a clean-up that passed adds no line under the case", async () => {
+  const run = {
+    ...RUN,
+    cases: [{ ...RUN.cases[1], cleanup: { step_number: 3, outcomes: [{ ok: true, detail: "clicked" }] } }],
+  };
+  renderReview(run);
+  await screen.findByText(/proposed: passed/i);
+  expect(within(caseCard(202)).queryByText(/^Clean-up:/)).not.toBeInTheDocument();
+});

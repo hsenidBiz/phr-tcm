@@ -237,3 +237,42 @@ fn steps_on_shared_rows_are_sorted_and_named_once() {
     assert!(steps_on_shared_rows(&[1, 3], &[2]).is_empty());
     assert!(steps_on_shared_rows(&[1, 2], &[]).is_empty());
 }
+
+// ---- #46: a clean-up step past the case's last step -----------------------
+
+fn with_cleanup_at(n: i32) -> CaseScript {
+    script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "Saved" }] },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": "Listed" }] },
+        { "step_number": n, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Delete" } }],
+          "cleanup": true, "unchecked": "removes the record step 1 made" }
+    ]))
+}
+
+#[test]
+fn a_clean_up_step_right_after_the_last_case_step_holds() {
+    let out = check_floor(&with_cleanup_at(3), &case(&["Saved", "Listed"]));
+    assert!(out.is_empty(), "{out:?}");
+}
+
+#[test]
+fn a_clean_up_step_numbered_anywhere_else_is_refused() {
+    let out = check_floor(&with_cleanup_at(4), &case(&["Saved", "Listed"]));
+    assert_eq!(
+        out,
+        vec!["step 4 is the clean-up, which comes right after the case's last step - number it 3".to_string()]
+    );
+}
+
+#[test]
+fn a_clean_up_step_on_a_case_step_is_refused() {
+    let sc = script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "Saved" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#delete" }], "cleanup": true, "unchecked": "tidy" }
+    ]));
+    let out = check_floor(&sc, &case(&["Saved", "Listed"]));
+    assert!(
+        out.contains(&"step 2 is the clean-up, which comes right after the case's last step - number it 3".to_string()),
+        "{out:?}"
+    );
+}

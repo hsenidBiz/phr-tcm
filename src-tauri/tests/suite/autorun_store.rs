@@ -56,6 +56,7 @@ fn script() -> CaseScript {
                 Action::CheckText { value: "Dashboard".to_string() },
             ],
             unchecked: None,
+            cleanup: false,
         }],
         repairs: 0,
         last_repair: None,
@@ -132,7 +133,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
             account: None,
             retried: None,
             notice: None,
-            page_errors_seen: 0, phases: None,
+            page_errors_seen: 0, phases: None, cleanup: None,
         }],
         mode: String::new(),
         published: None,
@@ -208,6 +209,7 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
             step_number: 1,
             actions: vec![Action::CheckText { value: "ok".to_string() }],
             unchecked: None,
+            cleanup: false,
         }],
         repairs: 0,
         last_repair: None,
@@ -285,8 +287,8 @@ fn a_duplicate_step_number_within_one_script_is_rejected() {
         account: None,
         area: None,
         steps: vec![
-            StepScript { step_number: 1, actions: vec![Action::CheckText { value: "a".to_string() }], unchecked: None },
-            StepScript { step_number: 1, actions: vec![Action::CheckText { value: "b".to_string() }], unchecked: None },
+            StepScript { step_number: 1, actions: vec![Action::CheckText { value: "a".to_string() }], unchecked: None, cleanup: false },
+            StepScript { step_number: 1, actions: vec![Action::CheckText { value: "b".to_string() }], unchecked: None, cleanup: false },
         ],
         repairs: 0,
         last_repair: None,
@@ -321,7 +323,7 @@ fn a_step_with_no_actions_is_still_accepted() {
         title: "Manual step included".to_string(),
         account: None,
         area: None,
-        steps: vec![StepScript { step_number: 1, actions: vec![], unchecked: None }],
+        steps: vec![StepScript { step_number: 1, actions: vec![], unchecked: None, cleanup: false }],
         repairs: 0,
         last_repair: None,
         suspected_defect: None,
@@ -468,7 +470,7 @@ fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
             account: None,
             retried: None,
             notice: None,
-            page_errors_seen: 0, phases: None,
+            page_errors_seen: 0, phases: None, cleanup: None,
         }],
         environment: None,
         resets: vec![],
@@ -692,7 +694,7 @@ fn clear_runs_removes_every_run_and_shot_published_or_not() {
             account: None,
             retried: None,
             notice: None,
-            page_errors_seen: 0, phases: None,
+            page_errors_seen: 0, phases: None, cleanup: None,
         }],
         environment: None,
         resets: vec![],
@@ -1261,4 +1263,93 @@ fn many_scripts_with_no_scripts_folder_are_all_none() {
     let got = v2_lib::autorun::store::load_scripts(dir.path(), &[1, 2]);
     assert_eq!(got.len(), 2);
     assert!(got.iter().all(|l| l.script.is_none() && l.error.is_none()));
+}
+
+// ---- #46: a clean-up step --------------------------------------------------
+
+fn cleanup_script(steps: serde_json::Value) -> CaseScript {
+    serde_json::from_value(serde_json::json!({ "case_id": 46, "title": "Clean-up", "steps": steps })).unwrap()
+}
+
+fn tidy() -> serde_json::Value {
+    serde_json::json!([{ "kind": "click", "selector": { "role": "button", "name": "Delete" } }])
+}
+
+#[test]
+fn a_last_unchecked_clean_up_step_is_accepted() {
+    let sc = cleanup_script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "a" }] },
+        { "step_number": 2, "actions": tidy(), "cleanup": true, "unchecked": "removes what step 1 made" }
+    ]));
+    assert_eq!(v2_lib::autorun::store::check_scripts(&[sc.clone()]), Ok(()));
+    assert!(sc.steps[1].cleanup);
+    // Written only when true, so every other step reads as it always did.
+    let written = serde_json::to_value(&sc).unwrap();
+    assert_eq!(written["steps"][1]["cleanup"], serde_json::json!(true));
+    assert!(written["steps"][0].get("cleanup").is_none(), "{written}");
+}
+
+#[test]
+fn a_clean_up_step_that_is_not_the_last_is_refused() {
+    let sc = cleanup_script(serde_json::json!([
+        { "step_number": 2, "actions": tidy(), "cleanup": true, "unchecked": "tidy" },
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "a" }] }
+    ]));
+    assert_eq!(
+        v2_lib::autorun::store::check_scripts(&[sc]).unwrap_err(),
+        "case 46 step 2: the clean-up must be the script's last step, numbered after every other step"
+    );
+    let sc = cleanup_script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "a" }] },
+        { "step_number": 3, "actions": [{ "kind": "check_text", "value": "b" }] },
+        { "step_number": 2, "actions": tidy(), "cleanup": true, "unchecked": "tidy" }
+    ]));
+    assert_eq!(
+        v2_lib::autorun::store::check_scripts(&[sc]).unwrap_err(),
+        "case 46 step 2: the clean-up must be the script's last step, numbered after every other step"
+    );
+}
+
+#[test]
+fn two_clean_up_steps_are_refused() {
+    let sc = cleanup_script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "a" }] },
+        { "step_number": 2, "actions": tidy(), "cleanup": true, "unchecked": "tidy" },
+        { "step_number": 3, "actions": tidy(), "cleanup": true, "unchecked": "tidy" }
+    ]));
+    assert_eq!(
+        v2_lib::autorun::store::check_scripts(&[sc]).unwrap_err(),
+        "case 46: steps 2 and 3 are both marked \"cleanup\" - a script has at most one clean-up step"
+    );
+}
+
+#[test]
+fn a_clean_up_step_must_be_unchecked_and_check_nothing() {
+    let sc = cleanup_script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "a" }] },
+        { "step_number": 2, "actions": tidy(), "cleanup": true }
+    ]));
+    assert_eq!(
+        v2_lib::autorun::store::check_scripts(&[sc]).unwrap_err(),
+        "case 46 step 2: a clean-up step checks nothing, so it needs \"unchecked\" with the reason (what it removes)"
+    );
+    let sc = cleanup_script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "a" }] },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": "gone" }], "cleanup": true, "unchecked": "tidy" }
+    ]));
+    assert_eq!(
+        v2_lib::autorun::store::check_scripts(&[sc]).unwrap_err(),
+        "case 46 step 2: a clean-up step checks nothing - its failures never fail the case, so move the check to a case step"
+    );
+}
+
+#[test]
+fn a_clean_up_step_alone_is_not_a_script() {
+    let sc = cleanup_script(serde_json::json!([
+        { "step_number": 1, "actions": tidy(), "cleanup": true, "unchecked": "tidy" }
+    ]));
+    assert_eq!(
+        v2_lib::autorun::store::check_scripts(&[sc]).unwrap_err(),
+        "case 46 step 1: a script with only a clean-up step runs none of the case - write the case's steps first"
+    );
 }

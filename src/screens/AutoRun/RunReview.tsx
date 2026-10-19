@@ -75,6 +75,16 @@ export function stepLabel(stepNumber: number): string {
   return `Step ${stepNumber}`;
 }
 
+/** What failed in a case's clean-up, as the run recorded it; null when it
+ * passed, never ran, or the script has none. Its own line, whatever the
+ * case's verdict: a clean-up never fails the case. */
+export function cleanupFailure(c: {
+  cleanup?: { outcomes: { ok: boolean; detail: string }[] } | null;
+}): string | null {
+  const failed = c.cleanup?.outcomes.find((o) => !o.ok && !o.detail.startsWith("not run:"));
+  return failed ? failed.detail : null;
+}
+
 export default function RunReview(props: {
   org: string;
   project: string;
@@ -424,6 +434,9 @@ export default function RunReview(props: {
                   )}
                 </div>
                 <p className="text-xs text-muted">{proposalLine(c)}</p>
+                {cleanupFailure(c) !== null && (
+                  <p className="text-xs text-warning">Clean-up: {cleanupFailure(c)}</p>
+                )}
 
                 <VerdictPicker
                   value={c.verdict}
@@ -452,11 +465,15 @@ export default function RunReview(props: {
 
                 {isExpanded && (
                   <ul className="space-y-2">
-                    {c.steps.map((s) => (
+                    {/* The case's steps, then its clean-up, named as such. */}
+                    {[
+                      ...c.steps.map((s) => ({ s, tidy: false })),
+                      ...(c.cleanup ? [{ s: c.cleanup, tidy: true }] : []),
+                    ].map(({ s, tidy }) => (
                       <li key={s.step_number} className="rounded-md border border-border/60 p-2 text-xs">
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-muted">
-                            {stepLabel(s.step_number)}
+                            {tidy ? "Clean-up" : stepLabel(s.step_number)}
                           </span>
                           {s.tab && <span className="text-[11px] text-muted">in tab {s.tab}</span>}
                           {s.screenshot && (
@@ -492,7 +509,7 @@ export default function RunReview(props: {
                             </p>
                           )}
                         />
-                        {(() => {
+                        {!tidy && (() => {
                           const reason = unchecked(c.case_id, s.step_number);
                           return (
                             reason && <p className="mt-1 text-muted">not checked: {reason}</p>

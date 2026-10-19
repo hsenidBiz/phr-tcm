@@ -758,6 +758,7 @@ async fn a_tried_action_really_happens_in_the_page() {
         step_number: 1,
         actions: vec![action_of(json!({ "kind": "click", "selector": { "css": "#save" } }))],
         unchecked: None,
+        cleanup: false,
     };
     let outcomes = run_step(&mut live.cdp, root.path(), "org", "proj", &click_step, &timing(), &mut account)
         .await
@@ -771,6 +772,7 @@ async fn a_tried_action_really_happens_in_the_page() {
         step_number: 2,
         actions: vec![action_of(json!({ "kind": "fill", "selector": { "css": "#name" }, "value": "hello" }))],
         unchecked: None,
+        cleanup: false,
     };
     let out = run_step(&mut live.cdp, root.path(), "org", "proj", &fill_step, &timing(), &mut account)
         .await
@@ -797,7 +799,7 @@ async fn a_banner_that_shows_up_late_is_dismissed_and_the_next_step_works() {
     let guard = json!({ "kind": "when_visible", "selector": { "css": "#close" }, "within_ms": 4000,
                         "then": [ { "kind": "click", "selector": { "css": "#close" } } ] });
 
-    let dismiss = StepScript { step_number: 1, actions: vec![action_of(guard.clone())], unchecked: None };
+    let dismiss = StepScript { step_number: 1, actions: vec![action_of(guard.clone())], unchecked: None, cleanup: false };
     let out = run_step(&mut live.cdp, root.path(), "org", "proj", &dismiss, &timing(), &mut account)
         .await
         .expect("run_step failed");
@@ -814,6 +816,7 @@ async fn a_banner_that_shows_up_late_is_dismissed_and_the_next_step_works() {
             action_of(json!({ "kind": "click", "selector": { "css": "#save" } })),
         ],
         unchecked: None,
+        cleanup: false,
     };
     let out = run_step(&mut live.cdp, root.path(), "org", "proj", &next, &timing(), &mut account)
         .await
@@ -865,6 +868,7 @@ async fn a_guard_on_an_element_outside_the_visible_page_is_skipped() {
                               "then": [ { "kind": "click", "selector": { "css": "#far" } } ] })),
         ],
         unchecked: None,
+        cleanup: false,
     };
     let started = std::time::Instant::now();
     let out = run_step(&mut live.cdp, root.path(), "org", "proj", &step, &timing(), &mut account)
@@ -1667,6 +1671,7 @@ async fn upload_reaches_a_file_input_directly_and_through_the_chooser() {
             action_of(json!({ "kind": "upload", "selector": { "css": "#nothing" }, "file": "cv.txt" })),
         ],
         unchecked: None,
+        cleanup: false,
     };
     let mut account = None;
     let out = run_step(&mut live.cdp, root.path(), "acme", "PMS", &step, &timing(), &mut account).await.unwrap();
@@ -1795,6 +1800,7 @@ Connection: close
         step_number: number,
         actions: actions.into_iter().map(action_of).collect(),
         unchecked: None,
+        cleanup: false,
     };
     let click = json!({ "kind": "click", "selector": { "css": "#save" } });
 
@@ -2881,7 +2887,7 @@ async fn a_hostile_name_lands_inside_the_folder() {
 
 /// One step of `expect_download`'s live test, run as a run runs it.
 async fn download_step(live: &mut Live, root: &Path, n: i32, actions: Vec<serde_json::Value>) -> Vec<ActionOutcome> {
-    let s = StepScript { step_number: n, actions: actions.into_iter().map(action_of).collect(), unchecked: None };
+    let s = StepScript { step_number: n, actions: actions.into_iter().map(action_of).collect(), unchecked: None, cleanup: false };
     let mut account: Option<String> = None;
     run_step(&mut live.cdp, root, "org", "proj", &s, &timing(), &mut account).await.expect("run_step failed")
 }
@@ -3013,7 +3019,7 @@ async fn a_replay_to_step_3_leaves_the_page_where_step_2_left_it() {
         |_, _| {},
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: 31, step: 3, notice: None, whole: None }, "{}", end.sentence());
+    assert_eq!(end, ReplayEnd::Ready { case_id: 31, step: 3, notice: None, whole: None, cleanup: None }, "{}", end.sentence());
     let state = page::eval_value(
         &mut live.cdp,
         "[location.pathname, document.getElementById('form').hidden, document.querySelector('[aria-label=Reason]').value, document.getElementById('msg').textContent]",

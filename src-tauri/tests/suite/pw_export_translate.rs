@@ -750,3 +750,25 @@ fn a_style_pattern_tolerates_runs_of_spaces() {
     );
     assert!(got.contains(r#"toHaveCSS('box-shadow', new RegExp('0px\\s+1px', 'i'), { timeout: 10000 });"#), "{got}");
 }
+
+/// #46: a clean-up step runs whether the case's steps passed or failed, so
+/// the spec plays it in a `finally` around them, and says what it is.
+#[test]
+fn a_clean_up_step_is_a_finally_around_the_case_steps() {
+    let mut fx = Fx::new(script(json!([
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": "#save" }] },
+        { "step_number": 2, "actions": [{ "kind": "click", "selector": "#delete" }],
+          "cleanup": true, "unchecked": "removes what step 1 made" }
+    ])));
+    fx.texts.insert(1, "Save the record".into());
+    let got = fx.run().unwrap();
+    let want = "    try {\n      // 1. Save the record\n      await cur.locator('#save').first().click();\n    } finally {\n      // Clean-up: removes what step 1 made\n      await cur.locator('#delete').first().click();\n    }\n";
+    assert!(lf(&got).contains(want), "{got}");
+    assert!(!got.contains("// 2."), "the clean-up is no step of the case: {got}");
+}
+
+#[test]
+fn a_script_with_no_clean_up_has_no_try() {
+    let got = one_step(json!([{ "kind": "click", "selector": "#save" }])).run().unwrap();
+    assert!(!got.contains("try {") && !got.contains("finally"), "{got}");
+}

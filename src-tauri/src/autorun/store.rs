@@ -171,6 +171,7 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
                 }
             }
         }
+        check_cleanup(sc)?;
         if let Some(key) = &sc.account {
             if !crate::autorun::accounts::valid_key(key) {
                 return Err(format!(
@@ -206,6 +207,47 @@ pub fn check_scripts(scripts: &[CaseScript]) -> Result<(), String> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// A script's clean-up step, if it has one: at most one, the script's last
+/// and numbered after every other step, after at least one step of the
+/// case, `unchecked` with the reason and checking nothing - its failures
+/// never fail the case. That it comes right after the case's last step is
+/// the floor's (`floor::check_floor`), which knows the case.
+fn check_cleanup(sc: &CaseScript) -> Result<(), String> {
+    let marked: Vec<i32> = sc.steps.iter().filter(|s| s.cleanup).map(|s| s.step_number).collect();
+    if let [first, second, ..] = marked[..] {
+        return Err(format!(
+            "case {}: steps {first} and {second} are both marked \"cleanup\" - a script has at most one clean-up step",
+            sc.case_id
+        ));
+    }
+    let Some(step) = sc.steps.iter().find(|s| s.cleanup) else {
+        return Ok(());
+    };
+    let (id, n) = (sc.case_id, step.step_number);
+    if sc.steps.len() == 1 {
+        return Err(format!(
+            "case {id} step {n}: a script with only a clean-up step runs none of the case - write the case's steps first"
+        ));
+    }
+    let last = sc.steps.last().is_some_and(|s| s.cleanup);
+    if !last || sc.steps.iter().any(|s| !s.cleanup && s.step_number >= n) {
+        return Err(format!(
+            "case {id} step {n}: the clean-up must be the script's last step, numbered after every other step"
+        ));
+    }
+    if step.unchecked.is_none() {
+        return Err(format!(
+            "case {id} step {n}: a clean-up step checks nothing, so it needs \"unchecked\" with the reason (what it removes)"
+        ));
+    }
+    if step.actions.iter().any(|a| a.each().iter().any(|e| e.is_check())) {
+        return Err(format!(
+            "case {id} step {n}: a clean-up step checks nothing - its failures never fail the case, so move the check to a case step"
+        ));
     }
     Ok(())
 }

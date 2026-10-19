@@ -163,6 +163,7 @@ pub fn as_run(r: &ReplayRecord) -> LocalRun {
             notice: None,
             page_errors_seen: 0,
             phases: None,
+            cleanup: None,
         }],
         mode: REPLAY_MODE.to_string(),
         published: None,

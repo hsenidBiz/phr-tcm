@@ -182,7 +182,7 @@ async fn steps_before_n_run_after_the_sign_in_and_the_trip_and_step_n_does_not()
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
     let mut heard = vec![];
     let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |k, of| heard.push((k, of))).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None });
     assert_eq!(end.sentence(), "replayed case 77 to step 3 - the browser is on the page before step 3 runs");
     let seen = log(&app);
     let at = |what: &str| seen.iter().position(|l| l == what).unwrap_or_else(|| panic!("no {what:?} in {seen:?}"));
@@ -204,7 +204,7 @@ async fn the_last_step_plus_1_replays_every_step() {
     let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |k, of| heard.push((k, of))).await;
     // Past the last step: the whole case ran, said as such, never as a
     // replay that stopped partway.
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3) });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3), cleanup: None });
     assert_eq!(end.sentence(), "replayed the whole of case 77 (all 3 steps) - the browser is on the page its last step left");
     for s in ["#s1", "#s2", "#s3"] {
         assert!(clicked(&app, s), "{s} did not run: {:?}", log(&app));
@@ -238,7 +238,7 @@ async fn a_replayed_components_wait_for_files_the_text_it_found() {
     let (mut d, app) = app();
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
     let end = replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &cancel, |_, _| {}).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
     let area = map.areas.iter().find(|a| a.area == "Leave").expect("nothing filed under the case's area");
     let key = v2_lib::browser::locator::SeenKey::Text("Profile saved".into());
@@ -284,7 +284,7 @@ async fn a_replayed_step_in_a_second_tab_carries_its_tab() {
         &mut Reuse::default(),
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     // Step 1 opened the tab from main, step 2 ran in it, step 3 went back.
     assert_eq!(tabs, vec![ReplayedTab { step: 2, tab: "report".into() }]);
     // The person's command answers with them beside the end.
@@ -588,7 +588,7 @@ async fn with_database_read_access_off_no_database_is_asked_and_the_notice_is_ca
         |_, _| {},
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: Some(NOT_CHECKED.into()), whole: None });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: Some(NOT_CHECKED.into()), whole: None, cleanup: None });
     assert!(db.calls().is_empty(), "the database was asked: {:?}", db.calls());
     assert!(clicked(&app, "#s1"));
 }
@@ -996,7 +996,7 @@ fn a_stop_before_the_browser_opens_ends_the_replay_there() {
 /// The person's command answers with the sentence already said.
 #[test]
 fn the_answer_carries_the_finished_sentence() {
-    let answer: ReplayAnswer = ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }.into();
+    let answer: ReplayAnswer = ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }.into();
     assert_eq!(answer.sentence, "replayed case 77 to step 3 - the browser is on the page before step 3 runs");
     let answer: ReplayAnswer = ReplayEnd::Refused(ALREADY_RUNNING.into()).into();
     assert_eq!(answer.sentence, ALREADY_RUNNING);
@@ -1224,7 +1224,7 @@ async fn a_replay_closes_the_tabs_left_from_before_and_recreates_the_cases_own()
     // A click opens a tab, as the case's link does.
     d.tabs.opens_on = Some("Input.dispatchMouseEvent".into());
     let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     assert_eq!(d.tabs.closed_others, 1, "the tabs from before were not closed first");
     assert_eq!(d.tabs.open, ["report"], "the case's own tab was not opened again");
     assert_eq!(d.tab_name(), "report", "the replay leaves the browser where step 2 left it");
@@ -1303,12 +1303,12 @@ async fn a_replay_carries_on_from_where_the_last_one_stood() {
         |_, _| {},
     )
     .await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None, whole: None });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None, whole: None, cleanup: None });
     assert_eq!(from_here(Some(&stand(&saved, 2)), &saved, 4), ReplayFrom::CarriedOn(2));
 
     let before = log(&app).len();
     let end = carry(&mut d, dir.path(), &req(4), 2, &mut account, &mut held, &mut guarded).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3) });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3), cleanup: None });
     let after: Vec<String> = log(&app)[before..].to_vec();
     assert!(after.contains(&"click #s2".to_string()) && after.contains(&"click #s3".to_string()), "{after:?}");
     for not_again in ["click #go", "click Leave", "click #s1"] {
@@ -1643,7 +1643,7 @@ async fn signed_in_once(
     held: &mut Held,
 ) {
     let (first, reused) = replay_kept(d, root, 3, account, held).await;
-    assert_eq!(first, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(app));
+    assert_eq!(first, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(app));
     assert_eq!(reused, Reuse::default(), "a fresh browser signs in");
     assert_eq!(sign_ins(d), 1);
     assert_eq!(account.as_deref(), Some("admin"));
@@ -1673,7 +1673,7 @@ async fn a_replay_in_a_browser_signed_in_as_its_account_skips_the_sign_in() {
     signed_in_once(dir.path(), &mut d, &app, &mut account, &mut held).await;
 
     let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     assert_eq!(reused.went.as_deref(), Some("Leave"), "it went to the case's area without signing in");
     assert_eq!(reused.said().as_deref(), Some("Signed in already: went to Leave."));
     assert_eq!(signed_in_already_line("Leave"), "Signed in already: went to Leave.");
@@ -2077,7 +2077,7 @@ async fn an_expire_session_step_clears_the_sign_in() {
     let (mut d, app, _jar) = jar_app();
     let (mut account, mut held) = (None, Held::supervised());
     let (first, _) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
-    assert_eq!(first, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(first, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     assert_eq!(account, None, "the ended session still names its account");
     assert!(held.sign_in_print().is_none(), "the ended session's print was kept");
     app.log.lock().unwrap().clear();
@@ -2126,7 +2126,7 @@ async fn a_save_stopped_on_the_reuse_trip_is_said_before_signing_in_again() {
     let sentence = v2_lib::browser::save_guard::blocked("POST", "https://hr.example.internal/api/leave/save");
     d.block_after = Some(("Accessibility.queryAXTree".into(), sentence.clone()));
     let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     assert_eq!(reused.went, None);
     assert_eq!(reused.save_stopped, Some(save_stopped_line("Leave", &sentence)));
     assert_eq!(
@@ -2162,7 +2162,7 @@ async fn a_failed_trip_signs_in_once_and_goes_again() {
 
     hidden.store(true, Ordering::SeqCst);
     let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None }, "{:?}", log(&app));
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None }, "{:?}", log(&app));
     assert_eq!(reused, Reuse::default(), "it signed in after all");
     assert_eq!(sign_ins(&d), 1, "{:?}", log(&app));
     let seen = log(&app);
@@ -2482,4 +2482,62 @@ async fn a_reset_whose_sign_in_has_gone_and_guard_stays_says_so_as_a_sentence() 
         log(&app)
     );
     assert_eq!(slot.as_ref().unwrap().account, None);
+}
+
+// ---- #46: the clean-up step ---------------------------------------------------
+
+fn three_steps_and_a_clean_up() -> Value {
+    json!([
+        { "step_number": 1, "actions": [click("#s1")] },
+        { "step_number": 2, "actions": [click("#s2")] },
+        { "step_number": 3, "actions": [click("#s3")] },
+        { "step_number": 4, "actions": [click("#tidy")], "cleanup": true, "unchecked": "removes what step 1 made" }
+    ])
+}
+
+#[tokio::test]
+async fn a_replay_to_the_clean_up_runs_the_whole_case_but_not_the_clean_up() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps_and_a_clean_up()));
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3), cleanup: Some(false) });
+    assert_eq!(
+        end.sentence(),
+        "replayed the whole of case 77 (all 3 steps; its clean-up did not run - replay to step 5 to run it too) - the browser is on the page its last step left"
+    );
+    assert!(clicked(&app, "#s3"), "{:?}", log(&app));
+    assert!(!clicked(&app, "#tidy"), "the clean-up ran: {:?}", log(&app));
+}
+
+#[tokio::test]
+async fn a_replay_past_the_clean_up_runs_it_last() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps_and_a_clean_up()));
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = replay(&mut d, dir.path(), &req(5), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 5, notice: None, whole: Some(3), cleanup: Some(true) });
+    assert_eq!(
+        end.sentence(),
+        "replayed the whole of case 77 (all 3 steps and its clean-up) - the browser is on the page its clean-up left"
+    );
+    let seen = log(&app);
+    let at = |what: &str| seen.iter().position(|l| l == what).unwrap_or_else(|| panic!("no {what:?} in {seen:?}"));
+    assert!(at("click #s3") < at("click #tidy"), "{seen:?}");
+}
+
+#[tokio::test]
+async fn a_replay_to_an_earlier_step_runs_no_clean_up() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps_and_a_clean_up()));
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None });
+    assert!(!clicked(&app, "#tidy"), "{:?}", log(&app));
 }

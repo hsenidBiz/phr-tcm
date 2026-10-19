@@ -311,10 +311,10 @@ pub fn propose_with(
     if stopped {
         return Proposal { verdict: "", reason: "stopped before it finished".into() };
     }
-    if !script.steps.iter().flat_map(|s| &s.actions).any(|a| a.is_check()) {
+    if !script.case_steps().flat_map(|s| &s.actions).any(|a| a.is_check()) {
         return Proposal { verdict: "", reason: "this script checks nothing, so there is nothing to propose".into() };
     }
-    Proposal { verdict: "Passed", reason: format!("every action of {} steps passed", script.steps.len()) }
+    Proposal { verdict: "Passed", reason: format!("every action of {} steps passed", script.case_steps().count()) }
 }
 
 /// Run one whole case as the script's own account, with no module step.
@@ -516,15 +516,26 @@ async fn run_case_in<D: Driver>(
     let mut noted = runner::Noted::default();
     noted.in_case(script.area.as_deref());
     let stepping = Instant::now();
-    for step in &script.steps {
-        if skip.is_none() && cancel.load(Ordering::SeqCst) {
+    // Whether a step of the case itself began, and whether the browser
+    // stopped answering in one: the clean-up runs only after the first and
+    // never after the second.
+    let (mut began_steps, mut gone) = (false, false);
+    // Where the clean-up's record is in `steps`, once it is there: taken
+    // out once every picture and download is on it.
+    let mut cleanup_at: Option<usize> = None;
+    for step in script.in_run_order() {
+        if step.cleanup {
+            cleanup_at = Some(steps.len());
+        } else if skip.is_none() && cancel.load(Ordering::SeqCst) {
             skip = Some(AFTER_STOP);
             stopped = true;
         }
-        if let Some(why) = skip {
+        let why_not = if step.cleanup { cleanup_skip(skip, began_steps, gone, cancel) } else { skip };
+        if let Some(why) = why_not {
             steps.push(not_run(step, why));
             continue;
         }
+        began_steps |= !step.cleanup;
         on_step(step.step_number);
         let asked_at = Instant::now();
         // A bare `return_to_area` goes where the run went before step 1; one
@@ -591,8 +602,11 @@ async fn run_case_in<D: Driver>(
         if let Some(sentence) = d.take_save_blocked() {
             charge_save(&mut outcomes, sentence);
         }
+        gone |= harness;
         if stopped_inside {
-            stopped = true;
+            // A stop inside the clean-up leaves the case's own steps as
+            // they finished.
+            stopped |= !step.cleanup;
             skip = Some(AFTER_STOP);
         } else if outcomes.iter().any(|o| !o.ok) {
             skip = Some(AFTER_FAILED_STEP);
@@ -639,10 +653,14 @@ async fn run_case_in<D: Driver>(
         }
     }
 
+    // The clean-up is no step of the case: kept apart, so nothing judges
+    // or sends it as one.
+    let cleanup = cleanup_at.map(|at| steps.remove(at));
+
     // A file that does not read leaves a component's outcomes unpaired.
     let components = super::components::load_components(root, organization, project).unwrap_or_default();
     let p = propose_with(script, &steps, signed_in, stopped, &components);
-    CaseRecord {
+    let mut record = CaseRecord {
         case_id: script.case_id,
         title: script.title.clone(),
         verdict: String::new(),
@@ -656,6 +674,29 @@ async fn run_case_in<D: Driver>(
         notice: None,
         page_errors_seen,
         phases: Some(CasePhases { sign_in_ms: sign_in_took, area_ms: area_took, steps_ms: steps_took, total_ms: ms(took), ..Default::default() }),
+        cleanup,
+    };
+    // A case that passed and whose clean-up failed says both.
+    if record.proposed == "Passed" && record.cleanup_line().is_some() {
+        record.reason = format!("{}{CLEANUP_FAILED}", record.reason);
+    }
+    record
+}
+
+/// Said after a passed case's reason when its clean-up failed.
+pub const CLEANUP_FAILED: &str = ", but its clean-up failed";
+
+/// Why the clean-up step does not run, or `None` when it does: it runs
+/// after the case's last step and after a step that failed, once a step
+/// of the case began - never once the run was stopped, the case could not
+/// start, or the browser stopped answering.
+fn cleanup_skip(skip: Option<&'static str>, began_steps: bool, gone: bool, cancel: &AtomicBool) -> Option<&'static str> {
+    if cancel.load(Ordering::SeqCst) {
+        return Some(AFTER_STOP);
+    }
+    match skip {
+        Some(why) if why == AFTER_FAILED_STEP && began_steps && !gone => None,
+        other => other,
     }
 }
 
@@ -703,7 +744,7 @@ fn unrun(case_id: i32, title: &str, proposed: &str, reason: String) -> CaseRecor
         account: None,
         retried: None,
         notice: None,
-        page_errors_seen: 0, phases: None,
+        page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
 
@@ -790,7 +831,7 @@ fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: Stri
         account: account.map(str::to_string),
         retried: None,
         notice: None,
-        page_errors_seen: 0, phases: None,
+        page_errors_seen: 0, phases: None, cleanup: None,
     }
 }
 

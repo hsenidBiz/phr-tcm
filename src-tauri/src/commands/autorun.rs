@@ -2045,6 +2045,7 @@ pub(crate) async fn replay_supervised(
             step,
             notice: None,
             whole: saved.as_ref().and_then(|s| replay_to::whole_case(s, step)),
+            cleanup: saved.as_ref().and_then(|s| replay_to::cleanup_ran(s, step)),
         },
         (Ok(_), ReplayFrom::CarriedOn(k)) => {
             replay_to::carry_on(

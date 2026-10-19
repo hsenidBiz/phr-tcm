@@ -2860,3 +2860,21 @@ fn an_area_mapped_before_sightings_counts_while_explored_within_thirty_days() {
         assert_eq!(clicked.is_ok(), saves, "explored {} days ago: {clicked:?}", (now - explored) / day);
     }
 }
+
+/// #46: a clean-up step's locators are held to the same rule as any step's.
+#[test]
+fn a_clean_up_steps_locators_must_be_seen_like_any_steps() {
+    let map = map_with("Ratings", "/ratings", &[role("button", "Save"), role("button", "Delete")]);
+    let steps = |name: &str| {
+        serde_json::json!([
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Save" } }] },
+            { "step_number": 2, "actions": [{ "kind": "click", "selector": { "role": "button", "name": name } }],
+              "cleanup": true, "unchecked": "removes the rating step 1 saved" }
+        ])
+    };
+    assert_eq!(check_seen(&map, &none(), &script(Some("Ratings"), steps("Delete")), &[], None), Ok(()));
+    assert_eq!(
+        check_seen(&map, &none(), &script(Some("Ratings"), steps("Remove")), &[], None),
+        Err(refusal(2, "button \"Remove\""))
+    );
+}
