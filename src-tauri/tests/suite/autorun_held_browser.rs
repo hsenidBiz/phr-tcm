@@ -744,7 +744,9 @@ async fn the_assistants_release_never_stops_a_replay() {
     let (status, said) = release_for_assistant().await;
     assert_eq!((status, said.clone()), (409, v2_lib::ai_bridge::replay_going_for_a_release()));
     assert!(said.contains("call replay_autorun_to_step"), "{said}");
-    assert!(said.contains("or stop_autorun_replay to stop it"), "{said}");
+    // The person's replay (no call of the assistant's waits on it): the
+    // stop tool, which never stops it, is not offered.
+    assert!(!said.contains("stop_autorun_replay"), "{said}");
     assert!(!v2_lib::autorun::replay_to::CANCEL.load(Ordering::SeqCst), "the replay was asked to stop");
     drop(replay);
 }
@@ -881,10 +883,7 @@ async fn a_reset_during_a_replay_is_refused() {
         .await
         .expect("the reset waited on the replay");
     assert_eq!(answer, (409, REPLAY_RUNNING_AT_RESET.to_string()));
-    assert_eq!(
-        REPLAY_RUNNING_AT_RESET,
-        "A replay is running: try again when it has finished, or stop it first with stop_autorun_replay."
-    );
+    assert_eq!(REPLAY_RUNNING_AT_RESET, "A replay is running: try again when it has finished.");
     assert!(!v2_lib::autorun::replay_to::CANCEL.load(Ordering::SeqCst), "the replay was asked to stop");
     drop(replay);
 }

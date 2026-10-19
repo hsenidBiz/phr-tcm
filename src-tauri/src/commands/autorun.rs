@@ -1350,8 +1350,7 @@ pub const NO_BROWSER_OPEN: &str = "No browser is open.";
 
 /// Said by the assistant's reset while a replay holds the browser: a reset
 /// never stops one.
-pub const REPLAY_RUNNING_AT_RESET: &str =
-    "A replay is running: try again when it has finished, or stop it first with stop_autorun_replay.";
+pub const REPLAY_RUNNING_AT_RESET: &str = "A replay is running: try again when it has finished.";
 
 /// Said by the assistant's reset when the home page no longer holds the
 /// app's sign-in: the account and its cookies' print are forgotten.
@@ -1379,7 +1378,7 @@ pub fn reset_sentence(account: &str) -> String {
 /// asked to give way first, as release asks.
 pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, String) {
     if crate::autorun::replay_to::is_running() {
-        return (409, REPLAY_RUNNING_AT_RESET.to_string());
+        return (409, crate::ai_bridge::replay_running_refusal());
     }
     crate::ai_bridge::stop_batch();
     let Ok(mut slot) = tokio::time::timeout(RELEASE_WAIT, SESSION.lock()).await else {
@@ -1538,7 +1537,7 @@ fn with_changes_left(said: String, left: &[String]) -> String {
 /// reset's sign-in gone (`sign_in_forgotten_event`).
 pub async fn clear_cookies_for_assistant() -> (u16, String) {
     if crate::autorun::replay_to::is_running() {
-        return (409, REPLAY_RUNNING_AT_RESET.to_string());
+        return (409, crate::ai_bridge::replay_running_refusal());
     }
     let Ok(mut slot) = tokio::time::timeout(crate::ai_bridge::CAPTURE_LOCK_WAIT, SESSION.lock()).await else {
         return (409, crate::ai_bridge::OVERRIDES_BUSY.to_string());

@@ -852,10 +852,14 @@ pub struct ActionNow {
     pub target: String,
     /// When it began.
     pub since: Option<Instant>,
-    /// How many of the step's actions have already failed (a wait that ran
-    /// out of time included). A failed action stops its step: the rest is
-    /// not run, and none is tried again.
+    /// 1 once an action of the step has failed (a wait that ran out of
+    /// time included), else 0: a failed action stops its step, so no later
+    /// action of it begins, the replay ends at that step, and nothing is
+    /// tried again. Never more than 1.
     pub failed: u32,
+    /// The action begun last was ended by the Stop while it ran (inside its
+    /// own wait), not after it finished.
+    pub stopped_inside: bool,
 }
 
 /// The longest target `ActionNow` keeps.
@@ -874,6 +878,7 @@ impl StepProgress {
             target: String::new(),
             since: None,
             failed: 0,
+            stopped_inside: false,
         }))
     }
 
@@ -903,6 +908,11 @@ impl StepProgress {
     }
 
     /// The action begun last ended, passing or not.
+    /// The action begun last was ended by the Stop while it ran.
+    pub fn stopped_inside(&self) {
+        self.held().stopped_inside = true;
+    }
+
     pub fn ended(&self, ok: bool) {
         if !ok {
             self.held().failed += 1;
@@ -1126,6 +1136,7 @@ async fn run_expanded<D: Driver>(
         popups,
         loaders,
         cancel: run.cancel,
+        stop_each: run.stop_before_each_action,
     };
     let mut out = Vec::with_capacity(step.actions.len());
     let mut blocked: Option<&'static str> = None;
@@ -1473,7 +1484,12 @@ async fn run_expanded<D: Driver>(
             }
         }
         if let Some(p) = run.progress {
-            p.ended(outcome.ok);
+            // A Stop heard inside the action is no failure of it.
+            if outcome.detail == AFTER_STOP {
+                p.stopped_inside();
+            } else {
+                p.ended(outcome.ok);
+            }
         }
         // A Stop is no failure to picture.
         if !outcome.ok && !outcome.harness && outcome.detail != AFTER_STOP {
@@ -1614,6 +1630,18 @@ struct Here<'a> {
     loaders: &'a [super::recipe::LoadingIndicator],
     /// The run's Stop, heard while a loading indicator is waited out.
     cancel: Option<&'a AtomicBool>,
+    /// `InRun::stop_before_each_action`: the Stop is heard before each
+    /// action a guard runs too (`stop_heard`).
+    stop_each: bool,
+}
+
+impl Here<'_> {
+    /// A replay's Stop, asked for: heard between a `when_visible`'s `then`
+    /// actions and between a `repeat_while_visible`'s passes, as between a
+    /// step's own actions.
+    fn stop_heard(&self) -> bool {
+        self.stop_each && self.cancel.is_some_and(|c| c.load(Ordering::SeqCst))
+    }
 }
 
 /// Said by the actions after one the application refused the session for.
@@ -1746,6 +1774,9 @@ async fn when_visible<D: Driver>(
     }
     let mut said: Vec<String> = Vec::with_capacity(then.len());
     for guarded in then {
+        if here.stop_heard() {
+            return (ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP));
+        }
         // A bounce the guard caught (the page went home) is recovered by
         // walking back to the area, as the step's own `return_to_area`
         // would; not reaching it stops the step the same way.
@@ -1790,6 +1821,9 @@ async fn repeat_while_visible<D: Driver>(
     let scoped = then.iter().any(|a| a.targets().into_iter().any(repeat::is_row_scoped));
     let mut passes: u32 = 0;
     loop {
+        if passes > 0 && here.stop_heard() {
+            return (ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP));
+        }
         let found = match repeat::look(d, selector, except).await {
             Ok(found) => found,
             Err(e) if e.is_transient() => Vec::new(),
@@ -1830,6 +1864,10 @@ async fn repeat_while_visible<D: Driver>(
         passes += 1;
         let mut said: Vec<String> = Vec::with_capacity(then.len());
         for step in then {
+            if here.stop_heard() {
+                repeat::unmark(d).await;
+                return (ActionOutcome::failed(AFTER_STOP), Some(AFTER_STOP));
+            }
             let (out, stop) = match step {
                 Action::ReturnToArea { .. } => return_to_area(d, step, area, areas, here.step, timing).await,
                 _ => plain(d, here, step, timing).await,

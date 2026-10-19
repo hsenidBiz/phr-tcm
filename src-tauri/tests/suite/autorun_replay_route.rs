@@ -672,16 +672,33 @@ async fn a_replay_going_is_stopped_on_request_and_says_where() {
     let dir = tempfile::tempdir().unwrap();
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
-    let host = leak(FakeHost { until_stopped: true, ..FakeHost::ready() });
+    use v2_lib::autorun::replay_to::{left_open_line, LeftOpen};
+    let left = LeftOpen { account: Some("admin".into()), by_assistant: true };
+    let host = leak(FakeHost { until_stopped: true, left_open: Some(left.clone()), ..FakeHost::ready() });
     let (status, _) = autorun_replay_with(&ctx(), &body(3), host, Duration::from_millis(50)).await;
     assert_eq!(status, 202, "the replay should still be going");
+
+    // While the assistant's own replay goes, a reset and a release that
+    // refuse name the stop tool.
+    let (status, said) = v2_lib::commands::autorun::reset_for_assistant("acme", "Web").await;
+    assert_eq!(status, 409, "{said}");
+    assert!(said.ends_with("Or stop it first with stop_autorun_replay."), "{said}");
+    let (status, said) = v2_lib::commands::autorun::release_for_assistant().await;
+    assert_eq!(status, 409, "{said}");
+    assert!(said.contains("or stop_autorun_replay to stop it"), "{said}");
 
     let (status, text) = autorun_replay_stop_with(WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
+    // The browser stays open, holding its account: said, as after any
+    // replay that leaves it open.
     assert_eq!(
         v,
-        json!({ "sentence": "Started from the beginning. The replay of case 77 was stopped on request after action 1 of step 2" })
+        json!({ "sentence": format!(
+            "Started from the beginning. The replay of case 77 was stopped on request after action 1 of step 2
+{}",
+            left_open_line(&left)
+        ) })
     );
     assert!(!v2_lib::autorun::replay_to::is_running());
 
@@ -699,10 +716,15 @@ async fn a_replay_going_is_stopped_on_request_and_says_where() {
 #[test]
 fn a_stop_on_request_says_after_which_action_of_which_step() {
     use v2_lib::autorun::replay_to::stopped_on_request;
-    assert_eq!(stopped_on_request(77, 2, 3), "the replay of case 77 was stopped on request after action 3 of step 2");
-    assert_eq!(stopped_on_request(77, 2, 0), "the replay of case 77 was stopped on request before step 2's first action");
+    assert_eq!(stopped_on_request(77, 2, 3, false), "the replay of case 77 was stopped on request after action 3 of step 2");
+    // Heard inside action 3's own wait: it never finished.
     assert_eq!(
-        stopped_on_request(77, 0, 0),
+        stopped_on_request(77, 2, 3, true),
+        "the replay of case 77 was stopped on request at action 3 of step 2, inside its wait"
+    );
+    assert_eq!(stopped_on_request(77, 2, 0, false), "the replay of case 77 was stopped on request before step 2's first action");
+    assert_eq!(
+        stopped_on_request(77, 0, 0, false),
         "the replay of case 77 was stopped on request before step 1, while the case was made ready (its preconditions, sign-in or trip to its area)"
     );
 }
@@ -788,6 +810,31 @@ async fn a_stop_not_heard_within_the_wait_says_it_was_asked_and_how_to_wait() {
     let (status, text) = autorun_replay_stop_with(WAIT).await;
     assert_eq!(status, 200, "{text}");
     assert!(text.contains("Replayed case 77 to step 3"), "{text}");
+}
+
+/// An answer the stop tool collects honours the page choice of the replay
+/// call that started it: `page: false` leaves the page out there too.
+#[tokio::test]
+async fn an_answer_collected_by_the_stop_keeps_the_replay_calls_page_choice() {
+    use v2_lib::ai_bridge::{autorun_replay_stop_with, PAGE_LEFT_OUT};
+    let _a = crate::serial::autorun();
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let host = slow();
+    let no_page = json!({ "case_id": ID, "step": 3, "page": false }).to_string();
+    let (status, _) = autorun_replay_with(&ctx(), &no_page, host, Duration::from_millis(30)).await;
+    assert_eq!(status, 202);
+    let (status, _) = autorun_replay_stop_with(Duration::from_millis(30)).await;
+    assert_eq!(status, 202);
+    host.release.as_ref().unwrap().notify_one();
+    let (status, text) = autorun_replay_stop_with(WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert!(v.get("page").is_none(), "{v}");
+    assert_eq!(v["page_left_out"], PAGE_LEFT_OUT);
+    assert!(v["sentence"].as_str().unwrap().contains("Replayed case 77 to step 3"), "{v}");
 }
 
 // ---- the browser a replay leaves open ---------------------------------------
@@ -980,7 +1027,9 @@ async fn calls_that_need_the_browser_are_refused_at_once_while_a_replay_runs() {
 }
 
 /// While a step runs, the 202 says which action it is on, for how long, and
-/// how many of the step's actions already failed; a replay never retries.
+/// that its action failed and the replay ends at that step (a step stops
+/// at its first failed action, so there is never a second); a replay never
+/// retries.
 /// Before any action has begun it says only the step, as before.
 #[test]
 fn still_running_names_the_action_and_the_failures_so_far() {
@@ -993,12 +1042,13 @@ fn still_running_names_the_action_and_the_failures_so_far() {
         target: "button \"Save\"".into(),
         since: Some(std::time::Instant::now() - Duration::from_secs(12)),
         failed: 1,
+        stopped_inside: false,
     };
     let v = replay_still_running_answer(77, 3, 2, 2, &on);
     assert_eq!(v["status"], "running");
     assert_eq!(
         v["sentence"],
-        "still running, now at step 2 of 2, on action 2 of 4 (click button \"Save\") for 12 s, 1 of this step's actions already failed (a replay never tries an action again) - call replay_autorun_to_step again with the same case (77) and step (3) to keep waiting"
+        "still running, now at step 2 of 2, on action 2 of 4 (click button \"Save\") for 12 s, action 2 failed - the replay ends at this step - call replay_autorun_to_step again with the same case (77) and step (3) to keep waiting"
     );
     assert_eq!(v["action"]["index"], 2);
     assert_eq!(v["action"]["of"], 4);

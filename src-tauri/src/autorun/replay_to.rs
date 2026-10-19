@@ -271,11 +271,13 @@ pub fn forget_stop_request() {
 /// What the assistant's replay that `stop_autorun_replay` stopped answers:
 /// where the stop was heard, from the step it was on (`at`, 0 before step
 /// 1) and the last action of that step to begin (`action`, from 1; 0 when
-/// none had). Said alone, with no page.
-pub fn stopped_on_request(case_id: i32, at: i32, action: usize) -> String {
+/// none had): "at" that action when the stop ended it inside its own wait
+/// (`inside`), "after" it when it had finished. Said alone, with no page.
+pub fn stopped_on_request(case_id: i32, at: i32, action: usize, inside: bool) -> String {
     let front = format!("the replay of case {case_id} was stopped on request");
     match (at, action) {
         (at, 0) if at > 0 => format!("{front} before step {at}'s first action"),
+        (at, n) if at > 0 && inside => format!("{front} at action {n} of step {at}, inside its wait"),
         (at, n) if at > 0 => format!("{front} after action {n} of step {at}"),
         _ => format!(
             "{front} before step 1, while the case was made ready (its preconditions, sign-in or trip to its area)"

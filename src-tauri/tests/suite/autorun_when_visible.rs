@@ -172,6 +172,72 @@ async fn a_then_action_that_fails_fails_the_step() {
     assert_eq!(state.clicks.load(Ordering::SeqCst), 0, "the guard stops at its first failure");
 }
 
+/// A browser that sets `cancel` once `after` clicks have landed.
+struct StopsAfterClicks {
+    inner: ScriptedDriver,
+    clicks: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    after: usize,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl v2_lib::browser::cdp::Driver for StopsAfterClicks {
+    async fn call(&mut self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, v2_lib::browser::cdp::CdpError> {
+        let answer = self.inner.call(method, params).await;
+        if self.clicks.load(Ordering::SeqCst) >= self.after {
+            self.cancel.store(true, Ordering::SeqCst);
+        }
+        answer
+    }
+    async fn wait_event(
+        &mut self,
+        method: &str,
+        limit: std::time::Duration,
+    ) -> Result<v2_lib::browser::cdp::Event, v2_lib::browser::cdp::CdpError> {
+        self.inner.wait_event(method, limit).await
+    }
+    fn forget_events(&mut self) {
+        self.inner.forget_events();
+    }
+    fn take_dialogs(&mut self) -> Vec<String> {
+        self.inner.take_dialogs()
+    }
+    fn set_deadline(&mut self, deadline: Option<std::time::Instant>) {
+        self.inner.set_deadline(deadline);
+    }
+}
+
+/// A replay's stop asked while a guard's `then` runs is heard before the
+/// guard's next action, as between a step's own actions: the guard ends
+/// as stopped. An unattended run (no stop before each action) runs the
+/// guard to its end, as it always has.
+#[tokio::test]
+async fn a_replays_stop_is_heard_between_a_guards_then_actions() {
+    use v2_lib::autorun::runner::{run_step_in_run, AreaRoute, InRun, AFTER_STOP, NEEDS_SCRIPT_AREA};
+    use v2_lib::autorun::lease::Held;
+    let guard = || {
+        action(json!({ "kind": "when_visible", "selector": { "css": "#banner" }, "within_ms": 200,
+                       "then": [ { "kind": "click", "selector": { "css": "#banner" } },
+                                 { "kind": "click", "selector": { "css": "#banner" } } ] }))
+    };
+    for (replay, clicks) in [(true, 1), (false, 2)] {
+        let dir = tempfile::tempdir().unwrap();
+        let (inner, state) = stateful_app(false, None);
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut d = StopsAfterClicks { inner, clicks: state.clicks.clone(), after: 1, cancel: cancel.clone() };
+        let (mut acc, mut held) = (None, Held::supervised());
+        let mut run = InRun { cancel: Some(&cancel), stop_before_each_action: replay, ..Default::default() };
+        let out = run_step_in_run(&mut d, dir.path(), "Acme", "Web", &step(vec![guard()]), &quick(), &mut acc, &mut held, None, AreaRoute::Unknown(NEEDS_SCRIPT_AREA), &mut run)
+            .await
+            .unwrap();
+        assert_eq!(state.clicks.load(Ordering::SeqCst), clicks, "replay: {replay}");
+        if replay {
+            assert_eq!(out[0].detail, AFTER_STOP, "{:?}", out[0]);
+        } else {
+            assert!(out[0].ok, "{:?}", out[0]);
+        }
+    }
+}
+
 #[tokio::test]
 async fn with_addresses_switched_off_a_guarded_navigate_never_reaches_the_browser() {
     let dir = tempfile::tempdir().unwrap();

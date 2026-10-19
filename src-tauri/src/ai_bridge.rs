@@ -2220,7 +2220,7 @@ pub const KEEPS_NO_OVERRIDES: &str = "this Auto Run browser keeps no record of t
 /// `commands::autorun::clear_cookies_for_assistant`.
 async fn autorun_override(tool: OverrideTool, body: &str) -> (u16, String) {
     if crate::autorun::replay_to::is_running() {
-        return (409, crate::commands::autorun::REPLAY_RUNNING_AT_RESET.to_string());
+        return (409, replay_running_refusal());
     }
     let Ok(mut slot) = tokio::time::timeout(CAPTURE_LOCK_WAIT, crate::commands::autorun::supervised().lock()).await else {
         return (409, OVERRIDES_BUSY.to_string());
@@ -2266,7 +2266,7 @@ pub async fn override_tool_in<B: DiscoveryBrowser>(
 /// let go first.
 pub(crate) async fn refuse_acting<B: DiscoveryBrowser>(slot: &mut Option<B>) -> Result<(), (u16, String)> {
     if crate::autorun::replay_to::is_running() {
-        return Err((409, crate::commands::autorun::REPLAY_RUNNING_AT_RESET.to_string()));
+        return Err((409, replay_running_refusal()));
     }
     if forget_gone_browser(slot).await {
         return Err((404, crate::commands::autorun::NO_BROWSER_OPEN.to_string()));
@@ -3528,10 +3528,30 @@ fn call_the_replay_going() -> String {
 /// Said, with 409, to the assistant's release while a replay holds the
 /// browser: a release never stops a replay, so it says how to wait for it.
 pub fn replay_going_for_a_release() -> String {
+    let stop = if assistant_replay_going() { ", or stop_autorun_replay to stop it" } else { "" };
     format!(
-        "a replay is going and holds the browser, and a release never stops one - {} to wait for it, or stop_autorun_replay to stop it, then release",
+        "a replay is going and holds the browser, and a release never stops one - {} to wait for it{stop}, then release",
         call_the_replay_going()
     )
+}
+
+/// Whether the replay going is the assistant's own: its call's slot holds
+/// no answer yet. Only then does a refusal point at `stop_autorun_replay`,
+/// which never stops the person's.
+pub fn assistant_replay_going() -> bool {
+    assistant_run().as_ref().is_some_and(|r| r.answer.borrow().is_none())
+}
+
+/// `commands::autorun::REPLAY_RUNNING_AT_RESET`, as the assistant's reset,
+/// cookie and header tools say it: naming `stop_autorun_replay` when the
+/// replay going is the assistant's own.
+pub fn replay_running_refusal() -> String {
+    let said = crate::commands::autorun::REPLAY_RUNNING_AT_RESET;
+    if assistant_replay_going() {
+        format!("{said} Or stop it first with stop_autorun_replay.")
+    } else {
+        said.to_string()
+    }
 }
 
 /// `REPLAY_GOING` while a replay to a step holds the browser.
@@ -6624,6 +6644,9 @@ struct AssistantRun {
     /// The script's `saved_at` when the replay started.
     saved_at: Option<String>,
     answer: tokio::sync::watch::Receiver<Option<ReplayDone>>,
+    /// Whether the call that started it wanted the page (`page_wanted`): an
+    /// answer `stop_autorun_replay` collects honours it too.
+    page: bool,
 }
 
 /// A finished assistant's replay: its answer, when it ended, and how many
@@ -6681,10 +6704,10 @@ pub fn replay_still_running(case_id: i32, step: i32, at: i32, of: i32) -> String
 }
 
 /// `replay_still_running`, saying too which action of the step it is on
-/// (`runner::ActionNow`), for how long, and how many of the step's actions
-/// already failed. A replay never tries an action again: a failed one is
-/// pictured, the rest of its step is not run, and the replay stops after
-/// that step.
+/// (`runner::ActionNow`), for how long, and whether one of the step's
+/// actions failed. A replay never tries an action again: a failed one is
+/// pictured, the rest of its step is not run, and the replay ends at that
+/// step.
 pub fn replay_still_running_on(
     case_id: i32,
     step: i32,
@@ -6701,10 +6724,11 @@ pub fn replay_still_running_on(
         let what = if a.target.is_empty() { a.kind.clone() } else { format!("{} {}", a.kind, a.target) };
         let secs = a.since.map_or(0, |s| s.elapsed().as_secs());
         now.push_str(&format!(", on action {} of {} ({what}) for {secs} s", a.index, a.of));
+        // A failed action stops its step: no later one of it begins, so
+        // the one begun last is the one that failed.
         match a.failed {
             0 => now.push_str(", none of this step's actions has failed yet"),
-            1 => now.push_str(", 1 of this step's actions already failed (a replay never tries an action again)"),
-            n => now.push_str(&format!(", {n} of this step's actions already failed (a replay never tries an action again)")),
+            _ => now.push_str(&format!(", action {} failed - the replay ends at this step", a.index)),
         }
     }
     format!(
@@ -6885,7 +6909,7 @@ async fn replay_answer_with(
             _ if replay_to::is_running() => return (409, replay_to::ALREADY_RUNNING.to_string()),
             _ => {
                 let saved_at = script_saved_at(&root, case_id);
-                *slot = Some(AssistantRun { id, case_id, step, saved_at, answer: answer.clone() });
+                *slot = Some(AssistantRun { id, case_id, step, saved_at, answer: answer.clone(), page: page_wanted(body) });
                 replay_to::forget_stop_request();
                 None
             }
@@ -6956,18 +6980,21 @@ pub fn replay_stopping_answer(case_id: i32, step: i32) -> serde_json::Value {
 /// ended within `wait`: 202 (`replay_stopping_answer`). No replay going:
 /// 404; the person's own: 409, never stopped.
 pub async fn autorun_replay_stop_with(wait: std::time::Duration) -> (u16, String) {
-    let mine = assistant_run().as_ref().map(|r| (r.answer.clone(), r.id, r.case_id, r.step));
+    let mine = assistant_run().as_ref().map(|r| (r.answer.clone(), r.id, r.case_id, r.step, r.page));
     match mine {
-        Some((answer, id, case_id, step)) if answer.borrow().is_none() => {
+        Some((answer, id, case_id, step, page)) if answer.borrow().is_none() => {
             crate::autorun::replay_to::stop_on_request();
             crate::applog::info(format!("Auto Run replay of case {case_id} to step {step}: the assistant asked it to stop"));
             match wait_for_replay(answer, id, case_id, step, wait).await {
                 (202, _) => (202, replay_stopping_answer(case_id, step).to_string()),
+                // As the replay call that started it asked: `page: false`
+                // leaves the page out here too.
+                done if !page => without_page(done, r#"{"page":false}"#),
                 done => done,
             }
         }
         _ if crate::autorun::replay_to::is_running() => (409, PERSONS_REPLAY_GOING.to_string()),
-        Some((_, _, case_id, step)) => (404, replay_already_ended(case_id, step)),
+        Some((_, _, case_id, step, _)) => (404, replay_already_ended(case_id, step)),
         None => (404, NO_REPLAY_RUNNING.to_string()),
     }
 }
@@ -7002,13 +7029,13 @@ async fn run_assistant_replay(
     let reused = reuse.said().map(|line| format!("{line} ")).unwrap_or_default();
     // Stopped by stop_autorun_replay: said as stopped on request, after the
     // last action to begin of the step it was on.
-    let ended = match &end {
-        ReplayEnd::Stopped { .. } if crate::autorun::replay_to::stop_was_requested() => {
-            let (at, _) = crate::autorun::replay_to::progress();
-            let action = crate::autorun::replay_to::action_now();
-            crate::autorun::replay_to::stopped_on_request(case_id, at, action.index)
-        }
-        _ => end.sentence(),
+    let on_request = matches!(end, ReplayEnd::Stopped { .. }) && crate::autorun::replay_to::stop_was_requested();
+    let ended = if on_request {
+        let (at, _) = crate::autorun::replay_to::progress();
+        let action = crate::autorun::replay_to::action_now();
+        crate::autorun::replay_to::stopped_on_request(case_id, at, action.index, action.stopped_inside)
+    } else {
+        end.sentence()
     };
     let said = match (&end, from) {
         (ReplayEnd::Refused(_) | ReplayEnd::Blocked(_), _) => end.sentence(),
@@ -7023,9 +7050,11 @@ async fn run_assistant_replay(
     };
     let mut sentence = after_ended_discovery(discovery.ended, &said);
     // A browser the replay leaves open, on a line of its own after it.
-    // Not after a stop: Stop, Close or Release stopped it, and the browser
-    // may be closing right behind the answer.
-    let refused_or_stopped = matches!(end, ReplayEnd::Refused(_) | ReplayEnd::Blocked(_) | ReplayEnd::Stopped { .. });
+    // Not after the person's stop: Stop, Close or Release stopped it, and
+    // the browser may be closing right behind the answer. A stop the
+    // assistant asked for leaves it open, holding its account, so it is said.
+    let refused_or_stopped = matches!(end, ReplayEnd::Refused(_) | ReplayEnd::Blocked(_))
+        || (matches!(end, ReplayEnd::Stopped { .. }) && !on_request);
     if let (Some(left), false) = (&left_open, refused_or_stopped) {
         sentence.push('\n');
         sentence.push_str(&crate::autorun::replay_to::left_open_line(left));

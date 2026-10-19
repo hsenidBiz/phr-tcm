@@ -366,6 +366,27 @@ impl Driver for StopsAfterClick {
     }
 }
 
+/// A stop asked for on the way to the case's area - after the last look
+/// before it - is heard where the steps start: step 1 never begins (its
+/// progress is never reported) and none of its actions runs.
+#[tokio::test]
+async fn a_stop_on_the_way_to_the_area_is_heard_before_step_1_begins() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (inner, app) = app();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let watched = common::MenuApp { log: app.log.clone(), path: app.path.clone() };
+    let mut d = StopsAfterClick { inner, app: watched, what: "Leave", cancel: cancel.clone() };
+    let (mut account, mut guarded) = (None, None);
+    let began = std::cell::RefCell::new(Vec::new());
+    let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |k, _| began.borrow_mut().push(k)).await;
+    assert_eq!(end, ReplayEnd::Stopped { step: 1 });
+    assert!(clicked(&app, "Leave"), "the trip to the area ran: {:?}", log(&app));
+    assert!(began.borrow().is_empty(), "step 1 began: {:?}", began.borrow());
+    assert!(!clicked(&app, "#s1"), "{:?}", log(&app));
+}
+
 /// Row 33: a stop asked for while a step's action runs ends the replay
 /// before that step's next action - never only once the whole step has
 /// run. The step's later actions are not carried out.
