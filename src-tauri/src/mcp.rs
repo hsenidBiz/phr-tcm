@@ -727,9 +727,9 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_cookies",
-            "description": "The cookies the Auto Run browser holds for a site - the page's own, or `url`'s - whatever their path: name, domain, path, expiry, flags (http_only, secure, same_site), size, and the value. The sign-in's cookies (HttpOnly, the sign-in and anti-forgery cookies, names like a secret) show their value as (hidden). `set_for_testing` marks the ones you set. A read: works in the person's browser too.",
+            "description": "The cookies the Auto Run browser holds for the app's own site - the one TCM's sign-in confirmed, whatever page shows (409 before it is) - whatever their path: name, domain, path, expiry, flags (http_only, secure, same_site), size, and the value. The sign-in's cookies (HttpOnly, the sign-in and anti-forgery cookies, names like a secret) show their value as (hidden). `set_for_testing` marks the ones you set. A read: works in the person's browser too.",
             "inputSchema": schema(serde_json::json!({
-                "url": { "type": "string", "description": "Optional: an http or https address whose site's cookies to read. Left out, the page's." },
+                "url": { "type": "string", "description": "Optional: an http or https address on the app's site or one of its parent domains (anything else is refused). Left out, the app's site." },
             }), &[]),
         },
         {

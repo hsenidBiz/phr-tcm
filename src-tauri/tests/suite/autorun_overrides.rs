@@ -375,14 +375,46 @@ async fn a_cookie_value_of_the_sign_in_is_hidden_when_read() {
     assert!(by_name("ESTSAUTH").is_none(), "another site's cookie was listed");
     assert_eq!(v["total"], 4);
 
-    // `url` names the site instead of the page's.
-    let (status, said) = cookies_in(&mut slot, &json!({ "url": "https://login.idp.example/x?y=1" })).await;
+    // `url` may name the confirmed site or a parent domain of it.
+    let (status, said) = cookies_in(&mut slot, &json!({ "url": "https://hr.example/x?y=1" })).await;
+    assert_eq!(status, 200, "{said}");
+    assert_eq!(parsed(&said)["site"], "hr.example");
+    let (status, said) = cookies_in(&mut slot, &json!({ "url": "https://example/" })).await;
+    assert_eq!(status, 200, "{said}");
+    assert_eq!(parsed(&said)["site"], "example");
+    assert_eq!(cookies_in(&mut slot, &json!({ "url": "ftp://x" })).await.0, 400);
+}
+
+/// With no `url`, the cookies read are the app's CONFIRMED site's, not the page
+/// showing (the identity provider's); with no confirmed site that is a 409.
+/// A `url` outside the confirmed site and its parent domains is a 400.
+#[tokio::test]
+async fn cookies_are_read_for_the_confirmed_site_not_the_page_showing() {
+    let mut slot = browser_with(page_on(IDP, jar()), false);
+    let (status, said) = cookies_in(&mut slot, &json!({})).await;
     assert_eq!(status, 200, "{said}");
     let v = parsed(&said);
-    assert_eq!(v["site"], "login.idp.example");
-    assert_eq!(v["cookies"].as_array().unwrap().len(), 2);
-    assert!(!said.contains("idp-session"));
-    assert_eq!(cookies_in(&mut slot, &json!({ "url": "ftp://x" })).await.0, 400);
+    assert_eq!(v["site"], "hr.example");
+    assert!(!said.contains("idp-session") && !said.contains("idp_lang"), "the page's site was read: {said}");
+    assert!(!slot.as_ref().unwrap().d.calls_to("Runtime.evaluate").iter().any(|p| p["expression"] == "location.origin"), "the page was asked");
+
+    for outside in ["https://login.idp.example/x", "https://other.example/", "https://evilhr.example/", "https://sub.hr.example/"] {
+        let (status, said) = cookies_in(&mut slot, &json!({ "url": outside })).await;
+        assert_eq!(status, 400, "{outside}: {said}");
+        assert!(!said.contains("idp-session"), "{said}");
+    }
+
+    let unconfirmed = ScriptedDriver::new(|method, _| match method {
+        "Network.getAllCookies" => Ok(json!({ "cookies": jar() })),
+        _ => Ok(json!({})),
+    })
+    .with_capture(NetCapture::default());
+    let mut slot = browser_with(unconfirmed, false);
+    for args in [json!({}), json!({ "url": "https://hr.example/" })] {
+        let (status, said) = cookies_in(&mut slot, &args).await;
+        assert_eq!((status, said.as_str()), (409, SITE_NOT_CONFIRMED));
+    }
+    assert!(slot.unwrap().d.calls_to("Network.getAllCookies").is_empty(), "cookies were read with no confirmed site");
 }
 
 // ---- the sign-in's print ---------------------------------------------------------

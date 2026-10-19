@@ -2334,12 +2334,14 @@ pub async fn set_headers_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &se
 }
 
 /// `get_autorun_cookies` over `slot`: every cookie the browser holds for
-/// the site - `url`'s host, or the page's - whatever its path, as
-/// `overrides::shown_cookie` shows it (the sign-in's values hidden). A read:
-/// any supervised browser, the person's too.
+/// the app's site - the one TCM's sign-in confirmed (`overrides::confirmed_origin`),
+/// never whatever page shows, which may be the identity provider's - whatever
+/// its path, as `overrides::shown_cookie` shows it (the sign-in's values
+/// hidden). `url` may name that site's host or one of its parent domains,
+/// nothing else (400). A read: any supervised browser, the person's too.
 pub async fn cookies_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &serde_json::Value) -> (u16, String) {
     use crate::autorun::overrides as ov;
-    let url = match args.get("url") {
+    let asked = match args.get("url") {
         None | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::String(u)) => match ov::url_host(u) {
             Some(host) => Some(host),
@@ -2354,12 +2356,16 @@ pub async fn cookies_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &serde_
         return (404, crate::commands::autorun::NO_BROWSER_OPEN.to_string());
     };
     let p = b.parts();
-    let host = match url {
+    let site = match ov::confirmed_origin(&*p.driver) {
+        Ok(origin) => ov::url_host(&origin).unwrap_or_default(),
+        Err(refused) => return refused,
+    };
+    let host = match asked {
+        Some(host) if !crate::browser::session::cookie_belongs(&host, &site) => {
+            return (400, format!("url is outside the app's site ({site}): name that site or a parent domain of it"));
+        }
         Some(host) => host,
-        None => match ov::page_origin(p.driver).await {
-            Ok(origin) => ov::url_host(&origin).unwrap_or_default(),
-            Err(refused) => return refused,
-        },
+        None => site,
     };
     let cookies = match ov::cookies_for_host(p.driver, &host).await {
         Ok(c) => c,
