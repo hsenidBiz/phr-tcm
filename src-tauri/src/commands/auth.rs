@@ -63,6 +63,9 @@ pub async fn resume_session(app: tauri::AppHandle) -> AuthStatus {
             // As in `sign_in`: before the tokens are visible to anything
             // that reads the cache.
             crate::cache::claim_for(tokens.account.as_deref());
+            // Capture sets imported for the assistant belong to whoever was
+            // signed in: never read by the next account.
+            crate::commands::autorun::forget_imported_captures();
             state.lock().unwrap().tokens = Some(tokens);
             crate::applog::info("Signed in to Azure DevOps with the kept sign-in");
             // Keeps the rotated refresh token Microsoft just handed back.
@@ -94,6 +97,9 @@ pub async fn sign_in(app: tauri::AppHandle) -> Result<AuthStatus, String> {
     // different account than last time must not be served the previous
     // one's tags or suite ids (the webview's cache does the same).
     crate::cache::claim_for(tokens.account.as_deref());
+    // Capture sets imported for the assistant belong to whoever was
+    // signed in: never read by the next account.
+    crate::commands::autorun::forget_imported_captures();
     let state = app.state::<Mutex<auth::AuthState>>();
     state.lock().unwrap().tokens = Some(tokens);
     saved_session::keep_for_next_launch(&app);
@@ -115,6 +121,7 @@ pub fn sign_out(app: tauri::AppHandle) -> Result<AuthStatus, String> {
     // Browsers API template runs kept signed in go with the person's
     // session, closed off this thread.
     tauri::async_runtime::spawn_blocking(crate::api_templates::held::close_all);
+    crate::commands::autorun::forget_imported_captures();
     crate::applog::info("Signed out");
     saved_session::forget(vault.store.as_ref()).map_err(|e| {
         crate::applog::warn(format!("Removing the kept sign-in failed: {e}"));

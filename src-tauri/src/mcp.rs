@@ -641,6 +641,84 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
+            "name": "list_autorun_requests",
+            "description": "The requests the page in the Auto Run browser made - its own XHR, fetch and page loads on the application's site, polls left out - newest first: id, method, path and query, status, type, sizes, start and duration. Read only, and redacted: passwords, tokens and session values show as [redacted]. Use it to build an API template from a real request instead of guessing its shape. Needs the Auto Run browser open (404 \"No browser is open.\" otherwise); nothing shows until TCM's sign-in has confirmed the application's site. With `from`, it reads a set loaded with import_autorun_requests instead, browser or not. Paged: while `next_offset` is there, call again with `offset` set to it.",
+            "inputSchema": schema(serde_json::json!({
+                "offset": { "type": "number", "description": "How many to skip: the `next_offset` of the previous answer. 0 by default." },
+                "limit": { "type": "number", "description": "How many one answer carries: 25 by default, 100 at most." },
+                "from": { "type": "string", "description": "Optional: the name of a set loaded with import_autorun_requests. Left out, the live capture." },
+            }), &[]),
+        },
+        {
+            "name": "search_autorun_requests",
+            "description": "Find captured requests: every filter given must match, each compared in any case - `path` a part of the path and query, `method` and `type` whole, `status` a code (404) or a class (4xx), `request_contains` and `response_contains` a part of the request or response body. Bodies and paths are searched as they show, redacted, so a secret's value never matches. Newest first, paged, with `total` matched. Same browser, `from` and paging rules as list_autorun_requests.",
+            "inputSchema": schema(serde_json::json!({
+                "path": { "type": "string", "description": "A part of the path and query, e.g. /api/leave." },
+                "method": { "type": "string", "description": "GET, POST, PUT, PATCH..." },
+                "status": { "type": ["string", "number"], "description": "A status code such as 200, or a class such as 4xx." },
+                "type": { "type": "string", "description": "XHR, Fetch or Document." },
+                "request_contains": { "type": "string", "description": "A part of the request body." },
+                "response_contains": { "type": "string", "description": "A part of the response body." },
+                "offset": { "type": "number", "description": "How many matches to skip: the `next_offset` of the previous answer." },
+                "limit": { "type": "number", "description": "How many one answer carries: 25 by default, 100 at most." },
+                "from": { "type": "string", "description": "Optional: an imported set's name. Left out, the live capture." },
+            }), &[]),
+        },
+        {
+            "name": "get_autorun_request",
+            "description": "One captured request by its id: method, path and query, type, tab, start, its headers (an allow-list: content-type, accept, x- headers and the like - never cookies or authorization) and its body, redacted. A body longer than 20 000 characters comes in pages: call again with `offset` set to `next_offset`.",
+            "inputSchema": schema(serde_json::json!({
+                "id": { "type": "number", "description": "The request's id, from list_autorun_requests or search_autorun_requests." },
+                "offset": { "type": "number", "description": "Optional: where the body's page starts, in characters (the `next_offset` of the previous answer)." },
+                "from": { "type": "string", "description": "Optional: an imported set's name. Left out, the live capture." },
+            }), &["id"]),
+        },
+        {
+            "name": "get_autorun_response",
+            "description": "One captured request's response by its id: status, mime, headers (allow-listed, values redacted), size, start and duration, a failure, its first redirect, and whether its body was kept and how long it is - get_autorun_response_body reads the body.",
+            "inputSchema": schema(serde_json::json!({
+                "id": { "type": "number", "description": "The request's id." },
+                "from": { "type": "string", "description": "Optional: an imported set's name. Left out, the live capture." },
+            }), &["id"]),
+        },
+        {
+            "name": "get_autorun_response_body",
+            "description": "One captured response's body as text, redacted, in pages of 20 000 characters: `chars` is its whole length and, while `next_offset` is there, call again with `offset` set to it. Only text bodies (JSON, text, HTML, XML, forms) are kept, at most 2 MB each; one that is not there says why.",
+            "inputSchema": schema(serde_json::json!({
+                "id": { "type": "number", "description": "The request's id." },
+                "offset": { "type": "number", "description": "Where the page starts, in characters. 0 by default." },
+                "from": { "type": "string", "description": "Optional: an imported set's name. Left out, the live capture." },
+            }), &["id"]),
+        },
+        {
+            "name": "set_autorun_capture",
+            "description": "Set what the Auto Run browser's capture keeps FROM NOW ON: only these resource types (`include_types`), not these (`exclude_types`), only paths containing `path_contains`. Each call replaces the whole filter; leave everything out to keep every request again. What was left out before cannot be brought back, and what is kept stays. Answers the filter as get_autorun_capture does.",
+            "inputSchema": schema(serde_json::json!({
+                "include_types": { "type": "array", "items": { "type": "string", "enum": ["XHR", "Fetch", "Document"] }, "description": "Keep only these types. Empty or left out: every type." },
+                "exclude_types": { "type": "array", "items": { "type": "string", "enum": ["XHR", "Fetch", "Document"] }, "description": "Never keep these types." },
+                "path_contains": { "type": "string", "description": "Keep only requests whose path and query contain this, in any case; at most 200 characters." },
+            }), &[]),
+        },
+        {
+            "name": "get_autorun_capture",
+            "description": "The Auto Run browser's capture filter (`include_types`, `exclude_types`, `path_contains`), how many requests it keeps now (1000 at most, the oldest dropped first), whether the application's site is confirmed yet, and the names of the sets loaded with import_autorun_requests.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
+            "name": "export_autorun_requests",
+            "description": "Save the live capture, redacted exactly as the reads show it, as a HAR 1.2 file in TCM's own captures folder (`<name>.har` - never anywhere else); a file of that name is replaced. Answers the file's name and how many requests it holds. import_autorun_requests reads it back.",
+            "inputSchema": schema(serde_json::json!({
+                "name": { "type": "string", "description": "The file's name without .har: letters, digits, spaces, dots, dashes or underscores, at most 80 characters, no folder." },
+            }), &["name"]),
+        },
+        {
+            "name": "import_autorun_requests",
+            "description": "Load `<name>.har` from TCM's own captures folder (an export of yours, or a HAR file the person saved there from a browser) as a separate read-only set, redacted again on the way in. Read it with `from: \"<name>\"` on list_autorun_requests, search_autorun_requests and the get tools; it is never replayed into the browser. Needs no browser. The sets are forgotten when the person signs in or out of TCM.",
+            "inputSchema": schema(serde_json::json!({
+                "name": { "type": "string", "description": "The file's name in the captures folder, without .har." },
+            }), &["name"]),
+        },
+        {
             "name": "get_api_template_guide",
             "description": "How to build an API template - a saved, proven sequence of the application's own requests that writes test data (creates a cycle, moves a record to a state) far faster than clicking through the screens. Returns the format and its rules, the placeholder and capture syntax, and the workflow: read the module's code for each request, find real values with db_query, then prove. Also names this project's account keys and the sign-in recipe's origin, so you never guess an account or a host. Read it before your first prove_api_template.",
             "inputSchema": schema(serde_json::json!({}), &[]),
@@ -1212,6 +1290,17 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         "delete_autorun_script" => call("POST", "/autorun-script-delete", &args.to_string()),
         "get_autorun_network_wait" => call("GET", "/autorun-network-wait", ""),
+        // The capture tools: each route reads its own named fields out of
+        // the body, so the arguments object travels whole.
+        "list_autorun_requests" => call("POST", "/autorun-requests", &args.to_string()),
+        "search_autorun_requests" => call("POST", "/autorun-requests-search", &args.to_string()),
+        "get_autorun_request" => call("POST", "/autorun-request", &args.to_string()),
+        "get_autorun_response" => call("POST", "/autorun-response", &args.to_string()),
+        "get_autorun_response_body" => call("POST", "/autorun-response-body", &args.to_string()),
+        "set_autorun_capture" => call("POST", "/autorun-capture", &args.to_string()),
+        "get_autorun_capture" => call("GET", "/autorun-capture", ""),
+        "export_autorun_requests" => call("POST", "/autorun-requests-export", &args.to_string()),
+        "import_autorun_requests" => call("POST", "/autorun-requests-import", &args.to_string()),
         "get_autorun_page" => {
             let mut params: Vec<String> = Vec::new();
             if let Some(n) = args["limit"].as_u64() {

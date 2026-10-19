@@ -94,8 +94,8 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the thirty-two dev-only
-    // tools (Auto Run's twenty-one, then the API templates row's eleven) are listed
+    // debug assertions on), so with nothing disabled the forty-seven dev-only
+    // tools (Auto Run's thirty-six, then the API templates row's eleven) are listed
     // like any other switchable tool - between merge_case_files and
     // db_lookup, where they sit in the source.
     assert_eq!(
@@ -136,6 +136,15 @@ fn tools_list_names_every_tool() {
             "get_accounts",
             "list_test_files",
             "get_autorun_network_wait",
+            "list_autorun_requests",
+            "search_autorun_requests",
+            "get_autorun_request",
+            "get_autorun_response",
+            "get_autorun_response_body",
+            "set_autorun_capture",
+            "get_autorun_capture",
+            "export_autorun_requests",
+            "import_autorun_requests",
             "get_api_template_guide",
             "list_api_templates",
             "prove_api_template",
@@ -679,7 +688,7 @@ fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordina
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1278,7 +1287,7 @@ fn with_auto_run_off_and_api_templates_on_the_app_quirk_tools_stay() {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests"]}"#.into(),
             ));
         }
         calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
@@ -1338,7 +1347,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts"]}"#.into(),
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1944,6 +1953,46 @@ fn the_network_wait_tool_is_an_auto_run_read_of_its_own_route() {
     // Read only: the description says nothing can end the wait.
     let list = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
     assert!(list.contains("nothing you call can"), "{list}");
+}
+
+/// The capture tools ride with the Auto Run tools: listed where Auto Run
+/// is offered, refused as "not available" where it is not, and each a call
+/// of its own bridge route with the arguments whole as the body (the filter
+/// read is the one GET, with none).
+#[test]
+fn the_capture_tools_are_auto_run_tools_on_their_own_routes() {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".to_string()))
+    };
+    let (_, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
+    for (tool, args, method, path) in [
+        ("list_autorun_requests", serde_json::json!({ "offset": 25, "from": "edge" }), "POST", "/autorun-requests"),
+        ("search_autorun_requests", serde_json::json!({ "path": "/api", "status": "4xx" }), "POST", "/autorun-requests-search"),
+        ("get_autorun_request", serde_json::json!({ "id": 3 }), "POST", "/autorun-request"),
+        ("get_autorun_response", serde_json::json!({ "id": 3 }), "POST", "/autorun-response"),
+        ("get_autorun_response_body", serde_json::json!({ "id": 3, "offset": 20000 }), "POST", "/autorun-response-body"),
+        ("set_autorun_capture", serde_json::json!({ "include_types": ["XHR"] }), "POST", "/autorun-capture"),
+        ("get_autorun_capture", serde_json::json!({}), "GET", "/autorun-capture"),
+        ("export_autorun_requests", serde_json::json!({ "name": "flow" }), "POST", "/autorun-requests-export"),
+        ("import_autorun_requests", serde_json::json!({ "name": "flow" }), "POST", "/autorun-requests-import"),
+    ] {
+        assert!(module_of_tool(tool) == Some(Module::AutoRun), "{tool}");
+        assert!(listed_names(&stub(200, r#"{"disabled":[]}"#)).iter().any(|n| n == tool), "{tool} listed");
+        assert!(v2_lib::mcp::refusal_text(tool, &on).contains("not available"), "{tool}");
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": tool, "arguments": args },
+        });
+        let resp = handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+        assert!(!resp.contains("Unknown tool"), "{resp}");
+        let (m, p, body) = calls.borrow().last().unwrap().clone();
+        assert_eq!((m.as_str(), p.as_str()), (method, path), "{tool}");
+        if method == "POST" {
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap(), args, "{tool}: the arguments travel whole");
+        }
+    }
 }
 
 /// The Crystal Reports tools forward to their bridge routes: the arguments

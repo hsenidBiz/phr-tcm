@@ -328,6 +328,13 @@ impl NetCapture {
         self.confirmed && self.app_site.is_some()
     }
 
+    /// The application's origin once a sign-in confirmed it; `None` while
+    /// it is only provisional. Only for an export written to TCM's own
+    /// folder (`capture_tools::export`): a HAR's `url` is absolute.
+    pub fn confirmed_site(&self) -> Option<&str> {
+        if self.confirmed { self.app_site.as_deref() } else { None }
+    }
+
     fn forget_pending(&mut self) {
         let (kept, held): (VecDeque<Slot>, VecDeque<Slot>) =
             std::mem::take(&mut self.entries).into_iter().partition(|s| !s.pending);

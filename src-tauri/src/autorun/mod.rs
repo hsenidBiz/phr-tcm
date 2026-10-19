@@ -9,6 +9,7 @@
 pub mod accounts;
 pub mod api_checks;
 pub mod capture_redact;
+pub mod capture_tools;
 pub mod cleanup;
 pub mod defects;
 pub mod components;

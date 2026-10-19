@@ -136,6 +136,9 @@ pub struct ScriptedDriver {
     /// showed on it, `confirm_capture_site`). This fake keeps no capture;
     /// it keeps only that it was told, and when.
     pub capture_notes: Vec<&'static str>,
+    /// The page's captured requests, when a test gives it some
+    /// (`with_capture`): what the capture tools read.
+    pub capture: Option<v2_lib::browser::net_capture::NetCapture>,
 }
 
 /// A test's yes or no to a call, by method and parameters.
@@ -229,7 +232,14 @@ impl ScriptedDriver {
             arriving: vec![],
             mark_ring: None,
             capture_notes: vec![],
+            capture: None,
         }
+    }
+
+    /// Keep this capture, as the supervised browser keeps one.
+    pub fn with_capture(mut self, capture: v2_lib::browser::net_capture::NetCapture) -> Self {
+        self.capture = Some(capture);
+        self
     }
 
     /// Keep marks as the whole browser keeps them (`mark_ring`).
@@ -285,6 +295,12 @@ impl ScriptedDriver {
 }
 
 impl Driver for ScriptedDriver {
+    fn capture(&self) -> Option<&v2_lib::browser::net_capture::NetCapture> {
+        self.capture.as_ref()
+    }
+    fn capture_mut(&mut self) -> Option<&mut v2_lib::browser::net_capture::NetCapture> {
+        self.capture.as_mut()
+    }
     fn confirm_capture_site(&mut self) {
         self.capture_notes.push("confirm");
     }

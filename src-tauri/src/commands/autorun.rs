@@ -19,6 +19,26 @@ use tauri::Manager;
 /// browser can never leave the screen permanently stuck.
 static SESSION: tokio::sync::Mutex<Option<Session>> = tokio::sync::Mutex::const_new(None);
 
+/// The capture sets the assistant imported from HAR files
+/// (`import_autorun_requests`), by name: read-only, in memory only, never
+/// replayed into a browser. Beside the session rather than in it, so a set
+/// is read with no browser open; forgotten when the person signs in or out
+/// of TCM (`forget_imported_captures`), so another account never reads them.
+static IMPORTED_CAPTURES: std::sync::Mutex<std::collections::BTreeMap<String, Vec<crate::browser::net_capture::Captured>>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// The imported capture sets (`IMPORTED_CAPTURES`). Held only for one
+/// read or one import, never across an await.
+pub fn imported_captures(
+) -> std::sync::MutexGuard<'static, std::collections::BTreeMap<String, Vec<crate::browser::net_capture::Captured>>> {
+    IMPORTED_CAPTURES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Forget every imported capture set: the TCM account signed in or out.
+pub fn forget_imported_captures() {
+    imported_captures().clear();
+}
+
 pub(crate) struct Session {
     pub(crate) browser: LaunchedBrowser,
     /// Which browser it is, Edge or Chrome: a discovery that names the other
@@ -444,7 +464,7 @@ async fn open_if_none(app: &tauri::AppHandle, slot: &mut Option<Session>, by: Op
 }
 
 /// Said by `open_for_discovery` when the app set up no data directory.
-const NO_DATA_DIRECTORY: &str = "the app could not set up its data directory this session - restart the app";
+pub const NO_DATA_DIRECTORY: &str = "the app could not set up its data directory this session - restart the app";
 
 /// What a discovery is refused for before anything is looked at under the
 /// session's lock: an unattended run, a recording or check, a replay to a

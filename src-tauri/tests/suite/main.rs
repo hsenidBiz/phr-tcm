@@ -49,6 +49,7 @@ mod autorun_batches;
 mod autorun_cleanup;
 mod autorun_close_popups;
 mod autorun_bridge;
+mod autorun_capture_tools;
 mod autorun_commands;
 mod autorun_defects;
 mod autorun_dialogs;
