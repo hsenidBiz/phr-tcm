@@ -98,6 +98,17 @@ fn entry(c: &Captured, site: &str) -> Value {
     let url = redact_path_query(&c.url_path_query);
     let absolute = format!("{site}{}{url}", if url.starts_with('/') { "" } else { "/" });
     let req_mime = header(&c.req_headers, "content-type");
+    // Each body redacted once; its size is the redacted text's, never the
+    // raw length, which would give a hidden value's length away.
+    let req_text = match &c.req_body {
+        Some(Body::Text(t)) => Some(redact_body(req_mime, t)),
+        _ => None,
+    };
+    let mime = c.mime.as_deref();
+    let resp_text = match &c.resp_body {
+        Some(Body::Text(t)) => Some(redact_body(mime, t)),
+        _ => None,
+    };
     let mut request = json!({
         "method": c.method,
         "url": absolute,
@@ -106,24 +117,23 @@ fn entry(c: &Captured, site: &str) -> Value {
         "headers": har_headers(&c.req_headers),
         "queryString": query_string(&url),
         "headersSize": -1,
-        "bodySize": match &c.req_body { Some(Body::Text(t)) => t.len() as i64, _ => -1 },
+        "bodySize": req_text.as_ref().map(|t| t.len() as i64).unwrap_or(-1),
     });
     if let Some(body) = &c.req_body {
         let mut post = json!({ "mimeType": req_mime.unwrap_or("") });
         match body {
-            Body::Text(t) => post["text"] = Value::String(redact_body(req_mime, t)),
+            Body::Text(_) => post["text"] = Value::String(req_text.clone().unwrap_or_default()),
             other => post["_tcmBody"] = json!(body_tag(other)),
         }
         request["postData"] = post;
     }
 
-    let mime = c.mime.as_deref();
     let mut content = json!({
-        "size": match &c.resp_body { Some(Body::Text(t)) => t.len() as i64, _ => 0 },
+        "size": resp_text.as_ref().map(|t| t.len() as i64).unwrap_or(0),
         "mimeType": mime.unwrap_or(""),
     });
     match &c.resp_body {
-        Some(Body::Text(t)) => content["text"] = Value::String(redact_body(mime, t)),
+        Some(Body::Text(_)) => content["text"] = Value::String(resp_text.clone().unwrap_or_default()),
         Some(other) => content["_tcmBody"] = json!(body_tag(other)),
         None => {}
     }
@@ -134,9 +144,14 @@ fn entry(c: &Captured, site: &str) -> Value {
         "cookies": [],
         "headers": har_headers(&c.resp_headers),
         "content": content,
-        "redirectURL": c.redirect.as_ref().map(|r| r.to_path.as_str()).unwrap_or(""),
+        "redirectURL": c.redirect.as_ref().map(|r| redact_path_query(&r.to_path)).unwrap_or_default(),
         "headersSize": -1,
-        "bodySize": c.resp_size.map(|s| s as i64).unwrap_or(-1),
+        // The redacted body's size when it was kept as text, never the raw
+        // one; otherwise what the browser received.
+        "bodySize": match &resp_text {
+            Some(t) => t.len() as i64,
+            None => c.resp_size.map(|s| s as i64).unwrap_or(-1),
+        },
     });
 
     let mut tcm = Map::new();

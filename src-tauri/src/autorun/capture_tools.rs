@@ -47,6 +47,16 @@ pub const NOTHING_KEPT_YET: &str =
 /// Said by a live read while the browser keeps no capture at all.
 pub const NO_CAPTURE: &str = "This browser keeps no capture.";
 
+/// Imported sets kept at once.
+pub const MAX_IMPORTED_SETS: usize = 5;
+
+/// Said when a sixth set is imported.
+pub const IMPORTS_FULL: &str = "Five captures are loaded; a sign-in clears them, or restart TCM.";
+
+/// Said for a file named like the live capture.
+pub const LIVE_IS_RESERVED: &str =
+    "\"live\" is the live capture's name: no export or import may take it - choose another name";
+
 /// Said with a set filter: it decides what is kept from now on only.
 pub const FILTER_FROM_NOW_ON: &str =
     "The filter decides what is kept from now on: requests already left out cannot be brought back, and what is kept stays.";
@@ -60,6 +70,8 @@ pub struct Set<'a> {
     pub entries: Vec<&'a Captured>,
     /// Live, and the application's site is not confirmed yet.
     pub unconfirmed: bool,
+    /// The whole set holds nothing (`entries` may be only a part of it).
+    pub empty: bool,
 }
 
 impl<'a> Set<'a> {
@@ -67,14 +79,16 @@ impl<'a> Set<'a> {
     /// never among them.
     pub fn live(cap: &'a NetCapture) -> Self {
         let (entries, _) = cap.list(0, usize::MAX);
-        Set { name: "live".to_string(), entries, unconfirmed: !cap.knows_app_site() }
+        let empty = entries.is_empty();
+        Set { name: "live".to_string(), entries, unconfirmed: !cap.knows_app_site(), empty }
     }
 
     /// An imported set, newest first (by start, then by its order in the file).
     pub fn imported(name: &str, entries: &'a [Captured]) -> Self {
         let mut entries: Vec<&Captured> = entries.iter().collect();
         entries.sort_by(|a, b| b.started_ms.cmp(&a.started_ms).then(b.id.cmp(&a.id)));
-        Set { name: name.to_string(), entries, unconfirmed: false }
+        let empty = entries.is_empty();
+        Set { name: name.to_string(), entries, unconfirmed: false, empty }
     }
 
     fn get(&self, id: u64) -> Option<&'a Captured> {
@@ -155,7 +169,7 @@ pub fn imported_set<'a>(imported: &'a BTreeMap<String, Vec<Captured>>, name: &st
             } else {
                 format!("loaded: {}", imported.keys().cloned().collect::<Vec<_>>().join(", "))
             };
-            Err((404, format!("No imported set named \"{name}\" ({loaded}): load it with import_autorun_requests first.")))
+            Err((400, format!("No imported set named \"{name}\" ({loaded}): load it with import_autorun_requests first.")))
         }
     }
 }
@@ -199,10 +213,19 @@ fn started_iso(ms: u64) -> Option<String> {
     chrono::DateTime::from_timestamp_millis(ms as i64).map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
 }
 
+/// The request body's size as it shows, redacted: never the raw length,
+/// which would give a hidden value's length away.
 fn request_size(c: &Captured) -> Option<usize> {
-    match &c.req_body {
-        Some(Body::Text(t)) => Some(t.len()),
-        _ => None,
+    body_text(c.req_body.as_ref(), request_mime(c)).map(|t| t.len())
+}
+
+/// The response's size as it shows: its redacted body's length when the
+/// body was kept as text (never the raw length), otherwise what the
+/// browser received.
+fn response_size(c: &Captured) -> Option<u64> {
+    match body_text(c.resp_body.as_ref(), c.mime.as_deref()) {
+        Some(t) => Some(t.len() as u64),
+        None => c.resp_size,
     }
 }
 
@@ -215,7 +238,7 @@ fn summary(c: &Captured) -> Value {
         "status": c.status,
         "type": c.kind,
         "request_size": request_size(c),
-        "response_size": c.resp_size,
+        "response_size": response_size(c),
         "started": started_iso(c.started_ms),
         "duration_ms": c.duration_ms,
         "failed": c.failed.as_deref().map(redact_text),
@@ -241,7 +264,7 @@ fn paged(set: &Set, matched: &[&Captured], offset: usize, limit: usize) -> Value
         "next_offset": next,
         "requests": page,
     });
-    if matched.is_empty() && set.entries.is_empty() {
+    if matched.is_empty() && set.empty {
         out["note"] = json!(set.empty_note());
     }
     out
@@ -254,6 +277,90 @@ pub fn list(set: &Set, args: &Value) -> (u16, String) {
         Err(e) => return e,
     };
     (200, paged(set, &set.entries, offset, limit).to_string())
+}
+
+/// What a read takes out of its set, cloned, so the set's lock (the
+/// supervised browser's, or the imported sets') is let go before anything
+/// is redacted (`answer`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Read {
+    List,
+    Search,
+    Request,
+    Response,
+    ResponseBody,
+}
+
+/// A read's entries, out of its set: for a list, the page asked for; for a
+/// search, the entries the filters that need no redaction let through
+/// (method, type, status); for one request, that request.
+pub struct Taken {
+    name: String,
+    unconfirmed: bool,
+    empty: bool,
+    /// How many the whole set holds.
+    total: usize,
+    entries: Vec<Captured>,
+}
+
+impl Taken {
+    fn set(&self) -> Set<'_> {
+        Set { name: self.name.clone(), entries: self.entries.iter().collect(), unconfirmed: self.unconfirmed, empty: self.empty }
+    }
+}
+
+/// Take what `read` needs out of `set`, cheaply: nothing is redacted here.
+/// A malformed argument is refused at once.
+pub fn take(set: &Set, read: Read, args: &Value) -> Result<Taken, (u16, String)> {
+    let entries: Vec<Captured> = match read {
+        Read::List => {
+            let (offset, limit) = paging(args)?;
+            set.entries.iter().skip(offset).take(limit).map(|c| (*c).clone()).collect()
+        }
+        Read::Search => {
+            paging(args)?;
+            let want = search_filters(args)?;
+            set.entries.iter().filter(|c| cheap_match(&want, c)).map(|c| (*c).clone()).collect()
+        }
+        Read::Request | Read::Response | Read::ResponseBody => {
+            let id = id_of(args)?;
+            set.get(id).cloned().into_iter().collect()
+        }
+    };
+    Ok(Taken { name: set.name.clone(), unconfirmed: set.unconfirmed, empty: set.empty, total: set.entries.len(), entries })
+}
+
+/// `read`'s answer from what `take` took: the redaction and the body
+/// matching happen here, with no lock held.
+pub fn answer(taken: &Taken, read: Read, args: &Value) -> (u16, String) {
+    let set = taken.set();
+    match read {
+        Read::List => {
+            let (offset, _) = match paging(args) {
+                Ok(p) => p,
+                Err(e) => return e,
+            };
+            let page: Vec<Value> = set.entries.iter().map(|c| summary(c)).collect();
+            let returned = page.len();
+            let next = (offset + returned < taken.total).then_some(offset + returned);
+            let mut out = json!({
+                "set": set.name,
+                "total": taken.total,
+                "offset": offset,
+                "returned": returned,
+                "next_offset": next,
+                "requests": page,
+            });
+            if taken.empty {
+                out["note"] = json!(set.empty_note());
+            }
+            (200, out.to_string())
+        }
+        Read::Search => search(&set, args),
+        Read::Request => request(&set, args),
+        Read::Response => response(&set, args),
+        Read::ResponseBody => response_body(&set, args),
+    }
 }
 
 /// A status filter: `404`, or a class such as `4xx`.
@@ -283,6 +390,31 @@ fn contains_ci(hay: &str, needle: &str) -> bool {
     hay.to_lowercase().contains(&needle.to_lowercase())
 }
 
+/// A search's filters, by name; a status that is not a code or a class is
+/// refused.
+fn search_filters(args: &Value) -> Result<BTreeMap<&'static str, String>, (u16, String)> {
+    let mut want = BTreeMap::new();
+    for key in ["path", "method", "status", "type", "request_contains", "response_contains"] {
+        if let Some(v) = text(args, key)? {
+            want.insert(key, v);
+        }
+    }
+    if let Some(s) = want.get("status") {
+        let ok = s.parse::<u16>().is_ok() || s.to_ascii_lowercase().strip_suffix("xx").is_some_and(|c| c.len() == 1 && c.parse::<u16>().is_ok());
+        if !ok {
+            return Err((400, "status must be a status code such as 404, or a class such as 4xx".to_string()));
+        }
+    }
+    Ok(want)
+}
+
+/// The search filters that need no redaction: method, type and status.
+fn cheap_match(want: &BTreeMap<&'static str, String>, c: &Captured) -> bool {
+    want.get("method").is_none_or(|m| c.method.eq_ignore_ascii_case(m))
+        && want.get("type").is_none_or(|t| c.kind.as_deref().is_some_and(|k| k.eq_ignore_ascii_case(t)))
+        && want.get("status").is_none_or(|s| status_matches(s, c.status))
+}
+
 /// `search_autorun_requests`: every filter given must match, each a
 /// substring in any case of the REDACTED text (method and type compared
 /// whole); newest first, paged, with the number that matched.
@@ -291,30 +423,16 @@ pub fn search(set: &Set, args: &Value) -> (u16, String) {
         Ok(p) => p,
         Err(e) => return e,
     };
-    let mut want = BTreeMap::new();
-    for key in ["path", "method", "status", "type", "request_contains", "response_contains"] {
-        match text(args, key) {
-            Ok(Some(v)) => {
-                want.insert(key, v);
-            }
-            Ok(None) => {}
-            Err(e) => return e,
-        }
-    }
-    if let Some(s) = want.get("status") {
-        let ok = s.parse::<u16>().is_ok() || s.to_ascii_lowercase().strip_suffix("xx").is_some_and(|c| c.len() == 1 && c.parse::<u16>().is_ok());
-        if !ok {
-            return (400, "status must be a status code such as 404, or a class such as 4xx".to_string());
-        }
-    }
+    let want = match search_filters(args) {
+        Ok(w) => w,
+        Err(e) => return e,
+    };
     let matched: Vec<&Captured> = set
         .entries
         .iter()
         .copied()
         .filter(|c| {
-            want.get("method").is_none_or(|m| c.method.eq_ignore_ascii_case(m))
-                && want.get("type").is_none_or(|t| c.kind.as_deref().is_some_and(|k| k.eq_ignore_ascii_case(t)))
-                && want.get("status").is_none_or(|s| status_matches(s, c.status))
+            cheap_match(&want, c)
                 && want.get("path").is_none_or(|p| contains_ci(&redact_path_query(&c.url_path_query), p))
                 && want.get("request_contains").is_none_or(|w| {
                     body_text(c.req_body.as_ref(), request_mime(c)).is_some_and(|t| contains_ci(&t, w))
@@ -423,7 +541,7 @@ pub fn response(set: &Set, args: &Value) -> (u16, String) {
         "status": c.status,
         "mime": c.mime,
         "headers": headers(&c.resp_headers),
-        "size": c.resp_size,
+        "size": response_size(c),
         "started": started_iso(c.started_ms),
         "duration_ms": c.duration_ms,
         "failed": c.failed.as_deref().map(redact_text),
@@ -537,20 +655,45 @@ pub fn set_filter(cap: &mut NetCapture, imported: &BTreeMap<String, Vec<Captured
 /// `<root>/captures/<name>.har`. Answers the file's name and how many
 /// requests it holds.
 pub fn export(cap: &NetCapture, root: &Path, args: &Value) -> (u16, String) {
-    let stem = match text(args, "name") {
-        Ok(Some(n)) => match file_stem(&n) {
-            Ok(s) => s,
-            Err(why) => return (400, why),
-        },
-        Ok(None) => return (400, "name is needed: the file's name, without .har".to_string()),
-        Err(e) => return e,
+    match take_export(cap, args) {
+        Ok(taken) => write_export(root, taken),
+        Err(e) => e,
+    }
+}
+
+/// What an export takes out of the live capture, cloned, so the browser's
+/// lock is let go before anything is redacted or written (`write_export`).
+pub struct TakenExport {
+    stem: String,
+    /// Oldest first.
+    entries: Vec<Captured>,
+    site: Option<String>,
+}
+
+/// The export's name checked, and the live capture's requests cloned,
+/// oldest first, with the confirmed site. Nothing is redacted here.
+pub fn take_export(cap: &NetCapture, args: &Value) -> Result<TakenExport, (u16, String)> {
+    let stem = match text(args, "name")? {
+        Some(n) => file_stem(&n).map_err(|why| (400, why))?,
+        None => return Err((400, "name is needed: the file's name, without .har".to_string())),
     };
+    if stem.eq_ignore_ascii_case("live") {
+        return Err((400, LIVE_IS_RESERVED.to_string()));
+    }
     let set = Set::live(cap);
     if set.entries.is_empty() {
-        return (404, set.empty_note().to_string());
+        return Err((404, set.empty_note().to_string()));
     }
-    let oldest_first: Vec<&Captured> = set.entries.iter().rev().copied().collect();
-    let har = crate::autorun::har::to_har(&oldest_first, cap.confirmed_site());
+    let entries = set.entries.iter().rev().map(|c| (*c).clone()).collect();
+    Ok(TakenExport { stem, entries, site: cap.confirmed_site().map(str::to_string) })
+}
+
+/// The taken requests as HAR 1.2, redacted (`har::to_har`), written
+/// atomically to `<root>/captures/<stem>.har`.
+pub fn write_export(root: &Path, taken: TakenExport) -> (u16, String) {
+    let TakenExport { stem, entries, site } = taken;
+    let oldest_first: Vec<&Captured> = entries.iter().collect();
+    let har = crate::autorun::har::to_har(&oldest_first, site.as_deref());
     let text = match serde_json::to_string_pretty(&har) {
         Ok(t) => t,
         Err(e) => {
@@ -581,49 +724,55 @@ pub fn export(cap: &NetCapture, root: &Path, args: &Value) -> (u16, String) {
     (200, out.to_string())
 }
 
-/// `import_autorun_requests`: `<root>/captures/<name>.har` read as a set of
-/// its own, by that name, redacted again on the way in (`har::from_har`).
-/// Never replayed into the browser. A set already loaded by the name is
-/// replaced.
+/// `import_autorun_requests`: `read_import` then `store_import`.
 pub fn import(root: &Path, imported: &mut BTreeMap<String, Vec<Captured>>, args: &Value) -> (u16, String) {
-    let stem = match text(args, "name") {
-        Ok(Some(n)) => match file_stem(&n) {
-            Ok(s) => s,
-            Err(why) => return (400, why),
-        },
-        Ok(None) => return (400, "name is needed: the file's name in TCM's captures folder, without .har".to_string()),
-        Err(e) => return e,
+    match read_import(root, args) {
+        Ok((stem, entries)) => store_import(imported, stem, entries),
+        Err(e) => e,
+    }
+}
+
+/// `<root>/captures/<name>.har` read and parsed (`har::from_har`, which
+/// redacts it again on the way in): no lock is needed for this, and none
+/// is taken. The name `live` is the live capture's and is refused.
+pub fn read_import(root: &Path, args: &Value) -> Result<(String, Vec<Captured>), (u16, String)> {
+    let stem = match text(args, "name")? {
+        Some(n) => file_stem(&n).map_err(|why| (400, why))?,
+        None => return Err((400, "name is needed: the file's name in TCM's captures folder, without .har".to_string())),
     };
+    if stem.eq_ignore_ascii_case("live") {
+        return Err((400, LIVE_IS_RESERVED.to_string()));
+    }
     let path = capture_file(root, &stem);
     let meta = match std::fs::metadata(&path) {
         Ok(m) if m.is_file() => m,
         _ => {
-            return (
+            return Err((
                 404,
                 format!("No {stem}.har in TCM's captures folder: export one with export_autorun_requests, or have the person put the HAR file there."),
-            )
+            ))
         }
     };
     if meta.len() > MAX_IMPORT_BYTES {
-        return (413, format!("{stem}.har is over {} MB: export a smaller capture", MAX_IMPORT_BYTES / (1024 * 1024)));
+        return Err((413, format!("{stem}.har is over {} MB: export a smaller capture", MAX_IMPORT_BYTES / (1024 * 1024))));
     }
-    let raw = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(e) => {
-            crate::applog::warn(format!("Auto Run: a capture import could not be read: {e}"));
-            return (500, "the file could not be read - see Settings, Logs".to_string());
-        }
-    };
+    let raw = std::fs::read(&path).map_err(|e| {
+        crate::applog::warn(format!("Auto Run: a capture import could not be read: {e}"));
+        (500, "the file could not be read - see Settings, Logs".to_string())
+    })?;
     let text = String::from_utf8_lossy(&raw);
-    let text = text.trim_start_matches('\u{feff}');
-    let doc = match serde_json::from_str::<Value>(text) {
-        Ok(v) => v,
-        Err(_) => return (400, "not a HAR file: not JSON".to_string()),
-    };
-    let entries = match crate::autorun::har::from_har(&doc) {
-        Ok(e) => e,
-        Err(why) => return (400, why),
-    };
+    let doc = serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}'))
+        .map_err(|_| (400, "not a HAR file: not JSON".to_string()))?;
+    let entries = crate::autorun::har::from_har(&doc).map_err(|why| (400, why))?;
+    Ok((stem, entries))
+}
+
+/// Keep a parsed import as the set `stem`, replacing one of that name; at
+/// most `MAX_IMPORTED_SETS` sets at once. Never replayed into the browser.
+pub fn store_import(imported: &mut BTreeMap<String, Vec<Captured>>, stem: String, entries: Vec<Captured>) -> (u16, String) {
+    if !imported.contains_key(&stem) && imported.len() >= MAX_IMPORTED_SETS {
+        return (409, IMPORTS_FULL.to_string());
+    }
     let n = entries.len();
     let replaced = imported.insert(stem.clone(), entries).is_some();
     crate::applog::info(format!("Auto Run: the assistant imported {n} requests from a HAR file"));

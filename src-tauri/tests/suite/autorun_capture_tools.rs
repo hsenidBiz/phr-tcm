@@ -10,8 +10,10 @@ use crate::common::ScriptedDriver;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use v2_lib::ai_bridge::{capture_tool_in, route, BridgeContext, CaptureTool, DiscoveryBrowser, DiscoveryParts};
-use v2_lib::autorun::capture_tools::{file_stem, BODY_PAGE_CHARS, NOTHING_CAPTURED_YET};
+use v2_lib::ai_bridge::{
+    capture_tool_begin, capture_tool_in, route, BridgeContext, CapturePhase, CaptureTool, DiscoveryBrowser, DiscoveryParts,
+};
+use v2_lib::autorun::capture_tools::{file_stem, BODY_PAGE_CHARS, IMPORTS_FULL, LIVE_IS_RESERVED, NOTHING_CAPTURED_YET};
 use v2_lib::autorun::lease::Held;
 use v2_lib::browser::cdp::Event;
 use v2_lib::browser::net_capture::{Captured, NetCapture};
@@ -208,7 +210,8 @@ fn list_is_newest_first_paged_and_redacted() {
     assert_eq!(first["path"], "/api/login?returnUrl=%2Fhr%2Fhome");
     assert_eq!(first["status"], 200);
     assert_eq!(first["type"], "XHR");
-    assert_eq!(first["response_size"], 321);
+    let shown = r#"{"access_token":"[redacted]","name":"Avin","next":"/hr/home"}"#;
+    assert_eq!(first["response_size"].as_u64(), Some(shown.len() as u64), "the redacted body's length: {first}");
     assert!(first["request_size"].as_u64().unwrap() > 0);
     assert!(first["started"].as_str().unwrap().starts_with("2025-"), "{first}");
     assert_eq!(first["duration_ms"], 250);
@@ -379,7 +382,7 @@ fn a_response_shows_status_headers_timing_and_whether_its_body_is_kept() {
     assert_no_secret(&v.to_string());
     assert_eq!(v["status"], 200);
     assert_eq!(v["mime"], "application/json");
-    assert_eq!(v["size"], 321);
+    assert_eq!(v["size"].as_u64(), v["body"]["chars"].as_u64(), "the redacted body's length");
     assert_eq!(v["duration_ms"], 250);
     assert_eq!(v["body"]["kept"], true);
     assert!(v["body"]["chars"].as_u64().unwrap() > 0);
@@ -604,7 +607,7 @@ fn an_import_is_read_with_from_and_needs_no_browser() {
 #[test]
 fn an_unknown_set_is_named_as_not_loaded() {
     let (status, out) = call(&mut None, &mut BTreeMap::new(), None, CaptureTool::List, json!({ "from": "nope" }));
-    assert_eq!(status, 404);
+    assert_eq!(status, 400);
     assert!(out.contains("import_autorun_requests"), "{out}");
     let (status, _) = call(&mut None, &mut BTreeMap::new(), None, CaptureTool::List, json!({ "from": "../x" }));
     assert_eq!(status, 400);
@@ -660,4 +663,152 @@ fn an_export_reads_back_as_an_import() {
     assert_eq!(filter["imported_sets"], json!([]), "a call's own map is what it reads");
     let (_, out) = call(&mut slot, &mut imported, None, CaptureTool::GetFilter, json!({}));
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["imported_sets"], json!(["round"]));
+}
+
+// ------------------------------------------------------- review round 1
+
+/// A token-shaped path segment a sign-in redirects to: 40 characters or
+/// more, the length a path segment is judged a token at (`capture_redact`).
+const RESET_TOKEN: &str = "Ab3dEf9GhIjKlMnOpQrStUvWx7Yz0aB1cD2eF3gH4iJ5kL6m";
+
+/// The sign-in posts its form and is redirected to a reset page whose path
+/// carries a token.
+fn redirected_capture() -> NetCapture {
+    let mut f = Feeder::confirmed();
+    f.wall += 1.0;
+    let asked = |path: &str, method: &str, wall: f64| {
+        json!({ "requestId": "rd", "type": "Document", "documentURL": PAGE, "timestamp": 100.0, "wallTime": wall,
+                "request": { "url": format!("{SITE}{path}"), "method": method, "headers": {} } })
+    };
+    let first = asked("/account/login", "POST", f.wall);
+    f.feed("Network.requestWillBeSent", first);
+    let mut hop = asked(&format!("/account/reset/{RESET_TOKEN}"), "GET", f.wall);
+    hop["redirectResponse"] = json!({ "url": format!("{SITE}/account/login"), "status": 302, "mimeType": "text/html", "headers": {} });
+    f.feed("Network.requestWillBeSent", hop);
+    f.feed("Network.responseReceived", json!({ "requestId": "rd", "type": "Document", "response": { "status": 200, "mimeType": "text/html", "headers": {} } }));
+    f.feed("Network.loadingFinished", json!({ "requestId": "rd", "timestamp": 100.25, "encodedDataLength": 10 }));
+    while let Some(read) = f.cap.next_read() {
+        f.cap.answered(&read, Some(&json!({ "body": "<p>reset</p>", "base64Encoded": false })));
+    }
+    f.cap
+}
+
+#[test]
+fn an_export_never_writes_a_redirects_token() {
+    let cap = redirected_capture();
+    let raw = cap.list(0, 1).0[0].redirect.clone().expect("the redirect was kept");
+    assert!(raw.to_path.contains(RESET_TOKEN), "the store keeps the raw path: {raw:?}");
+    let dir = TempDir::new();
+    let mut slot = browser_with(cap);
+    let (status, out) = call(&mut slot, &mut BTreeMap::new(), Some(dir.path()), CaptureTool::Export, json!({ "name": "reset" }));
+    assert_eq!(status, 200, "{out}");
+    let text = std::fs::read_to_string(dir.path().join("captures").join("reset.har")).unwrap();
+    assert!(!text.contains(RESET_TOKEN), "{text}");
+    let har: Value = serde_json::from_str(&text).unwrap();
+    let to = har["log"]["entries"][0]["response"]["redirectURL"].as_str().unwrap();
+    assert!(to.starts_with("/account/reset/"), "{to}");
+    let (_, v) = live(&mut slot, CaptureTool::Response, json!({ "id": 1 }));
+    assert!(!v.to_string().contains(RESET_TOKEN), "{v}");
+}
+
+/// A size is the redacted text's, never the raw length that would give a
+/// password's length away.
+#[test]
+fn sizes_are_the_redacted_bodies_lengths() {
+    let mut slot = browser_with(signed_in_capture());
+    let raw_request = format!("user=avin&password={PASSWORD}").len();
+    let (_, req) = live(&mut slot, CaptureTool::Request, json!({ "id": 1 }));
+    let shown_request = req["body"]["text"].as_str().unwrap().len();
+    assert_ne!(shown_request, raw_request);
+    let (_, list) = live(&mut slot, CaptureTool::List, json!({}));
+    let line = &list["requests"][2];
+    assert_eq!(line["request_size"].as_u64(), Some(shown_request as u64), "{line}");
+    let (_, body) = live(&mut slot, CaptureTool::ResponseBody, json!({ "id": 1 }));
+    let shown_response = body["text"].as_str().unwrap().len() as u64;
+    assert_eq!(line["response_size"].as_u64(), Some(shown_response), "{line}");
+    let (_, resp) = live(&mut slot, CaptureTool::Response, json!({ "id": 1 }));
+    assert_eq!(resp["size"].as_u64(), Some(shown_response));
+
+    let dir = TempDir::new();
+    let (status, _) = call(&mut slot, &mut BTreeMap::new(), Some(dir.path()), CaptureTool::Export, json!({ "name": "sizes" }));
+    assert_eq!(status, 200);
+    let har: Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("captures").join("sizes.har")).unwrap()).unwrap();
+    let e = &har["log"]["entries"][0];
+    let post = e["request"]["postData"]["text"].as_str().unwrap();
+    assert_eq!(e["request"]["bodySize"].as_u64(), Some(post.len() as u64));
+    let content = e["response"]["content"]["text"].as_str().unwrap();
+    assert_eq!(e["response"]["content"]["size"].as_u64(), Some(content.len() as u64));
+    assert_eq!(e["response"]["bodySize"].as_u64(), Some(content.len() as u64));
+}
+
+#[test]
+fn at_most_five_sets_are_imported() {
+    let dir = TempDir::new();
+    let mut imported = BTreeMap::new();
+    for i in 1..=6 {
+        put_har(dir.path(), &format!("set{i}"), &foreign_har());
+    }
+    for i in 1..=5 {
+        let (status, out) = call(&mut None, &mut imported, Some(dir.path()), CaptureTool::Import, json!({ "name": format!("set{i}") }));
+        assert_eq!(status, 200, "{out}");
+    }
+    let (status, out) = call(&mut None, &mut imported, Some(dir.path()), CaptureTool::Import, json!({ "name": "set6" }));
+    assert_eq!((status, out.as_str()), (409, IMPORTS_FULL));
+    assert_eq!(IMPORTS_FULL, "Five captures are loaded; a sign-in clears them, or restart TCM.");
+    assert_eq!(imported.len(), 5);
+    // A set already loaded may be loaded again: it replaces itself.
+    let (status, out) = call(&mut None, &mut imported, Some(dir.path()), CaptureTool::Import, json!({ "name": "set3" }));
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["replaced"], true);
+}
+
+#[test]
+fn live_is_never_an_imported_or_exported_name() {
+    let dir = TempDir::new();
+    put_har(dir.path(), "live", &foreign_har());
+    let mut imported = BTreeMap::new();
+    for name in ["live", "LIVE", "live.har"] {
+        let (status, out) = call(&mut None, &mut imported, Some(dir.path()), CaptureTool::Import, json!({ "name": name }));
+        assert_eq!((status, out.as_str()), (400, LIVE_IS_RESERVED), "{name}");
+    }
+    assert!(imported.is_empty());
+    let mut slot = browser_with(signed_in_capture());
+    let (status, out) = call(&mut slot, &mut imported, Some(dir.path()), CaptureTool::Export, json!({ "name": "live" }));
+    assert_eq!((status, out.as_str()), (400, LIVE_IS_RESERVED));
+}
+
+/// A read takes what it needs out of its set and is answered after: the
+/// redaction and matching need neither the browser nor the imported sets.
+#[test]
+fn a_read_is_answered_after_its_set_is_let_go() {
+    let mut slot = browser_with(signed_in_capture());
+    let mut imported = BTreeMap::new();
+    for (tool, args) in [
+        (CaptureTool::Search, json!({ "response_contains": "casual" })),
+        (CaptureTool::List, json!({ "limit": 2 })),
+        (CaptureTool::ResponseBody, json!({ "id": 1 })),
+    ] {
+        let phase = capture_tool_begin(&mut slot, &mut imported, None, tool, &args.to_string());
+        assert!(matches!(phase, CapturePhase::Read(..)), "{tool:?} answered under the lock");
+        let (status, out) = phase.finish();
+        assert_eq!(status, 200, "{tool:?}: {out}");
+        assert_no_secret(&out);
+    }
+    let phase = capture_tool_begin(&mut slot, &mut imported, None, CaptureTool::Search, r#"{"response_contains":"casual"}"#);
+    slot = None;
+    let (_, out) = phase.finish();
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["total"], 1, "{v}");
+    assert!(slot.is_none());
+    // A list's page keeps the whole set's count.
+    let mut slot = browser_with(signed_in_capture());
+    let (_, v) = live(&mut slot, CaptureTool::List, json!({ "limit": 2 }));
+    assert_eq!((v["total"].as_u64(), v["returned"].as_u64(), v["next_offset"].as_u64()), (Some(3), Some(2), Some(2)));
+    // An export takes its requests out the same way.
+    let dir = TempDir::new();
+    let phase = capture_tool_begin(&mut slot, &mut imported, Some(dir.path()), CaptureTool::Export, r#"{"name":"later"}"#);
+    assert!(matches!(phase, CapturePhase::Export(..)));
+    assert!(!dir.path().join("captures").join("later.har").exists(), "nothing written under the lock");
+    assert_eq!(phase.finish().0, 200);
+    assert!(dir.path().join("captures").join("later.har").exists());
 }

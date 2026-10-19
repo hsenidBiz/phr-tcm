@@ -67,6 +67,48 @@ fn failed(id: u64) -> Captured {
     }
 }
 
+/// What `from_har` reads back of `all`: a text body's response size is the
+/// size the export wrote, the redacted text's (the same here: nothing in
+/// these bodies is hidden), never what the browser received.
+fn as_read_back(all: &[Captured]) -> Vec<Captured> {
+    all.iter()
+        .cloned()
+        .map(|mut c| {
+            if let Some(Body::Text(t)) = &c.resp_body {
+                c.resp_size = Some(t.len() as u64);
+            }
+            c
+        })
+        .collect()
+}
+
+/// A redirect's address and every size are written redacted: a token in
+/// the path a sign-in redirects to never reaches the file, and a body's
+/// size never gives a hidden password's length away.
+#[test]
+fn a_redirect_and_the_sizes_are_written_redacted() {
+    let token = "Ab3dEf9GhIjKlMnOpQrStUvWx7Yz0aB1cD2eF3gH4iJ5kL6m";
+    let mut c = redirected(1);
+    c.redirect = Some(Redirect { status: 302, to_path: format!("/account/reset/{token}"), other_site: false });
+    c.req_headers = pairs(&[("content-type", "application/x-www-form-urlencoded")]);
+    c.req_body = Some(Body::Text(format!("user=avin&password={PASSWORD}")));
+    c.mime = Some("application/json".into());
+    c.resp_body = Some(Body::Text(format!(r#"{{"password":"{PASSWORD}","ok":true}}"#)));
+    c.resp_size = Some(999);
+    let har = to_har(&[&c], Some(SITE));
+    let text = har.to_string();
+    assert!(!text.contains(token), "{text}");
+    assert!(!text.contains(PASSWORD), "{text}");
+    let e = &har["log"]["entries"][0];
+    assert!(e["response"]["redirectURL"].as_str().unwrap().starts_with("/account/reset/"));
+    let post = e["request"]["postData"]["text"].as_str().unwrap();
+    assert_eq!(e["request"]["bodySize"].as_u64(), Some(post.len() as u64));
+    assert_ne!(post.len(), format!("user=avin&password={PASSWORD}").len());
+    let shown = e["response"]["content"]["text"].as_str().unwrap();
+    assert_eq!(e["response"]["content"]["size"].as_u64(), Some(shown.len() as u64));
+    assert_eq!(e["response"]["bodySize"].as_u64(), Some(shown.len() as u64));
+}
+
 #[test]
 fn a_har_round_trips() {
     let all = [search(1), redirected(2), failed(3)];
@@ -91,7 +133,7 @@ fn a_har_round_trips() {
     // Through text and back, as a file would.
     let reread: Value = serde_json::from_str(&har.to_string()).unwrap();
     let back = from_har(&reread).expect("our own HAR reads back");
-    assert_eq!(back, all.to_vec());
+    assert_eq!(back, as_read_back(&all));
 }
 
 #[test]
@@ -234,7 +276,7 @@ fn an_export_is_valid_har_with_an_absolute_url_and_a_time() {
         }
         // The host is not kept on the way back; an unknown duration stays unknown.
         let back = from_har(&har).unwrap();
-        assert_eq!(back, all.to_vec());
+        assert_eq!(back, as_read_back(&all));
         assert_eq!(back[1].duration_ms, None);
     }
 }

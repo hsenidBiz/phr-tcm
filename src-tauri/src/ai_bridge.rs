@@ -2086,31 +2086,76 @@ pub const CAPTURE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_sec
 pub const CAPTURE_BUSY: &str =
     "The Auto Run browser is busy (a replay, a step or a discovery action is using it): ask again when it has finished.";
 
-/// A capture tool's call: the browser's lock is taken only for a call that
-/// reads or changes the live capture, and only for that read - never for
-/// an import, or a read of an imported set.
+/// A capture tool's call. Nothing is redacted, matched or written while a
+/// lock is held: the call takes what it needs out of its set (cloned) and
+/// lets the lock go before it answers (`CapturePhase::finish`). An import
+/// reads and parses its file before it takes the imported sets' lock; a
+/// read naming `from` is checked, and its set looked for, before anything
+/// else, and never takes the browser's lock.
 async fn autorun_capture(tool: CaptureTool, body: &str) -> (u16, String) {
+    use crate::autorun::capture_tools as ct;
     let root = crate::autorun::store::configured_root();
-    let live = match tool {
-        CaptureTool::Import => false,
-        t if t.reads_a_set() => !matches!(
-            crate::autorun::capture_tools::args_of(body).and_then(|a| crate::autorun::capture_tools::from_of(&a)),
-            Ok(Some(_))
-        ),
-        _ => true,
+    let args = match ct::args_of(body) {
+        Ok(a) => a,
+        Err(e) => return e,
     };
-    if !live {
-        let mut imported = crate::commands::autorun::imported_captures();
-        return capture_tool_in(&mut None::<crate::commands::autorun::Session>, &mut imported, root.as_deref(), tool, body);
+    if tool == CaptureTool::Import {
+        let Some(root) = root.as_deref() else {
+            return (503, crate::commands::autorun::NO_DATA_DIRECTORY.to_string());
+        };
+        return match ct::read_import(root, &args) {
+            Ok((stem, entries)) => ct::store_import(&mut crate::commands::autorun::imported_captures(), stem, entries),
+            Err(e) => e,
+        };
+    }
+    let from = if tool.reads_a_set() {
+        match ct::from_of(&args) {
+            Ok(f) => f,
+            Err(e) => return e,
+        }
+    } else {
+        None
+    };
+    if from.is_some() {
+        let phase = {
+            let mut imported = crate::commands::autorun::imported_captures();
+            capture_tool_begin(&mut None::<crate::commands::autorun::Session>, &mut imported, root.as_deref(), tool, body)
+        };
+        return phase.finish();
     }
     if crate::autorun::replay_to::is_running() {
         return (409, CAPTURE_BUSY.to_string());
     }
-    let Ok(mut slot) = tokio::time::timeout(CAPTURE_LOCK_WAIT, crate::commands::autorun::supervised().lock()).await else {
-        return (409, CAPTURE_BUSY.to_string());
+    let phase = {
+        let Ok(mut slot) = tokio::time::timeout(CAPTURE_LOCK_WAIT, crate::commands::autorun::supervised().lock()).await
+        else {
+            return (409, CAPTURE_BUSY.to_string());
+        };
+        let mut imported = crate::commands::autorun::imported_captures();
+        capture_tool_begin(&mut slot, &mut imported, root.as_deref(), tool, body)
     };
-    let mut imported = crate::commands::autorun::imported_captures();
-    capture_tool_in(&mut slot, &mut imported, root.as_deref(), tool, body)
+    phase.finish()
+}
+
+/// A capture call part way: answered already, or holding what it took out
+/// of its set, to be redacted and answered with no lock held.
+pub enum CapturePhase {
+    Answered((u16, String)),
+    Read(crate::autorun::capture_tools::Read, crate::autorun::capture_tools::Taken, serde_json::Value),
+    Export(std::path::PathBuf, crate::autorun::capture_tools::TakenExport),
+}
+
+impl CapturePhase {
+    /// The answer: the redaction, the matching and the export's write
+    /// happen here.
+    pub fn finish(self) -> (u16, String) {
+        use crate::autorun::capture_tools as ct;
+        match self {
+            CapturePhase::Answered(a) => a,
+            CapturePhase::Read(read, taken, args) => ct::answer(&taken, read, &args),
+            CapturePhase::Export(root, taken) => ct::write_export(&root, taken),
+        }
+    }
 }
 
 /// A capture tool's call over the browser `slot` holds (the app's session,
@@ -2118,7 +2163,7 @@ async fn autorun_capture(tool: CaptureTool, body: &str) -> (u16, String) {
 /// its siblings answer. A read naming `from` reads that imported set, with
 /// no browser needed; every other read, the filter and the export need the
 /// browser (404 "No browser is open." without one). An import needs only
-/// the Auto Run folder (`root`).
+/// the Auto Run folder (`root`). `capture_tool_begin`, then its `finish`.
 pub fn capture_tool_in<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
     imported: &mut std::collections::BTreeMap<String, Vec<crate::browser::net_capture::Captured>>,
@@ -2126,58 +2171,81 @@ pub fn capture_tool_in<B: DiscoveryBrowser>(
     tool: CaptureTool,
     body: &str,
 ) -> (u16, String) {
+    capture_tool_begin(slot, imported, root, tool, body).finish()
+}
+
+/// The part of a capture call that needs its set: what it takes out of the
+/// live capture or an imported set, cloned and unredacted, or an answer
+/// already (a refusal, the filter, an import).
+pub fn capture_tool_begin<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    imported: &mut std::collections::BTreeMap<String, Vec<crate::browser::net_capture::Captured>>,
+    root: Option<&std::path::Path>,
+    tool: CaptureTool,
+    body: &str,
+) -> CapturePhase {
     use crate::autorun::capture_tools as ct;
     use crate::browser::cdp::Driver;
+    use CapturePhase::Answered;
     let args = match ct::args_of(body) {
         Ok(a) => a,
-        Err(e) => return e,
+        Err(e) => return Answered(e),
     };
-    let no_root = || (503, crate::commands::autorun::NO_DATA_DIRECTORY.to_string());
-    let read = |set: &ct::Set, args: &serde_json::Value| match tool {
-        CaptureTool::List => ct::list(set, args),
-        CaptureTool::Search => ct::search(set, args),
-        CaptureTool::Request => ct::request(set, args),
-        CaptureTool::Response => ct::response(set, args),
-        _ => ct::response_body(set, args),
+    let no_root = || Answered((503, crate::commands::autorun::NO_DATA_DIRECTORY.to_string()));
+    let read = match tool {
+        CaptureTool::List => Some(ct::Read::List),
+        CaptureTool::Search => Some(ct::Read::Search),
+        CaptureTool::Request => Some(ct::Read::Request),
+        CaptureTool::Response => Some(ct::Read::Response),
+        CaptureTool::ResponseBody => Some(ct::Read::ResponseBody),
+        _ => None,
+    };
+    let taken = |set: &ct::Set, read: ct::Read, args: serde_json::Value| match ct::take(set, read, &args) {
+        Ok(t) => CapturePhase::Read(read, t, args),
+        Err(e) => Answered(e),
     };
     if tool == CaptureTool::Import {
         return match root {
-            Some(root) => ct::import(root, imported, &args),
+            Some(root) => Answered(ct::import(root, imported, &args)),
             None => no_root(),
         };
     }
-    if tool.reads_a_set() {
+    if let Some(read) = read {
         match ct::from_of(&args) {
-            Err(e) => return e,
+            Err(e) => return Answered(e),
             Ok(Some(name)) => {
                 return match ct::imported_set(imported, &name) {
-                    Ok(set) => read(&set, &args),
-                    Err(e) => e,
+                    Ok(set) => taken(&set, read, args),
+                    Err(e) => Answered(e),
                 };
             }
             Ok(None) => {}
         }
     }
     let Some(b) = slot.as_mut() else {
-        return (404, crate::commands::autorun::NO_BROWSER_OPEN.to_string());
+        return Answered((404, crate::commands::autorun::NO_BROWSER_OPEN.to_string()));
     };
     let driver = b.parts().driver;
     if tool == CaptureTool::SetFilter {
-        return match Driver::capture_mut(driver) {
+        return Answered(match Driver::capture_mut(driver) {
             Some(cap) => ct::set_filter(cap, imported, &args),
             None => (404, ct::NO_CAPTURE.to_string()),
-        };
+        });
     }
     let Some(cap) = Driver::capture(&*driver) else {
-        return (404, ct::NO_CAPTURE.to_string());
+        return Answered((404, ct::NO_CAPTURE.to_string()));
     };
-    match tool {
-        CaptureTool::GetFilter => (200, ct::filter_answer(cap, imported).to_string()),
-        CaptureTool::Export => match root {
-            Some(root) => ct::export(cap, root, &args),
+    match (tool, read) {
+        (_, Some(read)) => taken(&ct::Set::live(cap), read, args),
+        (CaptureTool::GetFilter, _) => Answered((200, ct::filter_answer(cap, imported).to_string())),
+        (CaptureTool::Export, _) => match root {
+            Some(root) => match ct::take_export(cap, &args) {
+                Ok(t) => CapturePhase::Export(root.to_path_buf(), t),
+                Err(e) => Answered(e),
+            },
             None => no_root(),
         },
-        _ => read(&ct::Set::live(cap), &args),
+        _ => Answered((404, ct::NO_CAPTURE.to_string())),
     }
 }
 
