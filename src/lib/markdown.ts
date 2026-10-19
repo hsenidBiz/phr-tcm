@@ -213,8 +213,9 @@ const delimiterOf = (itemRaw: string) => (/^\s*\d+\)/.test(itemRaw) ? ")" : ".")
  *   could have produced (`<b>`, a `<div>` block) is dropped and its text
  *   kept; anything else (`<cycleId>`) shows as typed.
  * - A step has no paragraphs and no lists - Azure DevOps shows lines - see
- *   `renderStep`. The prerequisites are paragraphs and real lists, with
- *   an ordered list's `)` kept as typed.
+ *   `renderStep`. The prerequisites are paragraphs and real lists; an
+ *   ordered list is numbered `1.` whatever was typed (`1)` too), because
+ *   that is how Azure DevOps draws the field's `<ol>`.
  */
 function caseDialect(kind: CaseTextKind): MarkedExtension {
   return {
@@ -256,10 +257,9 @@ function caseDialect(kind: CaseTextKind): MarkedExtension {
         const tag = token.ordered ? "ol" : "ul";
         const start =
           token.ordered && token.start !== "" && token.start !== 1 ? ` start="${Number(token.start)}"` : "";
-        // `1) Login` keeps its `)` (a CSS marker on `.paren`).
-        const paren = token.ordered && delimiterOf(token.items[0]?.raw ?? "") === ")" ? ' class="paren"' : "";
+        // A plain `<ol>`: Azure DevOps numbers it `1.`, a typed `1)` too.
         const items = token.items.map((item) => this.listitem(item)).join("");
-        return `<${tag}${start}${paren}>\n${items}</${tag}>\n`;
+        return `<${tag}${start}>\n${items}</${tag}>\n`;
       },
     },
   };

@@ -296,17 +296,21 @@ fn a_step_has_the_same_line_breaks_as_the_apps_own_rendering() {
     }
 }
 
+/// Azure DevOps draws the prerequisites' numbered list with `1.` markers
+/// whatever was typed, so the review page does too: a typed `1)` is a plain
+/// `<ol>`, and no stylesheet rule redraws its markers. (A step keeps its
+/// `)`: its list is lines of text, in Azure DevOps and here.)
 #[test]
-fn a_prerequisites_list_typed_with_a_paren_keeps_it() {
-    assert_eq!(
-        case_text_to_html("1) a\n2) b", Field::Prereq),
-        "<ol class=\"paren\"><li>a</li><li>b</li></ol>\n"
-    );
+fn a_prerequisites_list_typed_with_a_paren_is_numbered_as_azure_devops_numbers_it() {
+    assert_eq!(case_text_to_html("1) a\n2) b", Field::Prereq), "<ol><li>a</li><li>b</li></ol>\n");
     assert_eq!(
         case_text_to_html("3) a\n4) b", Field::Prereq),
-        "<ol start=\"3\" class=\"paren\"><li>a</li><li>b</li></ol>\n"
+        "<ol start=\"3\"><li>a</li><li>b</li></ol>\n"
     );
     assert_eq!(case_text_to_html("2. a", Field::Prereq), "<ol start=\"2\"><li>a</li></ol>\n");
     assert_eq!(case_text_to_html("1. a", Field::Prereq), "<ol><li>a</li></ol>\n");
-    assert!(case_text_to_html("> 1) x", Field::Prereq).contains("<ol class=\"paren\">"));
+    assert!(case_text_to_html("> 1) x", Field::Prereq).contains("<ol><li>"));
+    assert_eq!(case_text_to_html("1) Login\n2) Open", Field::Step), "1) Login<br>2) Open");
+    let css = include_str!("../../web/cases-page.css");
+    assert!(!css.contains("::marker"), "no rule may redraw the list's markers");
 }

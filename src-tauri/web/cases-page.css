@@ -91,8 +91,6 @@ td.action code, td.expected code, .pre-md code { background: var(--surface); bor
 td.action pre, td.expected pre, .pre-md pre { background: var(--surface); border-radius: 4px;
                  padding: 6px 8px; margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
 td.action pre code, td.expected pre code, .pre-md pre code { background: none; padding: 0; }
-/* A list typed `1) Login` keeps its `)`: the renderer marks it `paren`. */
-.pre-md ol.paren > li::marker { content: counter(list-item) ") "; }
 .searchbar { position: sticky; top: 0; z-index: 5; background: var(--bg);
              display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 0 14px; }
 /* The search box: which field, the query, and how to match it, as one

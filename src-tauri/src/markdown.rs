@@ -244,18 +244,17 @@ fn prereq_text_to_html(src: &str) -> String {
     let mut out = String::new();
     // A raw HTML block arrives line by line; it is one paragraph of text.
     let mut html_block: Option<String> = None;
-    for (event, range) in Parser::new_ext(src, CASE_MARKDOWN_OPTIONS).into_offset_iter() {
+    for event in Parser::new_ext(src, CASE_MARKDOWN_OPTIONS) {
         match event {
             Event::Start(tag) => match tag {
                 Tag::Paragraph | Tag::Heading { .. } => out.push_str("<p>"),
                 Tag::CodeBlock(_) => out.push_str("<pre><code>"),
                 Tag::HtmlBlock => html_block = Some(String::new()),
                 Tag::List(Some(start)) => {
-                    // `1) Login` keeps its `)`: the page draws it on the
-                    // `paren` class (cases-page.css), as the app does.
+                    // A plain `<ol>`: Azure DevOps numbers the field's list
+                    // `1.`, a typed `1)` too, and the page shows what it shows.
                     let start = if start == 1 { String::new() } else { format!(" start=\"{start}\"") };
-                    let paren = if ordered_delimiter(src, range.start) == ')' { " class=\"paren\"" } else { "" };
-                    out.push_str(&format!("<ol{start}{paren}>"));
+                    out.push_str(&format!("<ol{start}>"));
                 }
                 Tag::List(None) => out.push_str("<ul>"),
                 Tag::Item => out.push_str("<li>"),

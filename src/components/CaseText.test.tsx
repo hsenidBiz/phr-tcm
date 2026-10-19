@@ -78,11 +78,15 @@ test("the field keeps the Markdown typed, and Preview shows it formatted", () =>
   expect((screen.getByLabelText("Preconditions") as HTMLTextAreaElement).value).toBe(typed);
 });
 
-/// jsdom draws no list markers, so the rule that shows a typed `1)` is
-/// pinned at the source: an ordered list marked `paren` gets `)` markers.
-test("a prerequisites list typed with ) is drawn with ) markers", () => {
+/// Azure DevOps draws the prerequisites' numbered list with `1.` markers
+/// whatever was typed, so a typed `1)` shows `1.` here too. jsdom draws no
+/// list markers, so it is pinned at the source: a plain `<ol>`, and no
+/// stylesheet rule that redraws its markers.
+test("a prerequisites list typed with ) shows the 1. markers Azure DevOps shows", () => {
   const css = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../index.css"), "utf8");
-  expect(css).toMatch(/\.case-text ol\.paren > li::marker\s*\{[^}]*content:\s*counter\(list-item\) "\) "/);
+  expect(css).not.toMatch(/\.case-text ol[^{]*::marker/);
   const { container } = render(<CaseText kind="prereq" text={"1) Login\n2) Open Leave"} />);
-  expect(container.querySelector("ol.paren")).not.toBeNull();
+  const ol = container.querySelector("ol");
+  expect(ol).not.toBeNull();
+  expect(ol?.hasAttribute("class")).toBe(false);
 });
