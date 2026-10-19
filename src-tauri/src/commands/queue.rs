@@ -1033,6 +1033,9 @@ pub async fn submit_queue(
         }
         chunk_start = end;
     }
+    // An update that went without its prerequisites (no baseline - see
+    // `queue_item_request`) says so on its row, not only in the log.
+    note_prereqs_not_saved(&mut results, &queue, preconditions_ref.as_deref(), &prereq_before);
     let failed = results.iter().filter(|r| r.action == "failed").count();
     let unknown = results.iter().filter(|r| r.action == "unknown").count();
     crate::applog::info(format!(
@@ -1227,6 +1230,38 @@ pub fn queue_item_request(
             }
         }
     })
+}
+
+/// What an updated row says when its prerequisites were left out.
+const PREREQS_NOT_SAVED: &str = "Its prerequisites were not saved: their current text could not be read \
+     from Azure DevOps, so they were left as they are there. Upload it again to save them. Settings → Logs \
+     has the details.";
+
+/// Marks each updated row whose prerequisites `queue_item_request` left
+/// out - an update with a prerequisites field and text for it, but no
+/// baseline (`prereq_before` lacks it: the read failed, or was refused the
+/// field). The rest of the update landed, so the row stays "updated"; its
+/// result says the prerequisites did not, where the row's warning shows.
+pub fn note_prereqs_not_saved(
+    results: &mut [SubmitItemResult],
+    queue: &[model::TestCase],
+    p_ref: Option<&str>,
+    prereq_before: &std::collections::HashMap<i32, ado::StoredText>,
+) {
+    if p_ref.is_none() {
+        return;
+    }
+    for r in results.iter_mut().filter(|r| r.action == "updated") {
+        let Some(tc) = queue.get(r.index as usize) else { continue };
+        let Some(id) = tc.update_id else { continue };
+        if prereq_before.contains_key(&id) || tc.preconditions.trim().is_empty() {
+            continue;
+        }
+        r.error = Some(match r.error.take() {
+            Some(e) => format!("{e} {PREREQS_NOT_SAVED}"),
+            None => PREREQS_NOT_SAVED.to_string(),
+        });
+    }
 }
 
 /// What each answer in a batch means for its case. `sent_idx[k]` is the

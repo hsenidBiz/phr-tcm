@@ -547,3 +547,49 @@ fn an_update_with_no_prerequisites_baseline_leaves_them_out() {
     let create = queue_item_request(&client(), "acme", "Web", 42, &new, None, Some("Custom.Prec"), "", "", None, None, None, 1).unwrap();
     assert_eq!(prereq(&create).len(), 1, "{}", create.body);
 }
+
+/// When the upload's read fails, an update leaves its prerequisites out
+/// (above) - so the row may not just say "updated": its result says the
+/// prerequisites were not saved, where the row's warning shows. Only an
+/// update that carried prerequisites text with no baseline gets the note.
+#[test]
+fn an_update_whose_prerequisites_were_left_out_says_so_on_its_row() {
+    use v2_lib::commands::queue::{note_prereqs_not_saved, SubmitItemResult};
+    let row = |index: u32, action: &str| SubmitItemResult {
+        index,
+        title: format!("row {index}"),
+        action: action.into(),
+        id: Some(700 + index as i32),
+        error: None,
+    };
+    let mut blind = case("Blind", Some(701));
+    blind.preconditions = "Signed in as admin".into();
+    let mut held = case("Held", Some(702));
+    held.preconditions = "Signed in as admin".into();
+    let blank = case("Blank", Some(703));
+    let mut new = case("New", None);
+    new.preconditions = "Signed in as admin".into();
+    let mut failed = case("Failed", Some(705));
+    failed.preconditions = "Signed in as admin".into();
+    let queue = vec![blind, held, blank, new, failed];
+
+    let mut before = std::collections::HashMap::new();
+    before.insert(702, v2_lib::ado::StoredText { value: "<p>x</p>".into(), markdown: false });
+    let mut results = vec![row(0, "updated"), row(1, "updated"), row(2, "updated"), row(3, "created"), row(4, "failed")];
+    results[4].error = Some("refused".into());
+
+    note_prereqs_not_saved(&mut results, &queue, Some("Custom.Prec"), &before);
+    let note = results[0].error.as_deref().unwrap_or_default();
+    assert!(note.contains("prerequisites were not saved"), "{note}");
+    assert!(note.contains("Settings → Logs"), "{note}");
+    assert_eq!(results[0].action, "updated", "the rest of the update did land");
+    assert_eq!(results[1].error, None, "a baseline was read: the prerequisites were compared and saved");
+    assert_eq!(results[2].error, None, "no prerequisites text: nothing was left out");
+    assert_eq!(results[3].error, None, "a create writes its prerequisites");
+    assert_eq!(results[4].error.as_deref(), Some("refused"), "a failed row keeps its own reason");
+
+    // No prerequisites field chosen: nothing is ever written, nothing to say.
+    let mut results = vec![row(0, "updated")];
+    note_prereqs_not_saved(&mut results, &queue, None, &before);
+    assert_eq!(results[0].error, None);
+}

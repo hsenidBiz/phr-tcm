@@ -4675,13 +4675,35 @@ async fn an_unchanged_old_case_raises_no_formatting_warning() {
     assert_eq!(all, "", "{all}");
 }
 
+/// Case text is read in the converter's dialect, which has no tables: a
+/// pipe-and-dashes block is lines of text in Azure DevOps and in TCM. An
+/// old field that holds one is not formatting anybody typed, so a case
+/// with an id is not warned about it - and nothing else in the text reads
+/// differently for it. A new case still hears that tables do not show.
+#[tokio::test]
+async fn an_old_pipe_and_dashes_block_is_text_not_a_table() {
+    let mut case = one_step("Open the page.", "| a | b |\n| --- | --- |\n| 1 | 2 |");
+    case["preconditions"] = serde_json::json!("Name | Age\n--- | ---\nAnn | 3");
+    case["id"] = serde_json::json!(155170);
+    let all = warnings_for(case).await;
+    assert_eq!(all, "", "{all}");
+
+    let mut case = one_step("Open the page.", "| a | b |\n| --- | --- |\n| 1 | 2 |");
+    case["preconditions"] = serde_json::json!("Name | Age\n--- | ---\nAnn | 3");
+    let all = warnings_for(case).await;
+    assert!(all.contains("step 1 expected") && all.contains("preconditions") && all.contains("table"), "{all}");
+
+    // Pipes in prose, or a lone dashes line, are not a table.
+    let ok = warnings_for(one_step("Pick A | B from the list.", "It is set.")).await;
+    assert!(!ok.contains("table"), "{ok}");
+}
+
 #[tokio::test]
 async fn a_case_with_an_id_still_warns_about_formatting_somebody_typed() {
     // Text read back from Azure DevOps is escaped, so these can only be
     // formatting that was typed: they are reported on an update too.
     let cases = [
         (one_step("# Open the page", "It opens."), "heading"),
-        (one_step("Open the page.", "| a | b |\n| --- | --- |\n| 1 | 2 |"), "table"),
         (one_step("Open [the page](https://example.com).", "It opens."), "link"),
         (one_step("Open the page.", "![logo](logo.png)"), "image"),
         (one_step("**a** **b** **c** **d**", "It opens."), "bold or italic"),

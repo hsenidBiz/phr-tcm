@@ -19,8 +19,14 @@
 //!   backticks, which keeps them exactly.
 //!
 //! The caller decides WHICH text to look at (see `ai_bridge::validate_json`).
+//!
+//! The text is parsed in the converter's dialect
+//! (`case_markdown::CASE_MARKDOWN_OPTIONS`), so a finding is about what the
+//! text actually becomes. That dialect has no tables: a pipe-and-dashes
+//! block is lines of text, and is found by its lines instead (see
+//! `pipe_table_at`).
 
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -37,6 +43,8 @@ const MOSTLY_BOLD_MIN_WORDS: usize = 3;
 #[derive(Debug, Default)]
 struct Scan {
     heading: bool,
+    /// A pipe table as GFM writes one (a row of cells, then a row of
+    /// dashes). Neither field shows it as a table.
     table: bool,
     link: bool,
     image: bool,
@@ -75,6 +83,26 @@ fn escaped_punctuation() -> &'static Regex {
 fn link_definition() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"^ {0,3}\[[^\]]+\]:\s*\S").unwrap())
+}
+
+/// A pipe table's delimiter row: `| --- | :-: |`, `--- | ---`.
+fn table_delimiter_row() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$").unwrap())
+}
+
+/// Whether line `i` (of the lines outside fences) starts a pipe table: it
+/// holds a `|`, and the line straight under it is a delimiter row with one.
+fn pipe_table_at(lines: &[(&str, bool)], i: usize) -> bool {
+    let Some(&(next, next_after_blank)) = lines.get(i + 1) else {
+        return false;
+    };
+    let head = lines[i].0;
+    !next_after_blank
+        && head.contains('|')
+        && !head.trim().is_empty()
+        && next.contains('|')
+        && table_delimiter_row().is_match(next)
 }
 
 /// The start of a line, short enough to quote in a warning.
@@ -192,15 +220,14 @@ fn paragraphs(lines: &[(&str, bool)]) -> Vec<String> {
 fn scan(text: &str) -> Scan {
     let mut s = Scan::default();
 
-    // What Markdown parses: the structure it would build from the text.
-    // Tables are switched on only so a pipe table can be recognised; the
-    // app itself renders without them (`case_markdown::CASE_MARKDOWN_OPTIONS`).
+    // What Markdown parses: the structure the converter builds from the
+    // text, in its own dialect - so an old field that happens to hold
+    // pipes and dashes is read as the lines of text it is.
     let mut bold_depth = 0usize;
     let mut in_code_block = false;
-    for (event, range) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {
+    for (event, range) in Parser::new_ext(text, crate::case_markdown::CASE_MARKDOWN_OPTIONS).into_offset_iter() {
         match event {
             Event::Start(Tag::Heading { .. }) => s.heading = true,
-            Event::Start(Tag::Table(_)) => s.table = true,
             Event::Start(Tag::Link { .. }) => s.link = true,
             Event::Start(Tag::Image { .. }) => s.image = true,
             Event::Start(tag @ (Tag::Strong | Tag::Emphasis)) => {
@@ -249,6 +276,7 @@ fn scan(text: &str) -> Scan {
             s.sql.push(excerpt(&plain[m.start()..]));
         }
     }
+    s.table = (0..lines.len()).any(|i| pipe_table_at(&lines, i));
     for (line, after_blank) in lines {
         if after_blank && link_definition().is_match(line) {
             s.eaten.push(format!(
@@ -273,10 +301,11 @@ fn scan(text: &str) -> Scan {
 ///
 /// `new_case` is a case without an id. A case being updated holds text
 /// read back from Azure DevOps, which is plain text escaped to be safe, so
-/// a heading, table, link, image, run of emphasis or mostly-bold step can
-/// only be formatting somebody typed, and those are reported for every
-/// case. An SQL line outside a fence, a backslash or a leading `>` can be
-/// the plain text already there, so those are reported for new cases only.
+/// a heading, link, image, run of emphasis or mostly-bold step can only be
+/// formatting somebody typed, and those are reported for every case. An
+/// SQL line outside a fence, a pipe-and-dashes table (lines of text in the
+/// converter's dialect), a backslash or a leading `>` can be the plain text
+/// already there, so those are reported for new cases only.
 pub fn formatting_warnings(index: usize, tc: &TestCase, new_case: bool) -> Vec<String> {
     let mut places: Vec<(String, bool, Scan)> = Vec::new();
     let mut step_spans: Vec<(usize, usize)> = Vec::new();
@@ -306,11 +335,6 @@ pub fn formatting_warnings(index: usize, tc: &TestCase, new_case: bool) -> Vec<S
             "a heading",
             "A heading has no place in a test case. Write a plain sentence.",
             (|p: &(String, bool, Scan)| p.2.heading) as fn(&(String, bool, Scan)) -> bool,
-        ),
-        (
-            "a table",
-            "Case text does not show tables. Write each row as its own line, or a list.",
-            |p| p.2.table,
         ),
         (
             "a link",
@@ -346,6 +370,14 @@ pub fn formatting_warnings(index: usize, tc: &TestCase, new_case: bool) -> Vec<S
 
     if !new_case {
         return out;
+    }
+
+    let at = names(&|p| p.2.table);
+    if !at.is_empty() {
+        out.push(format!(
+            "{head}: {at} has a table. Case text does not show tables. Write each row as its own \
+             line, or a list."
+        ));
     }
 
     let at = places
