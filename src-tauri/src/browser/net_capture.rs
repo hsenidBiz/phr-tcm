@@ -563,7 +563,7 @@ fn capped(text: String, cap: usize) -> Body {
 }
 
 /// A body worth keeping: JSON, text, script, XML, a form, GraphQL, HTML.
-fn text_like(mime: &str) -> bool {
+pub(crate) fn text_like(mime: &str) -> bool {
     let m = mime.to_ascii_lowercase();
     m.starts_with("text/")
         || ["json", "javascript", "ecmascript", "xml", "x-www-form-urlencoded", "graphql", "html"].iter().any(|w| m.contains(w))
@@ -577,7 +577,7 @@ fn header_value<'a>(headers: &'a Value, name: &str) -> Option<&'a str> {
 /// The headers kept, lower-case names, sorted, one entry per name: a name
 /// sent twice (in two cases, or as Chrome joins repeats, by a line break)
 /// has its values joined with ", ". See `kept_header`.
-fn kept_headers(headers: &Value) -> Vec<(String, String)> {
+pub(crate) fn kept_headers(headers: &Value) -> Vec<(String, String)> {
     let Some(map) = headers.as_object() else { return Vec::new() };
     let mut joined: Vec<(String, Vec<String>)> = Vec::new();
     for (name, v) in map {
@@ -614,12 +614,10 @@ fn kept_header(name: &str, value: String) -> Option<String> {
     Some(if secret_header(name) { HIDDEN.to_string() } else { value })
 }
 
-/// A header name that sounds like it carries a secret: the secret words
-/// (`api_checks`: token, password, secret, authorization, cookie, session)
-/// and the words headers carry keys and signatures under.
+/// A header name that sounds like it carries a secret: the one list of
+/// secret words every capture redaction uses (`capture_redact::secret_name`).
 fn secret_header(name: &str) -> bool {
-    const MORE: [&str; 8] = ["auth", "key", "credential", "signature", "jwt", "bearer", "csrf", "xsrf"];
-    crate::autorun::api_checks::secret_key(name) || MORE.iter().any(|w| name.contains(w))
+    crate::autorun::capture_redact::secret_name(name)
 }
 
 /// A status as Chrome sends it - an integer, sometimes written as a float.

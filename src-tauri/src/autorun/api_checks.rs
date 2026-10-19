@@ -127,7 +127,7 @@ impl Body {
 
 /// The words a key holding a secret is named with - any part of the name,
 /// in any case: `access_token`, `Password`, `sessionId`, `Set-Cookie`.
-const SECRET_WORDS: [&str; 6] = ["token", "password", "secret", "authorization", "cookie", "session"];
+pub(crate) const SECRET_WORDS: [&str; 6] = ["token", "password", "secret", "authorization", "cookie", "session"];
 
 pub(crate) fn secret_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
@@ -172,9 +172,16 @@ static SECRET_KEY: LazyLock<Regex> = LazyLock::new(|| {
 /// object or array - and up to the end of the text when it was cut off
 /// inside one.
 fn hide_members(text: &str) -> String {
+    hide_members_by(text, &SECRET_KEY)
+}
+
+/// `hide_members` for another set of secret words: `member` has the shape of
+/// `SECRET_KEY` (group 1 the escape, the match ending where the value
+/// begins), built with those words.
+pub(crate) fn hide_members_by(text: &str, member: &Regex) -> String {
     let mut out = String::with_capacity(text.len());
     let mut pos = 0;
-    while let Some(key) = SECRET_KEY.captures_at(text, pos) {
+    while let Some(key) = member.captures_at(text, pos) {
         let (Some(whole), Some(escape)) = (key.get(0), key.get(1)) else { break };
         let escaped = !escape.is_empty();
         out.push_str(&text[pos..whole.end()]);
@@ -283,7 +290,7 @@ static QUERY: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// `Bearer <token>`, whatever key or text it sits in.
-static BEARER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bbearer\s+[\w\-.~+/]+=*").unwrap());
+pub(crate) static BEARER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bbearer\s+[\w\-.~+/]+=*").unwrap());
 
 /// A JWT: three base64url parts, the first a JSON header (`eyJ`).
 static JWT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"eyJ[\w-]+\.[\w-]+\.[\w-]*").unwrap());
