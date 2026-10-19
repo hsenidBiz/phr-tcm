@@ -344,6 +344,7 @@ pub fn changes_the_page(action: &Action) -> bool {
             | Action::ExpectContainsText { .. }
             | Action::ExpectCount { .. }
             | Action::ExpectAttribute { .. }
+            | Action::ExpectStyle { .. }
             | Action::ExpectEnabled { .. }
             | Action::ExpectDisabled { .. }
             | Action::ExpectChecked { .. }

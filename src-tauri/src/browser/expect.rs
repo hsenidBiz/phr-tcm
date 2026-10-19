@@ -35,6 +35,9 @@ pub enum Check<'a> {
     Disabled,
     /// The one match is ticked (true) or not (false), by `CHECKED_JS`.
     Checked(bool),
+    /// The one match's computed style `property`, by `READ_STYLE_JS`,
+    /// judged by `style::judge`.
+    Style { property: &'a str, want: super::style::Want<'a> },
 }
 
 /// `this` is the element. Why it is disabled, in a few words, or `""` when
@@ -115,6 +118,37 @@ pub const READ_TEXT_JS: &str = r#"function() {
 
 /// `this` is the element. Argument: the attribute name. null when absent.
 pub const READ_ATTR_JS: &str = r#"function(name) { return this.getAttribute(name); }"#;
+
+/// `this` is the element. Argument: a CSS property name. `{ value, moving
+/// }`: its computed value, and whether a running transition or finite
+/// animation of the element is changing that property right now - a value
+/// read then is an in-between one, so `expect_style` looks again. A
+/// transition counts when it is of that property, of `all`, or of a
+/// shorthand or longhand of it; an animation when a keyframe sets it (or a
+/// shorthand or longhand of it). An endless animation (a pulse) never
+/// settles and is not waited for.
+pub const READ_STYLE_JS: &str = r#"function(prop) {
+  const value = String(getComputedStyle(this).getPropertyValue(prop) || '').trim();
+  const camel = prop.startsWith('--') ? prop : prop.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  const related = (a, b) => a === b || a.startsWith(b + '-') || b.startsWith(a + '-');
+  const meta = new Set(['offset', 'computedOffset', 'easing', 'composite']);
+  const touches = (an) => {
+    if (typeof CSSTransition !== 'undefined' && an instanceof CSSTransition) {
+      const p = an.transitionProperty || '';
+      return p === 'all' || related(p, prop);
+    }
+    const e = an.effect;
+    if (!e || !e.getKeyframes) return false;
+    const t = e.getComputedTiming ? e.getComputedTiming() : {};
+    if (t.iterations === Infinity) return false;
+    return e.getKeyframes().some((k) => Object.keys(k).some((n) => !meta.has(n) && (n === camel || camel.startsWith(n) || n.startsWith(camel))));
+  };
+  let moving = false;
+  try {
+    moving = (this.getAnimations ? this.getAnimations() : []).some((an) => an.playState === 'running' && touches(an));
+  } catch (_) {}
+  return { value, moving };
+}"#;
 
 /// The honest answer when the element IS in the page and cannot be seen.
 /// This and the constants below are the words an expectation fails in,
@@ -296,6 +330,18 @@ pub(crate) async fn look<D: Driver>(
                     (Some("mixed"), _) => Err(IS_MIXED.to_string()),
                     (Some("container"), _) => Err(MATCHES_A_CONTAINER.to_string()),
                     _ => Err(NOT_CHECKABLE.to_string()),
+                }
+            }
+        },
+        Check::Style { property, want } => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let got = page::call_value(d, h, READ_STYLE_JS, &[json!(property)]).await?;
+                let value = got["value"].as_str().unwrap_or("");
+                if got["moving"].as_bool().unwrap_or(false) {
+                    Err(format!("{property} is {} ({} so far)", super::style::STILL_CHANGING, super::style::shown(value)))
+                } else {
+                    super::style::judge(property, value, *want).map(|ok| format!("{what} {ok}"))
                 }
             }
         },

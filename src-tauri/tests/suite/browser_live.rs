@@ -3804,3 +3804,99 @@ async fn text_lines_resolve_and_the_probe_says_the_reads_name() {
     assert!(said.contains("button \"\" visible"), "{said}");
     assert!(said.contains(" - page read: button \"Edit AUTOTEST Preview 2027\""), "{said}");
 }
+
+/// `inspect_autorun_element` against a real page: every part reads, the
+/// listeners name where they were written and never their source, a
+/// password's value never shows, the page is not scrolled, and a cover the
+/// page puts over a button is named with its own listener.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn an_element_is_inspected_without_touching_the_page() {
+    use v2_lib::ai_bridge::inspect_page;
+    let mut live = open().await;
+    let ask = |args: serde_json::Value| args.to_string();
+    let (status, text) = inspect_page(&mut live.cdp, &ask(json!({ "locator": { "css": "#save" } }))).await;
+    assert_eq!(status, 200, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(v["styles"]["color"].as_str().is_some_and(|c| c.starts_with("rgb")), "{text}");
+    assert!(v["animations"]["running"].is_array(), "{text}");
+    assert_eq!(v["structure"]["tag"], "button", "{text}");
+    let click = v["listeners"]["element"].as_array().unwrap().iter().find(|l| l["type"] == "click").cloned();
+    // The fixture's onclick has not run: V8 lists no script for it yet.
+    assert_eq!(click.as_ref().map(|c| c["script"].clone()), Some(json!("(its onclick attribute)")), "{text}");
+    assert_eq!(click.as_ref().map(|c| c["line"].clone()), Some(json!(30)), "{text}");
+    assert!(!text.contains("bump()"), "a handler's source leaked: {text}");
+
+    let (status, text) =
+        inspect_page(&mut live.cdp, &ask(json!({ "locator": { "css": "input[type=password]" }, "show": ["structure"] }))).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(!text.contains("s3cret"), "{text}");
+
+    let before = page::eval_value(&mut live.cdp, "window.scrollY").await.unwrap();
+    let (status, text) = inspect_page(&mut live.cdp, &ask(json!({ "locator": { "css": "#tall" }, "show": ["structure"] }))).await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(page::eval_value(&mut live.cdp, "window.scrollY").await.unwrap(), before, "the inspect scrolled");
+
+    // The fixture's own overlay goes at 700 ms, with #late's disabled flag.
+    must(run(&mut live, json!({ "kind": "expect_enabled", "selector": { "css": "#late" } })).await);
+    page::eval_value(
+        &mut live.cdp,
+        "(() => { const d = document.createElement('div'); d.id = 'shield'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Busy'); d.style.cssText = 'position:fixed;inset:0;z-index:99'; d.addEventListener('click', () => {}, { capture: true }); document.body.appendChild(d); window.scrollTo(0, 0); return true; })()",
+    )
+    .await
+    .unwrap();
+    let (status, text) = inspect_page(&mut live.cdp, &ask(json!({ "locator": { "css": "#save" }, "show": ["listeners"] }))).await;
+    assert_eq!(status, 200, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(v["covered_by"].as_str().is_some_and(|c| c.contains("div#shield")), "{text}");
+    let theirs = v["listeners"]["cover"]["listeners"].as_array().cloned().unwrap_or_default();
+    assert!(theirs.iter().any(|l| l["type"] == "click" && l["use_capture"] == true), "{text}");
+
+    // Seventy elements deep, under a click listener on the document: the
+    // walk stops after 64, and still reads the document.
+    page::eval_value(
+        &mut live.cdp,
+        "(() => { document.getElementById('shield').remove(); let p = document.body; for (let i = 0; i < 70; i++) { const d = document.createElement('div'); p.appendChild(d); p = d; } const b = document.createElement('button'); b.id = 'deep'; b.textContent = 'Deep'; p.appendChild(b); document.addEventListener('click', () => {}); return true; })()",
+    )
+    .await
+    .unwrap();
+    let (status, text) = inspect_page(&mut live.cdp, &ask(json!({ "locator": { "css": "#deep" }, "show": ["listeners"] }))).await;
+    assert_eq!(status, 200, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let names: Vec<&str> = v["listeners"]["ancestors"].as_array().unwrap().iter().filter_map(|a| a["name"].as_str()).collect();
+    assert!(names.contains(&"document"), "{text}");
+    assert!(v["listeners"]["ancestors_stopped"].is_string(), "{text}");
+}
+
+/// `expect_style` against a real page: the computed value, colours written
+/// any way, a custom property, a quoted font family; a transition is
+/// waited out (a `not_equals` read mid-fade would otherwise pass on an
+/// in-between colour); an endless animation is not waited for.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn expect_style_reads_the_computed_style() {
+    let mut live = open().await;
+    let url = fixture_url().replace("autorun-live.html", "autorun-style.html");
+    must(run(&mut live, json!({ "kind": "navigate", "url": url })).await);
+    let style = |css: &str, property: &str, how: &str, value: &str| {
+        json!({ "kind": "expect_style", "selector": { "css": css }, "property": property, how: value, "timeout_ms": 3000 })
+    };
+    must(run(&mut live, style("#plain", "color", "equals", "red")).await);
+    must(run(&mut live, style("#plain", "color", "equals", "#f00")).await);
+    must(run(&mut live, style("#plain", "background-color", "equals", "rgba(255, 0, 0, 0.5)")).await);
+    must(run(&mut live, style("#plain", "display", "not_equals", "none")).await);
+    must(run(&mut live, style("#plain", "box-shadow", "contains", "black")).await);
+    must(run(&mut live, style("#plain", "font-family", "contains", "Arial")).await);
+    must(run(&mut live, style("#plain", "--brand", "equals", "#112233")).await);
+    let quick = json!({ "kind": "expect_style", "selector": { "css": "#plain" }, "property": "color", "equals": "blue", "timeout_ms": 300 });
+    refused(run(&mut live, quick).await, "#plain color is rgb(255, 0, 0), expected rgb(0, 0, 255)");
+
+    // The fade runs 1.5 s: read at once it is neither black nor blue.
+    must(run(&mut live, json!({ "kind": "click", "selector": { "css": "#go" } })).await);
+    let out = run(&mut live, style("#fade", "color", "not_equals", "blue")).await;
+    refused(out, "expected anything but rgb(0, 0, 255)");
+    must(run(&mut live, style("#fade", "color", "equals", "blue")).await);
+
+    // An endless animation never settles: its value is read as it is.
+    must(run(&mut live, style("#pulse", "color", "contains", "rgb(")).await);
+}

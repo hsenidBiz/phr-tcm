@@ -714,3 +714,39 @@ fn an_expectation_with_no_timeout_waits_as_long_as_auto_run_does() {
         assert!(l.contains("timeout: "), "no timeout on: {l}");
     }
 }
+
+/// `expect_style` becomes Playwright's `toHaveCSS`: a colour as the rgb()
+/// the browser reports, a keyword ignoring case, `contains` as a pattern,
+/// and `not_equals` negated.
+#[test]
+fn a_style_check_translates_to_to_have_css() {
+    let got = one_step(json!([
+        { "kind": "expect_style", "selector": "#s", "property": "color", "equals": "red" },
+        { "kind": "expect_style", "selector": "#s", "property": "box-shadow", "contains": "2px", "timeout_ms": 300 },
+        { "kind": "expect_style", "selector": "#s", "property": "display", "not_equals": "none" },
+        { "kind": "expect_style", "selector": "#s", "property": "content", "equals": "\"Hi\"" }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("await expect(cur.locator('#s').first()).toHaveCSS('color', 'rgb(255, 0, 0)', { timeout: 10000 });"), "{got}");
+    assert!(got.contains("await expect(cur.locator('#s').first()).toHaveCSS('box-shadow', new RegExp('2px', 'i'), { timeout: 300 });"), "{got}");
+    assert!(got.contains("await expect(cur.locator('#s').first()).not.toHaveCSS('display', new RegExp('^none$', 'i'), { timeout: 10000 });"), "{got}");
+    assert!(got.contains("await expect(cur.locator('#s').first()).toHaveCSS('content', '\"Hi\"', { timeout: 10000 });"), "{got}");
+}
+
+/// Auto Run makes runs of spaces one and writes a comma as `, `: the
+/// exported pattern takes any run of spaces, and any spaces around a comma.
+#[test]
+fn a_style_pattern_tolerates_runs_of_spaces() {
+    let got = one_step(json!([
+        { "kind": "expect_style", "selector": "#s", "property": "transform", "equals": "matrix(1,0,0,1,0,0)" },
+        { "kind": "expect_style", "selector": "#s", "property": "box-shadow", "contains": "0px   1px" }
+    ]))
+    .run()
+    .unwrap();
+    assert!(
+        got.contains(r#"toHaveCSS('transform', new RegExp('^matrix\\(1\\s*,\\s*0\\s*,\\s*0\\s*,\\s*1\\s*,\\s*0\\s*,\\s*0\\)$', 'i'), { timeout: 10000 });"#),
+        "{got}"
+    );
+    assert!(got.contains(r#"toHaveCSS('box-shadow', new RegExp('0px\\s+1px', 'i'), { timeout: 10000 });"#), "{got}");
+}

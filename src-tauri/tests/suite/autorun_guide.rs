@@ -36,6 +36,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
         Action::ExpectCount { selector: "s".into(), equals: 1, timeout_ms: None },
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), absent: false, timeout_ms: None },
+        serde_json::from_value(serde_json::json!({ "kind": "expect_style", "selector": "s", "property": "color", "equals": "red" })).unwrap(),
         Action::ExpectEnabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectDisabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectChecked { selector: "s".into(), checked: true, timeout_ms: None },
@@ -1389,6 +1390,65 @@ fn the_guide_opens_with_the_quick_rules() {
     assert!(quick.contains("call `get_autorun_guide` with a `section`, or `full` true."), "{quick}");
 }
 
+/// The capture, header, cookie and inspect tools are taught in one section:
+/// every tool by name, the template-building advice, what is hidden, when
+/// nothing is captured, how long test changes last, what is refused, and the
+/// capture-phase listener that makes a click do nothing.
+#[test]
+fn the_guide_teaches_the_network_cookie_and_element_tools() {
+    use v2_lib::autorun::guide::quick_rules;
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = autorun_guide();
+    let at = g.find("\n## Network, cookies and elements\n").expect("the guide has no Network, cookies and elements section");
+    let section = flat(g[at + 1..].split("\n## ").next().unwrap());
+    for tool in [
+        "list_autorun_requests",
+        "search_autorun_requests",
+        "get_autorun_request",
+        "get_autorun_response",
+        "get_autorun_response_body",
+        "set_autorun_capture",
+        "get_autorun_capture",
+        "export_autorun_requests",
+        "import_autorun_requests",
+        "set_autorun_headers",
+        "get_autorun_cookies",
+        "set_autorun_cookie",
+        "clear_autorun_cookies",
+        "inspect_autorun_element",
+        "expect_style",
+    ] {
+        assert!(section.contains(&format!("`{tool}`")), "the section never names `{tool}`: {section}");
+    }
+    for said in [
+        "Build API templates from captured requests",
+        "`get_autorun_request` / `get_autorun_response_body`",
+        "Passwords, tokens, session cookies and keys are hidden",
+        "never cookies or authorization",
+        "Nothing is captured until the app's site is confirmed by a sign-in",
+        "Test headers and cookies stay until you remove them, reset the browser (`reset_autorun_browser`) or release it",
+        "every answer names them",
+        "Reset or remove them before proving a fix",
+        "The sign-in's cookies",
+        "method-override headers are refused",
+        "a `url` on it or a parent domain of it",
+        "It also shows the listeners above the element",
+        "a capture-phase listener above it is the usual reason a click does nothing",
+        "The reads and `set_autorun_capture` work in the person's browser too; the headers and cookies tools that change something need one you opened",
+        "Each `set_autorun_capture` replaces the whole filter, and what it leaves out is gone: it cannot be brought back.",
+        "A body comes in pages of 20 000 characters: pass `offset` for the next.",
+        "each by a `name`",
+        "`X-Original-URL` and `X-Rewrite-URL`",
+        "a parent domain's `url` lists only the cookies set for that domain or above it, not the app host's own",
+    ] {
+        assert!(section.contains(said), "the section never says {said:?}: {section}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+
+    let quick = flat(&quick_rules());
+    assert!(quick.contains("Test headers and cookies stay until removed or reset; do that before proving a fix."), "{quick}");
+}
+
 /// Review Focus 5: the quick guide never contradicts the full guide. Each
 /// quick rule's key phrase is in the quick rules and in the full guide's
 /// own section for that rule, so a rule cannot change in one place only.
@@ -1588,4 +1648,23 @@ fn the_guide_teaches_the_applications_refusals() {
     ] {
         assert!(g.contains(phrase), "the guide never says {phrase:?}");
     }
+}
+
+/// `expect_style` is in the vocabulary with its three comparisons, how a
+/// colour is compared, and that a property is written as CSS writes it.
+#[test]
+fn the_guide_teaches_expect_style() {
+    let g = autorun_guide();
+    let line = g.lines().find(|l| l.contains("\"kind\": \"expect_style\"")).expect("no expect_style line in the vocabulary");
+    for term in ["\"property\"", "`equals`", "`contains`", "`not_equals`", "computed", "rgb()", "background-color", "transition"] {
+        assert!(line.contains(term), "the expect_style line never says {term}: {line}");
+    }
+    let flat = line.to_lowercase();
+    for note in ["reads a colour word as a colour", "always animating can pass by chance", "currentcolor"] {
+        assert!(flat.contains(note), "the expect_style line never says {note:?}: {line}");
+    }
+    // It reads one element, so the seen-check section lists it with those.
+    let seen = g.split("checks that read one element").nth(1).expect("no seen-check list");
+    assert!(seen[..400].contains("`expect_style`"), "the seen-check list never names expect_style");
+    assert!(!line.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }

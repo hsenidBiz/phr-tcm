@@ -66,6 +66,12 @@ pub async fn trip_to_module<D: Driver>(
     timing: &Timing,
     who: &str,
 ) -> ActionOutcome {
+    // The application's site for a supervised browser's capture, from the
+    // route's own start page: a browser signed in by hand never ran the
+    // sign-in that would have named it.
+    if !route.home.start_url.trim().is_empty() {
+        d.set_capture_site(Some(&route.home.start_url));
+    }
     let mut out = nav::reach_module(d, route, from, timing, who).await;
     // A save the module's page sent as it opened fails the case here,
     // before step 1 acts on it.

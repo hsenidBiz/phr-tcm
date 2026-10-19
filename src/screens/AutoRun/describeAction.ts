@@ -412,6 +412,21 @@ function describeKnown(a: Action): Sentence {
         ...describeTarget(a.selector),
         words(` has ${str(a.name)} set to "${withoutHosts(str(a.equals))}"${upTo(a.timeout_ms)}`),
       ];
+    case "expect_style": {
+      const property = str(a.property).trim();
+      const given = [
+        ["has", optStr(a.equals), ""],
+        ["has", optStr(a.contains), " containing"],
+        ["does not have", optStr(a.not_equals), ""],
+      ].filter(([, v]) => v !== undefined) as [string, string, string][];
+      if (given.length !== 1 || property === "") throw new Unreadable();
+      const [has, value, how] = given[0];
+      return [
+        words("Check "),
+        ...describeTarget(a.selector),
+        words(` ${has} ${property}${how} "${withoutHosts(value)}"${upTo(a.timeout_ms)}`),
+      ];
+    }
     case "expect_enabled":
       return [words("Check "), ...describeTarget(a.selector), words(` can be used${upTo(a.timeout_ms)}`)];
     case "expect_disabled":

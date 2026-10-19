@@ -1548,3 +1548,66 @@ async fn a_mark_pushed_out_is_no_longer_held() {
     assert!(cdp.net_since_held(old).is_none(), "a mark pushed out is still read");
     assert_eq!(cdp.net_since(old).len(), 1, "net_since still reads the whole record");
 }
+// ---- the assistant's test headers ---------------------------------------------
+
+/// The assistant's test headers (`set_extra_headers`) are one set for the
+/// whole browser: sent to every tab open now, and to a tab the page opens
+/// later before it runs (after its Network domain is on). An empty set
+/// sends none. Never `Fetch`.
+#[tokio::test]
+async fn test_headers_go_to_every_tab_and_to_a_tab_opened_later() {
+    let mut cdp = browser().await;
+    feed(&mut cdp, [attached("S-one", "T-one", "page", "https://hr.example/one", false)]);
+    settle(&mut cdp).await;
+    let headers: std::collections::BTreeMap<String, String> = [("X-Feature".to_string(), "beta".to_string())].into();
+    cdp.set_extra_headers(&headers).await.unwrap();
+    for session in [MAIN, "S-one"] {
+        let sent_here = sent(&cdp)
+            .iter()
+            .find(|f| f["sessionId"] == session && f["method"] == "Network.setExtraHTTPHeaders")
+            .unwrap_or_else(|| panic!("{session} was not given the headers"))
+            .clone();
+        assert_eq!(sent_here["params"]["headers"], json!({ "X-Feature": "beta" }));
+    }
+
+    feed(&mut cdp, [attached("S-pop", "T-pop", "page", "https://hr.example/pop", true)]);
+    settle(&mut cdp).await;
+    let setup = sent_on(&cdp, "S-pop");
+    let at = |m: &str| setup.iter().position(|s| s == m).unwrap_or_else(|| panic!("{m} was never sent: {setup:?}"));
+    assert!(at("Network.enable") < at("Network.setExtraHTTPHeaders"), "{setup:?}");
+    assert!(at("Network.setExtraHTTPHeaders") < at("Runtime.runIfWaitingForDebugger"), "the tab ran before it had the headers");
+    assert!(!sent(&cdp).iter().any(|f| f["method"].as_str().is_some_and(|m| m.starts_with("Fetch."))), "Fetch was touched");
+
+    // Taken away: every tab is sent the empty set, and a tab opened later
+    // is sent none.
+    cdp.set_extra_headers(&Default::default()).await.unwrap();
+    let emptied: Vec<&Value> = sent(&cdp)
+        .iter()
+        .filter(|f| f["method"] == "Network.setExtraHTTPHeaders" && f["params"]["headers"] == json!({}))
+        .collect();
+    assert_eq!(emptied.len(), 3, "{emptied:?}");
+    feed(&mut cdp, [attached("S-late", "T-late", "page", "https://hr.example/late", true)]);
+    settle(&mut cdp).await;
+    assert!(!sent_on(&cdp, "S-late").iter().any(|m| m == "Network.setExtraHTTPHeaders"));
+}
+
+/// Review Focus 4: test headers set on a guarded browser leave its guard as
+/// it was - no `Fetch` call is made - and a save the page sends after them
+/// is still stopped.
+#[tokio::test]
+async fn a_guarded_save_is_still_stopped_with_test_headers_set() {
+    let mut cdp = browser().await;
+    cdp.guard_saves(&[]).await.unwrap();
+    let fetch_before = sent(&cdp).iter().filter(|f| f["method"].as_str().is_some_and(|m| m.starts_with("Fetch."))).count();
+    let headers: std::collections::BTreeMap<String, String> = [("X-Tenant".to_string(), "acme".to_string())].into();
+    cdp.set_extra_headers(&headers).await.unwrap();
+    let fetch_after = sent(&cdp).iter().filter(|f| f["method"].as_str().is_some_and(|m| m.starts_with("Fetch."))).count();
+    assert_eq!(fetch_before, fetch_after, "setting test headers touched Fetch");
+    assert!(cdp.is_guarding_saves());
+
+    feed(&mut cdp, [paused(MAIN, "r1", "POST", "https://hr.example/api/Save?token=hunter2")]);
+    settle(&mut cdp).await;
+    let stop = answer_to(&cdp, "r1").expect("the save was left paused");
+    assert_eq!(stop["method"], "Fetch.failRequest");
+    assert_eq!(cdp.take_save_blocked().as_deref(), Some(SAVE_STOPPED));
+}

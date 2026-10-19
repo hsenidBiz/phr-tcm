@@ -664,3 +664,12 @@ fn the_report_shows_how_long_a_case_and_its_steps_took() {
     assert!(html.contains("Took 41.2 s: open 1.1, sign-in 12.4, area 3.0, steps 23.9, close 0.8"), "{html}");
     assert!(html.contains("2.3 s"), "{html}");
 }
+
+/// A style check is said with its property and its comparison.
+#[test]
+fn a_style_check_is_said_in_words() {
+    let say = |v: serde_json::Value| action_words(&serde_json::from_value(v).unwrap());
+    assert_eq!(say(serde_json::json!({ "kind": "expect_style", "selector": "#s", "property": "color", "equals": "red" })), "expect #s's color to be \"red\"");
+    assert_eq!(say(serde_json::json!({ "kind": "expect_style", "selector": "#s", "property": "box-shadow", "contains": "2px" })), "expect #s's box-shadow to contain \"2px\"");
+    assert_eq!(say(serde_json::json!({ "kind": "expect_style", "selector": "#s", "property": "display", "not_equals": "none" })), "expect #s's display not to be \"none\"");
+}

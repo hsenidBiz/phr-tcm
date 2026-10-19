@@ -88,6 +88,8 @@ struct FakeHost {
     /// What the replay made of a browser already signed in as the case's
     /// account, as the app says it.
     reuse: v2_lib::autorun::replay_to::Reuse,
+    /// What the assistant had changed for testing when the replay ended.
+    overrides: v2_lib::autorun::overrides::Overrides,
 }
 
 impl FakeHost {
@@ -103,6 +105,7 @@ impl FakeHost {
             left_open: None,
             from: v2_lib::autorun::replay_to::ReplayFrom::Beginning,
             reuse: Default::default(),
+            overrides: Default::default(),
         }
     }
     fn ready() -> Self {
@@ -138,6 +141,7 @@ impl ReplayHost for FakeHost {
                 left_open: self.left_open.clone(),
                 from: self.from,
                 reuse: self.reuse.clone(),
+                overrides: self.overrides.clone(),
             })
         })
     }
@@ -796,4 +800,78 @@ fn still_running_names_the_action_and_the_failures_so_far() {
         "still running, now signing in and going to the case's area - call replay_autorun_to_step again with the same case (77) and step (3) to keep waiting"
     );
     assert!(none.get("action").is_none());
+}
+// ---- what the assistant changed for testing --------------------------------
+
+/// Review Focus 5: a replay that passes while test headers and cookies are
+/// in place says it passed with them, naming them, so it is never taken for
+/// a normal run; one that stops says what is changed; once the reset has
+/// taken them away (`overrides::undo`, what `reset_autorun_browser` runs)
+/// the answer is plain again.
+#[tokio::test]
+async fn a_replay_that_passes_with_test_changes_says_so_and_after_a_reset_is_plain() {
+    use v2_lib::autorun::overrides::{undo, Overrides};
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let mut changed = Overrides::default();
+    changed.headers.insert("X-Feature".into(), "beta".into());
+    changed.cookies.insert(
+        "culture".into(),
+        v2_lib::autorun::overrides::SetCookie { domain: "hr.example.internal".into(), path: "/".into(), value: "fr-FR".into() },
+    );
+
+    let mut ready = FakeHost::ready();
+    ready.overrides = changed.clone();
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), leak(ready), WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    let sentence = v["sentence"].as_str().unwrap();
+    assert!(
+        sentence.ends_with("\nPassed with these changes in place: header X-Feature; cookie culture."),
+        "{sentence}"
+    );
+
+    // A replay that stopped names the changes too, as every answer does.
+    let mut stopped = FakeHost::ending(ReplayEnd::StoppedAt {
+        phase: v2_lib::autorun::replay_to::ReplayPhase::Step,
+        step: 2,
+        why: "nothing matched #s2".into(),
+        outcomes: vec![],
+    });
+    stopped.overrides = changed.clone();
+    let (_, text) = autorun_replay_with(&ctx(), &body(2), leak(stopped), WAIT).await;
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["sentence"],
+        "Started from the beginning. Replay stopped at step 2: nothing matched #s2\nChanged for testing: header X-Feature; cookie culture."
+    );
+
+    // A replay the app refused names them too, read under its lock.
+    let mut refused = FakeHost::ending(ReplayEnd::Refused("the person's Auto Run browser is open".into()));
+    refused.overrides = changed.clone();
+    let (status, text) = autorun_replay_with(&ctx(), &body(4), leak(refused), WAIT).await;
+    assert_eq!(status, 409);
+    assert_eq!(text, "the person's Auto Run browser is open\nChanged for testing: header X-Feature; cookie culture.");
+
+    // A refusal before the replay took the browser names them as last
+    // published.
+    v2_lib::commands::autorun::show_overrides(&changed);
+    let (status, text) = autorun_replay_with(&ctx(), &json!({ "case_id": 999, "step": 1 }).to_string(), leak(FakeHost::ready()), WAIT).await;
+    v2_lib::commands::autorun::show_overrides(&Overrides::default());
+    assert_eq!(status, 409, "{text}");
+    assert!(text.ends_with("\nChanged for testing: header X-Feature; cookie culture."), "{text}");
+
+    // The reset takes them away; the next replay's answer is plain.
+    let mut d = crate::common::ScriptedDriver::new(|_, _| Ok(json!({})));
+    let mut after = changed;
+    assert!(undo(&mut d, &mut after).await.is_empty());
+    assert!(after.is_empty(), "{after:?}");
+    let mut ready = FakeHost::ending(ReplayEnd::Ready { case_id: ID, step: 1, notice: None, whole: None });
+    ready.overrides = after;
+    let (status, text) = autorun_replay_with(&ctx(), &body(1), leak(ready), WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["sentence"], "Started from the beginning. Replayed case 77 to step 1 - the browser is on the page before step 1 runs");
 }

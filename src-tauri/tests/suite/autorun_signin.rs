@@ -44,6 +44,52 @@ async fn the_recipe_signs_in_and_the_session_is_saved() {
     assert_eq!(d.methods().iter().position(|m| m == "Network.clearBrowserCookies"), Some(0));
 }
 
+/// The capture must never take the page the password was typed on for
+/// the application's: the sign-in names that page after each login fill
+/// (the username's and the password's), before the marker confirms the
+/// site. A saved session types nothing and names only the confirmation.
+#[tokio::test]
+async fn the_sign_in_names_the_login_page_to_the_capture_before_confirming_the_site() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = stateful_app(false, None);
+    let out = sign_in(&mut d, dir.path(), &recipe(), &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(d.capture_notes, ["login", "login", "confirm"]);
+
+    let saved = SavedSession { saved_at_ms: now_ms(), cookies: vec![json!({ "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true })], local_storage: vec![] };
+    save_session(dir.path(), "admin", &saved).unwrap();
+    let (mut d, _state) = stateful_app(true, None);
+    let out = sign_in(&mut d, dir.path(), &recipe(), &account(), &quick()).await;
+    assert!(out.ok && out.used_saved_session, "{}", out.detail);
+    assert_eq!(d.capture_notes, ["confirm"]);
+}
+
+/// A provider that asks for the password on a prompt after the account
+/// name: the password fill sits inside a `when_visible`, and the page it is
+/// typed on is named to the capture all the same.
+#[tokio::test]
+async fn a_password_typed_inside_a_prompt_names_its_page_to_the_capture() {
+    let recipe: v2_lib::autorun::recipe::SignInRecipe = serde_json::from_value(json!({
+        "start_url": "https://hr.example.internal/",
+        "steps": [
+            { "kind": "fill", "selector": { "css": "#user" }, "value": "{{username}}" },
+            { "kind": "click", "selector": { "css": "#next" } },
+            { "kind": "when_visible", "selector": { "css": "#pass-prompt" }, "within_ms": 60,
+              "then": [ { "kind": "fill", "selector": { "css": "#pass" }, "value": "{{password}}" } ] },
+            { "kind": "click", "selector": { "css": "#go" } }
+        ],
+        "signed_in": { "css": "#marker" }
+    }))
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, state) = stateful_app(false, None);
+    let out = sign_in(&mut d, dir.path(), &recipe, &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(state.typed_password.load(Ordering::SeqCst));
+    assert_eq!(d.capture_notes, ["login", "login", "confirm"]);
+    no_password_anywhere(&out);
+}
+
 #[tokio::test]
 async fn a_fresh_saved_session_skips_the_form_entirely() {
     let dir = tempfile::tempdir().unwrap();

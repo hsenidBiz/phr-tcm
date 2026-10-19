@@ -1,0 +1,348 @@
+//! HAR 1.2 for the capture store: a redacted export that reads back, and an
+//! import that validates the shape and redacts whatever it takes in.
+
+use serde_json::{json, Value};
+use v2_lib::autorun::har::{from_har, to_har};
+use v2_lib::browser::net_capture::{Body, Captured, Redirect, MAX_CAPTURED};
+
+const PASSWORD: &str = "Hunter2-Pa55w0rd!";
+const SITE: &str = "https://hr.example/hr/home?x=1";
+
+fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
+    list.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect()
+}
+
+fn search(id: u64) -> Captured {
+    Captured {
+        id,
+        request_id: format!("R{id}"),
+        tab: "main".into(),
+        method: "POST".into(),
+        url_path_query: "/api/employees/search?page=2&size=50".into(),
+        kind: Some("XHR".into()),
+        status: Some(200),
+        mime: Some("application/json".into()),
+        req_headers: pairs(&[("content-type", "application/json"), ("x-requested-with", "XMLHttpRequest")]),
+        resp_headers: pairs(&[("content-type", "application/json; charset=utf-8")]),
+        req_body: Some(Body::Text(r#"{"name":"avin","dept":["hr","it"]}"#.into())),
+        resp_body: Some(Body::Text(r#"{"rows":[{"id":1},{"id":2}],"next":"https://hr.example/api/x?page=3"}"#.into())),
+        resp_size: Some(812),
+        started_ms: 1_760_000_000_123,
+        duration_ms: Some(48),
+        failed: None,
+        redirect: None,
+    }
+}
+
+fn redirected(id: u64) -> Captured {
+    Captured {
+        id,
+        request_id: format!("R{id}"),
+        method: "GET".into(),
+        url_path_query: "/hr/old".into(),
+        kind: Some("Document".into()),
+        status: Some(200),
+        mime: Some("text/html".into()),
+        resp_body: Some(Body::TooBig),
+        req_body: None,
+        started_ms: 1_760_000_001_000,
+        duration_ms: None,
+        redirect: Some(Redirect { status: 302, to_path: "/hr/new".into(), other_site: false }),
+        ..Default::default()
+    }
+}
+
+fn failed(id: u64) -> Captured {
+    Captured {
+        id,
+        request_id: format!("R{id}"),
+        method: "GET".into(),
+        url_path_query: "/api/slow".into(),
+        kind: Some("Fetch".into()),
+        started_ms: 1_760_000_002_000,
+        failed: Some("net::ERR_CONNECTION_RESET".into()),
+        resp_body: Some(Body::Dropped),
+        req_body: Some(Body::NotText),
+        ..Default::default()
+    }
+}
+
+/// What `from_har` reads back of `all`: a text body's response size is the
+/// size the export wrote, the redacted text's (the same here: nothing in
+/// these bodies is hidden), never what the browser received.
+fn as_read_back(all: &[Captured]) -> Vec<Captured> {
+    all.iter()
+        .cloned()
+        .map(|mut c| {
+            if let Some(Body::Text(t)) = &c.resp_body {
+                c.resp_size = Some(t.len() as u64);
+            }
+            c
+        })
+        .collect()
+}
+
+/// A redirect's address and every size are written redacted: a token in
+/// the path a sign-in redirects to never reaches the file, and a body's
+/// size never gives a hidden password's length away.
+#[test]
+fn a_redirect_and_the_sizes_are_written_redacted() {
+    let token = "Ab3dEf9GhIjKlMnOpQrStUvWx7Yz0aB1cD2eF3gH4iJ5kL6m";
+    let mut c = redirected(1);
+    c.redirect = Some(Redirect { status: 302, to_path: format!("/account/reset/{token}"), other_site: false });
+    c.req_headers = pairs(&[("content-type", "application/x-www-form-urlencoded")]);
+    c.req_body = Some(Body::Text(format!("user=avin&password={PASSWORD}")));
+    c.mime = Some("application/json".into());
+    c.resp_body = Some(Body::Text(format!(r#"{{"password":"{PASSWORD}","ok":true}}"#)));
+    c.resp_size = Some(999);
+    let har = to_har(&[&c], Some(SITE));
+    let text = har.to_string();
+    assert!(!text.contains(token), "{text}");
+    assert!(!text.contains(PASSWORD), "{text}");
+    let e = &har["log"]["entries"][0];
+    assert!(e["response"]["redirectURL"].as_str().unwrap().starts_with("/account/reset/"));
+    let post = e["request"]["postData"]["text"].as_str().unwrap();
+    assert_eq!(e["request"]["bodySize"].as_u64(), Some(post.len() as u64));
+    assert_ne!(post.len(), format!("user=avin&password={PASSWORD}").len());
+    let shown = e["response"]["content"]["text"].as_str().unwrap();
+    assert_eq!(e["response"]["content"]["size"].as_u64(), Some(shown.len() as u64));
+    assert_eq!(e["response"]["bodySize"].as_u64(), Some(shown.len() as u64));
+}
+
+#[test]
+fn a_har_round_trips() {
+    let all = [search(1), redirected(2), failed(3)];
+    let refs: Vec<&Captured> = all.iter().collect();
+    let har = to_har(&refs, Some(SITE));
+
+    assert_eq!(har["log"]["version"], "1.2");
+    assert_eq!(har["log"]["creator"]["name"], "TCM");
+    let first = &har["log"]["entries"][0];
+    assert_eq!(first["startedDateTime"], "2025-10-09T08:53:20.123Z");
+    assert_eq!(first["time"], 48);
+    assert_eq!(first["request"]["method"], "POST");
+    assert_eq!(first["request"]["url"], "https://hr.example/api/employees/search?page=2&size=50");
+    assert_eq!(first["request"]["queryString"], json!([{ "name": "page", "value": "2" }, { "name": "size", "value": "50" }]));
+    assert_eq!(first["request"]["headers"][0], json!({ "name": "content-type", "value": "application/json" }));
+    assert_eq!(first["request"]["postData"]["mimeType"], "application/json");
+    assert_eq!(first["request"]["postData"]["text"], r#"{"name":"avin","dept":["hr","it"]}"#);
+    assert_eq!(first["response"]["status"], 200);
+    assert_eq!(first["response"]["content"]["mimeType"], "application/json");
+    assert!(first["response"]["content"]["text"].as_str().unwrap().contains("https://hr.example/api/x?page=3"));
+
+    // Through text and back, as a file would.
+    let reread: Value = serde_json::from_str(&har.to_string()).unwrap();
+    let back = from_har(&reread).expect("our own HAR reads back");
+    assert_eq!(back, as_read_back(&all));
+}
+
+#[test]
+fn an_export_is_redacted_like_a_read() {
+    let mut c = search(1);
+    c.url_path_query = format!("/signin?user=avin&password={PASSWORD}");
+    c.req_headers = pairs(&[("content-type", "application/x-www-form-urlencoded"), ("x-csrf-token", "(hidden)")]);
+    c.req_body = Some(Body::Text(format!("Input.Username=avin&Input.Password={PASSWORD}")));
+    c.resp_body = Some(Body::Text(json!({ "id": "x", "access_token": PASSWORD, "note": "ok" }).to_string()));
+    let har = to_har(&[&c], Some(SITE)).to_string();
+    assert!(!har.contains(PASSWORD), "{har}");
+    assert!(har.contains("avin") && har.contains("ok"));
+    assert!(har.contains("[redacted]"));
+}
+
+#[test]
+fn a_har_from_elsewhere_with_secrets_is_redacted_on_import() {
+    let jwt = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    let foreign = json!({
+        "log": {
+            "version": "1.2",
+            "creator": { "name": "WebInspector", "version": "537.36" },
+            "entries": [
+                {
+                    "startedDateTime": "2026-10-19T09:30:00.000+05:30",
+                    "time": 120.6,
+                    "_resourceType": "xhr",
+                    "request": {
+                        "method": "post",
+                        "url": format!("https://hr.example:8443/connect/token?client_secret={PASSWORD}&scope=openid#frag"),
+                        "headers": [
+                            { "name": "Cookie", "value": format!(".ASPXAUTH={PASSWORD}") },
+                            { "name": "Authorization", "value": format!("Bearer {jwt}") },
+                            { "name": "Content-Type", "value": "application/x-www-form-urlencoded" },
+                            { "name": "X-Api-Key", "value": PASSWORD },
+                            { "name": "User-Agent", "value": "Mozilla" }
+                        ],
+                        "cookies": [ { "name": "a", "value": PASSWORD } ],
+                        "postData": { "mimeType": "application/x-www-form-urlencoded", "params": [
+                            { "name": "grant_type", "value": "password" },
+                            { "name": "username", "value": "avin" },
+                            { "name": "password", "value": PASSWORD }
+                        ] }
+                    },
+                    "response": {
+                        "status": 200,
+                        "headers": [
+                            { "name": "Set-Cookie", "value": format!("sid={PASSWORD}") },
+                            { "name": "Content-Type", "value": "application/json" }
+                        ],
+                        "content": { "mimeType": "application/json", "size": 90,
+                            "text": json!({ "who": jwt, "refresh_token": PASSWORD, "scope": "openid" }).to_string() }
+                    }
+                },
+                {
+                    "startedDateTime": "2026-10-19T04:00:01Z",
+                    "time": -1,
+                    "request": { "method": "GET", "url": "https://hr.example/static/logo.png", "headers": [] },
+                    "response": { "status": 200, "headers": [],
+                        "content": { "mimeType": "image/png", "size": 4, "encoding": "base64", "text": "iVBORw0=" } }
+                }
+            ]
+        }
+    });
+    let imported = from_har(&foreign).unwrap();
+    assert_eq!(imported.len(), 2);
+    let all = format!("{imported:?}");
+    assert!(!all.contains(PASSWORD), "{all}");
+    assert!(!all.contains("eyJ") && !all.contains("SflKx"), "{all}");
+
+    let c = &imported[0];
+    assert_eq!((c.id, c.method.as_str()), (1, "POST"));
+    assert_eq!(c.url_path_query, "/connect/token?client_secret=[redacted]&scope=openid");
+    assert_eq!(c.kind.as_deref(), Some("XHR"));
+    assert_eq!(c.status, Some(200));
+    assert_eq!(c.duration_ms, Some(121));
+    assert_eq!(c.started_ms, 1_792_382_400_000);
+    // Only allow-listed headers: no cookie, no authorization, no User-Agent; a secret x- header is hidden.
+    let names: Vec<&str> = c.req_headers.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["content-type", "x-api-key"]);
+    assert_eq!(c.req_headers[1].1, "(hidden)");
+    assert_eq!(c.resp_headers, pairs(&[("content-type", "application/json")]));
+    let Some(Body::Text(req)) = &c.req_body else { panic!("{:?}", c.req_body) };
+    assert_eq!(req, "grant_type=password&username=avin&password=[redacted]");
+    let Some(Body::Text(resp)) = &c.resp_body else { panic!("{:?}", c.resp_body) };
+    assert!(resp.contains("\"scope\":\"openid\"") && resp.contains("[redacted]"), "{resp}");
+    // A picture is never text.
+    assert_eq!(imported[1].resp_body, Some(Body::NotText));
+    assert_eq!(imported[1].id, 2);
+}
+
+#[test]
+fn an_import_refuses_what_is_not_a_har_in_a_short_sentence() {
+    let ok = json!({ "startedDateTime": "2026-10-19T04:00:01Z", "request": { "method": "GET", "url": "/a" }, "response": { "status": 200 } });
+    let har = |entries: Value| json!({ "log": { "version": "1.2", "entries": entries } });
+    assert!(from_har(&har(json!([ok.clone()]))).is_ok());
+
+    let cases: Vec<(Value, &str)> = vec![
+        (json!([1, 2]), "no log"),
+        (json!({ "log": {} }), "no log.entries"),
+        (json!({ "log": { "entries": "x" } }), "no log.entries"),
+        (json!({ "log": { "version": "2.0", "entries": [] } }), "not a HAR 1.x"),
+        (har(json!([ok.clone(), { "request": { "method": "GET", "url": "/a" }, "response": { "status": 200 } }])), "entry 2: no valid startedDateTime"),
+        (har(json!([{ "startedDateTime": "2026-10-19T04:00:01Z", "request": { "url": "/a" }, "response": { "status": 200 } }])), "entry 1: no request method"),
+        (har(json!([{ "startedDateTime": "2026-10-19T04:00:01Z", "request": { "method": "GET" }, "response": { "status": 200 } }])), "entry 1: no request url"),
+        (har(json!([{ "startedDateTime": "2026-10-19T04:00:01Z", "request": { "method": "GET", "url": "/a" }, "response": {} }])), "entry 1: no response status"),
+    ];
+    for (doc, expect) in cases {
+        let err = from_har(&doc).expect_err(expect);
+        assert!(err.contains(expect), "{err} vs {expect}");
+        assert!(err.len() < 80, "{err}");
+    }
+    // A message never quotes a value from the file.
+    let secret = json!({ "log": { "entries": [ { "startedDateTime": PASSWORD, "request": { "method": "GET", "url": "/a" }, "response": { "status": 200 } } ] } });
+    assert!(!from_har(&secret).unwrap_err().contains(PASSWORD));
+}
+
+#[test]
+fn an_import_keeps_the_newest_requests_within_the_cap() {
+    let entries: Vec<Value> = (0..MAX_CAPTURED + 5)
+        .map(|i| json!({ "startedDateTime": "2026-10-19T04:00:01Z", "request": { "method": "GET", "url": format!("/n/{i}") }, "response": { "status": 200 } }))
+        .collect();
+    let got = from_har(&json!({ "log": { "version": "1.2", "entries": entries } })).unwrap();
+    assert_eq!(got.len(), MAX_CAPTURED);
+    assert_eq!(got[0].url_path_query, "/n/5");
+    assert_eq!((got[0].id, got.last().unwrap().id), (1, MAX_CAPTURED as u64));
+}
+
+#[test]
+fn an_export_is_valid_har_with_an_absolute_url_and_a_time() {
+    let all = [search(1), redirected(2), failed(3)];
+    let refs: Vec<&Captured> = all.iter().collect();
+    for site in [Some(SITE), None] {
+        let har = to_har(&refs, site);
+        for e in har["log"]["entries"].as_array().unwrap() {
+            let url = e["request"]["url"].as_str().unwrap();
+            assert!(url.starts_with("https://") && url[8..].contains('/'), "{url}");
+            assert!(e["time"].as_f64().unwrap() >= 0.0, "{e}");
+            assert!(e["timings"]["wait"].as_f64().unwrap() >= 0.0);
+        }
+        // The host is not kept on the way back; an unknown duration stays unknown.
+        let back = from_har(&har).unwrap();
+        assert_eq!(back, as_read_back(&all));
+        assert_eq!(back[1].duration_ms, None);
+    }
+}
+
+#[test]
+fn params_are_redacted_by_name_whatever_the_mime() {
+    for mime in ["multipart/form-data; boundary=x", "text/plain", "application/json", "application/x-www-form-urlencoded", ""] {
+        let har = json!({ "log": { "version": "1.2", "entries": [ {
+            "startedDateTime": "2026-10-19T04:00:01Z",
+            "request": { "method": "POST", "url": "https://hr.example/login", "headers": [],
+                "postData": { "mimeType": mime, "params": [
+                    { "name": "username", "value": "avin" },
+                    { "name": "password", "value": "hunter2" },
+                    { "name": "next", "value": "/cb?token=hunter2" } ] } },
+            "response": { "status": 200 }
+        } ] } });
+        let got = from_har(&har).unwrap();
+        let Some(Body::Text(t)) = &got[0].req_body else { panic!("{:?}", got[0].req_body) };
+        assert!(!t.contains("hunter2"), "{mime}: {t}");
+        assert!(t.contains("username=avin"), "{mime}: {t}");
+    }
+}
+
+#[test]
+fn header_values_and_free_text_are_redacted_on_import_and_export() {
+    let har = json!({ "log": { "version": "1.2", "entries": [ {
+        "startedDateTime": "2026-10-19T04:00:01Z",
+        "_requestId": "id?access_token=hunter2",
+        "_tcm": { "tab": "main?password=hunter2", "failed": "net::ERR for /x?client_secret=hunter2" },
+        "request": { "method": "GET", "url": "https://hr.example/a", "headers": [
+            { "name": "X-Return-Url", "value": "https://hr.example/cb?token=hunter2&a=1" },
+            { "name": "X-Session-Id", "value": "hunter2" } ] },
+        "response": { "status": 200, "headers": [ { "name": "X-Next", "value": "/n?password=hunter2" } ] }
+    } ] } });
+    let got = from_har(&har).unwrap();
+    assert!(!format!("{got:?}").contains("hunter2"), "{got:?}");
+    assert!(got[0].req_headers.iter().any(|(n, v)| n == "x-return-url" && v.contains("a=1")));
+    // An export of a capture holding such values.
+    let mut c = search(1);
+    c.req_headers.push(("x-return-url".into(), "https://hr.example/cb?token=hunter2".into()));
+    c.failed = Some("failed for /x?password=hunter2".into());
+    c.tab = "main?token=hunter2".into();
+    assert!(!to_har(&[&c], Some(SITE)).to_string().contains("hunter2"));
+}
+
+#[test]
+fn an_import_keeps_bodies_within_the_total_budget() {
+    use v2_lib::browser::net_capture::{MAX_BODY_BYTES, MAX_TOTAL_BODY_BYTES};
+    let big = "x ".repeat(MAX_BODY_BYTES / 2 - 10);
+    let entry = |i: usize| json!({
+        "startedDateTime": "2026-10-19T04:00:01Z",
+        "request": { "method": "GET", "url": format!("/n/{i}") },
+        "response": { "status": 200, "content": { "mimeType": "text/plain", "text": big } }
+    });
+    let n = MAX_TOTAL_BODY_BYTES / (MAX_BODY_BYTES - 20) + 4;
+    let entries: Vec<Value> = (0..n).map(entry).collect();
+    let got = from_har(&json!({ "log": { "version": "1.2", "entries": entries } })).unwrap();
+    let kept: usize = got.iter().map(|c| match &c.resp_body { Some(Body::Text(t)) => t.len(), _ => 0 }).sum();
+    assert!(kept <= MAX_TOTAL_BODY_BYTES, "{kept}");
+    assert_eq!(got[0].resp_body, Some(Body::Dropped));
+    assert!(matches!(got.last().unwrap().resp_body, Some(Body::Text(_))));
+    // One body over its own cap.
+    let huge = json!({ "log": { "version": "1.2", "entries": [ {
+        "startedDateTime": "2026-10-19T04:00:01Z",
+        "request": { "method": "GET", "url": "/a" },
+        "response": { "status": 200, "content": { "mimeType": "text/plain", "text": "y".repeat(MAX_BODY_BYTES + 1) } }
+    } ] } });
+    assert_eq!(from_har(&huge).unwrap()[0].resp_body, Some(Body::TooBig));
+}

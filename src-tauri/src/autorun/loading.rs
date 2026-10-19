@@ -57,6 +57,7 @@ pub fn checks_for_loading(action: &Action) -> bool {
             | Action::ExpectContainsText { .. }
             | Action::ExpectCount { .. }
             | Action::ExpectAttribute { .. }
+            | Action::ExpectStyle { .. }
             | Action::ExpectEnabled { .. }
             | Action::ExpectDisabled { .. }
             | Action::ExpectChecked { .. }

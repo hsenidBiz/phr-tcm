@@ -190,7 +190,12 @@ pub async fn already_signed_in<D: Driver>(
         return false;
     }
     let look = timing.expect_ms.min(SIGNED_IN_LOOK_MS);
-    expect(d, &recipe.signed_in, Check::Visible, look, timing.poll_ms).await.ok
+    let seen = expect(d, &recipe.signed_in, Check::Visible, look, timing.poll_ms).await.ok;
+    if seen {
+        // Signed in, on the application's own page.
+        d.confirm_capture_site();
+    }
+    seen
 }
 
 /// Said when the application refused an account's session again after a
@@ -334,6 +339,9 @@ async fn sign_in_held<D: Driver>(
 ) -> SignInOutcome {
     let origins = recipe.origins();
     let policy = Policy::only(origins.clone());
+    // The application's site, which a supervised browser's capture keeps
+    // requests to - never the identity provider's.
+    d.set_capture_site(Some(&recipe.start_url));
     let mut run = Run { account: Some(account), steps: vec![], appeared: vec![] };
     let go = Action::Navigate { url: recipe.start_url.clone() };
     let who = if account.label.trim().is_empty() { account.key.clone() } else { account.label.clone() };
@@ -371,6 +379,9 @@ async fn sign_in_held<D: Driver>(
                     None
                 };
                 let seen = marker.as_ref().is_some_and(|m| m.ok);
+                if seen {
+                    d.confirm_capture_site();
+                }
                 session::unseed(d, &ids).await;
                 if seen {
                     // The recipe's own steps are skipped here; these are
@@ -431,7 +442,7 @@ async fn sign_in_held<D: Driver>(
         return run.done(false, format!("{PAGE_DID_NOT_OPEN}{why}"), false, harness_failure);
     }
     let steps = for_account(&recipe.steps, account);
-    let prompts = Prompts::SignIn { login_field: login_field(&steps) };
+    let prompts = Prompts::SignIn { login_field: login_field(&steps), written: &recipe.steps };
     if let Err((n, why, harness_failure)) = run_steps(d, &mut run, &steps, prompts, timing, &policy).await {
         return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, harness_failure);
     }
@@ -441,6 +452,10 @@ async fn sign_in_held<D: Driver>(
         // Refused again, with a session made just now: not the password.
         forget_session(root, &account.key);
         return run.done(false, session_refused_again(&account.key), false, false);
+    }
+    if marker.ok {
+        // Arrived: the page the marker shows on is the application's.
+        d.confirm_capture_site();
     }
     if !marker.ok {
         let harness_failure = marker.harness;
@@ -522,8 +537,13 @@ enum Prompts<'a> {
     /// The sign-in's own steps. While the login field is already showing
     /// the page has loaded, so a prompt is looked for once, not waited for.
     /// Otherwise (no login field, or the form is gone) it is waited for up
-    /// to its own `within_ms`, as written.
-    SignIn { login_field: Option<&'a Target> },
+    /// to its own `within_ms`, as written. `written` are the same steps as
+    /// the recipe wrote them, placeholders and all, beside the ones
+    /// `for_account` filled in: a fill whose written value is a placeholder
+    /// types the account name or password, and the page it is typed on is
+    /// a login page, whose site the capture never takes for the
+    /// application's (`Driver::note_capture_login_site`).
+    SignIn { login_field: Option<&'a Target>, written: &'a [RecipeStep] },
     /// `after_sign_in`: each run of consecutive prompts is watched together
     /// in one window of this many ms (`watch_together`).
     Together { window_ms: u64 },
@@ -535,6 +555,19 @@ fn login_field(steps: &[RecipeStep]) -> Option<&Target> {
         RecipeStep::Do(Action::Fill { selector, .. }) => Some(selector),
         _ => None,
     })
+}
+
+/// Does the action at this place in the steps as `written` type the
+/// account name or password - a fill whose written value is a
+/// placeholder? The place is step `i`, and within a `when_visible` step
+/// its `then` action `k`; `for_account` keeps every place as written.
+fn types_login(written: &[RecipeStep], i: usize, k: Option<usize>) -> bool {
+    let action = match (written.get(i), k) {
+        (Some(RecipeStep::Do(a)), None) => Some(a),
+        (Some(RecipeStep::WhenVisible(w)), Some(k)) => w.then.get(k),
+        _ => None,
+    };
+    matches!(action, Some(Action::Fill { value, .. }) if super::recipe::has_placeholder(value))
 }
 
 /// Recipe steps in order, each outcome kept. `Err` is the step number,
@@ -556,6 +589,14 @@ async fn run_steps<D: Driver>(
         match (&steps[i], prompts) {
             (RecipeStep::Do(a), _) => {
                 run_action(d, run, n, a, timing, policy).await?;
+                // Typed on this page: a login page's site, never the
+                // application's. Noted once the fill has found its field,
+                // on the page it found it on.
+                if let Prompts::SignIn { written, .. } = prompts {
+                    if types_login(written, i, None) {
+                        d.note_capture_login_site();
+                    }
+                }
                 i += 1;
             }
             (RecipeStep::WhenVisible(_), Prompts::Together { window_ms }) => {
@@ -574,7 +615,7 @@ async fn run_steps<D: Driver>(
                 watch_together(d, run, &group, window_ms, timing, policy).await?;
                 i = end;
             }
-            (RecipeStep::WhenVisible(w), Prompts::SignIn { login_field }) => {
+            (RecipeStep::WhenVisible(w), Prompts::SignIn { login_field, written }) => {
                 let shown = match sign_in_prompt_shown(d, w, login_field, timing).await {
                     Ok(shown) => shown,
                     Err(silent) => return Err(silent_at(run, n, silent)),
@@ -582,8 +623,13 @@ async fn run_steps<D: Driver>(
                 if shown {
                     let seen = run.hide(&w.selector.describe());
                     run.appeared.push(seen);
-                    for action in &w.then {
+                    for (k, action) in w.then.iter().enumerate() {
                         run_action(d, run, n, action, timing, policy).await?;
+                        // A password prompt that comes after the account
+                        // name: typed on this page too.
+                        if types_login(written, i, Some(k)) {
+                            d.note_capture_login_site();
+                        }
                     }
                 } else {
                     carried_past(run, n, w);

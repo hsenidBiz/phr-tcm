@@ -804,6 +804,14 @@ async fn read_name<D: Driver>(d: &mut D, handle: &page::Handle) -> Option<(Strin
     shown.then_some((node.role, node.name))
 }
 
+/// The element behind `handle` as a page read names it: `role "name"`, the
+/// name cleaned and cut as a probe line prints it (`read_name`). `None`
+/// when the page read would not name it.
+pub async fn page_read_label<D: Driver>(d: &mut D, handle: &page::Handle) -> Option<String> {
+    let (role, name) = read_name(d, handle).await?;
+    Some(format!("{role} \"{}\"", truncate_name(&sanitize(&name))))
+}
+
 fn trim_chars(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }

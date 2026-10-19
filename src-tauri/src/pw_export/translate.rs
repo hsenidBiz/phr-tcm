@@ -90,6 +90,7 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
+        | Action::ExpectStyle { selector, .. }
         | Action::ExpectEnabled { selector, .. }
         | Action::ExpectDisabled { selector, .. }
         | Action::ExpectChecked { selector, .. }
@@ -377,6 +378,35 @@ fn call(name: &str, args: &[String], timeout: Option<u32>) -> String {
 
 fn poll_opts(timeout: Option<u32>) -> String {
     format!(", {{ timeout: {} }}", expect_timeout(timeout))
+}
+
+/// What `toHaveCSS` compares an `expect_style` value with, as Auto Run
+/// compares it (`browser::style`): a colour as the rgb() the browser
+/// reports; a quoted value as written; any other value as a pattern that
+/// ignores case - the whole value for `equals` and `not_equals`
+/// (`whole`), anywhere in it for `contains`. As Auto Run makes each run
+/// of spaces one, the pattern takes any run of spaces where the value has
+/// one, and any spaces around a comma.
+fn css_value(want: &str, whole: bool) -> String {
+    let normal = crate::browser::style::normal(want);
+    let colour = crate::browser::style::colour(want).is_some();
+    if (colour || normal.contains(['"', '\''])) && whole {
+        return lit(&normal);
+    }
+    let mut pattern = String::new();
+    let mut after_comma = false;
+    for c in normal.chars() {
+        match c {
+            ',' => pattern.push_str(r"\s*,"),
+            ' ' if after_comma => pattern.push_str(r"\s*"),
+            ' ' => pattern.push_str(r"\s+"),
+            c => pattern.push_str(&escape_regex(&c.to_string())),
+        }
+        after_comma = c == ',';
+    }
+    let source = if whole { format!("^{pattern}$") } else { pattern };
+    let flags = if normal.contains(['"', '\'']) { "" } else { ", 'i'" };
+    format!("new RegExp({}{flags})", lit(&source))
 }
 
 /// Escape for a RegExp source built with `new RegExp(<lit>)`.
@@ -764,6 +794,25 @@ impl Em<'_> {
                 indent,
                 &format!("await expect({}).not.{};", one(selector), call("toHaveAttribute", &[lit(name)], *timeout_ms)),
             ),
+            Action::ExpectStyle { selector, property, equals, contains, not_equals, timeout_ms } => {
+                // `validate` holds the three to exactly one.
+                let picked = match (equals, contains, not_equals) {
+                    (Some(w), _, _) => Some(("", css_value(w, true))),
+                    (_, Some(w), _) => Some(("", css_value(w, false))),
+                    (_, _, Some(w)) => Some((".not", css_value(w, true))),
+                    _ => None,
+                };
+                if let Some((not, arg)) = picked {
+                    self.line(
+                        indent,
+                        &format!(
+                            "await expect({}){not}.{};",
+                            one(selector),
+                            call("toHaveCSS", &[lit(property.trim()), arg], *timeout_ms)
+                        ),
+                    )
+                }
+            }
             Action::ExpectEnabled { selector, timeout_ms } => self.line(
                 indent,
                 &format!("await expect({}).{};", one(selector), call("toBeEnabled", &[], *timeout_ms)),

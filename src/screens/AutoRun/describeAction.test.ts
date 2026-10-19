@@ -50,6 +50,18 @@ describe("a sentence for every action kind", () => {
       { kind: "expect_attribute", selector: SAVE, name: "aria-pressed", absent: true },
       'Check the "Save & Continue" button has no aria-pressed',
     ],
+    [
+      { kind: "expect_style", selector: SAVE, property: "color", equals: "red" },
+      'Check the "Save & Continue" button has color "red"',
+    ],
+    [
+      { kind: "expect_style", selector: SAVE, property: "box-shadow", contains: "2px", timeout_ms: 2000 },
+      'Check the "Save & Continue" button has box-shadow containing "2px" (up to 2 s)',
+    ],
+    [
+      { kind: "expect_style", selector: SAVE, property: "display", not_equals: "none" },
+      'Check the "Save & Continue" button does not have display "none"',
+    ],
     [{ kind: "expect_enabled", selector: SAVE }, 'Check the "Save & Continue" button can be used'],
     [{ kind: "expect_disabled", selector: SAVE, timeout_ms: 2000 }, 'Check the "Save & Continue" button is disabled (up to 2 s)'],
     [
@@ -208,7 +220,7 @@ describe("a sentence for every action kind", () => {
     expect([...kinds].sort()).toEqual(
       [
         "navigate", "click", "fill", "wait_for", "check_text", "check_url", "expect_visible", "expect_hidden",
-        "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "expect_enabled", "expect_disabled",
+        "expect_text", "expect_contains_text", "expect_count", "expect_attribute", "expect_style", "expect_enabled", "expect_disabled",
         "expect_checked", "sign_in", "upload",
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
@@ -364,6 +376,9 @@ describe("an action that is not the right shape reads as one plain line, never a
     ["a dialog with no answer", { kind: "expect_dialog", text: "x" }],
     ["a row with no cells", { kind: "expect_row", table: "#t", cells: {} }],
     ["a row count with two counts", { kind: "expect_row_count", table: "#t", equals: 1, at_most: 2 }],
+    ["a style check with two comparisons", { kind: "expect_style", selector: "#a", property: "color", equals: "red", contains: "r" }],
+    ["a style check with no comparison", { kind: "expect_style", selector: "#a", property: "color" }],
+    ["a style check with no property", { kind: "expect_style", selector: "#a", equals: "red" }],
     ["a sort order it does not know", { kind: "expect_sorted", table: "#t", column: "A", order: "up" }],
     ["a sort reading it does not know", { kind: "expect_sorted", table: "#t", column: "A", order: "ascending", as: "money" }],
   ])("%s", (_, action) => {
@@ -401,6 +416,12 @@ describe("no host or query string in any sentence", () => {
     expect(
       say({ kind: "expect_attribute", selector: { role: "link", name: "Help" }, name: "href", equals: "hr.example.test/docs" }),
     ).toBe('Check the "Help" link has href set to "/docs"');
+  });
+
+  test("expect_style", () => {
+    expect(
+      say({ kind: "expect_style", selector: { role: "banner" }, property: "background-image", contains: "https://cdn.example.test/a.png?t=1" }),
+    ).toBe('Check the banner has background-image containing "/a.png"');
   });
 
   test("check_url: a host followed by a path, a query, and a handler", () => {

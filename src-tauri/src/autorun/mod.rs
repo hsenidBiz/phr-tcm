@@ -8,6 +8,8 @@
 
 pub mod accounts;
 pub mod api_checks;
+pub mod capture_redact;
+pub mod capture_tools;
 pub mod cleanup;
 pub mod defects;
 pub mod components;
@@ -17,12 +19,14 @@ pub mod edits;
 pub mod failures;
 pub mod floor;
 pub mod guide;
+pub mod har;
 pub mod lease;
 pub mod mapping_summary;
 pub mod marks;
 pub mod nav;
 pub mod network;
 pub mod one_browser;
+pub mod overrides;
 pub mod page_errors;
 pub mod patterns;
 pub mod plan;

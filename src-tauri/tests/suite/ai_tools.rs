@@ -585,7 +585,21 @@ fn each_tool_belongs_to_its_module() {
             "propose_accounts",
             "get_accounts",
             "list_test_files",
-            "get_autorun_network_wait"
+            "get_autorun_network_wait",
+            "list_autorun_requests",
+            "search_autorun_requests",
+            "get_autorun_request",
+            "get_autorun_response",
+            "get_autorun_response_body",
+            "set_autorun_capture",
+            "get_autorun_capture",
+            "export_autorun_requests",
+            "import_autorun_requests",
+            "set_autorun_headers",
+            "get_autorun_cookies",
+            "set_autorun_cookie",
+            "clear_autorun_cookies",
+            "inspect_autorun_element"
         ]
     );
     assert_eq!(

@@ -263,11 +263,17 @@ pub struct Held {
     /// person made by hand. Memory only; gone with the lease, and whenever
     /// the browser's signed-in account is cleared (`forget_sign_in`).
     signed_in: Option<crate::browser::session::CookiePrint>,
+    /// The cookies the assistant set for testing in this browser, by name
+    /// in lower case (`autorun::overrides`): the sign-in's print leaves them
+    /// out (`same_sign_in`), so a test cookie never makes the sign-in look
+    /// changed. Kept for the browser's life - a test cookie a reset deleted
+    /// may have replaced one the sign-in left.
+    ignored: std::collections::BTreeSet<String>,
 }
 
 impl Held {
     pub fn new(holder: Holder, wait: Duration) -> Self {
-        Held { holder, wait, lease: None, signed_in: None }
+        Held { holder, wait, lease: None, signed_in: None, ignored: std::collections::BTreeSet::new() }
     }
 
     /// The supervised Auto Run browser's: a held account is refused at
@@ -304,6 +310,27 @@ impl Held {
     /// The app's last sign-in in this browser, if it still stands.
     pub fn sign_in_print(&self) -> Option<&crate::browser::session::CookiePrint> {
         self.signed_in.as_ref()
+    }
+
+    /// The assistant set a test cookie named `name` in this browser: the
+    /// sign-in's print leaves it out from now on.
+    pub fn ignore_in_print(&mut self, name: &str) {
+        self.ignored.insert(name.to_ascii_lowercase());
+    }
+
+    /// The cookies the sign-in's print leaves out (`ignore_in_print`).
+    pub fn ignored_in_print(&self) -> &std::collections::BTreeSet<String> {
+        &self.ignored
+    }
+
+    /// Does the browser still hold the app's last sign-in in it - its
+    /// cookies for `origins` there with the same values, the assistant's test
+    /// cookies left out (`session::same_cookies_except`)? None noted: no.
+    pub async fn same_sign_in<D: crate::browser::cdp::Driver>(&self, d: &mut D, origins: &[String]) -> bool {
+        match &self.signed_in {
+            Some(print) => crate::browser::session::same_cookies_except(d, origins, print, &self.ignored).await,
+            None => false,
+        }
     }
 
     /// The account this browser holds, if any.

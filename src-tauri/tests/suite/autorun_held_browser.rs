@@ -51,6 +51,7 @@ impl DiscoveryBrowser for HeldOne {
             discovery: &mut self.discovery,
             guarded_case: &mut self.guarded_case,
             guard_owner: &mut self.guard_owner,
+            overrides: None,
         }
     }
     fn close(self) {
@@ -699,10 +700,15 @@ fn the_browser_is_marked_with_who_opened_it() {
     let discovery = body("pub(crate) async fn open_for_discovery");
     assert!(discovery.contains("OpenedBy::Assistant") && discovery.contains("make_way_for_discovery"), "{discovery}");
     let step = body("pub async fn auto_run_step");
-    assert!(step.contains("session.opened_by = OpenedBy::Person;"), "{step}");
+    // The person taking the browser marks it theirs (and takes away what
+    // the assistant changed for testing): `Session::make_persons`.
+    let persons = body("    pub(crate) async fn make_persons");
+    assert!(persons.contains("self.opened_by = OpenedBy::Person;"), "{persons}");
+    assert!(persons.contains("overrides::take_for_person"), "{persons}");
+    assert!(step.contains("session.make_persons().await?;"), "{step}");
     let replay = body("pub(crate) async fn replay_supervised");
     assert!(replay.contains("open_if_none(app, &mut slot, by.opens_as())"), "{replay}");
-    assert!(replay.contains("if by == ReplayBy::Person {\n        session.opened_by = OpenedBy::Person;"), "{replay}");
+    assert!(replay.contains("if by == ReplayBy::Person {\n        if let Err(why) = session.make_persons().await {"), "{replay}");
     use v2_lib::commands::autorun::{OpenedBy, ReplayBy};
     assert_eq!((ReplayBy::Person.opens_as(), ReplayBy::Assistant.opens_as()), (OpenedBy::Person, OpenedBy::Assistant));
 }

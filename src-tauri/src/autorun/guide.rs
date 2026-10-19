@@ -28,6 +28,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_contains_text",
     "expect_count",
     "expect_attribute",
+    "expect_style",
     "expect_enabled",
     "expect_disabled",
     "expect_checked",
@@ -126,7 +127,6 @@ pub fn quick_rules() -> String {
 const QUICK_RULES: &str = r##"## Quick rules
 
 Not covered here: call `get_autorun_guide` with a `section`, or `full` true.
-
 - Discover the live app; never read the application's code to write scripts.
   A save refuses any locator the app has not seen. During a discovery with
   an area, `get_autorun_page` records what it shows as seen under that area.
@@ -161,6 +161,7 @@ Not covered here: call `get_autorun_guide` with a `section`, or `full` true.
 - `reset_autorun_browser` gives a clean page, sign-in kept. Use
   `release_autorun_browser` only for a broken browser (frozen, wrong account,
   session gone), never between replays. Never ask the person to restart the app.
+- Test headers and cookies stay until removed or reset; do that before proving a fix.
 - If a case creates, deletes, publishes or submits shared data, or needs the
   site in a particular state, mark it `changes` or `needs_unchanged`,
   reusing one name for one change across the PBI; a setting it needs at one
@@ -224,6 +225,7 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "expect_contains_text", "selector": ..., "value": "..." }`
 - `{ "kind": "expect_count", "selector": ..., "equals": 3 }`
 - `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute
+- `{ "kind": "expect_style", "selector": ..., "property": "color", "equals": "red" }` - the element's computed style (what the browser draws after every stylesheet), with exactly one of `equals`, `contains` or `not_equals`. A colour is compared as the rgb() the browser reports, however it is written (`red`, `#f00`, `rgb(255 0 0)`, `hsl(0, 100%, 50%)`); any other value ignores case and surrounding spaces (not inside quotes). Write the property as CSS does (`background-color`, never `backgroundColor`). A transition or animation still changing that property is waited out. `contains` reads a colour word as a colour (`"contains": "black"` matches `rgb(0, 0, 0) 0px 1px 2px`). A `not_equals` on a property that is always animating can pass by chance. `currentcolor` cannot be compared: write the colour itself
 - `{ "kind": "expect_enabled", "selector": ... }` - the element can be used
 - `{ "kind": "expect_checked", "selector": ..., "checked": true }` - the checkbox or radio is ticked (`"checked": false`: it is not), read from its live state, which follows clicks; any other element answers by its `aria-checked`, and a partly ticked box (`mixed`) is neither. `checked` is true when left out
 - `{ "kind": "expect_disabled", "selector": ... }` - the element is disabled: its `disabled` property is set, it or an element around it has `aria-disabled="true"`, or it is a form control (button, input, select, textarea) a disabled fieldset holds outside that fieldset's first legend; a link in a disabled fieldset is not disabled. A click waits out the same rule
@@ -1314,6 +1316,51 @@ into the application, so use test data, not the real thing. Never try
 `sign_in`: a tried sign-in is refused, and outside a replay the person
 signs in.
 
+## Network, cookies and elements
+
+Look under the page, and test an edge case, in the Auto Run browser. The
+reads and `set_autorun_capture` work in the person's browser too; the
+headers and cookies tools that change something need one you opened (a
+discovery or your replay).
+
+- `list_autorun_requests` and `search_autorun_requests` list the requests
+  the page made on the application's site, newest first and paged;
+  `get_autorun_request`, `get_autorun_response` and
+  `get_autorun_response_body` read one by its id. A body comes in pages
+  of 20 000 characters: pass `offset` for the next.
+- `set_autorun_capture` and `get_autorun_capture` set and show what the
+  capture keeps from now on. Each `set_autorun_capture` replaces the whole
+  filter, and what it leaves out is gone: it cannot be brought back.
+  `export_autorun_requests` and `import_autorun_requests` save it as a HAR
+  file in TCM's own captures folder and read it back as a set, each by a
+  `name`; read an imported set with `from`.
+- Build API templates from captured requests: read the real call with
+  `get_autorun_request` / `get_autorun_response_body` instead of guessing its
+  shape (see `get_api_template_guide`).
+- Passwords, tokens, session cookies and keys are hidden in everything these
+  tools show, and headers are an allow-list: never cookies or authorization.
+- Nothing is captured until the app's site is confirmed by a sign-in: a
+  replay or a discovery.
+- `set_autorun_headers` sends extra headers with every request;
+  `get_autorun_cookies` lists the app's cookies; `set_autorun_cookie` sets
+  one; `clear_autorun_cookies` signs out for real.
+- Test headers and cookies stay until you remove them, reset the browser
+  (`reset_autorun_browser`) or release it, and every answer names them
+  ("Changed for testing: ..."). Reset or remove them before proving a fix:
+  a pass with one in place proves nothing about the normal page.
+- The sign-in's cookies (HttpOnly, `.ASPXAUTH`, `.AspNetCore.*`, the session
+  and anti-forgery cookies, names like a secret) and method-override headers
+  are refused, and so are `X-Original-URL` and `X-Rewrite-URL`, which send a
+  request to another path. `get_autorun_cookies` reads the app's confirmed
+  site, or a `url` on it or a parent domain of it; a parent domain's `url`
+  lists only the cookies set for that domain or above it, not the app
+  host's own.
+- `inspect_autorun_element` shows one element's styles, listeners,
+  animations and structure, and whether a click at its centre reaches it. It
+  also shows the listeners above the element: a capture-phase listener above
+  it is the usual reason a click does nothing. A script checks a computed
+  style with `expect_style`.
+
 ## Discovering the app
 
 Discover the live app; never read the application's code to write scripts.
@@ -1491,7 +1538,7 @@ What a save checks:
   elements. Every other use needs a locator seen matching exactly one: an
   action (click, fill, upload, press_key, drag), the selector a
   `when_visible` waits for, and the checks that read one element (`expect_visible`, `expect_text`,
-  `expect_contains_text`, `expect_attribute`, `expect_enabled`,
+  `expect_contains_text`, `expect_attribute`, `expect_style`, `expect_enabled`,
   `expect_disabled`, `expect_checked`, `expect_focused`, and the table checks, whose table
   must be one). A locator never seen matching
   anything is refused for every use, `expect_hidden` included: probe it

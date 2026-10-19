@@ -906,6 +906,7 @@ export const autoRun: Screen = {
     "Every case starts in a fresh browser with a clean profile, so a result never depends on the case before it.",
     "Scripts, runs, accounts and test files are kept on this computer. Each tester keeps their own accounts; scripts name them by key.",
     "An assistant connected on the AI Bridge tab can write scripts for a whole Product Backlog Item, repair one that broke, and walk you through the setup.",
+    "When a step fails and the reason is not on the page, your assistant can also look at the requests the page made, try a header or cookie of its own, and inspect one element; passwords, tokens and session cookies are always hidden from it.",
   ],
   howTo: [
     {

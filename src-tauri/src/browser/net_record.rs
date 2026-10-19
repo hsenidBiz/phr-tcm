@@ -238,6 +238,15 @@ impl NetRecord {
         self.entries.get_mut(at)
     }
 
+    /// The request with this Chrome id, while it is still kept: what the
+    /// capture asks of a request it sees start (its type, site and poll
+    /// mark), so the two never disagree.
+    pub fn get(&self, request_id: &str) -> Option<&NetEntry> {
+        let seq = *self.by_id.get(request_id)?;
+        let first = self.entries.front()?.seq;
+        self.entries.get(usize::try_from(seq.checked_sub(first)?).ok()?)
+    }
+
     /// The `seq` the next request to start will get. A step takes this when
     /// it begins and later asks for what came `since`.
     pub fn mark(&self) -> u64 {
@@ -276,7 +285,7 @@ fn status_of(v: &Value) -> Option<u16> {
 
 /// `scheme://host:port` of an http(s) address, in lower case, to tell one
 /// site from another - compared, never kept.
-fn origin(url: &str) -> Option<String> {
+pub(crate) fn origin(url: &str) -> Option<String> {
     let (scheme, rest) = url.split_once("://")?;
     let scheme = scheme.to_ascii_lowercase();
     if scheme != "http" && scheme != "https" {

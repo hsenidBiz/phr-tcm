@@ -336,6 +336,16 @@ const DISPOSE_LIMIT: Duration = Duration::from_secs(5);
 /// needed is let go (`net_unmark`), so the ones still held are not pushed
 /// out by marks taken after them.
 pub const MAX_NET_MARKS: usize = 16;
+/// How many captured bodies one drain reads (`read_captured_bodies`).
+const MAX_BODY_READS: usize = 8;
+/// How long one drain may take in all: a page that holds its body reads up
+/// (a long task, an open alert, a paused page) costs a call this at most.
+pub const BODY_READ_BUDGET: Duration = Duration::from_millis(250);
+/// After a read the browser did not answer in time, no drain for this long.
+pub const BODY_READ_PAUSE: Duration = Duration::from_secs(1);
+/// A read given at least this long counts as a try when it is not answered
+/// (`NetCapture::retry`); one given less was cut short by its caller.
+const BODY_READ_FULL: Duration = Duration::from_millis(100);
 
 impl Tab {
     /// Note which document is which: a document loaded, or a request sent
@@ -690,6 +700,14 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// (`drive_new_context`), until it is disposed (`dispose_context`).
     /// While set, a page in any other context is never one of its tabs.
     context: Option<String>,
+    /// The page's own requests and responses, for the assistant to read
+    /// (`capture_requests`): `None` unless this is the supervised browser.
+    capture: Option<super::net_capture::NetCapture>,
+    /// No body is read before this (`BODY_READ_PAUSE`).
+    capture_pause: Option<Instant>,
+    /// The test headers the assistant set (`set_extra_headers`), sent on
+    /// every tab: a tab the page opens later is given them before it runs.
+    extra_headers: std::collections::BTreeMap<String, String>,
 }
 
 /// A browser's downloads: the folder they land in, and every download in
@@ -869,6 +887,9 @@ impl<T: Transport> Cdp<T> {
             dialogs_open: 0,
             page_errors: super::page_errors::PageErrorBook::default(),
             context: None,
+            capture: None,
+            capture_pause: None,
+            extra_headers: std::collections::BTreeMap::new(),
         }
     }
 
@@ -1097,6 +1118,29 @@ impl<T: Transport> Cdp<T> {
                 .filter(|t| t.guard.is_none() && !asked.contains(&t.session_id))
                 .map(|t| t.session_id.clone())
                 .collect();
+        }
+        Ok(())
+    }
+
+    /// Send `headers` with every request of every tab - each one open now,
+    /// and each one the page opens later (`on_attached`) - in place of the
+    /// set sent before; an empty set sends none. One merged set for the
+    /// whole browser (`Network.setExtraHTTPHeaders`, per tab). Never
+    /// `Fetch`: the save guard's interception is not touched, so a guarded
+    /// save stays stopped. A tab other than `main` that closed meanwhile is
+    /// skipped; any other refusal is `Err`, the tabs asked before it
+    /// already sending the new set.
+    pub async fn set_extra_headers(&mut self, headers: &std::collections::BTreeMap<String, String>) -> Result<(), CdpError> {
+        self.extra_headers = headers.clone();
+        let params = serde_json::json!({ "headers": headers });
+        let sessions: Vec<String> = self.tabs.iter().map(|t| t.session_id.clone()).collect();
+        for s in sessions {
+            let limit = self.limit_now();
+            match self.call_on(Some(s.clone()), "Network.setExtraHTTPHeaders", params.clone(), limit).await {
+                Ok(_) => {}
+                Err(CdpError::Closed) if s != self.main && !self.has_tab(&s) => {}
+                Err(e) => return Err(e),
+            }
         }
         Ok(())
     }
@@ -1413,7 +1457,8 @@ impl<T: Transport> Cdp<T> {
     pub async fn idle(&mut self, wait: Duration) {
         // An armed `expect_dialog` is waiting on a dialog: it is read, and
         // answered, the moment it opens.
-        if self.wants_reading() || self.downloads.is_some() || self.book.is_armed() {
+        let bodies_waiting = self.capture.as_ref().is_some_and(|c| c.queued_reads() > 0);
+        if self.wants_reading() || self.downloads.is_some() || self.book.is_armed() || bodies_waiting {
             self.pump(wait).await;
         } else {
             tokio::time::sleep(wait).await;
@@ -1429,6 +1474,7 @@ impl<T: Transport> Cdp<T> {
             tokio::time::sleep(wait).await;
             return;
         }
+        self.read_captured_bodies(BODY_READ_BUDGET.min(until.saturating_duration_since(Instant::now()))).await;
         loop {
             if self.resolve_parked().await.is_err() {
                 tokio::time::sleep(until.saturating_duration_since(Instant::now())).await;
@@ -1461,6 +1507,9 @@ impl<T: Transport> Cdp<T> {
                         tokio::time::sleep(until.saturating_duration_since(Instant::now())).await;
                         return;
                     }
+                    // A body is read as soon as its request finished: the
+                    // browser may drop it later.
+                    self.read_captured_bodies(BODY_READ_BUDGET.min(until.saturating_duration_since(Instant::now()))).await;
                 }
             }
         }
@@ -1687,6 +1736,12 @@ impl<T: Transport> Cdp<T> {
             ("Page.setLifecycleEventsEnabled", serde_json::json!({ "enabled": true })),
         ] {
             self.queue(s, method, params, Some(SetupStep::Watch(method)));
+        }
+        // The assistant's test headers, after the tab's Network domain is on
+        // and before it runs: its first request carries them too.
+        if !self.extra_headers.is_empty() {
+            let headers = serde_json::json!({ "headers": self.extra_headers });
+            self.queue(s, "Network.setExtraHTTPHeaders", headers, None);
         }
         for (_, params) in self.seeds.clone() {
             self.queue(s, "Page.addScriptToEvaluateOnNewDocument", params, None);
@@ -2133,6 +2188,9 @@ impl<T: Transport> Cdp<T> {
         if !self.has_tab(&session) {
             return Err(self.gone(&session));
         }
+        // Bodies of requests that finished since the last read, before the
+        // call moves the page on (a navigation drops them).
+        self.read_captured_bodies(BODY_READ_BUDGET).await;
         let seeding = method == "Page.addScriptToEvaluateOnNewDocument";
         let unseeding = method == "Page.removeScriptToEvaluateOnNewDocument";
         let seed = if seeding || unseeding { Some(params.clone()) } else { None };
@@ -2376,6 +2434,10 @@ impl<T: Transport> Cdp<T> {
         // The record sees every event first and never claims one, so the
         // page log below is fed exactly as before.
         tab.net_record.observe(&ev);
+        // The capture asks the record what it just noted (type, site, poll).
+        if let Some(c) = self.capture.as_mut().filter(|_| ev.method.starts_with("Network.")) {
+            c.observe(&tab.session_id, tab.name.as_deref().unwrap_or(""), &tab.url, &ev, &tab.net_record);
+        }
         // Network and console events go to the page log, never into the
         // buffer: a page volunteers thousands, and they would push out the
         // load event a navigation is about to wait for.
@@ -2427,6 +2489,10 @@ impl<T: Transport> Cdp<T> {
                         let i = at.expect("checked above");
                         self.tabs[i].observe_documents(&ev);
                         self.tabs[i].net_record.observe(&ev);
+                        if let Some(c) = self.capture.as_mut().filter(|_| ev.method.starts_with("Network.")) {
+                            let tab = &self.tabs[i];
+                            c.observe(&tab.session_id, tab.name.as_deref().unwrap_or(""), &tab.url, &ev, &tab.net_record);
+                        }
                         let owner = self.download_owner(session.as_deref(), &ev);
                         self.follow_download(&ev, &owner);
                         return Ok(ev);
@@ -2536,6 +2602,92 @@ impl<T: Transport> Cdp<T> {
         let (_, each) = marks.1.iter().find(|(id, _)| *id == mark)?;
         // A tab opened after the mark: all it did came after it.
         Some(t.net_record.since(each.get(&t.session_id).copied().unwrap_or(0)))
+    }
+
+    /// Keep the page's own requests and responses from now on, for the
+    /// assistant (`net_capture`). Only the supervised browser asks; asked
+    /// again, what is kept stays.
+    pub fn capture_requests(&mut self) {
+        self.capture.get_or_insert_with(Default::default);
+    }
+
+    /// What was captured, unless this browser does not capture.
+    pub fn capture(&self) -> Option<&super::net_capture::NetCapture> {
+        self.capture.as_ref()
+    }
+
+    pub fn capture_mut(&mut self) -> Option<&mut super::net_capture::NetCapture> {
+        self.capture.as_mut()
+    }
+
+    /// Whether this browser captures and knows the application's site for
+    /// sure (a sign-in arrived on it): until it does, nothing is shown
+    /// (`NetCapture::confirm_app_site`).
+    pub fn capture_site_known(&self) -> bool {
+        self.capture.as_ref().is_some_and(|c| c.knows_app_site())
+    }
+
+    /// A sign-in arrived: the signed-in marker shows on the current tab's
+    /// page, whose site is the application's (`NetCapture::confirm_app_site`).
+    pub fn confirm_capture_site(&mut self) {
+        let Some(url) = self.current().map(|t| t.url.clone()) else { return };
+        if let Some(c) = self.capture.as_mut() {
+            c.confirm_app_site(&url);
+        }
+    }
+
+    /// The sign-in typed the account name or password on the current tab's
+    /// page: its site is a login page's, never taken for the application's
+    /// (`NetCapture::note_login_site`).
+    pub fn note_capture_login_site(&mut self) {
+        let Some(url) = self.current().map(|t| t.url.clone()) else { return };
+        if let Some(c) = self.capture.as_mut() {
+            c.note_login_site(&url);
+        }
+    }
+
+    /// Read the bodies the capture is waiting on: at most `MAX_BODY_READS`
+    /// of them, within `budget` in all, each on the tab it came from; the
+    /// rest wait for the next time. Called only where no call of this
+    /// connection waits on its answer (`pump`, within its own wait; the
+    /// start of `call_within`), so a read never takes another call's reply.
+    /// A body the browser no longer holds, or a tab that closed, is
+    /// `Dropped`. A read not answered in time goes back to the front
+    /// (`NetCapture::retry`) and nothing is read for `BODY_READ_PAUSE`: a
+    /// page that holds reads up costs one call `budget`, not every call.
+    async fn read_captured_bodies(&mut self, budget: Duration) {
+        if self.capture.as_ref().is_none_or(|c| c.queued_reads() == 0) {
+            return;
+        }
+        if self.capture_pause.is_some_and(|until| Instant::now() < until) {
+            return;
+        }
+        let until = Instant::now() + budget;
+        for _ in 0..MAX_BODY_READS {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            let Some(read) = self.capture.as_mut().and_then(|c| c.next_read()) else {
+                return;
+            };
+            let answer = if self.has_tab(&read.session) {
+                let params = serde_json::json!({ "requestId": read.request_id });
+                self.call_on(Some(read.session.clone()), read.method, params, left).await
+            } else {
+                Err(CdpError::Closed)
+            };
+            if matches!(answer, Err(CdpError::Timeout { .. } | CdpError::Transport(_))) {
+                if let Some(c) = self.capture.as_mut() {
+                    c.retry(read, left >= BODY_READ_FULL);
+                }
+                self.capture_pause = Some(Instant::now() + BODY_READ_PAUSE);
+                return;
+            }
+            if let Some(c) = self.capture.as_mut() {
+                c.answered(&read, answer.as_ref().ok());
+            }
+        }
     }
 
     /// Run an expression in the page and return the raw DevTools result.
@@ -2684,6 +2836,15 @@ pub trait Driver {
     fn stop_guarding_saves(&mut self) -> impl Future<Output = Result<(), CdpError>> {
         async move { self.call("Fetch.disable", serde_json::json!({})).await.map(|_| ()) }
     }
+    /// See `Cdp::set_extra_headers`. A driver with one tab of its own (a
+    /// test's fake) is asked once, like any other call.
+    fn set_extra_headers(
+        &mut self,
+        headers: &std::collections::BTreeMap<String, String>,
+    ) -> impl Future<Output = Result<(), CdpError>> {
+        let params = serde_json::json!({ "headers": headers });
+        async move { self.call("Network.setExtraHTTPHeaders", params).await.map(|_| ()) }
+    }
     /// See `Cdp::is_guarding_saves`. A driver with no guard of its own
     /// never is.
     fn is_guarding_saves(&self) -> bool {
@@ -2710,6 +2871,31 @@ pub trait Driver {
     fn page_error_book(&mut self) -> Option<&mut super::page_errors::PageErrorBook> {
         None
     }
+    /// The page's captured requests (`Cdp::capture_requests`); `None` when
+    /// this driver does not capture.
+    fn capture(&self) -> Option<&super::net_capture::NetCapture> {
+        None
+    }
+    fn capture_mut(&mut self) -> Option<&mut super::net_capture::NetCapture> {
+        None
+    }
+    /// The application's site, from the sign-in's start page: what the
+    /// capture keeps is judged against it (`NetCapture::set_app_site`).
+    fn set_capture_site(&mut self, url: Option<&str>) {
+        if let Some(c) = self.capture_mut() {
+            c.set_app_site(url);
+        }
+    }
+    /// Whether this driver captures and knows the application's site.
+    fn capture_site_known(&self) -> bool {
+        self.capture().is_some_and(|c| c.knows_app_site())
+    }
+    /// The signed-in marker shows on the current page: its site is the
+    /// application's (`Cdp::confirm_capture_site`).
+    fn confirm_capture_site(&mut self) {}
+    /// The sign-in typed the account name or password on the current page:
+    /// its site is a login page's (`Cdp::note_capture_login_site`).
+    fn note_capture_login_site(&mut self) {}
     /// See `Cdp::idle`: a wait loop's pause between two looks.
     fn idle(&mut self, wait: Duration) -> impl Future<Output = ()> {
         tokio::time::sleep(wait)
@@ -2821,6 +3007,18 @@ impl<T: Transport> Driver for Cdp<T> {
     fn page_error_book(&mut self) -> Option<&mut super::page_errors::PageErrorBook> {
         Some(&mut self.page_errors)
     }
+    fn capture(&self) -> Option<&super::net_capture::NetCapture> {
+        self.capture.as_ref()
+    }
+    fn capture_mut(&mut self) -> Option<&mut super::net_capture::NetCapture> {
+        self.capture.as_mut()
+    }
+    fn confirm_capture_site(&mut self) {
+        Cdp::confirm_capture_site(self)
+    }
+    fn note_capture_login_site(&mut self) {
+        Cdp::note_capture_login_site(self)
+    }
     fn take_dialogs(&mut self) -> Vec<String> {
         Cdp::take_dialogs(self)
     }
@@ -2853,6 +3051,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     async fn stop_guarding_saves(&mut self) -> Result<(), CdpError> {
         Cdp::stop_guarding_saves(self).await
+    }
+    async fn set_extra_headers(&mut self, headers: &std::collections::BTreeMap<String, String>) -> Result<(), CdpError> {
+        Cdp::set_extra_headers(self, headers).await
     }
     fn is_guarding_saves(&self) -> bool {
         Cdp::is_guarding_saves(self)

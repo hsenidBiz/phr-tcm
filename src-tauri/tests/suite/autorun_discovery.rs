@@ -109,6 +109,7 @@ impl DiscoveryBrowser for FakeBrowser {
             discovery: &mut self.discovery,
             guarded_case: &mut self.guarded_case,
             guard_owner: &mut self.guard_owner,
+            overrides: None,
         }
     }
     fn close(self) {

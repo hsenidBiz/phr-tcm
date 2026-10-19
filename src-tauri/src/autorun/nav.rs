@@ -632,6 +632,10 @@ pub async fn load_home<D: Driver>(d: &mut D, home: &Home, timing: &Timing) -> Ac
         return ActionOutcome::passed("went to the home page");
     }
     let marker = expect(d, &home.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
+    if marker.ok {
+        // Signed in, on the application's own page.
+        d.confirm_capture_site();
+    }
     if !marker.ok {
         let mut failed = ActionOutcome::failed(if marker.harness {
             "the browser did not answer while the home page was opening"

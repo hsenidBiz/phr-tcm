@@ -47,6 +47,9 @@ pub enum ErrorClass {
     TextMismatch,
     CountMismatch,
     AttributeMismatch,
+    /// An `expect_style`'s computed value was not the one wanted
+    /// (`style::judge`).
+    StyleMismatch,
     StillVisible,
     PageTextMissing,
     UrlMismatch,
@@ -96,6 +99,7 @@ impl ErrorClass {
             ErrorClass::TextMismatch => "text_mismatch",
             ErrorClass::CountMismatch => "count_mismatch",
             ErrorClass::AttributeMismatch => "attribute_mismatch",
+            ErrorClass::StyleMismatch => "style_mismatch",
             ErrorClass::StillVisible => "still_visible",
             ErrorClass::PageTextMissing => "page_text_missing",
             ErrorClass::UrlMismatch => "url_mismatch",
@@ -129,6 +133,7 @@ impl ErrorClass {
             ErrorClass::TextMismatch => "showed different text".to_string(),
             ErrorClass::CountMismatch => "a different number of elements".to_string(),
             ErrorClass::AttributeMismatch => "a different attribute".to_string(),
+            ErrorClass::StyleMismatch => "a different style".to_string(),
             ErrorClass::StillVisible => "still visible".to_string(),
             ErrorClass::PageTextMissing => "the page lacked the words".to_string(),
             ErrorClass::UrlMismatch => "a different address".to_string(),
@@ -408,7 +413,35 @@ fn by_start(t: &str) -> Option<ErrorClass> {
     if (t.starts_with(exp::HAS_NO) && t.ends_with(exp::ATTRIBUTE_TAIL)) || (t.starts_with("expected ") && t.contains("=")) {
         return Some(ErrorClass::AttributeMismatch);
     }
-    None
+    style_class(t, false)
+}
+
+/// An `expect_style` sentence: `<property> is <value>, expected ...`, or
+/// `<property> is still changing (...)` - at the start of `t`, or, with
+/// `anywhere`, after whatever is in front of it (a target never
+/// stripped). The property is a CSS name - never a spreadsheet cell like
+/// `b2`, whose download check says `b2 is "x", expected "y"`.
+fn style_class(t: &str, anywhere: bool) -> Option<ErrorClass> {
+    use crate::browser::style;
+    let cell = |w: &str| {
+        let letters = w.trim_end_matches(|c: char| c.is_ascii_digit());
+        letters.len() < w.len() && !letters.is_empty() && letters.chars().all(|c| c.is_ascii_alphabetic())
+    };
+    t.match_indices(" is ").find_map(|(i, _)| {
+        let before = &t[..i];
+        let property = if anywhere { before.rsplit(' ').next().unwrap_or("") } else { before };
+        if !style::is_property_name(property) || cell(property) {
+            return None;
+        }
+        let rest = &t[i + " is ".len()..];
+        if rest.starts_with(style::STILL_CHANGING) {
+            Some(ErrorClass::StillMoving)
+        } else if rest.contains(style::EXPECTED) {
+            Some(ErrorClass::StyleMismatch)
+        } else {
+            None
+        }
+    })
 }
 
 /// The same reasons, found at the END of a sentence whose target is
@@ -435,6 +468,11 @@ fn by_end(t: &str) -> Option<ErrorClass> {
         (exp::ATTRIBUTE_TAIL, ErrorClass::AttributeMismatch),
     ];
     if let Some((_, class)) = endings.into_iter().find(|(words, _)| t.ends_with(&format!(" {words}")) || t.ends_with(words)) {
+        return Some(class);
+    }
+    // Before the text checks: a style's `contains` fails in their words
+    // (`expected it to contain`), after its own `<property> is <value>`.
+    if let Some(class) = style_class(t, true) {
         return Some(class);
     }
     for (words, class) in [
@@ -476,6 +514,7 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectContainsText { selector, .. }
         | Action::ExpectCount { selector, .. }
         | Action::ExpectAttribute { selector, .. }
+        | Action::ExpectStyle { selector, .. }
         | Action::ExpectEnabled { selector, .. }
         | Action::ExpectDisabled { selector, .. }
         | Action::ExpectChecked { selector, .. }

@@ -127,6 +127,76 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Whether an unattended run is paused because the company network is unreachable, and when it gives up.",
   },
   {
+    name: "list_autorun_requests",
+    label: "Captured requests",
+    summary: "The requests the page in the Auto Run browser made, newest first, with secrets hidden.",
+  },
+  {
+    name: "search_autorun_requests",
+    label: "Search captured requests",
+    summary: "Find captured requests by path, method, status, type or body text.",
+  },
+  {
+    name: "get_autorun_request",
+    label: "A captured request",
+    summary: "One captured request's headers and body, with secrets hidden.",
+  },
+  {
+    name: "get_autorun_response",
+    label: "A captured response",
+    summary: "One captured response's status, headers, size and timing.",
+  },
+  {
+    name: "get_autorun_response_body",
+    label: "A captured response body",
+    summary: "One captured response's body, with secrets hidden, in pages.",
+  },
+  {
+    name: "set_autorun_capture",
+    label: "Set the capture filter",
+    summary: "Which requests the Auto Run browser's capture keeps from now on.",
+  },
+  {
+    name: "get_autorun_capture",
+    label: "The capture filter",
+    summary: "The capture's filter, how many requests it keeps, and the imported sets.",
+  },
+  {
+    name: "export_autorun_requests",
+    label: "Export captured requests",
+    summary: "Save the capture, secrets hidden, as a HAR file in the app's own captures folder.",
+  },
+  {
+    name: "import_autorun_requests",
+    label: "Import captured requests",
+    summary: "Load a HAR file from the app's captures folder as a read-only set.",
+  },
+  {
+    name: "set_autorun_headers",
+    label: "Set test headers",
+    summary: "Extra request headers for the assistant's Auto Run browser, to test an edge case; named in every answer until reset.",
+  },
+  {
+    name: "get_autorun_cookies",
+    label: "Read cookies",
+    summary: "The Auto Run browser's cookies for the application's own site (the one TCM's sign-in confirmed), with the sign-in's values hidden.",
+  },
+  {
+    name: "set_autorun_cookie",
+    label: "Set a test cookie",
+    summary: "One cookie that is not the sign-in's, on the application's own site (the one TCM's sign-in confirmed) in the assistant's Auto Run browser.",
+  },
+  {
+    name: "clear_autorun_cookies",
+    label: "Sign out by clearing cookies",
+    summary: "Delete the application's own site's cookies in the assistant's Auto Run browser: a real sign-out.",
+  },
+  {
+    name: "inspect_autorun_element",
+    label: "Inspect an element",
+    summary: "One element's styles, listeners, animations and structure in the Auto Run browser, read without touching the page.",
+  },
+  {
     name: "get_autorun_failures",
     label: "Auto Run failures",
     summary: "What failed in a run on this machine, and when the script must be left alone.",
@@ -335,6 +405,20 @@ export const AUTORUN_TOOLS = [
   "get_accounts",
   "list_test_files",
   "get_autorun_network_wait",
+  "list_autorun_requests",
+  "search_autorun_requests",
+  "get_autorun_request",
+  "get_autorun_response",
+  "get_autorun_response_body",
+  "set_autorun_capture",
+  "get_autorun_capture",
+  "export_autorun_requests",
+  "import_autorun_requests",
+  "set_autorun_headers",
+  "get_autorun_cookies",
+  "set_autorun_cookie",
+  "clear_autorun_cookies",
+  "inspect_autorun_element",
 ] as const;
 
 export const API_TEMPLATE_TOOLS = [
@@ -450,6 +534,20 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "get_accounts",
     "list_test_files",
     "get_autorun_network_wait",
+    "list_autorun_requests",
+    "search_autorun_requests",
+    "get_autorun_request",
+    "get_autorun_response",
+    "get_autorun_response_body",
+    "set_autorun_capture",
+    "get_autorun_capture",
+    "export_autorun_requests",
+    "import_autorun_requests",
+    "set_autorun_headers",
+    "get_autorun_cookies",
+    "set_autorun_cookie",
+    "clear_autorun_cookies",
+    "inspect_autorun_element",
   ],
   // Building an API template is one job too: read the format, see what
   // is saved, prove a draft, run it. A list with no way to run what it

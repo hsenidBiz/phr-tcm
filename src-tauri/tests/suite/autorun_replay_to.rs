@@ -662,6 +662,7 @@ impl DiscoveryBrowser for Supervised {
             discovery: &mut self.discovery,
             guarded_case: &mut self.guarded_case,
             guard_owner: &mut self.guard_owner,
+            overrides: None,
         }
     }
     fn close(self) {}
@@ -1312,7 +1313,12 @@ fn every_other_use_of_the_browser_clears_the_stand() {
         assert!(b.contains("note_session_use();"), "{f} is not counted as a use");
     }
     for f in ["pub async fn auto_run_step", "pub async fn auto_run_check_preconditions", "pub async fn auto_run_sign_in"] {
-        assert!(body(&source, f).contains("opened_by = OpenedBy::Person;"), "{f} does not make the browser the person's");
+        // `make_persons` marks it, and takes away the assistant's test changes.
+        let b = body(&source, f);
+        assert!(
+            b.contains("opened_by = OpenedBy::Person;") || b.contains("make_persons().await?;"),
+            "{f} does not make the browser the person's"
+        );
     }
     let try_body = body(&bridge, "async fn autorun_try(");
     assert!(
@@ -1645,6 +1651,7 @@ impl DiscoveryBrowser for Kept {
             discovery: &mut self.discovery,
             guarded_case: &mut self.guarded_case,
             guard_owner: &mut self.guard_owner,
+            overrides: None,
         }
     }
     fn close(self) {}
