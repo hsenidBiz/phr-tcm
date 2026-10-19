@@ -438,7 +438,7 @@ pub async fn route(
         // the live application, one action at a time.
         ("POST", "/autorun-discover-start") => {
             let mut seen = None;
-            let answer = autorun_discover_start(ctx, body, &mut seen).await;
+            let answer = without_page(autorun_discover_start(ctx, body, &mut seen).await, body);
             with_overrides_seen(with_no_save_note(answer, discovery_no_save()), seen)
         }
         ("POST", "/autorun-discover-action") => {
@@ -830,16 +830,23 @@ pub fn with_discovery_hint(answer: (u16, String), discovering: bool, fixture: bo
 /// Said in place of the page dump an answer leaves out (`without_page`).
 pub const PAGE_LEFT_OUT: &str = "left out (page: false) - get_autorun_page reads it";
 
-/// `answer` with its `page` dump left out when the call's body sent
-/// `"page": false`: discover_autorun_action(s) and replay_autorun_to_step
-/// answer the whole page after every call, which a caller that only wants
-/// the outcome can do without. The page is still read, so what it shows is
-/// still recorded as seen; `page_left_out` says where to read it. Any other
-/// body, an answer that is not a JSON object, or one with no page, is
-/// unchanged.
-pub fn without_page(answer: (u16, String), body: &str) -> (u16, String) {
+/// Whether a call's body wants the page in its answer: every body but one
+/// that sent `"page": false`.
+pub fn page_wanted(body: &str) -> bool {
     let asked = serde_json::from_str::<serde_json::Value>(body).ok().and_then(|v| v.get("page").and_then(|p| p.as_bool()));
-    if asked != Some(false) {
+    asked != Some(false)
+}
+
+/// `answer` with its `page` dump left out when the call's body sent
+/// `"page": false` (`page_wanted`): start_autorun_discovery,
+/// discover_autorun_action and replay_autorun_to_step answer the whole
+/// page, which a caller that only wants the outcome can do without. The
+/// page is still read, so what it shows is still recorded as seen;
+/// `page_left_out` says where to read it. Any other body, an answer that
+/// is not a JSON object, or one with no page, is unchanged. The batch's
+/// text answer is asked for it instead (`discover_actions_paged`).
+pub fn without_page(answer: (u16, String), body: &str) -> (u16, String) {
+    if page_wanted(body) {
         return answer;
     }
     let (status, text) = answer;
@@ -2567,18 +2574,17 @@ pub fn capture_tool_begin<B: DiscoveryBrowser>(
 /// The page in the browser the person opened, as text: Chrome's own
 /// accessibility tree with a locator on every line.
 /// `within` (a locator, as a script writes one: a string, an object or a
-/// chain) and `limit` (`PAGE_LINES_DEFAULT` when left out, at most
-/// `PAGE_LINES_MAX`) are read from the query.
+/// chain), its `nth` (`within_target_nth`) and `limit`
+/// (`PAGE_LINES_DEFAULT` when left out, at most `PAGE_LINES_MAX`) are read
+/// from the query.
 async fn autorun_page(ctx: &BridgeContext, target: &str) -> (u16, String) {
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
-    let within = match q(target, "within").filter(|w| !w.trim().is_empty()) {
-        None => None,
-        Some(raw) => match within_target(&raw) {
-            Ok(t) => Some(t),
-            Err(why) => return (400, why),
-        },
+    let raw = q(target, "within").filter(|w| !w.trim().is_empty());
+    let within = match within_target_nth(raw.as_deref(), q(target, "nth").as_deref()) {
+        Ok(t) => t,
+        Err(why) => return (400, why),
     };
     supervised_page_within(&ctx.org, &ctx.project, page_limit(q(target, "limit").as_deref()), within.as_ref()).await
 }
@@ -2623,6 +2629,52 @@ pub fn within_target(raw: &str) -> Result<crate::browser::locator::Target, Strin
     };
     target.validate().map_err(|e| format!("within is not a locator: {e}"))?;
     Ok(target)
+}
+
+/// Said to an `nth` sent with no `within` for it to pick from.
+pub const NTH_NEEDS_WITHIN: &str = "nth picks one of the elements within matches: send within with it";
+
+/// A `within` locator from its text (`within_target`), with `nth`, when
+/// given, picking one of its matches: counted from 0 as a locator's `nth`
+/// is, and put on its last link, so a chain picks among its final matches.
+/// `None` with no `within`. Refused: an `nth` with no `within`, one that is
+/// not a count from 0, and one the `within` already gives.
+pub fn within_target_nth(
+    raw: Option<&str>,
+    nth: Option<&str>,
+) -> Result<Option<crate::browser::locator::Target>, String> {
+    use crate::browser::locator::Target;
+    let nth = match nth.map(str::trim).filter(|n| !n.is_empty()) {
+        None => None,
+        Some(n) => Some(
+            n.parse::<i32>()
+                .ok()
+                .filter(|n| *n >= 0)
+                .ok_or_else(|| format!("nth is a whole number counting from 0, not {n}"))?,
+        ),
+    };
+    let Some(raw) = raw else {
+        return match nth {
+            Some(_) => Err(NTH_NEEDS_WITHIN.to_string()),
+            None => Ok(None),
+        };
+    };
+    let target = within_target(raw)?;
+    let Some(n) = nth else {
+        return Ok(Some(target));
+    };
+    let mut links = match target {
+        Target::One(step) => vec![step],
+        Target::Chain(steps) => steps,
+        // `within_target` makes a css or text link of every string.
+        Target::Legacy(_) => target.links(),
+    };
+    let last = links.last_mut().ok_or_else(|| "within is not a locator: a locator list is empty".to_string())?;
+    if last.nth.is_some() {
+        return Err("within gives an nth already: send nth once, in within or beside it".to_string());
+    }
+    last.nth = Some(n);
+    Ok(Some(if links.len() == 1 { Target::One(links.remove(0)) } else { Target::Chain(links) }))
 }
 
 /// The supervised browser's page as text, `limit` lines at most: what
@@ -4875,11 +4927,42 @@ pub async fn discover_actions_in<B: DiscoveryBrowser>(
     stop_on_failure: bool,
     stop: &std::sync::atomic::AtomicBool,
 ) -> (u16, String) {
+    discover_actions_paged(slot, root, organization, project, actions, draft, area, stop_on_failure, stop, true).await
+}
+
+/// [`discover_actions_in`], with the page after the last action left out
+/// of the answer when `page` is false (`"page": false`): it is still read,
+/// and what it shows recorded as seen, and a last line says where to read
+/// it (`PAGE_LEFT_OUT`).
+#[allow(clippy::too_many_arguments)]
+pub async fn discover_actions_paged<B: DiscoveryBrowser>(
+    slot: &mut Option<B>,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    actions: &[crate::browser::actions::Action],
+    draft: Option<&crate::autorun::components::Component>,
+    area: Option<&str>,
+    stop_on_failure: bool,
+    stop: &std::sync::atomic::AtomicBool,
+    page: bool,
+) -> (u16, String) {
     let mut heard = Heard::default();
     let was_guarding = guarding_saves(slot);
-    let answer =
-        discover_actions_heard(slot, root, organization, project, actions, draft, area, stop_on_failure, stop, &mut heard)
-            .await;
+    let answer = discover_actions_heard(
+        slot,
+        root,
+        organization,
+        project,
+        actions,
+        draft,
+        area,
+        stop_on_failure,
+        stop,
+        page,
+        &mut heard,
+    )
+    .await;
     heard.remember(root, organization, project);
     heard.forget(slot);
     end_call_guard(slot, root, was_guarding).await;
@@ -4899,6 +4982,7 @@ async fn discover_actions_heard<B: DiscoveryBrowser>(
     area: Option<&str>,
     stop_on_failure: bool,
     stop: &std::sync::atomic::AtomicBool,
+    page_wanted: bool,
     heard: &mut Heard,
 ) -> (u16, String) {
     if let Err(refused) = refuse_batch_size(actions.len()) {
@@ -4996,6 +5080,9 @@ async fn discover_actions_heard<B: DiscoveryBrowser>(
     if status != 200 {
         lines.push(format!("The page could not be read: {}", one_short_line(&page)));
         return batch_ended_by_the_browser(slot, (status, page), lines).await;
+    }
+    if !page_wanted {
+        return (200, format!("{}\n\nPage: {PAGE_LEFT_OUT}", lines.join("\n")));
     }
     (200, format!("{}\n\n{page}", lines.join("\n")))
 }
@@ -5994,7 +6081,7 @@ async fn autorun_discover_actions(
     // the lines of the actions that ran.
     let mut slot = crate::commands::autorun::supervised().lock().await;
     mark_discovery_for(&mut slot, asked);
-    let answer = discover_actions_in(
+    let answer = discover_actions_paged(
         &mut slot,
         &root,
         &ctx.org,
@@ -6004,6 +6091,7 @@ async fn autorun_discover_actions(
         area.as_deref(),
         stop_on_failure,
         &BATCH_STOP,
+        page_wanted(body),
     )
     .await;
     crate::commands::autorun::publish_discovery(&slot);
@@ -6630,8 +6718,9 @@ async fn wait_for_replay(
 /// with `ENDED_DISCOVERY_FIRST`.
 ///
 /// The answer is `{ "sentence" }`, and once the browser stands before the
-/// step, `"page"` beside it: the page as `get_autorun_page` shows it, so the
-/// assistant can try the step at once.
+/// step, or where the replay stopped at a failure, `"page"` beside it: the
+/// page as `get_autorun_page` shows it, so the assistant can try the step
+/// at once.
 pub async fn autorun_replay_with(
     ctx: &BridgeContext,
     body: &str,
@@ -6808,14 +6897,18 @@ async fn run_assistant_replay(
     };
     match end {
         ReplayEnd::Refused(_) | ReplayEnd::Blocked(_) => (409, sentence),
-        ReplayEnd::Ready { .. } => {
+        // Where the browser stands: before the step, or at the failure it
+        // stopped on (a browser that went is never `StoppedAt`).
+        ReplayEnd::Ready { .. } | ReplayEnd::StoppedAt { .. } => {
             let answer = match host.page(org, project).await {
                 (200, page) => serde_json::json!({ "sentence": sentence, "page": page }),
                 (_, why) => serde_json::json!({ "sentence": sentence, "page_unavailable": why }),
             };
             (200, with_summary(answer))
         }
-        ReplayEnd::StoppedAt { .. } | ReplayEnd::Stopped { .. } | ReplayEnd::BrowserGone { .. } => {
+        // Stop, Close or Release ended it, or the browser went: there is
+        // no page to read, and the browser may be closing behind the answer.
+        ReplayEnd::Stopped { .. } | ReplayEnd::BrowserGone { .. } => {
             (200, with_summary(serde_json::json!({ "sentence": sentence })))
         }
     }

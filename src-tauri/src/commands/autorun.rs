@@ -1395,6 +1395,14 @@ pub async fn reset_for_assistant(organization: &str, project: &str) -> (u16, Str
     let account_before = slot.as_ref().and_then(|s| s.account.clone());
     let timing = crate::browser::timing::Timing::supervised();
     let answer = reset_in_for_assistant(&mut slot, &root, organization, project, &timing).await;
+    // No replay carries on from before the reset, even one whose step
+    // stood on the home page the reset went back to: the next one starts
+    // from the beginning, as `ReplayFrom::AlreadyThere` tells the assistant.
+    if answer.0 == 200 {
+        if let Some(s) = slot.as_mut() {
+            s.replay_stand = None;
+        }
+    }
     let answer = crate::ai_bridge::let_go_if_silent(&mut slot, answer).await;
     publish_discovery(&slot);
     publish_overrides(&slot);

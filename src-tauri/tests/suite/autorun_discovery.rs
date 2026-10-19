@@ -3760,6 +3760,37 @@ fn batch_lines(text: &str) -> Vec<&str> {
     text.split("\n\n").next().unwrap().lines().collect()
 }
 
+/// `page: false` leaves the batch's page out of its text answer, saying
+/// where to read it: the page is still read after the last action, and
+/// what it shows recorded as seen.
+#[tokio::test]
+async fn a_batch_asked_for_no_page_leaves_it_out() {
+    use v2_lib::ai_bridge::{discover_actions_paged, PAGE_LEFT_OUT};
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(stepping_page(), exploring("Leave"));
+    let (status, text) = discover_actions_paged(
+        &mut browser,
+        dir.path(),
+        ORG,
+        PROJECT,
+        &[click("#a"), click("#b")],
+        None,
+        None,
+        true,
+        &no_stop(),
+        false,
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    let lines = batch_lines(&text);
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(text.ends_with(&format!("\n\nPage: {PAGE_LEFT_OUT}")), "{text}");
+    assert!(!text.contains("\"Second\""), "the page came back: {text}");
+    let b = browser.as_ref().unwrap();
+    assert_eq!(b.d.calls_to("Accessibility.getFullAXTree").len(), 3, "the page was not read");
+    assert!(sighted(dir.path(), "Leave").contains(&"Second".to_string()), "what the page showed was not recorded");
+}
+
 /// The actions run in order, each answered by one line, and the page is
 /// answered once, from where the last action left it, ending as a page read
 /// during a discovery does. No host or query string comes back.

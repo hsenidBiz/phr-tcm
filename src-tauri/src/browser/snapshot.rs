@@ -584,12 +584,48 @@ pub async fn within_node<D: Driver>(d: &mut D, within: &Target) -> Result<Result
             Some(why) => format!("within matched 0 elements: {why}"),
             None => format!("within matched 0 elements: nothing on the page answers to {}; it must match exactly one", within.describe()),
         })),
-        many => Ok(Err(format!(
-            "within matched {} elements: {} must match exactly one, so narrow it with a name, \"exact\": true, a scope or \"nth\"",
-            many.len(),
-            within.describe()
-        ))),
+        many => {
+            let by_role = within.links().last().is_some_and(|l| l.role.is_some());
+            let mut named = Vec::new();
+            for handle in many.iter().take(WITHIN_NAMED) {
+                named.push(within_match(d, handle, by_role).await?);
+            }
+            let which = if many.len() > WITHIN_NAMED {
+                format!("The first {WITHIN_NAMED} of {}", many.len())
+            } else {
+                "They are".to_string()
+            };
+            Ok(Err(format!(
+                "within matched {} elements: {} must match exactly one, so narrow it with a name, \"exact\": true, a scope or \"nth\" (from 0). {which}: {}.",
+                many.len(),
+                within.describe(),
+                named.join("; ")
+            )))
+        }
     }
+}
+
+/// How many of a `within`'s several matches its refusal names.
+const WITHIN_NAMED: usize = 3;
+
+/// An element as `tag#id.class` (its first three classes), for naming one
+/// of a `within`'s matches.
+pub const WITHIN_MATCH_JS: &str = r#"function() {
+  const cls = typeof this.className === 'string' ? this.className.trim().split(/\s+/).filter(Boolean).slice(0, 3) : [];
+  return String(this.tagName || this.nodeName || '').toLowerCase() + (this.id ? '#' + this.id : '') + cls.map((c) => '.' + c).join('');
+}"#;
+
+/// One of a `within`'s several matches, as a page read lists a line: its
+/// role and name for a role locator (`page_read_label`), `tag#id.class`
+/// for a css or text one, or for an element the read gives no name.
+async fn within_match<D: Driver>(d: &mut D, handle: &page::Handle, by_role: bool) -> Result<String, CdpError> {
+    if by_role {
+        if let Some(label) = page_read_label(d, handle).await {
+            return Ok(label);
+        }
+    }
+    let said = page::call_value(d, handle, WITHIN_MATCH_JS, &[]).await?;
+    Ok(truncate_name(&sanitize(said.as_str().unwrap_or("an element"))))
 }
 
 /// [`snapshot_read`], or with `within` (a DOM node, `within_node`) only

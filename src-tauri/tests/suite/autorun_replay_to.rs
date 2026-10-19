@@ -1203,7 +1203,7 @@ fn a_replay_already_standing_before_the_step_runs_nothing() {
     assert_eq!(from_here(Some(&stand(&saved, 3)), &saved, 3), ReplayFrom::AlreadyThere);
     assert_eq!(
         ReplayFrom::AlreadyThere.said(ID, 3),
-        "The browser is already standing before step 3 of case 77: nothing ran."
+        "The browser is already standing before step 3 of case 77: nothing ran. To run it again from the beginning, call reset_autorun_browser first."
     );
 }
 

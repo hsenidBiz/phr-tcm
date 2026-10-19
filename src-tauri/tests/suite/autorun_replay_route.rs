@@ -265,6 +265,40 @@ async fn a_save_stopped_on_the_way_to_the_area_is_said() {
     );
 }
 
+/// A replay that stopped at a failure answers the page where it stopped,
+/// as a replay that reached its step does, and `page: false` leaves it out
+/// the same way.
+#[tokio::test]
+async fn a_replay_that_stops_at_a_failure_answers_the_page_there() {
+    use v2_lib::ai_bridge::{without_page, PAGE_LEFT_OUT};
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let host = leak(FakeHost::ending(ReplayEnd::StoppedAt {
+        phase: v2_lib::autorun::replay_to::ReplayPhase::Step,
+        step: 2,
+        why: "waited 15000ms and never saw heading \"Ready to Publish\"".into(),
+        outcomes: vec![],
+    }));
+    let answer = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    assert_eq!(answer.0, 200, "{}", answer.1);
+    let v: Value = serde_json::from_str(&answer.1).unwrap();
+    assert_eq!(
+        v,
+        json!({
+            "sentence": "Started from the beginning. Replay stopped at step 2: waited 15000ms and never saw heading \"Ready to Publish\"",
+            "page": "- button \"Submit\" [role=button name=\"Submit\"]",
+        })
+    );
+    let (_, text) = without_page(answer, &json!({ "case_id": ID, "step": 3, "page": false }).to_string());
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert!(v.get("page").is_none(), "{v}");
+    assert_eq!(v["page_left_out"], PAGE_LEFT_OUT);
+}
+
+/// A replay that was stopped, or whose browser closed under it, answers
+/// its sentence alone: there is no page to read.
 #[tokio::test]
 async fn a_replay_that_stops_answers_its_sentence_without_a_page() {
     let _a = crate::serial::autorun();
@@ -272,15 +306,6 @@ async fn a_replay_that_stops_answers_its_sentence_without_a_page() {
     store::set_root(dir.path().to_path_buf());
     project(dir.path(), &script(false));
     for (end, sentence) in [
-        (
-            ReplayEnd::StoppedAt {
-                phase: v2_lib::autorun::replay_to::ReplayPhase::Step,
-                step: 2,
-                why: "nothing matched #s2".into(),
-                outcomes: vec![],
-            },
-            "Started from the beginning. Replay stopped at step 2: nothing matched #s2",
-        ),
         (ReplayEnd::Stopped { step: 2 }, "Started from the beginning. The replay was stopped at step 2: it was asked to stop (Stop, Close browser or Release Auto Run browser)"),
         // The browser closing under it says so, and why, at step 1 too.
         (
@@ -670,7 +695,10 @@ async fn the_answer_says_where_the_replay_started() {
     let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
     assert_eq!(status, 200, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["sentence"], "The browser is already standing before step 3 of case 77: nothing ran.");
+    assert_eq!(
+        v["sentence"],
+        "The browser is already standing before step 3 of case 77: nothing ran. To run it again from the beginning, call reset_autorun_browser first."
+    );
     assert!(v["page"].is_string(), "{v}");
 }
 

@@ -2188,3 +2188,57 @@ fn the_crystal_tool_descriptions_guide_the_assistant() {
     assert_eq!(find("edit_report")["inputSchema"]["properties"]["ops"]["type"], "array");
     assert_eq!(find("edit_report")["inputSchema"]["properties"]["plan"]["type"], "object");
 }
+
+/// Every tool whose answer carries the page declares `page` (a boolean),
+/// and a call with `"page": false` forwards it to the bridge untouched, so
+/// the route can leave the page out.
+#[test]
+fn page_false_reaches_the_bridge_for_every_tool_that_answers_the_page() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &stub(200, "")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap().clone();
+    let find = |name: &str| tools.iter().find(|t| t["name"] == name).cloned().unwrap_or_else(|| panic!("{name} is listed"));
+    for (tool, path, args) in [
+        ("start_autorun_discovery", "/autorun-discover-start", serde_json::json!({ "account": "admin", "page": false })),
+        ("discover_autorun_action", "/autorun-discover-action", serde_json::json!({ "action": { "kind": "reload" }, "page": false })),
+        ("discover_autorun_actions", "/autorun-discover-actions", serde_json::json!({ "actions": [{ "kind": "reload" }], "page": false })),
+        ("replay_autorun_to_step", "/autorun-replay", serde_json::json!({ "case_id": 7, "step": 2, "page": false })),
+    ] {
+        let page = &find(tool)["inputSchema"]["properties"]["page"];
+        assert_eq!(page["type"], "boolean", "{tool} declares page");
+        assert!(page["description"].as_str().is_some_and(|d| d.contains("get_autorun_page")), "{tool}: {page}");
+        let calls = std::cell::RefCell::new(vec![]);
+        let call = |method: &str, path: &str, body: &str| {
+            calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+            Ok((200, "{}".to_string()))
+        };
+        let req = serde_json::json!({ "jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": { "name": tool, "arguments": args } });
+        handle_message(&req.to_string(), "1.0.0", &call).unwrap();
+        let recorded = calls.borrow();
+        let last = recorded.last().unwrap_or_else(|| panic!("{tool} called the bridge"));
+        assert_eq!((last.0.as_str(), last.1.as_str()), ("POST", path), "{tool}");
+        let body: serde_json::Value = serde_json::from_str(&last.2).unwrap();
+        assert_eq!(body["page"], false, "{tool}: {body}");
+    }
+}
+
+/// `get_autorun_page` declares `nth` beside `within`, and forwards it in
+/// the query.
+#[test]
+fn get_autorun_page_forwards_within_and_its_nth() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &stub(200, "")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let page = tools.iter().find(|t| t["name"] == "get_autorun_page").unwrap();
+    let nth = &page["inputSchema"]["properties"]["nth"];
+    assert_eq!(nth["type"], "number", "{page}");
+    assert!(nth["description"].as_str().is_some_and(|d| d.contains("from 0")), "{nth}");
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".to_string()))
+    };
+    let req = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"get_autorun_page","arguments":{"within":"main","nth":1}}}"#;
+    handle_message(req, "1.0.0", &call).unwrap();
+    assert_eq!(calls.borrow().last().unwrap().1, "/autorun-page?within=main&nth=1");
+}

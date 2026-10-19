@@ -1025,3 +1025,94 @@ fn text_inside_a_field_never_prints_as_a_text_line() {
         assert!(!read.text.contains(&format!("text \"{never}")) && !read.text.contains("s3cret"), "{never}: {}", read.text);
     }
 }
+
+/// A page with two nested `<main>` elements and two more, reached by a css
+/// `within` (`CSS_JS` hands back every match) or by role (`queryAXTree`):
+/// `el-0` is `main#app.layout` named "Shell", `el-1` `main.content` with no
+/// name, and so on.
+fn four_mains() -> ScriptedDriver {
+    use v2_lib::browser::snapshot::WITHIN_MATCH_JS;
+    ScriptedDriver::new(|method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        let on = params["objectId"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": true } })),
+            "Runtime.callFunctionOn" if f == WITHIN_MATCH_JS => {
+                let said = match on {
+                    "el-0" => "main#app.layout",
+                    "el-1" => "main.content",
+                    "el-2" => "main#side",
+                    _ => "main",
+                };
+                Ok(json!({ "result": { "value": said } }))
+            }
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => Ok(json!({ "result": [
+                { "name": "0", "value": { "objectId": "el-0" } },
+                { "name": "1", "value": { "objectId": "el-1" } },
+                { "name": "2", "value": { "objectId": "el-2" } },
+                { "name": "3", "value": { "objectId": "el-3" } }
+            ] })),
+            "Accessibility.queryAXTree" => Ok(json!({ "nodes": [
+                { "nodeId": "1", "role": { "value": "main" }, "name": { "value": "Shell" }, "backendDOMNodeId": 10 },
+                { "nodeId": "2", "role": { "value": "main" }, "name": { "value": "" }, "backendDOMNodeId": 11 }
+            ] })),
+            "DOM.resolveNode" => {
+                let backend = params["backendNodeId"].as_i64().unwrap();
+                Ok(json!({ "object": { "objectId": format!("el-{}", backend - 10) } }))
+            }
+            "DOM.describeNode" => {
+                let n: i64 = on.trim_start_matches("el-").parse().unwrap_or(0);
+                Ok(json!({ "node": { "backendNodeId": 10 + n } }))
+            }
+            "Accessibility.getPartialAXTree" => Ok(match on {
+                "el-0" => json!({ "nodes": [{ "nodeId": "1", "role": { "value": "main" }, "name": { "value": "Shell" } }] }),
+                _ => json!({ "nodes": [{ "nodeId": "2", "role": { "value": "main" }, "name": { "value": "" } }] }),
+            }),
+            other => panic!("unexpected {other}"),
+        }
+    })
+}
+
+/// A `within` that matches several names up to three of them, the way a
+/// page read lists a line: a css match as tag#id.class, a role match as
+/// its role and name (tag#id.class when the read gives it no name).
+#[tokio::test]
+async fn a_within_matching_several_names_the_first_three() {
+    use v2_lib::ai_bridge::within_target;
+    use v2_lib::browser::snapshot::within_node;
+    let mut d = four_mains();
+    let refused = within_node(&mut d, &within_target("main").unwrap()).await.unwrap().unwrap_err();
+    assert!(refused.starts_with("within matched 4 elements: main must match exactly one"), "{refused}");
+    assert!(refused.ends_with(" The first 3 of 4: main#app.layout; main.content; main#side."), "{refused}");
+
+    let mut d = four_mains();
+    let by_role = within_target(r#"{"role":"main"}"#).unwrap();
+    let refused = within_node(&mut d, &by_role).await.unwrap().unwrap_err();
+    assert!(refused.starts_with("within matched 2 elements: main must match exactly one"), "{refused}");
+    assert!(refused.ends_with(" They are: main \"Shell\"; main.content."), "{refused}");
+}
+
+/// `nth` picks one of the elements a `within` matches, counting from 0 as a
+/// locator's `nth` does: on the last link, so a chain picks among its final
+/// matches. Without `within`, given twice, or not a count, it is refused.
+#[tokio::test]
+async fn a_within_nth_picks_one_of_its_matches() {
+    use v2_lib::ai_bridge::within_target_nth;
+    use v2_lib::browser::snapshot::within_node;
+    let picked = within_target_nth(Some("main"), Some("1")).unwrap().unwrap();
+    assert_eq!(picked.links().last().unwrap().nth, Some(1));
+    let mut d = four_mains();
+    assert_eq!(within_node(&mut d, &picked).await.unwrap(), Ok(11), "nth 1 is the second match");
+
+    let chain = within_target_nth(Some(r#"[{"role":"dialog"},{"css":"main"}]"#), Some("0")).unwrap().unwrap();
+    let links = chain.links();
+    assert_eq!((links[0].nth, links[1].nth), (None, Some(0)));
+
+    assert_eq!(within_target_nth(None, None), Ok(None));
+    assert!(within_target_nth(None, Some("1")).unwrap_err().contains("within"));
+    assert!(within_target_nth(Some(r#"{"css":"main","nth":0}"#), Some("1")).unwrap_err().contains("nth"));
+    assert!(within_target_nth(Some("main"), Some("-1")).unwrap_err().contains("from 0"));
+    assert!(within_target_nth(Some("main"), Some("x")).unwrap_err().contains("from 0"));
+}

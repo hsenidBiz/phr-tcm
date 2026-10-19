@@ -1277,10 +1277,12 @@ browser (see "Discovering the app"):
   of the page with `within`: a locator, written as a script writes one,
   that matches exactly one element, such as a dialog or a form. Only that
   element and what is inside it is listed; a `within` that matches none
-  or several is refused with the count; a css string counts every
-  visible match. A replay's page, and the page `discover_autorun_action`
-  and `discover_autorun_actions` answer, stop at 120 lines too; send
-  `page: false` to those three to leave the page out of the answer.
+  or several is refused with the count, naming up to 3 of several; a css
+  string counts every visible match. `nth` beside `within` picks one of
+  several, counting from 0 as a locator's `nth` does. The page a replay,
+  `start_autorun_discovery`, `discover_autorun_action` and
+  `discover_autorun_actions` answer stops at 120 lines too; send
+  `page: false` to any of them to leave the page out of the answer.
 - Visible text that no line's name already says (a span, a div, a
   paragraph: "Self 20%", a status badge) prints as a `text "..."` line
   with a text locator on its end. A read never counts a text line as
