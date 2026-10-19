@@ -134,7 +134,10 @@
 //! counts for an action only when that script used it outside such a
 //! check, and only as it wrote it: a plain one-link locator by its key, a
 //! chain or a narrowed locator only whole, written the same way (its
-//! links alone count only for such a check). A script saved before
+//! links alone count only for such a check). A link a saved script used
+//! only where a run passes with nothing there (`takes_none`, a
+//! `when_visible`'s own locator included) counts only for such a use: it
+//! may have been saved on a probe of none, or on a count of several. A script saved before
 //! sightings kept their counts is grandfathered: what it vouches for is
 //! read the same way, though it was checked under the older rule.
 //!
@@ -296,9 +299,10 @@ pub fn is_own_sentence(hint: &str) -> bool {
 /// and name (`Sightings::matching`), then "and more" past 3. One name only
 /// is twins of it. Nothing when no name is known (a css locator).
 fn named_matches(matched: &[&LocatorStep]) -> String {
+    let quoted = |s: &str| s.replace('"', "\\\"");
     let named = |l: &&LocatorStep| match (&l.role, &l.name, &l.text) {
-        (Some(r), Some(n), _) => format!("{r} \"{n}\""),
-        (_, _, Some(t)) => format!("text \"{t}\""),
+        (Some(r), Some(n), _) => format!("{r} \"{}\"", quoted(n)),
+        (_, _, Some(t)) => format!("text \"{}\"", quoted(t)),
         _ => String::new(),
     };
     let names: Vec<String> = matched.iter().take(3).map(named).filter(|n| !n.is_empty()).collect();
@@ -413,6 +417,7 @@ fn present_only(map: &DiscoveryMap) -> DiscoveryMap {
     for a in &mut out.areas {
         a.sightings.retain(|s| s.matched != 0);
         a.wholes.retain(|w| w.matched != 0);
+        a.saved_none_links.clear();
     }
     out
 }
@@ -492,6 +497,22 @@ fn whole_matched(map: &DiscoveryMap, areas: &[&str]) -> Vec<Vec<LocatorStep>> {
             let wholes = a.wholes.iter().filter(|w| w.matched == 1).map(|w| w.locator.links());
             elements.chain(wholes).chain(saved)
         })
+        .collect()
+}
+
+/// The chains and narrowed locators seen whole in the named areas and in
+/// the bucket for no area whose count `keep` takes, as their links.
+fn wholes_in(map: &DiscoveryMap, areas: &[&str], keep: impl Fn(u32) -> bool) -> Vec<Vec<LocatorStep>> {
+    let wanted: Vec<String> = areas.iter().map(|a| area_key(a)).collect();
+    map.areas
+        .iter()
+        .filter(|a| {
+            let key = area_key(&a.area);
+            key.is_empty() || wanted.contains(&key)
+        })
+        .flat_map(|a| a.wholes.iter())
+        .filter(|w| keep(w.matched))
+        .map(|w| w.locator.links())
         .collect()
 }
 
@@ -602,6 +623,13 @@ struct SeenBoth {
     vouched: Sightings,
     many: HashSet<SeenKey>,
     many_legacy: HashSet<SeenKey>,
+    /// Every chain and narrowed locator seen whole, at any count, none
+    /// included: what a use that passes with nothing there takes whole
+    /// (a probe of none files no link alone).
+    none_wholes: Vec<Vec<LocatorStep>>,
+    /// The chains and narrowed locators seen whole matching several,
+    /// counted: what `SEEN_ONLY_MANY` is said of, written that way.
+    many_wholes: Vec<Vec<LocatorStep>>,
 }
 
 impl SeenBoth {
@@ -610,7 +638,9 @@ impl SeenBoth {
         // elements sit, not how many a locator matched: every seen chain.
         let chains = Sightings::new_strict(map, areas).chains;
         let none = Sightings::new(map, areas);
+        let none_wholes = wholes_in(map, areas, |_| true);
         let map = &present_only(map);
+        let many_wholes = wholes_in(map, areas, |m| only_many(m) && counted(m));
         let any = Sightings::new(map, areas);
         let mut one = Sightings::new_strict(&one_only(map, false), areas);
         one.whole = whole_matched(map, areas);
@@ -629,7 +659,24 @@ impl SeenBoth {
             vouched: Sightings::new(&without_checks, areas),
             many: counted_many(map, areas, false),
             many_legacy: counted_many(map, areas, true),
+            none_wholes,
+            many_wholes,
         }
+    }
+
+    /// Is `chain`, used where a run passes with nothing there (`none`),
+    /// seen as a whole at any count, none included, written the same way?
+    fn none_whole(&self, chain: &[LocatorStep], none: bool) -> bool {
+        none && self.none_wholes.iter().any(|w| w.len() == chain.len() && w.iter().zip(chain).all(|(a, b)| same_link_filled(a, b)))
+    }
+
+    /// Run time: [`SeenBoth::none_whole`] for `filled`, the run's copy of
+    /// the saved chain `saved`, as `whole_filled` fits one.
+    fn none_whole_filled(&self, saved: &[LocatorStep], filled: &[LocatorStep], none: bool) -> bool {
+        none && saved.len() == filled.len()
+            && self.none_wholes.iter().any(|w| {
+                w.len() == saved.len() && w.iter().zip(saved).zip(filled).all(|((s, sv), f)| filled_fits(s, sv, f))
+            })
     }
 
     /// Is `chain`, used this way (`many`), seen as a whole: a chain or a
@@ -692,13 +739,23 @@ impl SeenBoth {
             if !links.iter().all(|l| self.vouched.has(l, true)) {
                 return Some(SEEN_ONLY_IN_CHECKS.to_string());
             }
+            // Probed as written and found matching several: said so, with
+            // what it matched, never "probe it" again.
+            // A placeholder one may fit another value matching one: it is
+            // told to probe one (`NEVER_COUNTED_FILLED`) below.
+            let whole_many = !links.iter().any(link_holds_placeholder)
+                && self.many_wholes.iter().any(|w| w.len() == links.len() && w.iter().zip(links).all(|(a, b)| same_link(a, b)));
+            if whole_many {
+                return Some(format!("{SEEN_ONLY_MANY}{}", named_matches(&self.any.matching(link))));
+            }
             let several = if legacy { &self.many_legacy } else { &self.many };
             if link.seen_key().is_some_and(|k| several.contains(&k)) {
                 let matched = self.any.matching(link);
                 // Exact, only one name is its own: the count was of the
                 // names holding it, so it was never counted as written.
                 if link.exact && matched.len() <= 1 {
-                    return Some(NEVER_COUNTED.to_string());
+                    let nth = links.iter().any(|l| l.nth.is_some());
+                    return Some(if nth { NEVER_COUNTED_NTH } else { NEVER_COUNTED }.to_string());
                 }
                 return Some(format!("{SEEN_ONLY_MANY}{}", named_matches(&matched)));
             }
@@ -840,6 +897,7 @@ impl Sightings {
         for a in map.areas.iter().filter(|a| wanted.contains(&area_key(&a.area))) {
             s.saved.extend(a.saved_links.iter().cloned());
             s.saved.extend(a.saved_check_links.iter().cloned());
+            s.saved.extend(a.saved_none_links.iter().cloned());
         }
         for l in seen_links(map, areas) {
             if let Some(role) = &l.role {
@@ -1380,7 +1438,20 @@ pub fn add_saved_scripts(map: &mut DiscoveryMap, scripts: &[CaseScript]) {
             }
         };
         let a = &mut map.areas[i];
-        for (target, links, many) in script_links(script) {
+        for (target, links, class) in script_links(script) {
+            // A use that passes with nothing there vouches only for such
+            // uses: it may have been saved on a probe of none, or, for a
+            // `when_visible`'s own locator, on a count of several.
+            if class == SavedUse::None {
+                for link in links {
+                    let known = a.saved_links.contains(&link) || a.saved_check_links.contains(&link);
+                    if !known && !a.saved_none_links.contains(&link) {
+                        a.saved_none_links.push(link);
+                    }
+                }
+                continue;
+            }
+            let many = class == SavedUse::Many;
             // A plain one-link target outside a check that may match several
             // vouches by its key; a chain or a narrowed one only whole, its
             // links alone only for such a check.
@@ -1395,9 +1466,11 @@ pub fn add_saved_scripts(map: &mut DiscoveryMap, scripts: &[CaseScript]) {
                     }
                     if !a.saved_links.contains(&link) {
                         a.saved_check_links.retain(|l| *l != link);
+                        a.saved_none_links.retain(|l| *l != link);
                         a.saved_links.push(link);
                     }
                 } else if !a.saved_links.contains(&link) && !a.saved_check_links.contains(&link) {
+                    a.saved_none_links.retain(|l| *l != link);
                     a.saved_check_links.push(link);
                 }
             }
@@ -1405,26 +1478,46 @@ pub fn add_saved_scripts(map: &mut DiscoveryMap, scripts: &[CaseScript]) {
     }
 }
 
+/// How a saved script used a locator, for what it vouches for
+/// (`add_saved_scripts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SavedUse {
+    /// A use that needs one seen matching exactly one.
+    One,
+    /// A check that may match several (`takes_many`).
+    Many,
+    /// A use that passes with nothing there (`takes_none`), a
+    /// `when_visible`'s own locator included.
+    None,
+}
+
 /// Every link `script` names as written, a component's target inputs
 /// included, leaving out any that holds a placeholder or an input place;
-/// each with whether its action is a check that may match several
-/// (`takes_many`). A component's target input counts as a use that needs
-/// one: its use inside the component is not read here.
-fn script_links(script: &CaseScript) -> Vec<(Target, Vec<LocatorStep>, bool)> {
-    let mut out: Vec<(Target, Vec<LocatorStep>, bool)> = Vec::new();
+/// each with how its action used it (`SavedUse`). A component's target
+/// input counts as a use that needs one: its use inside the component is
+/// not read here. Each action's own targets only (`own_targets`): a
+/// `when_visible`'s `then` actions are listed on their own.
+fn script_links(script: &CaseScript) -> Vec<(Target, Vec<LocatorStep>, SavedUse)> {
+    let mut out: Vec<(Target, Vec<LocatorStep>, SavedUse)> = Vec::new();
     for action in script.steps.iter().flat_map(|s| s.actions.iter()).flat_map(Action::each) {
-        let many = takes_many(action);
-        let mut targets: Vec<(Target, bool)> = action.targets().into_iter().map(|t| (t.clone(), many)).collect();
+        let class = if takes_none(action) {
+            SavedUse::None
+        } else if takes_many(action) {
+            SavedUse::Many
+        } else {
+            SavedUse::One
+        };
+        let mut targets: Vec<(Target, SavedUse)> = own_targets(action).into_iter().map(|t| (t.clone(), class)).collect();
         if let Action::UseComponent { inputs, .. } = action {
             targets.extend(
                 inputs
                     .values()
                     .filter(|v| v.is_object() || v.is_array())
                     .filter_map(|v| serde_json::from_value::<Target>(v.clone()).ok())
-                    .map(|t| (t, false)),
+                    .map(|t| (t, SavedUse::One)),
             );
         }
-        for (target, many) in targets {
+        for (target, class) in targets {
             let links: Vec<LocatorStep> = target
                 .links()
                 .into_iter()
@@ -1433,7 +1526,7 @@ fn script_links(script: &CaseScript) -> Vec<(Target, Vec<LocatorStep>, bool)> {
                     link.input.is_none() && !placeholder
                 })
                 .collect();
-            out.push((target, links, many));
+            out.push((target, links, class));
         }
     }
     out
@@ -1456,6 +1549,9 @@ pub fn load_checked_map_with(
     saved: &[CaseScript],
 ) -> Result<DiscoveryMap, String> {
     let mut map = load_map(root, org, project)?;
+    // What was not seen for 30 days does not count, though its area has
+    // not been written since to let it go.
+    super::discovery_map::without_stale(&mut map, super::sessions::now_ms());
     let legacy = legacy_scripts_count(root, org, project);
     let vouching: Vec<CaseScript> = saved.iter().filter(|s| vouches(s, org, project, legacy)).cloned().collect();
     add_saved_scripts(&mut map, &vouching);
@@ -1972,7 +2068,7 @@ fn scan(
                     } else {
                         &both
                     };
-                    if seen.whole(&chain, n.many) {
+                    if seen.whole(&chain, n.many) || seen.none_whole(&chain, n.none) {
                         continue;
                     }
                     if let Some(link) = first_unseen(&n.links, &chain, seen.for_use(n.many, legacy, n.none), &own) {
@@ -2124,7 +2220,7 @@ fn component_unseen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) 
                 } else {
                     &both
                 };
-                if seen.whole(&chain, many) {
+                if seen.whole(&chain, many) || seen.none_whole(&chain, none) {
                     continue;
                 }
                 let legacy = t.is_legacy();
@@ -2234,7 +2330,9 @@ pub fn check_resolved_inputs_with(
                 let chain = ft.links();
                 // A placeholder chain or narrowed locator the save took as
                 // a whole (`SeenBoth::whole`) is fitted as a whole here too.
-                if both.whole_filled(&st.links(), &chain, seen_many(fa)) {
+                if both.whole_filled(&st.links(), &chain, seen_many(fa))
+                    || both.none_whole_filled(&st.links(), &chain, takes_none(fa))
+                {
                     continue;
                 }
                 let seen = both.for_use(seen_many(fa), ft.is_legacy(), takes_none(fa));
@@ -2272,7 +2370,9 @@ pub fn check_resolved_inputs_with(
                 for (m, r) in as_saved.iter().flat_map(Action::each).zip(ran.iter().flat_map(Action::each)) {
                     for (mt, rt) in own_targets(m).into_iter().zip(own_targets(r)) {
                         let chain = rt.links();
-                        if both.whole_filled(&mt.links(), &chain, seen_many(r)) {
+                        if both.whole_filled(&mt.links(), &chain, seen_many(r))
+                            || both.none_whole_filled(&mt.links(), &chain, takes_none(r))
+                        {
                             continue;
                         }
                         let seen = both.for_use(seen_many(r), rt.is_legacy(), takes_none(r));

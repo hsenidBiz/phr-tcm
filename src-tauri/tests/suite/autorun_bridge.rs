@@ -3300,7 +3300,7 @@ async fn a_script_using_a_component_saves() {
 
     let row: v2_lib::browser::locator::Target =
         serde_json::from_value(serde_json::json!({ "role": "row", "name": "Alpha" })).unwrap();
-    v2_lib::autorun::discovery_map::record_matched(dir.path(), "acme", "Web", None, "/", &row, 0).unwrap();
+    v2_lib::autorun::discovery_map::record_matched(dir.path(), "acme", "Web", None, "/", &row, v2_lib::autorun::sessions::now_ms()).unwrap();
     let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     assert!(load_script(dir.path(), 7).unwrap().is_some());
@@ -3364,7 +3364,8 @@ async fn a_bridge_saved_script_vouches_for_its_locators() {
         locator: Target::One(publish.clone()),
         required: false,
     };
-    record_seen(dir.path(), "acme", "Web", Some("Ratings"), "/ratings", "Ratings", &[line], None, Some(1), 1).unwrap();
+    let now = v2_lib::autorun::sessions::now_ms();
+    record_seen(dir.path(), "acme", "Web", Some("Ratings"), "/ratings", "Ratings", &[line], None, Some(now), now).unwrap();
     let script = |id: i32| {
         serde_json::json!({
             "case_id": id, "title": "Publish a rating", "area": "Ratings", "checked": false,

@@ -1302,7 +1302,8 @@ browser (see "Discovering the app"):
   page read gives it (`page read: button "Edit ..."`) when its own text
   is not that name.
 - `try_autorun_action` runs one action in that same browser and says what
-  happened - a rehearsal, not a run; nothing is recorded. Every try names
+  happened - a rehearsal, not a run: no run or step record is kept, but
+  what the try found on the page counts as seen. Every try names
   the case it is for, `case_id` beside the `action`, and is refused
   without it: a case marked `no_save` is tried with its saves stopped,
   as in a run.
@@ -1543,9 +1544,9 @@ What a save checks:
 - How many elements it was seen matching depends on how it is used. A
   check that can pass with several matches (`expect_hidden`,
   `expect_count`, `wait_for`) may use a locator seen matching several
-  elements. Every other use needs a locator seen matching exactly one: an
-  action (click, fill, upload, press_key, drag), the selector a
-  `when_visible` waits for, and the checks that read one element (`expect_visible`, `expect_text`,
+  elements, and so may the selector a `when_visible` waits for. Every
+  other use needs a locator seen matching exactly one: an action (click,
+  fill, upload, press_key, drag) and the checks that read one element (`expect_visible`, `expect_text`,
   `expect_contains_text`, `expect_attribute`, `expect_style`, `expect_enabled`,
   `expect_disabled`, `expect_checked`, `expect_focused`, and the table checks, whose table
   must be one). A locator never seen matching
@@ -1553,7 +1554,8 @@ What a save checks:
   as seen for a check that passes with nothing there: `expect_hidden`, an
   `expect_count` of 0, and a `when_visible`'s own locator. Probe the
   locator as written while what it names is not on the page; every other
-  use still needs it seen present.
+  use still needs it seen present, and a saved script that used it only
+  that way vouches for nothing else.
 - What was seen stays seen: a later discovery that reads the page without
   it (a wizard's earlier step, a dropdown's item, a toast) keeps it. It
   is let go only when the area's map is forgotten, or after 30 days not

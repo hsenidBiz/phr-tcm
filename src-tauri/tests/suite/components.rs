@@ -360,7 +360,7 @@ fn pick_a_date() -> Component {
 fn seen_in(root: &std::path::Path, area: &str, locators: &[serde_json::Value]) {
     for l in locators {
         let t: Target = serde_json::from_value(l.clone()).unwrap();
-        record_matched(root, "o", "p", Some(area), "/leave", &t, 1).unwrap();
+        record_matched(root, "o", "p", Some(area), "/leave", &t, v2_lib::autorun::sessions::now_ms()).unwrap();
     }
 }
 

@@ -1083,7 +1083,7 @@ fn a_try_must_name_its_case_as_a_number() {
 /// from Azure DevOps, so the seen check lets it through.
 fn import_seen(root: &std::path::Path, file: &std::path::Path) {
     let save = v2_lib::browser::locator::Target::from("#save");
-    v2_lib::autorun::discovery_map::record_matched(root, "acme", "PMS", None, "/", &save, 1).unwrap();
+    v2_lib::autorun::discovery_map::record_matched(root, "acme", "PMS", None, "/", &save, v2_lib::autorun::sessions::now_ms()).unwrap();
     let cases: v2_lib::commands::autorun::CaseTexts = [(7, vec![])].into_iter().collect();
     v2_lib::commands::autorun::import_scripts_from_path(root, "acme", "PMS", file.to_str().unwrap(), Some(&cases)).unwrap();
 }

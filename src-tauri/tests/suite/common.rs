@@ -1202,13 +1202,15 @@ pub fn see_scripts(root: &std::path::Path, org: &str, project: &str, body: &str)
         .as_array()
         .map(|a| a.iter().filter_map(|s| serde_json::from_value(s.clone()).ok()).collect())
         .unwrap_or_default();
+    // Seen now: a save leaves out what was not seen for 30 days.
+    let now = v2_lib::autorun::sessions::now_ms();
     for script in &scripts {
         for action in script.steps.iter().flat_map(|s| s.actions.iter()).flat_map(Action::each) {
             if let Action::Navigate { url } = action {
-                record_seen(root, org, project, None, url, "", &[], None, None, 0).unwrap();
+                record_seen(root, org, project, None, url, "", &[], None, None, now).unwrap();
             }
             for target in action.targets() {
-                record_matched(root, org, project, None, "/", target, 0).unwrap();
+                record_matched(root, org, project, None, "/", target, now).unwrap();
             }
         }
     }

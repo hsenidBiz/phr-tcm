@@ -600,11 +600,11 @@ fn matching_nothing_on_a_page_forgets_its_elements_but_no_sighting() {
     let sighting = |key: &SeenKey| a.sightings.iter().find(|s| s.key == *key).unwrap_or_else(|| panic!("{key:?} dropped"));
     let grid_edit = sighting(&SeenKey::Css("#grid .row-edit".into()));
     assert_eq!((grid_edit.matched, grid_edit.page.as_str()), (1, "/q"), "a match of none undid one of one");
-    assert_eq!(grid_edit.last_seen, 2000);
+    assert_eq!((grid_edit.last_seen, grid_edit.zero_seen), (1000, Some(2000)), "a match of none stamped the count seen");
     sighting(&SeenKey::Css(".grid".into()));
     sighting(&SeenKey::Role { role: "button".into(), name: "edit".into() });
     let whole = a.wholes.iter().find(|w| w.locator == chain).expect("the whole chain was dropped");
-    assert_eq!(whole.matched, 1);
+    assert_eq!((whole.matched, whole.last_seen, whole.zero_seen), (1, 1000, Some(2000)));
     let p = a.pages.iter().find(|p| p.path == "/p").unwrap();
     assert!(!p.elements.iter().any(|e| e.locator == css), "{:?}", p.elements);
     let q = a.pages.iter().find(|p| p.path == "/q").unwrap();
@@ -612,10 +612,11 @@ fn matching_nothing_on_a_page_forgets_its_elements_but_no_sighting() {
 }
 
 /// #42/#65: a probe that matches nothing files the locator as seen
-/// matching none (`matched` 0), in every form: a role and a name, css, text
-/// and a chain (each link, and the chain whole). It adds no element, and an
-/// area that was never mapped gets one. A later match of some takes its
-/// count; a later match of none never undoes a count of some.
+/// matching none (`matched` 0), in every form: a role and a name, css and
+/// text by their link, a chain only whole (its links alone say nothing). It
+/// adds no element, and an area that was never mapped gets one. A later
+/// match of some takes its count; a later match of none never undoes a
+/// count of some, and never stamps it seen again.
 #[test]
 fn a_probe_matching_nothing_files_every_form_as_seen_matching_none() {
     use v2_lib::autorun::discovery_map::record_matched_counts;
@@ -632,13 +633,17 @@ fn a_probe_matching_nothing_files_every_form_as_seen_matching_none() {
     }
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
     let a = map.areas.iter().find(|a| a.area == "Cycles").expect("no area was made for a match of none");
-    for t in [&role, &css, &text, &chain] {
+    for t in [&role, &css, &text] {
         for link in t.links() {
             let key = link.seen_key().unwrap();
             let s = a.sightings.iter().find(|s| s.key == key).unwrap_or_else(|| panic!("{key:?} not filed"));
             assert_eq!(s.matched, 0, "{key:?}");
             assert_eq!(s.all_matched(), 0, "{key:?}");
         }
+    }
+    for link in chain.links() {
+        let key = link.seen_key().unwrap();
+        assert!(!a.sightings.iter().any(|s| s.key == key), "a link of a chain of none was filed alone: {key:?}");
     }
     assert_eq!(a.wholes.iter().find(|w| w.locator == chain).map(|w| w.matched), Some(0));
     assert!(a.pages.iter().all(|p| p.elements.is_empty()), "a match of none added an element: {:?}", a.pages);
@@ -649,7 +654,39 @@ fn a_probe_matching_nothing_files_every_form_as_seen_matching_none() {
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
     let a = map.areas.iter().find(|a| a.area == "Cycles").unwrap();
     let s = a.sightings.iter().find(|s| s.key == css.links()[0].seen_key().unwrap()).unwrap();
-    assert_eq!((s.matched, s.last_seen), (3, 3000));
+    assert_eq!((s.matched, s.last_seen, s.zero_seen), (3, 2000, Some(3000)));
+}
+
+/// Review 2: a button the app removed, probed and found gone again and
+/// again, still ages out 30 days after it was last seen present; it then
+/// stands as seen matching none while that last probe is fresh, and goes
+/// once that is stale too.
+#[test]
+fn a_re_probed_removed_button_still_ages_out() {
+    use v2_lib::autorun::discovery_map::record_matched_counts;
+    let dir = tempfile::tempdir().unwrap();
+    let archive = Target::One(LocatorStep { role: Some("button".into()), name: Some("Archive".into()), ..LocatorStep::default() });
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &archive, 1000).unwrap();
+    let day = 24 * 60 * 60 * 1000;
+    for k in 1..=4 {
+        record_matched_counts(dir.path(), "Acme", "Web", Some("A"), "/p", &archive, 0, 0, 1000 + k * 7 * day).unwrap();
+    }
+    let sighting = |dir: &std::path::Path| {
+        let map = load_map(dir, "Acme", "Web").unwrap();
+        map.areas[0].sightings.iter().find(|s| s.key == role_key("button", "Archive")).cloned()
+    };
+    let s = sighting(dir.path()).expect("dropped");
+    assert_eq!((s.matched, s.last_seen), (1, 1000), "a probe of none stamped the button seen");
+    // 30 days after it was last seen present, the next write ages it: the
+    // fresh probe of none is what is left.
+    let later = 1000 + STALE_AFTER_MS + 1;
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/q", "Q", &[line("link", "Other")], None, None, later).unwrap();
+    let s = sighting(dir.path()).expect("the fresh probe of none was dropped too");
+    assert_eq!((s.matched, s.last_seen, s.zero_seen), (0, 1000 + 28 * day, None));
+    // And that ages out in its turn.
+    let gone = 1000 + 28 * day + STALE_AFTER_MS + 1;
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/q", "Q", &[line("link", "Other")], None, None, gone).unwrap();
+    assert!(sighting(dir.path()).is_none());
 }
 
 /// A page read while healing or replaying adds what it shows and drops

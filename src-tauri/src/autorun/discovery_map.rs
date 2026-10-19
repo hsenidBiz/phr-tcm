@@ -28,7 +28,8 @@
 //! are all gone from a later read and were real, so a later discovery's
 //! whole-page read replaces the page's `elements` and keeps every sighting.
 //! A sighting goes only when its area is forgotten, when it was not seen
-//! for `STALE_AFTER_MS` (30 days; let go at the area's next recording), or
+//! for `STALE_AFTER_MS` (30 days; let go at the area's next recording,
+//! and left out by a save's check before then, `without_stale`), or
 //! past `MAX_SIGHTINGS`, a safety ceiling on the file's size, the least
 //! recently seen first. An area's `wholes` are kept and let go the same
 //! way.
@@ -61,12 +62,16 @@
 //! refused save matches a locator against the page and files the number
 //! it found.
 //!
-//! A probe that matched nothing files the locator, each of its links and,
-//! for a chain or a narrowed one, the whole, as seen matching none
+//! A probe that matched nothing files a plain locator's link, or a chain or
+//! a narrowed locator whole (never its links alone), as seen matching none
 //! (`matched` 0): the seen check takes that only for a use that passes with
 //! nothing there (`expect_hidden`, an `expect_count` of 0, a
-//! `when_visible`'s own locator). A match of none never undoes a count of
-//! some, and a count of some replaces it. It adds no element.
+//! `when_visible`'s own locator). A count of some replaces it. A match of
+//! none beside a count of some is kept apart (`zero_seen`): it never
+//! stamps the count seen again, so a button the app removed, probed and
+//! found gone again and again, still ages out after 30 days, and then
+//! stands as seen matching none if that probe is itself fresh. It adds no
+//! element.
 //!
 //! A sighting and an element also keep `all`: how many elements the key
 //! matched hidden ones included, which is what a legacy string target
@@ -135,6 +140,12 @@ pub struct AreaMap {
     /// memory by the seen check for such checks alone, never saved.
     #[serde(skip)]
     pub saved_check_links: Vec<LocatorStep>,
+    /// The links the area's saved scripts use only where a run passes with
+    /// nothing there (`seen_check::takes_none`: `expect_hidden`, an
+    /// `expect_count` of 0, a `when_visible`'s own locator), as written:
+    /// read in memory by the seen check for such uses alone, never saved.
+    #[serde(skip)]
+    pub saved_none_links: Vec<LocatorStep>,
     /// The chains and narrowed locators the area's saved scripts use
     /// outside such a check, whole, as written: read in memory by the seen
     /// check, which takes them only written the same way, never saved.
@@ -174,6 +185,12 @@ pub struct Sighting {
     /// `matched` (see the module's notes): read through `all_matched`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub all: Option<u32>,
+    /// When a probe last matched none of it, while it holds a count of
+    /// some: kept apart, so it never makes the count look seen again (see
+    /// the module's notes). Left out when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<f64>)]
+    pub zero_seen: Option<u64>,
 }
 
 impl Sighting {
@@ -200,6 +217,66 @@ pub struct WholeSighting {
     pub last_seen: u64,
     /// How many elements it matched, kept as a sighting keeps it.
     pub matched: u32,
+    /// When a probe last matched none of it, kept as a sighting keeps it
+    /// (`Sighting::zero_seen`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<f64>)]
+    pub zero_seen: Option<u64>,
+}
+
+/// Is a stamp `at` within `STALE_AFTER_MS` of `now`?
+fn fresh(at: u64, now: u64) -> bool {
+    now.saturating_sub(at) <= STALE_AFTER_MS
+}
+
+/// Ages one seen record at `now`: its count of some (`matched`, stamped
+/// `last_seen`) and a match of none kept beside it (`zero_seen`). Answers
+/// whether anything of it is still fresh: a count of some gone stale with
+/// a fresh match of none left becomes that match of none.
+fn age(last_seen: &mut u64, matched: &mut u32, zero_seen: &mut Option<u64>, now: u64) -> bool {
+    if zero_seen.is_some_and(|z| !fresh(z, now)) {
+        *zero_seen = None;
+    }
+    if fresh(*last_seen, now) {
+        return true;
+    }
+    match zero_seen.take() {
+        Some(z) => {
+            *last_seen = z;
+            *matched = 0;
+            true
+        }
+        None => false,
+    }
+}
+
+/// `map` as the seen check reads it at `now`: every sighting and whole
+/// aged (`age`), what is not fresh left out, and with them each page
+/// element whose key no fresh sighting of some holds. A map is let go of
+/// this way at its next write too (`trim_sightings`); this is for a save's
+/// check of an area that has not been written since.
+pub fn without_stale(map: &mut DiscoveryMap, now: u64) {
+    for a in &mut map.areas {
+        age_sightings(a, now);
+        a.wholes.retain_mut(|w| age(&mut w.last_seen, &mut w.matched, &mut w.zero_seen, now));
+        // Every element filed is filed with a sighting of its key: one whose
+        // key has no fresh sighting of some was not seen for 30 days either.
+        let present: HashSet<&SeenKey> = a.sightings.iter().filter(|s| s.matched != 0).map(|s| &s.key).collect();
+        for p in &mut a.pages {
+            p.elements.retain(|e| present.contains(&e.key));
+        }
+    }
+}
+
+/// `age` over the area's sightings, the stale ones dropped.
+fn age_sightings(a: &mut AreaMap, now: u64) {
+    a.sightings.retain_mut(|s| {
+        let kept = age(&mut s.last_seen, &mut s.matched, &mut s.zero_seen, now);
+        if s.matched == 0 {
+            s.all = None;
+        }
+        kept
+    });
 }
 
 /// What a sighting or an element written before `matched` was kept loads
@@ -767,14 +844,16 @@ fn note_sighting(
     all: u32,
 ) {
     match a.sightings.iter_mut().find(|s| s.key == key) {
+        // A match of none beside a count of some is kept apart: it never
+        // stamps the count seen again, so what is gone still ages out.
+        Some(s) if matched == 0 && s.matched != 0 => {
+            s.zero_seen = Some(s.zero_seen.unwrap_or(0).max(now));
+        }
         Some(s) => {
             if refresh && now >= s.last_seen {
                 s.last_seen = now;
-                // A match of none keeps where some were last seen.
-                if matched != 0 || s.matched == 0 {
-                    s.link = link;
-                    s.page = page.to_string();
-                }
+                s.link = link;
+                s.page = page.to_string();
             }
             let old_all = s.all_matched();
             s.matched = merged_matches(s.matched, matched);
@@ -787,6 +866,7 @@ fn note_sighting(
             last_seen: now,
             matched,
             all: kept_all(matched, all),
+            zero_seen: None,
         }),
     }
 }
@@ -796,7 +876,7 @@ fn note_sighting(
 /// recently seen go, and among those seen at the same time the earliest
 /// kept goes first.
 fn trim_sightings(a: &mut AreaMap, now: u64) {
-    a.sightings.retain(|s| now.saturating_sub(s.last_seen) <= STALE_AFTER_MS);
+    age_sightings(a, now);
     let over = a.sightings.len().saturating_sub(MAX_SIGHTINGS);
     if over == 0 {
         return;
@@ -815,7 +895,7 @@ fn trim_sightings(a: &mut AreaMap, now: u64) {
 /// Lets go of the area's `wholes` as `trim_sightings` lets go of its
 /// sightings: not seen for `STALE_AFTER_MS`, or past `MAX_SIGHTINGS`.
 fn trim_wholes(a: &mut AreaMap, now: u64) {
-    a.wholes.retain(|w| now.saturating_sub(w.last_seen) <= STALE_AFTER_MS);
+    a.wholes.retain_mut(|w| age(&mut w.last_seen, &mut w.matched, &mut w.zero_seen, now));
     let over = a.wholes.len().saturating_sub(MAX_SIGHTINGS);
     if over == 0 {
         return;
@@ -897,31 +977,40 @@ pub fn record_matched_counts(
     let matched = u32::try_from(matched).unwrap_or(NOT_ONE);
     let all = if none { 0 } else { u32::try_from(all.max(1)).unwrap_or(NOT_ONE) };
     let plain = plain_target(target);
-    let link_count = if plain || none { matched } else { NOT_ONE };
-    let link_all = if plain || none { all } else { NOT_ONE };
+    let link_count = if plain { matched } else { NOT_ONE };
+    let link_all = if plain { all } else { NOT_ONE };
     let path = self::page_path(page_path);
     let area = canonical_area(root, org, project, area.unwrap_or(""));
     update(root, org, project, |map| {
         let a = area_mut(map, &area);
-        for link in target.links() {
-            if let Some(key) = link.seen_key() {
-                note_sighting(a, key, link, &path, now, true, link_count, link_all);
+        // A chain or a narrowed target that matched none says nothing of
+        // its links: only the whole is filed.
+        if plain || !none {
+            for link in target.links() {
+                if let Some(key) = link.seen_key() {
+                    note_sighting(a, key, link, &path, now, true, link_count, link_all);
+                }
             }
         }
         trim_sightings(a, now);
         if !plain {
             // The whole locator: what that exact locator matched.
             match a.wholes.iter_mut().find(|w| w.locator == *target) {
+                Some(w) if none && w.matched != 0 => w.zero_seen = Some(w.zero_seen.unwrap_or(0).max(now)),
                 Some(w) => {
                     if now >= w.last_seen {
                         w.last_seen = now;
-                        if !none || w.matched == 0 {
-                            w.page = path.clone();
-                        }
+                        w.page = path.clone();
                     }
                     w.matched = merged_matches(w.matched, matched);
                 }
-                None => a.wholes.push(WholeSighting { locator: target.clone(), page: path.clone(), last_seen: now, matched }),
+                None => a.wholes.push(WholeSighting {
+                    locator: target.clone(),
+                    page: path.clone(),
+                    last_seen: now,
+                    matched,
+                    zero_seen: None,
+                }),
             }
         }
         trim_wholes(a, now);

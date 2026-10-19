@@ -478,7 +478,7 @@ fn button(name: &str) -> serde_json::Value {
 fn seen_ratings(root: &std::path::Path) {
     use v2_lib::autorun::discovery_map::record_matched;
     let save: v2_lib::browser::locator::Target = serde_json::from_value(button("Save")).unwrap();
-    record_matched(root, "acme", "Web", None, "/ratings", &save, 1).unwrap();
+    record_matched(root, "acme", "Web", None, "/ratings", &save, v2_lib::autorun::sessions::now_ms()).unwrap();
 }
 
 fn ratings_script(case_id: i32, steps: serde_json::Value) -> serde_json::Value {

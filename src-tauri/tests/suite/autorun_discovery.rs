@@ -3627,7 +3627,7 @@ async fn a_component_dry_run_writes_and_records_nothing() {
     assert!(load_map(dir.path(), ORG, PROJECT).unwrap().areas.is_empty());
 
     // Seen and tried: it would save as version 1, and nothing is written.
-    v2_lib::autorun::discovery_map::record_matched(dir.path(), ORG, PROJECT, Some("Cycles"), "/hr/cycles", &Target::from("#pager-2"), 0)
+    v2_lib::autorun::discovery_map::record_matched(dir.path(), ORG, PROJECT, Some("Cycles"), "/hr/cycles", &Target::from("#pager-2"), v2_lib::autorun::sessions::now_ms())
         .unwrap();
     let seen = every_file(dir.path());
     let (status, body) =
