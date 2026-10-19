@@ -100,10 +100,15 @@ pub fn secret_name(name: &str) -> bool {
         "apikey", "accesskey", "privatekey", "secretkey", "clientkey", "encryptionkey", "signingkey", "masterkey",
         "subscriptionkey", "functionkey", "hostkey", "authkey",
     ];
-    if words.iter().any(|w| WHOLE.contains(&w.as_str())) || words == ["key"] {
+    let compound = |w: &[String]| {
+        w.last().is_some_and(|l| WHOLE.contains(&l.as_str()))
+            || (w.len() >= 2 && w[w.len() - 1] == "key" && KEY_PREFIXES.contains(&w[w.len() - 2].as_str()))
+    };
+    if words.iter().any(|w| WHOLE.contains(&w.as_str())) || words == ["key"] || compound(&words) {
         return true;
     }
-    words.len() >= 2 && words[words.len() - 1] == "key" && KEY_PREFIXES.contains(&words[words.len() - 2].as_str())
+    // `apiKeyValue`, `x-api-key-id`: the key's value or id.
+    words.len() >= 2 && matches!(words[words.len() - 1].as_str(), "value" | "id") && compound(&words[..words.len() - 1])
 }
 
 /// Any JSON member in text that does not parse: group 1 the escape, group 2
@@ -164,8 +169,8 @@ static JOSE_SPLIT: LazyLock<Regex> = LazyLock::new(|| {
 /// Three or more base64url parts joined by dots.
 static DOTTED: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+){2,}").unwrap());
-/// A long run of characters a token is written with.
-static LONG_RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9_\-+/=.%]{40,}").unwrap());
+/// A long run of characters a token is written with (`hex` tokens start at 32).
+static LONG_RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9_\-+/=.%]{32,}").unwrap());
 
 /// A JWT-looking run is hidden only when longer than this.
 const JWT_MIN_LEN: usize = 40;
@@ -173,8 +178,8 @@ const JWT_MIN_LEN: usize = 40;
 /// Hides the JWT-looking runs of `text`: a JOSE-headed token (`eyJ`, the
 /// base64 of `{"`), line breaks and all, and three or more base64url parts
 /// joined by dots, over 40 characters, that mix upper case, lower case and
-/// digits - so a long dotted host or class name stays and a token under any
-/// key does not.
+/// digits, with two parts of 16 or more characters - so a long dotted host or
+/// class name stays and a token under any key does not.
 fn hide_jwts(text: &str) -> String {
     let text = JOSE_SPLIT.replace_all(text, |c: &Captures| {
         let run = &c[0];
@@ -190,7 +195,8 @@ fn hide_jwts(text: &str) -> String {
             let mixed = run.chars().any(|c| c.is_ascii_uppercase())
                 && run.chars().any(|c| c.is_ascii_lowercase())
                 && run.chars().any(|c| c.is_ascii_digit());
-            if run.len() > JWT_MIN_LEN && (run.starts_with("eyJ") || mixed) {
+            let long_parts = run.split('.').filter(|p| p.len() >= 16).count();
+            if run.len() > JWT_MIN_LEN && (run.starts_with("eyJ") || (mixed && long_parts >= 2)) {
                 REDACTED.to_string()
             } else {
                 run.to_string()
@@ -199,21 +205,60 @@ fn hide_jwts(text: &str) -> String {
         .into_owned()
 }
 
-/// A token this long is hidden: one path segment, one value.
+/// A token-shaped value of this length (or longer) is hidden: one path
+/// segment, one value.
 const OPAQUE_MIN: usize = 40;
+/// Pure hex is a token (a key, a digest) from this length.
+const HEX_MIN: usize = 32;
 
-/// A letter and a digit both: what a token has and a word or a number lacks.
+/// A letter and a digit both: what a cookie value has and a word lacks.
 fn opaque(text: &str) -> bool {
     text.chars().any(|c| c.is_ascii_digit()) && text.chars().any(|c| c.is_ascii_alphabetic())
 }
 
-/// `run` (a run of token characters, 40 or more) with the opaque value in it
-/// hidden. The run is percent-decoded first, since a token is almost always
-/// written with `%2F` and `%3D`. After a short `name=` the rest is the value.
-/// A value that starts with `/` is an address: it stays unless one of its
-/// segments is itself an opaque run of 40 or more, which is hidden alone. Any
-/// other value of 40 or more opaque characters is hidden whole. Words,
-/// numbers and text with spaces are not tokens.
+/// Whether `text` is shaped like a token, not merely long: lower case, upper
+/// case and a digit all in it; or a base64 marker (`+`, `/`, `=` padding) in
+/// text with both cases; or pure hex of 32 or more with a letter. It must be
+/// `min` characters or more, hex excepted. All-caps business codes, lower
+/// case slugs, GUIDs, numbers and dates are not token-shaped.
+fn token_shaped(text: &str, min: usize) -> bool {
+    let n = text.chars().count();
+    if n >= HEX_MIN
+        && text.chars().all(|c| c.is_ascii_hexdigit())
+        && text.chars().any(|c| c.is_ascii_alphabetic())
+    {
+        return true;
+    }
+    if n < min {
+        return false;
+    }
+    let upper = text.chars().any(|c| c.is_ascii_uppercase());
+    let lower = text.chars().any(|c| c.is_ascii_lowercase());
+    let digit = text.chars().any(|c| c.is_ascii_digit());
+    let marker = text.contains('+') || text.contains('/') || text.ends_with('=');
+    (upper && lower && digit) || (marker && upper && lower)
+}
+
+/// `token_shaped` for one decoded path segment or value. Dots separate names
+/// (`Company.Module.SomeLongTypeName2026`), so each part is judged alone. A
+/// value that starts with `/` is an address (an encoded `ReturnUrl`): each
+/// of its segments is judged alone.
+fn token_segment(decoded: &str, min: usize) -> bool {
+    let judge = |part: &str| part.split('.').any(|p| token_shaped(p, min));
+    if decoded.starts_with('/') {
+        decoded.split('/').any(judge)
+    } else {
+        judge(decoded)
+    }
+}
+
+/// `run` (a run of token characters, 32 or more) with the token-shaped parts
+/// hidden. After a short `name=` the rest is the value. The rest is split on
+/// `/` and each segment is percent-decoded (tokens are written with `%2F` and
+/// `%3D`) and judged alone: paths of short words and numbers stay, a token
+/// segment is hidden. A token a path split into short pieces (with `%2F`, or
+/// literal slashes beside a `+` or `=` padding) is caught by judging the
+/// decoded whole. Text with spaces is not a token.
 fn hide_run(run: &str) -> String {
     let (prefix, rest) = match run.find('=') {
         Some(i)
@@ -226,30 +271,31 @@ fn hide_run(run: &str) -> String {
         }
         _ => ("", run),
     };
-    let plain = String::from_utf8_lossy(&urlencoding::decode_binary(rest.as_bytes())).into_owned();
-    if plain.chars().any(|c| c.is_whitespace() || c.is_control()) || !opaque(&plain) {
+    let decode = |t: &str| String::from_utf8_lossy(&urlencoding::decode_binary(t.as_bytes())).into_owned();
+    let plain = decode(rest);
+    if plain.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return run.to_string();
     }
-    if plain.starts_with('/') {
-        let mut changed = false;
-        let shown: Vec<&str> = plain
-            .split('/')
-            .map(|seg| {
-                if seg.chars().count() >= OPAQUE_MIN && opaque(seg) {
-                    changed = true;
-                    HIDDEN
-                } else {
-                    seg
-                }
-            })
-            .collect();
-        return if changed { format!("{prefix}{}", shown.join("/")) } else { run.to_string() };
+    let mut changed = false;
+    let shown: Vec<String> = rest
+        .split('/')
+        .map(|seg| {
+            if token_segment(&decode(seg), OPAQUE_MIN) {
+                changed = true;
+                HIDDEN.to_string()
+            } else {
+                seg.to_string()
+            }
+        })
+        .collect();
+    if changed {
+        return format!("{prefix}{}", shown.join("/"));
     }
-    if plain.chars().count() >= OPAQUE_MIN {
-        format!("{prefix}{HIDDEN}")
-    } else {
-        run.to_string()
+    let split_marker = rest.to_ascii_lowercase().contains("%2f") || plain.contains('+') || plain.ends_with('=');
+    if split_marker && !plain.starts_with('/') && token_shaped(&plain, OPAQUE_MIN) {
+        return format!("{prefix}{HIDDEN}");
     }
+    run.to_string()
 }
 
 /// Hides every opaque token (`hide_run`) in `text`: an echoed session cookie,
@@ -290,12 +336,12 @@ fn finish(text: String) -> String {
     hide_long_runs(&hide_cookie_values(&hide_jwts(&hide_bearer(&text))))
 }
 
-/// A `code` value that is a token and not a short code: 20 or more token
-/// characters with a letter and a digit (a password-reset code).
+/// A `code` value that is a token and not a business code: token-shaped
+/// (`token_shaped`) and 20 or more token characters (a password-reset code).
 fn opaque_code(value: &str) -> bool {
-    value.chars().count() >= 20
-        && value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+' | '/' | '=' | '.' | '%'))
-        && opaque(value)
+    value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+' | '/' | '=' | '.' | '%'))
+        && value.chars().count() >= 20
+        && token_shaped(value, 20)
 }
 
 /// A percent-decoded component (`+` a space); bytes that are not UTF-8 are

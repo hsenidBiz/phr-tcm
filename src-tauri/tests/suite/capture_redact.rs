@@ -401,3 +401,62 @@ fn a_short_session_cookie_echoed_in_a_page_is_hidden() {
     let prose = "The ASP.NET_SessionId cookie improves internationalization of pages";
     assert_eq!(redact_body(Some("text/plain"), prose), prose);
 }
+
+#[test]
+fn business_values_that_are_long_but_not_token_shaped_show() {
+    let guid = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+    let guids = format!("{guid}-{}", "9b2f6a10-7c3d-4e8a-b1f5-2d4c6e8a0b13");
+    let shown = [
+        "LV-ANNUAL-2026-FULLDAY-APPROVAL-WORKFLOW-STEP-2".to_string(),
+        "api/v2/employees/12345/leave-requests/pending-approval".to_string(),
+        "/api/v2/employees/12345/leave-requests/pending-approval".to_string(),
+        guid.to_string(),
+        guids.clone(),
+        "Company.Module.SubModule.SomeLongTypeName2026".to_string(),
+        "Company.Module.SubModule.SomeLongTypeName2026.Another.Part".to_string(),
+        "2026-10-19T04:00:01.123456+05:30".to_string(),
+        "12345678901234567890123456789012345678901234567890".to_string(),
+    ];
+    for value in &shown {
+        assert_eq!(redact_body(Some("application/json"), &format!(r#"{{"v":"{value}"}}"#)), format!(r#"{{"v":"{value}"}}"#), "{value}");
+        assert_eq!(redact_body(Some("text/plain"), &format!("see {value} now")), format!("see {value} now"), "{value}");
+        let query = format!("/x?v={value}&w=1");
+        assert_eq!(redact_path_query(&query), query, "{value}");
+    }
+    assert_eq!(redact_path_query("/api/v2/employees/12345/leave-requests?type=LV-ANNUAL-2026-FULLDAY"),
+        "/api/v2/employees/12345/leave-requests?type=LV-ANNUAL-2026-FULLDAY");
+    // A business `code` shows; a token-shaped one does not.
+    assert_eq!(redact_path_query("/cb?code=LV-ANNUAL-2026-FULLDAY&x=1"), "/cb?code=LV-ANNUAL-2026-FULLDAY&x=1");
+    assert_eq!(redact_path_query("/cb?code=LEAVETYPE12345678901234"), "/cb?code=LEAVETYPE12345678901234");
+    assert!(!redact_path_query("/cb?code=AbCd1234EfGh5678IjKl9012&x=1").contains("AbCd1234"));
+}
+
+#[test]
+fn token_shaped_values_are_hidden_in_every_place() {
+    let token = "CfDJ8AbCdEf1GhIjKl2MnOpQr3StUvWx4YzAbCd5EfGhIjKl6MnOpQr7StUvWx8Yz";
+    let hex40 = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b";
+    let hex32 = "9f86d081884c7d659a2feaa0c55ad015";
+    for secret in [token, hex40, hex32] {
+        for shown in [
+            redact_body(Some("application/json"), &format!(r#"{{"v":"{secret}"}}"#)),
+            redact_body(Some("text/plain"), &format!("see {secret} now")),
+            redact_path_query(&format!("/x?v={secret}&w=1")),
+            redact_path_query(&format!("/reset/{secret}/confirm")),
+            redact_path_query(&format!("/Account/Confirm/{secret}")),
+        ] {
+            assert!(!shown.contains(&secret[..12]), "{secret}: {shown}");
+        }
+    }
+    // The coordinator's encoded confirmation link, tokens split by %2F, ending in %3D%3D.
+    let link = format!("/Account/Confirm/{}%2F{}%2F{}%3D%3D", &token[..24], &token[24..48], &token[48..]);
+    let out = redact_path_query(&link);
+    assert!(!out.contains("CfDJ8") && !out.contains("GhIjKl") && out.starts_with("/Account/Confirm/"), "{out}");
+    // Mixed case and digits in a token with a literal base64 marker.
+    let std = "Zm9vYmFy+YmF6cXV4/Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9v==";
+    assert!(!redact_body(Some("text/plain"), &format!("t={std}")).contains("Zm9vYmFy"));
+    // The key's value and id.
+    let out = redact_body(Some("application/json"), &format!(r#"{{"apiKeyValue":"{hex32}","apiKeyId":"{hex32}","sortKeyId":"k1","keyword":"leave"}}"#));
+    assert!(!out.contains(hex32) && out.contains("\"k1\"") && out.contains("leave"), "{out}");
+    assert!(secret_name("apiKeyValue") && secret_name("x-api-key-id") && secret_name("subscriptionKeyValue"));
+    assert!(!secret_name("sortKeyValue") && !secret_name("keyId") && !secret_name("primaryKeyId"));
+}
