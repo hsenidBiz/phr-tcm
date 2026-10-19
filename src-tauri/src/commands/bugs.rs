@@ -24,6 +24,18 @@ pub struct RunAttachmentOut {
     pub b64: String,
 }
 
+/// The repro steps as the HTML the Bug's repro field takes.
+///
+/// The text is built from the case's steps, and step text is Markdown inside
+/// TCM, so `**Save**` has to arrive as bold and not as asterisks. The repro
+/// field is a full rich-text field, so it takes the same HTML as the
+/// prerequisites: paragraphs, line breaks, bold, italic, lists and code. A
+/// single newline is a line break, so plain text reads as it was typed, and
+/// anything in angle brackets stays text.
+pub fn repro_html(repro_text: &str) -> String {
+    crate::case_markdown::prereq_md_to_html(repro_text)
+}
+
 /// File a Bug (or Issue on Basic-process projects) for a failed case:
 /// Related links to the test case + PBI, screenshots attached. POST only.
 #[tauri::command]
@@ -45,10 +57,9 @@ pub async fn file_bug(
         .detect_bug_type(&organization, &project)
         .await
         .map_err(|e| e.to_string())?;
-    let repro_html = format!("<div>{}</div>", repro_text.replace('\n', "<br>"));
     let fields = vec![
         ("System.Title".to_string(), title),
-        (info.repro_field.clone(), repro_html),
+        (info.repro_field.clone(), repro_html(&repro_text)),
     ];
     let (id, url) = client
         .create_work_item(&organization, &project, &info.wi_type, &fields, &[test_case_id, pbi_id], None)

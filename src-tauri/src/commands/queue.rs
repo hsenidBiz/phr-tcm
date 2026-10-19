@@ -776,16 +776,35 @@ pub async fn submit_queue(
     // can actually REMOVE a tag depends on the current value - see
     // `tags_write_ops`. Without this baseline a dropped tag stays put.
     let mut tags_before: std::collections::HashMap<i32, String> = Default::default();
+    // The prerequisites field as ADO holds it, from the same read: an update
+    // that did not edit it leaves it out, and a field stored as Markdown is
+    // written as Markdown - see `prereq_patch`.
+    let mut prereq_before: std::collections::HashMap<i32, ado::StoredText> = Default::default();
     if let Ok(token) = get_fresh_token(&app).await {
         let client = ado::AdoClient::new(token);
         let update_ids: Vec<i32> = queue.iter().filter_map(|tc| tc.update_id).collect();
         if !update_ids.is_empty() {
-            match client
-                .get_test_cases_by_ids(&organization, &update_ids, None, None)
-                .await
-            {
+            let mut read = client
+                .get_test_cases_by_ids(&organization, &update_ids, None, preconditions_ref.as_deref())
+                .await;
+            // A prerequisites field the read refuses (Azure DevOps answers
+            // an unknown field with a 400) must not cost the steps and tags
+            // their baseline: read again without it. The updates then leave
+            // the prerequisites out (see `queue_item_request`).
+            if matches!(read, Err(ado::AdoError::Http { status: 400, .. })) && preconditions_ref.is_some() {
+                crate::applog::warn(
+                    "could not read the current prerequisites for the updates - reading without them; \
+                     the updates leave the prerequisites as Azure DevOps holds them",
+                );
+                read = client.get_test_cases_by_ids(&organization, &update_ids, None, None).await;
+            }
+            match read {
                 Ok(current) => {
                     tags_before = current.iter().map(|c| (c.id, c.tags.clone())).collect();
+                    prereq_before = current
+                        .iter()
+                        .filter_map(|c| Some((c.id, c.preconditions_stored.clone()?)))
+                        .collect();
                     steps_before = current.into_iter().map(|c| (c.id, c.steps_xml)).collect();
                 }
                 // Without a baseline the import's own steps are written, as
@@ -793,7 +812,9 @@ pub async fn submit_queue(
                 // Say so, because it is the one path where markup can still
                 // be lost and the log is where that has to be visible.
                 Err(e) => crate::applog::warn(format!(
-                    "could not read the current steps for {} update(s) ({e}) - their steps                      will be rewritten from the imported text, which drops any formatting                      Azure DevOps holds",
+                    "could not read the current steps and prerequisites for {} update(s) ({e}) - their \
+                     steps will be rewritten from the imported text, which drops any formatting Azure \
+                     DevOps holds, and their prerequisites are left as Azure DevOps holds them",
                     update_ids.len()
                 )),
             }
@@ -935,6 +956,7 @@ pub async fn submit_queue(
                         &effective_iteration,
                         tc.update_id.and_then(|id| steps_before.get(&id)).map(String::as_str),
                         tc.update_id.and_then(|id| tags_before.get(&id)).map(String::as_str),
+                        tc.update_id.and_then(|id| prereq_before.get(&id)),
                         i - chunk_start + 1,
                     ) {
                         Ok(req) => {
@@ -1011,6 +1033,9 @@ pub async fn submit_queue(
         }
         chunk_start = end;
     }
+    // An update that went without its prerequisites (no baseline - see
+    // `queue_item_request`) says so on its row, not only in the log.
+    note_prereqs_not_saved(&mut results, &queue, preconditions_ref.as_deref(), &prereq_before);
     let failed = results.iter().filter(|r| r.action == "failed").count();
     let unknown = results.iter().filter(|r| r.action == "unknown").count();
     crate::applog::info(format!(
@@ -1157,6 +1182,7 @@ pub fn queue_item_request(
     iteration_path: &str,
     original_steps_xml: Option<&str>,
     original_tags: Option<&str>,
+    original_prereq: Option<&ado::StoredText>,
     temp_id: usize,
 ) -> Result<crate::ado::wit_batch::BatchRequest, String> {
     use crate::ado::wit_batch::{create_uri, temp_id_op, update_uri, BatchMethod, BatchRequest};
@@ -1168,9 +1194,17 @@ pub fn queue_item_request(
             body: serde_json::Value::Array(client.update_test_case_doc(
                 tc,
                 m_ref,
-                p_ref,
+                // An update with no baseline for its prerequisites - the
+                // read failed, or was refused the field - leaves them OUT.
+                // Without the field as Azure DevOps holds it, nothing says
+                // whether the row's text is an edit or the old plain-text
+                // copy of a list someone formatted since, and writing the
+                // second flattens it. The queue keeps no copy of what it
+                // loaded to compare with instead, so the field stays as it is.
+                p_ref.filter(|_| original_prereq.is_some()),
                 original_steps_xml,
                 original_tags,
+                original_prereq,
                 ado::BlankPolicy::Skip,
             )),
         },
@@ -1196,6 +1230,38 @@ pub fn queue_item_request(
             }
         }
     })
+}
+
+/// What an updated row says when its prerequisites were left out.
+const PREREQS_NOT_SAVED: &str = "Its prerequisites were not saved: their current text could not be read \
+     from Azure DevOps, so they were left as they are there. Upload it again to save them. Settings → Logs \
+     has the details.";
+
+/// Marks each updated row whose prerequisites `queue_item_request` left
+/// out - an update with a prerequisites field and text for it, but no
+/// baseline (`prereq_before` lacks it: the read failed, or was refused the
+/// field). The rest of the update landed, so the row stays "updated"; its
+/// result says the prerequisites did not, where the row's warning shows.
+pub fn note_prereqs_not_saved(
+    results: &mut [SubmitItemResult],
+    queue: &[model::TestCase],
+    p_ref: Option<&str>,
+    prereq_before: &std::collections::HashMap<i32, ado::StoredText>,
+) {
+    if p_ref.is_none() {
+        return;
+    }
+    for r in results.iter_mut().filter(|r| r.action == "updated") {
+        let Some(tc) = queue.get(r.index as usize) else { continue };
+        let Some(id) = tc.update_id else { continue };
+        if prereq_before.contains_key(&id) || tc.preconditions.trim().is_empty() {
+            continue;
+        }
+        r.error = Some(match r.error.take() {
+            Some(e) => format!("{e} {PREREQS_NOT_SAVED}"),
+            None => PREREQS_NOT_SAVED.to_string(),
+        });
+    }
 }
 
 /// What each answer in a batch means for its case. `sent_idx[k]` is the

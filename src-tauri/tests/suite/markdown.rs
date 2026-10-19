@@ -153,3 +153,164 @@ fn a_code_block_keeps_its_line_breaks_and_escapes_its_contents() {
     assert!(html.contains("<pre><code>"));
     assert!(html.contains("if (a &lt; b) {\n"), "{html}");
 }
+
+// ---------------------------------------------------------------------------
+// Test case text: the review page shows it as the dialect of case_markdown.rs
+// ---------------------------------------------------------------------------
+
+use v2_lib::case_markdown::Field;
+use v2_lib::markdown::case_text_to_html;
+
+#[test]
+fn case_text_shows_bold_italic_lists_and_code() {
+    // A step is lines: no paragraph around it.
+    let html = case_text_to_html("Click **Save** and *close*", Field::Step);
+    assert_eq!(html, "Click <strong>Save</strong> and <em>close</em>");
+
+    let html = case_text_to_html("Run:\n```sql\nSELECT 1\n```", Field::Step);
+    assert_eq!(html, "Run:<pre><code>SELECT 1\n</code></pre>");
+
+    // A step has no lists: each item is a line, as Azure DevOps shows it.
+    let html = case_text_to_html("Do:\n- one\n- two with `x`\n\n1. first\n2) second", Field::Step);
+    assert_eq!(
+        html,
+        "Do:<br>• one<br>• two with <code>x</code><br><br>1. first<br>2) second"
+    );
+
+    // The prerequisites are paragraphs and real lists.
+    let html = case_text_to_html("Needs:\n\n- one\n- two with `x`", Field::Prereq);
+    assert_eq!(html, "<p>Needs:</p>\n<ul><li>one</li><li>two with <code>x</code></li></ul>\n");
+    let html = case_text_to_html("```\nSELECT 1\n```", Field::Prereq);
+    assert_eq!(html, "<pre><code>SELECT 1\n</code></pre>\n");
+}
+
+#[test]
+fn a_single_newline_is_a_line_break_as_in_azure_devops() {
+    assert_eq!(case_text_to_html("first\nsecond", Field::Step), "first<br>second");
+    assert_eq!(case_text_to_html("first\nsecond", Field::Prereq), "<p>first<br>second</p>\n");
+}
+
+#[test]
+fn case_text_is_plain_commonmark_so_old_text_never_renders_differently() {
+    for field in [Field::Step, Field::Prereq] {
+        let html = case_text_to_html("Status ~~old~~", field);
+        assert!(html.contains("~~old~~") && !html.contains("<del"), "{html}");
+        let html = case_text_to_html("a | b\n--- | ---\nc | d", field);
+        assert!(!html.contains("<table"), "{html}");
+        let html = case_text_to_html("- [ ] x", field);
+        assert!(html.contains("[ ] x") && !html.contains("<input"), "{html}");
+        let html = case_text_to_html("SELECT COUNT(*) FROM t WHERE a * b", field);
+        assert!(!html.contains("<em>") && !html.contains("<strong>"), "{html}");
+    }
+}
+
+#[test]
+fn raw_html_in_case_text_is_never_an_element() {
+    for field in [Field::Step, Field::Prereq] {
+        let html = case_text_to_html(
+            "<img src=x onerror=alert(1)>\n\nenter <cycleId> and <b>bold</b>\n\n<script>alert(2)</script>",
+            field,
+        );
+        for bad in ["<img", "<script", "<b>", "<cycleId>", "onerror"] {
+            assert!(!html.contains(bad), "{bad} must not be an element: {html}");
+        }
+        // A typed placeholder stays visible; an editor's tag leaves its text.
+        assert!(html.contains("enter &lt;cycleId&gt; and bold"), "{html}");
+    }
+}
+
+#[test]
+fn headings_links_images_quotes_and_rules_are_their_plain_text() {
+    for field in [Field::Step, Field::Prereq] {
+        let html = case_text_to_html(
+            "# Title\n\nsee [the spec](http://example.invalid/x) ![shot](http://example.invalid/i.png)\n\n> quoted\n\n---",
+            field,
+        );
+        for bad in ["<h1", "<a ", "<img", "<blockquote", "<hr"] {
+            assert!(!html.contains(bad), "{bad}: {html}");
+        }
+        for text in ["Title", "the spec", "shot", "quoted"] {
+            assert!(html.contains(text), "{text}: {html}");
+        }
+    }
+}
+
+#[test]
+fn a_step_keeps_every_blank_line_and_the_prerequisites_make_one_gap() {
+    // One <br> per line break, so a blank line is two and three stay three.
+    assert_eq!(case_text_to_html("a\n\nb", Field::Step), "a<br><br>b");
+    assert_eq!(case_text_to_html("a\n\n\n\nb", Field::Step), "a<br><br><br><br>b");
+    // Text, then a block: the block ends the line itself.
+    assert_eq!(case_text_to_html("a\n```\nx\n```\nb", Field::Step), "a<pre><code>x\n</code></pre>b");
+    assert_eq!(
+        case_text_to_html("a\n\n```\nx\n```\n\nb", Field::Step),
+        "a<br><br><pre><code>x\n</code></pre><br>b"
+    );
+    // The prerequisites are paragraphs: one gap however many blank lines.
+    assert_eq!(case_text_to_html("a\n\n\n\nb", Field::Prereq), "<p>a</p>\n<p>b</p>\n");
+}
+
+#[test]
+fn empty_case_text_renders_nothing() {
+    for field in [Field::Step, Field::Prereq] {
+        assert_eq!(case_text_to_html("", field), "");
+        assert_eq!(case_text_to_html("  \n\n ", field), "");
+    }
+}
+
+/// The review page must read the same as the app's own screens. These are
+/// `renderCaseMarkdown(md, "step")`'s outputs from src/lib/markdown.ts for the
+/// same inputs (a block's trailing newline is whitespace in HTML and left out).
+#[test]
+fn a_step_has_the_same_line_breaks_as_the_apps_own_rendering() {
+    let cases: &[(&str, &str)] = &[
+        ("a\n\nb", "a<br><br>b"),
+        ("a\n\n\n\nb", "a<br><br><br><br>b"),
+        // Not blank lines: a rule, a link definition, a tag-only HTML block.
+        ("a\n\n---\nb", "a<br><br>b"),
+        ("a\n\n---\n\nb", "a<br><br><br>b"),
+        ("a\n---\nb", "a<br>b"),
+        ("a\n\n\n---\n\n\nb", "a<br><br><br><br><br>b"),
+        ("a\n\n[x]: http://e.com\nb", "a<br><br>b"),
+        ("a\n\n[x]: http://e.com\n\nb", "a<br><br><br>b"),
+        ("a\n\n<div></div>\n\nb", "a<br><br><br>b"),
+        // Quotes and lists.
+        ("> a\n>\n> b", "a<br><br>b"),
+        ("> 1) x\n> 2) y", "1) x<br>2) y"),
+        ("1) Login\n2) Open Leave", "1) Login<br>2) Open Leave"),
+        ("3. a\n4. b", "3. a<br>4. b"),
+        ("1) a\n2) b\n\n3. c", "1) a<br>2) b<br><br>3. c"),
+        ("- a\n- **b**", "\u{2022} a<br>\u{2022} <strong>b</strong>"),
+        ("Do:\n- a\n- b", "Do:<br>\u{2022} a<br>\u{2022} b"),
+        ("- a\n\n- b", "\u{2022} a<br><br>\u{2022} b"),
+        ("- a\n  - b", "\u{2022} a<br>\u{2022} b"),
+        ("- a\n\n  b\n- c", "\u{2022} a<br><br>b<br>\u{2022} c"),
+        ("x\n\n- a\n\n\n- b", "x<br><br>\u{2022} a<br><br><br>\u{2022} b"),
+        ("- [ ] x", "\u{2022} [ ] x"),
+        // A block ends its own line.
+        ("a\n```\nx\n```\nb", "a<pre><code>x\n</code></pre>b"),
+        ("a\n\n```\nx\n```\n\nb", "a<br><br><pre><code>x\n</code></pre><br>b"),
+    ];
+    for (md, want) in cases {
+        assert_eq!(case_text_to_html(md, Field::Step), *want, "{md:?}");
+    }
+}
+
+/// Azure DevOps draws the prerequisites' numbered list with `1.` markers
+/// whatever was typed, so the review page does too: a typed `1)` is a plain
+/// `<ol>`, and no stylesheet rule redraws its markers. (A step keeps its
+/// `)`: its list is lines of text, in Azure DevOps and here.)
+#[test]
+fn a_prerequisites_list_typed_with_a_paren_is_numbered_as_azure_devops_numbers_it() {
+    assert_eq!(case_text_to_html("1) a\n2) b", Field::Prereq), "<ol><li>a</li><li>b</li></ol>\n");
+    assert_eq!(
+        case_text_to_html("3) a\n4) b", Field::Prereq),
+        "<ol start=\"3\"><li>a</li><li>b</li></ol>\n"
+    );
+    assert_eq!(case_text_to_html("2. a", Field::Prereq), "<ol start=\"2\"><li>a</li></ol>\n");
+    assert_eq!(case_text_to_html("1. a", Field::Prereq), "<ol><li>a</li></ol>\n");
+    assert!(case_text_to_html("> 1) x", Field::Prereq).contains("<ol><li>"));
+    assert_eq!(case_text_to_html("1) Login\n2) Open", Field::Step), "1) Login<br>2) Open");
+    let css = include_str!("../../web/cases-page.css");
+    assert!(!css.contains("::marker"), "no rule may redraw the list's markers");
+}

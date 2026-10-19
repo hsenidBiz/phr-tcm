@@ -479,9 +479,11 @@ impl AdoClient {
             }
         }
         if let Some(p) = preconditions_ref {
+            // A new work item stores the field as HTML: Markdown storage is
+            // a switch someone flips on an existing item.
             if !tc.preconditions.trim().is_empty() {
                 patch.push(serde_json::json!({"op": "add", "path": format!("/fields/{p}"),
-                    "value": format!("<div>{}</div>", escape_html(tc.preconditions.trim()))}));
+                    "value": crate::case_markdown::prereq_md_to_html(tc.preconditions.trim())}));
             }
         }
         if let Some(pbi_id) = link_pbi {
@@ -640,6 +642,10 @@ impl AdoClient {
     /// `original_tags` is System.Tags as Azure DevOps currently holds it,
     /// when the caller has it - it decides which PATCH op can actually
     /// REMOVE a tag. See `tags_write_ops`.
+    ///
+    /// `original_prereq` is the prerequisites field as Azure DevOps
+    /// currently holds it, when the caller has it. See `prereq_patch`:
+    /// with it, a save that did not edit the field leaves it out.
     #[allow(clippy::too_many_arguments)]
     pub async fn update_test_case_from_model(
         &self,
@@ -651,16 +657,18 @@ impl AdoClient {
         preconditions_ref: Option<&str>,
         original_steps_xml: Option<&str>,
         original_tags: Option<&str>,
+        original_prereq: Option<&super::StoredText>,
         blanks: BlankPolicy,
     ) -> Result<(), AdoError> {
         let ops = self.update_test_case_doc(
-            tc, module_ref, preconditions_ref, original_steps_xml, original_tags, blanks,
+            tc, module_ref, preconditions_ref, original_steps_xml, original_tags, original_prereq, blanks,
         );
         self.patch_work_item_ops(organization, project, tc_id, ops).await
     }
 
     /// The JSON-patch ops an update sends - the same document whether it
     /// goes out alone or inside a batch. Pure.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_test_case_doc(
         &self,
         tc: &crate::model::TestCase,
@@ -668,6 +676,7 @@ impl AdoClient {
         preconditions_ref: Option<&str>,
         original_steps_xml: Option<&str>,
         original_tags: Option<&str>,
+        original_prereq: Option<&super::StoredText>,
         blanks: BlankPolicy,
     ) -> Vec<serde_json::Value> {
         let mut fields = vec![
@@ -701,21 +710,31 @@ impl AdoClient {
                 fields.push((m.to_string(), tc.module_value.trim().to_string()));
             }
         }
+        // Set when the prerequisites are written into a field the work item
+        // stores as Markdown: see the format op below.
+        let mut markdown_field: Option<&str> = None;
         if let Some(p) = preconditions_ref {
             if writes(&tc.preconditions) {
-                let text = tc.preconditions.trim();
-                let html = if text.is_empty() {
-                    String::new()
-                } else {
-                    format!("<div>{}</div>", escape_html(text))
-                };
-                fields.push((p.to_string(), html));
+                if let Some(value) = prereq_patch(&tc.preconditions, original_prereq) {
+                    fields.push((p.to_string(), value));
+                    if original_prereq.is_some_and(|o| o.markdown) {
+                        markdown_field = Some(p);
+                    }
+                }
             }
         }
         let mut ops: Vec<serde_json::Value> = fields
             .iter()
             .map(|(r, v)| serde_json::json!({"op": "add", "path": format!("/fields/{r}"), "value": v}))
             .collect();
+        // Azure DevOps keeps a multi-line field's format as the last edit
+        // chose it. A write of the value alone may store the field back as
+        // HTML, and the Markdown then shows as `**admin**`. Saying Markdown
+        // with the write keeps the format the item already has - it never
+        // converts a field, because it is only sent for one already Markdown.
+        if let Some(p) = markdown_field {
+            ops.push(serde_json::json!({"op": "add", "path": format!("/multilineFieldsFormat/{p}"), "value": "Markdown"}));
+        }
         // Priority only when the case sets one, whatever `blanks` says:
         // `None` means "leave Azure DevOps' value alone", and an update
         // never resets a priority to the create default.
@@ -915,7 +934,7 @@ impl AdoClient {
 
     /// The v1 Edit-tab field set (same batch endpoint as the summaries) plus
     /// the optional module/preconditions refs, with steps parsed and
-    /// preconditions flattened for editing. Read only.
+    /// preconditions read as Markdown for editing. Read only.
     pub async fn get_pbi_test_cases_full(
         &self,
         organization: &str,
@@ -993,6 +1012,14 @@ impl AdoClient {
             for w in fetched["value"].as_array().cloned().unwrap_or_default() {
                 let f = &w["fields"];
                 let str_of = |key: &str| f[key].as_str().unwrap_or_default().to_string();
+                let steps_xml = str_of("Microsoft.VSTS.TCM.Steps");
+                // Both readings from one parse of the field.
+                let (steps, legacy) = crate::steps_xml::parse_steps_readings(&steps_xml);
+                let preconditions_stored = preconditions_ref.map(|p| super::StoredText {
+                    value: str_of(p),
+                    markdown: stores_markdown(&w, p),
+                });
+                let (preconditions, preconditions_legacy) = prereq_readings(preconditions_stored.as_ref());
                 cases.push(TestCaseFull {
                     id: w["id"].as_i64().unwrap_or_default() as i32,
                     title: str_of("System.Title"),
@@ -1002,13 +1029,14 @@ impl AdoClient {
                         if s.is_empty() { "Not Automated".to_string() } else { s }
                     },
                     priority: parse_priority(&f["Microsoft.VSTS.Common.Priority"]),
-                    steps: crate::steps_xml::parse_steps_xml(&str_of("Microsoft.VSTS.TCM.Steps")),
-                    step_ids: crate::steps_xml::parse_step_ids(&str_of("Microsoft.VSTS.TCM.Steps")),
-                    steps_xml: str_of("Microsoft.VSTS.TCM.Steps"),
+                    steps_legacy: (legacy != steps).then_some(legacy),
+                    steps,
+                    step_ids: crate::steps_xml::parse_step_ids(&steps_xml),
+                    steps_xml,
                     module_value: module_ref.map(str_of).unwrap_or_default(),
-                    preconditions: preconditions_ref
-                        .map(|p| crate::steps_xml::html_to_text(&str_of(p)))
-                        .unwrap_or_default(),
+                    preconditions,
+                    preconditions_legacy,
+                    preconditions_stored,
                 });
             }
         }
@@ -1041,7 +1069,8 @@ impl AdoClient {
                 out.push(CaseText {
                     id: id as i32,
                     project: f["System.TeamProject"].as_str().unwrap_or_default().to_string(),
-                    text: steps.into_iter().flat_map(|s| [s.action, s.expected]).collect(),
+                    // Words, not Markdown: the seen check matches phrases.
+                    text: crate::steps_xml::plain_texts(&steps),
                 });
             }
         }
@@ -1650,15 +1679,17 @@ pub fn tags_write_ops(desired: &str, original: Option<&str>) -> Vec<serde_json::
 /// The Steps XML to write, or `None` to leave the field out of the patch.
 ///
 /// The problem this solves: `steps` on a loaded case is a LOSSY read.
-/// `parse_steps_xml` strips every tag, so a step whose action is
-/// `<b>Click Save</b><img src="...screenshot...">` comes back as the bare
-/// text `Click Save`. Rebuilding the field from that and PATCHing it - which
-/// is what every save used to do, unconditionally - deleted the formatting
-/// and the screenshot from Azure DevOps. Editing only the TITLE was enough
-/// to do it, and the save reported success.
+/// `parse_steps_xml` keeps a step's lines, bold and italic but nothing
+/// else, so a step whose action is `<b>Click Save</b><img src="...">` comes
+/// back as `**Click Save**`. Rebuilding the field from that and PATCHing it
+/// - which is what every save used to do, unconditionally - deleted the
+/// screenshot from Azure DevOps. Editing only the TITLE was enough to do
+/// it, and the save reported success.
 ///
-/// The comparison is deliberately PARSED against PARSED. A case the user did
-/// not touch parses to exactly what it parsed to when it was loaded, so it
+/// The comparison is deliberately PARSED against PARSED
+/// (`steps_unchanged`). A case the user did not touch parses to exactly
+/// what it parsed to when it was loaded - or, for a copy saved before steps
+/// kept their lines, to what the old one-line reader made of it - so it
 /// compares equal and the field is omitted (or only its step types are
 /// repaired). A real edit is MERGED into the original (`merge_steps_xml`):
 /// only the steps that changed are rewritten, every other step keeps its
@@ -1679,7 +1710,7 @@ fn steps_patch(steps: &[crate::steps_xml::Step], original_xml: Option<&str>) -> 
         return None;
     }
     if let Some(xml) = original_xml {
-        if crate::steps_xml::parse_steps_xml(xml) == steps {
+        if crate::steps_xml::steps_unchanged(xml, steps) {
             // Same text: leave the markup alone. But a step whose stored
             // TYPE is wrong for its Expected Result (every step this app
             // wrote before 1.25.1 was an ActionStep) is repaired in place -
@@ -1699,14 +1730,82 @@ fn steps_patch(steps: &[crate::steps_xml::Step], original_xml: Option<&str>) -> 
     merged
 }
 
-/// Text going into an HTML field value.
+/// The prerequisites value an update writes, or `None` to leave the field
+/// out. The blank policy is the caller's, decided before this.
 ///
-/// Preconditions are typed as plain text and were interpolated straight
-/// into `<div>...</div>`, so a `<` or an `&` - "value < 10", "Tom & Jerry"
-/// - reached Azure DevOps as broken markup and came back mangled or
-/// truncated. Escaping is what makes the round-trip faithful.
-fn escape_html(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+/// With the field as Azure DevOps holds it (`original`), an unedited value
+/// is left out: for an HTML field, one `case_markdown::unchanged` accepts -
+/// the field read as Markdown, or the text TCM read before Markdown, which
+/// every older draft and export holds; for a field stored as Markdown, the
+/// same text. That keeps a title-only save from rewriting the field, and an
+/// old one-line draft from flattening a list someone formatted in Azure
+/// DevOps. Otherwise the value is the Markdown as HTML - or as-is, for a
+/// Markdown field - and a blank empties the field.
+///
+/// The value goes through `prereq_md_to_html`, which escapes text, so a
+/// typed `<` or `&` ("value < 10", "Tom & Jerry") reaches Azure DevOps as
+/// text, never as broken markup.
+///
+/// A field is Markdown only when the work item said so (`stores_markdown`).
+/// When it says nothing - `multilineFieldsFormat` absent from the read, or
+/// no baseline at all - the field is written as HTML, which is what every
+/// field held before the Markdown switch existed and what a field nobody
+/// converted still holds. Writing HTML into a field someone converted would
+/// show its markup as text; guessing Markdown for an unconverted one would
+/// show `**` the same way, on every field in every org. The first is the
+/// rarer case, so it is the one taken.
+pub fn prereq_patch(new_md: &str, original: Option<&super::StoredText>) -> Option<String> {
+    let text = new_md.trim();
+    let markdown = original.is_some_and(|o| o.markdown);
+    if let Some(o) = original {
+        let same = if o.markdown {
+            text == o.value.trim()
+        } else {
+            crate::case_markdown::unchanged(text, &o.value, crate::case_markdown::Field::Prereq)
+        };
+        if same {
+            return None;
+        }
+    }
+    Some(if text.is_empty() {
+        String::new()
+    } else if markdown {
+        text.to_string()
+    } else {
+        crate::case_markdown::prereq_md_to_html(text)
+    })
+}
+
+/// The prerequisites as TCM shows them, and the old reading when it
+/// differs (see `TestCaseFull::preconditions_legacy`). A field stored as
+/// Markdown is read as-is and has no old reading worth keeping.
+fn prereq_readings(stored: Option<&super::StoredText>) -> (String, Option<String>) {
+    match stored {
+        None => (String::new(), None),
+        Some(s) if s.markdown => (s.value.clone(), None),
+        Some(s) => {
+            let md = crate::case_markdown::prereq_html_to_md(&s.value);
+            let old = crate::case_markdown::legacy_text(&s.value, crate::case_markdown::Field::Prereq);
+            let old = (old != md).then_some(old);
+            (md, old)
+        }
+    }
+}
+
+/// Whether the work item `w` (an item of a GET response) stores `field` as
+/// Markdown. Azure DevOps reports that per item, under
+/// `multilineFieldsFormat`, keyed by reference name; a field it does not
+/// name is HTML. Both the key and "Markdown" are matched ignoring case.
+///
+/// Only the STRING "markdown" counts. The REST API sends the format as a
+/// name; a number (the extension SDK's `LargeTextCustomHtmlFormat` enum),
+/// `null` or anything else is not a name this reader can trust, so it reads
+/// as HTML - the format the field had before Markdown existed (see
+/// `prereq_patch`).
+fn stores_markdown(w: &serde_json::Value, field: &str) -> bool {
+    w["multilineFieldsFormat"].as_object().is_some_and(|formats| {
+        formats.iter().any(|(k, v)| {
+            k.eq_ignore_ascii_case(field) && v.as_str().is_some_and(|f| f.eq_ignore_ascii_case("markdown"))
+        })
+    })
 }

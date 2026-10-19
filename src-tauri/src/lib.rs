@@ -34,6 +34,8 @@ pub mod audio;
 pub mod auth;
 pub mod backup;
 pub mod cache;
+pub mod case_format;
+pub mod case_markdown;
 pub mod capture;
 pub mod commands;
 pub mod crystal;

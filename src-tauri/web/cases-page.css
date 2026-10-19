@@ -64,8 +64,10 @@ h1 { font-size: 22px; margin: 0 0 4px; }
                   color: var(--warning); font-weight: 600; margin-right: 8px;
                   border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
 .pre { font-size: 13px; background: var(--surface-2); border-left: 3px solid var(--border);
-       padding: 8px 12px; margin: 0 0 12px; white-space: pre-wrap; }
-.pre b { color: var(--muted); }
+       padding: 8px 12px; margin: 0 0 12px; white-space: pre-wrap;
+       display: flex; gap: 6px; align-items: baseline; }
+.pre b { color: var(--muted); flex: none; }
+.pre-md { flex: 1; min-width: 0; }
 .pre .none { color: var(--faint); font-style: italic; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; background: var(--surface-2); color: var(--muted); font-size: 12px;
@@ -73,6 +75,22 @@ th { text-align: left; background: var(--surface-2); color: var(--muted); font-s
 td { padding: 7px 10px; border: 1px solid var(--border); vertical-align: top;
      white-space: pre-wrap; overflow-wrap: anywhere; }
 td.num { width: 34px; text-align: center; color: var(--faint); }
+/* Test case text is Markdown shown formatted: paragraphs and lists lay
+   themselves out, so the preserved line breaks of a plain cell would only
+   double every gap. A code block keeps its own. */
+td.action, td.expected, .pre-md { white-space: normal; }
+td.action > :first-child, td.expected > :first-child, .pre-md > :first-child { margin-top: 0; }
+td.action > :last-child, td.expected > :last-child, .pre-md > :last-child { margin-bottom: 0; }
+td.action p, td.expected p, .pre-md p,
+td.action ul, td.expected ul, .pre-md ul,
+td.action ol, td.expected ol, .pre-md ol { margin: 0 0 6px; }
+td.action ul, td.expected ul, .pre-md ul,
+td.action ol, td.expected ol, .pre-md ol { padding-left: 20px; }
+td.action code, td.expected code, .pre-md code { background: var(--surface); border-radius: 3px;
+                 padding: 0 3px; font-family: Consolas, monospace; font-size: 12px; }
+td.action pre, td.expected pre, .pre-md pre { background: var(--surface); border-radius: 4px;
+                 padding: 6px 8px; margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+td.action pre code, td.expected pre code, .pre-md pre code { background: none; padding: 0; }
 .searchbar { position: sticky; top: 0; z-index: 5; background: var(--bg);
              display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 0 14px; }
 /* The search box: which field, the query, and how to match it, as one

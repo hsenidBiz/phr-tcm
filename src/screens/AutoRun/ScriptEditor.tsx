@@ -17,9 +17,11 @@ import { Input, Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import { MODAL_LARGE } from "./modalWidths";
 import SharedStepLabel from "../../components/SharedStepLabel";
+import CaseText from "../../components/CaseText";
 import { unwrapStr } from "../../lib/ipc";
 import { IconAdd, IconBack, IconCancel, IconConfirm, IconEdit, IconRemove } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
+import { caseTextLine } from "../../lib/markdown";
 import { sameAreaName } from "../../lib/areaName";
 import { floorOf } from "./floor";
 import SetupSection from "./SetupSection";
@@ -236,12 +238,19 @@ export default function ScriptEditor({
           <ol className="space-y-1 text-xs text-muted">
             {steps.map((s, i) => (
               <li key={i} className="rounded border border-border/60 px-2 py-1">
-                <span className="text-text">
-                  {i + 1}.{" "}
-                  {s.shared != null ? <SharedStepLabel id={s.shared} org={org} /> : s.action}
-                </span>
+                <div className="flex gap-1 text-text">
+                  <span className="shrink-0">{i + 1}.</span>
+                  {s.shared != null ? (
+                    <SharedStepLabel id={s.shared} org={org} />
+                  ) : (
+                    <CaseText kind="step" text={s.action} className="min-w-0 flex-1" />
+                  )}
+                </div>
                 {s.shared == null && s.expected && (
-                  <div className="text-faint">→ {s.expected}</div>
+                  <div className="flex gap-1 text-faint">
+                    <span className="shrink-0">→</span>
+                    <CaseText kind="step" text={s.expected} className="min-w-0 flex-1" />
+                  </div>
                 )}
               </li>
             ))}
@@ -535,7 +544,7 @@ function ReadableScript({
                 {own && (
                   <>
                     {" "}
-                    {own.shared != null ? <SharedStepLabel id={own.shared} org={org} /> : own.action}
+                    {own.shared != null ? <SharedStepLabel id={own.shared} org={org} /> : caseTextLine(own.action)}
                   </>
                 )}
               </h3>

@@ -11,6 +11,28 @@ import { Input, Textarea } from "./ui/input";
 import { Modal } from "./ui/modal";
 import { IconBug, IconCancel } from "../lib/actionIcons";
 
+/** A line that opens (or closes) a fenced code block. */
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+
+/** One step of the repro as a Markdown list item. The repro goes to Azure
+ * DevOps as rich text, so the step's other lines are indented under its
+ * number (a list item's continuation): a fenced query in a step then opens
+ * and closes inside that step, and the expected result and the steps after
+ * it stay out of the code block. The expected result is a line of its own. */
+function reproStep(n: number, action: string, expected: string): string {
+  const marker = `${n}. `;
+  const pad = " ".repeat(marker.length);
+  const lines = action.split(/\r?\n/);
+  if (expected) {
+    const exp = expected.split(/\r?\n/);
+    // "Expected: ```sql" would not open the fence, and its closing line
+    // would then open one that never closes.
+    if (FENCE.test(exp[0])) lines.push("Expected:", ...exp);
+    else lines.push(`Expected: ${exp[0]}`, ...exp.slice(1));
+  }
+  return lines.map((l, i) => (i === 0 ? marker + l : l.trim() === "" ? "" : pad + l)).join("\n");
+}
+
 /** Prefills title + repro from the case's failed steps, then POSTs a Bug
  * (or Issue) linked to the test case and PBI, with the runner's screenshots. */
 export default function BugDialog({
@@ -36,7 +58,7 @@ export default function BugDialog({
   const stepLine = (s: Step, i: number) =>
     s.shared != null
       ? `${i + 1}. ${sharedStepText(s.shared, qc.getQueryData<string>(sharedStepQueryKey(org, s.shared)))}`
-      : `${i + 1}. ${s.action}${s.expected ? ` -> expected: ${s.expected}` : ""}`;
+      : reproStep(i + 1, s.action, s.expected);
   const defaultRepro = [
     `Test case #${testCase.id}: ${testCase.title}`,
     "",

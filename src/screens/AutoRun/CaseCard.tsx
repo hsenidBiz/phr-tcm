@@ -15,6 +15,7 @@ import { Checkbox } from "../../components/ui/checkbox";
 import SharedStepLabel from "../../components/SharedStepLabel";
 import { IconAdd, IconBug, IconEdit, IconHideDetails, IconRun, IconShowDetails } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
+import { caseTextLine } from "../../lib/markdown";
 import RunDownloads from "./RunDownloads";
 import { loadSetupView, setupViewKey } from "./setupView";
 import { ClearConfirm, SuspectedDefectBadge } from "./SuspectedDefectMark";
@@ -247,8 +248,8 @@ function CaseCard({
                       return (
                         <li key={s.step_number} className="flex min-w-0 gap-2">
                           <span className="shrink-0 text-faint">{s.step_number}.</span>
-                          <span className="min-w-0 flex-1 truncate text-text" title={own?.action}>
-                            {own?.shared != null ? <SharedStepLabel id={own.shared} org={org} /> : own?.action}
+                          <span className="min-w-0 flex-1 truncate text-text" title={own ? caseTextLine(own.action) : undefined}>
+                            {own?.shared != null ? <SharedStepLabel id={own.shared} org={org} /> : own && caseTextLine(own.action)}
                           </span>
                           <span className="shrink-0 text-faint">{plural(s.actions.length, "action")}</span>
                         </li>

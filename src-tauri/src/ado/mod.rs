@@ -85,7 +85,7 @@ pub struct WikiPage {
 }
 
 /// A fully-loaded Test Case for the editor: steps parsed from the XML blob,
-/// preconditions flattened to plain text. `id` doubles as update_id when the
+/// preconditions read as Markdown. `id` doubles as update_id when the
 /// editor saves.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct TestCaseFull {
@@ -94,22 +94,52 @@ pub struct TestCaseFull {
     pub tags: String,
     pub automation_status: String,
     pub steps: Vec<crate::steps_xml::Step>,
+    /// The steps as TCM read them before step text was Markdown - one line,
+    /// formatting stripped (`steps_xml::parse_steps_text`) - and only when
+    /// that differs from `steps`. A queue draft or cache saved before then
+    /// holds this reading; the webview's review counts a step equal to
+    /// either as unchanged, as the save itself does (`steps_unchanged`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps_legacy: Option<Vec<crate::steps_xml::Step>>,
     /// Real ADO step ids (document order, aligned with `steps`) - the runner
     /// needs them to build iterationDetails.
     pub step_ids: Vec<String>,
     /// The Steps field EXACTLY as Azure DevOps holds it.
     ///
-    /// `steps` above is a lossy read: parse_steps_xml strips every tag, so
-    /// bold, links and embedded screenshots do not survive it. Writing that
+    /// `steps` above is a lossy read: parse_steps_xml keeps a step's lines,
+    /// bold and italic, but links and embedded screenshots do not survive it. Writing that
     /// back would delete them from the work item. Keeping the original
     /// lets a save ask "did the user actually change the steps?" and, when
     /// the answer is no, leave the field out of the patch entirely.
     pub steps_xml: String,
     pub module_value: String,
+    /// The List of Prerequisites as Markdown: the field's HTML read back
+    /// (`case_markdown::prereq_html_to_md`), or its text as-is when the
+    /// work item stores the field as Markdown.
     pub preconditions: String,
+    /// The prerequisites as TCM read them before they were Markdown
+    /// (`steps_xml::html_to_text`), only when that differs from
+    /// `preconditions` - what a draft or cache saved before then holds, and
+    /// which a save counts as unchanged (see `steps_legacy`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preconditions_legacy: Option<String>,
+    /// The prerequisites field EXACTLY as Azure DevOps holds it, and its
+    /// storage format - what a save compares with to leave the field out
+    /// when it was not edited. `None` when no prerequisites field was read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preconditions_stored: Option<StoredText>,
     /// `Microsoft.VSTS.Common.Priority`, 1-4; `None` when the work item has
     /// none (or one outside the picklist).
     pub priority: Option<i32>,
+}
+
+/// A rich-text field as Azure DevOps holds it: its raw value, and whether
+/// the work item stores it as Markdown (`multilineFieldsFormat`) rather
+/// than HTML.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct StoredText {
+    pub value: String,
+    pub markdown: bool,
 }
 
 /// A test case's own words and the project it is in: each step's action

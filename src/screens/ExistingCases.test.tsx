@@ -162,7 +162,8 @@ test("Discard also notices and reverts a step edit", async () => {
   fireEvent.change(step, { target: { value: "Open the login page" } });
   fireEvent.click(await screen.findByRole("button", { name: /Discard changes/ }));
 
-  expect((await screen.findByLabelText("Step 1 action")).getAttribute("value")).toBe("Open page");
+  // A text area, so its value is the property (it has no value attribute).
+  expect((await screen.findByLabelText("Step 1 action") as HTMLTextAreaElement).value).toBe("Open page");
 });
 
 /** After a save, the loaded values are stale - Azure DevOps holds what was

@@ -2,10 +2,17 @@ import { useState } from "react";
 import { GripVertical } from "lucide-react";
 import type { Step } from "../bindings";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import { IconAdd } from "../lib/actionIcons";
 import { cn } from "../lib/cn";
+import { CaseTextField, PreviewToggle } from "./CaseText";
 import SharedStepLabel from "./SharedStepLabel";
+
+/** A step field's height for its text: two lines at least, so a field
+ * reads as one that takes more than one; up to seven before it scrolls
+ * (or is dragged taller). Whole class names, so Tailwind finds them. */
+const FIELD_HEIGHTS = ["h-12", "h-12", "h-12", "h-16", "h-20", "h-24", "h-28", "h-32"];
+const fieldHeight = (text: string) =>
+  FIELD_HEIGHTS[Math.min(FIELD_HEIGHTS.length - 1, text.split("\n").length)];
 
 /** The step grid used by Manual Entry AND the case editor: numbered rows of
  * action/expected with reorder, remove and Add Step - one interaction model
@@ -51,6 +58,8 @@ export default function StepsEditor({
   // and the indices never need to leave this component anyway.
   const [dragging, setDragging] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
+  // Step text is Markdown; Preview shows every step formatted at once.
+  const [preview, setPreview] = useState(false);
 
   return (
     <div className="space-y-1">
@@ -61,7 +70,7 @@ export default function StepsEditor({
         <div
           key={i}
           className={cn(
-            "flex items-center gap-1 rounded-md border border-transparent",
+            "flex items-start gap-1 rounded-md border border-transparent",
             // The row under the drag shows where the step will land; the
             // dragged row dims so the eye tracks the gap, not the ghost.
             over === i && dragging !== null && dragging !== i && "border-accent bg-accent-soft",
@@ -85,7 +94,7 @@ export default function StepsEditor({
             draggable
             aria-label={`Reorder step ${i + 1}`}
             title="Drag to reorder - or focus and use the arrow keys"
-            className="cursor-grab px-0.5 text-faint hover:text-text active:cursor-grabbing"
+            className="cursor-grab px-0.5 pt-2 text-faint hover:text-text active:cursor-grabbing"
             onDragStart={() => setDragging(i)}
             onDragEnd={() => {
               setDragging(null);
@@ -105,7 +114,7 @@ export default function StepsEditor({
           >
             <GripVertical size={14} />
           </span>
-          <span className="id-mono w-5 text-right text-xs text-faint">{i + 1}</span>
+          <span className="id-mono w-5 pt-2 text-right text-xs text-faint">{i + 1}</span>
           {s.shared != null ? (
             // Locked: a Shared Steps reference is edited in its own work
             // item. It can still be dragged, moved by keyboard and removed.
@@ -118,25 +127,29 @@ export default function StepsEditor({
             </div>
           ) : (
             <>
-              <Input
+              <CaseTextField
+                kind="step"
+                preview={preview}
                 aria-label={`Step ${i + 1} action`}
-                className="flex-1 px-2 py-1.5 text-xs"
+                className={cn("min-w-0 flex-1 text-xs", fieldHeight(s.action))}
                 placeholder="Action"
                 value={s.action}
-                onChange={(e) => setStep(i, "action", e.target.value)}
+                onChange={(v) => setStep(i, "action", v)}
               />
-              <Input
+              <CaseTextField
+                kind="step"
+                preview={preview}
                 aria-label={`Step ${i + 1} expected`}
-                className="flex-1 px-2 py-1.5 text-xs"
+                className={cn("min-w-0 flex-1 text-xs", fieldHeight(s.expected))}
                 placeholder="Expected result"
                 value={s.expected}
-                onChange={(e) => setStep(i, "expected", e.target.value)}
+                onChange={(v) => setStep(i, "expected", v)}
               />
             </>
           )}
           <button
             aria-label={`Remove step ${i + 1}`}
-            className="px-1 text-xs text-faint hover:text-danger"
+            className="px-1 pt-2 text-xs text-faint hover:text-danger"
             title="Remove step"
             onClick={() => onChange(steps.filter((_, j) => j !== i))}
           >
@@ -144,14 +157,19 @@ export default function StepsEditor({
           </button>
         </div>
       ))}
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => onChange([...steps, { action: "", expected: "" }])}
-      >
-        <IconAdd aria-hidden />
-        Add Step
-      </Button>
+      <div className="flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => onChange([...steps, { action: "", expected: "" }])}
+        >
+          <IconAdd aria-hidden />
+          Add Step
+        </Button>
+        {steps.length > 0 && (
+          <PreviewToggle what="steps" on={preview} onToggle={() => setPreview((p) => !p)} />
+        )}
+      </div>
     </div>
   );
 }

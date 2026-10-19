@@ -9,6 +9,7 @@ import { toast } from "../../lib/toast";
 import { useLightbox } from "@astryxdesign/core/Lightbox";
 import AstryxIsland from "../../components/AstryxIsland";
 import SharedStepLabel from "../../components/SharedStepLabel";
+import CaseText from "../../components/CaseText";
 import { commands, type RunOutcome, type TestPoint } from "../../bindings";
 import { outcomeLabel } from "../../lib/outcomes";
 import { unwrap } from "../../lib/ipc";
@@ -139,8 +140,12 @@ export default function CasePreview({
                     </td>
                   ) : (
                     <>
-                      <td className="whitespace-pre-wrap px-2 py-1 text-text">{s.action}</td>
-                      <td className="whitespace-pre-wrap px-2 py-1 text-muted">{s.expected}</td>
+                      <td className="px-2 py-1 text-text">
+                        <CaseText kind="step" text={s.action} />
+                      </td>
+                      <td className="px-2 py-1 text-muted">
+                        <CaseText kind="step" text={s.expected} />
+                      </td>
                     </>
                   )}
                 </tr>

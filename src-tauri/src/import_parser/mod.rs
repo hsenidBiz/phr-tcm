@@ -230,10 +230,6 @@ struct StepRead {
     /// failure, never a fallback to whatever `action`/`expected` sat next
     /// to it).
     step: Option<Step>,
-    /// Whether flattening changed `action` or `expected` - the case-level
-    /// "spanned several lines" warning is one line for the whole case, so
-    /// callers OR this across every step rather than reporting it here.
-    wrapped: bool,
     /// Phrased as "step N: ..." with no case-specific prefix, so a caller
     /// with a `label`/`title` to prepend can build the same text
     /// `parse_json_text` always has, and a caller with no warning channel
@@ -275,7 +271,6 @@ fn read_step(rs: &serde_json::Value, n: usize) -> StepRead {
         _ => {
             return StepRead {
                 step: None,
-                wrapped: false,
                 warnings: vec![format!("step {n}: expected an object or string - step skipped.")],
             };
         }
@@ -284,7 +279,6 @@ fn read_step(rs: &serde_json::Value, n: usize) -> StepRead {
         return match shared_id {
             None => StepRead {
                 step: None,
-                wrapped: false,
                 warnings: vec![format!(
                     "step {n}: 'shared' must be the id of a Shared Steps work item - step skipped."
                 )],
@@ -298,7 +292,6 @@ fn read_step(rs: &serde_json::Value, n: usize) -> StepRead {
                 }
                 StepRead {
                     step: Some(Step { shared: Some(id), ..Default::default() }),
-                    wrapped: false,
                     warnings,
                 }
             }
@@ -310,13 +303,10 @@ fn read_step(rs: &serde_json::Value, n: usize) -> StepRead {
         } else {
             vec![]
         };
-        return StepRead { step: None, wrapped: false, warnings };
+        return StepRead { step: None, warnings };
     }
-    let (action, action_wrapped) = flatten_step_text(&action);
-    let (expected, expected_wrapped) = flatten_step_text(&expected);
     StepRead {
-        step: Some(Step { action, expected, shared: None }),
-        wrapped: action_wrapped || expected_wrapped,
+        step: Some(Step { action: step_lines(&action), expected: step_lines(&expected), shared: None }),
         warnings: vec![],
     }
 }
@@ -324,7 +314,7 @@ fn read_step(rs: &serde_json::Value, n: usize) -> StepRead {
 /// One case's `steps` list, read the way the importer reads it - through
 /// `read_step`, the same reader `parse_json_text` uses, so an AI-inserted
 /// case's steps survive the same shapes a real import accepts. Warnings and
-/// the "wrapped" flag are discarded: `insert_cases` has no per-case warnings
+/// are discarded: `insert_cases` has no per-case warnings
 /// channel, only the report's `ignored` list, which is built separately.
 pub(crate) fn case_steps_of(v: &serde_json::Value) -> Vec<Step> {
     let raw_steps = match v.get("steps") {
@@ -342,19 +332,14 @@ pub(crate) fn step_is_kept(rs: &serde_json::Value) -> bool {
     read_step(rs, 0).step.is_some()
 }
 
-/// Flatten a step's internal line breaks, reporting whether any were there.
+/// A step's text with its line breaks kept, every flavour as `\n`.
 ///
-/// Azure DevOps stores steps in an HTML field, and the app's own step
-/// editor is a single-line input - so a line break in an imported step
-/// never survives to anywhere the user will see it. It used to be dropped
-/// silently somewhere between here and the browser; folding it here means
-/// what the file said and what the app shows are the same thing, and the
-/// author gets told their layout did not carry.
-fn flatten_step_text(s: &str) -> (String, bool) {
-    if !s.contains(['\n', '\r']) {
-        return (s.to_string(), false);
-    }
-    (s.split_whitespace().collect::<Vec<_>>().join(" "), true)
+/// Step text is Markdown, and a step keeps its lines in Azure DevOps (as
+/// `<BR/>`): a query on its own lines, a list, a fence. They used to be
+/// folded onto one line here, when a step could hold only one. `\r\n` is
+/// made `\n` so the text compares equal to the same step read back.
+fn step_lines(s: &str) -> String {
+    s.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 fn step_sort_key(item: &Row) -> (i64, u32) {
@@ -505,7 +490,6 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
         }
 
         let mut steps: Vec<Step> = vec![];
-        let mut wrapped_steps = false;
         for (row_num, row) in &group {
             let action = row.get("StepAction").map(|s| s.trim()).unwrap_or("");
             let expected = row.get("StepExpected").map(|s| s.trim()).unwrap_or("");
@@ -517,12 +501,7 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
                 }
                 continue;
             }
-            let (action, action_wrapped) = flatten_step_text(action);
-            let (expected, expected_wrapped) = flatten_step_text(expected);
-            if action_wrapped || expected_wrapped {
-                wrapped_steps = true;
-            }
-            steps.push(Step { action, expected, shared: None });
+            steps.push(Step { action: step_lines(action), expected: step_lines(expected), shared: None });
         }
 
         if steps.is_empty() {
@@ -530,11 +509,6 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
                 "Row {first_row}: test case '{name}' has no rows with a StepAction - skipped."
             ));
             continue;
-        }
-        if wrapped_steps {
-            warnings.push(format!(
-                "Row {first_row}: test case '{name}' - a step spanned several lines; Azure DevOps stores steps on one line, so the line breaks were removed."
-            ));
         }
 
         test_cases.push(TestCase {
@@ -770,14 +744,10 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
             }
         };
         let mut steps = vec![];
-        let mut wrapped_steps = false;
         for (j, rs) in raw_steps.iter().enumerate() {
             let read = read_step(rs, j + 1);
             for w in read.warnings {
                 warnings.push(format!("{label} ('{title}') {w}"));
-            }
-            if read.wrapped {
-                wrapped_steps = true;
             }
             if let Some(step) = read.step {
                 steps.push(step);
@@ -789,11 +759,6 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
                 "{label} ('{title}'): has no steps with an action - skipped."
             ));
             continue;
-        }
-        if wrapped_steps {
-            warnings.push(format!(
-                "{label} ('{title}'): a step spanned several lines; Azure DevOps stores steps on one line, so the line breaks were removed."
-            ));
         }
 
         test_cases.push(TestCase {

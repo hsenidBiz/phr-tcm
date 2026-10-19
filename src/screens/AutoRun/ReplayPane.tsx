@@ -16,6 +16,7 @@
 import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { commands, type PlanView, type StepRecord } from "../../bindings";
 import SharedStepLabel from "../../components/SharedStepLabel";
+import CaseText from "../../components/CaseText";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Modal } from "../../components/ui/modal";
@@ -595,11 +596,20 @@ function CaseSteps({
               )}
             >
               <div className="min-w-0 flex-1">
-                <span className={now ? "text-accent" : done ? "text-faint" : "text-text"}>
-                  {n}.{" "}
-                  {s.shared != null ? <SharedStepLabel id={s.shared} org={org} /> : s.action}
-                </span>
-                {s.shared == null && s.expected && <div className="text-faint">→ {s.expected}</div>}
+                <div className={cn("flex gap-1", now ? "text-accent" : done ? "text-faint" : "text-text")}>
+                  <span className="shrink-0">{n}.</span>
+                  {s.shared != null ? (
+                    <SharedStepLabel id={s.shared} org={org} />
+                  ) : (
+                    <CaseText kind="step" text={s.action} className="min-w-0 flex-1" />
+                  )}
+                </div>
+                {s.shared == null && s.expected && (
+                  <div className="flex gap-1 text-faint">
+                    <span className="shrink-0">→</span>
+                    <CaseText kind="step" text={s.expected} className="min-w-0 flex-1" />
+                  </div>
+                )}
                 {result?.kind === "failed" && <div className="text-danger">{result.detail}</div>}
               </div>
               {now && <span className="shrink-0 font-medium">Checking now</span>}

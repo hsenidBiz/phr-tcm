@@ -229,3 +229,45 @@ test("a wrong stored type is still caught when the compref holds more than one n
   expect(d.steps.retyped).toBe(1);
   expect(d.noop).toBe(false);
 });
+
+test("a draft saved before steps kept their lines is no change", () => {
+  // Azure DevOps holds the step with a line break and bold; the draft holds
+  // the old one-line reading. The save leaves the step alone, so does the review.
+  const cur = current({
+    steps: [{ action: "Open the page\n**Click Save**", expected: "Saved" }],
+    steps_legacy: [{ action: "Open the page Click Save", expected: "Saved" }],
+  });
+  expect(diffCase(queued({ steps: [{ action: "Open the page Click Save", expected: "Saved" }] }), cur).noop).toBe(true);
+  expect(diffCase(queued({ steps: cur.steps }), cur).noop).toBe(true);
+  // A real edit still differs from both.
+  const edited = diffCase(queued({ steps: [{ action: "Open the page\nClick Save", expected: "Saved" }] }), cur);
+  expect(edited.steps.changed).toBe(1);
+});
+
+test("each field of a step is matched against either reading", () => {
+  // The action is today's reading, the expected the old one-line copy: no
+  // change, as the save sees it field by field.
+  const cur = current({
+    steps: [{ action: "Open the page\n**Click Save**", expected: "Saved\nListed" }],
+    steps_legacy: [{ action: "Open the page Click Save", expected: "Saved Listed" }],
+  });
+  const mixed = queued({ steps: [{ action: "Open the page\n**Click Save**", expected: "Saved Listed" }] });
+  expect(diffCase(mixed, cur).noop).toBe(true);
+  // One field really edited: a change.
+  const edited = queued({ steps: [{ action: "Open the page Click Save", expected: "Saved and listed" }] });
+  expect(diffCase(edited, cur).steps.changed).toBe(1);
+});
+
+test("preconditions saved before they were Markdown are no change", () => {
+  // Azure DevOps holds a bold word and a list; the draft holds the old
+  // plain-text reading. The save leaves the field out, so does the review.
+  const cur = current({
+    preconditions: "Signed in as **admin**\n\n- one\n- two",
+    preconditions_legacy: "Signed in as admin\n• one\n• two",
+  });
+  expect(diffCase(queued({ preconditions: "Signed in as admin\n• one\n• two" }), cur).noop).toBe(true);
+  expect(diffCase(queued({ preconditions: cur.preconditions }), cur).noop).toBe(true);
+  // A real edit still differs from both.
+  const edited = diffCase(queued({ preconditions: "Signed in as **admin**\n\n- one" }), cur);
+  expect(edited.fields.map((f) => f.name)).toContain("Preconditions");
+});

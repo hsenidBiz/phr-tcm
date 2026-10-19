@@ -182,6 +182,19 @@ fn squash(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// A step's text tidied without folding its lines. Step text is Markdown
+/// and keeps its line breaks in Azure DevOps - a query on its own lines, a
+/// list, a fence - so a step with several lines keeps them, only trailing
+/// spaces and blank edges going; a one-line step is `squash`ed as before.
+fn tidy_step(s: &str) -> String {
+    if !s.contains(['\n', '\r']) {
+        return squash(s);
+    }
+    let s = s.replace("\r\n", "\n").replace('\r', "\n");
+    let lines: Vec<&str> = s.split('\n').map(str::trim_end).collect();
+    lines.join("\n").trim_matches('\n').to_string()
+}
+
 fn sentences(text: &str) -> Vec<String> {
     text.split(['\n', ';'])
         .flat_map(|line| line.split(". "))
@@ -940,12 +953,14 @@ pub fn optimize_full(
         report.empty_steps_removed += before - c.steps.len();
 
         for (i, s) in c.steps.iter_mut().enumerate() {
-            s.action = squash(&s.action);
-            let original = squash(&s.expected);
+            s.action = tidy_step(&s.action);
+            let original = tidy_step(&s.expected);
             // Round 8 §14: with trimming off the expected result is left
             // exactly as written - only the whitespace is normalised, which
-            // every other field gets too.
-            if !trim_expected {
+            // every other field gets too. An expected result of several
+            // lines (a list, a fence) is not trimmed either: the trim works
+            // on sentences and would run its lines together.
+            if !trim_expected || original.contains('\n') {
                 s.expected = original;
                 continue;
             }

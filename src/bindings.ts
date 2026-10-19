@@ -227,8 +227,16 @@ export const commands = {
 	 *  `original_tags` is System.Tags from that same TestCaseFull - without
 	 *  it a removed tag cannot actually be removed (ADO merges tag writes
 	 *  made with the plain `add` op; see `tags_write_ops`).
+	 * 
+	 *  `original_preconditions` is the prerequisites field from that same
+	 *  TestCaseFull (`preconditions_stored`): with it a save that did not edit
+	 *  the field leaves it out, and a field stored as Markdown is written as
+	 *  Markdown - see `prereq_patch`.
 	 */
-	updateTestCase: (organization: string, project: string, tc: TestCase_Deserialize, moduleRef: string | null, preconditionsRef: string | null, originalStepsXml: string | null, originalTags: string | null) => typedError<null, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef, originalStepsXml, originalTags })),
+	updateTestCase: (organization: string, project: string, tc: TestCase_Deserialize, moduleRef: string | null, preconditionsRef: string | null, originalStepsXml: string | null, originalTags: string | null, originalPreconditions: {
+	value: string,
+	markdown: boolean,
+} | null) => typedError<null, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef, originalStepsXml, originalTags, originalPreconditions })),
 	exportQueueJson: (path: string, queue: TestCase_Deserialize[]) => typedError<null, string>(__TAURI_INVOKE("export_queue_json", { path, queue })),
 	listPlansWithSuites: (organization: string, project: string) => typedError<PlanWithSuites[], AdoError>(__TAURI_INVOKE("list_plans_with_suites", { organization, project })),
 	getResultDetail: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultDetail, AdoError>(__TAURI_INVOKE("get_result_detail", { organization, project, runId, resultId })),
@@ -6017,6 +6025,16 @@ export type Step_Serialize = {
 };
 
 /**
+ *  A rich-text field as Azure DevOps holds it: its raw value, and whether
+ *  the work item stores it as Markdown (`multilineFieldsFormat`) rather
+ *  than HTML.
+ */
+export type StoredText = {
+	value: string,
+	markdown: boolean,
+};
+
+/**
  *  The record a flow is about: the placeholder name a check uses for it and
  *  the type of the value.
  */
@@ -6255,14 +6273,14 @@ export type TestCase = TestCase_Serialize | TestCase_Deserialize;
 
 /**
  *  A fully-loaded Test Case for the editor: steps parsed from the XML blob,
- *  preconditions flattened to plain text. `id` doubles as update_id when the
+ *  preconditions read as Markdown. `id` doubles as update_id when the
  *  editor saves.
  */
 export type TestCaseFull = TestCaseFull_Serialize | TestCaseFull_Deserialize;
 
 /**
  *  A fully-loaded Test Case for the editor: steps parsed from the XML blob,
- *  preconditions flattened to plain text. `id` doubles as update_id when the
+ *  preconditions read as Markdown. `id` doubles as update_id when the
  *  editor saves.
  */
 export type TestCaseFull_Deserialize = {
@@ -6272,6 +6290,14 @@ export type TestCaseFull_Deserialize = {
 	automation_status: string,
 	steps: Step_Deserialize[],
 	/**
+	 *  The steps as TCM read them before step text was Markdown - one line,
+	 *  formatting stripped (`steps_xml::parse_steps_text`) - and only when
+	 *  that differs from `steps`. A queue draft or cache saved before then
+	 *  holds this reading; the webview's review counts a step equal to
+	 *  either as unchanged, as the save itself does (`steps_unchanged`).
+	 */
+	steps_legacy: Step_Deserialize[] | null,
+	/**
 	 *  Real ADO step ids (document order, aligned with `steps`) - the runner
 	 *  needs them to build iterationDetails.
 	 */
@@ -6279,15 +6305,33 @@ export type TestCaseFull_Deserialize = {
 	/**
 	 *  The Steps field EXACTLY as Azure DevOps holds it.
 	 * 
-	 *  `steps` above is a lossy read: parse_steps_xml strips every tag, so
-	 *  bold, links and embedded screenshots do not survive it. Writing that
+	 *  `steps` above is a lossy read: parse_steps_xml keeps a step's lines,
+	 *  bold and italic, but links and embedded screenshots do not survive it. Writing that
 	 *  back would delete them from the work item. Keeping the original
 	 *  lets a save ask "did the user actually change the steps?" and, when
 	 *  the answer is no, leave the field out of the patch entirely.
 	 */
 	steps_xml: string,
 	module_value: string,
+	/**
+	 *  The List of Prerequisites as Markdown: the field's HTML read back
+	 *  (`case_markdown::prereq_html_to_md`), or its text as-is when the
+	 *  work item stores the field as Markdown.
+	 */
 	preconditions: string,
+	/**
+	 *  The prerequisites as TCM read them before they were Markdown
+	 *  (`steps_xml::html_to_text`), only when that differs from
+	 *  `preconditions` - what a draft or cache saved before then holds, and
+	 *  which a save counts as unchanged (see `steps_legacy`).
+	 */
+	preconditions_legacy: string | null,
+	/**
+	 *  The prerequisites field EXACTLY as Azure DevOps holds it, and its
+	 *  storage format - what a save compares with to leave the field out
+	 *  when it was not edited. `None` when no prerequisites field was read.
+	 */
+	preconditions_stored: StoredText | null,
 	/**
 	 *  `Microsoft.VSTS.Common.Priority`, 1-4; `None` when the work item has
 	 *  none (or one outside the picklist).
@@ -6297,7 +6341,7 @@ export type TestCaseFull_Deserialize = {
 
 /**
  *  A fully-loaded Test Case for the editor: steps parsed from the XML blob,
- *  preconditions flattened to plain text. `id` doubles as update_id when the
+ *  preconditions read as Markdown. `id` doubles as update_id when the
  *  editor saves.
  */
 export type TestCaseFull_Serialize = {
@@ -6307,6 +6351,14 @@ export type TestCaseFull_Serialize = {
 	automation_status: string,
 	steps: Step_Serialize[],
 	/**
+	 *  The steps as TCM read them before step text was Markdown - one line,
+	 *  formatting stripped (`steps_xml::parse_steps_text`) - and only when
+	 *  that differs from `steps`. A queue draft or cache saved before then
+	 *  holds this reading; the webview's review counts a step equal to
+	 *  either as unchanged, as the save itself does (`steps_unchanged`).
+	 */
+	steps_legacy?: Step_Serialize[] | null,
+	/**
 	 *  Real ADO step ids (document order, aligned with `steps`) - the runner
 	 *  needs them to build iterationDetails.
 	 */
@@ -6314,15 +6366,33 @@ export type TestCaseFull_Serialize = {
 	/**
 	 *  The Steps field EXACTLY as Azure DevOps holds it.
 	 * 
-	 *  `steps` above is a lossy read: parse_steps_xml strips every tag, so
-	 *  bold, links and embedded screenshots do not survive it. Writing that
+	 *  `steps` above is a lossy read: parse_steps_xml keeps a step's lines,
+	 *  bold and italic, but links and embedded screenshots do not survive it. Writing that
 	 *  back would delete them from the work item. Keeping the original
 	 *  lets a save ask "did the user actually change the steps?" and, when
 	 *  the answer is no, leave the field out of the patch entirely.
 	 */
 	steps_xml: string,
 	module_value: string,
+	/**
+	 *  The List of Prerequisites as Markdown: the field's HTML read back
+	 *  (`case_markdown::prereq_html_to_md`), or its text as-is when the
+	 *  work item stores the field as Markdown.
+	 */
 	preconditions: string,
+	/**
+	 *  The prerequisites as TCM read them before they were Markdown
+	 *  (`steps_xml::html_to_text`), only when that differs from
+	 *  `preconditions` - what a draft or cache saved before then holds, and
+	 *  which a save counts as unchanged (see `steps_legacy`).
+	 */
+	preconditions_legacy?: string | null,
+	/**
+	 *  The prerequisites field EXACTLY as Azure DevOps holds it, and its
+	 *  storage format - what a save compares with to leave the field out
+	 *  when it was not edited. `None` when no prerequisites field was read.
+	 */
+	preconditions_stored?: StoredText | null,
 	/**
 	 *  `Microsoft.VSTS.Common.Priority`, 1-4; `None` when the work item has
 	 *  none (or one outside the picklist).

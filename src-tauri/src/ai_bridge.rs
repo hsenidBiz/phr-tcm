@@ -8343,9 +8343,9 @@ impl SaveRefusal {
 }
 
 /// A test case's step actions and expected results, as the seen check
-/// reads them.
+/// reads them: plain words, the Markdown taken out.
 fn case_step_text(case: &crate::ado::TestCaseFull) -> Vec<String> {
-    case.steps.iter().flat_map(|s| [s.action.clone(), s.expected.clone()]).collect()
+    crate::steps_xml::plain_texts(&case.steps)
 }
 
 /// What a script save's seen check reads: the discovery map, the project's
@@ -8929,6 +8929,17 @@ async fn validate_json(
                         hits.join(", ")
                     ));
                 }
+
+                // How the text is formatted. validate has no copy of an
+                // updated case's current text to compare with, so a case
+                // with an id gets only the warnings that plain text read
+                // back from Azure DevOps can never trigger (see
+                // `case_format::formatting_warnings`).
+                warnings.extend(crate::case_format::formatting_warnings(
+                    i + 1,
+                    tc,
+                    tc.update_id.is_none(),
+                ));
 
                 // A negative folded into its positive is covered but not
                 // visible: nobody auditing by title can see it was tested.
@@ -9718,9 +9729,9 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         - AVOID unnecessary adjectives and adverbs.\n\
         - AVOID hashtags.\n\
         - AVOID semicolons.\n\
-        - AVOID markdown and asterisks in titles, steps, expected results and\n\
-        preconditions (reviewer_notes is the one field rendered as markdown,\n\
-        and it needs none).\n\
+        - AVOID markdown and asterisks in titles (reviewer_notes is rendered as\n\
+        markdown and needs none). Steps, expected results and preconditions\n\
+        follow the Formatting section.\n\
         - AVOID these words: can, may, just, that, very, really, literally,\n\
         actually, certainly, probably, basically, could, maybe, delve, embark,\n\
         enlightening, esteemed, shed light, craft, crafting, imagine, realm,\n\
@@ -9740,6 +9751,18 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         word \"save\" from the button \"Save\".\n\n\
         IMPORTANT: review every case before handing it back and make sure\n\
         there are no em dashes.\n\n\
+        ## Formatting\n\
+        Steps and preconditions are Markdown. Use formatting only where it helps\n\
+        reading; never excessively. In a step, bold the one value or control it\n\
+        turns on, such as the **Save** button. Use a list in the preconditions\n\
+        for several conditions. Put any SQL or code in a fenced block: a lead-in\n\
+        sentence such as \"Run the following query.\", then the query in a\n\
+        ```sql fence. In a step its lines stay plain lines in Azure DevOps; in\n\
+        the preconditions it shows as code. A step keeps bold, italic and line\n\
+        breaks, a few bold words at most; never headings, tables, links,\n\
+        images or emphasis on a whole sentence. Text Markdown would change\n\
+        (`\\\\server`, a line starting with `>`, a `---` line, `__init__`) goes in\n\
+        backticks.\n\n\
         ## area\n\
         Give every case an `area`: where it sits on the page or in the\n\
         feature, as a path with `/` between the levels, page or screen\n\

@@ -110,7 +110,11 @@ async fn validate_warns_about_markup_and_merged_branches() {
                 "title": "A plain case with a placeholder",
                 "automation_status": "Not Automated",
                 "steps": [
-                    { "action": "Run SELECT * FROM t WHERE id = <cycleId>;", "expected": "One row is returned." }
+                    { "action": "Run the following query.
+
+```sql
+SELECT * FROM t WHERE id = <cycleId>;
+```", "expected": "One row is returned." }
                 ]
             }
         ]
@@ -4525,4 +4529,250 @@ mod crystal_routes {
         assert_eq!(live_preview_gate(&all, false), Err((400, WRITES_OFF.to_string())));
         assert_eq!(live_preview_gate(&all, true), Ok(()));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Formatting in case text: the guide and the warnings
+// ---------------------------------------------------------------------------
+
+/// Validate a draft of one case and give back every warning, joined.
+async fn warnings_for(case: serde_json::Value) -> String {
+    let draft = serde_json::json!({ "test_cases": [case] }).to_string();
+    let (status, body) = route(&ctx(), None, "POST", "/validate", &draft, "2.2.3").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["error"], serde_json::Value::Null, "{body}");
+    v["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w.as_str().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn one_step(action: &str, expected: &str) -> serde_json::Value {
+    serde_json::json!({
+        "title": "Formatting probe", "automation_status": "Not Automated",
+        "steps": [{ "action": action, "expected": expected }]
+    })
+}
+
+#[tokio::test]
+async fn a_heading_table_link_or_image_in_a_step_or_the_prerequisites_warns() {
+    let all = warnings_for(one_step("# Open the page", "The page opens.")).await;
+    assert!(all.contains("step 1 action") && all.contains("heading"), "{all}");
+
+    let all = warnings_for(one_step("Open the page.", "| Name | Age |\n| --- | --- |\n| Ann | 3 |")).await;
+    assert!(all.contains("step 1 expected") && all.contains("table"), "{all}");
+
+    let all = warnings_for(one_step("Open [the page](https://example.com/p).", "It opens.")).await;
+    assert!(all.contains("step 1 action") && all.contains("link"), "{all}");
+
+    let all = warnings_for(one_step("Open the page.", "![logo](logo.png) is shown.")).await;
+    assert!(all.contains("step 1 expected") && all.contains("image"), "{all}");
+
+    let mut case = one_step("Open the page.", "It opens.");
+    case["preconditions"] = serde_json::json!("## Setup\n\nA signed-in manager.");
+    let all = warnings_for(case).await;
+    assert!(all.contains("preconditions") && all.contains("heading"), "{all}");
+}
+
+#[tokio::test]
+async fn more_than_three_bold_or_italic_spans_in_a_step_warn() {
+    // Three is the limit, counted across the action and the expected result.
+    let ok = warnings_for(one_step("Click **Save**, then **Close**.", "The **Home** page opens.")).await;
+    assert!(!ok.contains("bold or italic"), "{ok}");
+
+    let all = warnings_for(one_step(
+        "Click **Save**, then **Close** and *Back*.",
+        "The **Home** page opens.",
+    ))
+    .await;
+    assert!(all.contains("step 1") && all.contains("bold or italic") && all.contains("4"), "{all}");
+}
+
+#[tokio::test]
+async fn a_step_that_is_mostly_bold_warns() {
+    let all = warnings_for(one_step(
+        "**Open the leave request page and check the balance**",
+        "The page opens.",
+    ))
+    .await;
+    assert!(all.contains("step 1 action") && all.contains("mostly bold"), "{all}");
+    // The one control a step turns on is what bold is for.
+    let ok = warnings_for(one_step("Click the **Save** button.", "The page opens.")).await;
+    assert!(!ok.contains("mostly bold"), "{ok}");
+}
+
+#[tokio::test]
+async fn an_sql_line_outside_a_code_fence_warns_and_tells_what_to_write() {
+    let all = warnings_for(one_step(
+        "Run the following query.\nSELECT * FROM Leave WHERE Id = 4",
+        "One row is returned.",
+    ))
+    .await;
+    assert!(all.contains("step 1 action") && all.contains("SQL"), "{all}");
+    assert!(all.contains("```sql") && all.contains("Run the following query."), "{all}");
+
+    let mut case = one_step("Open the page.", "It opens.");
+    case["preconditions"] = serde_json::json!("The table is empty.\n\nUPDATE Leave SET Status = 1");
+    let all = warnings_for(case).await;
+    assert!(all.contains("preconditions") && all.contains("SQL"), "{all}");
+
+    // Inside a fence it is exactly what the guide asks for.
+    let mut case = one_step(
+        "Run the following query.\n\n```sql\nSELECT * FROM Leave WHERE Id = 4\n```",
+        "One row is returned.",
+    );
+    case["preconditions"] =
+        serde_json::json!("Run the following query.\n\n```sql\nDELETE FROM Leave WHERE Id = 4\n```");
+    let ok = warnings_for(case).await;
+    assert!(!ok.contains("SQL"), "{ok}");
+
+    // Ordinary prose that happens to hold the lower-case words is not SQL.
+    let ok = warnings_for(one_step("Select a leave type from the list where it is shown.", "It is set.")).await;
+    assert!(!ok.contains("SQL"), "{ok}");
+}
+
+#[tokio::test]
+async fn characters_markdown_would_change_warn_and_say_to_use_backticks() {
+    let cases: [(&str, &str); 5] = [
+        ("Open \\\\fileserver\\share.", "backslash"),
+        ("> Note: this is a quote", "starts with >"),
+        ("Open the page.\n\n---\n\nThen close it.", "---"),
+        ("[ref]: https://example.com", "[ref]:"),
+        ("Call __init__ on the object.", "underscores"),
+    ];
+    for (text, what) in cases {
+        let all = warnings_for(one_step(text, "It works.")).await;
+        assert!(all.contains("step 1 action") && all.contains(what), "{what}: {all}");
+        assert!(all.contains("backticks"), "it must say what to type instead ({what}): {all}");
+    }
+
+    // Wrapped in backticks, or inside a fence, the same text is kept as typed.
+    let ok = warnings_for(one_step(
+        "Open `\\\\fileserver\\share`, call `__init__` and read\n\n```\n> Note\n---\n[ref]: x\n```",
+        "It works.",
+    ))
+    .await;
+    assert!(!ok.contains("backticks"), "{ok}");
+}
+
+#[tokio::test]
+async fn an_unchanged_old_case_raises_no_formatting_warning() {
+    // A case with an id is an update. validate_cases has no copy of its
+    // current text, so it holds back the warnings that plain text read
+    // back from Azure DevOps could trigger (an SQL line outside a fence, a
+    // backslash, a leading >, a --- line): text the developer already has
+    // is never flagged as if the assistant had just written it.
+    let mut case = one_step(
+        "Run SELECT * FROM Leave WHERE Id = 4\n> a note\n\\\\fileserver\\share\n---",
+        "It works.",
+    );
+    case["id"] = serde_json::json!(155170);
+    let all = warnings_for(case).await;
+    assert_eq!(all, "", "{all}");
+}
+
+/// Case text is read in the converter's dialect, which has no tables: a
+/// pipe-and-dashes block is lines of text in Azure DevOps and in TCM. An
+/// old field that holds one is not formatting anybody typed, so a case
+/// with an id is not warned about it - and nothing else in the text reads
+/// differently for it. A new case still hears that tables do not show.
+#[tokio::test]
+async fn an_old_pipe_and_dashes_block_is_text_not_a_table() {
+    let mut case = one_step("Open the page.", "| a | b |\n| --- | --- |\n| 1 | 2 |");
+    case["preconditions"] = serde_json::json!("Name | Age\n--- | ---\nAnn | 3");
+    case["id"] = serde_json::json!(155170);
+    let all = warnings_for(case).await;
+    assert_eq!(all, "", "{all}");
+
+    let mut case = one_step("Open the page.", "| a | b |\n| --- | --- |\n| 1 | 2 |");
+    case["preconditions"] = serde_json::json!("Name | Age\n--- | ---\nAnn | 3");
+    let all = warnings_for(case).await;
+    assert!(all.contains("step 1 expected") && all.contains("preconditions") && all.contains("table"), "{all}");
+
+    // Pipes in prose, or a lone dashes line, are not a table.
+    let ok = warnings_for(one_step("Pick A | B from the list.", "It is set.")).await;
+    assert!(!ok.contains("table"), "{ok}");
+}
+
+#[tokio::test]
+async fn a_case_with_an_id_still_warns_about_formatting_somebody_typed() {
+    // Text read back from Azure DevOps is escaped, so these can only be
+    // formatting that was typed: they are reported on an update too.
+    let cases = [
+        (one_step("# Open the page", "It opens."), "heading"),
+        (one_step("Open [the page](https://example.com).", "It opens."), "link"),
+        (one_step("Open the page.", "![logo](logo.png)"), "image"),
+        (one_step("**a** **b** **c** **d**", "It opens."), "bold or italic"),
+        (one_step("**Open the leave request page and check the balance**", "It opens."), "mostly bold"),
+    ];
+    for (mut case, what) in cases {
+        case["id"] = serde_json::json!(155170);
+        let all = warnings_for(case).await;
+        assert!(all.contains(what), "{what}: {all}");
+    }
+}
+
+#[tokio::test]
+async fn a_query_over_several_lines_is_caught_and_a_query_in_backticks_is_not() {
+    let all = warnings_for(one_step("Run the following query.\nSELECT *\nFROM Leave\nWHERE Id = 4", "It works.")).await;
+    assert!(all.contains("step 1 action") && all.contains("SQL"), "{all}");
+
+    let mut case = one_step("Open the page.", "It opens.");
+    case["preconditions"] = serde_json::json!("The table holds one row:\nUPDATE Leave\nSET Status = 1");
+    let all = warnings_for(case).await;
+    assert!(all.contains("preconditions") && all.contains("SQL"), "{all}");
+
+    // A fence between SELECT and FROM splits them into two pieces of text.
+    let ok = warnings_for(one_step("Run SELECT 1.\n\n```\nx\n```\n\nThen read FROM the list.", "It works.")).await;
+    assert!(!ok.contains("SQL"), "{ok}");
+
+    let ok = warnings_for(one_step("Run `SELECT * FROM Leave WHERE Id = 4` and read the row.", "It works.")).await;
+    assert!(!ok.contains("SQL"), "{ok}");
+}
+
+#[tokio::test]
+async fn sparing_formatting_raises_no_warning() {
+    let case = serde_json::json!({
+        "title": "Formatting probe", "automation_status": "Not Automated",
+        "preconditions": "- Signed in as a manager.\n- Two pending requests.\n\nRun the following query.\n\n```sql\nSELECT COUNT(*) FROM Leave WHERE Status = 1\n```",
+        "steps": [
+            { "action": "Click the **Save** button.", "expected": "Your changes were saved." },
+            { "action": "Run the following query.\n\n```sql\nSELECT * FROM Leave WHERE Id = 4\n```", "expected": "One row is returned." }
+        ]
+    });
+    let all = warnings_for(case).await;
+    assert_eq!(all, "", "{all}");
+}
+
+#[tokio::test]
+async fn the_guide_teaches_formatting_sparingly_with_the_fence_rule() {
+    let _style = crate::serial::writing_style();
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/wit/workitemtypes/Test%20Case/fields/Custom.Module"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "allowedValues": ["Login"]
+        })))
+        .mount(&server)
+        .await;
+    let (status, g) = route(&ctx(), Some(&client), "GET", "/guide", "", "2.2.3").await;
+    assert_eq!(status, 200, "{g}");
+
+    let f = section(&g, "## Formatting");
+    assert!(f.contains("only where it helps"), "{f}");
+    assert!(f.contains("never excessively"), "{f}");
+    assert!(f.contains("```sql") && f.contains("Run the following query."), "the fence rule and its lead-in: {f}");
+    assert!(f.contains("plain lines") && f.contains("preconditions"), "what a fence becomes in each field: {f}");
+    assert!(f.contains("never headings, tables, links"), "{f}");
+    assert!(f.contains("backticks"), "{f}");
+    assert!(!f.contains('\u{2014}'), "the guide follows its own style: {f}");
+
+    // The style list no longer forbids the formatting this section allows.
+    let style = section(&g, "## Writing style");
+    assert!(!style.contains("AVOID markdown and asterisks in titles, steps"), "{style}");
+    assert!(style.contains("titles"), "{style}");
 }
