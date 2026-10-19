@@ -285,7 +285,7 @@ fn status_of(v: &Value) -> Option<u16> {
 
 /// `scheme://host:port` of an http(s) address, in lower case, to tell one
 /// site from another - compared, never kept.
-fn origin(url: &str) -> Option<String> {
+pub(crate) fn origin(url: &str) -> Option<String> {
     let (scheme, rest) = url.split_once("://")?;
     let scheme = scheme.to_ascii_lowercase();
     if scheme != "http" && scheme != "https" {

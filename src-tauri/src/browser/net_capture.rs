@@ -6,59 +6,77 @@
 //! Beside `net_record`, not inside it: the record keeps every request a
 //! step may check, with nothing a person could not see in the address bar;
 //! this keeps much more (allow-listed headers, bodies) and so only for
-//! the requests worth it - the page's own XHR, fetch and documents, to its
-//! own site, polls left out, exactly as the record marks them (`observe`
-//! asks the tab's record). Only the supervised browser captures
+//! the requests worth it - the page's own XHR, fetch and documents, to the
+//! application's own site, polls left out exactly as the record marks them
+//! (`observe` asks the tab's record). Only the supervised browser captures
 //! (`Cdp::capture_requests`); an unattended run's browser never does.
+//!
+//! The application's site is the sign-in's start page (`set_app_site`).
+//! Until it is known, documents are not kept at all - a top-level
+//! navigation is always "same site" as itself, and one to the identity
+//! provider carries tokens in its page - and an XHR or fetch is kept when
+//! it goes to the site of the document that sent it. A request sent or
+//! redirected off the application's site never has its response body read
+//! (`Body::OffSite`).
 //!
 //! Never kept: the `cookie`, `set-cookie`, `authorization` and
 //! `proxy-authorization` headers, or any header outside the allow-list
-//! (`kept_header`); a header named like a secret, except `x-csrf-token`,
-//! whose name alone is kept. Bodies are kept as the page sent and got them;
+//! (`kept_header`); an `x-` header named like a secret keeps its name only,
+//! its value `HIDDEN`. Bodies are kept as the page sent and got them;
 //! whoever shows one redacts it first.
 //!
 //! A response body is read at `loadingFinished` - later the browser may
 //! have dropped it. That read is a protocol call and `observe` is not, so
 //! the request is queued (`next_read`) and the driver reads it where it
-//! already waits on the browser (`Cdp::pump`, the start of a call), at most
-//! a few at a time. A body gone by then is `Body::Dropped`.
+//! already waits on the browser, within a small time budget
+//! (`Cdp::read_captured_bodies`). A read the browser does not answer in time
+//! goes back to the front (`retry`), at most `MAX_READ_ATTEMPTS` times; a
+//! body gone by then is `Body::Dropped`.
 //!
 //! Bounded: `MAX_CAPTURED` requests, oldest first; a body at most
-//! `MAX_BODY_BYTES` (a request's `MAX_REQUEST_BODY_BYTES`); all bodies
-//! together at most `MAX_TOTAL_BODY_BYTES`, the oldest bodies dropped first
-//! while their requests stay.
+//! `MAX_BODY_BYTES` (a request's `MAX_REQUEST_BODY_BYTES`); bodies, headers
+//! and addresses together at most `MAX_TOTAL_BODY_BYTES`, the oldest bodies
+//! dropped first while their requests stay.
 
 use super::cdp::Event;
-use super::net_record::NetRecord;
+use super::net_record::{origin, NetRecord};
 use base64::Engine;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 
 /// Requests kept at once; the oldest goes first.
 pub const MAX_CAPTURED: usize = 1000;
-/// The largest response body kept.
+/// The largest response body kept, decoded.
 pub const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 /// The largest request body kept.
 pub const MAX_REQUEST_BODY_BYTES: usize = 256 * 1024;
-/// Every body kept, together; the oldest bodies are dropped first.
+/// Everything kept, together - bodies, headers and addresses; the oldest
+/// bodies are dropped first.
 pub const MAX_TOTAL_BODY_BYTES: usize = 32 * 1024 * 1024;
 /// Body reads waiting at once. One more drops the oldest waiting (its
 /// body `Dropped`): a page finishing requests faster than they are read
 /// never grows the queue.
 pub const MAX_QUEUED_READS: usize = 64;
+/// How many times a read the browser did not answer in time is tried.
+pub const MAX_READ_ATTEMPTS: u8 = 3;
+/// What a kept header named like a secret shows instead of its value.
+pub const HIDDEN: &str = "(hidden)";
 
 /// A body, as kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
     /// The whole body.
     Text(String),
-    /// Gone: the browser no longer held it when it was read, or it was
-    /// dropped to stay within the budget.
+    /// Gone: the browser no longer held it when it was read, it was never
+    /// read in time, or it was dropped to stay within the budget.
     Dropped,
     /// Not text (a picture, a file, bytes that are not UTF-8): never kept.
     NotText,
     /// Over its cap (`MAX_BODY_BYTES`, `MAX_REQUEST_BODY_BYTES`).
     TooBig,
+    /// Answered by another site (sent or redirected off the application's
+    /// site): never read.
+    OffSite,
 }
 
 impl Body {
@@ -68,6 +86,16 @@ impl Body {
             _ => 0,
         }
     }
+}
+
+/// A request's first redirect: the 3xx it answered and where it was sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Redirect {
+    pub status: u16,
+    /// The path it was sent to - never the host, the query or a fragment.
+    pub to_path: String,
+    /// Sent to another site (scheme, host or port).
+    pub other_site: bool,
 }
 
 /// One request the page made, as kept.
@@ -88,7 +116,8 @@ pub struct Captured {
     pub kind: Option<String>,
     pub status: Option<u16>,
     pub mime: Option<String>,
-    /// Allow-listed (`kept_header`), lower-case names, sorted.
+    /// Allow-listed (`kept_header`), lower-case names, sorted, one entry
+    /// per name (repeated values joined with ", ").
     pub req_headers: Vec<(String, String)>,
     pub resp_headers: Vec<(String, String)>,
     /// `None` when the request sent none, or its read is still waiting.
@@ -104,9 +133,8 @@ pub struct Captured {
     pub duration_ms: Option<u64>,
     /// Chrome's reason (`net::ERR_...`) when it failed.
     pub failed: Option<String>,
-    /// Its first redirect: `302 /path` (the path it was sent to, never the
-    /// host or the query).
-    pub redirect: Option<String>,
+    /// Its first redirect.
+    pub redirect: Option<Redirect>,
 }
 
 /// What is kept from now on. Empty lists and no path keep every request
@@ -142,6 +170,8 @@ pub struct BodyRead {
     pub request_id: String,
     /// `Network.getResponseBody` or `Network.getRequestPostData`.
     pub method: &'static str,
+    /// Tries the browser did not answer in time (`retry`).
+    pub attempts: u8,
 }
 
 impl BodyRead {
@@ -159,6 +189,25 @@ struct Slot {
     session: String,
     /// Its start by the browser's own clock, in seconds.
     started_at: Option<f64>,
+    /// Sent or redirected off the application's site: its body is never
+    /// read.
+    off_site: bool,
+    /// Decoded bytes received so far (`Network.dataReceived`).
+    decoded: u64,
+    /// The response's `Content-Length`, when it said one.
+    content_length: Option<u64>,
+    /// Bytes its address and headers take (`bytes`).
+    meta: usize,
+}
+
+impl Slot {
+    fn body_bytes(&self) -> usize {
+        self.c.req_body.as_ref().map_or(0, Body::bytes) + self.c.resp_body.as_ref().map_or(0, Body::bytes)
+    }
+
+    fn header_bytes(c: &Captured) -> usize {
+        c.url_path_query.len() + c.req_headers.iter().chain(&c.resp_headers).map(|(n, v)| n.len() + v.len()).sum::<usize>()
+    }
 }
 
 #[derive(Default)]
@@ -170,12 +219,31 @@ pub struct NetCapture {
     /// The last id handed out.
     last_id: u64,
     filter: CaptureFilter,
-    /// Bytes of every body kept now.
+    /// Bytes of everything kept now: bodies, headers, addresses.
     bytes: usize,
     reads: VecDeque<BodyRead>,
+    /// The application's origin (`set_app_site`), compared, never shown.
+    app_site: Option<String>,
 }
 
 impl NetCapture {
+    /// The application's site, from any address on it (the sign-in's
+    /// start page); `None` when it is not known. Decides what is kept from
+    /// now on.
+    pub fn set_app_site(&mut self, url: Option<&str>) {
+        self.app_site = url.and_then(origin);
+    }
+
+    /// Whether the application's site is known.
+    pub fn knows_app_site(&self) -> bool {
+        self.app_site.is_some()
+    }
+
+    /// Is `url` on the application's site? Unknown when the site is not.
+    fn on_app_site(&self, url: &str) -> Option<bool> {
+        self.app_site.as_ref().map(|site| origin(url).as_ref() == Some(site))
+    }
+
     /// Note what this event, in the tab with this session and name, says
     /// about a request. `record` is that tab's network record, which has
     /// seen the event already: whether a starting request is kept is what
@@ -190,20 +258,33 @@ impl NetCapture {
         match ev.method.as_str() {
             "Network.responseReceived" => {
                 let r = &p["response"];
-                let c = &mut self.entries[at].c;
-                c.status = status_of(&r["status"]);
-                c.mime = r["mimeType"].as_str().map(str::to_string);
-                c.resp_headers = kept_headers(&r["headers"]);
+                let headers = kept_headers(&r["headers"]);
+                let slot = &mut self.entries[at];
+                slot.content_length = header_value(&r["headers"], "content-length").and_then(|v| v.trim().parse().ok());
+                slot.c.status = status_of(&r["status"]);
+                slot.c.mime = r["mimeType"].as_str().map(str::to_string);
+                slot.c.resp_headers = headers;
+                let meta = Slot::header_bytes(&slot.c);
+                self.bytes = self.bytes + meta - slot.meta;
+                slot.meta = meta;
+                self.keep_within_budget();
+            }
+            "Network.dataReceived" => {
+                let n = p["dataLength"].as_f64().filter(|n| *n >= 0.0).unwrap_or(0.0) as u64;
+                let slot = &mut self.entries[at];
+                slot.decoded = slot.decoded.saturating_add(n);
             }
             "Network.loadingFinished" => {
                 let slot = &mut self.entries[at];
                 slot.c.duration_ms = elapsed_ms(slot.started_at, p);
-                let size = p["encodedDataLength"].as_f64().filter(|n| *n >= 0.0).map(|n| n as u64);
-                slot.c.resp_size = size;
+                slot.c.resp_size = p["encodedDataLength"].as_f64().filter(|n| *n >= 0.0).map(|n| n as u64);
+                let cap = MAX_BODY_BYTES as u64;
                 let id = slot.c.id;
-                if !slot.c.mime.as_deref().is_some_and(text_like) {
+                if slot.off_site {
+                    slot.c.resp_body = Some(Body::OffSite);
+                } else if !slot.c.mime.as_deref().is_some_and(text_like) {
                     slot.c.resp_body = Some(Body::NotText);
-                } else if size.is_some_and(|n| n > MAX_BODY_BYTES as u64) {
+                } else if slot.decoded > cap || slot.content_length.is_some_and(|n| n > cap) {
                     slot.c.resp_body = Some(Body::TooBig);
                 } else {
                     self.queue(BodyRead {
@@ -211,6 +292,7 @@ impl NetCapture {
                         session: session.to_string(),
                         request_id: request_id.to_string(),
                         method: RESPONSE_BODY,
+                        attempts: 0,
                     });
                 }
             }
@@ -224,19 +306,31 @@ impl NetCapture {
     }
 
     fn started(&mut self, session: &str, tab: &str, request_id: &str, p: &Value, record: &NetRecord) {
+        let url = p["request"]["url"].as_str().unwrap_or("");
         // A redirect arrives under the same id: the request goes on, keeping
         // what the page asked; the first hop is kept, the answer is the
-        // last hop's.
+        // last hop's - and never read once a hop left the application.
         if let Some(at) = self.index_of(session, request_id) {
-            let c = &mut self.entries[at].c;
-            if c.redirect.is_none() {
-                if let Some(r) = record.get(request_id).and_then(|e| e.redirect.as_ref()) {
-                    c.redirect = Some(format!("{} {}", r.status, r.to));
+            let entry = record.get(request_id);
+            let hop_off = match self.on_app_site(url) {
+                Some(on) => !on,
+                None => entry.and_then(|e| e.redirect.as_ref()).is_some_and(|r| r.other_site),
+            };
+            let slot = &mut self.entries[at];
+            if slot.c.redirect.is_none() {
+                if let Some(r) = entry.and_then(|e| e.redirect.as_ref()) {
+                    slot.c.redirect = Some(Redirect { status: r.status, to_path: r.to.clone(), other_site: r.other_site });
                 }
             }
-            c.status = None;
-            c.mime = None;
-            c.resp_headers.clear();
+            slot.off_site |= hop_off;
+            slot.c.status = None;
+            slot.c.mime = None;
+            slot.c.resp_headers.clear();
+            slot.content_length = None;
+            slot.decoded = 0;
+            let meta = Slot::header_bytes(&slot.c);
+            self.bytes = self.bytes + meta - slot.meta;
+            slot.meta = meta;
             return;
         }
         let Some(e) = record.get(request_id) else { return };
@@ -247,7 +341,12 @@ impl NetCapture {
             return;
         }
         let kind = e.kind.as_deref().unwrap_or("");
-        if !matches!(kind, "XHR" | "Fetch" | "Document") || !e.same_site || !self.filter.keeps(kind, &e.path_query) {
+        let ours = match self.on_app_site(url) {
+            Some(on) => on,
+            // A document is judged only against the application's site.
+            None => e.same_site && kind != "Document",
+        };
+        if !matches!(kind, "XHR" | "Fetch" | "Document") || !ours || !self.filter.keeps(kind, &e.path_query) {
             return;
         }
         self.last_id += 1;
@@ -262,6 +361,7 @@ impl NetCapture {
                 session: session.to_string(),
                 request_id: request_id.to_string(),
                 method: REQUEST_BODY,
+                attempts: 0,
             });
         }
         let started_ms = p["wallTime"]
@@ -270,25 +370,31 @@ impl NetCapture {
             .unwrap_or_else(|| {
                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
             });
-        let added = req_body.as_ref().map_or(0, Body::bytes);
-        self.entries.push_back(Slot {
-            c: Captured {
-                id,
-                request_id: request_id.to_string(),
-                tab: tab.to_string(),
-                method: e.method.clone(),
-                url_path_query: e.path_query.clone(),
-                kind: e.kind.clone(),
-                req_headers: kept_headers(&r["headers"]),
-                req_body,
-                started_ms,
-                ..Default::default()
-            },
+        let c = Captured {
+            id,
+            request_id: request_id.to_string(),
+            tab: tab.to_string(),
+            method: e.method.clone(),
+            url_path_query: e.path_query.clone(),
+            kind: e.kind.clone(),
+            req_headers: kept_headers(&r["headers"]),
+            req_body,
+            started_ms,
+            ..Default::default()
+        };
+        let meta = Slot::header_bytes(&c);
+        let slot = Slot {
+            c,
             session: session.to_string(),
             started_at: p["timestamp"].as_f64(),
-        });
+            off_site: false,
+            decoded: 0,
+            content_length: None,
+            meta,
+        };
+        self.bytes += meta + slot.body_bytes();
+        self.entries.push_back(slot);
         self.by_request.insert((session.to_string(), request_id.to_string()), id);
-        self.bytes += added;
         while self.entries.len() > MAX_CAPTURED {
             if let Some(old) = self.entries.pop_front() {
                 self.forget(&old);
@@ -308,13 +414,14 @@ impl NetCapture {
         }
     }
 
-    /// A request leaves: its bodies' bytes and its id go with it.
+    /// A request leaves: its bytes, its id and its waiting reads go with it.
     fn forget(&mut self, s: &Slot) {
-        self.bytes -= s.c.req_body.as_ref().map_or(0, Body::bytes) + s.c.resp_body.as_ref().map_or(0, Body::bytes);
+        self.bytes -= s.meta + s.body_bytes();
         let key = (s.session.clone(), s.c.request_id.clone());
         if self.by_request.get(&key) == Some(&s.c.id) {
             self.by_request.remove(&key);
         }
+        self.reads.retain(|r| r.id != s.c.id);
     }
 
     fn queue(&mut self, read: BodyRead) {
@@ -336,9 +443,27 @@ impl NetCapture {
         self.reads.len()
     }
 
+    /// The browser did not answer `read` in time: it goes back to the front
+    /// of the queue. A `counted` try (one given its whole time) counts
+    /// towards `MAX_READ_ATTEMPTS`, after which the body is `Dropped`; a try
+    /// cut short by its caller's own wait does not.
+    pub fn retry(&mut self, mut read: BodyRead, counted: bool) {
+        if self.index_by_id(read.id).is_none() {
+            return;
+        }
+        if counted {
+            read.attempts += 1;
+        }
+        if read.attempts >= MAX_READ_ATTEMPTS {
+            self.settle(&read, Body::Dropped);
+        } else {
+            self.reads.push_front(read);
+        }
+    }
+
     /// The browser's answer to `read` (`Network.getResponseBody`'s `body`
     /// or `getRequestPostData`'s `postData`, base64 or not); `None` when it
-    /// refused or never answered - the body is gone.
+    /// refused - the body is gone.
     pub fn answered(&mut self, read: &BodyRead, answer: Option<&Value>) {
         let field = if read.of_response() { "body" } else { "postData" };
         let body = match answer.and_then(|a| a[field].as_str().map(|raw| (raw, a["base64Encoded"].as_bool() == Some(true)))) {
@@ -368,7 +493,7 @@ impl NetCapture {
         self.bytes = self.bytes + added - before.as_ref().map_or(0, Body::bytes);
     }
 
-    /// Drop the oldest bodies until all of them fit `MAX_TOTAL_BODY_BYTES`;
+    /// Drop the oldest bodies until everything fits `MAX_TOTAL_BODY_BYTES`;
     /// their requests stay.
     fn keep_within_budget(&mut self) {
         for slot in self.entries.iter_mut() {
@@ -405,8 +530,8 @@ impl NetCapture {
         &self.filter
     }
 
-    /// Forget every request and every waiting read; the filter stays, and
-    /// an id is never handed out again.
+    /// Forget every request and every waiting read; the filter and the
+    /// application's site stay, and an id is never handed out again.
     pub fn clear(&mut self) {
         self.entries.clear();
         self.by_request.clear();
@@ -414,8 +539,9 @@ impl NetCapture {
         self.bytes = 0;
     }
 
-    /// Bytes of every body kept now (`MAX_TOTAL_BODY_BYTES` at most).
-    pub fn body_bytes(&self) -> usize {
+    /// Bytes of everything kept now - bodies, headers, addresses
+    /// (`MAX_TOTAL_BODY_BYTES` at most).
+    pub fn kept_bytes(&self) -> usize {
         self.bytes
     }
 
@@ -445,27 +571,36 @@ fn text_like(mime: &str) -> bool {
         || ["json", "javascript", "ecmascript", "xml", "x-www-form-urlencoded", "graphql", "html"].iter().any(|w| m.contains(w))
 }
 
-/// The headers kept, lower-case names, sorted: `content-type`, `accept`,
-/// `content-length`, `x-requested-with`, `x-csrf-token` (its name only) and
-/// any other `x-` header not named like a secret. Never `cookie`,
-/// `set-cookie`, `authorization` or `proxy-authorization` - none is on the
-/// list, and a secret's name is checked again besides.
+/// The value of the header `name` (lower case), in any case, as sent.
+fn header_value<'a>(headers: &'a Value, name: &str) -> Option<&'a str> {
+    headers.as_object()?.iter().find(|(n, _)| n.trim().eq_ignore_ascii_case(name)).and_then(|(_, v)| v.as_str())
+}
+
+/// The headers kept, lower-case names, sorted, one entry per name: a name
+/// sent twice (in two cases, or as Chrome joins repeats, by a line break)
+/// has its values joined with ", ". See `kept_header`.
 fn kept_headers(headers: &Value) -> Vec<(String, String)> {
     let Some(map) = headers.as_object() else { return Vec::new() };
-    let mut kept: Vec<(String, String)> = map
-        .iter()
-        .filter_map(|(name, v)| {
-            let name = name.trim().to_ascii_lowercase();
-            let value = v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
-            kept_header(&name, value).map(|value| (name, value))
-        })
-        .collect();
+    let mut joined: Vec<(String, Vec<String>)> = Vec::new();
+    for (name, v) in map {
+        let name = name.trim().to_ascii_lowercase();
+        let raw = v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
+        let values = raw.split('\n').map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        match joined.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, all)) => all.extend(values),
+            None => joined.push((name, values.collect())),
+        }
+    }
+    let mut kept: Vec<(String, String)> =
+        joined.into_iter().filter_map(|(name, all)| kept_header(&name, all.join(", ")).map(|v| (name, v))).collect();
     kept.sort();
-    kept.dedup_by(|a, b| a.0 == b.0);
     kept
 }
 
-/// `value` as kept for the header `name` (lower case), or `None`.
+/// `value` as kept for the header `name` (lower case), or `None`: the
+/// plain ones as sent; any other `x-` header too, its value `HIDDEN` when
+/// its name sounds like a secret (`secret_header`); nothing else - never
+/// `cookie`, `set-cookie`, `authorization` or `proxy-authorization`.
 fn kept_header(name: &str, value: String) -> Option<String> {
     const NEVER: [&str; 4] = ["cookie", "set-cookie", "authorization", "proxy-authorization"];
     const PLAIN: [&str; 4] = ["content-type", "accept", "content-length", "x-requested-with"];
@@ -475,11 +610,18 @@ fn kept_header(name: &str, value: String) -> Option<String> {
     if PLAIN.contains(&name) {
         return Some(value);
     }
-    if matches!(name, "x-csrf-token" | "x-xsrf-token") {
-        return Some(crate::autorun::api_checks::REDACTED.to_string());
+    if !name.starts_with("x-") {
+        return None;
     }
-    let secret = crate::autorun::api_checks::secret_key(name) || name.contains("auth");
-    (name.starts_with("x-") && !secret).then_some(value)
+    Some(if secret_header(name) { HIDDEN.to_string() } else { value })
+}
+
+/// A header name that sounds like it carries a secret: the secret words
+/// (`api_checks`: token, password, secret, authorization, cookie, session)
+/// and the words headers carry keys and signatures under.
+fn secret_header(name: &str) -> bool {
+    const MORE: [&str; 8] = ["auth", "key", "credential", "signature", "jwt", "bearer", "csrf", "xsrf"];
+    crate::autorun::api_checks::secret_key(name) || MORE.iter().any(|w| name.contains(w))
 }
 
 /// A status as Chrome sends it - an integer, sometimes written as a float.

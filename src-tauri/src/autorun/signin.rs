@@ -334,6 +334,9 @@ async fn sign_in_held<D: Driver>(
 ) -> SignInOutcome {
     let origins = recipe.origins();
     let policy = Policy::only(origins.clone());
+    // The application's site, which a supervised browser's capture keeps
+    // requests to - never the identity provider's.
+    d.set_capture_site(Some(&recipe.start_url));
     let mut run = Run { account: Some(account), steps: vec![], appeared: vec![] };
     let go = Action::Navigate { url: recipe.start_url.clone() };
     let who = if account.label.trim().is_empty() { account.key.clone() } else { account.label.clone() };

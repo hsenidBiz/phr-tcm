@@ -338,8 +338,14 @@ const DISPOSE_LIMIT: Duration = Duration::from_secs(5);
 pub const MAX_NET_MARKS: usize = 16;
 /// How many captured bodies one drain reads (`read_captured_bodies`).
 const MAX_BODY_READS: usize = 8;
-/// How long one body read may take.
-const BODY_READ_LIMIT: Duration = Duration::from_secs(2);
+/// How long one drain may take in all: a page that holds its body reads up
+/// (a long task, an open alert, a paused page) costs a call this at most.
+pub const BODY_READ_BUDGET: Duration = Duration::from_millis(250);
+/// After a read the browser did not answer in time, no drain for this long.
+pub const BODY_READ_PAUSE: Duration = Duration::from_secs(1);
+/// A read given at least this long counts as a try when it is not answered
+/// (`NetCapture::retry`); one given less was cut short by its caller.
+const BODY_READ_FULL: Duration = Duration::from_millis(100);
 
 impl Tab {
     /// Note which document is which: a document loaded, or a request sent
@@ -697,6 +703,8 @@ pub struct Cdp<T: Transport = WsTransport> {
     /// The page's own requests and responses, for the assistant to read
     /// (`capture_requests`): `None` unless this is the supervised browser.
     capture: Option<super::net_capture::NetCapture>,
+    /// No body is read before this (`BODY_READ_PAUSE`).
+    capture_pause: Option<Instant>,
 }
 
 /// A browser's downloads: the folder they land in, and every download in
@@ -877,6 +885,7 @@ impl<T: Transport> Cdp<T> {
             page_errors: super::page_errors::PageErrorBook::default(),
             context: None,
             capture: None,
+            capture_pause: None,
         }
     }
 
@@ -1438,7 +1447,7 @@ impl<T: Transport> Cdp<T> {
             tokio::time::sleep(wait).await;
             return;
         }
-        self.read_captured_bodies().await;
+        self.read_captured_bodies(BODY_READ_BUDGET.min(until.saturating_duration_since(Instant::now()))).await;
         loop {
             if self.resolve_parked().await.is_err() {
                 tokio::time::sleep(until.saturating_duration_since(Instant::now())).await;
@@ -1473,7 +1482,7 @@ impl<T: Transport> Cdp<T> {
                     }
                     // A body is read as soon as its request finished: the
                     // browser may drop it later.
-                    self.read_captured_bodies().await;
+                    self.read_captured_bodies(BODY_READ_BUDGET.min(until.saturating_duration_since(Instant::now()))).await;
                 }
             }
         }
@@ -2148,7 +2157,7 @@ impl<T: Transport> Cdp<T> {
         }
         // Bodies of requests that finished since the last read, before the
         // call moves the page on (a navigation drops them).
-        self.read_captured_bodies().await;
+        self.read_captured_bodies(BODY_READ_BUDGET).await;
         let seeding = method == "Page.addScriptToEvaluateOnNewDocument";
         let unseeding = method == "Page.removeScriptToEvaluateOnNewDocument";
         let seed = if seeding || unseeding { Some(params.clone()) } else { None };
@@ -2578,30 +2587,46 @@ impl<T: Transport> Cdp<T> {
         self.capture.as_mut()
     }
 
-    /// Read the bodies the capture is waiting on, at most
-    /// `MAX_BODY_READS` of them, each on the tab it came from. Called only
-    /// where no call of this connection waits on its answer (`pump`, the
+    /// Read the bodies the capture is waiting on: at most `MAX_BODY_READS`
+    /// of them, within `budget` in all, each on the tab it came from; the
+    /// rest wait for the next time. Called only where no call of this
+    /// connection waits on its answer (`pump`, within its own wait; the
     /// start of `call_within`), so a read never takes another call's reply.
     /// A body the browser no longer holds, or a tab that closed, is
-    /// `Dropped`; a browser that stops answering ends the reading, and the
-    /// rest wait for the next time.
-    async fn read_captured_bodies(&mut self) {
+    /// `Dropped`. A read not answered in time goes back to the front
+    /// (`NetCapture::retry`) and nothing is read for `BODY_READ_PAUSE`: a
+    /// page that holds reads up costs one call `budget`, not every call.
+    async fn read_captured_bodies(&mut self, budget: Duration) {
+        if self.capture.as_ref().is_none_or(|c| c.queued_reads() == 0) {
+            return;
+        }
+        if self.capture_pause.is_some_and(|until| Instant::now() < until) {
+            return;
+        }
+        let until = Instant::now() + budget;
         for _ in 0..MAX_BODY_READS {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
             let Some(read) = self.capture.as_mut().and_then(|c| c.next_read()) else {
                 return;
             };
             let answer = if self.has_tab(&read.session) {
                 let params = serde_json::json!({ "requestId": read.request_id });
-                self.call_on(Some(read.session.clone()), read.method, params, BODY_READ_LIMIT).await
+                self.call_on(Some(read.session.clone()), read.method, params, left).await
             } else {
                 Err(CdpError::Closed)
             };
-            let silent = matches!(answer, Err(CdpError::Timeout { .. } | CdpError::Transport(_)));
+            if matches!(answer, Err(CdpError::Timeout { .. } | CdpError::Transport(_))) {
+                if let Some(c) = self.capture.as_mut() {
+                    c.retry(read, left >= BODY_READ_FULL);
+                }
+                self.capture_pause = Some(Instant::now() + BODY_READ_PAUSE);
+                return;
+            }
             if let Some(c) = self.capture.as_mut() {
                 c.answered(&read, answer.as_ref().ok());
-            }
-            if silent {
-                return;
             }
         }
     }
@@ -2785,6 +2810,13 @@ pub trait Driver {
     }
     fn capture_mut(&mut self) -> Option<&mut super::net_capture::NetCapture> {
         None
+    }
+    /// The application's site, from the sign-in's start page: what the
+    /// capture keeps is judged against it (`NetCapture::set_app_site`).
+    fn set_capture_site(&mut self, url: Option<&str>) {
+        if let Some(c) = self.capture_mut() {
+            c.set_app_site(url);
+        }
     }
     /// See `Cdp::idle`: a wait loop's pause between two looks.
     fn idle(&mut self, wait: Duration) -> impl Future<Output = ()> {

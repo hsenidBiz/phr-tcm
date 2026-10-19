@@ -8,10 +8,11 @@
 
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
-use std::time::Duration;
-use v2_lib::browser::cdp::{Cdp, Driver, Event, Transport};
+use std::time::{Duration, Instant};
+use v2_lib::browser::cdp::{Cdp, Driver, Event, Transport, BODY_READ_BUDGET, BODY_READ_PAUSE};
 use v2_lib::browser::net_capture::{
-    Body, CaptureFilter, NetCapture, MAX_BODY_BYTES, MAX_CAPTURED, MAX_REQUEST_BODY_BYTES, MAX_TOTAL_BODY_BYTES,
+    Body, BodyRead, CaptureFilter, NetCapture, Redirect, HIDDEN, MAX_BODY_BYTES, MAX_CAPTURED, MAX_READ_ATTEMPTS,
+    MAX_REQUEST_BODY_BYTES, MAX_TOTAL_BODY_BYTES,
 };
 use v2_lib::browser::net_record::NetRecord;
 
@@ -41,6 +42,13 @@ fn answered(id: &str, status: u64, mime: &str, headers: Value) -> Value {
 
 fn finished(id: &str, size: u64) -> Value {
     json!({ "requestId": id, "timestamp": 100.25, "encodedDataLength": size })
+}
+
+/// A capture that knows the application's site, as after a sign-in.
+fn capture_at_site() -> NetCapture {
+    let mut cap = NetCapture::default();
+    cap.set_app_site(Some("https://hr.example/hr/home?x=1"));
+    cap
 }
 
 /// Feed one event to the record and then the capture, in the order `Cdp`
@@ -80,6 +88,8 @@ struct FakeBrowser {
     sent: Vec<Value>,
     bodies: HashMap<String, String>,
     posts: HashMap<String, String>,
+    /// `Network.getResponseBody` is never answered: a busy or paused page.
+    stall: bool,
 }
 
 impl Transport for FakeBrowser {
@@ -104,8 +114,11 @@ impl Transport for FakeBrowser {
         if let Some(s) = v.get("sessionId") {
             reply["sessionId"] = s.clone();
         }
+        let stalled = self.stall && method == "Network.getResponseBody";
         self.sent.push(v);
-        self.incoming.push_back(reply.to_string());
+        if !stalled {
+            self.incoming.push_back(reply.to_string());
+        }
         Ok(())
     }
     async fn recv(&mut self) -> Option<Result<String, String>> {
@@ -122,7 +135,7 @@ impl Transport for FakeBrowser {
 /// A supervised browser's connection: `main` driven over the browser's own
 /// socket, capturing.
 async fn browser() -> Cdp<FakeBrowser> {
-    let fake = FakeBrowser { incoming: VecDeque::new(), sent: vec![], bodies: HashMap::new(), posts: HashMap::new() };
+    let fake = FakeBrowser { incoming: VecDeque::new(), sent: vec![], bodies: HashMap::new(), posts: HashMap::new(), stall: false };
     let mut cdp = Cdp::over(fake);
     cdp.drive_first_page("T-main", "https://hr.example/home").await.expect("main was not attached");
     cdp.capture_requests();
@@ -215,7 +228,7 @@ async fn a_body_the_browser_dropped_is_marked_dropped_and_a_picture_is_not_text(
 
 #[test]
 fn polls_other_sites_images_are_not_kept() {
-    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    let (mut rec, mut cap) = (NetRecord::default(), capture_at_site());
     whole(&mut rec, &mut cap, "1", "XHR", "https://hr.example/api/kept", "application/json");
     // The same method and path again within two seconds: both are polls.
     whole(&mut rec, &mut cap, "2", "XHR", "https://hr.example/api/notifications?n=1", "application/json");
@@ -228,13 +241,14 @@ fn polls_other_sites_images_are_not_kept() {
     whole(&mut rec, &mut cap, "9", "Fetch", "https://hr.example/api/also", "application/json");
     whole(&mut rec, &mut cap, "10", "Other", "https://hr.example/api/other", "application/json");
     assert_eq!(kept_paths(&cap), ["/api/kept", "/hr/page", "/api/also"]);
+    assert_eq!(cap.queued_reads(), 3, "a poll taken out takes its waiting read with it");
     serve(&mut cap, &HashMap::new());
     assert_eq!(cap.queued_reads(), 0);
 }
 
 #[test]
 fn a_redirect_keeps_its_first_hop() {
-    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    let (mut rec, mut cap) = (NetRecord::default(), capture_at_site());
     feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("1", "Document", "POST", "https://hr.example/Account/Login?ReturnUrl=%2F", json!({}), Some("x=1")));
     let mut hop = asked("1", "Document", "GET", "https://hr.example/hr/home", json!({}), None);
     hop["redirectResponse"] = json!({ "url": "https://hr.example/Account/Login?ReturnUrl=%2F", "status": 302, "mimeType": "text/html", "headers": {} });
@@ -249,9 +263,10 @@ fn a_redirect_keeps_its_first_hop() {
     let c = all[0];
     assert_eq!(c.method, "POST", "what the page asked");
     assert_eq!(c.url_path_query, "/Account/Login?ReturnUrl=%2F");
-    assert_eq!(c.redirect.as_deref(), Some("302 /hr/home"), "the first hop");
+    assert_eq!(c.redirect, Some(Redirect { status: 302, to_path: "/hr/home".into(), other_site: false }), "the first hop");
     assert_eq!(c.status, Some(200), "the final answer");
     assert_eq!(c.req_body, Some(Body::Text("x=1".into())));
+    assert_eq!(cap.queued_reads(), 1, "an on-site page's body is read");
 }
 
 #[test]
@@ -265,7 +280,7 @@ fn budgets_drop_oldest_bodies_and_requests() {
         whole(&mut rec, &mut cap, &id, "XHR", &format!("https://hr.example/api/item/{i}"), "application/json");
         bodies.insert(id, json_body.clone());
         serve(&mut cap, &bodies);
-        assert!(cap.body_bytes() <= MAX_TOTAL_BODY_BYTES, "over the budget at {i}: {}", cap.body_bytes());
+        assert!(cap.kept_bytes() <= MAX_TOTAL_BODY_BYTES, "over the budget at {i}: {}", cap.kept_bytes());
     }
     let (all, total) = cap.list(0, MAX_CAPTURED);
     assert_eq!(total, MAX_CAPTURED, "at most 1000 requests");
@@ -289,11 +304,11 @@ fn budgets_drop_oldest_bodies_and_requests() {
     assert_eq!(cap.list(0, 1).0[0].req_body, Some(Body::TooBig));
     // Reported as received, never read when the browser says it is over.
     feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("huge", "XHR", "GET", "https://hr.example/api/huge", json!({}), None));
-    feed(&mut rec, &mut cap, "Network.responseReceived", answered("huge", 200, "application/json", json!({})));
-    feed(&mut rec, &mut cap, "Network.loadingFinished", finished("huge", (MAX_BODY_BYTES as u64) * 2));
+    feed(&mut rec, &mut cap, "Network.responseReceived", answered("huge", 200, "application/json", json!({ "Content-Length": "4194304" })));
+    feed(&mut rec, &mut cap, "Network.loadingFinished", finished("huge", 10));
     assert_eq!(cap.queued_reads(), 0);
     assert_eq!(cap.list(0, 1).0[0].resp_body, Some(Body::TooBig));
-    assert!(cap.body_bytes() <= MAX_TOTAL_BODY_BYTES);
+    assert!(cap.kept_bytes() <= MAX_TOTAL_BODY_BYTES);
 }
 
 #[test]
@@ -313,7 +328,7 @@ fn a_filter_decides_what_is_kept_from_now_on() {
     cap.set_filter(CaptureFilter::default());
     cap.clear();
     assert_eq!(cap.list(0, 10).1, 0);
-    assert_eq!(cap.body_bytes(), 0);
+    assert_eq!(cap.kept_bytes(), 0);
     whole(&mut rec, &mut cap, "7", "XHR", "https://hr.example/api/after", "application/json");
     assert_eq!(kept_paths(&cap), ["/api/after"]);
     assert!(cap.list(0, 10).0[0].id > last, "an id is never handed out twice");
@@ -325,21 +340,39 @@ fn cookie_and_authorization_headers_are_never_kept() {
     let headers = json!({
         "Cookie": ".ASPXAUTH=abc", "Authorization": "Bearer hunter2", "Proxy-Authorization": "Basic aHVudGVy",
         "X-Session-Id": "s3cr3t", "X-Auth-Token": "t0k3n", "X-CSRF-TOKEN": "csrf-value", "X-Tenant": "acme",
+        "x-api-key": "k3y-value", "x-signature": "s1gn3d", "X-Client-Credential": "cr3d", "X-JWT": "eyJhbGci",
         "Content-Type": "application/json", "User-Agent": "Edge", "Referer": "https://hr.example/hr/page?token=1"
     });
     feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("1", "XHR", "POST", "https://hr.example/api/x", headers, Some("{}")));
     feed(&mut rec, &mut cap, "Network.responseReceived", answered("1", 200, "application/json", json!({
         "Set-Cookie": "session=abc; HttpOnly", "set-cookie": "a=b", "Content-Type": "application/json", "X-Powered-By": "ASP.NET",
-        "WWW-Authenticate": "Bearer"
+        "WWW-Authenticate": "Bearer", "X-Trace": "a", "x-trace": "b
+c"
     })));
     let c = cap.list(0, 1).0[0];
-    let names: Vec<&str> = c.req_headers.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names, ["content-type", "x-csrf-token", "x-tenant"], "{:?}", c.req_headers);
-    assert!(c.req_headers.contains(&("x-csrf-token".into(), "[redacted]".into())), "its name only: {:?}", c.req_headers);
-    let resp: Vec<&str> = c.resp_headers.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(resp, ["content-type", "x-powered-by"], "{:?}", c.resp_headers);
+    let h = |n: &str, v: &str| (n.to_string(), v.to_string());
+    assert_eq!(
+        c.req_headers,
+        [
+            h("content-type", "application/json"),
+            h("x-api-key", HIDDEN),
+            h("x-auth-token", HIDDEN),
+            h("x-client-credential", HIDDEN),
+            h("x-csrf-token", HIDDEN),
+            h("x-jwt", HIDDEN),
+            h("x-session-id", HIDDEN),
+            h("x-signature", HIDDEN),
+            h("x-tenant", "acme"),
+        ],
+        "a secret-named header keeps its name only"
+    );
+    assert_eq!(
+        c.resp_headers,
+        [h("content-type", "application/json"), h("x-powered-by", "ASP.NET"), h("x-trace", "a, b, c")],
+        "a header sent twice is one entry, its values joined"
+    );
     let all = format!("{:?}", c);
-    for secret in ["abc", "hunter2", "aHVudGVy", "s3cr3t", "t0k3n", "csrf-value"] {
+    for secret in ["abc", "hunter2", "aHVudGVy", "s3cr3t", "t0k3n", "csrf-value", "k3y-value", "s1gn3d", "cr3d", "eyJhbGci"] {
         assert!(!all.contains(secret), "{secret} kept: {all}");
     }
 }
@@ -375,7 +408,7 @@ async fn a_new_tab_is_captured() {
 
 #[tokio::test]
 async fn a_browser_not_capturing_reads_nothing() {
-    let fake = FakeBrowser { incoming: VecDeque::new(), sent: vec![], bodies: HashMap::new(), posts: HashMap::new() };
+    let fake = FakeBrowser { incoming: VecDeque::new(), sent: vec![], bodies: HashMap::new(), posts: HashMap::new(), stall: false };
     let mut cdp = Cdp::over(fake);
     cdp.drive_first_page("T-main", "https://hr.example/home").await.unwrap();
     on(&mut cdp, MAIN, "Network.requestWillBeSent", asked("r1", "XHR", "GET", "https://hr.example/api/list", json!({}), None));
@@ -384,4 +417,151 @@ async fn a_browser_not_capturing_reads_nothing() {
     settle(&mut cdp).await;
     assert!(Driver::capture(&cdp).is_none(), "an unattended run's browser is not captured");
     assert!(reads_sent(&cdp).is_empty());
+}
+
+#[test]
+fn the_decoded_size_decides_too_big() {
+    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    // Compressed small, decoded over 2 MB: never read.
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("z", "XHR", "GET", "https://hr.example/api/zipped", json!({}), None));
+    feed(&mut rec, &mut cap, "Network.responseReceived", answered("z", 200, "application/json", json!({})));
+    for _ in 0..3 {
+        feed(&mut rec, &mut cap, "Network.dataReceived", json!({ "requestId": "z", "dataLength": 1_000_000, "encodedDataLength": 20_000 }));
+    }
+    feed(&mut rec, &mut cap, "Network.loadingFinished", finished("z", 60_000));
+    assert_eq!(cap.queued_reads(), 0);
+    assert_eq!(cap.list(0, 1).0[0].resp_body, Some(Body::TooBig));
+    // Received big, decoded small (no Content-Length): read.
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("s", "XHR", "GET", "https://hr.example/api/small", json!({}), None));
+    feed(&mut rec, &mut cap, "Network.responseReceived", answered("s", 200, "application/json", json!({})));
+    feed(&mut rec, &mut cap, "Network.dataReceived", json!({ "requestId": "s", "dataLength": 100, "encodedDataLength": 100 }));
+    feed(&mut rec, &mut cap, "Network.loadingFinished", finished("s", (MAX_BODY_BYTES as u64) * 3));
+    assert_eq!(cap.queued_reads(), 1, "only the decoded size or Content-Length skips a read");
+}
+
+#[test]
+fn a_navigation_to_the_identity_provider_is_not_kept() {
+    let idp = "https://login.idp.example/authorize?client_id=hr&response_mode=form_post";
+    let at_idp = |id: &str, kind: &str, method: &str, url: &str| {
+        let mut p = asked(id, kind, method, url, json!({}), None);
+        p["documentURL"] = json!(idp);
+        p
+    };
+    let (mut rec, mut cap) = (NetRecord::default(), capture_at_site());
+    // A top-level navigation is its own document: same site as itself.
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", at_idp("1", "Document", "GET", idp));
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", at_idp("2", "XHR", "POST", "https://login.idp.example/token"));
+    // The identity provider's form posts back to the application.
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", at_idp("3", "Document", "POST", "https://hr.example/signin-oidc"));
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("4", "Document", "GET", "https://hr.example/hr/home", json!({}), None));
+    assert_eq!(kept_paths(&cap), ["/signin-oidc", "/hr/home"]);
+
+    // Before the site is known, no document is kept at all.
+    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    assert!(!cap.knows_app_site());
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", at_idp("1", "Document", "GET", idp));
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("2", "Document", "GET", "https://hr.example/hr/home", json!({}), None));
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("3", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
+    assert_eq!(kept_paths(&cap), ["/api/menu"]);
+}
+
+#[test]
+fn an_off_site_redirect_reads_no_body() {
+    for known in [true, false] {
+        let (mut rec, mut cap) = (NetRecord::default(), if known { capture_at_site() } else { NetCapture::default() });
+        feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("1", "XHR", "GET", "https://hr.example/api/data", json!({}), None));
+        let mut hop = asked("1", "XHR", "GET", "https://login.idp.example/authorize?state=abc", json!({}), None);
+        hop["redirectResponse"] = json!({ "url": "https://hr.example/api/data", "status": 302, "headers": {} });
+        feed(&mut rec, &mut cap, "Network.requestWillBeSent", hop);
+        feed(&mut rec, &mut cap, "Network.responseReceived", answered("1", 200, "text/html", json!({})));
+        feed(&mut rec, &mut cap, "Network.loadingFinished", finished("1", 10));
+        let c = cap.list(0, 1).0[0];
+        assert_eq!(c.redirect, Some(Redirect { status: 302, to_path: "/authorize".into(), other_site: true }));
+        assert_eq!(c.resp_body, Some(Body::OffSite), "known site: {known}");
+        assert_eq!(cap.queued_reads(), 0);
+    }
+}
+
+#[test]
+fn a_read_not_answered_is_retried_then_dropped() {
+    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    whole(&mut rec, &mut cap, "1", "XHR", "https://hr.example/api/a", "application/json");
+    // A try cut short by its caller's own wait never counts.
+    for _ in 0..5 {
+        let read: BodyRead = cap.next_read().unwrap();
+        cap.retry(read, false);
+    }
+    assert_eq!(cap.queued_reads(), 1);
+    for n in 1..=MAX_READ_ATTEMPTS {
+        let read = cap.next_read().expect("put back at the front");
+        assert_eq!(read.attempts, n - 1);
+        cap.retry(read, true);
+    }
+    assert_eq!(cap.queued_reads(), 0);
+    assert_eq!(cap.list(0, 1).0[0].resp_body, Some(Body::Dropped));
+}
+
+fn body_reads(cdp: &Cdp<FakeBrowser>) -> usize {
+    reads_sent(cdp).iter().filter(|(m, _)| m == "Network.getResponseBody").count()
+}
+
+#[tokio::test]
+async fn a_stalled_read_costs_a_call_at_most_the_budget_and_is_retried_later() {
+    let mut cdp = browser().await;
+    cdp.transport_mut().stall = true;
+    on(&mut cdp, MAIN, "Network.requestWillBeSent", asked("r1", "XHR", "GET", "https://hr.example/api/list", json!({}), None));
+    on(&mut cdp, MAIN, "Network.responseReceived", answered("r1", 200, "application/json", json!({})));
+    on(&mut cdp, MAIN, "Network.loadingFinished", finished("r1", 10));
+    // The first call reads the events; the read waits for the next.
+    cdp.call("Runtime.evaluate", json!({ "expression": "1" })).await.unwrap();
+    assert_eq!(body_reads(&cdp), 0);
+
+    let began = Instant::now();
+    cdp.call("Runtime.evaluate", json!({ "expression": "2" })).await.unwrap();
+    let took = began.elapsed();
+    assert!(took < BODY_READ_BUDGET + Duration::from_millis(150), "a stalled read cost the call {took:?}");
+    assert_eq!(body_reads(&cdp), 1);
+
+    // Paused: the next calls read nothing and pay nothing.
+    let began = Instant::now();
+    for _ in 0..3 {
+        cdp.call("Runtime.evaluate", json!({ "expression": "3" })).await.unwrap();
+    }
+    assert!(began.elapsed() < Duration::from_millis(150), "{:?}", began.elapsed());
+    assert_eq!(body_reads(&cdp), 1, "no read while paused");
+    assert_eq!(Driver::capture(&cdp).unwrap().queued_reads(), 1, "kept for later, not dropped");
+
+    // Later, with the page answering again, the same read is tried again.
+    tokio::time::sleep(BODY_READ_PAUSE + Duration::from_millis(100)).await;
+    cdp.transport_mut().stall = false;
+    cdp.transport_mut().bodies.insert("r1".into(), "[1]".into());
+    cdp.call("Runtime.evaluate", json!({ "expression": "4" })).await.unwrap();
+    assert_eq!(body_reads(&cdp), 2);
+    let cap = Driver::capture(&cdp).unwrap();
+    assert_eq!(cap.list(0, 1).0[0].resp_body, Some(Body::Text("[1]".into())));
+}
+
+#[tokio::test]
+async fn idle_stays_within_its_wait_while_a_read_stalls() {
+    let mut cdp = browser().await;
+    cdp.transport_mut().stall = true;
+    on(&mut cdp, MAIN, "Network.requestWillBeSent", asked("r1", "XHR", "GET", "https://hr.example/api/list", json!({}), None));
+    on(&mut cdp, MAIN, "Network.responseReceived", answered("r1", 200, "application/json", json!({})));
+    on(&mut cdp, MAIN, "Network.loadingFinished", finished("r1", 10));
+    let began = Instant::now();
+    Driver::idle(&mut cdp, Duration::from_millis(100)).await;
+    let took = began.elapsed();
+    assert!(took < Duration::from_millis(160), "idle(100ms) took {took:?}");
+    assert_eq!(body_reads(&cdp), 1, "the read was tried within the wait");
+    assert_eq!(Driver::capture(&cdp).unwrap().queued_reads(), 1, "and kept for later");
+}
+
+#[tokio::test]
+async fn the_sign_in_names_the_site_the_capture_keeps() {
+    let mut cdp = browser().await;
+    cdp.set_capture_site(Some("https://hr.example/hr/home"));
+    assert!(Driver::capture(&cdp).unwrap().knows_app_site());
+    on(&mut cdp, MAIN, "Network.requestWillBeSent", asked("d1", "Document", "GET", "https://hr.example/hr/home", json!({}), None));
+    settle(&mut cdp).await;
+    assert_eq!(Driver::capture(&cdp).unwrap().list(0, 10).1, 1);
 }
