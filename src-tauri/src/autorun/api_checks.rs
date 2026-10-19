@@ -172,19 +172,24 @@ static SECRET_KEY: LazyLock<Regex> = LazyLock::new(|| {
 /// object or array - and up to the end of the text when it was cut off
 /// inside one.
 fn hide_members(text: &str) -> String {
-    hide_members_by(text, &SECRET_KEY)
+    hide_members_by(text, &SECRET_KEY, |_| true)
 }
 
-/// `hide_members` for another set of secret words: `member` has the shape of
-/// `SECRET_KEY` (group 1 the escape, the match ending where the value
-/// begins), built with those words.
-pub(crate) fn hide_members_by(text: &str, member: &Regex) -> String {
+/// `hide_members` for another way of telling a secret's key: `member` has
+/// the shape of `SECRET_KEY` (group 1 the escape, the match ending where
+/// the value begins) and may match any key, with group 2 its name; only a
+/// member whose name `is_secret` has its value hidden.
+pub(crate) fn hide_members_by(text: &str, member: &Regex, is_secret: impl Fn(&str) -> bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut pos = 0;
     while let Some(key) = member.captures_at(text, pos) {
         let (Some(whole), Some(escape)) = (key.get(0), key.get(1)) else { break };
-        let escaped = !escape.is_empty();
         out.push_str(&text[pos..whole.end()]);
+        if !key.get(2).map_or(true, |name| is_secret(name.as_str())) {
+            pos = whole.end();
+            continue;
+        }
+        let escaped = !escape.is_empty();
         let quote = if escaped { "\\\"" } else { "\"" };
         out.push_str(&format!("{quote}{REDACTED}{quote}"));
         pos = value_end(text, whole.end(), escaped).max(whole.end());

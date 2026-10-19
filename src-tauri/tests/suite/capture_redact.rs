@@ -175,3 +175,144 @@ fn one_list_of_words_decides_every_name() {
         assert!(!secret_name(name), "{name}");
     }
 }
+
+/// A body is judged by what it is, not by the mime it claims.
+#[test]
+fn a_body_is_judged_by_its_shape_not_its_mime() {
+    let json = r#"{"UserName":"a","Password":"hunter2"}"#;
+    for mime in ["application/x-www-form-urlencoded", "text/plain", "multipart/form-data; boundary=zz", "text/html", ""] {
+        let out = redact_body(Some(mime), json);
+        assert!(!out.contains("hunter2"), "{mime}: {out}");
+        assert!(out.contains("\"UserName\":\"a\""), "{mime}: {out}");
+    }
+    for mime in ["text/plain", "application/json", "text/html", "application/octet-stream"] {
+        let out = redact_body(Some(mime), "UserName=a&Password=hunter2");
+        assert!(!out.contains("hunter2"), "{mime}: {out}");
+        assert!(out.contains("UserName=a"), "{mime}: {out}");
+    }
+    // A multipart body under a JSON mime.
+    let multipart = "--q\r\nContent-Disposition: form-data; name=\"Password\"\r\n\r\nhunter2\r\n--q--\r\n";
+    assert!(!redact_body(Some("application/json"), multipart).contains("hunter2"));
+    // Lines of name: value in plain text.
+    let lines = "UserName=a\r\nPassword=hunter2\r\nnote: hi";
+    let out = redact_body(Some("text/plain"), lines);
+    assert!(!out.contains("hunter2") && out.contains("UserName=a") && out.contains("note: hi"), "{out}");
+    // A BOM before JSON.
+    let out = redact_body(Some("application/json"), "\u{feff}{\"password\":\"hunter2\"}");
+    assert!(!out.contains("hunter2"), "{out}");
+}
+
+#[test]
+fn multipart_preamble_epilogue_and_padded_delimiters_are_covered() {
+    let body = "password=hunter2\r\n--x \r\nContent-Disposition: form-data; name=\"Password\"\r\n\r\nhunter2\r\n--x  \r\nContent-Disposition: form-data; name=\"n\"\r\n\r\nok\r\n--x--\r\ntoken: hunter2\r\n";
+    for mime in [Some("multipart/form-data; boundary=x"), None] {
+        let out = redact_body(mime, body);
+        assert!(!out.contains("hunter2"), "{out}");
+        assert!(out.contains("ok"), "{out}");
+    }
+    // RFC 5987 part name, plain and encoded.
+    let ext = "--x\r\nContent-Disposition: form-data; name*=UTF-8''password\r\n\r\nhunter2\r\n--x--\r\n";
+    assert!(!redact_body(Some("multipart/form-data; boundary=x"), ext).contains("hunter2"));
+    let enc = "--x\r\nContent-Disposition: form-data; name*=UTF-8''pass%77ord\r\n\r\nhunter2\r\n--x--\r\n";
+    assert!(!redact_body(None, enc).contains("hunter2"));
+}
+
+#[test]
+fn values_that_hold_forms_urls_fragments_and_graphql_are_redacted_inside() {
+    let cases: Vec<(&str, String)> = vec![
+        ("application/json", r#"{"d":"grant_type=password&password=hunter2"}"#.to_string()),
+        ("application/json", r#"{"r":"cb?token=hunter2"}"#.to_string()),
+        ("application/x-www-form-urlencoded", "ReturnUrl=%2Fcb%23access_token%3Dhunter2".to_string()),
+        ("application/json", r#"{"query":"mutation { login(password:\"hunter2\") { ok } }"}"#.to_string()),
+        ("application/json", r#"{"q":"mutation { login(user: \"a\", password: \"hunter2\") { ok } }"}"#.to_string()),
+        ("application/json", r#"{"query":"login(password:\"hunter2\"#.to_string()),
+        ("text/html", "<a href=\"/cb#id_token=hunter2\">x</a>".to_string()),
+    ];
+    for (mime, body) in cases {
+        let out = redact_body(Some(mime), &body);
+        assert!(!out.contains("hunter2"), "{body} -> {out}");
+    }
+    let out = redact_path_query("/cb?code=hunter2&state=s1&x=1");
+    assert!(!out.contains("hunter2") && out.contains("state=s1") && out.contains("x=1"), "{out}");
+    let out = redact_body(Some("application/json"), r#"{"code":"hunter2","state":"s1","n":1}"#);
+    assert!(!out.contains("hunter2") && out.contains("s1"), "{out}");
+    // `code` alone is no secret.
+    assert_eq!(redact_path_query("/p?code=ABC&x=1"), "/p?code=ABC&x=1");
+}
+
+#[test]
+fn saml_oauth_and_opaque_values_are_hidden() {
+    let out = redact_body(
+        Some("application/x-www-form-urlencoded"),
+        "SAMLResponse=hunter2&RelayState=hunter2&id_token=hunter2&refresh_token=hunter2&code_verifier=hunter2&client_secret=hunter2&SAMLRequest=hunter2",
+    );
+    assert!(!out.contains("hunter2"), "{out}");
+    // An echoed session cookie, under an innocent name, in JSON, text and a query.
+    let cookie = "CfDJ8Hk3n2LzQ7vXr0aB5cD9eF1gH4iJ6kL8mN0pQ2rS4tU6vW8xY0zA1bC3dE5fG7hI9jK1lM3nO5pQ7rS9tU";
+    assert!(cookie.len() >= 64);
+    for shown in [
+        redact_body(Some("application/json"), &format!(r#"{{"echo":"{cookie}"}}"#)),
+        redact_body(Some("text/plain"), &format!("seen {cookie} here")),
+        redact_path_query(&format!("/x?v={cookie}")),
+    ] {
+        assert!(!shown.contains("CfDJ8Hk3") && shown.contains("(hidden)"), "{shown}");
+    }
+    // A 63-character run, a long path and plain words stay.
+    let run63 = "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxy";
+    assert_eq!(run63.len(), 61);
+    let text = format!("stays: {run63}01");
+    assert_eq!(redact_body(Some("text/plain"), &text), text);
+    let path = "/hr/leave/requests/pending/approvals/detail/2024/some-long-slug-here-for-the-test-case";
+    assert_eq!(redact_path_query(path), path);
+}
+
+#[test]
+fn over_redaction_is_limited_to_real_secret_words() {
+    for name in ["author", "isAuthorized", "authorizedBy", "keyword", "sortKey", "monkey", "keyboard", "primaryKeyName"] {
+        assert!(!secret_name(name), "{name}");
+    }
+    for name in [
+        "apiKey", "api_key", "x-api-key", "authToken", "auth_token", "auth-token", "auth", "x-auth-user", "APIKey",
+        "privateKey", "client_secret", "samlResponse", "RelayState", "code_verifier", "id_token", "key",
+    ] {
+        assert!(secret_name(name), "{name}");
+    }
+    let body = r#"{"author":"Bob","isAuthorized":true,"keyword":"leave","sortKey":"date","apiKey":"hunter2"}"#;
+    let out = redact_body(Some("application/json"), body);
+    assert!(!out.contains("hunter2") && out.contains("Bob") && out.contains("leave") && out.contains("date"), "{out}");
+}
+
+#[test]
+fn odd_encodings_do_not_hide_a_name_or_a_token() {
+    // Invalid UTF-8 in a percent-escape of the name.
+    let out = redact_body(Some("application/x-www-form-urlencoded"), "Pass%77ord%FF=hunter2&u=a");
+    assert!(!out.contains("hunter2") && out.contains("u=a"), "{out}");
+    // An encoded space after Bearer.
+    let out = redact_body(Some("text/plain"), "h=Bearer%20hunter2opaque");
+    assert!(!out.contains("hunter2"), "{out}");
+    assert!(!redact_path_query("/x?a=Bearer%20hunter2opaque").contains("hunter2"));
+    // A JWT split across lines: dots at line ends or starts, a part wrapped.
+    let jwt_a = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9";
+    let jwt_b = "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ";
+    let jwt_c = "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    for shown in [
+        redact_body(Some("text/plain"), &format!("{jwt_a}.\n{jwt_b}.\n{jwt_c}")),
+        redact_body(Some("text/plain"), &format!("{jwt_a}\r\n.{jwt_b}\r\n.{jwt_c}")),
+        redact_body(Some("text/plain"), &format!("{}\n{}.{}.{}", &jwt_a[..20], &jwt_a[20..], jwt_b, jwt_c)),
+    ] {
+        assert!(!shown.contains("hbGciOi") && !shown.contains("zdWIi") && !shown.contains("SflKx"), "{shown}");
+    }
+}
+
+#[test]
+fn free_text_headers_and_fields_are_redacted_as_text() {
+    use v2_lib::autorun::capture_redact::{redact_field, redact_header, redact_text};
+    assert_eq!(redact_header("x-api-key", "hunter2"), "(hidden)");
+    assert_eq!(redact_header("authorization", "Basic aHVudGVyMg=="), "(hidden)");
+    let out = redact_header("x-return-url", "https://hr.example/cb?token=hunter2&a=1");
+    assert!(!out.contains("hunter2") && out.contains("a=1"), "{out}");
+    assert_eq!(redact_header("content-type", "application/json; charset=utf-8"), "application/json; charset=utf-8");
+    assert_eq!(redact_field("password", "hunter2"), "[redacted]");
+    assert_eq!(redact_field("note", "hi"), "hi");
+    assert!(!redact_text("net::ERR failed for /x?access_token=hunter2").contains("hunter2"));
+}

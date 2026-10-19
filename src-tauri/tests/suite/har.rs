@@ -6,6 +6,7 @@ use v2_lib::autorun::har::{from_har, to_har};
 use v2_lib::browser::net_capture::{Body, Captured, Redirect, MAX_CAPTURED};
 
 const PASSWORD: &str = "Hunter2-Pa55w0rd!";
+const SITE: &str = "https://hr.example/hr/home?x=1";
 
 fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
     list.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect()
@@ -70,7 +71,7 @@ fn failed(id: u64) -> Captured {
 fn a_har_round_trips() {
     let all = [search(1), redirected(2), failed(3)];
     let refs: Vec<&Captured> = all.iter().collect();
-    let har = to_har(&refs);
+    let har = to_har(&refs, Some(SITE));
 
     assert_eq!(har["log"]["version"], "1.2");
     assert_eq!(har["log"]["creator"]["name"], "TCM");
@@ -78,7 +79,7 @@ fn a_har_round_trips() {
     assert_eq!(first["startedDateTime"], "2025-10-09T08:53:20.123Z");
     assert_eq!(first["time"], 48);
     assert_eq!(first["request"]["method"], "POST");
-    assert_eq!(first["request"]["url"], "/api/employees/search?page=2&size=50");
+    assert_eq!(first["request"]["url"], "https://hr.example/api/employees/search?page=2&size=50");
     assert_eq!(first["request"]["queryString"], json!([{ "name": "page", "value": "2" }, { "name": "size", "value": "50" }]));
     assert_eq!(first["request"]["headers"][0], json!({ "name": "content-type", "value": "application/json" }));
     assert_eq!(first["request"]["postData"]["mimeType"], "application/json");
@@ -100,7 +101,7 @@ fn an_export_is_redacted_like_a_read() {
     c.req_headers = pairs(&[("content-type", "application/x-www-form-urlencoded"), ("x-csrf-token", "(hidden)")]);
     c.req_body = Some(Body::Text(format!("Input.Username=avin&Input.Password={PASSWORD}")));
     c.resp_body = Some(Body::Text(json!({ "id": "x", "access_token": PASSWORD, "note": "ok" }).to_string()));
-    let har = to_har(&[&c]).to_string();
+    let har = to_har(&[&c], Some(SITE)).to_string();
     assert!(!har.contains(PASSWORD), "{har}");
     assert!(har.contains("avin") && har.contains("ok"));
     assert!(har.contains("[redacted]"));
@@ -217,4 +218,89 @@ fn an_import_keeps_the_newest_requests_within_the_cap() {
     assert_eq!(got.len(), MAX_CAPTURED);
     assert_eq!(got[0].url_path_query, "/n/5");
     assert_eq!((got[0].id, got.last().unwrap().id), (1, MAX_CAPTURED as u64));
+}
+
+#[test]
+fn an_export_is_valid_har_with_an_absolute_url_and_a_time() {
+    let all = [search(1), redirected(2), failed(3)];
+    let refs: Vec<&Captured> = all.iter().collect();
+    for site in [Some(SITE), None] {
+        let har = to_har(&refs, site);
+        for e in har["log"]["entries"].as_array().unwrap() {
+            let url = e["request"]["url"].as_str().unwrap();
+            assert!(url.starts_with("https://") && url[8..].contains('/'), "{url}");
+            assert!(e["time"].as_f64().unwrap() >= 0.0, "{e}");
+            assert!(e["timings"]["wait"].as_f64().unwrap() >= 0.0);
+        }
+        // The host is not kept on the way back; an unknown duration stays unknown.
+        let back = from_har(&har).unwrap();
+        assert_eq!(back, all.to_vec());
+        assert_eq!(back[1].duration_ms, None);
+    }
+}
+
+#[test]
+fn params_are_redacted_by_name_whatever_the_mime() {
+    for mime in ["multipart/form-data; boundary=x", "text/plain", "application/json", "application/x-www-form-urlencoded", ""] {
+        let har = json!({ "log": { "version": "1.2", "entries": [ {
+            "startedDateTime": "2026-10-19T04:00:01Z",
+            "request": { "method": "POST", "url": "https://hr.example/login", "headers": [],
+                "postData": { "mimeType": mime, "params": [
+                    { "name": "username", "value": "avin" },
+                    { "name": "password", "value": "hunter2" },
+                    { "name": "next", "value": "/cb?token=hunter2" } ] } },
+            "response": { "status": 200 }
+        } ] } });
+        let got = from_har(&har).unwrap();
+        let Some(Body::Text(t)) = &got[0].req_body else { panic!("{:?}", got[0].req_body) };
+        assert!(!t.contains("hunter2"), "{mime}: {t}");
+        assert!(t.contains("username=avin"), "{mime}: {t}");
+    }
+}
+
+#[test]
+fn header_values_and_free_text_are_redacted_on_import_and_export() {
+    let har = json!({ "log": { "version": "1.2", "entries": [ {
+        "startedDateTime": "2026-10-19T04:00:01Z",
+        "_requestId": "id?access_token=hunter2",
+        "_tcm": { "tab": "main?password=hunter2", "failed": "net::ERR for /x?client_secret=hunter2" },
+        "request": { "method": "GET", "url": "https://hr.example/a", "headers": [
+            { "name": "X-Return-Url", "value": "https://hr.example/cb?token=hunter2&a=1" },
+            { "name": "X-Session-Id", "value": "hunter2" } ] },
+        "response": { "status": 200, "headers": [ { "name": "X-Next", "value": "/n?password=hunter2" } ] }
+    } ] } });
+    let got = from_har(&har).unwrap();
+    assert!(!format!("{got:?}").contains("hunter2"), "{got:?}");
+    assert!(got[0].req_headers.iter().any(|(n, v)| n == "x-return-url" && v.contains("a=1")));
+    // An export of a capture holding such values.
+    let mut c = search(1);
+    c.req_headers.push(("x-return-url".into(), "https://hr.example/cb?token=hunter2".into()));
+    c.failed = Some("failed for /x?password=hunter2".into());
+    c.tab = "main?token=hunter2".into();
+    assert!(!to_har(&[&c], Some(SITE)).to_string().contains("hunter2"));
+}
+
+#[test]
+fn an_import_keeps_bodies_within_the_total_budget() {
+    use v2_lib::browser::net_capture::{MAX_BODY_BYTES, MAX_TOTAL_BODY_BYTES};
+    let big = "x ".repeat(MAX_BODY_BYTES / 2 - 10);
+    let entry = |i: usize| json!({
+        "startedDateTime": "2026-10-19T04:00:01Z",
+        "request": { "method": "GET", "url": format!("/n/{i}") },
+        "response": { "status": 200, "content": { "mimeType": "text/plain", "text": big } }
+    });
+    let n = MAX_TOTAL_BODY_BYTES / (MAX_BODY_BYTES - 20) + 4;
+    let entries: Vec<Value> = (0..n).map(entry).collect();
+    let got = from_har(&json!({ "log": { "version": "1.2", "entries": entries } })).unwrap();
+    let kept: usize = got.iter().map(|c| match &c.resp_body { Some(Body::Text(t)) => t.len(), _ => 0 }).sum();
+    assert!(kept <= MAX_TOTAL_BODY_BYTES, "{kept}");
+    assert_eq!(got[0].resp_body, Some(Body::Dropped));
+    assert!(matches!(got.last().unwrap().resp_body, Some(Body::Text(_))));
+    // One body over its own cap.
+    let huge = json!({ "log": { "version": "1.2", "entries": [ {
+        "startedDateTime": "2026-10-19T04:00:01Z",
+        "request": { "method": "GET", "url": "/a" },
+        "response": { "status": 200, "content": { "mimeType": "text/plain", "text": "y".repeat(MAX_BODY_BYTES + 1) } }
+    } ] } });
+    assert_eq!(from_har(&huge).unwrap()[0].resp_body, Some(Body::TooBig));
 }

@@ -16,10 +16,14 @@
 //! pass the capture's own allow-list, so a HAR from elsewhere (cookies,
 //! authorization and all) can never bring a secret in.
 
-use crate::autorun::capture_redact::{redact_body, redact_path_query};
+use crate::autorun::capture_redact::{
+    redact_body, redact_field, redact_header, redact_path_query, redact_text,
+};
 use crate::browser::net_capture::{
     kept_headers, text_like, Body, Captured, Redirect, MAX_BODY_BYTES, MAX_CAPTURED, MAX_REQUEST_BODY_BYTES,
+    MAX_TOTAL_BODY_BYTES,
 };
+use crate::browser::net_record::origin;
 use base64::Engine;
 use chrono::{DateTime, SecondsFormat};
 use serde_json::{json, Map, Value};
@@ -29,8 +33,9 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
     headers.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str())
 }
 
+/// HAR's `[{name, value}]`, every value redacted as a header's (`redact_header`).
 fn har_headers(headers: &[(String, String)]) -> Value {
-    Value::Array(headers.iter().map(|(n, v)| json!({ "name": n, "value": v })).collect())
+    Value::Array(headers.iter().map(|(n, v)| json!({ "name": n, "value": redact_header(n, v) })).collect())
 }
 
 /// A body's kind where it is not text: `_tcmBody`.
@@ -86,12 +91,16 @@ fn kind_name(kind: &Option<String>) -> Value {
     }
 }
 
-fn entry(c: &Captured) -> Value {
+/// What a HAR's `url` needs when nothing is known of the site.
+const UNKNOWN_SITE: &str = "https://app.invalid";
+
+fn entry(c: &Captured, site: &str) -> Value {
     let url = redact_path_query(&c.url_path_query);
+    let absolute = format!("{site}{}{url}", if url.starts_with('/') { "" } else { "/" });
     let req_mime = header(&c.req_headers, "content-type");
     let mut request = json!({
         "method": c.method,
-        "url": url,
+        "url": absolute,
         "httpVersion": "HTTP/1.1",
         "cookies": [],
         "headers": har_headers(&c.req_headers),
@@ -131,25 +140,31 @@ fn entry(c: &Captured) -> Value {
     });
 
     let mut tcm = Map::new();
+    if c.duration_ms.is_none() {
+        tcm.insert("noDuration".into(), json!(true));
+    }
     if !c.tab.is_empty() {
-        tcm.insert("tab".into(), json!(c.tab));
+        tcm.insert("tab".into(), json!(redact_text(&c.tab)));
     }
     if let Some(f) = &c.failed {
-        tcm.insert("failed".into(), json!(f));
+        tcm.insert("failed".into(), json!(redact_text(f)));
     }
     if let Some(r) = &c.redirect {
-        tcm.insert("redirect".into(), json!({ "status": r.status, "toPath": r.to_path, "otherSite": r.other_site }));
+        tcm.insert(
+            "redirect".into(),
+            json!({ "status": r.status, "toPath": redact_path_query(&r.to_path), "otherSite": r.other_site }),
+        );
     }
     let wait = c.duration_ms.map(|d| d as i64).unwrap_or(0);
     let mut e = json!({
         "startedDateTime": started_iso(c.started_ms),
-        "time": c.duration_ms.map(|d| d as i64).unwrap_or(-1),
+        "time": c.duration_ms.map(|d| d as i64).unwrap_or(0),
         "request": request,
         "response": response,
         "cache": {},
         "timings": { "send": 0, "wait": wait, "receive": 0 },
         "_resourceType": kind_name(&c.kind),
-        "_requestId": c.request_id,
+        "_requestId": redact_text(&c.request_id),
     });
     if !tcm.is_empty() {
         e["_tcm"] = Value::Object(tcm);
@@ -157,14 +172,17 @@ fn entry(c: &Captured) -> Value {
     e
 }
 
-/// `entries` as a HAR 1.2 document, in the order given, every address, query
-/// and body redacted (`capture_redact`).
-pub fn to_har(entries: &[&Captured]) -> Value {
+/// `entries` as a HAR 1.2 document, in the order given, every address, query,
+/// header and body redacted (`capture_redact`). `site` is the application's
+/// address (any address on it): a HAR's `url` is absolute, so each request's
+/// path and query follows its origin.
+pub fn to_har(entries: &[&Captured], site: Option<&str>) -> Value {
+    let site = site.and_then(origin).unwrap_or_else(|| UNKNOWN_SITE.to_string());
     json!({
         "log": {
             "version": "1.2",
             "creator": { "name": "TCM", "version": env!("CARGO_PKG_VERSION") },
-            "entries": entries.iter().map(|c| entry(c)).collect::<Vec<_>>(),
+            "entries": entries.iter().map(|c| entry(c, &site)).collect::<Vec<_>>(),
         }
     })
 }
@@ -207,13 +225,26 @@ fn header_object(list: &Value) -> Value {
     Value::Object(map)
 }
 
+fn redacted_headers(headers: Vec<(String, String)>) -> Vec<(String, String)> {
+    headers
+        .into_iter()
+        .map(|(n, v)| {
+            let v = redact_header(&n, &v);
+            (n, v)
+        })
+        .collect()
+}
+
+/// HAR `params` as form text, every one redacted by its own name whatever
+/// the mime says (a multipart or text/plain body is rebuilt the same way).
 fn text_of_params(params: &Value) -> Option<String> {
     let list = params.as_array()?;
     Some(
         list.iter()
             .filter_map(|p| {
                 let name = p["name"].as_str()?;
-                Some(format!("{}={}", urlencoding::encode(name), urlencoding::encode(p["value"].as_str().unwrap_or(""))))
+                let value = redact_field(name, p["value"].as_str().unwrap_or(""));
+                Some(format!("{}={}", urlencoding::encode(name), urlencoding::encode(&value)))
             })
             .collect::<Vec<_>>()
             .join("&"),
@@ -228,11 +259,12 @@ fn request_body(post: &Value, header_mime: Option<&str>) -> Option<Body> {
         return Some(tag);
     }
     let mime = post["mimeType"].as_str().filter(|m| !m.is_empty()).or(header_mime);
+    let from_params = post["text"].as_str().is_none();
     let text = post["text"].as_str().map(str::to_string).or_else(|| text_of_params(&post["params"]))?;
     if text.len() > MAX_REQUEST_BODY_BYTES {
         return Some(Body::TooBig);
     }
-    Some(Body::Text(redact_body(mime, &text)))
+    Some(Body::Text(redact_body(if from_params { None } else { mime }, &text)))
 }
 
 fn response_body(content: &Value, mime: Option<&str>) -> Option<Body> {
@@ -282,8 +314,8 @@ fn one(n: usize, e: &Value) -> Result<Captured, String> {
         return Err(bad("no valid startedDateTime"));
     };
 
-    let req_headers = kept_headers(&header_object(&e["request"]["headers"]));
-    let resp_headers = kept_headers(&header_object(&e["response"]["headers"]));
+    let req_headers = redacted_headers(kept_headers(&header_object(&e["request"]["headers"])));
+    let resp_headers = redacted_headers(kept_headers(&header_object(&e["response"]["headers"])));
     let mime = e["response"]["content"]["mimeType"].as_str().filter(|m| !m.is_empty()).map(str::to_string);
     let req_mime = header(&req_headers, "content-type").map(str::to_string);
     let tcm = &e["_tcm"];
@@ -296,8 +328,8 @@ fn one(n: usize, e: &Value) -> Result<Captured, String> {
     });
     Ok(Captured {
         id: 0,
-        request_id: e["_requestId"].as_str().unwrap_or("").to_string(),
-        tab: tcm["tab"].as_str().unwrap_or("").to_string(),
+        request_id: redact_text(e["_requestId"].as_str().unwrap_or("")),
+        tab: redact_text(tcm["tab"].as_str().unwrap_or("")),
         method: method.to_ascii_uppercase(),
         url_path_query: redact_path_query(&path_query_of(url)),
         kind: e["_resourceType"].as_str().and_then(kind_of),
@@ -309,8 +341,11 @@ fn one(n: usize, e: &Value) -> Result<Captured, String> {
         resp_headers,
         resp_size: e["response"]["bodySize"].as_i64().filter(|s| *s >= 0).map(|s| s as u64),
         started_ms: started.timestamp_millis().max(0) as u64,
-        duration_ms: e["time"].as_f64().filter(|t| *t >= 0.0).map(|t| t.round() as u64),
-        failed: tcm["failed"].as_str().map(str::to_string),
+        duration_ms: e["time"]
+            .as_f64()
+            .filter(|t| *t >= 0.0 && tcm["noDuration"] != json!(true))
+            .map(|t| t.round() as u64),
+        failed: tcm["failed"].as_str().map(redact_text),
         redirect,
     })
 }
@@ -337,5 +372,29 @@ pub fn from_har(v: &Value) -> Result<Vec<Captured>, String> {
         c.id = (out.len() + 1) as u64;
         out.push(c);
     }
+    keep_within_budget(&mut out);
     Ok(out)
+}
+
+/// The store's budget for everything kept: while the bodies together are
+/// over `MAX_TOTAL_BODY_BYTES`, the oldest request's bodies are dropped
+/// (the request stays).
+fn keep_within_budget(entries: &mut [Captured]) {
+    let size = |b: &Option<Body>| match b {
+        Some(Body::Text(t)) => t.len(),
+        _ => 0,
+    };
+    let mut total: usize = entries.iter().map(|c| size(&c.req_body) + size(&c.resp_body)).sum();
+    for c in entries.iter_mut() {
+        if total <= MAX_TOTAL_BODY_BYTES {
+            break;
+        }
+        total -= size(&c.req_body) + size(&c.resp_body);
+        if matches!(c.req_body, Some(Body::Text(_))) {
+            c.req_body = Some(Body::Dropped);
+        }
+        if matches!(c.resp_body, Some(Body::Text(_))) {
+            c.resp_body = Some(Body::Dropped);
+        }
+    }
 }
