@@ -1419,11 +1419,14 @@ fn sign_ins(d: &ScriptedDriver) -> usize {
 /// The fake browser's cookies for the application's host, as (name, value).
 /// `now` is what it holds; `login` what a sign-in leaves - put in as the
 /// sign-in clears the site (`Storage.clearDataForOrigin`), which is before
-/// anything reads them. `expire_session` deletes them one by one.
+/// anything reads them. `expire_session` deletes them one by one. Every
+/// cookie is HttpOnly, as a server's sign-in cookie is, except those named
+/// in `by_script`: the page's own script wrote them.
 #[derive(Clone)]
 struct Jar {
     now: Arc<std::sync::Mutex<Vec<(String, String)>>>,
     login: Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    by_script: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl Jar {
@@ -1435,17 +1438,33 @@ impl Jar {
     }
 }
 
-/// `app()` with a cookie jar: a sign-in leaves admin's two PeoplesHR cookies.
+/// The cookie PeoplesHR's page script writes as pages load (not HttpOnly).
+const TAB_COOKIE: &str = "my-application-browser-tab";
+
+/// `app()` with a cookie jar: a sign-in leaves admin's two PeoplesHR
+/// cookies (HttpOnly), and the page's script its tab cookie.
 fn jar_app() -> (ScriptedDriver, common::MenuApp, Jar) {
     let (d, app) = app();
-    let admin = vec![(".ASPXAUTH".to_string(), "auth-admin-1".to_string()), ("ehrm85".to_string(), "admin".to_string())];
-    let jar = Jar { now: Arc::new(std::sync::Mutex::new(vec![])), login: Arc::new(std::sync::Mutex::new(admin)) };
+    let admin = vec![
+        (".ASPXAUTH".to_string(), "auth-admin-1".to_string()),
+        ("ehrm85".to_string(), "admin".to_string()),
+        (TAB_COOKIE.to_string(), "tab-1".to_string()),
+    ];
+    let jar = Jar {
+        now: Arc::new(std::sync::Mutex::new(vec![])),
+        login: Arc::new(std::sync::Mutex::new(admin)),
+        by_script: Arc::new(std::sync::Mutex::new(vec![TAB_COOKIE.to_string()])),
+    };
     let j = jar.clone();
     let d = d.answering_first(move |method, params| {
+        let by_script = j.by_script.lock().unwrap().clone();
         let as_json = |cookies: &[(String, String)]| {
             let list: Vec<Value> = cookies
                 .iter()
-                .map(|(n, v)| json!({ "name": n, "value": v, "domain": "hr.example.internal", "path": "/", "session": true }))
+                .map(|(n, v)| {
+                    let http_only = !by_script.contains(n);
+                    json!({ "name": n, "value": v, "domain": "hr.example.internal", "path": "/", "httpOnly": http_only, "session": true })
+                })
                 .collect();
             Ok(json!({ "cookies": list }))
         };
@@ -1543,6 +1562,25 @@ async fn a_cookie_the_page_added_since_the_sign_in_keeps_the_reuse() {
     let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     assert_eq!(reused.went.as_deref(), Some("Leave"));
+    assert_eq!(sign_ins(&d), 0, "{:?}", log(&app));
+}
+
+/// #64: the page's own script rewrote its tab cookie as the replay moved
+/// the page. That cookie is not HttpOnly - it says nothing about who is
+/// signed in - so the browser still holds the sign-in, and the next replay
+/// reuses it.
+#[tokio::test]
+async fn a_cookie_the_pages_script_rewrote_keeps_the_reuse() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut d, app, jar) = jar_app();
+    let (mut account, mut held) = (None, Held::supervised());
+    signed_in_once(dir.path(), &mut d, &app, &mut account, &mut held).await;
+    jar.set(TAB_COOKIE, "tab-2");
+    let (end, reused) = replay_kept(&mut d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused.went.as_deref(), Some("Leave"), "a script's cookie made the sign-in look changed: {:?}", log(&app));
     assert_eq!(sign_ins(&d), 0, "{:?}", log(&app));
 }
 
@@ -2074,6 +2112,32 @@ async fn a_reset_keeps_the_sign_in_and_goes_home() {
     let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
     assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
     assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after a reset signed in again");
+}
+
+/// #64: between the sign-in and the reset the page's script rewrote its
+/// tab cookie (not HttpOnly): the reset still says the browser is signed in
+/// as admin - never that the sign-in has gone - and the next replay reuses
+/// it.
+#[tokio::test]
+async fn a_reset_after_the_pages_script_rewrote_its_cookie_keeps_the_sign_in() {
+    use v2_lib::commands::autorun::{reset_in_for_assistant, reset_sentence};
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path(), &script(three_steps()));
+    let (mut slot, app, jar) = left_by_a_replay(dir.path()).await;
+    jar.set(TAB_COOKIE, "tab-2");
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick()).await;
+    assert_eq!((status, said.as_str()), (200, reset_sentence("admin").as_str()), "{:?}", log(&app));
+    let b = slot.as_ref().expect("the reset closed the browser");
+    assert_eq!((b.account.as_deref(), b.lease.account()), (Some("admin"), Some("admin")));
+    assert!(b.lease.sign_in_print().is_some(), "the sign-in's cookies were forgotten");
+
+    let mut b = slot.unwrap();
+    let (mut account, mut held) = (b.account.take(), b.lease);
+    let (end, reused) = replay_kept(&mut b.d, dir.path(), 3, &mut account, &mut held).await;
+    assert!(matches!(end, ReplayEnd::Ready { .. }), "{end:?}");
+    assert_eq!(reused.went.as_deref(), Some("Leave"), "the replay after a reset signed in again");
+    assert_eq!(sign_ins(&b.d), 0, "{:?}", log(&app));
 }
 
 /// A reset ends the assistant's discovery as end_autorun_discovery does -

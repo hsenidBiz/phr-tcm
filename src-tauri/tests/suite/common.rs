@@ -898,7 +898,7 @@ pub fn stateful_app(cookie_is_good: bool, broken_selector: Option<&'static str>)
                 json!({ "frameId": "F", "loaderId": "L" })
             }
             "Network.getAllCookies" => json!({ "cookies": [
-                { "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true }
+                { "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "httpOnly": true, "session": true }
             ] }),
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),

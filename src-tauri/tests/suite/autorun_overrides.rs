@@ -505,8 +505,11 @@ async fn a_cookie_url_on_a_subdomain_sites_parent_is_read_and_a_lookalike_refuse
 // ---- the sign-in's print ---------------------------------------------------------
 
 /// Ruling A: the sign-in's cookie print leaves out the cookies the assistant
-/// set, so a changed `culture` never makes TCM think the sign-in changed; a
-/// changed sign-in cookie still does.
+/// set, so a test cookie never makes TCM think the sign-in changed; a
+/// changed sign-in cookie still does. The print covers only the HttpOnly
+/// cookies (#64), so the script-readable `culture` is never part of it; an
+/// HttpOnly one a reset deleted (`Tenant`) and the assistant then set for
+/// testing is left out from then on.
 #[tokio::test]
 async fn a_test_cookie_never_makes_the_sign_in_look_changed() {
     // A replay another module's test claims would refuse these calls.
@@ -516,28 +519,141 @@ async fn a_test_cookie_never_makes_the_sign_in_look_changed() {
     {
         let b = slot.as_mut().unwrap();
         let print = v2_lib::browser::session::cookie_print(&mut b.d, &origins).await;
-        assert!(print.is_some());
+        assert_eq!(format!("{print:?}"), "Some(CookiePrint(2 cookies))", "only the HttpOnly .AspNetCore.Cookies and Tenant");
         b.lease.note_sign_in(print);
         assert!(b.lease.same_sign_in(&mut b.d, &origins).await);
     }
-    let changed = |culture: &'static str, session: &'static str| {
+    // `jar()` with `culture`, `Tenant` (None: deleted) and the session cookie as given.
+    let changed = |culture: &'static str, tenant: Option<&'static str>, session: &'static str| {
         let mut cookies = jar();
         cookies[2]["value"] = json!(culture);
         cookies[0]["value"] = json!(session);
+        match tenant {
+            Some(t) => cookies[3]["value"] = json!(t),
+            None => {
+                cookies.remove(3);
+            }
+        }
         page_on(ORIGIN, cookies)
     };
-    // Before the assistant set it, a changed culture is a changed sign-in.
     let lease = &slot.as_ref().unwrap().lease;
-    assert!(!lease.same_sign_in(&mut changed("fr-FR", SESSION_VALUE), &origins).await);
+    // A script-readable cookie is not the sign-in's, set for testing or not.
+    assert!(lease.same_sign_in(&mut changed("fr-FR", Some("acme"), SESSION_VALUE), &origins).await, "a script's cookie changed the sign-in");
+    // Before the assistant set it, a changed or deleted Tenant is a changed sign-in.
+    assert!(!lease.same_sign_in(&mut changed("en-GB", Some("globex"), SESSION_VALUE), &origins).await);
+    assert!(!lease.same_sign_in(&mut changed("en-GB", None, SESSION_VALUE), &origins).await);
 
     let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "Culture", "value": "fr-FR" })).await;
     assert_eq!(status, 200, "{said}");
     let lease = &slot.as_ref().unwrap().lease;
-    assert!(lease.same_sign_in(&mut changed("fr-FR", SESSION_VALUE), &origins).await, "the test cookie changed the sign-in");
+    assert!(lease.same_sign_in(&mut changed("fr-FR", Some("acme"), SESSION_VALUE), &origins).await, "the test cookie changed the sign-in");
     let mut gone = jar();
     gone.remove(2);
     assert!(lease.same_sign_in(&mut page_on(ORIGIN, gone), &origins).await, "a reset deleting it changed the sign-in");
-    assert!(!lease.same_sign_in(&mut changed("fr-FR", "another-session-value"), &origins).await, "a new sign-in went unseen");
+
+    // A reset deleted Tenant; the assistant set one of its own in its place.
+    slot.as_mut().unwrap().d = changed("en-GB", None, SESSION_VALUE);
+    let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "Tenant", "value": "test" })).await;
+    assert_eq!(status, 200, "{said}");
+    let lease = &slot.as_ref().unwrap().lease;
+    assert!(lease.same_sign_in(&mut changed("en-GB", None, SESSION_VALUE), &origins).await, "the deleted test cookie changed the sign-in");
+    assert!(lease.same_sign_in(&mut changed("en-GB", Some("test"), SESSION_VALUE), &origins).await, "the test cookie changed the sign-in");
+    assert!(!lease.same_sign_in(&mut changed("fr-FR", Some("acme"), "another-session-value"), &origins).await, "a new sign-in went unseen");
+}
+
+// ---- #64: the print is the HttpOnly cookies ---------------------------------------
+
+/// PeoplesHR's tab cookie: its page script writes it as pages load.
+const TAB_COOKIE: &str = "my-application-browser-tab";
+
+/// A sign-in cookie as the browser lists it: HttpOnly, on the app's host.
+fn http_only(name: &str, value: &str) -> Value {
+    json!({ "name": name, "value": value, "domain": "hr.example", "path": "/", "expires": -1, "size": 40, "httpOnly": true, "secure": true, "session": true })
+}
+
+/// A lease that noted the sign-in `cookies` show.
+async fn signed_in_with(cookies: Vec<Value>) -> Held {
+    let mut lease = Held::supervised();
+    let print = v2_lib::browser::session::cookie_print(&mut page_on(ORIGIN, cookies), &[ORIGIN.to_string()]).await;
+    assert!(print.is_some(), "no print taken");
+    lease.note_sign_in(print);
+    lease
+}
+
+/// `.ASPXAUTH` (HttpOnly) and the tab cookie (written by the page's script).
+fn aspx_and_tab(auth: &str, tab: &str) -> Vec<Value> {
+    vec![http_only(".ASPXAUTH", auth), plain(TAB_COOKIE, tab, "hr.example")]
+}
+
+/// The page's script rewrote its tab cookie: the sign-in is the same.
+#[tokio::test]
+async fn a_script_cookie_changing_keeps_the_sign_in() {
+    let origins = [ORIGIN.to_string()];
+    let lease = signed_in_with(aspx_and_tab("auth-admin-1", "tab-1")).await;
+    assert_eq!(format!("{:?}", lease.sign_in_print()), "Some(CookiePrint(1 cookies))");
+    assert!(lease.same_sign_in(&mut page_on(ORIGIN, aspx_and_tab("auth-admin-1", "tab-2")), &origins).await);
+    let mut no_tab = aspx_and_tab("auth-admin-1", "tab-1");
+    no_tab.remove(1);
+    assert!(lease.same_sign_in(&mut page_on(ORIGIN, no_tab), &origins).await, "the tab cookie gone changed the sign-in");
+}
+
+/// A new `.ASPXAUTH` value is another sign-in.
+#[tokio::test]
+async fn a_new_aspxauth_is_a_new_sign_in() {
+    let lease = signed_in_with(aspx_and_tab("auth-admin-1", "tab-1")).await;
+    let mut d = page_on(ORIGIN, aspx_and_tab("auth-carol-1", "tab-1"));
+    assert!(!lease.same_sign_in(&mut d, &[ORIGIN.to_string()]).await);
+}
+
+/// The HttpOnly sign-in cookie gone is no sign-in of the app's.
+#[tokio::test]
+async fn an_httponly_cookie_gone_is_a_new_sign_in() {
+    let lease = signed_in_with(aspx_and_tab("auth-admin-1", "tab-1")).await;
+    let mut d = page_on(ORIGIN, vec![plain(TAB_COOKIE, "tab-1", "hr.example")]);
+    assert!(!lease.same_sign_in(&mut d, &[ORIGIN.to_string()]).await);
+}
+
+/// Only cookies a script could write: nothing shows whose sign-in it is,
+/// so there is no print (the next replay signs in).
+#[tokio::test]
+async fn no_httponly_cookie_no_print() {
+    let mut d = page_on(ORIGIN, vec![plain(TAB_COOKIE, "tab-1", "hr.example"), plain("culture", "en-GB", "hr.example")]);
+    assert_eq!(v2_lib::browser::session::cookie_print(&mut d, &[ORIGIN.to_string()]).await, None);
+}
+
+/// What changed is said by name - in the answer and in the app log - and
+/// never with a value; a browser that does not answer says nothing.
+#[tokio::test]
+async fn the_changed_names_are_named_never_values() {
+    use v2_lib::browser::session::{changed_cookies, cookie_print};
+    let _t = crate::serial::log_tail();
+    let origins = [ORIGIN.to_string()];
+    let before = vec![
+        http_only(".ASPXAUTH", "auth-value-admin-7f3a"),
+        http_only("ehrm85", "ehrm-value-admin-91c2"),
+        plain(TAB_COOKIE, "tab-value-1-55d0", "hr.example"),
+    ];
+    let after = vec![http_only(".ASPXAUTH", "auth-value-carol-0b8e"), plain(TAB_COOKIE, "tab-value-2-6e14", "hr.example")];
+    let print = cookie_print(&mut page_on(ORIGIN, before), &origins).await.expect("no print");
+    let none = std::collections::BTreeSet::new();
+    let changed = changed_cookies(&mut page_on(ORIGIN, after.clone()), &origins, &print, &none).await;
+    assert_eq!(changed, Some(vec![".ASPXAUTH (changed)".to_string(), "ehrm85 (gone)".to_string()]));
+    let ignored: std::collections::BTreeSet<String> = [".aspxauth".to_string()].into();
+    let changed = changed_cookies(&mut page_on(ORIGIN, after.clone()), &origins, &print, &ignored).await;
+    assert_eq!(changed, Some(vec!["ehrm85 (gone)".to_string()]), "a cookie the assistant set was named");
+    let mut silent =
+        ScriptedDriver::new(|method, _| Err(v2_lib::browser::cdp::CdpError::Protocol { method: method.into(), message: "no".into() }));
+    assert_eq!(changed_cookies(&mut silent, &origins, &print, &none).await, None);
+
+    let mut lease = Held::supervised();
+    lease.note_sign_in(Some(print));
+    assert!(!lease.same_sign_in(&mut page_on(ORIGIN, after), &origins).await);
+    let lines: Vec<String> = v2_lib::applog::recent(400).into_iter().map(|l| l.message).collect();
+    assert!(
+        lines.iter().any(|l| l == "Auto Run: the sign-in's cookies changed: .ASPXAUTH (changed), ehrm85 (gone)"),
+        "{lines:?}"
+    );
+    assert!(!lines.iter().any(|l| l.contains("-value-")), "a cookie value was logged");
 }
 
 // ---- who may act ----------------------------------------------------------------

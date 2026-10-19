@@ -64,16 +64,21 @@ async fn own_cookies<D: Driver>(d: &mut D, origins: &[String]) -> Result<Vec<Val
         .collect())
 }
 
-/// Which of its own cookies a sign-in left in a browser - by name, domain
-/// and path - and a SHA-256 of their name=value pairs. Taken at each sign-in
-/// the app makes (`cookie_print`) and kept in memory only, with the
-/// browser's lease (`autorun::lease::Held`): never logged, never written,
-/// and its `Debug` shows only how many cookies it covers. The same cookies
-/// with the same values later (`same_cookies`) are the same sign-in; a value
-/// changed or a cookie gone is not. A cookie the page set after the sign-in
-/// is not part of it. Each cookie has a digest of its own, so a comparison
-/// can leave out the ones the assistant changed for testing
-/// (`same_cookies_except`).
+/// Which of its own HttpOnly cookies a sign-in left in a browser - by name,
+/// domain and path - and a SHA-256 of their name=value pairs. Only the
+/// HttpOnly ones: the server set them, a page's script can neither read nor
+/// write them, and another person's sign-in changes them. A cookie a script
+/// set - PeoplesHR's `my-application-browser-tab`, rewritten as pages load -
+/// says nothing about who is signed in. Taken at each sign-in the app makes
+/// (`cookie_print`) and kept in memory only, with the browser's lease
+/// (`autorun::lease::Held`): never logged, never written, and its `Debug`
+/// shows only how many cookies it covers. The same HttpOnly cookies with the
+/// same values later (`same_cookies`) are the same sign-in; a value changed
+/// or a cookie gone is not. A cookie the page set after the sign-in is not
+/// part of it. Each cookie has a digest of its own, so a comparison can
+/// leave out the ones the assistant changed for testing
+/// (`same_cookies_except`) and name the ones that changed
+/// (`changed_cookies`).
 #[derive(Clone, PartialEq, Eq)]
 pub struct CookiePrint {
     keys: Vec<(String, String, String)>,
@@ -113,11 +118,20 @@ fn digests_of(cookies: &[Value], keys: &[(String, String, String)]) -> Option<Ve
     keys.iter().map(|key| cookie_of(cookies, key).map(|c| digest_one(key, c["value"].as_str().unwrap_or("")))).collect()
 }
 
-/// The print of the sign-in the browser holds now: its own cookies for
-/// `origins` (read only). `None` when it holds none - nothing then shows
-/// whose sign-in it is - or the browser does not answer.
+/// The browser's HttpOnly cookies for `origins`: the ones a sign-in's print
+/// covers, both when it is taken and when it is compared. Read only.
+async fn sign_in_cookies<D: Driver>(d: &mut D, origins: &[String]) -> Result<Vec<Value>, CdpError> {
+    let mut cookies = own_cookies(d, origins).await?;
+    cookies.retain(|c| c["httpOnly"].as_bool() == Some(true));
+    Ok(cookies)
+}
+
+/// The print of the sign-in the browser holds now: its own HttpOnly cookies
+/// for `origins` (read only). `None` when it holds none - nothing then shows
+/// whose sign-in it is, so the next replay signs in again, as it does for a
+/// browser with no cookies at all - or the browser does not answer.
 pub async fn cookie_print<D: Driver>(d: &mut D, origins: &[String]) -> Option<CookiePrint> {
-    let cookies = own_cookies(d, origins).await.ok()?;
+    let cookies = sign_in_cookies(d, origins).await.ok()?;
     let mut keys: Vec<(String, String, String)> = cookies.iter().map(cookie_key).collect();
     keys.sort();
     keys.dedup();
@@ -129,8 +143,8 @@ pub async fn cookie_print<D: Driver>(d: &mut D, origins: &[String]) -> Option<Co
 }
 
 /// Does the browser still hold the sign-in `print` was taken of: each of
-/// its cookies there, with the same value? Read only; a browser that does
-/// not answer does not.
+/// its HttpOnly cookies there, with the same value? Read only; a browser
+/// that does not answer does not.
 pub async fn same_cookies<D: Driver>(d: &mut D, origins: &[String], print: &CookiePrint) -> bool {
     same_cookies_except(d, origins, print, &std::collections::BTreeSet::new()).await
 }
@@ -145,11 +159,33 @@ pub async fn same_cookies_except<D: Driver>(
     print: &CookiePrint,
     ignored: &std::collections::BTreeSet<String>,
 ) -> bool {
-    let Ok(cookies) = own_cookies(d, origins).await else { return false };
-    print.keys.iter().zip(&print.digests).all(|(key, want)| {
-        ignored.contains(&key.0.to_ascii_lowercase())
-            || cookie_of(&cookies, key).is_some_and(|c| digest_one(key, c["value"].as_str().unwrap_or("")) == *want)
-    })
+    changed_cookies(d, origins, print, ignored).await.is_some_and(|changed| changed.is_empty())
+}
+
+/// Which of `print`'s HttpOnly cookies the browser no longer holds as they
+/// were, `ignored` left out as in `same_cookies_except`: each said by NAME
+/// only, never its value, as `<name> (changed)` or `<name> (gone)`, in the
+/// print's order. Empty: the same sign-in. `None` when the browser does not
+/// answer. Read only.
+pub async fn changed_cookies<D: Driver>(
+    d: &mut D,
+    origins: &[String],
+    print: &CookiePrint,
+    ignored: &std::collections::BTreeSet<String>,
+) -> Option<Vec<String>> {
+    let cookies = sign_in_cookies(d, origins).await.ok()?;
+    let changed = print
+        .keys
+        .iter()
+        .zip(&print.digests)
+        .filter(|(key, _)| !ignored.contains(&key.0.to_ascii_lowercase()))
+        .filter_map(|(key, want)| match cookie_of(&cookies, key) {
+            None => Some(format!("{} (gone)", key.0)),
+            Some(c) if digest_one(key, c["value"].as_str().unwrap_or("")) != *want => Some(format!("{} (changed)", key.0)),
+            Some(_) => None,
+        })
+        .collect();
+    Some(changed)
 }
 
 pub async fn capture<D: Driver>(

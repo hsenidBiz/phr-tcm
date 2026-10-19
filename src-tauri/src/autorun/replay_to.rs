@@ -439,8 +439,8 @@ pub async fn replay_to_checked<D: Driver, P: StageDb, B: Browsers>(
 /// signed in as the case's account, for its answer to say (`Reuse::said`).
 ///
 /// That browser - signed in by the app as the script's account, holding
-/// its lease in this environment, still holding the cookies that sign-in
-/// left (`session::same_cookies`), its page not refused and the recipe's
+/// its lease in this environment, still holding the HttpOnly cookies that
+/// sign-in left (`Held::same_sign_in`), its page not refused and the recipe's
 /// signed-in marker showing (`signin::already_signed_in`) - keeps its
 /// sign-in and goes to the area from where it is (`TripFrom::Elsewhere`).
 /// If that trip fails, the case is signed in as it always is and goes
@@ -610,9 +610,11 @@ pub async fn replay_to_traced<D: Driver, P: StageDb, B: Browsers>(
 
 /// Is the supervised browser `d` already signed in as `key`, the case's
 /// account? Its session is `key`'s (`account`), it holds `key`'s lease in
-/// the active environment (`Held::holds`), it still holds the cookies the
-/// app's own sign-in left (`Held::sign_in_print`, `session::same_cookies`:
-/// not a login a step typed or the person made by hand), and the page says
+/// the active environment (`Held::holds`), it still holds the HttpOnly
+/// cookies the app's own sign-in left (`Held::sign_in_print`,
+/// `Held::same_sign_in`: not a login a step typed or the person made by
+/// hand; a cookie a page's script rewrote is not the sign-in's, and one
+/// that changed is named in the app log), and the page says
 /// so (`signin::already_signed_in`). Only looked at, never changed. A
 /// project whose recipe cannot be read is signed in as always, which says
 /// why.
