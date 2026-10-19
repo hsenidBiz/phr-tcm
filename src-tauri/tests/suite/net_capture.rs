@@ -696,37 +696,27 @@ fn the_identity_providers_page_the_password_was_typed_on_is_never_confirmed() {
 /// A refused confirmation logs one line, not one per check: a restored
 /// session meets the marker off the configured address on every replay's
 /// reuse test and every return home. A change of the sites logs again.
+/// Counted on the capture itself, so no other test's log lines count.
 #[test]
 fn a_refused_confirmation_is_logged_once_until_the_sites_change() {
-    let _l = crate::serial::log_tail();
-    let off_address = "https://portal.hr.example/home";
-    let count = |needle: &str| v2_lib::applog::recent(500).iter().filter(|l| l.message.contains(needle)).count();
-    let before_first = "before any sign-in typed a login in this browser";
-    let typed_on = "showed on the page the sign-in was typed on";
     let mut cap = NetCapture::default();
     cap.set_app_site(Some("https://hr.example/Account/Login"));
-    // Counted right after the first refusal and again after five more: the
-    // window is too short for another test to log the same line.
-    cap.confirm_app_site(off_address);
-    let once = count(before_first);
-    assert!(once >= 1, "the first refusal is logged");
+    assert_eq!(cap.refusals_logged(), 0);
+    cap.confirm_app_site("https://portal.hr.example/home");
+    assert_eq!(cap.refusals_logged(), 1, "the first refusal is logged");
     for _ in 0..5 {
-        cap.confirm_app_site(off_address);
+        cap.confirm_app_site("https://portal.hr.example/home");
     }
     assert!(!cap.knows_app_site());
-    assert_eq!(count(before_first), once, "logged once, not on every check");
-    let login = "https://login.idp.example/login";
-    cap.note_login_site(login);
-    let before = count(typed_on);
-    cap.confirm_app_site("https://login.idp.example/signed-in");
-    let once = count(typed_on);
-    assert!(once > before, "a new login site logs again");
+    assert_eq!(cap.refusals_logged(), 1, "logged once, not on every check");
+    cap.note_login_site("https://login.idp.example/login");
     for _ in 0..5 {
         cap.confirm_app_site("https://login.idp.example/signed-in");
     }
-    assert_eq!(count(typed_on), once, "and once only");
+    assert_eq!(cap.refusals_logged(), 2, "a new login site logs again, once");
     cap.confirm_app_site("https://hr.example/hr/home");
     assert!(cap.knows_app_site());
+    assert_eq!(cap.refusals_logged(), 2, "a confirmation is not a refusal");
 }
 
 #[test]

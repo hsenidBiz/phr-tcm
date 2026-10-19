@@ -255,6 +255,8 @@ pub struct NetCapture {
     /// sites last changed: the check runs on every replay's reuse test and
     /// every return home, so the line is written once, not on each.
     refusal_logged: bool,
+    /// How many refusals `confirm_app_site` has logged (`refusals_logged`).
+    refusals_logged: u32,
 }
 
 impl NetCapture {
@@ -281,6 +283,7 @@ impl NetCapture {
     /// was logged since the sites last changed.
     fn log_refusal(&mut self, line: &str) {
         if !std::mem::replace(&mut self.refusal_logged, true) {
+            self.refusals_logged += 1;
             crate::applog::info(line);
         }
     }
@@ -335,6 +338,12 @@ impl NetCapture {
         }
         self.app_site = Some(site);
         self.confirmed = true;
+    }
+
+    /// How many refused confirmations this capture has logged: one per
+    /// change of the sites at most, not one per check.
+    pub fn refusals_logged(&self) -> u32 {
+        self.refusals_logged
     }
 
     /// Whether the application's site is known for sure: a sign-in arrived

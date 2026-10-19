@@ -816,6 +816,45 @@ fn the_bridges_imported_sets_live_in_the_rust_cache() {
     assert!(imported_captures().is_empty(), "a sign-in or out forgets them");
 }
 
+/// Eight imports at once, each of its own set: the cap still holds -
+/// exactly five are kept and three refused - because the imports are
+/// taken one at a time (`change_imported_captures`).
+#[test]
+fn imports_at_once_never_pass_the_five_set_cap() {
+    use v2_lib::autorun::capture_tools::{read_import, store_import, MAX_IMPORTED_SETS};
+    use v2_lib::commands::autorun::{change_imported_captures, forget_imported_captures, imported_captures};
+    // The bridge's capture routes read the same sets.
+    let _a = crate::serial::autorun();
+    forget_imported_captures();
+    let dir = TempDir::new();
+    let parsed: Vec<_> = (1..=8)
+        .map(|i| {
+            let name = format!("race{i}");
+            put_har(dir.path(), &name, &foreign_har());
+            read_import(dir.path(), &json!({ "name": name })).unwrap()
+        })
+        .collect();
+    let start = std::sync::Arc::new(std::sync::Barrier::new(parsed.len()));
+    let threads: Vec<_> = parsed
+        .into_iter()
+        .map(|(stem, entries)| {
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                change_imported_captures(|sets| store_import(sets, stem, entries))
+            })
+        })
+        .collect();
+    let answers: Vec<(u16, String)> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+    let kept = answers.iter().filter(|(status, _)| *status == 200).count();
+    let refused: Vec<_> = answers.iter().filter(|(status, _)| *status != 200).collect();
+    assert_eq!(kept, MAX_IMPORTED_SETS, "{answers:?}");
+    assert_eq!(refused.len(), 3, "{answers:?}");
+    assert!(refused.iter().all(|(status, said)| *status == 409 && said == IMPORTS_FULL), "{refused:?}");
+    assert_eq!(imported_captures().len(), MAX_IMPORTED_SETS);
+    forget_imported_captures();
+}
+
 #[test]
 fn live_is_never_an_imported_or_exported_name() {
     let dir = TempDir::new();
