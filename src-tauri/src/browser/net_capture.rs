@@ -11,11 +11,11 @@
 //! (`observe` asks the tab's record). Only the supervised browser captures
 //! (`Cdp::capture_requests`); an unattended run's browser never does.
 //!
-//! The application's site is the sign-in's start page (`set_app_site`).
-//! Until it is known, documents are not kept at all - a top-level
-//! navigation is always "same site" as itself, and one to the identity
-//! provider carries tokens in its page - and an XHR or fetch is kept when
-//! it goes to the site of the document that sent it. A request sent or
+//! The application's site is the sign-in's start page (`set_app_site`), and
+//! a request is kept only when it goes there - never the "same site as its
+//! document" rule alone: a top-level navigation is always same site as
+//! itself, and the identity provider's own pages and XHR carry tokens.
+//! Until a sign-in names the site, nothing is kept at all. A request
 //! redirected off the application's site never has its response body read
 //! (`Body::OffSite`).
 //!
@@ -228,8 +228,8 @@ pub struct NetCapture {
 
 impl NetCapture {
     /// The application's site, from any address on it (the sign-in's
-    /// start page); `None` when it is not known. Decides what is kept from
-    /// now on.
+    /// start page); `None` when it is not known, and then nothing is kept.
+    /// Decides what is kept from now on.
     pub fn set_app_site(&mut self, url: Option<&str>) {
         self.app_site = url.and_then(origin);
     }
@@ -239,9 +239,10 @@ impl NetCapture {
         self.app_site.is_some()
     }
 
-    /// Is `url` on the application's site? Unknown when the site is not.
-    fn on_app_site(&self, url: &str) -> Option<bool> {
-        self.app_site.as_ref().map(|site| origin(url).as_ref() == Some(site))
+    /// Is `url` on the application's site? Never while the site is not
+    /// known.
+    fn on_app_site(&self, url: &str) -> bool {
+        self.app_site.as_ref().is_some_and(|site| origin(url).as_ref() == Some(site))
     }
 
     /// Note what this event, in the tab with this session and name, says
@@ -312,10 +313,7 @@ impl NetCapture {
         // last hop's - and never read once a hop left the application.
         if let Some(at) = self.index_of(session, request_id) {
             let entry = record.get(request_id);
-            let hop_off = match self.on_app_site(url) {
-                Some(on) => !on,
-                None => entry.and_then(|e| e.redirect.as_ref()).is_some_and(|r| r.other_site),
-            };
+            let hop_off = !self.on_app_site(url);
             let slot = &mut self.entries[at];
             if slot.c.redirect.is_none() {
                 if let Some(r) = entry.and_then(|e| e.redirect.as_ref()) {
@@ -341,12 +339,7 @@ impl NetCapture {
             return;
         }
         let kind = e.kind.as_deref().unwrap_or("");
-        let ours = match self.on_app_site(url) {
-            Some(on) => on,
-            // A document is judged only against the application's site.
-            None => e.same_site && kind != "Document",
-        };
-        if !matches!(kind, "XHR" | "Fetch" | "Document") || !ours || !self.filter.keeps(kind, &e.path_query) {
+        if !matches!(kind, "XHR" | "Fetch" | "Document") || !self.on_app_site(url) || !self.filter.keeps(kind, &e.path_query) {
             return;
         }
         self.last_id += 1;

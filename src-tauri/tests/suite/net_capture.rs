@@ -139,6 +139,8 @@ async fn browser() -> Cdp<FakeBrowser> {
     let mut cdp = Cdp::over(fake);
     cdp.drive_first_page("T-main", "https://hr.example/home").await.expect("main was not attached");
     cdp.capture_requests();
+    // As the sign-in names it.
+    cdp.set_capture_site(Some("https://hr.example/hr/home"));
     cdp
 }
 
@@ -271,7 +273,7 @@ fn a_redirect_keeps_its_first_hop() {
 
 #[test]
 fn budgets_drop_oldest_bodies_and_requests() {
-    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    let (mut rec, mut cap) = (NetRecord::default(), capture_at_site());
     // A long discovery: 1500 requests, 50 MB of JSON in all.
     let json_body = format!("{{\"rows\":\"{}\"}}", "x".repeat(50 * 1024 * 1024 / 1500));
     let mut bodies = HashMap::new();
@@ -313,7 +315,7 @@ fn budgets_drop_oldest_bodies_and_requests() {
 
 #[test]
 fn a_filter_decides_what_is_kept_from_now_on() {
-    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    let (mut rec, mut cap) = (NetRecord::default(), capture_at_site());
     whole(&mut rec, &mut cap, "1", "XHR", "https://hr.example/api/before", "application/json");
     cap.set_filter(CaptureFilter { include_types: vec!["fetch".into()], exclude_types: vec![], path_contains: None });
     assert_eq!(cap.filter().include_types, ["fetch"]);
@@ -336,7 +338,7 @@ fn a_filter_decides_what_is_kept_from_now_on() {
 
 #[test]
 fn cookie_and_authorization_headers_are_never_kept() {
-    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    let (mut rec, mut cap) = (NetRecord::default(), capture_at_site());
     let headers = json!({
         "Cookie": ".ASPXAUTH=abc", "Authorization": "Bearer hunter2", "Proxy-Authorization": "Basic aHVudGVy",
         "X-Session-Id": "s3cr3t", "X-Auth-Token": "t0k3n", "X-CSRF-TOKEN": "csrf-value", "X-Tenant": "acme",
@@ -421,7 +423,7 @@ async fn a_browser_not_capturing_reads_nothing() {
 
 #[test]
 fn the_decoded_size_decides_too_big() {
-    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    let (mut rec, mut cap) = (NetRecord::default(), capture_at_site());
     // Compressed small, decoded over 2 MB: never read.
     feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("z", "XHR", "GET", "https://hr.example/api/zipped", json!({}), None));
     feed(&mut rec, &mut cap, "Network.responseReceived", answered("z", 200, "application/json", json!({})));
@@ -456,19 +458,41 @@ fn a_navigation_to_the_identity_provider_is_not_kept() {
     feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("4", "Document", "GET", "https://hr.example/hr/home", json!({}), None));
     assert_eq!(kept_paths(&cap), ["/signin-oidc", "/hr/home"]);
 
-    // Before the site is known, no document is kept at all.
-    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    assert_eq!(cap.queued_reads(), 0, "nothing from the identity provider is read either");
+}
+
+#[test]
+fn nothing_is_kept_before_a_sign_in_names_the_site() {
+    let idp = "https://login.idp.example/authorize?client_id=hr";
+    let at_idp = |id: &str, kind: &str, url: &str| {
+        let mut p = asked(id, kind, "POST", url, json!({}), Some("client_secret=s3cr3t"));
+        p["documentURL"] = json!(idp);
+        p
+    };
+    let mut rec = NetRecord::default();
+    let mut cap = NetCapture::default();
     assert!(!cap.knows_app_site());
-    feed(&mut rec, &mut cap, "Network.requestWillBeSent", at_idp("1", "Document", "GET", idp));
-    feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("2", "Document", "GET", "https://hr.example/hr/home", json!({}), None));
-    feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("3", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
-    assert_eq!(kept_paths(&cap), ["/api/menu"]);
+    // The identity provider's own XHR and fetch, to its own site, during
+    // the sign-in: same site as their document, and still never kept.
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", at_idp("1", "XHR", "https://login.idp.example/token"));
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", at_idp("2", "Fetch", "https://login.idp.example/check"));
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", at_idp("3", "Document", idp));
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("4", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("5", "Document", "GET", "https://hr.example/hr/home", json!({}), None));
+    assert_eq!(cap.list(0, 10).1, 0, "nothing at all before the site is known");
+    assert_eq!(cap.kept_bytes(), 0);
+    // Once the sign-in names the site, the application's requests are kept
+    // and the identity provider's still are not.
+    cap.set_app_site(Some("https://hr.example/hr/home"));
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", at_idp("6", "XHR", "https://login.idp.example/token2"));
+    feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("7", "XHR", "GET", "https://hr.example/api/menu2", json!({}), None));
+    assert_eq!(kept_paths(&cap), ["/api/menu2"]);
 }
 
 #[test]
 fn an_off_site_redirect_reads_no_body() {
-    for known in [true, false] {
-        let (mut rec, mut cap) = (NetRecord::default(), if known { capture_at_site() } else { NetCapture::default() });
+    {
+        let (mut rec, mut cap) = (NetRecord::default(), capture_at_site());
         feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("1", "XHR", "GET", "https://hr.example/api/data", json!({}), None));
         let mut hop = asked("1", "XHR", "GET", "https://login.idp.example/authorize?state=abc", json!({}), None);
         hop["redirectResponse"] = json!({ "url": "https://hr.example/api/data", "status": 302, "headers": {} });
@@ -477,14 +501,14 @@ fn an_off_site_redirect_reads_no_body() {
         feed(&mut rec, &mut cap, "Network.loadingFinished", finished("1", 10));
         let c = cap.list(0, 1).0[0];
         assert_eq!(c.redirect, Some(Redirect { status: 302, to_path: "/authorize".into(), other_site: true }));
-        assert_eq!(c.resp_body, Some(Body::OffSite), "known site: {known}");
+        assert_eq!(c.resp_body, Some(Body::OffSite));
         assert_eq!(cap.queued_reads(), 0);
     }
 }
 
 #[test]
 fn a_read_not_answered_is_retried_then_dropped() {
-    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    let (mut rec, mut cap) = (NetRecord::default(), capture_at_site());
     whole(&mut rec, &mut cap, "1", "XHR", "https://hr.example/api/a", "application/json");
     // A try cut short by its caller's own wait never counts.
     for _ in 0..5 {
