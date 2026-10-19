@@ -1423,7 +1423,7 @@ struct Found {
 /// area adds nothing (it would count everywhere), and neither does a link
 /// that holds a placeholder (`{{...}}`) or is a component's input place.
 /// `map` is never written back: these links are not sightings.
-pub fn add_saved_scripts(map: &mut DiscoveryMap, scripts: &[CaseScript]) {
+pub fn add_saved_scripts(map: &mut DiscoveryMap, scripts: &[CaseScript], components: &ComponentFile) {
     for script in scripts {
         let Some(area) = script.area_name() else { continue };
         let key = area_key(area);
@@ -1438,7 +1438,7 @@ pub fn add_saved_scripts(map: &mut DiscoveryMap, scripts: &[CaseScript]) {
             }
         };
         let a = &mut map.areas[i];
-        for (target, links, class) in script_links(script) {
+        for (target, links, class) in script_links(script, components) {
             // A use that passes with nothing there vouches only for such
             // uses: it may have been saved on a probe of none, or, for a
             // `when_visible`'s own locator, on a count of several.
@@ -1478,6 +1478,46 @@ pub fn add_saved_scripts(map: &mut DiscoveryMap, scripts: &[CaseScript]) {
     }
 }
 
+/// The strictest use `component`'s actions make of its input `name`, as a
+/// save checks the locator the input gives there (`input_locators`): one
+/// that needs one seen matching exactly one, else a check that may match
+/// several, else a use that passes with nothing there. A use inside a
+/// `repeat_while_visible`'s `then` may match several, one per row. `None`
+/// when the project has no such component, or the component never puts
+/// the input into a locator.
+fn input_use(components: &ComponentFile, component: &str, name: &str) -> Option<SavedUse> {
+    let c = find(components, component)?;
+    let name = name.trim();
+    let rank = |u: SavedUse| match u {
+        SavedUse::One => 2,
+        SavedUse::Many => 1,
+        SavedUse::None => 0,
+    };
+    let mut strictest: Option<SavedUse> = None;
+    for top in &c.actions {
+        for w in top.each() {
+            let in_loop = matches!(top, Action::RepeatWhileVisible { .. }) && !std::ptr::eq(top, w);
+            let feeds = own_targets(w)
+                .into_iter()
+                .any(|t| t.links().iter().any(|l| l.input.as_deref().is_some_and(|i| i.trim() == name)));
+            if !feeds {
+                continue;
+            }
+            let class = if takes_none(w) {
+                SavedUse::None
+            } else if in_loop || seen_many(w) {
+                SavedUse::Many
+            } else {
+                SavedUse::One
+            };
+            if strictest.is_none_or(|s| rank(class) > rank(s)) {
+                strictest = Some(class);
+            }
+        }
+    }
+    strictest
+}
+
 /// How a saved script used a locator, for what it vouches for
 /// (`add_saved_scripts`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1494,10 +1534,12 @@ enum SavedUse {
 /// Every link `script` names as written, a component's target inputs
 /// included, leaving out any that holds a placeholder or an input place;
 /// each with how its action used it (`SavedUse`). A component's target
-/// input counts as a use that needs one: its use inside the component is
-/// not read here. Each action's own targets only (`own_targets`): a
+/// input counts as the strictest use the component makes of it
+/// (`input_use`), as a save checked it; one of a component the project
+/// does not have, or never puts into a locator, is left out: it vouches
+/// for nothing. Each action's own targets only (`own_targets`): a
 /// `when_visible`'s `then` actions are listed on their own.
-fn script_links(script: &CaseScript) -> Vec<(Target, Vec<LocatorStep>, SavedUse)> {
+fn script_links(script: &CaseScript, components: &ComponentFile) -> Vec<(Target, Vec<LocatorStep>, SavedUse)> {
     let mut out: Vec<(Target, Vec<LocatorStep>, SavedUse)> = Vec::new();
     for action in script.steps.iter().flat_map(|s| s.actions.iter()).flat_map(Action::each) {
         let class = if takes_none(action) {
@@ -1508,14 +1550,16 @@ fn script_links(script: &CaseScript) -> Vec<(Target, Vec<LocatorStep>, SavedUse)
             SavedUse::One
         };
         let mut targets: Vec<(Target, SavedUse)> = own_targets(action).into_iter().map(|t| (t.clone(), class)).collect();
-        if let Action::UseComponent { inputs, .. } = action {
-            targets.extend(
-                inputs
-                    .values()
-                    .filter(|v| v.is_object() || v.is_array())
-                    .filter_map(|v| serde_json::from_value::<Target>(v.clone()).ok())
-                    .map(|t| (t, SavedUse::One)),
-            );
+        if let Action::UseComponent { component, inputs } = action {
+            // Each target input as strictly as its uses inside the
+            // component checked it; one the project cannot place vouches
+            // for nothing.
+            for (name, v) in inputs.iter().filter(|(_, v)| v.is_object() || v.is_array()) {
+                let Some(class) = input_use(components, component, name) else { continue };
+                if let Ok(t) = serde_json::from_value::<Target>(v.clone()) {
+                    targets.push((t, class));
+                }
+            }
         }
         for (target, class) in targets {
             let links: Vec<LocatorStep> = target
@@ -1554,7 +1598,10 @@ pub fn load_checked_map_with(
     super::discovery_map::without_stale(&mut map, super::sessions::now_ms());
     let legacy = legacy_scripts_count(root, org, project);
     let vouching: Vec<CaseScript> = saved.iter().filter(|s| vouches(s, org, project, legacy)).cloned().collect();
-    add_saved_scripts(&mut map, &vouching);
+    // Its components, for how a script's target inputs were checked: one
+    // that cannot be read places no input, so none vouches.
+    let components = super::components::load_components(root, org, project).unwrap_or_default();
+    add_saved_scripts(&mut map, &vouching, &components);
     // Where each area arrives, for "did you mean" to prefer that page. An
     // areas file that cannot be read only costs the preference.
     if let Ok(nav) = super::nav::load_nav(root, org, project) {

@@ -1445,3 +1445,24 @@ fn no_rules_no_heading() {
     remember_refusal(&mut map, "Leave", rule("/p", "Name is required.", 1));
     assert_eq!(rules_section(&map, Some("Eval Rules")), "", "an area without rules adds no empty heading");
 }
+
+/// Re-review 2: the write that lets a sighting go takes the page elements
+/// of its key with it, so an element with no sighting is only ever one a
+/// map kept before sightings were. A read that is no discovery restamps a
+/// sighting gone stale, which keeps both.
+#[test]
+fn a_sighting_let_go_takes_its_elements_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let css = Target::One(LocatorStep { css: Some("#grid .row-edit".into()), ..LocatorStep::default() });
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &css, 1000).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Save")], None, None, 1000).unwrap();
+    let later = 1000 + STALE_AFTER_MS + 1;
+    // A healing read showing Save restamps it; nothing shows the css.
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/q", "Q", &[line("button", "Save")], None, None, later).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let a = &map.areas[0];
+    let p = a.pages.iter().find(|p| p.path == "/p").unwrap();
+    assert!(!p.elements.iter().any(|e| e.locator == css), "a let-go sighting left its element: {:?}", p.elements);
+    assert!(p.elements.iter().any(|e| e.name == "Save"), "{:?}", p.elements);
+    assert!(a.sightings.iter().any(|s| s.key == role_key("button", "Save") && s.last_seen == later), "{:?}", a.sightings);
+}

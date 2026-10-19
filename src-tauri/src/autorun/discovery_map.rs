@@ -252,31 +252,52 @@ fn age(last_seen: &mut u64, matched: &mut u32, zero_seen: &mut Option<u64>, now:
 
 /// `map` as the seen check reads it at `now`: every sighting and whole
 /// aged (`age`), what is not fresh left out, and with them each page
-/// element whose key no fresh sighting of some holds. A map is let go of
-/// this way at its next write too (`trim_sightings`); this is for a save's
-/// check of an area that has not been written since.
+/// element whose key's sighting of some aged out in this pass. An element
+/// whose key has no sighting at all comes from a map written before
+/// sightings were kept: it stays while its area was explored within
+/// `STALE_AFTER_MS`, and goes with an area never explored or explored
+/// longer ago. The next write of the area lets go of the same sightings,
+/// wholes and elements (`trim_sightings`, `trim_wholes`); this is for a
+/// save's check of an area that has not been written since.
 pub fn without_stale(map: &mut DiscoveryMap, now: u64) {
     for a in &mut map.areas {
-        age_sightings(a, now);
+        let sighted: HashSet<SeenKey> = a.sightings.iter().map(|s| s.key.clone()).collect();
+        let gone = age_sightings(a, now);
         a.wholes.retain_mut(|w| age(&mut w.last_seen, &mut w.matched, &mut w.zero_seen, now));
-        // Every element filed is filed with a sighting of its key: one whose
-        // key has no fresh sighting of some was not seen for 30 days either.
-        let present: HashSet<&SeenKey> = a.sightings.iter().filter(|s| s.matched != 0).map(|s| &s.key).collect();
+        let explored = a.explored_at.is_some_and(|at| fresh(at, now));
         for p in &mut a.pages {
-            p.elements.retain(|e| present.contains(&e.key));
+            p.elements.retain(|e| !gone.contains(&e.key) && (sighted.contains(&e.key) || explored));
         }
     }
 }
 
-/// `age` over the area's sightings, the stale ones dropped.
-fn age_sightings(a: &mut AreaMap, now: u64) {
+/// `age` over the area's sightings, the stale ones dropped. Answers the
+/// keys that held a count of some before and no longer do, which no page
+/// element may stand for any more.
+fn age_sightings(a: &mut AreaMap, now: u64) -> HashSet<SeenKey> {
+    let mut gone = HashSet::new();
     a.sightings.retain_mut(|s| {
+        let some = s.matched != 0;
         let kept = age(&mut s.last_seen, &mut s.matched, &mut s.zero_seen, now);
         if s.matched == 0 {
             s.all = None;
         }
+        if some && (!kept || s.matched == 0) {
+            gone.insert(s.key.clone());
+        }
         kept
     });
+    gone
+}
+
+/// Takes off every page of the area the elements filed as one of `keys`.
+fn forget_elements(a: &mut AreaMap, keys: &HashSet<SeenKey>) {
+    if keys.is_empty() {
+        return;
+    }
+    for p in &mut a.pages {
+        p.elements.retain(|e| !keys.contains(&e.key));
+    }
 }
 
 /// What a sighting or an element written before `matched` was kept loads
@@ -849,8 +870,10 @@ fn note_sighting(
         Some(s) if matched == 0 && s.matched != 0 => {
             s.zero_seen = Some(s.zero_seen.unwrap_or(0).max(now));
         }
+        // A read that is no discovery stamps only one gone stale: it saw
+        // it, and a fresh one it leaves as it is, so it writes nothing.
         Some(s) => {
-            if refresh && now >= s.last_seen {
+            if (refresh || !fresh(s.last_seen, now)) && now >= s.last_seen {
                 s.last_seen = now;
                 s.link = link;
                 s.page = page.to_string();
@@ -874,22 +897,28 @@ fn note_sighting(
 /// Lets go of the area's sightings not seen for more than `STALE_AFTER_MS`
 /// before `now`, then keeps it within `MAX_SIGHTINGS`: past it, the least
 /// recently seen go, and among those seen at the same time the earliest
-/// kept goes first.
+/// kept goes first. The page elements of each key let go go too.
 fn trim_sightings(a: &mut AreaMap, now: u64) {
-    age_sightings(a, now);
+    let mut let_go = age_sightings(a, now);
     let over = a.sightings.len().saturating_sub(MAX_SIGHTINGS);
-    if over == 0 {
-        return;
+    if over > 0 {
+        let mut order: Vec<usize> = (0..a.sightings.len()).collect();
+        order.sort_by_key(|&i| (a.sightings[i].last_seen, i));
+        let gone: HashSet<usize> = order.into_iter().take(over).collect();
+        let mut i = 0;
+        a.sightings.retain(|s| {
+            let keep = !gone.contains(&i);
+            if !keep {
+                let_go.insert(s.key.clone());
+            }
+            i += 1;
+            keep
+        });
     }
-    let mut order: Vec<usize> = (0..a.sightings.len()).collect();
-    order.sort_by_key(|&i| (a.sightings[i].last_seen, i));
-    let gone: HashSet<usize> = order.into_iter().take(over).collect();
-    let mut i = 0;
-    a.sightings.retain(|_| {
-        let keep = !gone.contains(&i);
-        i += 1;
-        keep
-    });
+    // An element stands for its key's sighting: one let go takes its
+    // elements with it, so an element with no sighting is only ever one
+    // a map kept before sightings were.
+    forget_elements(a, &let_go);
 }
 
 /// Lets go of the area's `wholes` as `trim_sightings` lets go of its
