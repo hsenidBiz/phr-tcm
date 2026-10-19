@@ -190,7 +190,12 @@ pub async fn already_signed_in<D: Driver>(
         return false;
     }
     let look = timing.expect_ms.min(SIGNED_IN_LOOK_MS);
-    expect(d, &recipe.signed_in, Check::Visible, look, timing.poll_ms).await.ok
+    let seen = expect(d, &recipe.signed_in, Check::Visible, look, timing.poll_ms).await.ok;
+    if seen {
+        // Signed in, on the application's own page.
+        d.confirm_capture_site();
+    }
+    seen
 }
 
 /// Said when the application refused an account's session again after a
@@ -374,6 +379,9 @@ async fn sign_in_held<D: Driver>(
                     None
                 };
                 let seen = marker.as_ref().is_some_and(|m| m.ok);
+                if seen {
+                    d.confirm_capture_site();
+                }
                 session::unseed(d, &ids).await;
                 if seen {
                     // The recipe's own steps are skipped here; these are
@@ -444,6 +452,10 @@ async fn sign_in_held<D: Driver>(
         // Refused again, with a session made just now: not the password.
         forget_session(root, &account.key);
         return run.done(false, session_refused_again(&account.key), false, false);
+    }
+    if marker.ok {
+        // Arrived: the page the marker shows on is the application's.
+        d.confirm_capture_site();
     }
     if !marker.ok {
         let harness_failure = marker.harness;

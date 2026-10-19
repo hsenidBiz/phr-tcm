@@ -18,6 +18,8 @@ use v2_lib::browser::net_record::NetRecord;
 
 const SITE: &str = "https://hr.example";
 const MAIN: &str = "S-main";
+/// The page the tab shows while `feed` feeds it.
+const PAGE: &str = "https://hr.example/hr/page";
 
 fn ev(method: &str, params: Value) -> Event {
     Event { method: method.to_string(), params }
@@ -47,7 +49,7 @@ fn finished(id: &str, size: u64) -> Value {
 /// A capture that knows the application's site, as after a sign-in.
 fn capture_at_site() -> NetCapture {
     let mut cap = NetCapture::default();
-    cap.set_app_site(Some("https://hr.example/hr/home?x=1"));
+    cap.confirm_app_site("https://hr.example/hr/home?x=1");
     cap
 }
 
@@ -56,7 +58,14 @@ fn capture_at_site() -> NetCapture {
 fn feed(rec: &mut NetRecord, cap: &mut NetCapture, method: &str, params: Value) {
     let e = ev(method, params);
     rec.observe(&e);
-    cap.observe(MAIN, "main", &e, rec);
+    cap.observe(MAIN, "main", PAGE, &e, rec);
+}
+
+/// `feed`, with the tab showing the page at `page`.
+fn feed_on(rec: &mut NetRecord, cap: &mut NetCapture, page: &str, method: &str, params: Value) {
+    let e = ev(method, params);
+    rec.observe(&e);
+    cap.observe(MAIN, "main", page, &e, rec);
 }
 
 /// One whole request: asked, answered and finished.
@@ -141,6 +150,8 @@ async fn browser() -> Cdp<FakeBrowser> {
     cdp.capture_requests();
     // As the sign-in names it.
     cdp.set_capture_site(Some("https://hr.example/hr/home"));
+    // A sign-in arrived on the application's page.
+    cdp.confirm_capture_site();
     cdp
 }
 
@@ -483,7 +494,7 @@ fn nothing_is_kept_before_a_sign_in_names_the_site() {
     assert_eq!(cap.kept_bytes(), 0);
     // Once the sign-in names the site, the application's requests are kept
     // and the identity provider's still are not.
-    cap.set_app_site(Some("https://hr.example/hr/home"));
+    cap.confirm_app_site("https://hr.example/hr/home");
     feed(&mut rec, &mut cap, "Network.requestWillBeSent", at_idp("6", "XHR", "https://login.idp.example/token2"));
     feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("7", "XHR", "GET", "https://hr.example/api/menu2", json!({}), None));
     assert_eq!(kept_paths(&cap), ["/api/menu2"]);
@@ -582,12 +593,60 @@ async fn idle_stays_within_its_wait_while_a_read_stalls() {
 
 #[tokio::test]
 async fn the_sign_in_names_the_site_the_capture_keeps() {
-    let mut cdp = browser().await;
+    let fake = FakeBrowser { incoming: VecDeque::new(), sent: vec![], bodies: HashMap::new(), posts: HashMap::new(), stall: false };
+    let mut cdp = Cdp::over(fake);
+    cdp.drive_first_page("T-main", "https://hr.example/home").await.unwrap();
+    cdp.capture_requests();
     cdp.set_capture_site(Some("https://hr.example/hr/home"));
-    assert!(Driver::capture(&cdp).unwrap().knows_app_site());
+    assert!(!cdp.capture_site_known(), "an address is only provisional");
     on(&mut cdp, MAIN, "Network.requestWillBeSent", asked("d1", "Document", "GET", "https://hr.example/hr/home", json!({}), None));
     settle(&mut cdp).await;
-    assert_eq!(Driver::capture(&cdp).unwrap().list(0, 10).1, 1);
+    assert_eq!(Driver::capture(&cdp).unwrap().list(0, 10).1, 0, "held back until a sign-in arrives");
+    Driver::confirm_capture_site(&mut cdp);
+    assert!(cdp.capture_site_known());
+    assert_eq!(Driver::capture(&cdp).unwrap().list(0, 10).1, 1, "shown once the site is confirmed");
+}
+
+#[test]
+fn an_address_on_the_identity_provider_never_captures_it() {
+    let login = "https://login.idp.example/login?client_id=hr";
+    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    // The environment's address is the identity provider's login page.
+    cap.set_app_site(Some(login));
+    assert!(!cap.knows_app_site());
+    feed_on(&mut rec, &mut cap, login, "Network.requestWillBeSent", asked("1", "Document", "GET", login, json!({}), None));
+    feed_on(&mut rec, &mut cap, login, "Network.requestWillBeSent", asked("2", "XHR", "POST", "https://login.idp.example/token", json!({}), Some("client_secret=s3cr3t")));
+    feed_on(&mut rec, &mut cap, login, "Network.responseReceived", answered("2", 200, "application/json", json!({})));
+    feed_on(&mut rec, &mut cap, login, "Network.loadingFinished", finished("2", 10));
+    // The application's own requests while the address is provisional.
+    feed_on(&mut rec, &mut cap, PAGE, "Network.requestWillBeSent", asked("3", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
+    assert_eq!(cap.list(0, 10).1, 0, "nothing shown while the site is provisional");
+    serve(&mut cap, &HashMap::from([("2".to_string(), r#"{"access_token":"t0k3n"}"#.to_string())]));
+    // The signed-in marker shows on the application's host.
+    cap.confirm_app_site("https://hr.example/hr/home");
+    assert!(cap.knows_app_site());
+    assert_eq!(cap.list(0, 10).1, 0, "what was held back for the identity provider is forgotten");
+    assert_eq!(cap.kept_bytes(), 0);
+    feed_on(&mut rec, &mut cap, PAGE, "Network.requestWillBeSent", asked("4", "XHR", "GET", "https://hr.example/api/menu2", json!({}), None));
+    feed_on(&mut rec, &mut cap, login, "Network.requestWillBeSent", asked("5", "XHR", "POST", "https://login.idp.example/token2", json!({}), None));
+    assert_eq!(kept_paths(&cap), ["/api/menu2"]);
+    // A later address never moves a confirmed site.
+    cap.set_app_site(Some(login));
+    assert!(cap.knows_app_site());
+    feed_on(&mut rec, &mut cap, PAGE, "Network.requestWillBeSent", asked("6", "XHR", "GET", "https://hr.example/api/menu3", json!({}), None));
+    assert_eq!(kept_paths(&cap), ["/api/menu2", "/api/menu3"]);
+}
+
+#[test]
+fn a_provisional_app_address_keeps_only_requests_made_from_its_pages() {
+    let idp = "https://login.idp.example/authorize";
+    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    cap.set_app_site(Some("https://hr.example/Account/Login"));
+    // The identity provider's form posts back to the application.
+    feed_on(&mut rec, &mut cap, idp, "Network.requestWillBeSent", asked("1", "Document", "POST", "https://hr.example/signin-oidc", json!({}), Some("id_token=eyJ")));
+    feed_on(&mut rec, &mut cap, PAGE, "Network.requestWillBeSent", asked("2", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
+    cap.confirm_app_site("https://hr.example/hr/home");
+    assert_eq!(kept_paths(&cap), ["/api/menu"], "held back for the confirmed site, shown");
 }
 
 #[test]
@@ -623,11 +682,19 @@ async fn opened_with_address(address: &str) -> (Cdp<FakeBrowser>, tempfile::Temp
 #[tokio::test]
 async fn a_browser_opened_and_signed_in_by_hand_captures_requests() {
     let (mut cdp, _dir) = opened_with_address("https://hr.example/Account/Login").await;
-    assert!(cdp.capture_site_known(), "the site is known from the moment the browser opens");
+    assert!(!cdp.capture_site_known(), "the address is only provisional");
     // A person signs in by hand: no sign-in of TCM's ever names the site.
+    let navigated = |url: &str| json!({ "frame": { "id": "T-main", "loaderId": format!("L-{url}"), "url": url } });
+    on(&mut cdp, MAIN, "Page.frameNavigated", navigated("https://hr.example/Account/Login"));
     on(&mut cdp, MAIN, "Network.requestWillBeSent", asked("1", "Document", "POST", "https://hr.example/Account/Login", json!({}), Some("UserName=a")));
+    on(&mut cdp, MAIN, "Page.frameNavigated", navigated("https://hr.example/hr/home"));
     on(&mut cdp, MAIN, "Network.requestWillBeSent", asked("2", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
     settle(&mut cdp).await;
+    assert_eq!(Driver::capture(&cdp).unwrap().list(0, 10).1, 0, "held back until the sign-in is seen");
+    // A replay finds it signed in (`signed_in_here`): the marker shows on
+    // the application's page.
+    Driver::confirm_capture_site(&mut cdp);
+    assert!(cdp.capture_site_known());
     assert_eq!(Driver::capture(&cdp).unwrap().list(0, 10).1, 2);
 
     // An environment with no address leaves it to the sign-in or the trip.

@@ -2403,7 +2403,7 @@ impl<T: Transport> Cdp<T> {
         tab.net_record.observe(&ev);
         // The capture asks the record what it just noted (type, site, poll).
         if let Some(c) = self.capture.as_mut().filter(|_| ev.method.starts_with("Network.")) {
-            c.observe(&tab.session_id, tab.name.as_deref().unwrap_or(""), &ev, &tab.net_record);
+            c.observe(&tab.session_id, tab.name.as_deref().unwrap_or(""), &tab.url, &ev, &tab.net_record);
         }
         // Network and console events go to the page log, never into the
         // buffer: a page volunteers thousands, and they would push out the
@@ -2458,7 +2458,7 @@ impl<T: Transport> Cdp<T> {
                         self.tabs[i].net_record.observe(&ev);
                         if let Some(c) = self.capture.as_mut().filter(|_| ev.method.starts_with("Network.")) {
                             let tab = &self.tabs[i];
-                            c.observe(&tab.session_id, tab.name.as_deref().unwrap_or(""), &ev, &tab.net_record);
+                            c.observe(&tab.session_id, tab.name.as_deref().unwrap_or(""), &tab.url, &ev, &tab.net_record);
                         }
                         let owner = self.download_owner(session.as_deref(), &ev);
                         self.follow_download(&ev, &owner);
@@ -2587,10 +2587,20 @@ impl<T: Transport> Cdp<T> {
         self.capture.as_mut()
     }
 
-    /// Whether this browser captures and knows the application's site:
-    /// until it does, nothing is kept (`NetCapture::set_app_site`).
+    /// Whether this browser captures and knows the application's site for
+    /// sure (a sign-in arrived on it): until it does, nothing is shown
+    /// (`NetCapture::confirm_app_site`).
     pub fn capture_site_known(&self) -> bool {
         self.capture.as_ref().is_some_and(|c| c.knows_app_site())
+    }
+
+    /// A sign-in arrived: the signed-in marker shows on the current tab's
+    /// page, whose site is the application's (`NetCapture::confirm_app_site`).
+    pub fn confirm_capture_site(&mut self) {
+        let Some(url) = self.current().map(|t| t.url.clone()) else { return };
+        if let Some(c) = self.capture.as_mut() {
+            c.confirm_app_site(&url);
+        }
     }
 
     /// Read the bodies the capture is waiting on: at most `MAX_BODY_READS`
@@ -2828,6 +2838,9 @@ pub trait Driver {
     fn capture_site_known(&self) -> bool {
         self.capture().is_some_and(|c| c.knows_app_site())
     }
+    /// The signed-in marker shows on the current page: its site is the
+    /// application's (`Cdp::confirm_capture_site`).
+    fn confirm_capture_site(&mut self) {}
     /// See `Cdp::idle`: a wait loop's pause between two looks.
     fn idle(&mut self, wait: Duration) -> impl Future<Output = ()> {
         tokio::time::sleep(wait)
@@ -2944,6 +2957,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn capture_mut(&mut self) -> Option<&mut super::net_capture::NetCapture> {
         self.capture.as_mut()
+    }
+    fn confirm_capture_site(&mut self) {
+        Cdp::confirm_capture_site(self)
     }
     fn take_dialogs(&mut self) -> Vec<String> {
         Cdp::take_dialogs(self)

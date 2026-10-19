@@ -11,13 +11,18 @@
 //! (`observe` asks the tab's record). Only the supervised browser captures
 //! (`Cdp::capture_requests`); an unattended run's browser never does.
 //!
-//! The application's site is the sign-in's start page (`set_app_site`), and
-//! a request is kept only when it goes there - never the "same site as its
-//! document" rule alone: a top-level navigation is always same site as
-//! itself, and the identity provider's own pages and XHR carry tokens.
-//! Until a sign-in names the site, nothing is kept at all. A request
-//! redirected off the application's site never has its response body read
-//! (`Body::OffSite`).
+//! A request is kept only when it goes to the application's site - never
+//! the "same site as its document" rule alone: a top-level navigation is
+//! always same site as itself, and the identity provider's own pages and
+//! XHR carry tokens. The site is known for sure only once a sign-in has
+//! arrived: the signed-in marker showed, and the page it showed on is the
+//! application's (`confirm_app_site`). Before then the configured address
+//! (`set_app_site`) is only provisional - it may be the identity provider's
+//! login page - and a request to it, made from a page on it, is held back
+//! unseen: shown once the site is confirmed to be that one, forgotten when
+//! it is another. Nothing else is kept while the site is unknown or
+//! provisional. A request redirected off the application's site never has
+//! its response body read (`Body::OffSite`).
 //!
 //! Never kept: the `cookie`, `set-cookie`, `authorization` and
 //! `proxy-authorization` headers, or any header outside the allow-list
@@ -198,6 +203,9 @@ struct Slot {
     content_length: Option<u64>,
     /// Bytes its address and headers take (`bytes`).
     meta: usize,
+    /// Kept while the site was only provisional: unseen until it is
+    /// confirmed (`confirm_app_site`).
+    pending: bool,
 }
 
 impl Slot {
@@ -222,21 +230,60 @@ pub struct NetCapture {
     /// Bytes of everything kept now: bodies, headers, addresses.
     bytes: usize,
     reads: VecDeque<BodyRead>,
-    /// The application's origin (`set_app_site`), compared, never shown.
+    /// The application's origin, compared, never shown: provisional
+    /// (`set_app_site`) until `confirmed` (`confirm_app_site`).
     app_site: Option<String>,
+    confirmed: bool,
 }
 
 impl NetCapture {
     /// The application's site, from any address on it (the sign-in's
     /// start page); `None` when it is not known, and then nothing is kept.
     /// Decides what is kept from now on.
+    ///
+    /// Only provisional (the address may be the identity provider's), and
+    /// never over a site a sign-in confirmed. A provisional site that
+    /// changes forgets what was held back for the old one.
     pub fn set_app_site(&mut self, url: Option<&str>) {
-        self.app_site = url.and_then(origin);
+        if self.confirmed {
+            return;
+        }
+        let site = url.and_then(origin);
+        if site != self.app_site {
+            self.forget_pending();
+        }
+        self.app_site = site;
     }
 
-    /// Whether the application's site is known.
+    /// A sign-in arrived: its signed-in marker showed on the page at `url`,
+    /// which is the application's. Its site is the site from now on; what
+    /// was held back for that site is shown, and anything else held back is
+    /// forgotten.
+    pub fn confirm_app_site(&mut self, url: &str) {
+        let Some(site) = origin(url) else { return };
+        if self.app_site.as_ref() != Some(&site) {
+            self.forget_pending();
+        }
+        for s in self.entries.iter_mut() {
+            s.pending = false;
+        }
+        self.app_site = Some(site);
+        self.confirmed = true;
+    }
+
+    /// Whether the application's site is known for sure: a sign-in arrived
+    /// on it (`confirm_app_site`).
     pub fn knows_app_site(&self) -> bool {
-        self.app_site.is_some()
+        self.confirmed && self.app_site.is_some()
+    }
+
+    fn forget_pending(&mut self) {
+        let (kept, held): (VecDeque<Slot>, VecDeque<Slot>) =
+            std::mem::take(&mut self.entries).into_iter().partition(|s| !s.pending);
+        self.entries = kept;
+        for s in &held {
+            self.forget(s);
+        }
     }
 
     /// Is `url` on the application's site? Never while the site is not
@@ -245,15 +292,15 @@ impl NetCapture {
         self.app_site.as_ref().is_some_and(|site| origin(url).as_ref() == Some(site))
     }
 
-    /// Note what this event, in the tab with this session and name, says
-    /// about a request. `record` is that tab's network record, which has
-    /// seen the event already: whether a starting request is kept is what
-    /// it says of the request's type, site and polling.
-    pub fn observe(&mut self, session: &str, tab: &str, ev: &Event, record: &NetRecord) {
+    /// Note what this event, in the tab with this session and name, showing
+    /// the page at `page_url`, says about a request. `record` is that tab's
+    /// network record, which has seen the event already: whether a starting
+    /// request is kept is what it says of the request's type and polling.
+    pub fn observe(&mut self, session: &str, tab: &str, page_url: &str, ev: &Event, record: &NetRecord) {
         let p = &ev.params;
         let Some(request_id) = p["requestId"].as_str() else { return };
         if ev.method == "Network.requestWillBeSent" {
-            return self.started(session, tab, request_id, p, record);
+            return self.started(session, tab, page_url, request_id, p, record);
         }
         let Some(at) = self.index_of(session, request_id) else { return };
         match ev.method.as_str() {
@@ -306,7 +353,7 @@ impl NetCapture {
         }
     }
 
-    fn started(&mut self, session: &str, tab: &str, request_id: &str, p: &Value, record: &NetRecord) {
+    fn started(&mut self, session: &str, tab: &str, page_url: &str, request_id: &str, p: &Value, record: &NetRecord) {
         let url = p["request"]["url"].as_str().unwrap_or("");
         // A redirect arrives under the same id: the request goes on, keeping
         // what the page asked; the first hop is kept, the answer is the
@@ -340,6 +387,12 @@ impl NetCapture {
         }
         let kind = e.kind.as_deref().unwrap_or("");
         if !matches!(kind, "XHR" | "Fetch" | "Document") || !self.on_app_site(url) || !self.filter.keeps(kind, &e.path_query) {
+            return;
+        }
+        // A provisional site may be the identity provider's: held back, and
+        // only from a page on it.
+        let pending = !self.confirmed;
+        if pending && !self.on_app_site(page_url) {
             return;
         }
         self.last_id += 1;
@@ -384,6 +437,7 @@ impl NetCapture {
             decoded: 0,
             content_length: None,
             meta,
+            pending,
         };
         self.bytes += meta + slot.body_bytes();
         self.entries.push_back(slot);
@@ -509,13 +563,15 @@ impl NetCapture {
 
     /// Kept requests, newest first, from `offset`, at most `limit`, and how
     /// many are kept in all.
+    /// Held-back requests (`pending`) are not among them.
     pub fn list(&self, offset: usize, limit: usize) -> (Vec<&Captured>, usize) {
-        (self.entries.iter().rev().skip(offset).take(limit).map(|s| &s.c).collect(), self.entries.len())
+        let shown = || self.entries.iter().rev().filter(|s| !s.pending);
+        (shown().skip(offset).take(limit).map(|s| &s.c).collect(), shown().count())
     }
 
     /// One kept request by the capture's id.
     pub fn get(&self, id: u64) -> Option<&Captured> {
-        self.index_by_id(id).map(|at| &self.entries[at].c)
+        self.index_by_id(id).map(|at| &self.entries[at]).filter(|s| !s.pending).map(|s| &s.c)
     }
 
     /// What is kept from now on. What was kept stays; what was left out
