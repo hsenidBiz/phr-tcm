@@ -13,7 +13,8 @@ use crate::common::ScriptedDriver;
 use serde_json::{json, Value};
 use v2_lib::ai_bridge::inspect_page;
 use v2_lib::browser::inspect::{
-    ANIMATIONS_JS, ATTRIBUTE_HANDLERS_JS, COVER_AT_JS, HANDLER_NOT_SHOWN, STRUCTURE_JS, STYLES_JS, TEXT_MAX,
+    capture_above, ANCESTORS_JS, ANIMATIONS_JS, ATTRIBUTE_HANDLERS_JS, COVER_AT_JS, HANDLER_NOT_SHOWN, NODE_NAME_JS,
+    STRUCTURE_JS, STYLES_JS, TEXT_MAX,
 };
 use v2_lib::browser::page::GROUP;
 use v2_lib::browser::input::PROBE_JS;
@@ -42,6 +43,9 @@ struct Page {
     styles: Value,
     animations: Value,
     structure: Value,
+    /// The element's own accessible name, and its cover's.
+    name: String,
+    cover_name: String,
 }
 
 impl Default for Page {
@@ -65,6 +69,8 @@ impl Default for Page {
                 "frames": [],
                 "path": "/hr/login",
             }),
+            name: "Save".into(),
+            cover_name: "Confirm delete".into(),
         }
     }
 }
@@ -97,6 +103,12 @@ fn driver(p: Page) -> ScriptedDriver {
             "Runtime.callFunctionOn" if f == ANIMATIONS_JS => json!({ "result": { "value": p.animations.clone() } }),
             "Runtime.callFunctionOn" if f == STRUCTURE_JS => json!({ "result": { "value": p.structure.clone() } }),
             "Runtime.callFunctionOn" if f == COVER_AT_JS => json!({ "result": { "objectId": "cover-arr" } }),
+            // Above the element: a form, the app's root, the document and the window.
+            "Runtime.callFunctionOn" if f == ANCESTORS_JS => json!({ "result": { "objectId": "anc-arr" } }),
+            "Runtime.callFunctionOn" if f == NODE_NAME_JS => {
+                let name = match on { "anc-form" => "form#leave", "anc-root" => "div#root", "anc-doc" => "document", _ => "window" };
+                json!({ "result": { "value": name } })
+            }
             "Runtime.callFunctionOn" if f == VISIBLE_JS => json!({ "result": { "value": true } }),
             // The element carries an onchange attribute, and nothing else.
             "Runtime.callFunctionOn" if f == ATTRIBUTE_HANDLERS_JS => {
@@ -113,6 +125,11 @@ fn driver(p: Page) -> ScriptedDriver {
             }
             // Any locator function: an array of elements.
             "Runtime.callFunctionOn" => json!({ "result": { "objectId": "arr" } }),
+            "Runtime.getProperties" if on == "anc-arr" => json!({ "result": (["anc-form", "anc-root", "anc-doc", "win"])
+                .iter()
+                .enumerate()
+                .map(|(i, id)| json!({ "name": i.to_string(), "value": { "objectId": id } }))
+                .collect::<Vec<_>>() }),
             "Runtime.getProperties" if on == "cover-arr" => {
                 json!({ "result": [{ "name": "0", "value": { "objectId": "cover" } }] })
             }
@@ -121,10 +138,30 @@ fn driver(p: Page) -> ScriptedDriver {
                 .collect::<Vec<_>>() }),
             "DOM.describeNode" => json!({ "node": { "backendNodeId": if on == "cover" { 20 } else { 10 } } }),
             "Accessibility.getPartialAXTree" if on == "cover" => json!({ "nodes": [
-                { "nodeId": "1", "role": { "value": "dialog" }, "name": { "value": "Confirm delete" }, "ignored": false }
+                { "nodeId": "1", "role": { "value": "dialog" }, "name": { "value": p.cover_name.clone() }, "ignored": false }
             ] }),
             "Accessibility.getPartialAXTree" => json!({ "nodes": [
-                { "nodeId": "1", "role": { "value": "button" }, "name": { "value": "Save" }, "ignored": false }
+                { "nodeId": "1", "role": { "value": "button" }, "name": { "value": p.name.clone() }, "ignored": false }
+            ] }),
+            // The form submits on bubbling; the root takes clicks in capture
+            // and bubbling (and keys, not counted); the document only keys;
+            // the window a pointerdown in capture.
+            "DOMDebugger.getEventListeners" if on == "anc-form" => json!({ "listeners": [
+                { "type": "submit", "useCapture": false, "passive": false, "once": false, "scriptId": "12", "lineNumber": 1, "columnNumber": 1 },
+                { "type": "input", "useCapture": false, "passive": false, "once": false, "scriptId": "12", "lineNumber": 1, "columnNumber": 1 },
+            ] }),
+            "DOMDebugger.getEventListeners" if on == "anc-root" => json!({ "listeners": [
+                { "type": "click", "useCapture": true, "passive": false, "once": false, "scriptId": "12", "lineNumber": 1, "columnNumber": 1,
+                  "handler": { "type": "function", "description": "function stopAll(e) { e.stopPropagation() }", "objectId": "h-2" } },
+                { "type": "click", "useCapture": true, "passive": false, "once": false, "scriptId": "12", "lineNumber": 2, "columnNumber": 1 },
+                { "type": "click", "useCapture": false, "passive": false, "once": false, "scriptId": "12", "lineNumber": 3, "columnNumber": 1 },
+                { "type": "keydown", "useCapture": true, "passive": false, "once": false, "scriptId": "12", "lineNumber": 4, "columnNumber": 1 },
+            ] }),
+            "DOMDebugger.getEventListeners" if on == "anc-doc" => json!({ "listeners": [
+                { "type": "keydown", "useCapture": false, "passive": false, "once": false, "scriptId": "12", "lineNumber": 5, "columnNumber": 1 },
+            ] }),
+            "DOMDebugger.getEventListeners" if on == "win" => json!({ "listeners": [
+                { "type": "pointerdown", "useCapture": true, "passive": true, "once": false, "scriptId": "12", "lineNumber": 6, "columnNumber": 1 },
             ] }),
             "DOMDebugger.getEventListeners" if on == "cover" => json!({ "listeners": [
                 { "type": "click", "useCapture": true, "passive": false, "once": false, "scriptId": "31", "lineNumber": 0, "columnNumber": 4120 }
@@ -225,6 +262,82 @@ async fn listeners_say_type_flags_and_the_script_path_never_its_source_host_or_q
     assert!(v["listeners"].get("cover").is_none(), "{v}");
     assert!(v["covered_by"].is_null(), "{v}");
     read_only(&d);
+}
+
+#[tokio::test]
+async fn the_click_listeners_above_the_element_are_counted_and_a_capture_one_is_called_out() {
+    let mut d = driver(Page::default());
+    let (status, v) = inspect(&mut d, json!({ "locator": "#save", "show": ["listeners"] })).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(
+        v["listeners"]["ancestors"],
+        json!([
+            { "name": "form#leave", "listeners": [{ "type": "submit", "capture": false, "count": 1 }] },
+            { "name": "div#root", "listeners": [
+                { "type": "click", "capture": false, "count": 1 },
+                { "type": "click", "capture": true, "count": 2 },
+            ] },
+            { "name": "window", "listeners": [{ "type": "pointerdown", "capture": true, "count": 1 }] },
+        ]),
+        "only ancestors with a click kind of listener, nearest first; the document has none"
+    );
+    let names = vec!["div#root".to_string(), "window".to_string()];
+    assert_eq!(v["listeners"]["ancestors_note"], capture_above(&names));
+    assert!(capture_above(&names).contains("usual reason a click does nothing"));
+    assert!(!v.to_string().contains("stopPropagation()"), "a handler's source leaked: {v}");
+    read_only(&d);
+}
+
+#[tokio::test]
+async fn with_no_capture_listener_above_nothing_is_called_out() {
+    let mut d = ScriptedDriver::new(|method, params| {
+        let on = params["objectId"].as_str().unwrap_or("");
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Runtime.evaluate" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": free_point() } }),
+            "Runtime.callFunctionOn" if f == ANCESTORS_JS => json!({ "result": { "objectId": "anc-arr" } }),
+            "Runtime.callFunctionOn" if f == NODE_NAME_JS => json!({ "result": { "value": "ul.menu" } }),
+            "Runtime.callFunctionOn" => json!({ "result": { "objectId": "arr" } }),
+            "Runtime.getProperties" if on == "anc-arr" => json!({ "result": [{ "name": "0", "value": { "objectId": "anc-ul" } }] }),
+            "Runtime.getProperties" => json!({ "result": [{ "name": "0", "value": { "objectId": "el-0" } }] }),
+            "DOMDebugger.getEventListeners" if on == "anc-ul" => json!({ "listeners": [
+                { "type": "mouseover", "useCapture": false, "passive": false, "once": false },
+            ] }),
+            _ => json!({}),
+        })
+    });
+    let (status, v) = inspect(&mut d, json!({ "locator": "#item", "show": ["listeners"] })).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["listeners"]["ancestors"], json!([{ "name": "ul.menu", "listeners": [{ "type": "mouseover", "capture": false, "count": 1 }] }]));
+    assert!(v["listeners"].get("ancestors_note").is_none(), "{v}");
+}
+
+#[tokio::test]
+async fn a_token_in_an_accessible_name_is_hidden() {
+    let mut d = driver(Page {
+        point: covered_point(),
+        name: format!("Save {TOKEN}"),
+        cover_name: format!("Session {TOKEN}"),
+        ..Page::default()
+    });
+    let (status, v) = inspect(&mut d, json!({ "locator": "#save", "show": ["listeners"] })).await;
+    assert_eq!(status, 200, "{v}");
+    assert!(!v.to_string().contains(TOKEN), "{v}");
+    assert!(v["named"].as_str().unwrap().starts_with("button \"Save "), "{v}");
+    assert!(v["covered_by"].as_str().unwrap().starts_with("dialog \"Session "), "{v}");
+}
+
+/// The route tells the window when a dead browser was let go (and with it
+/// a discovery), as the probe's does: after the let-go.
+#[test]
+fn the_route_publishes_the_discovery_after_letting_a_dead_browser_go() {
+    let source = include_str!("../../src/ai_bridge.rs");
+    let route = &source[source.find("async fn autorun_inspect(").unwrap()..];
+    let route = &route[..route.find("\n}").unwrap()];
+    let let_go = route.find("let_go_if_silent(&mut slot, answer)").expect("a dead browser is let go");
+    let publish = route.find("publish_discovery(&slot)").expect("the window is not told");
+    assert!(let_go < publish, "published before the let-go");
 }
 
 #[tokio::test]

@@ -3486,6 +3486,8 @@ async fn autorun_inspect(body: &str) -> (u16, String) {
     };
     let answer = inspected(&mut session.cdp, &target, &ask).await;
     let answer = let_go_if_silent(&mut slot, answer).await;
+    // A browser let go above may have ended a discovery: the window hears.
+    crate::commands::autorun::publish_discovery(&slot);
     // Never the locator: it is the assistant's writing and can hold an address.
     crate::applog::info(format!("AI inspected an element in the supervised browser: {}", answer.0));
     answer

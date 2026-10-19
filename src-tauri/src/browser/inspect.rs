@@ -244,7 +244,9 @@ async fn look<D: Driver>(d: &mut D, target: &Target, ask: &Ask) -> Result<Value,
     let el = handles.remove(0);
     let mut out = Map::new();
     out.insert("element".into(), json!(described));
-    out.insert("named".into(), json!(super::snapshot::page_read_label(d, &el).await));
+    // A name is the page's words: a token in one is hidden like any text.
+    let named = super::snapshot::page_read_label(d, &el).await.map(|l| redact_text(&l));
+    out.insert("named".into(), json!(named));
 
     // The click point, measured where the element stands: never settled
     // across frames, never scrolled to.
@@ -265,7 +267,7 @@ async fn look<D: Driver>(d: &mut D, target: &Target, ask: &Ask) -> Result<Value,
         let found = cover_at(d, &el, x, y).await?;
         let name = match &found {
             Some(h) => match super::snapshot::page_read_label(d, h).await {
-                Some(label) => format!("{label} ({said})"),
+                Some(label) => format!("{} ({said})", redact_text(&label)),
                 None => said,
             },
             None => said,
@@ -297,7 +299,7 @@ async fn look<D: Driver>(d: &mut D, target: &Target, ask: &Ask) -> Result<Value,
     }
     out.insert(
         "note".into(),
-        json!("Read only: nothing was clicked, typed, focused or scrolled. Listeners are the element's own: a page that delegates events (React, jQuery's .on with a selector) listens on an ancestor or the document."),
+        json!("Read only: nothing was clicked, typed, focused or scrolled. `listeners.element` are the element's own; `listeners.ancestors` counts the click, pointer, mouse, touch and submit listeners above it, up to the document and the window - where a page that delegates events (React, jQuery's .on with a selector) listens."),
     );
     Ok(Value::Object(out))
 }
@@ -342,7 +344,92 @@ async fn listeners<D: Driver>(
     if let Some((name, h, list)) = theirs {
         out.insert("cover".into(), json!({ "name": name, "listeners": shown_listeners(d, &h, &list, &scripts).await? }));
     }
+    let above = ancestor_listeners(d, el).await?;
+    let capturing: Vec<String> = above
+        .iter()
+        .filter(|a| a["listeners"].as_array().into_iter().flatten().any(|l| l["capture"] == true))
+        .filter_map(|a| a["name"].as_str().map(str::to_string))
+        .collect();
+    out.insert("ancestors".into(), json!(above));
+    if !capturing.is_empty() {
+        out.insert("ancestors_note".into(), json!(capture_above(&capturing)));
+    }
     Ok(Value::Object(out))
+}
+
+/// Said when an element has capture-phase listeners above it (`names`,
+/// nearest first).
+pub fn capture_above(names: &[String]) -> String {
+    format!(
+        "Capture-phase listeners above the element run before its own: {}. One that stops the event (stopPropagation) or cancels it (preventDefault) is the usual reason a click does nothing.",
+        names.join(", ")
+    )
+}
+
+/// The most ancestors looked at, nearest first, besides the window.
+const MAX_ANCESTORS: usize = 64;
+
+/// `this` is the element. Every node above it, nearest first, up to its
+/// document (through a shadow root to its host), then its window.
+pub const ANCESTORS_JS: &str = r#"function() {
+  const out = [];
+  let p = this.parentNode;
+  while (p && out.length < 64) {
+    if (p.nodeType === 11) { p = p.host; continue; }
+    out.push(p);
+    p = p.parentNode;
+  }
+  out.push(this.ownerDocument.defaultView);
+  return out;
+}"#;
+
+/// `this` is an ancestor: `tag#id`, or `tag.class` when it has no id, or
+/// `document` / `window`.
+pub const NODE_NAME_JS: &str = r#"function() {
+  if (this.window === this) return 'window';
+  if (this.nodeType === 9) return 'document';
+  const tag = String(this.tagName || this.nodeName || '').toLowerCase();
+  if (this.id) return tag + '#' + this.id;
+  const cls = typeof this.className === 'string' ? this.className.trim().split(/\s+/).filter(Boolean)[0] : '';
+  return cls ? tag + '.' + cls : tag;
+}"#;
+
+/// The event types counted on the element's ancestors: those a click
+/// passes through.
+fn click_kind(t: &str) -> bool {
+    matches!(t, "click" | "dblclick" | "auxclick" | "submit")
+        || t.starts_with("pointer")
+        || t.starts_with("mouse")
+        || t.starts_with("touch")
+}
+
+/// The ancestors of `el` (up to the document, and the window) that listen
+/// for a click kind of event (`click_kind`), nearest first: each named, with
+/// each type and capture flag counted. Handlers are released and never
+/// read, as the element's own are.
+async fn ancestor_listeners<D: Driver>(d: &mut D, el: &Handle) -> Result<Vec<Value>, CdpError> {
+    let above = page::call_elements(d, el, ANCESTORS_JS, &[]).await?;
+    let mut out = Vec::new();
+    for h in above.iter().take(MAX_ANCESTORS + 1) {
+        let r = d.call("DOMDebugger.getEventListeners", json!({ "objectId": h, "objectGroup": page::GROUP })).await?;
+        let mut counts: std::collections::BTreeMap<(String, bool), usize> = std::collections::BTreeMap::new();
+        for l in r["listeners"].as_array().into_iter().flatten() {
+            let kind = l["type"].as_str().unwrap_or("");
+            if click_kind(kind) {
+                *counts.entry((kind.to_string(), l["useCapture"].as_bool().unwrap_or(false))).or_default() += 1;
+            }
+        }
+        if counts.is_empty() {
+            continue;
+        }
+        let name = page::call_value(d, h, NODE_NAME_JS, &[]).await?;
+        let listeners: Vec<Value> = counts
+            .into_iter()
+            .map(|((kind, capture), count)| json!({ "type": kind, "capture": capture, "count": count }))
+            .collect();
+        out.push(json!({ "name": redact_text(name.as_str().unwrap_or("an ancestor")), "listeners": listeners }));
+    }
+    Ok(out)
 }
 
 /// One node's own listeners. Chrome hands each handler back as an object
