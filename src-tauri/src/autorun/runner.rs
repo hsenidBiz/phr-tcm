@@ -17,7 +17,7 @@ use super::components::{self, ComponentUse};
 use super::{store, PageErrors, StepDialog, StepScript};
 use crate::browser::dialogs;
 use crate::browser::actions::{
-    execute_in, expectation, in_missing_tab, shows_up, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN,
+    execute_in, expectation, in_missing_tab, shows_up_to_click, upload_in, Action, ActionOutcome, Policy, CANNOT_RUN, NOT_SHOWN,
     WHEN_VISIBLE_MS,
 };
 use super::refusals::{self, app_refused_line, refused_with_ids, RefusedRequest};
@@ -1727,7 +1727,7 @@ async fn when_visible<D: Driver>(
         return (ActionOutcome::failed(format!("{CANNOT_RUN}this is not a when_visible")), None);
     };
     let target = selector.describe();
-    match shows_up(d, selector, within_ms.unwrap_or(WHEN_VISIBLE_MS), timing).await {
+    match shows_up_to_click(d, selector, within_ms.unwrap_or(WHEN_VISIBLE_MS), timing).await {
         Err(silent) => return (silent, None),
         Ok(false) => return (ActionOutcome::passed(format!("{target} {NOT_SHOWN}")), None),
         Ok(true) => {}

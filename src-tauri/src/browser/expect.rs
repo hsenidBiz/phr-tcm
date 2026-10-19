@@ -18,10 +18,15 @@ pub enum Check<'a> {
     Visible,
     /// At least one match is visible - what a `when_visible` asks. Two
     /// visible matches (a dialog's OK and Cancel) are shown, not "not
-    /// shown": the ambiguity is for the guarded action to report. Visible
-    /// here is what a click needs (`input::SHOWN_JS`): one still outside
-    /// the window after it is scrolled into view is not shown.
+    /// shown": the ambiguity is for the guarded action to report. Never
+    /// moves the page: the runner's own looks (a pop-up, a loader, a
+    /// sign-in prompt) ask this one.
     Shown,
+    /// `Shown`, as a script's `when_visible` guard asks it: visible the way
+    /// the click that follows needs (`input::SHOWN_JS`), so one still
+    /// outside the window after it is scrolled into view is not shown. A
+    /// match drawn outside the window is scrolled to, as the click would.
+    ShownToClick,
     Hidden,
     Text(&'a str),
     ContainsText(&'a str),
@@ -231,10 +236,12 @@ pub(crate) async fn look<D: Driver>(
                 }
             }
         },
-        Check::Shown => {
+        Check::Shown | Check::ShownToClick => {
+            let to_click = matches!(check, Check::ShownToClick);
             let mut seen = false;
             for h in &handles {
-                if shown(d, h).await? {
+                let up = if to_click { shown(d, h).await? } else { visible(d, h).await? };
+                if up {
                     seen = true;
                     break;
                 }

@@ -249,8 +249,9 @@ macro_rules! probe_js {
 /// click there is what a person's click on the slider does.
 pub const PROBE_JS: &str = probe_js!();
 
-/// `this` is the element. Is it shown: what a `when_visible` asks of each
-/// match (`expect::Check::Shown`), by the rule a click itself waits on -
+/// `this` is the element. Is it shown: what a script's `when_visible`
+/// guard asks of each match (`expect::Check::ShownToClick`), by the rule a
+/// click itself waits on -
 /// `PROBE_JS`'s `visible` and `onscreen`, never a second definition. It is
 /// measured where it stands; one that is visible and outside the window is
 /// scrolled into view the way a click would scroll it, and measured again.

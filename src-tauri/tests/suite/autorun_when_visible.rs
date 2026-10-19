@@ -460,3 +460,23 @@ fn shown_is_the_clicks_own_visible_and_onscreen() {
     assert!(SHOWN_JS.contains(PROBE_JS), "SHOWN_JS must carry PROBE_JS itself, not a copy of its geometry");
     assert!(SHOWN_JS.contains("p.visible && p.onscreen"), "{SHOWN_JS}");
 }
+
+/// Only a script's guard asks the click's rule. The runner's own one-look
+/// checks (a pop-up before a click, a loader, a sign-in prompt) and the
+/// sign-in recipe's prompt keep the plain visibility rule, which never
+/// scrolls: a loader wait that scrolled a far-off spinner into view on
+/// every look would move the page under the script.
+#[tokio::test]
+async fn the_runners_own_looks_never_ask_the_scrolling_rule() {
+    use v2_lib::browser::actions::{shown_now, shows_up};
+    let (mut d, _clicked) = off_the_page_app();
+    assert_eq!(shown_now(&mut d, &serde_json::from_value(json!({ "css": "#gone" })).unwrap()).await.unwrap(), Some(true));
+    let target = serde_json::from_value(json!({ "css": "#gone" })).unwrap();
+    assert!(shows_up(&mut d, &target, 40, &quick()).await.unwrap());
+    let asked_shown = d
+        .calls_to("Runtime.callFunctionOn")
+        .iter()
+        .filter(|p| p["functionDeclaration"] == v2_lib::browser::input::SHOWN_JS)
+        .count();
+    assert_eq!(asked_shown, 0, "only a script's when_visible guard asks SHOWN_JS");
+}
