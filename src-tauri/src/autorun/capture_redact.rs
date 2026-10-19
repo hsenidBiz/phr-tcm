@@ -16,7 +16,8 @@
 //! JSON body sent as a form, a form sent as `text/plain`. Beyond names, two
 //! things are hidden wherever they sit: a JWT-looking value (an OIDC answer
 //! can carry one under an innocent key) and any long opaque run of token
-//! characters (an echoed session cookie, a token under any name).
+//! characters (an echoed session cookie, a token under any name). So are an
+//! authenticator's `otpauth://` URI and its base32 key, grouped or not.
 
 use crate::api_templates::exec::scrub_tokens;
 use crate::autorun::api_checks::{hide_members_by, REDACTED, SECRET_WORDS};
@@ -31,6 +32,11 @@ const MORE_WORDS: [&str; 13] = [
     "credential", "signature", "jwt", "bearer", "csrf", "xsrf", "passwd", "pwd", "passphrase", "samlresponse",
     "samlrequest", "relaystate", "codeverifier",
 ];
+
+/// Words a name carries a secret under only as a word of its own (`otp` is
+/// inside `footprint`): an authenticator's shared key, a one-time code, a
+/// recovery code. `twoFactor` counts written as one word or two.
+const SEGMENT_WORDS: [&str; 7] = ["shared", "authenticator", "totp", "otp", "mfa", "twofactor", "recovery"];
 
 /// What may stand before a final `key` word to make a compound: `api key`,
 /// `subscription-key`, `x-functions-key`... (`sortKey`, `primaryKey`,
@@ -94,6 +100,11 @@ pub fn secret_name(name: &str) -> bool {
     }
     let words = segments(name);
     if words.iter().any(|w| w == "auth" || w == "authtoken") {
+        return true;
+    }
+    if words.iter().any(|w| SEGMENT_WORDS.contains(&w.as_str()))
+        || words.windows(2).any(|p| p[0] == "two" && p[1] == "factor")
+    {
         return true;
     }
     const WHOLE: [&str; 12] = [
@@ -330,10 +341,54 @@ fn hide_bearer(text: &str) -> String {
     BEARER_VALUE.replace_all(text, format!("Bearer {REDACTED}").as_str()).into_owned()
 }
 
-/// What every redacted text ends with: bearer values, JWTs and long opaque
-/// runs hidden wherever they sit.
+/// An `otpauth://` URI (what an authenticator's QR code holds: the shared
+/// key, the account, the issuer), raw, JSON-escaped (`\/`) or
+/// percent-encoded - the encoded one ends at the next `&`.
+static OTPAUTH_URI: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)otpauth:(?:\\/|[^\s"'<>\\])*|otpauth%3a[^\s"'<>\\&]*"#).unwrap()
+});
+
+/// A run that may be a base32 key (A-Z or a-z, and 2-7): whole, or in
+/// space-separated groups of 4 as an authenticator page shows it, the last
+/// group shorter. `base32_key` judges it.
+static BASE32_RUN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"\b(?:[A-Z2-7]{4}(?: [A-Z2-7]{4})+(?: [A-Z2-7]{1,3})?",
+        r"|[a-z2-7]{4}(?: [a-z2-7]{4})+(?: [a-z2-7]{1,3})?",
+        r"|[A-Z2-7]{16,}|[a-z2-7]{16,})\b",
+    ))
+    .unwrap()
+});
+
+/// A base32 key is this long, its groups joined.
+const BASE32_MIN: usize = 16;
+
+/// Whether `run` is an authenticator's base32 key: 16 or more characters
+/// with the groups joined, at least 2 digits (a word has none) and more
+/// letters than digits, and no group of 4 all digits (a phone number
+/// written in groups). An all-caps word, a sentence and a business code
+/// with `0`, `1`, `8` or `9` in it are not.
+fn base32_key(run: &str) -> bool {
+    if run.split(' ').any(|g| g.len() == 4 && g.chars().all(|c| c.is_ascii_digit())) {
+        return false;
+    }
+    let joined: String = run.chars().filter(|c| *c != ' ').collect();
+    let digits = joined.chars().filter(|c| c.is_ascii_digit()).count();
+    joined.len() >= BASE32_MIN && digits >= 2 && joined.len() - digits > digits
+}
+
+/// Hides `otpauth://` URIs whole and base32 keys (`base32_key`).
+fn hide_authenticator_keys(text: &str) -> String {
+    let text = OTPAUTH_URI.replace_all(text, REDACTED);
+    BASE32_RUN
+        .replace_all(&text, |c: &Captures| if base32_key(&c[0]) { REDACTED.to_string() } else { c[0].to_string() })
+        .into_owned()
+}
+
+/// What every redacted text ends with: bearer values, JWTs, long opaque
+/// runs, `otpauth://` URIs and base32 keys hidden wherever they sit.
 fn finish(text: String) -> String {
-    hide_long_runs(&hide_cookie_values(&hide_jwts(&hide_bearer(&text))))
+    hide_authenticator_keys(&hide_long_runs(&hide_cookie_values(&hide_jwts(&hide_bearer(&text)))))
 }
 
 /// A `code` value that is a token and not a business code: token-shaped

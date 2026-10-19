@@ -460,3 +460,69 @@ fn token_shaped_values_are_hidden_in_every_place() {
     assert!(secret_name("apiKeyValue") && secret_name("x-api-key-id") && secret_name("subscriptionKeyValue"));
     assert!(!secret_name("sortKeyValue") && !secret_name("keyId") && !secret_name("primaryKeyId"));
 }
+
+#[test]
+fn authenticator_secrets_and_recovery_codes_are_hidden() {
+    let base32 = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+    // Under their own names, an array of codes included.
+    let out = redact_body(Some("application/json"), &format!(r#"{{"sharedKey":"{base32}","user":"avin"}}"#));
+    assert!(!out.contains("JBSWY3DP") && out.contains("avin"), "{out}");
+    let out = redact_body(Some("application/json"), r#"{"recoveryCodes":["8f3k-29dk","x9q2-1ld0"],"user":"avin"}"#);
+    assert!(!out.contains("8f3k-29dk") && !out.contains("x9q2-1ld0") && out.contains("avin"), "{out}");
+    for name in ["sharedKey", "authenticatorKey", "authenticatorUri", "recoveryCodes", "totpSecret", "otp", "mfa_code",
+        "twoFactorCode", "two_factor_key", "TwoFactorRecoveryCode"] {
+        assert!(secret_name(name), "{name}");
+    }
+    assert!(!secret_name("footprint") && !secret_name("department") && !secret_name("score"));
+    // As a form field and a query parameter.
+    let out = redact_body(Some("application/x-www-form-urlencoded"), "otp=654321&user=avin");
+    assert!(!out.contains("654321") && out.contains("user=avin"), "{out}");
+    assert!(!redact_path_query("/mfa/verify?totp=482913&x=1").contains("482913"));
+
+    // ASP.NET Identity's authenticator page shows the key in lower-case groups.
+    let page = "<p>Enter this key <kbd>jbsw y3dp ehpk 3pxp</kbd> into your app.</p>";
+    let out = redact_body(Some("text/html"), page);
+    assert!(!out.contains("jbsw") && !out.contains("y3dp") && !out.contains("3pxp"), "{out}");
+    assert!(out.contains("Enter this key") && out.contains("into your app."), "{out}");
+    // Its 26-character key ends with a short group.
+    let out = redact_body(Some("text/html"), "<kbd>jbsw y3dp ehpk 3pxp jbsw y3dp ehpk 3p</kbd>");
+    assert!(!out.contains("y3dp") && !out.contains(" 3p<"), "{out}");
+
+    // A base32 value under an innocent name, upper or lower case.
+    for value in ["JBSWY3DPEHPK3PXP", "jbswy3dpehpk3pxp", base32] {
+        let out = redact_body(Some("application/json"), &format!(r#"{{"value":"{value}"}}"#));
+        assert!(!out.contains(&value[..8]), "{value}: {out}");
+        let out = redact_body(Some("text/plain"), &format!("key: is {value} now"));
+        assert!(!out.contains(&value[..8]), "{value}: {out}");
+        assert!(!redact_path_query(&format!("/x?v={value}&w=1")).contains(&value[..8]), "{value}");
+    }
+
+    // An otpauth URI goes whole, raw or encoded.
+    let uri = "otpauth://totp/App:user?secret=JBSWY3DPEHPK3PXP&issuer=App";
+    let out = redact_body(Some("application/json"), &format!(r#"{{"qr":"{uri}","user":"avin"}}"#));
+    assert!(!out.contains("otpauth") && !out.contains("JBSWY3DP") && out.contains("avin"), "{out}");
+    let out = redact_body(Some("text/html"), &format!(r#"<div data-url="{uri}"></div><p>Scan it</p>"#));
+    assert!(!out.contains("otpauth") && !out.contains("issuer") && out.contains("Scan it"), "{out}");
+    let encoded = urlencoding::encode(uri);
+    let out = redact_path_query(&format!("/qr?chl={encoded}&chs=200x200"));
+    assert!(!out.contains("otpauth") && !out.contains("JBSWY3DP") && out.contains("chs=200x200"), "{out}");
+}
+
+#[test]
+fn ordinary_text_is_not_taken_for_an_authenticator_secret() {
+    for text in [
+        "DEPARTMENT",
+        "ADMINISTRATIONDEPARTMENT",
+        "LV-ANNUAL-2026-FULLDAY",
+        "Please enter the code from your authenticator app to continue.",
+        "this will take some time to load from the server",
+        "call 3456 7234 then wait",
+        "Leave type ANNUALLEAVE2026FULL was approved on 2026-10-19.",
+    ] {
+        assert_eq!(redact_body(Some("text/plain"), text), text);
+        let json = json!({ "v": text }).to_string();
+        assert_eq!(redact_body(Some("application/json"), &json), json);
+    }
+    assert_eq!(redact_path_query("/x?type=LV-ANNUAL-2026-FULLDAY&dept=DEPARTMENT"),
+        "/x?type=LV-ANNUAL-2026-FULLDAY&dept=DEPARTMENT");
+}
