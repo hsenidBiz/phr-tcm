@@ -127,7 +127,6 @@ pub fn quick_rules() -> String {
 const QUICK_RULES: &str = r##"## Quick rules
 
 Not covered here: call `get_autorun_guide` with a `section`, or `full` true.
-
 - Discover the live app; never read the application's code to write scripts.
   A save refuses any locator the app has not seen. During a discovery with
   an area, `get_autorun_page` records what it shows as seen under that area.
@@ -162,6 +161,7 @@ Not covered here: call `get_autorun_guide` with a `section`, or `full` true.
 - `reset_autorun_browser` gives a clean page, sign-in kept. Use
   `release_autorun_browser` only for a broken browser (frozen, wrong account,
   session gone), never between replays. Never ask the person to restart the app.
+- Test headers and cookies stay until removed or reset; do that before proving a fix.
 - If a case creates, deletes, publishes or submits shared data, or needs the
   site in a particular state, mark it `changes` or `needs_unchanged`,
   reusing one name for one change across the PBI; a setting it needs at one
@@ -1315,6 +1315,44 @@ case's own step says to. A `fill` you try really types
 into the application, so use test data, not the real thing. Never try
 `sign_in`: a tried sign-in is refused, and outside a replay the person
 signs in.
+
+## Network, cookies and elements
+
+Look under the page, and test an edge case, in the Auto Run browser. The
+reads work in the person's browser too; the tools that change something
+need one you opened (a discovery or your replay).
+
+- `list_autorun_requests` and `search_autorun_requests` list the requests
+  the page made on the application's site, newest first and paged;
+  `get_autorun_request`, `get_autorun_response` and
+  `get_autorun_response_body` read one by its id.
+- `set_autorun_capture` and `get_autorun_capture` set and show what the
+  capture keeps from now on; `export_autorun_requests` and
+  `import_autorun_requests` save it as a HAR file in TCM's own captures
+  folder and read it back as a set, read with `from`.
+- Build API templates from captured requests: read the real call with
+  `get_autorun_request` / `get_autorun_response_body` instead of guessing its
+  shape (see `get_api_template_guide`).
+- Passwords, tokens, session cookies and keys are hidden in everything these
+  tools show, and headers are an allow-list: never cookies or authorization.
+- Nothing is captured until the app's site is confirmed by a sign-in: a
+  replay or a discovery.
+- `set_autorun_headers` sends extra headers with every request;
+  `get_autorun_cookies` lists the app's cookies; `set_autorun_cookie` sets
+  one; `clear_autorun_cookies` signs out for real.
+- Test headers and cookies stay until you remove them, reset the browser
+  (`reset_autorun_browser`) or release it, and every answer names them
+  ("Changed for testing: ..."). Reset or remove them before proving a fix:
+  a pass with one in place proves nothing about the normal page.
+- The sign-in's cookies (HttpOnly, `.ASPXAUTH`, `.AspNetCore.*`, the session
+  and anti-forgery cookies, names like a secret) and method-override headers
+  are refused. `get_autorun_cookies` reads the app's confirmed site, or a
+  `url` on it or a parent domain of it.
+- `inspect_autorun_element` shows one element's styles, listeners,
+  animations and structure, and whether a click at its centre reaches it. It
+  also shows the listeners above the element: a capture-phase listener above
+  it is the usual reason a click does nothing. A script checks a computed
+  style with `expect_style`.
 
 ## Discovering the app
 

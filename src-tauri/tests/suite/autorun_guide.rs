@@ -1390,6 +1390,59 @@ fn the_guide_opens_with_the_quick_rules() {
     assert!(quick.contains("call `get_autorun_guide` with a `section`, or `full` true."), "{quick}");
 }
 
+/// The capture, header, cookie and inspect tools are taught in one section:
+/// every tool by name, the template-building advice, what is hidden, when
+/// nothing is captured, how long test changes last, what is refused, and the
+/// capture-phase listener that makes a click do nothing.
+#[test]
+fn the_guide_teaches_the_network_cookie_and_element_tools() {
+    use v2_lib::autorun::guide::quick_rules;
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = autorun_guide();
+    let at = g.find("\n## Network, cookies and elements\n").expect("the guide has no Network, cookies and elements section");
+    let section = flat(g[at + 1..].split("\n## ").next().unwrap());
+    for tool in [
+        "list_autorun_requests",
+        "search_autorun_requests",
+        "get_autorun_request",
+        "get_autorun_response",
+        "get_autorun_response_body",
+        "set_autorun_capture",
+        "get_autorun_capture",
+        "export_autorun_requests",
+        "import_autorun_requests",
+        "set_autorun_headers",
+        "get_autorun_cookies",
+        "set_autorun_cookie",
+        "clear_autorun_cookies",
+        "inspect_autorun_element",
+        "expect_style",
+    ] {
+        assert!(section.contains(&format!("`{tool}`")), "the section never names `{tool}`: {section}");
+    }
+    for said in [
+        "Build API templates from captured requests",
+        "`get_autorun_request` / `get_autorun_response_body`",
+        "Passwords, tokens, session cookies and keys are hidden",
+        "never cookies or authorization",
+        "Nothing is captured until the app's site is confirmed by a sign-in",
+        "Test headers and cookies stay until you remove them, reset the browser (`reset_autorun_browser`) or release it",
+        "every answer names them",
+        "Reset or remove them before proving a fix",
+        "The sign-in's cookies",
+        "method-override headers are refused",
+        "a `url` on it or a parent domain of it",
+        "It also shows the listeners above the element",
+        "a capture-phase listener above it is the usual reason a click does nothing",
+    ] {
+        assert!(section.contains(said), "the section never says {said:?}: {section}");
+    }
+    assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+
+    let quick = flat(&quick_rules());
+    assert!(quick.contains("Test headers and cookies stay until removed or reset; do that before proving a fix."), "{quick}");
+}
+
 /// Review Focus 5: the quick guide never contradicts the full guide. Each
 /// quick rule's key phrase is in the quick rules and in the full guide's
 /// own section for that rule, so a rule cannot change in one place only.
