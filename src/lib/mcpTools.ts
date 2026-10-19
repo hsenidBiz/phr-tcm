@@ -179,17 +179,17 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "get_autorun_cookies",
     label: "Read cookies",
-    summary: "The Auto Run browser's cookies for a site, with the sign-in's values hidden.",
+    summary: "The Auto Run browser's cookies for the application's own site (the one TCM's sign-in confirmed), with the sign-in's values hidden.",
   },
   {
     name: "set_autorun_cookie",
     label: "Set a test cookie",
-    summary: "One cookie that is not the sign-in's, on the page's site in the assistant's Auto Run browser.",
+    summary: "One cookie that is not the sign-in's, on the application's own site (the one TCM's sign-in confirmed) in the assistant's Auto Run browser.",
   },
   {
     name: "clear_autorun_cookies",
     label: "Sign out by clearing cookies",
-    summary: "Delete the site's cookies in the assistant's Auto Run browser: a real sign-out.",
+    summary: "Delete the application's own site's cookies in the assistant's Auto Run browser: a real sign-out.",
   },
   {
     name: "inspect_autorun_element",

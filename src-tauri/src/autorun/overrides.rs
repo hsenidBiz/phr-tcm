@@ -123,22 +123,26 @@ pub fn with_note(answer: (u16, String), overrides: &Overrides) -> (u16, String) 
 /// browser's own.
 pub const REFUSED_HEADERS: [&str; 4] = ["cookie", "authorization", "proxy-authorization", "host"];
 
-/// Request headers that make a server treat a request as another method:
-/// a POST the save guard lets through could act as a PUT or a DELETE. Never
-/// set for testing either.
-pub const METHOD_OVERRIDE_HEADERS: [&str; 3] = ["x-http-method-override", "x-http-method", "x-method-override"];
+/// Request headers that make a server route a request as another method or
+/// to another path: the save guard judges the method and the path of the
+/// request line, so a POST it lets through could act as a PUT or a DELETE
+/// (the method overrides), or reach a save address (`X-Original-URL` and
+/// `X-Rewrite-URL`, honoured by IIS URL Rewrite, ASP.NET and some
+/// frameworks). Never set for testing either.
+pub const ROUTING_OVERRIDE_HEADERS: [&str; 5] =
+    ["x-http-method-override", "x-http-method", "x-method-override", "x-original-url", "x-rewrite-url"];
 
-/// Whether `name` is one of `REFUSED_HEADERS` or `METHOD_OVERRIDE_HEADERS`,
+/// Whether `name` is one of `REFUSED_HEADERS` or `ROUTING_OVERRIDE_HEADERS`,
 /// in any case.
 pub fn refused_header(name: &str) -> bool {
-    REFUSED_HEADERS.iter().chain(METHOD_OVERRIDE_HEADERS.iter()).any(|h| name.trim().eq_ignore_ascii_case(h))
+    REFUSED_HEADERS.iter().chain(ROUTING_OVERRIDE_HEADERS.iter()).any(|h| name.trim().eq_ignore_ascii_case(h))
 }
 
 /// Said when a refused header is asked for.
 pub fn refused_header_sentence(name: &str) -> String {
-    if METHOD_OVERRIDE_HEADERS.iter().any(|h| name.trim().eq_ignore_ascii_case(h)) {
+    if ROUTING_OVERRIDE_HEADERS.iter().any(|h| name.trim().eq_ignore_ascii_case(h)) {
         return format!(
-            "{name} is never set as a test header: it makes the server take a request for another method, so a request the save guard lets through could save or delete."
+            "{name} is never set as a test header: it makes the server take a request for another path or method, so a request the save guard lets through could save or delete."
         );
     }
     format!(
@@ -362,21 +366,6 @@ pub fn url_host(url: &str) -> Option<String> {
     };
     (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
-
-/// The origin (`https://host[:port]`) of the page the browser shows. `Err`
-/// is the sentence for a page that is not a web page (a blank page, the
-/// browser's own), or a browser that did not answer.
-pub async fn page_origin<D: Driver>(d: &mut D) -> Result<String, (u16, String)> {
-    match crate::browser::page::eval_value(d, "location.origin").await {
-        Ok(Value::String(o)) if url_host(&o).is_some() => Ok(o.trim_end_matches('/').to_string()),
-        Ok(_) => Err((409, NOT_A_WEB_PAGE.to_string())),
-        Err(e) => Err(browser_failed(e)),
-    }
-}
-
-/// Said when the page is not one with a site to set or read cookies for.
-pub const NOT_A_WEB_PAGE: &str =
-    "the Auto Run browser is not on a web page (a blank page or the browser's own): go to the application first";
 
 /// A browser call that failed, as an answer (`CdpError`'s own words: a
 /// closed browser is told by them, `ai_bridge::let_go_if_silent`).

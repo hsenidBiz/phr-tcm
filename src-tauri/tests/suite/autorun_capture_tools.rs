@@ -13,10 +13,12 @@ use std::path::{Path, PathBuf};
 use v2_lib::ai_bridge::{
     capture_tool_begin, capture_tool_in, route, BridgeContext, CapturePhase, CaptureTool, DiscoveryBrowser, DiscoveryParts,
 };
-use v2_lib::autorun::capture_tools::{file_stem, BODY_PAGE_CHARS, IMPORTS_FULL, LIVE_IS_RESERVED, NOTHING_CAPTURED_YET};
+use v2_lib::autorun::capture_tools::{
+    file_stem, ImportedSets, BODY_PAGE_CHARS, IMPORTS_FULL, LIVE_IS_RESERVED, NOTHING_CAPTURED_YET,
+};
 use v2_lib::autorun::lease::Held;
 use v2_lib::browser::cdp::Event;
-use v2_lib::browser::net_capture::{Captured, NetCapture};
+use v2_lib::browser::net_capture::NetCapture;
 use v2_lib::browser::net_record::NetRecord;
 use v2_lib::commands::autorun::{DiscoveryState, GuardOwner, NO_BROWSER_OPEN};
 
@@ -180,7 +182,7 @@ fn signed_in_capture() -> NetCapture {
     f.cap
 }
 
-fn call(slot: &mut Option<Browser>, imported: &mut BTreeMap<String, Vec<Captured>>, root: Option<&Path>, tool: CaptureTool, args: Value) -> (u16, String) {
+fn call(slot: &mut Option<Browser>, imported: &mut ImportedSets, root: Option<&Path>, tool: CaptureTool, args: Value) -> (u16, String) {
     capture_tool_in(slot, imported, root, tool, &args.to_string())
 }
 
@@ -325,6 +327,11 @@ fn search_matches_every_filter_given() {
     assert_eq!(ids(&v), vec![1]);
     let (status, _) = live(&mut slot, CaptureTool::Search, json!({ "status": "abc" }));
     assert_eq!(status, 400);
+    // A type the capture never keeps is refused with the ones it does, not
+    // answered with nothing.
+    let mut slot = browser_with(signed_in_capture());
+    let (status, out) = call(&mut slot, &mut BTreeMap::new(), None, CaptureTool::Search, json!({ "type": "xhrr" }));
+    assert_eq!((status, out.as_str()), (400, "type: the capture keeps only these types: XHR, Fetch, Document"));
 }
 
 /// A search runs over the redacted text: asking for a secret's value can
@@ -584,7 +591,7 @@ fn an_import_is_read_with_from_and_needs_no_browser() {
     assert_eq!((v["set"].as_str(), v["requests"].as_u64()), (Some("from edge"), Some(2)));
     assert!(imported.contains_key("from edge"));
 
-    let from = |tool, mut args: Value, imported: &mut BTreeMap<String, Vec<Captured>>| {
+    let from = |tool, mut args: Value, imported: &mut ImportedSets| {
         args["from"] = json!("from edge");
         let (status, out) = call(&mut None, imported, None, tool, args);
         assert_eq!(status, 200, "{tool:?}: {out}");
@@ -761,6 +768,52 @@ fn at_most_five_sets_are_imported() {
     let (status, out) = call(&mut None, &mut imported, Some(dir.path()), CaptureTool::Import, json!({ "name": "set3" }));
     assert_eq!(status, 200, "{out}");
     assert_eq!(serde_json::from_str::<Value>(&out).unwrap()["replaced"], true);
+}
+
+/// The bridge's own imported sets live in the Rust cache's memory-only
+/// tier: an import keeps a set there, a read with no browser finds it, a
+/// refused change keeps nothing, the five-set cap holds, and a sign-in or
+/// out forgets them all.
+#[test]
+fn the_bridges_imported_sets_live_in_the_rust_cache() {
+    use v2_lib::autorun::capture_tools::{read_import, store_import, MAX_IMPORTED_SETS};
+    use v2_lib::commands::autorun::{change_imported_captures, forget_imported_captures, imported_captures};
+    // The bridge's capture routes read the same sets.
+    let _a = crate::serial::autorun();
+    forget_imported_captures();
+    let dir = TempDir::new();
+    for i in 1..=MAX_IMPORTED_SETS + 1 {
+        put_har(dir.path(), &format!("set{i}"), &foreign_har());
+    }
+    let import = |name: &str| {
+        let (stem, entries) = read_import(dir.path(), &json!({ "name": name })).unwrap();
+        change_imported_captures(|sets| store_import(sets, stem, entries))
+    };
+    let (status, out) = import("set1");
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(imported_captures().keys().collect::<Vec<_>>(), ["set1"]);
+    let mut sets = imported_captures();
+    let (status, out) = call(&mut None, &mut sets, None, CaptureTool::List, json!({ "from": "set1" }));
+    assert_eq!(status, 200, "read with no browser open: {out}");
+    assert_no_secret(&out);
+
+    let (status, _) = change_imported_captures(|sets| {
+        sets.clear();
+        (409, IMPORTS_FULL.to_string())
+    });
+    assert_eq!(status, 409);
+    assert_eq!(imported_captures().len(), 1, "a refused change keeps nothing");
+
+    for i in 2..=MAX_IMPORTED_SETS {
+        let (status, out) = import(&format!("set{i}"));
+        assert_eq!(status, 200, "{out}");
+    }
+    let (status, out) = import(&format!("set{}", MAX_IMPORTED_SETS + 1));
+    assert_eq!((status, out.as_str()), (409, IMPORTS_FULL));
+    assert_eq!(imported_captures().len(), MAX_IMPORTED_SETS);
+
+    forget_imported_captures();
+    assert!(imported_captures().is_empty(), "a sign-in or out forgets them");
 }
 
 #[test]

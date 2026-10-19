@@ -415,6 +415,30 @@ fn static_maps(text: &str) -> Vec<(usize, String)> {
     found
 }
 
+/// The capture sets imported for the assistant are a session value under
+/// their key in keys.rs, kept for a working session: the same account
+/// signing in again keeps them in the cache, a different one drops them
+/// (the sign-in and sign-out also forget them outright,
+/// `commands::autorun::forget_imported_captures`).
+#[test]
+fn imported_capture_sets_go_when_another_account_signs_in() {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use v2_lib::autorun::capture_tools::ImportedSets;
+    let store = Store::open(None);
+    store.claim_for(Some("first@example.com"));
+    let key = keys::imported_captures();
+    let sets: ImportedSets = BTreeMap::from([("kept".to_string(), Arc::new(Vec::new()))]);
+    store.session_put(&key, sets);
+    assert!(keys::IMPORTED_CAPTURES_TTL >= Duration::from_secs(8 * 60 * 60), "a working session");
+    let read = || store.session_fresh::<ImportedSets>(&key, keys::IMPORTED_CAPTURES_TTL);
+    assert_eq!(read().unwrap().keys().collect::<Vec<_>>(), ["kept"]);
+    store.claim_for(Some("first@example.com"));
+    assert!(read().is_some(), "the same account keeps them");
+    store.claim_for(Some("second@example.com"));
+    assert!(read().is_none(), "another account never reads them");
+}
+
 /// One cache means one: a module that needs to remember data uses
 /// `crate::cache`, not a map of its own in a static. If this fails, move
 /// that data onto the cache (a key in cache/keys.rs) instead of allowing it.

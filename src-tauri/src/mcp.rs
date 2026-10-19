@@ -642,7 +642,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "list_autorun_requests",
-            "description": "The requests the page in the Auto Run browser made - its own XHR, fetch and page loads on the application's site, polls left out - newest first: id, method, path and query, status, type, sizes, start and duration. Read only, and redacted: passwords, tokens and session values show as [redacted]. Use it to build an API template from a real request instead of guessing its shape. Needs the Auto Run browser open (404 \"No browser is open.\" otherwise); nothing shows until TCM's sign-in has confirmed the application's site. With `from`, it reads a set loaded with import_autorun_requests instead, browser or not. Paged: while `next_offset` is there, call again with `offset` set to it.",
+            "description": "The requests the page in the Auto Run browser made - its own XHR, fetch and page loads on the application's site, polls left out - newest first: id, method, path and query, status, type, sizes, start and duration. Read only, and redacted: passwords, tokens and session values show as [redacted]. Use it to build an API template from a real request instead of guessing its shape. Needs the Auto Run browser open (404 \"No browser is open.\" otherwise), and answers 409 while a replay, a step or a discovery action is using it: ask again when it has finished. Nothing shows until TCM's sign-in has confirmed the application's site. With `from`, it reads a set loaded with import_autorun_requests instead, browser or not. Paged: while `next_offset` is there, call again with `offset` set to it.",
             "inputSchema": schema(serde_json::json!({
                 "offset": { "type": "number", "description": "How many to skip: the `next_offset` of the previous answer. 0 by default." },
                 "limit": { "type": "number", "description": "How many one answer carries: 25 by default, 100 at most." },
@@ -666,7 +666,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_request",
-            "description": "One captured request by its id: method, path and query, type, tab, start, its headers (an allow-list: content-type, accept, x- headers and the like - never cookies or authorization) and its body, redacted. A body longer than 20 000 characters comes in pages: call again with `offset` set to `next_offset`.",
+            "description": "One captured request by its id: method, path and query, type, tab, start, its headers (an allow-list: content-type, accept, x- headers and the like - never cookies or authorization) and its body, redacted. A body longer than 20 000 characters comes in pages: call again with `offset` set to `next_offset`. Same browser and `from` rules as list_autorun_requests (404 with no browser, 409 while it is busy).",
             "inputSchema": schema(serde_json::json!({
                 "id": { "type": "number", "description": "The request's id, from list_autorun_requests or search_autorun_requests." },
                 "offset": { "type": "number", "description": "Optional: where the body's page starts, in characters (the `next_offset` of the previous answer)." },
@@ -675,7 +675,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_response",
-            "description": "One captured request's response by its id: status, mime, headers (allow-listed, values redacted), size, start and duration, a failure, its first redirect, and whether its body was kept and how long it is - get_autorun_response_body reads the body.",
+            "description": "One captured request's response by its id: status, mime, headers (allow-listed, values redacted), size, start and duration, a failure, its first redirect, and whether its body was kept and how long it is - get_autorun_response_body reads the body. Same browser and `from` rules as list_autorun_requests (404 with no browser, 409 while it is busy).",
             "inputSchema": schema(serde_json::json!({
                 "id": { "type": "number", "description": "The request's id." },
                 "from": { "type": "string", "description": "Optional: an imported set's name. Left out, the live capture." },
@@ -683,7 +683,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_response_body",
-            "description": "One captured response's body as text, redacted, in pages of 20 000 characters: `chars` is its whole length and, while `next_offset` is there, call again with `offset` set to it. Only text bodies (JSON, text, HTML, XML, forms) are kept, at most 2 MB each; one that is not there says why.",
+            "description": "One captured response's body as text, redacted, in pages of 20 000 characters: `chars` is its whole length and, while `next_offset` is there, call again with `offset` set to it. Only text bodies (JSON, text, HTML, XML, forms) are kept, at most 2 MB each; one that is not there says why. Same browser and `from` rules as list_autorun_requests (404 with no browser, 409 while it is busy).",
             "inputSchema": schema(serde_json::json!({
                 "id": { "type": "number", "description": "The request's id." },
                 "offset": { "type": "number", "description": "Where the page starts, in characters. 0 by default." },
@@ -692,7 +692,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "set_autorun_capture",
-            "description": "Set what the Auto Run browser's capture keeps FROM NOW ON: only these resource types (`include_types`), not these (`exclude_types`), only paths containing `path_contains`. Each call replaces the whole filter; leave everything out to keep every request again. What was left out before cannot be brought back, and what is kept stays. Answers the filter as get_autorun_capture does.",
+            "description": "Set what the Auto Run browser's capture keeps FROM NOW ON: only these resource types (`include_types`), not these (`exclude_types`), only paths containing `path_contains`. Each call replaces the whole filter; leave everything out to keep every request again. What was left out before cannot be brought back, and what is kept stays. Answers the filter as get_autorun_capture does. Works in the person's browser too; 404 with no browser, 409 while a replay, a step or a discovery action is using it.",
             "inputSchema": schema(serde_json::json!({
                 "include_types": { "type": "array", "items": { "type": "string", "enum": ["XHR", "Fetch", "Document"] }, "description": "Keep only these types. Empty or left out: every type." },
                 "exclude_types": { "type": "array", "items": { "type": "string", "enum": ["XHR", "Fetch", "Document"] }, "description": "Never keep these types." },
@@ -701,12 +701,12 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "get_autorun_capture",
-            "description": "The Auto Run browser's capture filter (`include_types`, `exclude_types`, `path_contains`), how many requests it keeps now (1000 at most, the oldest dropped first), whether the application's site is confirmed yet, and the names of the sets loaded with import_autorun_requests.",
+            "description": "The Auto Run browser's capture filter (`include_types`, `exclude_types`, `path_contains`), how many requests it keeps now (1000 at most, the oldest dropped first), whether the application's site is confirmed yet, and the names of the sets loaded with import_autorun_requests. 404 with no browser, 409 while a replay, a step or a discovery action is using it.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "export_autorun_requests",
-            "description": "Save the live capture, redacted exactly as the reads show it, as a HAR 1.2 file in TCM's own captures folder (`<name>.har` - never anywhere else); a file of that name is replaced. Answers the file's name and how many requests it holds. import_autorun_requests reads it back.",
+            "description": "Save the live capture, redacted exactly as the reads show it, as a HAR 1.2 file in TCM's own captures folder (`<name>.har` - never anywhere else); a file of that name is replaced. Answers the file's name and how many requests it holds. import_autorun_requests reads it back. 404 with no browser, 409 while a replay, a step or a discovery action is using it.",
             "inputSchema": schema(serde_json::json!({
                 "name": { "type": "string", "description": "The file's name without .har: letters, digits, spaces, dots, dashes or underscores, at most 80 characters, no folder." },
             }), &["name"]),
@@ -720,16 +720,16 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "set_autorun_headers",
-            "description": "Send extra request headers with every request of the Auto Run browser you opened (your discovery or replay) - every tab, and any tab the page opens - to test an edge case such as a feature header or another language. Merged into the headers already set; `null` removes one you set. Never cookie, authorization, proxy-authorization or host, nor a method override (X-HTTP-Method-Override, X-HTTP-Method, X-Method-Override). The save guard is not touched: a blocked save stays blocked. They stay until you remove them, or reset_autorun_browser, clear_autorun_cookies or a release takes them away, and every try, discovery and replay answer ends naming them (\"Changed for testing: header ...\"). Refused in the person's browser and while a replay runs.",
+            "description": "Send extra request headers with every request of the Auto Run browser you opened (your discovery or replay) - every tab, and any tab the page opens - to test an edge case such as a feature header or another language. Merged into the headers already set; `null` removes one you set. Never cookie, authorization, proxy-authorization or host, nor one that routes a request to another method or path (X-HTTP-Method-Override, X-HTTP-Method, X-Method-Override, X-Original-URL, X-Rewrite-URL). The save guard is not touched: a blocked save stays blocked. They stay until you remove them, or reset_autorun_browser, clear_autorun_cookies or a release takes them away, and every try, discovery and replay answer ends naming them (\"Changed for testing: header ...\"). Refused in the person's browser and while a replay runs.",
             "inputSchema": schema(serde_json::json!({
                 "headers": { "type": "object", "additionalProperties": { "type": ["string", "null"] }, "description": "Header name to value, or to null to remove a header you set." },
             }), &["headers"]),
         },
         {
             "name": "get_autorun_cookies",
-            "description": "The cookies the Auto Run browser holds for the app's own site - the one TCM's sign-in confirmed, whatever page shows (409 before it is) - whatever their path: name, domain, path, expiry, flags (http_only, secure, same_site), size, and the value. The sign-in's cookies (HttpOnly, the sign-in and anti-forgery cookies, names like a secret) show their value as (hidden). `set_for_testing` marks the ones you set. A read: works in the person's browser too.",
+            "description": "The cookies the Auto Run browser holds for the app's own site - the one TCM's sign-in confirmed, whatever page shows (409 before it is) - whatever their path: name, domain, path, expiry, flags (http_only, secure, same_site), size, and the value. The sign-in's cookies (HttpOnly, the sign-in and anti-forgery cookies, names like a secret) show their value as (hidden). `set_for_testing` marks the ones you set. A read: works in the person's browser too. 409 while a replay runs or a step or a discovery action is using the browser: ask again when it has finished.",
             "inputSchema": schema(serde_json::json!({
-                "url": { "type": "string", "description": "Optional: an http or https address on the app's site or one of its parent domains (anything else is refused). Left out, the app's site." },
+                "url": { "type": "string", "description": "Optional: an http or https address on the app's site or one of its parent domains (anything else is refused). A parent domain lists only the cookies set for it or above it, not the app host's own. Left out, the app's site." },
             }), &[]),
         },
         {
@@ -746,12 +746,12 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "clear_autorun_cookies",
-            "description": "Sign out for real in the Auto Run browser you opened: delete every cookie of the app's confirmed site and its parent domains (the sign-in's included; never the identity provider's), forget the signed-in account and let its lease go, and take away your test headers. The next replay signs in again; a discovery going keeps going, signed out. Refused in the person's browser, while a replay runs, and before TCM's sign-in has confirmed the app's site.",
+            "description": "Sign out for real in the Auto Run browser you opened: delete every cookie of the app's confirmed site, including the ones set for its parent domains (the sign-in's included) - an identity provider on a sibling host that shares a parent-domain cookie is signed out too - forget the signed-in account and let its lease go, and take away your test headers. The next replay signs in again; a discovery going keeps going, signed out. Refused in the person's browser, while a replay runs, and before TCM's sign-in has confirmed the app's site.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "inspect_autorun_element",
-            "description": "Look at ONE element in the open Auto Run browser without touching it, to diagnose a failing step or check an edge case (a field turning red, a button that only looks disabled, a click that lands on something else). The locator is resolved as a try resolves it: refused when it matches nothing or more than one. Shows any of: `styles` (computed values, all or the `properties` you name), `listeners` (each event listener's type, capture, once and passive flags, and where its handler was written - a script path, line and column, never its source; plus the listeners of the element a click at its centre would land on when another covers it, named), `animations` (running animations and transitions with duration, delay, iterations and play state, and the computed transition-* and animation-* values) and `structure` (tag, attributes, text up to 500 characters, children counted by tag, the frame it sits in) - all four when `show` is left out. Every answer says whether a click at its centre reaches it, or what covers it. A password field's value, attributes named like a secret and tokens in text are hidden. Read only: nothing is clicked, typed, focused or scrolled (an element outside the visible part of the page is not scrolled to), so it works in the person's browser too.",
+            "description": "Look at ONE element in the open Auto Run browser without touching it, to diagnose a failing step or check an edge case (a field turning red, a button that only looks disabled, a click that lands on something else). The locator is resolved as a try resolves it: refused when it matches nothing or more than one. Shows any of: `styles` (computed values, all or the `properties` you name), `listeners` (each event listener's type, capture, once and passive flags, and where its handler was written - a script path, line and column, never its source; plus the listeners of the element a click at its centre would land on when another covers it, named, and under `listeners.ancestors` the click, pointer, mouse, touch and submit listeners above it up to the document and the window, where a capture-phase one is the usual reason a click does nothing), `animations` (running animations and transitions with duration, delay, iterations and play state, and the computed transition-* and animation-* values) and `structure` (tag, attributes, text up to 500 characters, children counted by tag, the frame it sits in) - all four when `show` is left out. Every answer says whether a click at its centre reaches it, or what covers it. A password field's value, attributes named like a secret and tokens in text are hidden. Read only: nothing is clicked, typed, focused or scrolled (an element outside the visible part of the page is not scrolled to), so it works in the person's browser too.",
             "inputSchema": schema(serde_json::json!({
                 "locator": {
                     "type": ["object", "string", "array"],

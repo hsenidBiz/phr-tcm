@@ -19,24 +19,43 @@ use tauri::Manager;
 /// browser can never leave the screen permanently stuck.
 static SESSION: tokio::sync::Mutex<Option<Session>> = tokio::sync::Mutex::const_new(None);
 
-/// The capture sets the assistant imported from HAR files
-/// (`import_autorun_requests`), by name: read-only, in memory only, never
-/// replayed into a browser. Beside the session rather than in it, so a set
-/// is read with no browser open; forgotten when the person signs in or out
-/// of TCM (`forget_imported_captures`), so another account never reads them.
-static IMPORTED_CAPTURES: std::sync::Mutex<std::collections::BTreeMap<String, Vec<crate::browser::net_capture::Captured>>> =
-    std::sync::Mutex::new(std::collections::BTreeMap::new());
+/// Serialises a change to the imported capture sets (an import), so two
+/// imports at once cannot both pass the five-set cap or lose each other's
+/// set. Coordination only: the sets themselves live in the Rust cache.
+static IMPORTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// The imported capture sets (`IMPORTED_CAPTURES`). Held only for one
-/// read or one import, never across an await.
-pub fn imported_captures(
-) -> std::sync::MutexGuard<'static, std::collections::BTreeMap<String, Vec<crate::browser::net_capture::Captured>>> {
-    IMPORTED_CAPTURES.lock().unwrap_or_else(|e| e.into_inner())
+/// The capture sets the assistant imported from HAR files
+/// (`import_autorun_requests`), by name: read-only, never replayed into a
+/// browser. Kept in the Rust cache's memory-only tier
+/// (`cache::keys::imported_captures`), not in the session, so a set is read
+/// with no browser open; the cache drops them when a different account
+/// signs in, and `forget_imported_captures` when the person signs in or out
+/// of TCM, so another account never reads them. A copy: each set is shared,
+/// so this copies names and pointers, not requests.
+pub fn imported_captures() -> crate::autorun::capture_tools::ImportedSets {
+    crate::cache::session_fresh(&crate::cache::keys::imported_captures(), crate::cache::keys::IMPORTED_CAPTURES_TTL)
+        .unwrap_or_default()
+}
+
+/// Change the imported capture sets with `f` (`capture_tools::store_import`),
+/// one change at a time (`IMPORTING`); kept, and its time renewed, only
+/// when `f` answers 200.
+pub fn change_imported_captures(
+    f: impl FnOnce(&mut crate::autorun::capture_tools::ImportedSets) -> (u16, String),
+) -> (u16, String) {
+    let _one_at_a_time = IMPORTING.lock().unwrap_or_else(|e| e.into_inner());
+    let mut sets = imported_captures();
+    let answer = f(&mut sets);
+    if answer.0 == 200 {
+        crate::cache::session_put(&crate::cache::keys::imported_captures(), sets);
+    }
+    answer
 }
 
 /// Forget every imported capture set: the TCM account signed in or out.
 pub fn forget_imported_captures() {
-    imported_captures().clear();
+    let _one_at_a_time = IMPORTING.lock().unwrap_or_else(|e| e.into_inner());
+    crate::cache::forget(&crate::cache::keys::imported_captures());
 }
 
 pub(crate) struct Session {

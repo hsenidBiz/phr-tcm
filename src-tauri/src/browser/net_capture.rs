@@ -251,6 +251,10 @@ pub struct NetCapture {
     /// configured address's own. Never confirmed as the application's
     /// (`confirm_app_site`).
     login_sites: Vec<String>,
+    /// `confirm_app_site` has logged that it refused a page's site since the
+    /// sites last changed: the check runs on every replay's reuse test and
+    /// every return home, so the line is written once, not on each.
+    refusal_logged: bool,
 }
 
 impl NetCapture {
@@ -268,8 +272,17 @@ impl NetCapture {
         let site = url.and_then(origin);
         if site != self.app_site {
             self.forget_pending();
+            self.refusal_logged = false;
         }
         self.app_site = site;
+    }
+
+    /// Log `line` (a refusal of `confirm_app_site`, naming no host) unless one
+    /// was logged since the sites last changed.
+    fn log_refusal(&mut self, line: &str) {
+        if !std::mem::replace(&mut self.refusal_logged, true) {
+            crate::applog::info(line);
+        }
     }
 
     /// The sign-in typed the account name or password on the page at `url`:
@@ -280,6 +293,7 @@ impl NetCapture {
         let Some(site) = origin(url) else { return };
         if !self.login_sites.contains(&site) {
             self.login_sites.push(site);
+            self.refusal_logged = false;
         }
     }
 
@@ -296,18 +310,19 @@ impl NetCapture {
     /// provider's page cannot be told from the application's - only the
     /// provisional address's own origin is confirmed. Either way nothing
     /// changes - the site stays as it was, what was held back stays held
-    /// back - and one line is logged, naming no host.
+    /// back - and one line is logged, naming no host, once until the sites
+    /// change (`refusal_logged`).
     pub fn confirm_app_site(&mut self, url: &str) {
         let Some(site) = origin(url) else { return };
         let configured = self.app_site.as_ref() == Some(&site);
         if !configured && self.login_sites.is_empty() {
-            crate::applog::info(
+            self.log_refusal(
                 "Auto Run: the signed-in marker showed on a page that is not on the configured address, before any sign-in typed a login in this browser - its site is not taken for the application's, and nothing is captured until the marker shows on the configured address",
             );
             return;
         }
         if !configured && self.login_sites.contains(&site) {
-            crate::applog::info(
+            self.log_refusal(
                 "Auto Run: the signed-in marker showed on the page the sign-in was typed on, which is not the application's address - its site is not taken for the application's, and nothing is captured until the marker shows on the application's own page",
             );
             return;

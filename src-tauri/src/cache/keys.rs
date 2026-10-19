@@ -171,3 +171,17 @@ pub const PW_WRITTEN_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 pub fn pw_written(clone: &str) -> String {
     format!("pw-written:{clone}")
 }
+
+/// How long the capture sets imported for the assistant are kept (session
+/// tier only): twelve hours, a working day with room to spare, renewed by
+/// each import. They also go when the person signs in or out of TCM, and
+/// with everything else when a different account signs in (`claim_for`).
+pub const IMPORTED_CAPTURES_TTL: Duration = Duration::from_secs(12 * 60 * 60);
+
+/// The capture sets imported from HAR files with `import_autorun_requests`,
+/// by name (session tier only, `commands::autorun::imported_captures`): at
+/// most `capture_tools::MAX_IMPORTED_SETS`, read-only, readable with no
+/// browser open.
+pub fn imported_captures() -> String {
+    "imported-captures".to_string()
+}

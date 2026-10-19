@@ -1319,17 +1319,21 @@ signs in.
 ## Network, cookies and elements
 
 Look under the page, and test an edge case, in the Auto Run browser. The
-reads work in the person's browser too; the tools that change something
-need one you opened (a discovery or your replay).
+reads and `set_autorun_capture` work in the person's browser too; the
+headers and cookies tools that change something need one you opened (a
+discovery or your replay).
 
 - `list_autorun_requests` and `search_autorun_requests` list the requests
   the page made on the application's site, newest first and paged;
   `get_autorun_request`, `get_autorun_response` and
-  `get_autorun_response_body` read one by its id.
+  `get_autorun_response_body` read one by its id. A body comes in pages
+  of 20 000 characters: pass `offset` for the next.
 - `set_autorun_capture` and `get_autorun_capture` set and show what the
-  capture keeps from now on; `export_autorun_requests` and
-  `import_autorun_requests` save it as a HAR file in TCM's own captures
-  folder and read it back as a set, read with `from`.
+  capture keeps from now on. Each `set_autorun_capture` replaces the whole
+  filter, and what it leaves out is gone: it cannot be brought back.
+  `export_autorun_requests` and `import_autorun_requests` save it as a HAR
+  file in TCM's own captures folder and read it back as a set, each by a
+  `name`; read an imported set with `from`.
 - Build API templates from captured requests: read the real call with
   `get_autorun_request` / `get_autorun_response_body` instead of guessing its
   shape (see `get_api_template_guide`).
@@ -1346,8 +1350,11 @@ need one you opened (a discovery or your replay).
   a pass with one in place proves nothing about the normal page.
 - The sign-in's cookies (HttpOnly, `.ASPXAUTH`, `.AspNetCore.*`, the session
   and anti-forgery cookies, names like a secret) and method-override headers
-  are refused. `get_autorun_cookies` reads the app's confirmed site, or a
-  `url` on it or a parent domain of it.
+  are refused, and so are `X-Original-URL` and `X-Rewrite-URL`, which send a
+  request to another path. `get_autorun_cookies` reads the app's confirmed
+  site, or a `url` on it or a parent domain of it; a parent domain's `url`
+  lists only the cookies set for that domain or above it, not the app
+  host's own.
 - `inspect_autorun_element` shows one element's styles, listeners,
   animations and structure, and whether a click at its centre reaches it. It
   also shows the listeners above the element: a capture-phase listener above

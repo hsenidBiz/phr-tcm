@@ -995,6 +995,56 @@ fn db_query_describes_the_object_allowance_and_the_size_cap() {
     assert!(!text.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }
 
+/// The network, cookie and element tools say when they answer 409 (a
+/// replay, a step or a discovery action using the browser), which headers
+/// are refused - the URL-rewrite ones with the method overrides - that a
+/// sign-out reaches a parent-domain cookie, and what `listeners.ancestors`
+/// holds.
+#[test]
+fn the_network_tools_name_their_refusals_and_the_busy_answer() {
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &stub(200, "")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap().clone();
+    let desc = |name: &str| -> String {
+        tools
+            .iter()
+            .find(|t| t["name"] == name)
+            .and_then(|t| t["description"].as_str())
+            .unwrap_or_else(|| panic!("no tool {name}"))
+            .to_string()
+    };
+    for name in [
+        "list_autorun_requests",
+        "search_autorun_requests",
+        "get_autorun_request",
+        "get_autorun_response",
+        "get_autorun_response_body",
+        "set_autorun_capture",
+        "get_autorun_capture",
+        "export_autorun_requests",
+        "get_autorun_cookies",
+    ] {
+        let text = desc(name);
+        assert!(
+            text.contains("409") || text.contains("Same browser, `from` and paging rules as list_autorun_requests"),
+            "{name} does not say it answers 409 while the browser is busy: {text}"
+        );
+    }
+    assert!(desc("list_autorun_requests").contains("409 while a replay, a step or a discovery action is using it"));
+    let headers = desc("set_autorun_headers");
+    for name in ["X-HTTP-Method-Override", "X-HTTP-Method", "X-Method-Override", "X-Original-URL", "X-Rewrite-URL"] {
+        assert!(headers.contains(name), "set_autorun_headers does not name {name}: {headers}");
+    }
+    let clear = desc("clear_autorun_cookies");
+    assert!(!clear.contains("never the identity provider's"), "{clear}");
+    assert!(clear.contains("parent domains") && clear.contains("sibling host"), "{clear}");
+    assert!(desc("inspect_autorun_element").contains("`listeners.ancestors`"));
+    for name in ["set_autorun_headers", "clear_autorun_cookies", "inspect_autorun_element", "get_autorun_cookies"] {
+        let text = desc(name);
+        assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "no em or en dashes: {name}");
+    }
+}
+
 #[test]
 fn db_no_ask_needs_an_explicit_yes() {
     use v2_lib::mcp::db_no_ask_from;

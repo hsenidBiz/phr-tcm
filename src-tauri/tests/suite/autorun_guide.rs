@@ -1434,6 +1434,12 @@ fn the_guide_teaches_the_network_cookie_and_element_tools() {
         "a `url` on it or a parent domain of it",
         "It also shows the listeners above the element",
         "a capture-phase listener above it is the usual reason a click does nothing",
+        "The reads and `set_autorun_capture` work in the person's browser too; the headers and cookies tools that change something need one you opened",
+        "Each `set_autorun_capture` replaces the whole filter, and what it leaves out is gone: it cannot be brought back.",
+        "A body comes in pages of 20 000 characters: pass `offset` for the next.",
+        "each by a `name`",
+        "`X-Original-URL` and `X-Rewrite-URL`",
+        "a parent domain's `url` lists only the cookies set for that domain or above it, not the app host's own",
     ] {
         assert!(section.contains(said), "the section never says {said:?}: {section}");
     }

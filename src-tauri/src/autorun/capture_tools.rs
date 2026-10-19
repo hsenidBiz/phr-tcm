@@ -18,6 +18,12 @@ use crate::browser::net_capture::{Body, CaptureFilter, Captured, NetCapture, MAX
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+/// The imported sets, by name. Each set is shared, so a copy of the whole
+/// (what the Rust cache hands a reader, `commands::autorun::imported_captures`)
+/// copies the names and pointers, never the requests.
+pub type ImportedSets = BTreeMap<String, Arc<Vec<Captured>>>;
 
 /// A body's page: this many characters at most.
 pub const BODY_PAGE_CHARS: usize = 20_000;
@@ -160,9 +166,9 @@ pub fn from_of(args: &Value) -> Result<Option<String>, (u16, String)> {
 }
 
 /// The imported set `name`, or why there is none.
-pub fn imported_set<'a>(imported: &'a BTreeMap<String, Vec<Captured>>, name: &str) -> Result<Set<'a>, (u16, String)> {
+pub fn imported_set<'a>(imported: &'a ImportedSets, name: &str) -> Result<Set<'a>, (u16, String)> {
     match imported.get(name) {
-        Some(entries) => Ok(Set::imported(name, entries)),
+        Some(entries) => Ok(Set::imported(name, entries.as_slice())),
         None => {
             let loaded = if imported.is_empty() {
                 "none is loaded".to_string()
@@ -399,6 +405,12 @@ fn search_filters(args: &Value) -> Result<BTreeMap<&'static str, String>, (u16, 
             want.insert(key, v);
         }
     }
+    if let Some(t) = want.get_mut("type") {
+        let Some(canon) = CAPTURE_TYPES.iter().find(|k| k.eq_ignore_ascii_case(t)) else {
+            return Err((400, format!("type: the capture keeps only these types: {}", CAPTURE_TYPES.join(", "))));
+        };
+        *t = canon.to_string();
+    }
     if let Some(s) = want.get("status") {
         let ok = s.parse::<u16>().is_ok() || s.to_ascii_lowercase().strip_suffix("xx").is_some_and(|c| c.len() == 1 && c.parse::<u16>().is_ok());
         if !ok {
@@ -608,7 +620,7 @@ fn types_of(args: &Value, key: &str) -> Result<Vec<String>, (u16, String)> {
 
 /// What the filter is and what is kept, for `get_autorun_capture` and the
 /// answer of a set.
-pub fn filter_answer(cap: &NetCapture, imported: &BTreeMap<String, Vec<Captured>>) -> Value {
+pub fn filter_answer(cap: &NetCapture, imported: &ImportedSets) -> Value {
     let f = cap.filter();
     let (_, kept) = cap.list(0, 0);
     let mut out = json!({
@@ -628,7 +640,7 @@ pub fn filter_answer(cap: &NetCapture, imported: &BTreeMap<String, Vec<Captured>
 
 /// `set_autorun_capture`: the filter from now on, whole - what is left out
 /// is left as no filter.
-pub fn set_filter(cap: &mut NetCapture, imported: &BTreeMap<String, Vec<Captured>>, args: &Value) -> (u16, String) {
+pub fn set_filter(cap: &mut NetCapture, imported: &ImportedSets, args: &Value) -> (u16, String) {
     let include_types = match types_of(args, "include_types") {
         Ok(t) => t,
         Err(e) => return e,
@@ -725,7 +737,7 @@ pub fn write_export(root: &Path, taken: TakenExport) -> (u16, String) {
 }
 
 /// `import_autorun_requests`: `read_import` then `store_import`.
-pub fn import(root: &Path, imported: &mut BTreeMap<String, Vec<Captured>>, args: &Value) -> (u16, String) {
+pub fn import(root: &Path, imported: &mut ImportedSets, args: &Value) -> (u16, String) {
     match read_import(root, args) {
         Ok((stem, entries)) => store_import(imported, stem, entries),
         Err(e) => e,
@@ -769,12 +781,12 @@ pub fn read_import(root: &Path, args: &Value) -> Result<(String, Vec<Captured>),
 
 /// Keep a parsed import as the set `stem`, replacing one of that name; at
 /// most `MAX_IMPORTED_SETS` sets at once. Never replayed into the browser.
-pub fn store_import(imported: &mut BTreeMap<String, Vec<Captured>>, stem: String, entries: Vec<Captured>) -> (u16, String) {
+pub fn store_import(imported: &mut ImportedSets, stem: String, entries: Vec<Captured>) -> (u16, String) {
     if !imported.contains_key(&stem) && imported.len() >= MAX_IMPORTED_SETS {
         return (409, IMPORTS_FULL.to_string());
     }
     let n = entries.len();
-    let replaced = imported.insert(stem.clone(), entries).is_some();
+    let replaced = imported.insert(stem.clone(), Arc::new(entries)).is_some();
     crate::applog::info(format!("Auto Run: the assistant imported {n} requests from a HAR file"));
     let out = json!({
         "set": stem,

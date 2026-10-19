@@ -2108,7 +2108,8 @@ pub const CAPTURE_BUSY: &str =
 /// A capture tool's call. Nothing is redacted, matched or written while a
 /// lock is held: the call takes what it needs out of its set (cloned) and
 /// lets the lock go before it answers (`CapturePhase::finish`). An import
-/// reads and parses its file before it takes the imported sets' lock; a
+/// reads and parses its file before it changes the imported sets (one
+/// import at a time, `commands::autorun::change_imported_captures`); a
 /// read naming `from` is checked, and its set looked for, before anything
 /// else, and never takes the browser's lock.
 async fn autorun_capture(tool: CaptureTool, body: &str) -> (u16, String) {
@@ -2123,7 +2124,9 @@ async fn autorun_capture(tool: CaptureTool, body: &str) -> (u16, String) {
             return (503, crate::commands::autorun::NO_DATA_DIRECTORY.to_string());
         };
         return match ct::read_import(root, &args) {
-            Ok((stem, entries)) => ct::store_import(&mut crate::commands::autorun::imported_captures(), stem, entries),
+            Ok((stem, entries)) => {
+                crate::commands::autorun::change_imported_captures(|sets| ct::store_import(sets, stem, entries))
+            }
             Err(e) => e,
         };
     }
@@ -2478,7 +2481,7 @@ impl CapturePhase {
 /// the Auto Run folder (`root`). `capture_tool_begin`, then its `finish`.
 pub fn capture_tool_in<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
-    imported: &mut std::collections::BTreeMap<String, Vec<crate::browser::net_capture::Captured>>,
+    imported: &mut crate::autorun::capture_tools::ImportedSets,
     root: Option<&std::path::Path>,
     tool: CaptureTool,
     body: &str,
@@ -2491,7 +2494,7 @@ pub fn capture_tool_in<B: DiscoveryBrowser>(
 /// already (a refusal, the filter, an import).
 pub fn capture_tool_begin<B: DiscoveryBrowser>(
     slot: &mut Option<B>,
-    imported: &mut std::collections::BTreeMap<String, Vec<crate::browser::net_capture::Captured>>,
+    imported: &mut crate::autorun::capture_tools::ImportedSets,
     root: Option<&std::path::Path>,
     tool: CaptureTool,
     body: &str,

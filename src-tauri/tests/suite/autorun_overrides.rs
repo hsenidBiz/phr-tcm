@@ -19,7 +19,7 @@ use v2_lib::ai_bridge::{
 use v2_lib::autorun::lease::Held;
 use v2_lib::autorun::overrides::{
     protected_cookie, refused_header, take_for_person, undo, with_note, Overrides, SetCookie, COOKIE_REFUSED,
-    METHOD_OVERRIDE_HEADERS, REFUSED_HEADERS, SITE_NOT_CONFIRMED, TEST_CHANGES_STUCK,
+    REFUSED_HEADERS, ROUTING_OVERRIDE_HEADERS, SITE_NOT_CONFIRMED, TEST_CHANGES_STUCK,
 };
 use v2_lib::browser::cdp::Driver;
 use v2_lib::browser::net_capture::NetCapture;
@@ -164,21 +164,49 @@ fn set_here(value: &str) -> SetCookie {
 
 /// cookie, authorization, proxy-authorization and host are never set as test
 /// headers, nor the method-override headers (a POST the save guard passes
-/// could act as a PUT), in any case; one of them refuses the whole call, and
+/// could act as a PUT) or the URL-rewrite headers (it could reach a save
+/// address the request line does not name), in any case; one of them refuses the whole call, and
 /// the browser is not asked anything.
 #[tokio::test]
 async fn refused_header_names() {
     // A replay another module's test claims would refuse these calls.
     let _a = crate::serial::autorun();
     assert_eq!(REFUSED_HEADERS, ["cookie", "authorization", "proxy-authorization", "host"]);
-    assert_eq!(METHOD_OVERRIDE_HEADERS, ["x-http-method-override", "x-http-method", "x-method-override"]);
-    for name in ["cookie", "Cookie", "AUTHORIZATION", "Proxy-Authorization", "Host", " host ", "X-HTTP-Method-Override", "x-http-method", "X-Method-Override"] {
+    assert_eq!(
+        ROUTING_OVERRIDE_HEADERS,
+        ["x-http-method-override", "x-http-method", "x-method-override", "x-original-url", "x-rewrite-url"]
+    );
+    for name in [
+        "cookie",
+        "Cookie",
+        "AUTHORIZATION",
+        "Proxy-Authorization",
+        "Host",
+        " host ",
+        "X-HTTP-Method-Override",
+        "x-http-method",
+        "X-Method-Override",
+        "X-Original-URL",
+        "x-original-url",
+        "X-REWRITE-URL",
+        " X-Rewrite-Url ",
+    ] {
         assert!(refused_header(name), "{name}");
     }
-    for name in ["X-Feature", "Accept-Language", "X-Cookie-Consent", "Hostname", "X-HTTP-Method-Name"] {
+    for name in ["X-Feature", "Accept-Language", "X-Cookie-Consent", "Hostname", "X-HTTP-Method-Name", "X-Original-Host", "X-Url"] {
         assert!(!refused_header(name), "{name}");
     }
-    for name in ["Cookie", "Authorization", "proxy-authorization", "HOST", "X-HTTP-Method-Override", "X-HTTP-Method", "x-method-override"] {
+    for name in [
+        "Cookie",
+        "Authorization",
+        "proxy-authorization",
+        "HOST",
+        "X-HTTP-Method-Override",
+        "X-HTTP-Method",
+        "x-method-override",
+        "X-Original-URL",
+        "X-Rewrite-URL",
+    ] {
         let mut slot = browser(true);
         let mut headers = serde_json::Map::new();
         headers.insert("X-Feature".into(), json!("beta"));
@@ -193,6 +221,11 @@ async fn refused_header_names() {
     let mut slot = browser(true);
     let (_, said) = set_headers_in(&mut slot, &json!({ "headers": { "X-HTTP-Method-Override": "DELETE" } })).await;
     assert!(said.contains("save or delete"), "{said}");
+    let mut slot = browser(true);
+    let (status, said) = set_headers_in(&mut slot, &json!({ "headers": { "X-Original-URL": "/Leave/Save" } })).await;
+    assert_eq!(status, 400, "{said}");
+    assert!(said.contains("another path or method") && said.contains("save or delete"), "{said}");
+    assert!(!said.contains("/Leave/Save"), "the asked value is not echoed: {said}");
 }
 
 /// Headers are merged into one set (a name in another case replaces it, a
@@ -415,6 +448,58 @@ async fn cookies_are_read_for_the_confirmed_site_not_the_page_showing() {
         assert_eq!((status, said.as_str()), (409, SITE_NOT_CONFIRMED));
     }
     assert!(slot.unwrap().d.calls_to("Network.getAllCookies").is_empty(), "cookies were read with no confirmed site");
+}
+
+/// A site that is itself a subdomain (`hr.example.com`): a `url` on its parent
+/// domain is accepted and lists only the cookies set for that domain, not
+/// the app host's own; a lookalike (`evil-example.com`) is refused; another
+/// port or an upper-case host is the same site.
+#[tokio::test]
+async fn a_cookie_url_on_a_subdomain_sites_parent_is_read_and_a_lookalike_refused() {
+    let cookies = vec![
+        plain("app_only", "a", "hr.example.com"),
+        plain("parent_wide", "p", ".example.com"),
+        plain("sibling", "s", "sso.example.com"),
+        plain("lookalike", "l", "evil-example.com"),
+    ];
+    let mut cap = NetCapture::default();
+    cap.set_app_site(Some("https://hr.example.com/Account/Login"));
+    cap.confirm_app_site("https://hr.example.com/hr/home");
+    let d = ScriptedDriver::new(move |method, _| match method {
+        "Network.getAllCookies" => Ok(json!({ "cookies": cookies.clone() })),
+        _ => Ok(json!({})),
+    })
+    .with_capture(cap);
+    let mut slot = browser_with(d, false);
+    let names = |said: &str| -> Vec<String> {
+        let mut n: Vec<String> =
+            parsed(said)["cookies"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap().to_string()).collect();
+        n.sort();
+        n
+    };
+
+    let (status, said) = cookies_in(&mut slot, &json!({})).await;
+    assert_eq!(status, 200, "{said}");
+    assert_eq!(parsed(&said)["site"], "hr.example.com");
+    assert_eq!(names(&said), ["app_only", "parent_wide"]);
+
+    let (status, said) = cookies_in(&mut slot, &json!({ "url": "https://example.com/" })).await;
+    assert_eq!(status, 200, "a parent domain is accepted: {said}");
+    assert_eq!(parsed(&said)["site"], "example.com");
+    assert_eq!(names(&said), ["parent_wide"], "only that domain's cookies, not the app host's own");
+
+    for same in ["https://hr.example.com:8443/hr/x", "HTTPS://HR.Example.COM/", "http://hr.example.com:80/"] {
+        let (status, said) = cookies_in(&mut slot, &json!({ "url": same })).await;
+        assert_eq!(status, 200, "{same}: {said}");
+        assert_eq!(parsed(&said)["site"], "hr.example.com", "{same}");
+        assert_eq!(names(&said), ["app_only", "parent_wide"], "{same}");
+    }
+
+    for outside in ["https://evil-example.com/", "https://sso.example.com/", "https://example.com.evil/", "https://xexample.com/"] {
+        let (status, said) = cookies_in(&mut slot, &json!({ "url": outside })).await;
+        assert_eq!(status, 400, "{outside}: {said}");
+        assert!(!said.contains("lookalike") && !said.contains("sibling"), "{said}");
+    }
 }
 
 // ---- the sign-in's print ---------------------------------------------------------
