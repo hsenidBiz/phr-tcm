@@ -384,14 +384,27 @@ fn poll_opts(timeout: Option<u32>) -> String {
 /// compares it (`browser::style`): a colour as the rgb() the browser
 /// reports; a quoted value as written; any other value as a pattern that
 /// ignores case - the whole value for `equals` and `not_equals`
-/// (`whole`), anywhere in it for `contains`.
+/// (`whole`), anywhere in it for `contains`. As Auto Run makes each run
+/// of spaces one, the pattern takes any run of spaces where the value has
+/// one, and any spaces around a comma.
 fn css_value(want: &str, whole: bool) -> String {
     let normal = crate::browser::style::normal(want);
     let colour = crate::browser::style::colour(want).is_some();
     if (colour || normal.contains(['"', '\''])) && whole {
         return lit(&normal);
     }
-    let source = if whole { format!("^{}$", escape_regex(&normal)) } else { escape_regex(&normal) };
+    let mut pattern = String::new();
+    let mut after_comma = false;
+    for c in normal.chars() {
+        match c {
+            ',' => pattern.push_str(r"\s*,"),
+            ' ' if after_comma => pattern.push_str(r"\s*"),
+            ' ' => pattern.push_str(r"\s+"),
+            c => pattern.push_str(&escape_regex(&c.to_string())),
+        }
+        after_comma = c == ',';
+    }
+    let source = if whole { format!("^{pattern}$") } else { pattern };
     let flags = if normal.contains(['"', '\'']) { "" } else { ", 'i'" };
     format!("new RegExp({}{flags})", lit(&source))
 }

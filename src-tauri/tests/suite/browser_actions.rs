@@ -1184,3 +1184,47 @@ fn other_style_values_compare_trimmed_and_ignoring_the_case_of_keywords() {
     assert!(judge("transition", "color 0.2s ease 0s", Want::Contains("COLOR 0.2S")).is_ok());
     assert_eq!(judge("--x", "", Want::Equals("1")).unwrap_err(), "--x is (empty), expected 1");
 }
+
+/// Every CSS named colour is read, not only the basic ones: the table is
+/// the whole CSS Color 4 list, one entry per name.
+#[test]
+fn every_css_named_colour_normalises() {
+    use v2_lib::browser::style::{colour, NAMED_COLOURS};
+    assert_eq!(NAMED_COLOURS.len(), 148);
+    let names: Vec<&str> = NAMED_COLOURS.iter().map(|(n, _)| *n).collect();
+    let mut sorted = names.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(names, sorted, "alphabetical, each name once");
+    assert_eq!(colour("rebeccapurple").as_deref(), Some("rgb(102, 51, 153)"));
+    assert_eq!(colour("Tomato").as_deref(), Some("rgb(255, 99, 71)"));
+    assert_eq!(colour("lightgoldenrodyellow").as_deref(), Some("rgb(250, 250, 210)"));
+    for (name, [r, g, b]) in NAMED_COLOURS {
+        assert_eq!(colour(name), Some(format!("rgb({r}, {g}, {b})")), "{name}");
+    }
+}
+
+/// `currentcolor` computes to the actual colour, so a check against it
+/// could never be right: it is refused where the script is written.
+#[test]
+fn expect_style_refuses_currentcolor() {
+    use v2_lib::browser::actions::STYLE_CURRENTCOLOR;
+    for (how, value) in [("equals", "currentColor"), ("contains", "1px solid currentcolor"), ("not_equals", "CURRENTCOLOR")] {
+        let a: Action = serde_json::from_value(json!({ "kind": "expect_style", "selector": "#s", "property": "border", how: value })).unwrap();
+        assert_eq!(a.validate().unwrap_err(), STYLE_CURRENTCOLOR, "{how}");
+    }
+    assert!(STYLE_CURRENTCOLOR.contains("write that colour instead"));
+}
+
+/// The browser writes a computed list with one space after each comma:
+/// a value written without them, or with spaces before them, is the same.
+#[test]
+fn comma_spacing_is_normalised() {
+    use v2_lib::browser::style::{judge, normal, Want};
+    let computed = "matrix(1, 0, 0, 1, 0, 0)";
+    assert_eq!(normal("matrix(1,0,0,1,0,0)"), computed);
+    assert_eq!(normal(" matrix(1 ,0,  0,1,0 , 0) "), computed);
+    assert!(judge("transform", computed, Want::Equals("matrix(1,0,0,1,0,0)")).is_ok());
+    assert!(judge("transform", computed, Want::Contains("1,0,0")).is_ok());
+    assert!(judge("transform", computed, Want::NotEquals("matrix(1,0,0,1,0,0)")).is_err());
+}

@@ -1600,6 +1600,10 @@ fn the_guide_teaches_expect_style() {
     for term in ["\"property\"", "`equals`", "`contains`", "`not_equals`", "computed", "rgb()", "background-color", "transition"] {
         assert!(line.contains(term), "the expect_style line never says {term}: {line}");
     }
+    let flat = line.to_lowercase();
+    for note in ["reads a colour word as a colour", "always animating can pass by chance", "currentcolor"] {
+        assert!(flat.contains(note), "the expect_style line never says {note:?}: {line}");
+    }
     // It reads one element, so the seen-check section lists it with those.
     let seen = g.split("checks that read one element").nth(1).expect("no seen-check list");
     assert!(seen[..400].contains("`expect_style`"), "the seen-check list never names expect_style");

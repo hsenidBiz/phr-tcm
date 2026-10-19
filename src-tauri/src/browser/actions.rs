@@ -1164,6 +1164,9 @@ impl Action {
                 if [equals.is_some(), contains.is_some(), not_equals.is_some()].iter().filter(|g| **g).count() != 1 {
                     return Err(STYLE_NEEDS_ONE.to_string());
                 }
+                if [equals, contains, not_equals].into_iter().flatten().any(|v| super::style::names_current_colour(v)) {
+                    return Err(STYLE_CURRENTCOLOR.to_string());
+                }
                 if contains.as_deref().is_some_and(|c| c.trim().is_empty()) {
                     return Err("expect_style has an empty contains - everything contains nothing".to_string());
                 }
@@ -1523,6 +1526,8 @@ pub const ATTRIBUTE_EQUALS_OR_ABSENT: &str =
 /// `expect_attribute` given neither.
 pub const ATTRIBUTE_NEEDS_ONE: &str =
     "expect_attribute needs \"equals\" (the value it must have) or \"absent\": true (it must not be there)";
+/// `expect_style` comparing with `currentcolor`.
+pub const STYLE_CURRENTCOLOR: &str = "expect_style cannot compare currentcolor: the computed value is always the actual colour - write that colour instead.";
 /// `expect_style` given none, or more than one, of its comparisons.
 pub const STYLE_NEEDS_ONE: &str =
     "expect_style takes exactly one of \"equals\", \"contains\" or \"not_equals\"";
