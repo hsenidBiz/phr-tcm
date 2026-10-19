@@ -704,11 +704,11 @@ fn the_browser_is_marked_with_who_opened_it() {
     // the assistant changed for testing): `Session::make_persons`.
     let persons = body("    pub(crate) async fn make_persons");
     assert!(persons.contains("self.opened_by = OpenedBy::Person;"), "{persons}");
-    assert!(persons.contains("overrides::undo"), "{persons}");
-    assert!(step.contains("session.make_persons().await;"), "{step}");
+    assert!(persons.contains("overrides::take_for_person"), "{persons}");
+    assert!(step.contains("session.make_persons().await?;"), "{step}");
     let replay = body("pub(crate) async fn replay_supervised");
     assert!(replay.contains("open_if_none(app, &mut slot, by.opens_as())"), "{replay}");
-    assert!(replay.contains("if by == ReplayBy::Person {\n        session.make_persons().await;"), "{replay}");
+    assert!(replay.contains("if by == ReplayBy::Person {\n        if let Err(why) = session.make_persons().await {"), "{replay}");
     use v2_lib::commands::autorun::{OpenedBy, ReplayBy};
     assert_eq!((ReplayBy::Person.opens_as(), ReplayBy::Assistant.opens_as()), (OpenedBy::Person, OpenedBy::Assistant));
 }

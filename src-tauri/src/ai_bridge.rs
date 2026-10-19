@@ -425,26 +425,33 @@ pub async fn route(
         // A real sign-out: the panes hear it, as they hear the reset's.
         ("POST", "/autorun-cookies-clear") => crate::commands::autorun::clear_cookies_for_assistant().await,
         ("POST", "/autorun-probe") => autorun_probe(ctx, body).await,
-        ("POST", "/autorun-try") => with_overrides_now(autorun_try(ctx, body).await),
+        ("POST", "/autorun-try") => {
+            let mut seen = None;
+            let answer = autorun_try(ctx, body, &mut seen).await;
+            with_overrides_seen(answer, seen)
+        }
         // Discovery: the assistant opens the Auto Run browser itself, signs
         // in as a saved account (the app types the password) and explores
         // the live application, one action at a time.
         ("POST", "/autorun-discover-start") => {
-            let answer = autorun_discover_start(ctx, body).await;
-            with_overrides_now(with_no_save_note(answer, discovery_no_save()))
+            let mut seen = None;
+            let answer = autorun_discover_start(ctx, body, &mut seen).await;
+            with_overrides_seen(with_no_save_note(answer, discovery_no_save()), seen)
         }
         ("POST", "/autorun-discover-action") => {
-            let answer = without_page(autorun_discover_action(ctx, body).await, body);
-            with_overrides_now(with_no_save_note(answer, discovery_no_save()))
+            let mut seen = None;
+            let answer = without_page(autorun_discover_action(ctx, body, &mut seen).await, body);
+            with_overrides_seen(with_no_save_note(answer, discovery_no_save()), seen)
         }
         ("POST", "/autorun-discover-actions") => {
-            let answer = without_page(autorun_discover_actions(ctx, body).await, body);
-            with_overrides_now(with_no_save_note(answer, discovery_no_save()))
+            let mut seen = None;
+            let answer = without_page(autorun_discover_actions(ctx, body, &mut seen).await, body);
+            with_overrides_seen(with_no_save_note(answer, discovery_no_save()), seen)
         }
         // A replay going has already ended any discovery, and holds the
         // browser: said at once rather than waited for.
         ("POST", "/autorun-discover-end") => match replay_is_holding_the_browser() {
-            Some(going) => going,
+            Some(going) => with_overrides_seen(going, None),
             None => crate::commands::autorun::end_discovery(EndedBy::Assistant).await,
         },
         // Release: every Auto Run browser record the app holds is cleared
@@ -2147,11 +2154,16 @@ async fn autorun_capture(tool: CaptureTool, body: &str) -> (u16, String) {
 }
 
 /// `answer` ending with what the assistant changed for testing in the
-/// Auto Run browser, as last published (`commands::autorun::overrides_now`):
-/// every try and discovery answer while anything is changed
-/// (`overrides::with_note`).
-fn with_overrides_now(answer: (u16, String)) -> (u16, String) {
-    crate::autorun::overrides::with_note(answer, &crate::commands::autorun::overrides_now())
+/// Auto Run browser (`overrides::with_note`): as `seen` under the session
+/// lock the moment the call finished, or - for an answer given before the
+/// browser was taken (a refusal) - as last published
+/// (`commands::autorun::overrides_now`).
+fn with_overrides_seen(
+    answer: (u16, String),
+    seen: Option<crate::autorun::overrides::Overrides>,
+) -> (u16, String) {
+    let changed = seen.unwrap_or_else(crate::commands::autorun::overrides_now);
+    crate::autorun::overrides::with_note(answer, &changed)
 }
 
 /// The assistant's test header and cookie tools (`autorun::overrides`).
@@ -2356,8 +2368,7 @@ pub async fn cookies_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &serde_
         .take(ov::MAX_LISTED)
         .map(|c| {
             let name = c["name"].as_str().unwrap_or("");
-            let host_of_set = set.cookies.get(name).and_then(|u| ov::url_host(u));
-            ov::shown_cookie(c, host_of_set.as_deref() == Some(host.as_str()))
+            ov::shown_cookie(c, set.cookies.get(name).is_some_and(|s| s.is(name, c)))
         })
         .collect();
     let answer = serde_json::json!({
@@ -2370,10 +2381,14 @@ pub async fn cookies_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &serde_
     (200, answer.to_string())
 }
 
-/// `set_autorun_cookie` over `slot`: one cookie on the page's own site (its
-/// host, `path` `/` unless asked), recorded so a reset deletes it. Refused
-/// for the sign-in's cookies (`overrides::protected_cookie`), an HttpOnly
-/// cookie of that name on the site included.
+/// `set_autorun_cookie` over `slot`: one cookie on the app's own site - the
+/// one TCM's sign-in confirmed (`overrides::confirmed_origin`), never
+/// whatever page shows - on its host only, `path` `/` unless asked;
+/// recorded exactly (`SetCookie`) so a reset deletes it only while it is
+/// still that, and left out of the sign-in's print
+/// (`Held::ignore_in_print`), so it never makes the sign-in look changed.
+/// Refused for the sign-in's cookies (`overrides::protected_cookie`), an
+/// HttpOnly cookie of that name (in any case) on the site included.
 pub async fn set_cookie_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &serde_json::Value) -> (u16, String) {
     use crate::autorun::overrides as ov;
     let ask = match ov::cookie_ask(args) {
@@ -2393,7 +2408,7 @@ pub async fn set_cookie_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &ser
     let Some(o) = p.overrides else {
         return (500, KEEPS_NO_OVERRIDES.to_string());
     };
-    let origin = match ov::page_origin(p.driver).await {
+    let origin = match ov::confirmed_origin(&*p.driver) {
         Ok(origin) => origin,
         Err(refused) => return refused,
     };
@@ -2402,13 +2417,18 @@ pub async fn set_cookie_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &ser
         Ok(c) => c,
         Err(e) => return ov::browser_failed(e),
     };
-    if existing.iter().any(|c| c["name"].as_str() == Some(ask.name.as_str()) && c["httpOnly"].as_bool() == Some(true)) {
+    let http_only_named = |c: &serde_json::Value| {
+        c["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(&ask.name)) && c["httpOnly"].as_bool() == Some(true)
+    };
+    if existing.iter().any(http_only_named) {
         return (403, ov::protected_cookie_sentence(&ask.name));
     }
     match crate::browser::cdp::Driver::call(p.driver, "Network.setCookie", ov::set_cookie_params(&ask, &origin)).await {
         Ok(reply) if reply["success"].as_bool() == Some(false) => (400, ov::COOKIE_REFUSED.to_string()),
         Ok(_) => {
-            o.cookies.insert(ask.name.clone(), format!("{origin}/"));
+            let set = ov::SetCookie { domain: host.clone(), path: ask.path.clone(), value: ask.value.clone() };
+            o.cookies.insert(ask.name.clone(), set);
+            p.lease.ignore_in_print(&ask.name);
             let said = format!("Set cookie {} on {host} (path {}). {LASTS_UNTIL}", ask.name, ask.path);
             overrides_answer(said, o)
         }
@@ -3514,7 +3534,11 @@ fn tried_addresses(action: &crate::browser::actions::Action) -> Vec<&str> {
 
 /// Run ONE action against the open page, so an assistant can find out
 /// whether a repair works before it writes the repair down.
-async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
+async fn autorun_try(
+    ctx: &BridgeContext,
+    body: &str,
+    seen: &mut Option<crate::autorun::overrides::Overrides>,
+) -> (u16, String) {
     let raw = match body_field(body, "action", "{ \"action\": <one script action> }") {
         Ok(v) => v,
         Err(refused) => return refused,
@@ -3585,6 +3609,7 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     .await;
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery(&slot);
+    *seen = Some(crate::commands::autorun::overrides_of(&slot));
     answer
 }
 
@@ -5548,7 +5573,11 @@ async fn save_discovered_area<B: DiscoveryBrowser>(
 /// and sign in as `account` (`discover_start_in`). Refused, before
 /// anything opens, while anything else holds the browser, and for an
 /// account or recipe that is not there.
-async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String) {
+async fn autorun_discover_start(
+    ctx: &BridgeContext,
+    body: &str,
+    seen: &mut Option<crate::autorun::overrides::Overrides>,
+) -> (u16, String) {
     const SHAPE: &str = "{ \"account\": <an account key>, \"area\": <an area name, optional>, \"browser\": \"edge\" | \"chrome\", optional, \"mapping\": true | false, optional, \"modules\": [<a module name>], for a mapping run, \"case_id\": <the case explored for, optional>, \"no_save\": true | false, optional }";
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -5635,6 +5664,7 @@ async fn autorun_discover_start(ctx: &BridgeContext, body: &str) -> (u16, String
     if slot.as_ref().is_some_and(|s| s.cdp.is_guarding_saves()) {
         crate::commands::autorun::answer_between_commands();
     }
+    *seen = Some(crate::commands::autorun::overrides_of(&slot));
     said_made_way(made_way, answer)
 }
 
@@ -5720,7 +5750,11 @@ pub fn said_made_way(made_way: MadeWay, (status, text): (u16, String)) -> (u16, 
 /// file), and a `navigate` or `open_tab` to a site outside the sign-in
 /// recipe's, before the browser is touched. A `use_component` may carry a
 /// `draft` component, tried in place of the saved one.
-async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, String) {
+async fn autorun_discover_action(
+    ctx: &BridgeContext,
+    body: &str,
+    seen: &mut Option<crate::autorun::overrides::Overrides>,
+) -> (u16, String) {
     const SHAPE: &str = "{ \"action\": <one script action>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional>, \"case_id\": <the case explored for, optional>, \"no_save\": true | false, optional }";
     let raw = match body_field(body, "action", SHAPE) {
         Ok(v) => v,
@@ -5775,6 +5809,7 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
     let answer = discover_action_in(&mut slot, &root, &ctx.org, &ctx.project, &action, draft.as_ref(), area.as_deref()).await;
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery(&slot);
+    *seen = Some(crate::commands::autorun::overrides_of(&slot));
     answer
 }
 
@@ -5784,7 +5819,11 @@ async fn autorun_discover_action(ctx: &BridgeContext, body: &str) -> (u16, Strin
 /// browser is touched: a batch with one refused action runs none. A
 /// `draft` is tried by each `use_component` that names it; `area` moves the
 /// discovery before the first action.
-async fn autorun_discover_actions(ctx: &BridgeContext, body: &str) -> (u16, String) {
+async fn autorun_discover_actions(
+    ctx: &BridgeContext,
+    body: &str,
+    seen: &mut Option<crate::autorun::overrides::Overrides>,
+) -> (u16, String) {
     const SHAPE: &str = concat!("{ \"actions\": [<script actions, at most ", max_batch!(), ">], \"stop_on_failure\": <true or false, optional, true by default>, \"draft\": <a component, optional, for a use_component>, \"area\": <an area name, optional>, \"case_id\": <the case explored for, optional>, \"no_save\": true | false, optional }");
     let raw = match body_field(body, "actions", SHAPE) {
         Ok(v) => v,
@@ -5886,6 +5925,7 @@ async fn autorun_discover_actions(ctx: &BridgeContext, body: &str) -> (u16, Stri
     )
     .await;
     crate::commands::autorun::publish_discovery(&slot);
+    *seen = Some(crate::commands::autorun::overrides_of(&slot));
     answer
 }
 
@@ -6511,6 +6551,29 @@ async fn wait_for_replay(
 /// step, `"page"` beside it: the page as `get_autorun_page` shows it, so the
 /// assistant can try the step at once.
 pub async fn autorun_replay_with(
+    ctx: &BridgeContext,
+    body: &str,
+    host: &'static dyn ReplayHost,
+    wait: std::time::Duration,
+) -> (u16, String) {
+    let answer = replay_answer_with(ctx, body, host, wait).await;
+    with_changes_on_a_refusal(answer)
+}
+
+/// A replay's refusal (any 4xx or 5xx) that does not name what the
+/// assistant changed for testing yet - one given before the replay took the
+/// browser - names it, as last published (`commands::autorun::overrides_now`):
+/// a replay ended by the host names it already, read under the lock.
+pub fn with_changes_on_a_refusal(answer: (u16, String)) -> (u16, String) {
+    use crate::autorun::overrides::{CHANGED_FOR_TESTING, PASSED_WITH_CHANGES};
+    if answer.0 < 400 || answer.1.contains(CHANGED_FOR_TESTING) || answer.1.contains(PASSED_WITH_CHANGES) {
+        return answer;
+    }
+    crate::autorun::overrides::with_note(answer, &crate::commands::autorun::overrides_now())
+}
+
+/// `autorun_replay_with`, before a refusal names the test changes.
+async fn replay_answer_with(
     ctx: &BridgeContext,
     body: &str,
     host: &'static dyn ReplayHost,

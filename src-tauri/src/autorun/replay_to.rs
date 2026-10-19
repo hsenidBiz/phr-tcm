@@ -630,9 +630,12 @@ pub async fn signed_in_here<D: Driver>(
     if account.as_deref() != Some(key) || !lease.holds(root, key) {
         return false;
     }
-    let Some(print) = lease.sign_in_print() else { return false };
+    if lease.sign_in_print().is_none() {
+        return false;
+    }
     let Ok(recipe) = super::recipe::load_effective_recipe(root, organization, project) else { return false };
-    if !crate::browser::session::same_cookies(d, &recipe.origins(), print).await {
+    // The assistant's test cookies are left out (`Held::same_sign_in`).
+    if !lease.same_sign_in(d, &recipe.origins()).await {
         return false;
     }
     signin::already_signed_in(d, &recipe, account.as_deref(), key, timing).await

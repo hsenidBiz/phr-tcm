@@ -109,21 +109,17 @@ impl Session {
     }
 
     /// The person takes this browser (their step, start, sign-in or
-    /// replay): it is theirs from now on, and whatever the assistant
-    /// changed for testing is taken away first, so the person's run is a
-    /// normal one (`overrides::undo`).
-    pub(crate) async fn make_persons(&mut self) {
+    /// replay): whatever the assistant changed for testing is taken away
+    /// first (`overrides::take_for_person`), and then it is theirs from now
+    /// on. When the changes would not go, `Err(TEST_CHANGES_STUCK)`: the
+    /// person's action is refused, never run with them in place, and the
+    /// browser keeps its mark.
+    pub(crate) async fn make_persons(&mut self) -> Result<(), String> {
+        let taken = crate::autorun::overrides::take_for_person(&mut self.cdp, &mut self.overrides).await;
+        show_overrides(&self.overrides);
+        taken?;
         self.opened_by = OpenedBy::Person;
-        if !self.overrides.is_empty() {
-            let left = crate::autorun::overrides::undo(&mut self.cdp, &mut self.overrides).await;
-            if !left.is_empty() {
-                crate::applog::warn(format!(
-                    "Auto Run: the person took the browser, but these test changes could not be removed: {}",
-                    left.join("; ")
-                ));
-            }
-            show_overrides(&self.overrides);
-        }
+        Ok(())
     }
 }
 
@@ -133,7 +129,9 @@ impl Session {
 static OVERRIDES_SHOWN: std::sync::Mutex<crate::autorun::overrides::Overrides> =
     std::sync::Mutex::new(crate::autorun::overrides::Overrides::new());
 
-fn show_overrides(o: &crate::autorun::overrides::Overrides) {
+/// Publish `o` as the supervised browser's overrides (`overrides_now`).
+/// Called under the session lock, after anything that changed them.
+pub fn show_overrides(o: &crate::autorun::overrides::Overrides) {
     *OVERRIDES_SHOWN.lock().unwrap_or_else(|e| e.into_inner()) = o.clone();
 }
 
@@ -144,6 +142,12 @@ pub(crate) fn publish_overrides(slot: &Option<Session>) {
         Some(s) => show_overrides(&s.overrides),
         None => show_overrides(&crate::autorun::overrides::Overrides::new()),
     }
+}
+
+/// The overrides of the browser `slot` holds, read under its lock: what a
+/// try, discovery or replay answer names the moment it finishes.
+pub(crate) fn overrides_of(slot: &Option<Session>) -> crate::autorun::overrides::Overrides {
+    slot.as_ref().map(|s| s.overrides.clone()).unwrap_or_default()
 }
 
 /// The supervised browser's overrides as last published
@@ -606,6 +610,12 @@ pub(crate) async fn end_discovery(by: crate::ai_bridge::EndedBy) -> (u16, String
     let held = slot.is_some();
     let answer = crate::ai_bridge::end_discovery_as(&mut slot, by).await;
     publish_discovery(&slot);
+    // The assistant's end names what it changed for testing, read here
+    // under the lock: the browser it keeps still has it.
+    let answer = match by {
+        crate::ai_bridge::EndedBy::Assistant => crate::autorun::overrides::with_note(answer, &overrides_of(&slot)),
+        _ => answer,
+    };
     if held && slot.is_none() {
         tell_panes_closed();
     }
@@ -1522,7 +1532,10 @@ pub async fn clear_cookies_for_assistant() -> (u16, String) {
 }
 
 /// `clear_autorun_cookies` over `slot`: a real sign-out. Every cookie of
-/// the page's site is deleted (the sign-in's too), then the browser is
+/// the app's confirmed site (`overrides::confirmed_origin`, never whatever
+/// page shows - an identity provider's cookies are never touched) is
+/// deleted, its host's and its parent domains' alike, the sign-in's too;
+/// with no confirmed site, nothing is (409). Then the browser is
 /// signed in as nobody: the account is forgotten, its cookie fingerprint
 /// and lease let go, and the panes hear it (`sign_in_forgotten_event`, as
 /// the reset tells them). The test headers go too (spec decision 1). A
@@ -1540,7 +1553,7 @@ pub async fn clear_cookies_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowse
     };
     let (host, deleted, failed, before) = {
         let p = b.parts();
-        let origin = match ov::page_origin(p.driver).await {
+        let origin = match ov::confirmed_origin(&*p.driver) {
             Ok(origin) => origin,
             Err(refused) => return (refused, None),
         };
@@ -1569,7 +1582,7 @@ pub async fn clear_cookies_in_for_assistant<B: crate::ai_bridge::DiscoveryBrowse
         let before = p.signed_in.take();
         p.lease.let_go();
         if let Some(o) = p.overrides {
-            o.cookies.retain(|_, url| ov::url_host(url).as_deref() != Some(host.as_str()));
+            o.cookies.retain(|_, set| !crate::browser::session::cookie_belongs(&set.domain, &host));
             if !o.headers.is_empty() {
                 if let Err(e) = crate::browser::cdp::Driver::set_extra_headers(p.driver, &Default::default()).await {
                     crate::applog::warn(format!("Auto Run: the test headers could not be removed at the sign-out: {e}"));
@@ -1724,7 +1737,7 @@ pub async fn auto_run_step(
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     // A browser the person runs a step in is theirs from now on, and no
     // replay carries on from where it stood.
-    session.make_persons().await;
+    session.make_persons().await?;
     session.replay_stand = None;
     hold_stepped_run(&mut session.stepping, replaying);
     note_session_use();
@@ -1824,7 +1837,7 @@ pub async fn auto_run_replay_to_step(
     let req = crate::autorun::replay_to::ReplayRequest { case_id, step, db_read_access };
     // The person's own replay, as their own step: it may lift an earlier
     // case's guard. The tabs its steps ran in go to the pane beside them.
-    let (end, tabs, _, _, _, _) = replay_supervised(&app, &organization, &project, req, ReplayBy::Person).await?;
+    let (end, tabs, _, _, _, _, _) = replay_supervised(&app, &organization, &project, req, ReplayBy::Person).await?;
     Ok(crate::autorun::replay_to::ReplayAnswer::with_tabs(end, tabs))
 }
 
@@ -1900,6 +1913,7 @@ pub(crate) async fn replay_supervised(
         Option<crate::autorun::replay_to::LeftOpen>,
         crate::autorun::replay_to::ReplayFrom,
         crate::autorun::replay_to::Reuse,
+        crate::autorun::overrides::Overrides,
     ),
     String,
 > {
@@ -1909,7 +1923,7 @@ pub(crate) async fn replay_supervised(
     const BEGINNING: ReplayFrom = ReplayFrom::Beginning;
     let _one = match OneReplay::claim() {
         Ok(one) => one,
-        Err(why) => return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING, Default::default())),
+        Err(why) => return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING, Default::default(), overrides_now())),
     };
     let root = root(app)?;
     // Its script is not deleted while the replay goes: noted before the
@@ -1918,7 +1932,7 @@ pub(crate) async fn replay_supervised(
     let _replaying = store::replaying(req.case_id);
     // Refused before anything opens.
     if let Err(why) = replay_to::check(&root, organization, project, &req) {
-        return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING, Default::default()));
+        return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING, Default::default(), overrides_now()));
     }
     let (case_id, step, db_read_access) = (req.case_id, req.step, req.db_read_access);
     let secrets = std::sync::Arc::clone(&app.state::<crate::db::DbSecrets>().0);
@@ -1926,7 +1940,7 @@ pub(crate) async fn replay_supervised(
     // A Close that took the lock first is respected: no browser is opened
     // again for a replay the person has already stopped.
     if let Some(stopped) = replay_to::stopped_before_opening(&replay_to::CANCEL) {
-        return Ok((stopped, Vec::new(), DiscoveryEnded::default(), None, BEGINNING, Default::default()));
+        return Ok((stopped, Vec::new(), DiscoveryEnded::default(), None, BEGINNING, Default::default(), overrides_now()));
     }
     // A replay never runs beside a discovery. The person's is refused; the
     // assistant's ends its own discovery first, the way End discovery does,
@@ -1943,7 +1957,7 @@ pub(crate) async fn replay_supervised(
             publish_discovery(&slot);
         }
     } else if let Err(why) = crate::ai_bridge::refuse_while_discovering(&mut slot) {
-        return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING, Default::default()));
+        return Ok((ReplayEnd::Refused(why), Vec::new(), DiscoveryEnded::default(), None, BEGINNING, Default::default(), overrides_now()));
     }
     let had_browser = slot.is_some();
     if let Err(why) = open_if_none(app, &mut slot, by.opens_as()).await {
@@ -1958,7 +1972,10 @@ pub(crate) async fn replay_supervised(
     // The person's replay makes a browser already open theirs; the
     // assistant's leaves its mark as it was.
     if by == ReplayBy::Person {
-        session.make_persons().await;
+        if let Err(why) = session.make_persons().await {
+            let changed = session.overrides.clone();
+            return Ok((ReplayEnd::Refused(why), Vec::new(), discovery, None, BEGINNING, Default::default(), changed));
+        }
     }
     // Where it starts: the assistant's own browser, open and alive, that
     // its last replay of this case left before an earlier step, with
@@ -2127,7 +2144,10 @@ pub(crate) async fn replay_supervised(
         account: s.lease.account().map(str::to_string),
         by_assistant: s.opened_by == OpenedBy::Assistant,
     });
-    Ok((end, tabs, discovery, left_open, from, reuse))
+    // What the assistant changed for testing, as it stands the moment the
+    // replay ends, read under the lock the replay ran under.
+    let changed = slot.as_ref().map(|s| s.overrides.clone()).unwrap_or_default();
+    Ok((end, tabs, discovery, left_open, from, reuse, changed))
 }
 
 /// The replay's stop control: the replay going, if any, ends at its next
@@ -2166,7 +2186,7 @@ pub async fn auto_run_check_preconditions(
         session.cdp.close_other_tabs().await;
         session.tabs_case = Some(case_id);
         // The person starting a case in this browser makes it theirs.
-        session.make_persons().await;
+        session.make_persons().await?;
         session.used_otherwise();
         note_session_use();
     }
@@ -3366,7 +3386,7 @@ pub async fn auto_run_sign_in(
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     // The person signing in here makes the browser theirs.
-    session.make_persons().await;
+    session.make_persons().await?;
     session.used_otherwise();
     note_session_use();
     crate::autorun::signin::sign_in_leased(

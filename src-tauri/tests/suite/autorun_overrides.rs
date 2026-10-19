@@ -3,22 +3,26 @@
 //! routes): guarded, named in every answer while in place, and taken away
 //! by a reset - only what the assistant set.
 //!
-//! The browser is a scripted fake: the page is on `https://hr.example`, and
-//! the cookies it holds are what `Network.getAllCookies` answers. Every
-//! call it was asked is recorded, so a test sees exactly what reached the
-//! browser - and that nothing reached it when a call was refused.
+//! The browser is a scripted fake: TCM's sign-in confirmed the app's site
+//! `https://hr.example` in its capture, the page shows whatever origin a
+//! test says, and the cookies it holds are what `Network.getAllCookies`
+//! answers. Every call it was asked is recorded, so a test sees exactly
+//! what reached the browser - and that nothing reached it when a call was
+//! refused.
 
 use crate::common::ScriptedDriver;
 use serde_json::{json, Value};
 use v2_lib::ai_bridge::{
-    cookies_in, override_tool_in, persons_browser_not_changed, set_cookie_in, set_headers_in,
-    DiscoveryBrowser, DiscoveryParts, OverrideTool,
+    cookies_in, override_tool_in, persons_browser_not_changed, set_cookie_in, set_headers_in, DiscoveryBrowser,
+    DiscoveryParts, OverrideTool,
 };
 use v2_lib::autorun::lease::Held;
 use v2_lib::autorun::overrides::{
-    protected_cookie, refused_header, undo, with_note, Overrides, COOKIE_REFUSED, REFUSED_HEADERS,
+    protected_cookie, refused_header, take_for_person, undo, with_note, Overrides, SetCookie, COOKIE_REFUSED,
+    METHOD_OVERRIDE_HEADERS, REFUSED_HEADERS, SITE_NOT_CONFIRMED, TEST_CHANGES_STUCK,
 };
 use v2_lib::browser::cdp::Driver;
+use v2_lib::browser::net_capture::NetCapture;
 use v2_lib::commands::autorun::{
     clear_cookies_in_for_assistant as clear_cookies_in, DiscoveryState, GuardOwner, NO_BROWSER_OPEN,
     REPLAY_RUNNING_AT_RESET,
@@ -26,6 +30,8 @@ use v2_lib::commands::autorun::{
 use v2_lib::events::AutorunSessionChanged;
 
 const ORIGIN: &str = "https://hr.example";
+/// The identity provider's page, where a sign-out may find the browser.
+const IDP: &str = "https://login.idp.example";
 /// The sign-in's session value: it must never show.
 const SESSION_VALUE: &str = "CfDJ8Kq2xYzSessionValue0099";
 
@@ -67,32 +73,47 @@ impl DiscoveryBrowser for Browser {
     }
 }
 
-/// The site's cookies: the sign-in's (`.AspNetCore.Cookies`, HttpOnly), an
-/// anti-forgery one, a script-readable `culture`, and an HttpOnly cookie
-/// with an innocent name; plus one of another site.
+/// The app's cookies: the sign-in's (`.AspNetCore.Cookies`, HttpOnly), an
+/// anti-forgery one, a script-readable `culture` on the parent domain, and
+/// an HttpOnly cookie with an innocent name; plus the identity provider's.
 fn jar() -> Vec<Value> {
     vec![
         json!({ "name": ".AspNetCore.Cookies", "value": SESSION_VALUE, "domain": "hr.example", "path": "/", "expires": -1, "size": 40, "httpOnly": true, "secure": true, "session": true, "sameSite": "Lax" }),
         json!({ "name": "__RequestVerificationToken_L2hy", "value": "aftok-77Qx", "domain": "hr.example", "path": "/hr", "expires": -1, "size": 30, "httpOnly": false, "secure": true, "session": true }),
         json!({ "name": "culture", "value": "en-GB", "domain": ".hr.example", "path": "/", "expires": 1_900_000_000.0, "size": 12, "httpOnly": false, "secure": false, "session": false, "sameSite": "Lax" }),
-        json!({ "name": "tenant", "value": "acme", "domain": "hr.example", "path": "/", "expires": -1, "size": 10, "httpOnly": true, "secure": true, "session": true }),
-        json!({ "name": "elsewhere", "value": "x", "domain": "other.example", "path": "/", "expires": -1, "size": 10, "httpOnly": false, "secure": false, "session": true }),
+        json!({ "name": "Tenant", "value": "acme", "domain": "hr.example", "path": "/", "expires": -1, "size": 10, "httpOnly": true, "secure": true, "session": true }),
+        json!({ "name": "ESTSAUTH", "value": "idp-session", "domain": "login.idp.example", "path": "/", "expires": -1, "size": 10, "httpOnly": true, "secure": true, "session": true }),
+        json!({ "name": "idp_lang", "value": "en", "domain": ".idp.example", "path": "/", "expires": -1, "size": 10, "httpOnly": false, "secure": true, "session": true }),
     ]
 }
 
-/// A page on `ORIGIN` holding `jar()`.
-fn page() -> ScriptedDriver {
-    ScriptedDriver::new(|method, params| match method {
-        "Runtime.evaluate" if params["expression"] == "location.origin" => Ok(json!({ "result": { "value": ORIGIN } })),
-        "Network.getAllCookies" => Ok(json!({ "cookies": jar() })),
+/// A capture whose site TCM's sign-in confirmed as `ORIGIN`.
+fn confirmed() -> NetCapture {
+    let mut cap = NetCapture::default();
+    cap.set_app_site(Some("https://hr.example/Account/Login"));
+    cap.confirm_app_site("https://hr.example/hr/home");
+    cap
+}
+
+/// A page showing `origin`, holding `cookies`, whose app site is confirmed.
+fn page_on(origin: &'static str, cookies: Vec<Value>) -> ScriptedDriver {
+    ScriptedDriver::new(move |method, params| match method {
+        "Runtime.evaluate" if params["expression"] == "location.origin" => Ok(json!({ "result": { "value": origin } })),
+        "Network.getAllCookies" => Ok(json!({ "cookies": cookies.clone() })),
         "Network.setCookie" => Ok(json!({ "success": true })),
         _ => Ok(json!({})),
     })
+    .with_capture(confirmed())
 }
 
-fn browser(assistant: bool) -> Option<Browser> {
+/// The app's page holding `jar()`.
+fn page() -> ScriptedDriver {
+    page_on(ORIGIN, jar())
+}
+
+fn browser_with(d: ScriptedDriver, assistant: bool) -> Option<Browser> {
     Some(Browser {
-        d: page(),
+        d,
         lease: Held::supervised(),
         account: Some("admin".into()),
         discovery: None,
@@ -102,6 +123,10 @@ fn browser(assistant: bool) -> Option<Browser> {
         assistant,
         taken_over: 0,
     })
+}
+
+fn browser(assistant: bool) -> Option<Browser> {
+    browser_with(page(), assistant)
 }
 
 fn discovering() -> Option<DiscoveryState> {
@@ -126,25 +151,38 @@ fn methods(b: &Option<Browser>) -> Vec<String> {
     b.as_ref().unwrap().d.methods()
 }
 
+/// A cookie as the browser lists it, on `domain` at `/`, readable by scripts.
+fn plain(name: &str, value: &str, domain: &str) -> Value {
+    json!({ "name": name, "value": value, "domain": domain, "path": "/", "expires": -1, "size": 8, "httpOnly": false, "secure": false, "session": true })
+}
+
+fn set_here(value: &str) -> SetCookie {
+    SetCookie { domain: "hr.example".into(), path: "/".into(), value: value.into() }
+}
+
 // ---- headers ------------------------------------------------------------------
 
 /// cookie, authorization, proxy-authorization and host are never set as test
-/// headers, in any case; one of them refuses the whole call, and the browser
-/// is not asked anything.
+/// headers, nor the method-override headers (a POST the save guard passes
+/// could act as a PUT), in any case; one of them refuses the whole call, and
+/// the browser is not asked anything.
 #[tokio::test]
 async fn refused_header_names() {
+    // A replay another module's test claims would refuse these calls.
+    let _a = crate::serial::autorun();
     assert_eq!(REFUSED_HEADERS, ["cookie", "authorization", "proxy-authorization", "host"]);
-    for name in ["cookie", "Cookie", "AUTHORIZATION", "Proxy-Authorization", "Host", " host "] {
+    assert_eq!(METHOD_OVERRIDE_HEADERS, ["x-http-method-override", "x-http-method", "x-method-override"]);
+    for name in ["cookie", "Cookie", "AUTHORIZATION", "Proxy-Authorization", "Host", " host ", "X-HTTP-Method-Override", "x-http-method", "X-Method-Override"] {
         assert!(refused_header(name), "{name}");
     }
-    for name in ["X-Feature", "Accept-Language", "X-Cookie-Consent", "Hostname"] {
+    for name in ["X-Feature", "Accept-Language", "X-Cookie-Consent", "Hostname", "X-HTTP-Method-Name"] {
         assert!(!refused_header(name), "{name}");
     }
-    for name in ["Cookie", "Authorization", "proxy-authorization", "HOST"] {
+    for name in ["Cookie", "Authorization", "proxy-authorization", "HOST", "X-HTTP-Method-Override", "X-HTTP-Method", "x-method-override"] {
         let mut slot = browser(true);
         let mut headers = serde_json::Map::new();
         headers.insert("X-Feature".into(), json!("beta"));
-        headers.insert(name.into(), json!("x"));
+        headers.insert(name.into(), json!("PUT"));
         let args = json!({ "headers": headers });
         let (status, said) = set_headers_in(&mut slot, &args).await;
         assert_eq!(status, 400, "{name}: {said}");
@@ -152,12 +190,17 @@ async fn refused_header_names() {
         assert!(methods(&slot).is_empty(), "{name}: the browser was asked {:?}", methods(&slot));
         assert!(slot.unwrap().overrides.is_empty());
     }
+    let mut slot = browser(true);
+    let (_, said) = set_headers_in(&mut slot, &json!({ "headers": { "X-HTTP-Method-Override": "DELETE" } })).await;
+    assert!(said.contains("save or delete"), "{said}");
 }
 
 /// Headers are merged into one set (a name in another case replaces it, a
 /// null removes it), sent to the browser whole, and named - names only.
 #[tokio::test]
 async fn headers_are_merged_sent_whole_and_named() {
+    // A replay another module's test claims would refuse these calls.
+    let _a = crate::serial::autorun();
     let mut slot = browser(true);
     let (status, said) = set_headers_in(&mut slot, &json!({ "headers": { "X-Feature": "beta", "Accept-Language": "fr" } })).await;
     assert_eq!(status, 200, "{said}");
@@ -186,6 +229,8 @@ async fn headers_are_merged_sent_whole_and_named() {
 /// still stopped. (`browser_tabs` shows the same on a real connection.)
 #[tokio::test]
 async fn a_set_header_leaves_the_save_guard_alone() {
+    // A replay another module's test claims would refuse these calls.
+    let _a = crate::serial::autorun();
     let mut slot = browser(true);
     let before = {
         let b = slot.as_mut().unwrap();
@@ -206,26 +251,34 @@ async fn a_set_header_leaves_the_save_guard_alone() {
 // ---- cookies ------------------------------------------------------------------
 
 /// Review Focus 3: the sign-in's cookies are refused - `.ASPXAUTH`, the
-/// other ASP.NET sign-in and anti-forgery names, a secret-word name, and an
-/// HttpOnly cookie of the site whatever its name - and nothing is set; an
-/// ordinary cookie like `culture` is set on the page's own site, recorded,
-/// and named.
+/// other ASP.NET sign-in and anti-forgery names, a secret-word name (`auth`
+/// as a word of its own), and an HttpOnly cookie of the site whatever its
+/// name, in any case - and nothing is set; an ordinary cookie like `culture`
+/// (or `author`) is set on the app's site, recorded exactly, and named.
 #[tokio::test]
 async fn the_sign_in_cookies_are_refused_and_culture_is_set() {
+    // A replay another module's test claims would refuse these calls.
+    let _a = crate::serial::autorun();
     for name in [
         ".ASPXAUTH",
+        ".aspxauth",
         ".AspNetCore.Cookies",
-        ".AspNetCore.Session",
+        ".ASPNETCORE.SESSION",
         "ASP.NET_SessionId",
+        "asp.net_sessionid",
         "__RequestVerificationToken",
-        "__RequestVerificationToken_L2hy",
+        "__requestverificationtoken_L2hy",
         "session_id",
         "AuthState",
+        "authToken",
+        "AUTHTOKEN",
         "access_token",
         "my_password",
         "api_secret",
         "remember_cookie",
+        // HttpOnly on the site as `Tenant`: refused in any case.
         "tenant",
+        "TENANT",
     ] {
         let mut slot = browser(true);
         let (status, said) = set_cookie_in(&mut slot, &json!({ "name": name, "value": "x" })).await;
@@ -235,7 +288,13 @@ async fn the_sign_in_cookies_are_refused_and_culture_is_set() {
         assert!(slot.unwrap().overrides.is_empty());
     }
     assert!(protected_cookie("anything", true), "an HttpOnly cookie is the sign-in's");
-    assert!(!protected_cookie("culture", false) && !protected_cookie("feature_flags", false));
+    for name in ["culture", "feature_flags", "author", "Authority"] {
+        assert!(!protected_cookie(name, false), "{name}");
+    }
+
+    let mut slot = browser(true);
+    let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "author", "value": "kim" })).await;
+    assert_eq!(status, 200, "author: {said}");
 
     let mut slot = browser(true);
     let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "culture", "value": "fr-FR", "same_site": "lax" })).await;
@@ -244,20 +303,49 @@ async fn the_sign_in_cookies_are_refused_and_culture_is_set() {
     let b = slot.unwrap();
     let set = b.d.calls_to("Network.setCookie");
     assert_eq!(set, vec![json!({ "name": "culture", "value": "fr-FR", "url": "https://hr.example/", "path": "/", "sameSite": "Lax" })]);
-    assert_eq!(b.overrides.cookies.get("culture").map(String::as_str), Some("https://hr.example/"));
+    assert_eq!(b.overrides.cookies.get("culture"), Some(&set_here("fr-FR")));
+    assert!(b.lease.ignored_in_print().contains("culture"), "the sign-in's print still counts it");
     assert_eq!(b.account.as_deref(), Some("admin"), "a cookie set changed the account");
+}
+
+/// Ruling B: a cookie is set on the app's confirmed site whatever page
+/// shows - the identity provider's included - and with no confirmed site
+/// nothing is set.
+#[tokio::test]
+async fn a_cookie_is_set_on_the_apps_confirmed_site_never_the_page_showing() {
+    // A replay another module's test claims would refuse these calls.
+    let _a = crate::serial::autorun();
+    let mut slot = browser_with(page_on(IDP, jar()), true);
+    let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "culture", "value": "fr-FR" })).await;
+    assert_eq!(status, 200, "{said}");
+    let b = slot.unwrap();
+    assert_eq!(b.d.calls_to("Network.setCookie")[0]["url"], "https://hr.example/");
+    assert!(!b.d.calls_to("Runtime.evaluate").iter().any(|p| p["expression"] == "location.origin"), "the page was asked");
+
+    let unconfirmed = ScriptedDriver::new(|method, _| match method {
+        "Network.getAllCookies" => Ok(json!({ "cookies": jar() })),
+        _ => Ok(json!({})),
+    })
+    .with_capture(NetCapture::default());
+    let mut slot = browser_with(unconfirmed, true);
+    let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "culture", "value": "fr-FR" })).await;
+    assert_eq!((status, said.as_str()), (409, SITE_NOT_CONFIRMED));
+    assert_eq!(SITE_NOT_CONFIRMED, "The app's site is not confirmed yet: sign in through a replay or a discovery first.");
+    assert!(methods(&slot).is_empty());
 }
 
 /// A cookie the browser will not take is said so, and not recorded.
 #[tokio::test]
 async fn a_cookie_the_browser_refuses_is_not_recorded() {
-    let mut slot = browser(true);
-    slot.as_mut().unwrap().d = ScriptedDriver::new(|method, params| match method {
-        "Runtime.evaluate" if params["expression"] == "location.origin" => Ok(json!({ "result": { "value": ORIGIN } })),
+    // A replay another module's test claims would refuse these calls.
+    let _a = crate::serial::autorun();
+    let refusing = ScriptedDriver::new(|method, _| match method {
         "Network.getAllCookies" => Ok(json!({ "cookies": [] })),
         "Network.setCookie" => Ok(json!({ "success": false })),
         _ => Ok(json!({})),
-    });
+    })
+    .with_capture(confirmed());
+    let mut slot = browser_with(refusing, true);
     let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "flag", "value": "1", "same_site": "None" })).await;
     assert_eq!((status, said.as_str()), (400, COOKIE_REFUSED));
     assert!(slot.unwrap().overrides.is_empty());
@@ -281,19 +369,58 @@ async fn a_cookie_value_of_the_sign_in_is_hidden_when_read() {
     assert_eq!(session["http_only"], true);
     assert_eq!(session["expires"], "session");
     assert_eq!(by_name("__RequestVerificationToken_L2hy").unwrap()["value"], "(hidden)");
-    assert_eq!(by_name("tenant").unwrap()["value"], "(hidden)");
+    assert_eq!(by_name("Tenant").unwrap()["value"], "(hidden)");
     let culture = by_name("culture").unwrap();
     assert_eq!((culture["value"].as_str(), culture["protected"].as_bool()), (Some("en-GB"), Some(false)));
-    assert!(by_name("elsewhere").is_none(), "another site's cookie was listed");
+    assert!(by_name("ESTSAUTH").is_none(), "another site's cookie was listed");
     assert_eq!(v["total"], 4);
 
     // `url` names the site instead of the page's.
-    let (status, said) = cookies_in(&mut slot, &json!({ "url": "https://other.example/x?y=1" })).await;
+    let (status, said) = cookies_in(&mut slot, &json!({ "url": "https://login.idp.example/x?y=1" })).await;
     assert_eq!(status, 200, "{said}");
     let v = parsed(&said);
-    assert_eq!(v["site"], "other.example");
-    assert_eq!(v["cookies"].as_array().unwrap().len(), 1);
+    assert_eq!(v["site"], "login.idp.example");
+    assert_eq!(v["cookies"].as_array().unwrap().len(), 2);
+    assert!(!said.contains("idp-session"));
     assert_eq!(cookies_in(&mut slot, &json!({ "url": "ftp://x" })).await.0, 400);
+}
+
+// ---- the sign-in's print ---------------------------------------------------------
+
+/// Ruling A: the sign-in's cookie print leaves out the cookies the assistant
+/// set, so a changed `culture` never makes TCM think the sign-in changed; a
+/// changed sign-in cookie still does.
+#[tokio::test]
+async fn a_test_cookie_never_makes_the_sign_in_look_changed() {
+    // A replay another module's test claims would refuse these calls.
+    let _a = crate::serial::autorun();
+    let origins = [ORIGIN.to_string()];
+    let mut slot = browser(true);
+    {
+        let b = slot.as_mut().unwrap();
+        let print = v2_lib::browser::session::cookie_print(&mut b.d, &origins).await;
+        assert!(print.is_some());
+        b.lease.note_sign_in(print);
+        assert!(b.lease.same_sign_in(&mut b.d, &origins).await);
+    }
+    let changed = |culture: &'static str, session: &'static str| {
+        let mut cookies = jar();
+        cookies[2]["value"] = json!(culture);
+        cookies[0]["value"] = json!(session);
+        page_on(ORIGIN, cookies)
+    };
+    // Before the assistant set it, a changed culture is a changed sign-in.
+    let lease = &slot.as_ref().unwrap().lease;
+    assert!(!lease.same_sign_in(&mut changed("fr-FR", SESSION_VALUE), &origins).await);
+
+    let (status, said) = set_cookie_in(&mut slot, &json!({ "name": "Culture", "value": "fr-FR" })).await;
+    assert_eq!(status, 200, "{said}");
+    let lease = &slot.as_ref().unwrap().lease;
+    assert!(lease.same_sign_in(&mut changed("fr-FR", SESSION_VALUE), &origins).await, "the test cookie changed the sign-in");
+    let mut gone = jar();
+    gone.remove(2);
+    assert!(lease.same_sign_in(&mut page_on(ORIGIN, gone), &origins).await, "a reset deleting it changed the sign-in");
+    assert!(!lease.same_sign_in(&mut changed("fr-FR", "another-session-value"), &origins).await, "a new sign-in went unseen");
 }
 
 // ---- who may act ----------------------------------------------------------------
@@ -303,6 +430,8 @@ async fn a_cookie_value_of_the_sign_in_is_hidden_when_read() {
 /// browser they answer 404; while a replay runs, 409.
 #[tokio::test]
 async fn acting_tools_refuse_in_the_persons_browser() {
+    // A replay another module's test claims would refuse these calls.
+    let _a = crate::serial::autorun();
     let refused = persons_browser_not_changed();
     let calls = [
         (OverrideTool::SetHeaders, json!({ "headers": { "X-Feature": "beta" } })),
@@ -330,7 +459,6 @@ async fn acting_tools_refuse_in_the_persons_browser() {
     }
     assert!(refused.contains("the person's Auto Run browser is open"), "{refused}");
 
-    let _a = crate::serial::autorun();
     let replay = v2_lib::autorun::replay_to::OneReplay::claim().unwrap();
     for (tool, args) in &calls {
         let mut slot = browser(true);
@@ -341,19 +469,53 @@ async fn acting_tools_refuse_in_the_persons_browser() {
     drop(replay);
 }
 
+/// The person taking the browser takes the assistant's test changes away
+/// first; when they will not go, the person's action is refused, never run
+/// with them in place.
+#[tokio::test]
+async fn the_person_never_runs_with_the_assistants_test_changes() {
+    let mut o = Overrides::default();
+    o.headers.insert("X-Feature".into(), "beta".into());
+    o.cookies.insert("culture".into(), set_here("fr-FR"));
+    let mut d = page_on(ORIGIN, vec![plain("culture", "fr-FR", "hr.example")]);
+    assert_eq!(take_for_person(&mut d, &mut o).await, Ok(()));
+    assert!(o.is_empty());
+    assert_eq!(d.calls_to("Network.deleteCookies"), vec![json!({ "name": "culture", "domain": "hr.example", "path": "/" })]);
+
+    let mut o = Overrides::default();
+    o.headers.insert("X-Feature".into(), "beta".into());
+    let mut stuck = ScriptedDriver::new(|method, _| match method {
+        "Network.setExtraHTTPHeaders" => Err(v2_lib::browser::cdp::CdpError::Protocol {
+            method: method.into(),
+            message: "refused by the test".into(),
+        }),
+        _ => Ok(json!({})),
+    });
+    assert_eq!(take_for_person(&mut stuck, &mut o).await, Err(TEST_CHANGES_STUCK.to_string()));
+    assert_eq!(TEST_CHANGES_STUCK, "Test changes made by the assistant could not be removed: use Release browser, then try again.");
+    assert!(!o.is_empty(), "what would not go was forgotten");
+    // Nothing to take away: nothing is asked.
+    let mut idle = ScriptedDriver::new(|_, _| Ok(json!({})));
+    assert_eq!(take_for_person(&mut idle, &mut Overrides::default()).await, Ok(()));
+    assert!(idle.methods().is_empty());
+}
+
 // ---- the sign-out ---------------------------------------------------------------
 
-/// clear_autorun_cookies is a real sign-out: every cookie of the site is
-/// deleted (the sign-in's too, never another site's), the account is
-/// forgotten with its cookie fingerprint, the lease is let go, the panes
-/// hear nobody is signed in, the test headers go too - and a discovery
-/// going keeps going.
+/// clear_autorun_cookies is a real sign-out: every cookie of the app's
+/// confirmed site is deleted (its host's and its parent domain's, the
+/// sign-in's too, never the identity provider's - even with the IdP's page
+/// showing), the account is forgotten with its cookie fingerprint, the lease
+/// is let go, the panes hear nobody is signed in, the test headers go too -
+/// and a discovery going keeps going.
 #[tokio::test]
 async fn clear_cookies_signs_out_and_lets_the_lease_go() {
+    // A replay another module's test claims would refuse these calls.
+    let _a = crate::serial::autorun();
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     let env = v2_lib::environments::active_id(dir.path()).unwrap();
-    let mut slot = browser(true);
+    let mut slot = browser_with(page_on(IDP, jar()), true);
     {
         let b = slot.as_mut().unwrap();
         b.discovery = discovering();
@@ -362,7 +524,7 @@ async fn clear_cookies_signs_out_and_lets_the_lease_go() {
         assert!(print.is_some());
         b.lease.note_sign_in(print);
         b.overrides.headers.insert("X-Feature".into(), "beta".into());
-        b.overrides.cookies.insert("culture".into(), "https://hr.example/".into());
+        b.overrides.cookies.insert("culture".into(), set_here("fr-FR"));
         b.d.calls.clear();
     }
     assert!(v2_lib::autorun::lease::is_held(&env, "admin"));
@@ -377,8 +539,9 @@ async fn clear_cookies_signs_out_and_lets_the_lease_go() {
     let b = slot.as_ref().unwrap();
     let deleted: Vec<String> =
         b.d.calls_to("Network.deleteCookies").iter().map(|c| c["name"].as_str().unwrap().to_string()).collect();
-    assert_eq!(deleted, [".AspNetCore.Cookies", "__RequestVerificationToken_L2hy", "culture", "tenant"]);
+    assert_eq!(deleted, [".AspNetCore.Cookies", "__RequestVerificationToken_L2hy", "culture", "Tenant"], "the IdP's cookies were touched");
     assert_eq!(b.d.calls_to("Network.deleteCookies")[1], json!({ "name": "__RequestVerificationToken_L2hy", "domain": "hr.example", "path": "/hr" }));
+    assert_eq!(b.d.calls_to("Network.deleteCookies")[2]["domain"], ".hr.example", "the parent domain's cookie was kept");
     assert_eq!(b.account, None, "still signed in as an account");
     assert!(b.lease.sign_in_print().is_none(), "the cookie fingerprint was kept");
     assert_eq!(b.lease.account(), None, "the lease was kept");
@@ -392,25 +555,47 @@ async fn clear_cookies_signs_out_and_lets_the_lease_go() {
     let ((status, _), event) = clear_cookies_in(&mut slot).await;
     assert_eq!(status, 200);
     assert_eq!(event, None);
+
+    // With no confirmed site nothing is deleted.
+    let unconfirmed = ScriptedDriver::new(|method, _| match method {
+        "Network.getAllCookies" => Ok(json!({ "cookies": jar() })),
+        _ => Ok(json!({})),
+    })
+    .with_capture(NetCapture::default());
+    let mut slot = browser_with(unconfirmed, true);
+    let ((status, said), event) = clear_cookies_in(&mut slot).await;
+    assert_eq!((status, said.as_str(), event), (409, SITE_NOT_CONFIRMED, None));
+    assert!(methods(&slot).is_empty());
+    assert_eq!(slot.unwrap().account.as_deref(), Some("admin"));
 }
 
 // ---- the reset ------------------------------------------------------------------
 
 /// The assistant's reset takes away its test headers and deletes the
-/// cookies it set - only those: never the sign-in's or any other the page
-/// set - whatever the home page then does.
+/// cookies it set - only those, and only while each is still exactly what
+/// it set: one the sign-in wrote over since is left alone. Never the
+/// sign-in's or any other cookie the page set - whatever the home page then
+/// does.
 #[tokio::test]
 async fn reset_removes_only_what_the_assistant_set() {
+    // A replay another module's test claims would refuse these calls.
+    let _a = crate::serial::autorun();
     use v2_lib::commands::autorun::reset_in_for_assistant;
     let _l = crate::serial::account_leases();
     let dir = tempfile::tempdir().unwrap();
     v2_lib::autorun::recipe::save_recipe(dir.path(), "acme", "Web", &crate::common::menu_recipe()).unwrap();
-    let mut slot = browser(true);
+    let mut cookies = jar();
+    cookies.push(plain("culture", "fr-FR", "hr.example"));
+    cookies.push(plain("feature_flags", "on", "hr.example"));
+    // The assistant set `theme`, and a sign-in has since written its own.
+    cookies.push(plain("theme", "app-default", "hr.example"));
+    let mut slot = browser_with(page_on(ORIGIN, cookies), true);
     {
         let b = slot.as_mut().unwrap();
         b.overrides.headers.insert("X-Feature".into(), "beta".into());
-        b.overrides.cookies.insert("culture".into(), "https://hr.example/".into());
-        b.overrides.cookies.insert("feature_flags".into(), "https://hr.example/".into());
+        b.overrides.cookies.insert("culture".into(), set_here("fr-FR"));
+        b.overrides.cookies.insert("feature_flags".into(), set_here("on"));
+        b.overrides.cookies.insert("theme".into(), set_here("dark"));
     }
     let quick = v2_lib::browser::timing::Timing {
         action_ms: 300,
@@ -429,10 +614,10 @@ async fn reset_removes_only_what_the_assistant_set() {
     assert_eq!(
         deleted,
         vec![
-            json!({ "name": "culture", "url": "https://hr.example/" }),
-            json!({ "name": "feature_flags", "url": "https://hr.example/" }),
+            json!({ "name": "culture", "domain": "hr.example", "path": "/" }),
+            json!({ "name": "feature_flags", "domain": "hr.example", "path": "/" }),
         ],
-        "the reset deleted a cookie the assistant did not set"
+        "the reset deleted a cookie that was not the one the assistant set"
     );
 
     // A reset with nothing changed sends nothing of the kind.
@@ -446,6 +631,7 @@ async fn reset_removes_only_what_the_assistant_set() {
 #[tokio::test]
 async fn what_the_browser_would_not_take_away_stays_named() {
     let mut d = ScriptedDriver::new(|method, _| match method {
+        "Network.getAllCookies" => Ok(json!({ "cookies": [plain("culture", "fr-FR", "hr.example")] })),
         "Network.deleteCookies" => Err(v2_lib::browser::cdp::CdpError::Protocol {
             method: "Network.deleteCookies".into(),
             message: "refused by the test".into(),
@@ -454,7 +640,7 @@ async fn what_the_browser_would_not_take_away_stays_named() {
     });
     let mut o = Overrides::default();
     o.headers.insert("X-Feature".into(), "beta".into());
-    o.cookies.insert("culture".into(), "https://hr.example/".into());
+    o.cookies.insert("culture".into(), set_here("fr-FR"));
     let left = undo(&mut d, &mut o).await;
     assert_eq!(left, vec!["cookie culture".to_string()]);
     assert!(o.headers.is_empty());
@@ -470,12 +656,12 @@ async fn what_the_browser_would_not_take_away_stays_named() {
 fn every_answer_ends_with_what_is_changed_for_testing() {
     let mut o = Overrides::default();
     assert_eq!(o.changed_line(), None);
-    let plain = (200, json!({ "ok": true, "page": "- button" }).to_string());
-    assert_eq!(with_note(plain.clone(), &o), plain);
+    let plain_answer = (200, json!({ "ok": true, "page": "- button" }).to_string());
+    assert_eq!(with_note(plain_answer.clone(), &o), plain_answer);
 
     o.headers.insert("X-Feature".into(), "beta".into());
     o.headers.insert("Accept-Language".into(), "fr".into());
-    o.cookies.insert("culture".into(), "https://hr.example/".into());
+    o.cookies.insert("culture".into(), set_here("fr-FR"));
     let line = "Changed for testing: header Accept-Language, X-Feature; cookie culture.";
     assert_eq!(o.changed_line().as_deref(), Some(line));
     assert_eq!(
@@ -483,17 +669,40 @@ fn every_answer_ends_with_what_is_changed_for_testing() {
         Some("Passed with these changes in place: header Accept-Language, X-Feature; cookie culture.")
     );
 
-    let (status, text) = with_note(plain, &o);
+    let (status, text) = with_note(plain_answer, &o);
     assert_eq!(status, 200);
     let v = parsed(&text);
     let last = v.as_object().unwrap().iter().last().unwrap();
     assert_eq!((last.0.as_str(), last.1), ("changed_for_testing", &json!(line)));
-    assert!(!text.contains("beta") && !text.contains("fr\""), "a value was named: {text}");
+    assert!(!text.contains("beta") && !text.contains("fr-FR"), "a value was named: {text}");
 
     let (status, text) = with_note((409, "the case has no saved script".to_string()), &o);
     assert_eq!((status, text.as_str()), (409, format!("the case has no saved script\n{line}").as_str()));
 
     let mut cookies_only = Overrides::default();
-    cookies_only.cookies.insert("culture".into(), "https://hr.example/".into());
+    cookies_only.cookies.insert("culture".into(), set_here("fr-FR"));
     assert_eq!(cookies_only.changed_line().as_deref(), Some("Changed for testing: cookie culture."));
+}
+
+/// The answers take what is changed under the session lock, the moment the
+/// call finishes - try, discovery start, action and batch, the assistant's
+/// end of a discovery and its replay - not from the published copy
+/// afterwards.
+#[test]
+fn the_answers_read_what_is_changed_under_the_lock() {
+    let norm = |s: &str| s.replace("\r\n", "\n");
+    let bridge = norm(include_str!("../../src/ai_bridge.rs"));
+    let commands = norm(include_str!("../../src/commands/autorun.rs"));
+    let host = norm(include_str!("../../src/commands/ai_bridge.rs"));
+    let body = |text: &str, start: &str| -> String {
+        let from = &text[text.find(start).unwrap_or_else(|| panic!("{start} is gone"))..];
+        from[..from.find("\n}\n").unwrap()].to_string()
+    };
+    for f in ["async fn autorun_try(", "async fn autorun_discover_start(", "async fn autorun_discover_action(", "async fn autorun_discover_actions("] {
+        assert!(body(&bridge, f).contains("*seen = Some(crate::commands::autorun::overrides_of(&slot));"), "{f}");
+    }
+    assert!(body(&commands, "pub(crate) async fn end_discovery(").contains("with_note(answer, &overrides_of(&slot))"));
+    let replay = body(&commands, "pub(crate) async fn replay_supervised(");
+    assert!(replay.contains("let changed = slot.as_ref().map(|s| s.overrides.clone()).unwrap_or_default();"), "{replay}");
+    assert!(!host.contains("overrides_now()"), "the replay host reads the published copy");
 }

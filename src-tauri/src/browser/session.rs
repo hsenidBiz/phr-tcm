@@ -71,11 +71,13 @@ async fn own_cookies<D: Driver>(d: &mut D, origins: &[String]) -> Result<Vec<Val
 /// and its `Debug` shows only how many cookies it covers. The same cookies
 /// with the same values later (`same_cookies`) are the same sign-in; a value
 /// changed or a cookie gone is not. A cookie the page set after the sign-in
-/// is not part of it.
+/// is not part of it. Each cookie has a digest of its own, so a comparison
+/// can leave out the ones the assistant changed for testing
+/// (`same_cookies_except`).
 #[derive(Clone, PartialEq, Eq)]
 pub struct CookiePrint {
     keys: Vec<(String, String, String)>,
-    digest: Vec<u8>,
+    digests: Vec<Vec<u8>>,
 }
 
 impl std::fmt::Debug for CookiePrint {
@@ -89,19 +91,26 @@ fn cookie_key(c: &Value) -> (String, String, String) {
     (s("name"), s("domain").to_ascii_lowercase(), s("path"))
 }
 
-/// The digest of `keys`' values among `cookies`, in `keys`' order; `None`
-/// when one of them is not there.
-fn digest_of(cookies: &[Value], keys: &[(String, String, String)]) -> Option<Vec<u8>> {
+/// The digest of one cookie: its key and its value.
+fn digest_one(key: &(String, String, String), value: &str) -> Vec<u8> {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
-    for key in keys {
-        let c = cookies.iter().find(|c| cookie_key(c) == *key)?;
-        for part in [key.0.as_str(), key.1.as_str(), key.2.as_str(), c["value"].as_str().unwrap_or("")] {
-            h.update((part.len() as u64).to_le_bytes());
-            h.update(part.as_bytes());
-        }
+    for part in [key.0.as_str(), key.1.as_str(), key.2.as_str(), value] {
+        h.update((part.len() as u64).to_le_bytes());
+        h.update(part.as_bytes());
     }
-    Some(h.finalize().to_vec())
+    h.finalize().to_vec()
+}
+
+/// The cookie of `key` among `cookies`, if there.
+fn cookie_of<'a>(cookies: &'a [Value], key: &(String, String, String)) -> Option<&'a Value> {
+    cookies.iter().find(|c| cookie_key(c) == *key)
+}
+
+/// The digest of each of `keys`' values among `cookies`, in `keys`' order;
+/// `None` when one of them is not there.
+fn digests_of(cookies: &[Value], keys: &[(String, String, String)]) -> Option<Vec<Vec<u8>>> {
+    keys.iter().map(|key| cookie_of(cookies, key).map(|c| digest_one(key, c["value"].as_str().unwrap_or("")))).collect()
 }
 
 /// The print of the sign-in the browser holds now: its own cookies for
@@ -115,18 +124,32 @@ pub async fn cookie_print<D: Driver>(d: &mut D, origins: &[String]) -> Option<Co
     if keys.is_empty() {
         return None;
     }
-    let digest = digest_of(&cookies, &keys)?;
-    Some(CookiePrint { keys, digest })
+    let digests = digests_of(&cookies, &keys)?;
+    Some(CookiePrint { keys, digests })
 }
 
 /// Does the browser still hold the sign-in `print` was taken of: each of
 /// its cookies there, with the same value? Read only; a browser that does
 /// not answer does not.
 pub async fn same_cookies<D: Driver>(d: &mut D, origins: &[String], print: &CookiePrint) -> bool {
-    match own_cookies(d, origins).await {
-        Ok(cookies) => digest_of(&cookies, &print.keys).is_some_and(|now| now == print.digest),
-        Err(_) => false,
-    }
+    same_cookies_except(d, origins, print, &std::collections::BTreeSet::new()).await
+}
+
+/// `same_cookies`, leaving out every cookie named in `ignored` (lower case,
+/// matched in any case): the ones the assistant changed for testing
+/// (`autorun::lease::Held::ignore_in_print`), so a test cookie - a changed
+/// `culture` - never makes the sign-in look changed.
+pub async fn same_cookies_except<D: Driver>(
+    d: &mut D,
+    origins: &[String],
+    print: &CookiePrint,
+    ignored: &std::collections::BTreeSet<String>,
+) -> bool {
+    let Ok(cookies) = own_cookies(d, origins).await else { return false };
+    print.keys.iter().zip(&print.digests).all(|(key, want)| {
+        ignored.contains(&key.0.to_ascii_lowercase())
+            || cookie_of(&cookies, key).is_some_and(|c| digest_one(key, c["value"].as_str().unwrap_or("")) == *want)
+    })
 }
 
 pub async fn capture<D: Driver>(

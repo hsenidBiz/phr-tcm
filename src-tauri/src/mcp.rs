@@ -720,7 +720,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "set_autorun_headers",
-            "description": "Send extra request headers with every request of the Auto Run browser you opened (your discovery or replay) - every tab, and any tab the page opens - to test an edge case such as a feature header or another language. Merged into the headers already set; `null` removes one you set. Never cookie, authorization, proxy-authorization or host. The save guard is not touched: a blocked save stays blocked. They stay until you remove them, or reset_autorun_browser, clear_autorun_cookies or a release takes them away, and every try, discovery and replay answer ends naming them (\"Changed for testing: header ...\"). Refused in the person's browser and while a replay runs.",
+            "description": "Send extra request headers with every request of the Auto Run browser you opened (your discovery or replay) - every tab, and any tab the page opens - to test an edge case such as a feature header or another language. Merged into the headers already set; `null` removes one you set. Never cookie, authorization, proxy-authorization or host, nor a method override (X-HTTP-Method-Override, X-HTTP-Method, X-Method-Override). The save guard is not touched: a blocked save stays blocked. They stay until you remove them, or reset_autorun_browser, clear_autorun_cookies or a release takes them away, and every try, discovery and replay answer ends naming them (\"Changed for testing: header ...\"). Refused in the person's browser and while a replay runs.",
             "inputSchema": schema(serde_json::json!({
                 "headers": { "type": "object", "additionalProperties": { "type": ["string", "null"] }, "description": "Header name to value, or to null to remove a header you set." },
             }), &["headers"]),
@@ -734,7 +734,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "set_autorun_cookie",
-            "description": "Set one cookie on the page's own site in the Auto Run browser you opened, to test an edge case (culture, tenant, a feature flag). Never the sign-in's cookies: an HttpOnly one, .ASPXAUTH, .AspNetCore.*, ASP.NET_SessionId, __RequestVerificationToken*, or a name like a secret (session, auth, token, password, secret, cookie) - those are refused. It stays until reset_autorun_browser (which deletes only the cookies you set), clear_autorun_cookies or a release, and every try, discovery and replay answer ends naming it. Refused in the person's browser and while a replay runs.",
+            "description": "Set one cookie on the app's own site - the one TCM's sign-in confirmed, whatever page shows - in the Auto Run browser you opened, to test an edge case (culture, tenant, a feature flag). Never the sign-in's cookies: an HttpOnly one, .ASPXAUTH, .AspNetCore.*, ASP.NET_SessionId, __RequestVerificationToken*, or a name like a secret (session, auth, token, password, secret, cookie) - those are refused. It never makes TCM think the sign-in changed. It stays until reset_autorun_browser (which deletes only the cookies you set), clear_autorun_cookies or a release, and every try, discovery and replay answer ends naming it. Refused in the person's browser and while a replay runs.",
             "inputSchema": schema(serde_json::json!({
                 "name": { "type": "string", "description": "The cookie's name." },
                 "value": { "type": "string", "description": "Its value: one line, no ;." },
@@ -746,7 +746,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "clear_autorun_cookies",
-            "description": "Sign out for real in the Auto Run browser you opened: delete every cookie of the page's site (the sign-in's included), forget the signed-in account and let its lease go, and take away your test headers. The next replay signs in again; a discovery going keeps going, signed out. Refused in the person's browser and while a replay runs.",
+            "description": "Sign out for real in the Auto Run browser you opened: delete every cookie of the app's confirmed site and its parent domains (the sign-in's included; never the identity provider's), forget the signed-in account and let its lease go, and take away your test headers. The next replay signs in again; a discovery going keeps going, signed out. Refused in the person's browser, while a replay runs, and before TCM's sign-in has confirmed the app's site.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {

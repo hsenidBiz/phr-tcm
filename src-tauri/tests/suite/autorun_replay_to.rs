@@ -1316,7 +1316,7 @@ fn every_other_use_of_the_browser_clears_the_stand() {
         // `make_persons` marks it, and takes away the assistant's test changes.
         let b = body(&source, f);
         assert!(
-            b.contains("opened_by = OpenedBy::Person;") || b.contains("make_persons().await;"),
+            b.contains("opened_by = OpenedBy::Person;") || b.contains("make_persons().await?;"),
             "{f} does not make the browser the person's"
         );
     }

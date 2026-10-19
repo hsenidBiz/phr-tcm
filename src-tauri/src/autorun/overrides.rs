@@ -29,9 +29,31 @@ pub struct Overrides {
     /// Extra request headers sent on every tab, by name as the assistant
     /// wrote it (one name per header, compared in any case), with its value.
     pub headers: BTreeMap<String, String>,
-    /// The cookies the assistant set, by name, with the address each was set
-    /// for (the page's origin and `/`): what a reset deletes.
-    pub cookies: BTreeMap<String, String>,
+    /// The cookies the assistant set, by name, with exactly where and what
+    /// it set (`SetCookie`): a reset deletes one only while it is still that.
+    pub cookies: BTreeMap<String, SetCookie>,
+}
+
+/// One cookie as the assistant set it: on the app's host only (`domain`,
+/// never a parent domain), at `path`, holding `value` - the assistant's own
+/// value, never one the page or the sign-in wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetCookie {
+    pub domain: String,
+    pub path: String,
+    pub value: String,
+}
+
+impl SetCookie {
+    /// Whether the browser's cookie `c` is still this one: the same name,
+    /// domain, path and value. One the page or a sign-in wrote over it since
+    /// is not.
+    pub fn is(&self, name: &str, c: &Value) -> bool {
+        c["name"].as_str() == Some(name)
+            && c["domain"].as_str().is_some_and(|d| d.eq_ignore_ascii_case(&self.domain))
+            && c["path"].as_str() == Some(self.path.as_str())
+            && c["value"].as_str() == Some(self.value.as_str())
+    }
 }
 
 impl Overrides {
@@ -101,13 +123,24 @@ pub fn with_note(answer: (u16, String), overrides: &Overrides) -> (u16, String) 
 /// browser's own.
 pub const REFUSED_HEADERS: [&str; 4] = ["cookie", "authorization", "proxy-authorization", "host"];
 
-/// Whether `name` is one of `REFUSED_HEADERS`, in any case.
+/// Request headers that make a server treat a request as another method:
+/// a POST the save guard lets through could act as a PUT or a DELETE. Never
+/// set for testing either.
+pub const METHOD_OVERRIDE_HEADERS: [&str; 3] = ["x-http-method-override", "x-http-method", "x-method-override"];
+
+/// Whether `name` is one of `REFUSED_HEADERS` or `METHOD_OVERRIDE_HEADERS`,
+/// in any case.
 pub fn refused_header(name: &str) -> bool {
-    REFUSED_HEADERS.iter().any(|h| name.trim().eq_ignore_ascii_case(h))
+    REFUSED_HEADERS.iter().chain(METHOD_OVERRIDE_HEADERS.iter()).any(|h| name.trim().eq_ignore_ascii_case(h))
 }
 
 /// Said when a refused header is asked for.
 pub fn refused_header_sentence(name: &str) -> String {
+    if METHOD_OVERRIDE_HEADERS.iter().any(|h| name.trim().eq_ignore_ascii_case(h)) {
+        return format!(
+            "{name} is never set as a test header: it makes the server take a request for another method, so a request the save guard lets through could save or delete."
+        );
+    }
     format!(
         "{name} is never set as a test header: cookie, authorization, proxy-authorization and host belong to the sign-in and the browser. Set a cookie that is not the sign-in's with set_autorun_cookie."
     )
@@ -191,8 +224,9 @@ pub fn merged(
 
 /// Whether a cookie is the sign-in's, and so never set, deleted by name or
 /// shown: an `HttpOnly` one, the ASP.NET sign-in and anti-forgery cookies,
-/// or one named with a secret word (`capture_redact::secret_name`, plus
-/// `auth` anywhere in the name). The same rule with or without a cookie
+/// or one named with a secret word (`capture_redact::secret_name`, whose
+/// `auth` is a word of its own: `authToken` is protected, `author` is not).
+/// Names are compared in any case. The same rule with or without a cookie
 /// fingerprint (spec decision 2).
 pub fn protected_cookie(name: &str, http_only: bool) -> bool {
     if http_only {
@@ -204,7 +238,6 @@ pub fn protected_cookie(name: &str, http_only: bool) -> bool {
         || lower.starts_with(".aspnetcore.")
         || lower == "asp.net_sessionid"
         || lower.starts_with("__requestverificationtoken")
-        || lower.contains("auth")
         || secret_name(n)
 }
 
@@ -382,11 +415,29 @@ pub fn set_cookie_params(ask: &CookieAsk, origin: &str) -> Value {
     p
 }
 
+/// Said by the cookie tools before TCM's sign-in has confirmed the app's
+/// own site (`NetCapture::confirmed_site`): they act only there.
+pub const SITE_NOT_CONFIRMED: &str =
+    "The app's site is not confirmed yet: sign in through a replay or a discovery first.";
+
+/// The app's own site (`https://host[:port]`), as TCM's sign-in confirmed
+/// it in this browser's capture - never whatever page is showing, which may
+/// be the identity provider's. `Err` (409 `SITE_NOT_CONFIRMED`) before it is.
+pub fn confirmed_origin<D: Driver>(d: &D) -> Result<String, (u16, String)> {
+    d.capture()
+        .and_then(|c| c.confirmed_site())
+        .filter(|site| url_host(site).is_some())
+        .map(|site| site.trim_end_matches('/').to_string())
+        .ok_or_else(|| (409, SITE_NOT_CONFIRMED.to_string()))
+}
+
 /// Take away everything `o` records from the browser: the test headers
-/// (an empty set on every tab) and each cookie the assistant set (by name,
-/// on the address it was set for). Only those - never a cookie it did not
-/// set. What could not be taken away stays recorded, and is named in what
-/// this returns (empty when everything went).
+/// (an empty set on every tab) and each cookie the assistant set - only
+/// while the cookie there is still exactly the one it set (`SetCookie::is`,
+/// value included). One the page or a sign-in wrote over since is left
+/// alone, and no longer counted as the assistant's. What could not be taken
+/// away stays recorded, and is named in what this returns (empty when
+/// everything went).
 pub async fn undo<D: Driver>(d: &mut D, o: &mut Overrides) -> Vec<String> {
     let mut left = Vec::new();
     if !o.headers.is_empty() {
@@ -398,9 +449,26 @@ pub async fn undo<D: Driver>(d: &mut D, o: &mut Overrides) -> Vec<String> {
             }
         }
     }
-    let cookies: Vec<(String, String)> = o.cookies.iter().map(|(n, u)| (n.clone(), u.clone())).collect();
-    for (name, url) in cookies {
-        match d.call("Network.deleteCookies", json!({ "name": name, "url": url })).await {
+    if o.cookies.is_empty() {
+        return left;
+    }
+    let jar = match d.call("Network.getAllCookies", json!({})).await {
+        Ok(reply) => reply["cookies"].as_array().cloned().unwrap_or_default(),
+        Err(e) => {
+            crate::applog::warn(format!("Auto Run: the test cookies could not be read to remove them: {e}"));
+            left.extend(o.cookies.keys().map(|n| format!("cookie {n}")));
+            return left;
+        }
+    };
+    let cookies: Vec<(String, SetCookie)> = o.cookies.iter().map(|(n, c)| (n.clone(), c.clone())).collect();
+    for (name, set) in cookies {
+        if !jar.iter().any(|c| set.is(&name, c)) {
+            // Gone, or written over since: not the assistant's any more.
+            o.cookies.remove(&name);
+            continue;
+        }
+        let params = json!({ "name": name, "domain": set.domain, "path": set.path });
+        match d.call("Network.deleteCookies", params).await {
             Ok(_) => {
                 o.cookies.remove(&name);
             }
@@ -411,4 +479,28 @@ pub async fn undo<D: Driver>(d: &mut D, o: &mut Overrides) -> Vec<String> {
         }
     }
     left
+}
+
+/// Said when the person takes the browser and the assistant's test changes
+/// would not go: the person's action is refused rather than run with them.
+pub const TEST_CHANGES_STUCK: &str =
+    "Test changes made by the assistant could not be removed: use Release browser, then try again.";
+
+/// Before the person's own step, start, sign-in or replay in this browser:
+/// every test change taken away (`undo`), or `Err(TEST_CHANGES_STUCK)` - the
+/// person's action never runs with the assistant's changes in place.
+pub async fn take_for_person<D: Driver>(d: &mut D, o: &mut Overrides) -> Result<(), String> {
+    if o.is_empty() {
+        return Ok(());
+    }
+    let left = undo(d, o).await;
+    if left.is_empty() {
+        Ok(())
+    } else {
+        crate::applog::warn(format!(
+            "Auto Run: the person took the browser, but these test changes could not be removed: {}",
+            left.join("; ")
+        ));
+        Err(TEST_CHANGES_STUCK.to_string())
+    }
 }
