@@ -32,6 +32,9 @@
 //! until the marker shows on another page. The one exception is the
 //! configured address itself: an application whose login form is its own
 //! has the password typed on its own site, which is the application's.
+//! Until a sign-in has typed a login in this browser at all (a saved
+//! session restored into a fresh browser types nothing), only the
+//! configured address's own origin can be confirmed.
 //!
 //! Never kept: the `cookie`, `set-cookie`, `authorization` and
 //! `proxy-authorization` headers, or any header outside the allow-list
@@ -287,12 +290,23 @@ impl NetCapture {
     ///
     /// Not when `url` is on a login page's site (`note_login_site`) that is
     /// not the provisional address's own: that is the identity provider
-    /// showing the marker on its own page, never the application. Then
-    /// nothing changes - the site stays as it was, what was held back stays
-    /// held back - and one line is logged, naming no host.
+    /// showing the marker on its own page, never the application. And
+    /// while no login page has been noted in this browser at all - a saved
+    /// session restored into a fresh browser types nothing, so the
+    /// provider's page cannot be told from the application's - only the
+    /// provisional address's own origin is confirmed. Either way nothing
+    /// changes - the site stays as it was, what was held back stays held
+    /// back - and one line is logged, naming no host.
     pub fn confirm_app_site(&mut self, url: &str) {
         let Some(site) = origin(url) else { return };
-        if self.login_sites.contains(&site) && self.app_site.as_ref() != Some(&site) {
+        let configured = self.app_site.as_ref() == Some(&site);
+        if !configured && self.login_sites.is_empty() {
+            crate::applog::info(
+                "Auto Run: the signed-in marker showed on a page that is not on the configured address, before any sign-in typed a login in this browser - its site is not taken for the application's, and nothing is captured until the marker shows on the configured address",
+            );
+            return;
+        }
+        if !configured && self.login_sites.contains(&site) {
             crate::applog::info(
                 "Auto Run: the signed-in marker showed on the page the sign-in was typed on, which is not the application's address - its site is not taken for the application's, and nothing is captured until the marker shows on the application's own page",
             );

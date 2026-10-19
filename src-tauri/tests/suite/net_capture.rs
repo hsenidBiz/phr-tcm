@@ -49,6 +49,7 @@ fn finished(id: &str, size: u64) -> Value {
 /// A capture that knows the application's site, as after a sign-in.
 fn capture_at_site() -> NetCapture {
     let mut cap = NetCapture::default();
+    cap.set_app_site(Some("https://hr.example/Account/Login"));
     cap.confirm_app_site("https://hr.example/hr/home?x=1");
     cap
 }
@@ -492,8 +493,10 @@ fn nothing_is_kept_before_a_sign_in_names_the_site() {
     feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("5", "Document", "GET", "https://hr.example/hr/home", json!({}), None));
     assert_eq!(cap.list(0, 10).1, 0, "nothing at all before the site is known");
     assert_eq!(cap.kept_bytes(), 0);
-    // Once the sign-in names the site, the application's requests are kept
-    // and the identity provider's still are not.
+    // Once the sign-in, typed on the identity provider's page, names the
+    // site, the application's requests are kept and the identity
+    // provider's still are not.
+    cap.note_login_site(idp);
     cap.confirm_app_site("https://hr.example/hr/home");
     feed(&mut rec, &mut cap, "Network.requestWillBeSent", at_idp("6", "XHR", "https://login.idp.example/token2"));
     feed(&mut rec, &mut cap, "Network.requestWillBeSent", asked("7", "XHR", "GET", "https://hr.example/api/menu2", json!({}), None));
@@ -622,7 +625,9 @@ fn an_address_on_the_identity_provider_never_captures_it() {
     feed_on(&mut rec, &mut cap, PAGE, "Network.requestWillBeSent", asked("3", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
     assert_eq!(cap.list(0, 10).1, 0, "nothing shown while the site is provisional");
     serve(&mut cap, &HashMap::from([("2".to_string(), r#"{"access_token":"t0k3n"}"#.to_string())]));
-    // The signed-in marker shows on the application's host.
+    // The sign-in typed the login on that page; the signed-in marker shows
+    // on the application's host.
+    cap.note_login_site(login);
     cap.confirm_app_site("https://hr.example/hr/home");
     assert!(cap.knows_app_site());
     assert_eq!(cap.list(0, 10).1, 0, "what was held back for the identity provider is forgotten");
@@ -738,6 +743,30 @@ async fn the_browser_notes_the_login_page_from_the_tab_it_is_on() {
     Driver::confirm_capture_site(&mut cdp);
     assert!(cdp.capture_site_known());
     assert_eq!(Driver::capture(&cdp).unwrap().list(0, 10).1, 1);
+}
+
+#[test]
+fn a_restored_session_in_a_fresh_browser_confirms_only_the_configured_address() {
+    let signed_in_at_idp = "https://login.idp.example/signed-in";
+    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    // A saved session restored into a fresh browser types nothing, so no
+    // login page is noted - and the marker shows on another host.
+    cap.set_app_site(Some("https://hr.example/Account/Login"));
+    feed_on(&mut rec, &mut cap, PAGE, "Network.requestWillBeSent", asked("1", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
+    cap.confirm_app_site(signed_in_at_idp);
+    assert!(!cap.knows_app_site(), "another host is not the configured address");
+    assert_eq!(cap.list(0, 10).1, 0, "nothing new is shown");
+    feed_on(&mut rec, &mut cap, signed_in_at_idp, "Network.requestWillBeSent", asked("2", "XHR", "GET", "https://login.idp.example/me", json!({}), None));
+    assert_eq!(cap.list(0, 10).1, 0);
+    // On the configured address it does.
+    cap.confirm_app_site("https://hr.example/hr/home");
+    assert!(cap.knows_app_site());
+    assert_eq!(kept_paths(&cap), ["/api/menu"]);
+
+    // With no address configured, nothing is ever confirmed this way.
+    let mut cap = NetCapture::default();
+    cap.confirm_app_site("https://hr.example/hr/home");
+    assert!(!cap.knows_app_site());
 }
 
 #[test]
