@@ -586,13 +586,16 @@ fn the_guide_teaches_when_visible_with_its_two_examples() {
 }
 
 /// The runner closes the recipe's listed pop-ups itself, so the guide must
-/// not teach a guard for them - and must say an old one is harmless.
+/// not teach a guard for them - and must say an old one is skipped once
+/// the runner has closed the pop-up (tool errors #31, #71: it used to say
+/// "harmless" while the guard's click failed on the closed banner).
 #[test]
 fn the_guide_says_listed_popups_need_no_guard() {
     let g = autorun_guide();
     let section = g.split_once("## Dismissing what may not show up").unwrap().1;
     let section = section.split("\n## ").next().unwrap();
-    for term in ["close_when_shown", "without waiting", "NO guard", "harmless", "cookie banner first","never Accept All"] {
+    assert!(!section.contains("harmless"), "an old guard is skipped, not harmless");
+    for term in ["close_when_shown", "without waiting", "NO guard", "the guard is skipped", "outside the visible part", "cookie banner first","never Accept All"] {
         assert!(section.contains(term), "the when_visible section never says {term:?}");
     }
 }

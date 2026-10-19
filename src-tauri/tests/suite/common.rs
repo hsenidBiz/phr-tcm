@@ -747,7 +747,7 @@ impl FakePage {
                 self.probed.set(self.probed.get() + 1);
                 json!({ "result": { "value": self.probes[i] } })
             }
-            "Runtime.callFunctionOn" if f == VISIBLE_JS => json!({ "result": { "value": self.visible } }),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => json!({ "result": { "value": self.visible } }),
             // A legacy string resolves to its first match only.
             "Runtime.callFunctionOn" if f == v2_lib::browser::locator::LEGACY_JS => {
                 self.legacy_next.set(true);
@@ -903,7 +903,7 @@ pub fn stateful_app(cookie_is_good: bool, broken_selector: Option<&'static str>)
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
             "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": ready } }),
-            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
                 last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
                 json!({ "result": { "objectId": "arr" } })
@@ -1031,7 +1031,7 @@ pub fn stalling_menu_app(
                 last_probed = params["objectId"].as_str().unwrap_or("").to_string();
                 json!({ "result": { "value": ready_probe() } })
             }
-            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
                 json!({ "result": { "value": true } })
             }
             "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => {

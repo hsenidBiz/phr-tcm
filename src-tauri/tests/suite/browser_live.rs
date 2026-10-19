@@ -824,6 +824,59 @@ async fn a_banner_that_shows_up_late_is_dismissed_and_the_next_step_works() {
     assert_eq!(mirror.as_str(), Some("saved"), "the click after the guard did not reach the page");
 }
 
+/// Tool errors #71 against a real page: a closed banner whose x is left in
+/// the page, moved below the bottom of the window where no scroll reaches
+/// it, is not shown - the guard is skipped at once instead of its click
+/// waiting out its time. A button far down the page is shown: the click's
+/// own scroll brings it into view, and the guarded click reaches it.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_guard_on_an_element_outside_the_visible_page_is_skipped() {
+    let mut live = open().await;
+    must(run(&mut live, json!({ "kind": "navigate", "url": fixture_url() })).await);
+    page::eval_value(
+        &mut live.cdp,
+        r#"(() => {
+  const banner = document.createElement('div');
+  banner.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:60px;transform:translateY(200%)';
+  banner.innerHTML = '<button id="offx">x</button>';
+  document.body.appendChild(banner);
+  const spacer = document.createElement('div');
+  spacer.style.height = '3000px';
+  document.body.appendChild(spacer);
+  const far = document.createElement('button');
+  far.id = 'far';
+  far.textContent = 'Far down';
+  far.onclick = () => { far.dataset.clicked = 'yes'; };
+  document.body.appendChild(far);
+  return true;
+})()"#,
+    )
+    .await
+    .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let mut account: Option<String> = None;
+    let step = StepScript {
+        step_number: 1,
+        actions: vec![
+            action_of(json!({ "kind": "when_visible", "selector": { "css": "#offx" }, "within_ms": 1000,
+                              "then": [ { "kind": "click", "selector": { "css": "#offx" } } ] })),
+            action_of(json!({ "kind": "when_visible", "selector": { "css": "#far" }, "within_ms": 1000,
+                              "then": [ { "kind": "click", "selector": { "css": "#far" } } ] })),
+        ],
+        unchecked: None,
+    };
+    let started = std::time::Instant::now();
+    let out = run_step(&mut live.cdp, root.path(), "org", "proj", &step, &timing(), &mut account)
+        .await
+        .expect("run_step failed");
+    assert!(out[0].ok && out[0].detail.ends_with("not shown, skipped"), "{}", out[0].detail);
+    assert!(out[1].ok && out[1].detail.starts_with("#far showed: clicked"), "{}", out[1].detail);
+    let clicked = page::eval_value(&mut live.cdp, "document.getElementById('far').dataset.clicked || ''").await.unwrap();
+    assert_eq!(clicked.as_str(), Some("yes"), "the guarded click did not reach the button far down the page");
+    assert!(started.elapsed() < Duration::from_secs(4), "took {:?}", started.elapsed());
+}
+
 /// A web application small enough to read in one go. `GET /` is the home
 /// page for a browser carrying a cookie the server still honours, and the
 /// login form for anyone else. `POST /login` checks the login, sets an

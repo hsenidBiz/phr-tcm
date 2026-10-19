@@ -442,8 +442,9 @@ control (the banner's x, never Accept All); the step then says "closed the
 cookie banner first". This happens in runs, tries, discoveries and replays
 alike. So a script needs NO guard for a listed pop-up - do not add one. A
 "covered by div#cookieBanner" failure means the close did not work; the
-step says so too. An older script's guard on the banner is harmless and
-may stay:
+step says so too. An older script's guard on the banner may stay: once
+the runner has closed it, its x is not shown (even when it is still in
+the page, outside the visible part of it), so the guard is skipped:
 
     { "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "within_ms": 4000, "then": [ { "kind": "click", "selector": { "css": "#btnCookieClose" } } ] }
 
@@ -454,7 +455,8 @@ For anything NOT on that list, guard the click with `when_visible`:
 - If the target becomes visible within `within_ms` (default 2000, at
   most 10000), the `then` actions run in order, and the step records what
   they did. Otherwise the step passes with "not shown, skipped" and the
-  run moves on.
+  run moves on. Visible means a click could reach it: one left in the
+  page outside the visible part of it is not shown.
 - `then` holds plain actions only: no `when_visible` inside it, no
   `sign_in`, and no checks (`expect_`, `check_`, `api_request`,
   `expect_response`). A guarded click is a tidy-up, not an assertion, so

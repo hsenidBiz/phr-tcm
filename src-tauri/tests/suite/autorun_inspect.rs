@@ -110,7 +110,7 @@ fn driver(p: Page) -> ScriptedDriver {
                 let name = match on { "anc-form" => "form#leave", "anc-root" => "div#root", "anc-doc" => "document", _ => "window" };
                 json!({ "result": { "value": name } })
             }
-            "Runtime.callFunctionOn" if f == VISIBLE_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => json!({ "result": { "value": true } }),
             // The element carries an onchange attribute, and nothing else.
             "Runtime.callFunctionOn" if f == ATTRIBUTE_HANDLERS_JS => {
                 let asked = params["arguments"][0]["value"].as_array().cloned().unwrap_or_default();

@@ -8,7 +8,7 @@
 
 use super::actions::{harness, harness_timeout, ActionOutcome};
 use super::cdp::{CdpError, Driver};
-use super::input::STILL_LOOKING;
+use super::input::{SHOWN_JS, STILL_LOOKING};
 use super::locator::{resolve, resolve_explained, Target, VISIBLE_JS};
 use super::page::{self, Handle};
 use serde_json::json;
@@ -18,7 +18,9 @@ pub enum Check<'a> {
     Visible,
     /// At least one match is visible - what a `when_visible` asks. Two
     /// visible matches (a dialog's OK and Cancel) are shown, not "not
-    /// shown": the ambiguity is for the guarded action to report.
+    /// shown": the ambiguity is for the guarded action to report. Visible
+    /// here is what a click needs (`input::SHOWN_JS`): one still outside
+    /// the window after it is scrolled into view is not shown.
     Shown,
     Hidden,
     Text(&'a str),
@@ -177,6 +179,12 @@ async fn visible<D: Driver>(d: &mut D, h: &Handle) -> Result<bool, CdpError> {
     Ok(page::call_value(d, h, VISIBLE_JS, &[]).await?.as_bool().unwrap_or(false))
 }
 
+/// Shown the way a click needs it: visible, and inside the window once
+/// scrolled there (`input::SHOWN_JS`).
+async fn shown<D: Driver>(d: &mut D, h: &Handle) -> Result<bool, CdpError> {
+    Ok(page::call_value(d, h, SHOWN_JS, &[]).await?.as_bool().unwrap_or(false))
+}
+
 fn only(handles: &[Handle]) -> Result<&Handle, String> {
     match handles {
         [] => Err(NOT_ON_PAGE.to_string()),
@@ -226,7 +234,7 @@ pub(crate) async fn look<D: Driver>(
         Check::Shown => {
             let mut seen = false;
             for h in &handles {
-                if visible(d, h).await? {
+                if shown(d, h).await? {
                     seen = true;
                     break;
                 }

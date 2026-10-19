@@ -1590,7 +1590,7 @@ fn probed_page_at(href: &'static str, found: usize) -> crate::common::ScriptedDr
             "Runtime.evaluate" if params["expression"] == "document.title" => {
                 Ok(serde_json::json!({ "result": { "value": "Ratings" } }))
             }
-            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS => {
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => {
                 Ok(serde_json::json!({ "result": { "value": true } }))
             }
             "Accessibility.getPartialAXTree" => Ok(serde_json::json!({ "nodes": [] })),
@@ -1730,7 +1730,7 @@ fn probed_page_showing(found: usize, shown: &'static [usize]) -> crate::common::
             "Runtime.evaluate" if params["expression"] == "document.title" => {
                 Ok(serde_json::json!({ "result": { "value": "Ratings" } }))
             }
-            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS => {
+            "Runtime.callFunctionOn" if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => {
                 let id = params["objectId"].as_str().unwrap_or("");
                 let visible = shown.iter().any(|i| id == format!("el-{i}"));
                 Ok(serde_json::json!({ "result": { "value": visible } }))

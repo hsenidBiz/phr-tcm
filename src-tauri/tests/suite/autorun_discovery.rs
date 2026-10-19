@@ -212,7 +212,7 @@ fn signin_app(marker_shows: bool) -> ScriptedDriver {
             ] }),
             "Network.getAllCookies" => json!({ "cookies": [] }),
             "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": ready_probe() } }),
-            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
                 json!({ "result": { "value": true } })
             }
             "Runtime.callFunctionOn" if f == FOCUS_JS => json!({ "result": { "value": "text" } }),
@@ -1324,7 +1324,7 @@ fn menu_app(signed_in: bool, at: &str) -> ScriptedDriver {
             }
             "Network.getAllCookies" => json!({ "cookies": [] }),
             "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": ready_probe() } }),
-            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
                 json!({ "result": { "value": true } })
             }
             "Runtime.callFunctionOn" if f == FOCUS_JS => json!({ "result": { "value": "text" } }),
@@ -1849,7 +1849,7 @@ fn sidebar_app(open: bool, at: &str, screen: &'static str) -> (ScriptedDriver, S
             ] }),
             "Network.getAllCookies" => json!({ "cookies": [] }),
             "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": ready_probe() } }),
-            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == HIGHLIGHT_JS || f == HAS_FOCUS_JS => {
                 json!({ "result": { "value": true } })
             }
             "Runtime.callFunctionOn" if f == FOCUS_JS => json!({ "result": { "value": "text" } }),
@@ -2787,7 +2787,7 @@ fn cycles_page_at(href: &'static str, found: usize, visible: bool) -> ScriptedDr
             "Runtime.evaluate" if params["expression"] == "document" => Ok(json!({ "result": { "objectId": "doc" } })),
             "Runtime.evaluate" if params["expression"] == "location.href" => Ok(json!({ "result": { "value": href } })),
             "Runtime.evaluate" if params["expression"] == "document.title" => Ok(json!({ "result": { "value": "Cycles" } })),
-            "Runtime.callFunctionOn" if f == VISIBLE_JS => Ok(json!({ "result": { "value": visible } })),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => Ok(json!({ "result": { "value": visible } })),
             "Accessibility.getPartialAXTree" => Ok(serde_json::json!({ "nodes": [] })),
             "Runtime.callFunctionOn" if f == PROBE_SUMMARY_JS => Ok(json!({
                 "result": { "value": { "tag": "button", "text": "2", "rect": [10.0, 20.0, 30.0, 24.0] } }

@@ -203,7 +203,7 @@ fn late_banner_app() -> (ScriptedDriver, std::sync::Arc<std::sync::Mutex<Vec<Str
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => json!({ "result": { "value": common::ready_probe() } }),
             "Runtime.callFunctionOn"
-                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
+                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
             {
                 json!({ "result": { "value": true } })
             }
@@ -267,7 +267,7 @@ fn two_buttons_app() -> (ScriptedDriver, std::sync::Arc<std::sync::Mutex<Vec<Str
             "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
             "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => json!({ "result": { "value": common::ready_probe() } }),
             "Runtime.callFunctionOn"
-                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
+                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
             {
                 json!({ "result": { "value": true } })
             }
@@ -368,4 +368,95 @@ async fn the_executor_hands_when_visible_to_the_runner() {
     let out = execute_with(&mut d, &action(cookie_banner()), &quick()).await;
     assert!(!out.ok);
     assert_eq!(out.detail, "when_visible is carried out by the runner");
+}
+
+/// A page where `#gone` is in the page and drawn, but outside the window
+/// even once scrolled to (a closed cookie banner moved off the page): the
+/// click's own probe says `onscreen: false`, as `SHOWN_JS` does, though the
+/// plain visibility rule still says it is drawn. `#here` is in view. Every
+/// other css locator is there and clickable. Each click is logged by the
+/// locator it was aimed at.
+fn off_the_page_app() -> (ScriptedDriver, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let clicked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = clicked.clone();
+    let mut last_selector = String::new();
+    let d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        let off = last_selector == "#gone";
+        Ok(match method {
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::PROBE_JS => {
+                let mut probe = common::ready_probe();
+                if off {
+                    probe["onscreen"] = json!(false);
+                    probe["hit"] = json!(false);
+                }
+                json!({ "result": { "value": probe } })
+            }
+            "Runtime.callFunctionOn" if f == v2_lib::browser::input::SHOWN_JS => json!({ "result": { "value": !off } }),
+            "Runtime.callFunctionOn"
+                if f == v2_lib::browser::locator::VISIBLE_JS || f == v2_lib::browser::input::HAS_FOCUS_JS =>
+            {
+                json!({ "result": { "value": true } })
+            }
+            "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
+                last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.getProperties" => json!({ "result": [ { "name": "0", "value": { "objectId": "el" } } ] }),
+            "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
+            "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
+            "Input.dispatchMouseEvent" if params["type"] == "mouseReleased" => {
+                log.lock().unwrap().push(last_selector.clone());
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    (d, clicked)
+}
+
+/// Tool errors #71: a guard on a close button left in the page, outside
+/// the visible part of it, said "showed" and its click then waited 15 s
+/// for the button and failed the step. Shown is what a click needs, so
+/// the guard is skipped and the step carries on.
+#[tokio::test]
+async fn an_element_outside_the_visible_page_is_not_shown_and_the_step_carries_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, clicked) = off_the_page_app();
+    let mut acc: Option<String> = None;
+    let guard = action(json!({ "kind": "when_visible", "selector": { "css": "#gone" }, "within_ms": 40,
+                               "then": [ { "kind": "click", "selector": { "css": "#gone" } } ] }));
+    let after = action(json!({ "kind": "click", "selector": { "css": "#save" } }));
+    let started = std::time::Instant::now();
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard, after]), &quick(), &mut acc).await.unwrap();
+    assert_eq!(out.len(), 2);
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert_eq!(out[0].detail, format!("#gone {NOT_SHOWN}"));
+    assert!(out[1].ok, "the step carries on: {:?}", out[1]);
+    assert_eq!(*clicked.lock().unwrap(), vec!["#save".to_string()], "the guarded click never ran");
+    assert!(started.elapsed() < std::time::Duration::from_secs(3), "waited {:?}", started.elapsed());
+}
+
+/// The same page: an element in view is shown, and its `then` runs.
+#[tokio::test]
+async fn an_element_in_view_is_shown_and_its_then_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, clicked) = off_the_page_app();
+    let mut acc: Option<String> = None;
+    let guard = action(json!({ "kind": "when_visible", "selector": { "css": "#here" }, "within_ms": 40,
+                               "then": [ { "kind": "click", "selector": { "css": "#here" } } ] }));
+    let out = run_step(&mut d, dir.path(), "Acme", "Web", &step(vec![guard]), &quick(), &mut acc).await.unwrap();
+    assert!(out[0].ok, "{:?}", out[0]);
+    assert!(out[0].detail.starts_with("#here showed: clicked"), "{}", out[0].detail);
+    assert_eq!(*clicked.lock().unwrap(), vec!["#here".to_string()]);
+}
+
+/// "Shown" is the click's own rule, carried whole: `SHOWN_JS` holds the
+/// probe a click waits on, and answers by its `visible` and `onscreen`.
+#[test]
+fn shown_is_the_clicks_own_visible_and_onscreen() {
+    use v2_lib::browser::input::{PROBE_JS, SHOWN_JS};
+    assert!(SHOWN_JS.contains(PROBE_JS), "SHOWN_JS must carry PROBE_JS itself, not a copy of its geometry");
+    assert!(SHOWN_JS.contains("p.visible && p.onscreen"), "{SHOWN_JS}");
 }

@@ -170,7 +170,7 @@ fn page_app(page: Page) -> (ScriptedDriver, PromptApp) {
                     "x": 5.0, "y": 5.0, "rect": [0.0, 0.0, 10.0, 10.0], "stable": stable
                 } } })
             }
-            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
             "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
                 let css = params["arguments"][0]["value"].as_str().unwrap();
                 let form = ["#user", "#pass", "#go", "#marker"].contains(&css);
