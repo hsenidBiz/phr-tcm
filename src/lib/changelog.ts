@@ -27,6 +27,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.14",
+    date: "2026-10-20",
+    items: [
+      "Auto Run: while the assistant discovers or replays, it can read the requests the application's own pages send and what came back, search them and save them to a file, so it can build API templates from real requests. Passwords, tokens and session values are always hidden.",
+      "Auto Run: the assistant can set a test header or cookie to try an edge case. Every answer names what it changed, a passing replay says it passed with those changes in place, and a reset takes them away. The sign-in's own cookies can never be changed.",
+      "Auto Run: the assistant can look closely at one element: its styles, the click listeners on it and above it, its animations and its structure. Scripts can also check a style, for example that a button turned red (expect_style).",
+    ],
+  },
+  {
     version: "2.2.3-beta.13",
     date: "2026-10-19",
     items: [
