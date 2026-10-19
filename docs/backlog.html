@@ -42,7 +42,37 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 19 October 2026, after 2.2.3-beta.13 (formatting in test case text). What is left is below.</p>
+  <p class="sub">Updated 20 October 2026, after 2.2.3-beta.14 (the assistant's network, cookie and element tools). What is left is below.</p>
+
+  <h2>The assistant's network, cookie and element tools (2.2.3-beta.14, 20 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Hand checks owed (need your organisation)</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>In a discovery, Save a form, then have the assistant read that request and its response and build an API template from it: no password, token or session value shows anywhere, and the template proves.</li>
+      <li>Have the assistant set a feature or culture cookie, replay a case (its answer says "Passed with these changes in place"), then reset: the cookie is gone and the answer is plain again.</li>
+      <li>Inspect a button that looks disabled: its styles, the click listeners on it and above it, and whether something covers it.</li>
+      <li>Export the requests of a discovery to a HAR file and open it in your browser's developer tools.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>Opaque tokens written all in lower case, or as dashed GUIDs, in a request body are not recognised as secrets unless their field name says so.</li>
+      <li>If the environment's address is set to the sign-in provider's page, nothing is captured until a page of the application itself shows signed in.</li>
+      <li>A sign-in made by hand (or a restored one) where the address redirects to a different application address never confirms the site, so nothing is captured in that browser.</li>
+      <li>A very large response (near 2 MB) can be skipped on a busy machine; the request itself is still listed.</li>
+      <li>A HAR file you import from elsewhere is capped on its bodies, not on its header values and addresses.</li>
+    </ul>
+  </div>
+
+  <h2>Tool errors from 19 October (rows 25-71): being fixed now</h2>
+  <div class="item">
+    <div class="head"><span class="title">Needs you</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>Row 53: on QA Automation, perf_goal_group is empty (groups 698 and 753 gone) and the profile assignments went from 7 to 0, from an earlier run. Restore them.</li>
+      <li>Row 62: two Definition Wizard cases have a precondition that no longer fits how the Playwright suite sets things up. Item 28 (repairs can change preconditions) is the fix.</li>
+    </ul>
+  </div>
 
   <h2>Formatting in test case text (2.2.3-beta.13, 19 October 2026)</h2>
   <div class="item">
@@ -101,8 +131,6 @@
 
   <h2>Agreed, not built yet</h2>
   <div class="item"><div class="head"><span class="num">28</span><span class="title">Assistants can change a script's preconditions in a repair</span><span class="status todo">Agreed</span></div><p>Add, remove or change one precondition in a repair, with a reason; a removed one is replaced by steps that create that state.</p></div>
-  <div class="item"><div class="head"><span class="num">29</span><span class="title">Full request and response capture in Auto Run</span><span class="status todo">Agreed</span></div><p>Keep the page's own requests and responses whole (secrets hidden) so the assistant has more to go on and can build API templates from the real requests it sees while discovering.</p></div>
-  <div class="item"><div class="head"><span class="num">30</span><span class="title">Element inspection for the assistant</span><span class="status todo">Agreed</span></div><p>Computed styles (and an expect_style check), event listeners, animations and one element's structure, read-only, for diagnosing a step and checking edge cases. Element cloning and asset extraction are not taken.</p></div>
   <div class="item"><div class="head"><span class="num">31</span><span class="title">Count-up animation on the Overview numbers</span><span class="status todo">Agreed</span></div><p>The numbers in the Playwright Overview's summary count up to their value when the tab opens, instead of appearing at once (not under reduced motion).</p></div>
   <div class="item"><div class="head"><span class="num">32</span><span class="title">Overview folders drawn as a tree</span><span class="status todo">Agreed</span></div><p>In the Playwright Overview, the Folder area reads as a tree (folders nested under their parents, features beneath) rather than a row of separate records.</p></div>
   <div class="item"><div class="head"><span class="num">33</span><span class="title">List again becomes Refresh</span><span class="status todo">Agreed</span></div><p>On the Playwright tab, the List again button is renamed Refresh (and its help text and accessible name follow).</p></div>

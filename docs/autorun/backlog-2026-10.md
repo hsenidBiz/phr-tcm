@@ -197,7 +197,7 @@ information in the slots the Playwright pipeline already reads; it never overrid
 
 ## Full request and response capture (agreed 2026-10-18)
 
-29. **Keep the page's requests and responses whole during Auto Run, for the assistant.** Today
+29. **Keep the page's requests and responses whole during Auto Run, for the assistant.** *Built in 2.2.3-beta.14.* Today
     TCM keeps each request's method, path and status, and reads a body only for a refused request
     or an `expect_response`. Keep, for the page's own XHR/fetch requests (same site, not polls),
     the request body and the response body (capped), the status and the headers that matter
@@ -222,7 +222,7 @@ information in the slots the Playwright pipeline already reads; it never overrid
 
 ## Element inspection (agreed 2026-10-18)
 
-30. **Read-only element inspection for the assistant**, from stealth-browser-mcp's "Element
+30. **Read-only element inspection for the assistant** *Built in 2.2.3-beta.14.*, from stealth-browser-mcp's "Element
     Extraction" group, TCM's own versions on its CDP driver, for diagnosing a step and checking
     edge cases (Avin: make the assistant more capable):
     - **computed styles** of an element (CSS `getComputedStyle` / `CSS.getComputedStyleForNode`),
