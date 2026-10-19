@@ -598,7 +598,8 @@ fn each_tool_belongs_to_its_module() {
             "set_autorun_headers",
             "get_autorun_cookies",
             "set_autorun_cookie",
-            "clear_autorun_cookies"
+            "clear_autorun_cookies",
+            "inspect_autorun_element"
         ]
     );
     assert_eq!(

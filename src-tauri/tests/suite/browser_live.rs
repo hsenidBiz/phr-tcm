@@ -3804,3 +3804,51 @@ async fn text_lines_resolve_and_the_probe_says_the_reads_name() {
     assert!(said.contains("button \"\" visible"), "{said}");
     assert!(said.contains(" - page read: button \"Edit AUTOTEST Preview 2027\""), "{said}");
 }
+
+/// `inspect_autorun_element` against a real page: every part reads, the
+/// listeners name where they were written and never their source, a
+/// password's value never shows, the page is not scrolled, and a cover the
+/// page puts over a button is named with its own listener.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn an_element_is_inspected_without_touching_the_page() {
+    use v2_lib::ai_bridge::inspect_page;
+    let mut live = open().await;
+    let ask = |args: serde_json::Value| args.to_string();
+    let (status, text) = inspect_page(&mut live.cdp, &ask(json!({ "locator": { "css": "#save" } }))).await;
+    assert_eq!(status, 200, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(v["styles"]["color"].as_str().is_some_and(|c| c.starts_with("rgb")), "{text}");
+    assert!(v["animations"]["running"].is_array(), "{text}");
+    assert_eq!(v["structure"]["tag"], "button", "{text}");
+    let click = v["listeners"]["element"].as_array().unwrap().iter().find(|l| l["type"] == "click").cloned();
+    // The fixture's onclick has not run: V8 lists no script for it yet.
+    assert_eq!(click.as_ref().map(|c| c["script"].clone()), Some(json!("(its onclick attribute)")), "{text}");
+    assert_eq!(click.as_ref().map(|c| c["line"].clone()), Some(json!(30)), "{text}");
+    assert!(!text.contains("bump()"), "a handler's source leaked: {text}");
+
+    let (status, text) =
+        inspect_page(&mut live.cdp, &ask(json!({ "locator": { "css": "input[type=password]" }, "show": ["structure"] }))).await;
+    assert_eq!(status, 200, "{text}");
+    assert!(!text.contains("s3cret"), "{text}");
+
+    let before = page::eval_value(&mut live.cdp, "window.scrollY").await.unwrap();
+    let (status, text) = inspect_page(&mut live.cdp, &ask(json!({ "locator": { "css": "#tall" }, "show": ["structure"] }))).await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(page::eval_value(&mut live.cdp, "window.scrollY").await.unwrap(), before, "the inspect scrolled");
+
+    // The fixture's own overlay goes at 700 ms, with #late's disabled flag.
+    must(run(&mut live, json!({ "kind": "expect_enabled", "selector": { "css": "#late" } })).await);
+    page::eval_value(
+        &mut live.cdp,
+        "(() => { const d = document.createElement('div'); d.id = 'shield'; d.setAttribute('role', 'dialog'); d.setAttribute('aria-label', 'Busy'); d.style.cssText = 'position:fixed;inset:0;z-index:99'; d.addEventListener('click', () => {}, { capture: true }); document.body.appendChild(d); window.scrollTo(0, 0); return true; })()",
+    )
+    .await
+    .unwrap();
+    let (status, text) = inspect_page(&mut live.cdp, &ask(json!({ "locator": { "css": "#save" }, "show": ["listeners"] }))).await;
+    assert_eq!(status, 200, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(v["covered_by"].as_str().is_some_and(|c| c.contains("div#shield")), "{text}");
+    let theirs = v["listeners"]["cover"]["listeners"].as_array().cloned().unwrap_or_default();
+    assert!(theirs.iter().any(|l| l["type"] == "click" && l["use_capture"] == true), "{text}");
+}

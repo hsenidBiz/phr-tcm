@@ -425,6 +425,9 @@ pub async fn route(
         // A real sign-out: the panes hear it, as they hear the reset's.
         ("POST", "/autorun-cookies-clear") => crate::commands::autorun::clear_cookies_for_assistant().await,
         ("POST", "/autorun-probe") => autorun_probe(ctx, body).await,
+        // One element's styles, listeners, animations and structure. Read
+        // only: nothing is clicked, typed, focused or scrolled.
+        ("POST", "/autorun-inspect") => autorun_inspect(body).await,
         ("POST", "/autorun-try") => {
             let mut seen = None;
             let answer = autorun_try(ctx, body, &mut seen).await;
@@ -3419,6 +3422,72 @@ async fn autorun_probe(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let answer = probe_page(&mut session.cdp, &target, at.as_ref()).await;
     let answer = let_go_if_silent(&mut slot, answer).await;
     crate::commands::autorun::publish_discovery(&slot);
+    answer
+}
+
+/// What an inspect body carries.
+const INSPECT_SHAPE: &str = "{ \"locator\": <a script's target: a CSS string, one locator object, or a list of them (a chain, outermost first)>, \"show\"?: [\"styles\", \"listeners\", \"animations\", \"structure\"], \"properties\"?: [<CSS property names>] }";
+
+/// Said to an inspect whose locator still waits for a value.
+pub const INSPECT_PLACEHOLDER: &str =
+    "a locator with a placeholder ({{...}}) or a component input cannot be inspected as written - put in the value it stands for";
+
+/// The locator and what to show, out of an inspect's body: everything that
+/// can be refused without the browser.
+fn inspect_ask(body: &str) -> Result<(crate::browser::locator::Target, crate::browser::inspect::Ask), (u16, String)> {
+    let locator = body_field(body, "locator", INSPECT_SHAPE)?;
+    let target = probe_target(locator).map_err(|why| (400, why))?;
+    if !probeable(&target) {
+        return Err((400, INSPECT_PLACEHOLDER.to_string()));
+    }
+    let args: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let ask = crate::browser::inspect::read_ask(&args).map_err(|why| (400, why))?;
+    Ok((target, ask))
+}
+
+/// `inspect_autorun_element` on the page `d` shows: the body read
+/// (`inspect_ask`), then the one element its locator matches inspected
+/// (`browser::inspect`). Read only.
+pub async fn inspect_page<D: crate::browser::cdp::Driver>(d: &mut D, body: &str) -> (u16, String) {
+    match inspect_ask(body) {
+        Ok((target, ask)) => inspected(d, &target, &ask).await,
+        Err(refused) => refused,
+    }
+}
+
+async fn inspected<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    target: &crate::browser::locator::Target,
+    ask: &crate::browser::inspect::Ask,
+) -> (u16, String) {
+    match crate::browser::inspect::inspect(d, target, ask).await {
+        Ok(v) => (200, v.to_string()),
+        Err(refused) => refused,
+    }
+}
+
+/// `/autorun-inspect`: one element in the supervised browser, as a probe
+/// reaches it - any supervised browser, the person's too, since nothing is
+/// changed. Refused at once while an unattended run or a replay holds it.
+async fn autorun_inspect(body: &str) -> (u16, String) {
+    let (target, ask) = match inspect_ask(body) {
+        Ok(asked) => asked,
+        Err(refused) => return refused,
+    };
+    if let Some(busy) = unattended_run_is_using_the_browser() {
+        return busy;
+    }
+    if let Some(going) = replay_is_holding_the_browser() {
+        return going;
+    }
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let Some(session) = slot.as_mut() else {
+        return (409, NO_SUPERVISED_BROWSER.to_string());
+    };
+    let answer = inspected(&mut session.cdp, &target, &ask).await;
+    let answer = let_go_if_silent(&mut slot, answer).await;
+    // Never the locator: it is the assistant's writing and can hold an address.
+    crate::applog::info(format!("AI inspected an element in the supervised browser: {}", answer.0));
     answer
 }
 

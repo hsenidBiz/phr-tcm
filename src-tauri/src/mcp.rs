@@ -750,6 +750,27 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
+            "name": "inspect_autorun_element",
+            "description": "Look at ONE element in the open Auto Run browser without touching it, to diagnose a failing step or check an edge case (a field turning red, a button that only looks disabled, a click that lands on something else). The locator is resolved as a try resolves it: refused when it matches nothing or more than one. Shows any of: `styles` (computed values, all or the `properties` you name), `listeners` (each event listener's type, capture, once and passive flags, and where its handler was written - a script path, line and column, never its source; plus the listeners of the element a click at its centre would land on when another covers it, named), `animations` (running animations and transitions with duration, delay, iterations and play state, and the computed transition-* and animation-* values) and `structure` (tag, attributes, text up to 500 characters, children counted by tag, the frame it sits in) - all four when `show` is left out. Every answer says whether a click at its centre reaches it, or what covers it. A password field's value, attributes named like a secret and tokens in text are hidden. Read only: nothing is clicked, typed, focused or scrolled (an element outside the visible part of the page is not scrolled to), so it works in the person's browser too.",
+            "inputSchema": schema(serde_json::json!({
+                "locator": {
+                    "type": ["object", "string", "array"],
+                    "items": { "type": "object" },
+                    "description": "A script target, exactly as the script writes it: a CSS selector string, the role-and-accessible-name object a snapshot line ends with, or a chain - a list of those objects, outermost first.",
+                },
+                "show": {
+                    "type": "array",
+                    "items": { "type": "string", "enum": ["styles", "listeners", "animations", "structure"] },
+                    "description": "Optional: which parts to show. All four when left out.",
+                },
+                "properties": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional: only these computed style properties, e.g. [\"color\", \"border-color\", \"pointer-events\"]. Every computed value when left out.",
+                },
+            }), &["locator"]),
+        },
+        {
             "name": "get_api_template_guide",
             "description": "How to build an API template - a saved, proven sequence of the application's own requests that writes test data (creates a cycle, moves a record to a state) far faster than clicking through the screens. Returns the format and its rules, the placeholder and capture syntax, and the workflow: read the module's code for each request, find real values with db_query, then prove. Also names this project's account keys and the sign-in recipe's origin, so you never guess an account or a host. Read it before your first prove_api_template.",
             "inputSchema": schema(serde_json::json!({}), &[]),
@@ -1338,6 +1359,8 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "get_autorun_cookies" => call("POST", "/autorun-cookies", &args.to_string()),
         "set_autorun_cookie" => call("POST", "/autorun-cookie", &args.to_string()),
         "clear_autorun_cookies" => call("POST", "/autorun-cookies-clear", &args.to_string()),
+        // Read only: the arguments object travels whole.
+        "inspect_autorun_element" => call("POST", "/autorun-inspect", &args.to_string()),
         "get_autorun_page" => {
             let mut params: Vec<String> = Vec::new();
             if let Some(n) = args["limit"].as_u64() {

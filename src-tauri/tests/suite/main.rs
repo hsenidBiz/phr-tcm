@@ -61,6 +61,7 @@ mod autorun_failures;
 mod autorun_floor;
 mod autorun_guide;
 mod autorun_held_browser;
+mod autorun_inspect;
 mod autorun_lease;
 mod autorun_marks;
 mod autorun_one_browser;

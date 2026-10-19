@@ -39,7 +39,9 @@ pub struct Ready {
     pub y: f64,
 }
 
-/// `this` is the element. Argument: `settle`.
+/// `this` is the element. Arguments: `settle`, and `still` - measure the
+/// element where it stands, without scrolling it into view first (what
+/// `inspect` reads: a look that must not move the page).
 ///
 /// Without `settle` it is one synchronous measurement (the re-check
 /// `click` makes the instant before it acts). With it, an element whose
@@ -82,7 +84,7 @@ pub struct Ready {
 /// real `<input>` sits at 0 by 0 under a slider drawn in its label. A
 /// click there is what a person's click on the slider does.
 pub const PROBE_JS: &str = concat!(
-    "async function(settle) {\n  const disabledWhy = ",
+    "async function(settle, still) {\n  const disabledWhy = ",
     disabled_why_js!(),
     ";\n",
     r#"
@@ -200,7 +202,9 @@ pub const PROBE_JS: &str = concat!(
       covered_by: !allOnscreen || allHit ? '' : (outer !== null ? say(outer || null) : say(top)),
     };
   };
-  const first = measure(true);
+  // `still`: measured where it stands, never scrolled into view - an
+  // inspect reads the page and must not move it (`inspect`).
+  const first = measure(!still);
   // Only an element the flags already call usable is worth watching
   // across frames: anything else is reported for its flags, not its motion.
   if (!settle || !first.visible || !first.onscreen || !first.enabled || !first.hit) {

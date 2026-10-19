@@ -81,3 +81,4 @@ pub mod page_messages;
 pub mod actions;
 pub mod repeat;
 pub mod snapshot;
+pub mod inspect;

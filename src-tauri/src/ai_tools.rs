@@ -186,6 +186,7 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "get_autorun_cookies",
     "set_autorun_cookie",
     "clear_autorun_cookies",
+    "inspect_autorun_element",
 ];
 
 /// The API template tools: the API Templates module's. A template runs in

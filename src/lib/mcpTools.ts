@@ -192,6 +192,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Delete the site's cookies in the assistant's Auto Run browser: a real sign-out.",
   },
   {
+    name: "inspect_autorun_element",
+    label: "Inspect an element",
+    summary: "One element's styles, listeners, animations and structure in the Auto Run browser, read without touching the page.",
+  },
+  {
     name: "get_autorun_failures",
     label: "Auto Run failures",
     summary: "What failed in a run on this machine, and when the script must be left alone.",
@@ -413,6 +418,7 @@ export const AUTORUN_TOOLS = [
   "get_autorun_cookies",
   "set_autorun_cookie",
   "clear_autorun_cookies",
+  "inspect_autorun_element",
 ] as const;
 
 export const API_TEMPLATE_TOOLS = [
@@ -541,6 +547,7 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "get_autorun_cookies",
     "set_autorun_cookie",
     "clear_autorun_cookies",
+    "inspect_autorun_element",
   ],
   // Building an API template is one job too: read the format, see what
   // is saved, prove a draft, run it. A list with no way to run what it
