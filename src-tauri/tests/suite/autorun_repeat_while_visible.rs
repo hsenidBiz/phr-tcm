@@ -152,7 +152,7 @@ fn goal_groups(names: Vec<&'static str>) -> (ScriptedDriver, Shared) {
                 p["x"] = json!(x_of(&on));
                 json!({ "result": { "value": p } })
             }
-            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == v2_lib::browser::input::SHOWN_JS => {
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => {
                 let seen = index(&on).is_none_or(|i| r.alive.get(i).copied().unwrap_or(true));
                 json!({ "result": { "value": seen } })
             }

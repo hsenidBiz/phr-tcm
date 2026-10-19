@@ -454,7 +454,10 @@ alike. So a script needs NO guard for a listed pop-up - do not add one. A
 "covered by div#cookieBanner" failure means the close did not work; the
 step says so too. An older script's guard on the banner may stay: once
 the runner has closed it, its x is not shown (even when it is still in
-the page, outside the visible part of it), so the guard is skipped:
+the page, outside the visible part of it), so the guard is skipped. The
+runner closes a pop-up only before those actions: on a page whose next
+action is a check, the banner can still be open, and the page a tool reads
+(`get_autorun_page`, a replay's answer) can still list its x:
 
     { "kind": "when_visible", "selector": { "css": "#btnCookieClose" }, "within_ms": 4000, "then": [ { "kind": "click", "selector": { "css": "#btnCookieClose" } } ] }
 
@@ -465,8 +468,9 @@ For anything NOT on that list, guard the click with `when_visible`:
 - If the target becomes visible within `within_ms` (default 2000, at
   most 10000), the `then` actions run in order, and the step records what
   they did. Otherwise the step passes with "not shown, skipped" and the
-  run moves on. Visible means a click could reach it: one left in the
-  page outside the visible part of it is not shown.
+  run moves on. Shown means visible and inside the visible part of the
+  page, after the page is scrolled to it: one left in the page outside
+  that part is not shown.
 - `then` holds plain actions only: no `when_visible` inside it, no
   `sign_in`, and no checks (`expect_`, `check_`, `api_request`,
   `expect_response`). A guarded click is a tidy-up, not an assertion, so
@@ -1924,6 +1928,9 @@ the answer says so; start a new one to explore again.
   try, a discovery action or another replay) has used it since; the
   answer starts with "Carried on from step K" or "Started from the
   beginning". Already standing before the step, nothing runs.
+- To prove a case's last step, replay to one past it, its last step number
+  + 1: the answer says "replayed the whole of case N (all M steps)", and
+  the browser stands on the page that last step left.
 - A replay still going after about 45 seconds answers "still running, now
   at step N of M". Call `replay_autorun_to_step` again with the same case
   and step to keep waiting on that same replay; it is never started twice.
@@ -2018,6 +2025,8 @@ An edit's own `quirk` is one sentence about the APPLICATION, not about
 this particular script - something the next repair, yours or someone
 else's, would otherwise have to rediscover. It is recorded exactly like
 `record_autorun_quirk`, which also works on its own, outside a repair.
+That tool takes the line as `text` (not `note`), and a quirk, there or as an
+edit's `quirk`, is at most 300 characters.
 
 When this project has recorded quirks, this guide ends with a
 `## Known quirks of this application` section listing them, filed one at
@@ -2032,7 +2041,7 @@ on the same target failing the same way, or one element covering many
 targets - `get_autorun_failures` ends with a `## Patterns across cases`
 section. That is often the application behaving a certain way rather than
 several scripts being wrong. Put the same quirk on the edit of EVERY case
-you repair for it: each edit adds its case and steps to the one note, and
+you repair for it: each edit adds its case and steps to the one quirk, and
 that is what lets later runs say whether it helped. To file it without a
 repair, call `record_autorun_quirk` with `cases: [{ case_id, steps }]`
 naming the cases and steps that failed for it in their newest run; a step
@@ -2049,12 +2058,12 @@ A project keeps 60 active quirks. Past that, `record_autorun_quirk` (and
 an edit's `quirk`) is refused with up to three of the assistant's own
 notes to retire: ones that did not help more often than they helped
 first, then ones no run has confirmed, then ones never tied to a run,
-oldest first within each; and with the three oldest of its other notes. Retire one with
+oldest first within each; and with the three oldest of its other quirks. Retire one with
 `retire_autorun_quirk { id, reason, replacement? }` - `replacement`
-records a better note in the same call and keeps the old one's cases and
-steps. A retired note leaves this guide; recording the same line again
+records a better quirk in the same call and keeps the old one's cases and
+steps. A retired quirk leaves this guide; recording the same line again
 brings it back rather than adding a copy - unless a person wrote it or
-retired it, which is refused: ask them to restore it. A note a person
+retired it, which is refused: ask them to restore it. A quirk a person
 wrote cannot be retired by you - ask them to remove it. Nothing about a
 quirk ever changes a script or runs anything on its own.
 

@@ -1689,3 +1689,50 @@ fn the_replay_part_teaches_stopping_a_replay() {
     let quick = autorun_guide().split("\n## ").next().unwrap().to_string();
     assert!(!quick.contains("stop_autorun_replay"), "the quick rules are at their cap");
 }
+
+/// Rows 32, 44 and 66 (tool errors 2026-10-19), and the `when_visible`
+/// wording: sentences in their sections, never the quick rules (at their cap).
+#[test]
+fn the_guide_teaches_the_quirk_field_the_last_step_replay_and_the_banner_on_a_check_page() {
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = autorun_guide();
+    let quick = g.split("
+## ").next().unwrap().to_string();
+
+    // Row 66: the field is `text`, not `note`, and the limit is 300.
+    let quirks = flat(g.split_once("## Repairing a script that failed").unwrap().1.split("
+## ").next().unwrap());
+    assert!(
+        quirks.contains("That tool takes the line as `text` (not `note`), and a quirk, there or as an edit's `quirk`, is at most 300 characters."),
+        "{quirks}"
+    );
+    assert!(!quirks.contains("the one note"), "a quirk is not called a note: {quirks}");
+
+    // Row 44: one past the last step proves the last step.
+    assert!(
+        quirks.contains("To prove a case's last step, replay to one past it, its last step number + 1:"),
+        "{quirks}"
+    );
+    assert!(quirks.contains("replayed the whole of case N (all M steps)"), "{quirks}");
+
+    // Row 32: the runner closes a pop-up only before an action.
+    let popups = flat(g.split_once("## Dismissing what may not show up").unwrap().1.split("
+## ").next().unwrap());
+    assert!(
+        popups.contains(
+            "The runner closes a pop-up only before those actions: on a page whose next action is a check, the banner can still be open, and the page a tool reads (`get_autorun_page`, a replay's answer) can still list its x"
+        ),
+        "{popups}"
+    );
+
+    // The guard's rule: visible and inside the page, not "nothing covers it".
+    assert!(
+        popups.contains("Shown means visible and inside the visible part of the page, after the page is scrolled to it"),
+        "{popups}"
+    );
+    assert!(!popups.contains("a click could reach it"), "the guard does not check what covers an element: {popups}");
+
+    for term in ["record_autorun_quirk", "replay_autorun_to_step", "last step number + 1"] {
+        assert!(!quick.contains(term), "the quick rules are at their cap, and {term:?} does not belong there");
+    }
+}

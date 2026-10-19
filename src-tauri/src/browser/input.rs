@@ -249,15 +249,16 @@ macro_rules! probe_js {
 /// click there is what a person's click on the slider does.
 pub const PROBE_JS: &str = probe_js!();
 
-/// `this` is the element. Is it shown: what a script's `when_visible`
-/// guard asks of each match (`expect::Check::ShownToClick`), by the rule a
-/// click itself waits on -
-/// `PROBE_JS`'s `visible` and `onscreen`, never a second definition. It is
-/// measured where it stands; one that is visible and outside the window is
-/// scrolled into view the way a click would scroll it, and measured again.
-/// Still outside after that (a closed cookie banner moved off the page) is
-/// not shown: a click on it would wait out its whole time with
-/// `OFFSCREEN`. An element already in view is never moved.
+/// `this` is the element. Is it shown? This is what a script's
+/// `when_visible` guard asks of each match (`expect::Check::ShownToClick`),
+/// by the rule a click itself waits on: `PROBE_JS`'s `visible` and
+/// `onscreen`, never a second definition. The element is measured where it
+/// stands. One that is visible but outside the window is scrolled into view
+/// the way a click would scroll it, and measured again. Still outside after
+/// that (a closed cookie banner moved off the page) means not shown, since
+/// a click on it would wait out its whole time with `OFFSCREEN`. An element
+/// already in view is never moved. Whether something covers it is not
+/// asked.
 pub const SHOWN_JS: &str = concat!(
     "async function() {
   if (!(this instanceof Element)) return false;
