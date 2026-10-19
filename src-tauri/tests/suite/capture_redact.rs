@@ -257,10 +257,10 @@ fn saml_oauth_and_opaque_values_are_hidden() {
     ] {
         assert!(!shown.contains("CfDJ8Hk3") && shown.contains("(hidden)"), "{shown}");
     }
-    // A 63-character run, a long path and plain words stay.
-    let run63 = "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxy";
-    assert_eq!(run63.len(), 61);
-    let text = format!("stays: {run63}01");
+    // A 39-character run, a long path and plain words stay.
+    let run39 = "abcdefghijklmnopqrstuvwxyz0123456789abc";
+    assert_eq!(run39.len(), 39);
+    let text = format!("stays: {run39}");
     assert_eq!(redact_body(Some("text/plain"), &text), text);
     let path = "/hr/leave/requests/pending/approvals/detail/2024/some-long-slug-here-for-the-test-case";
     assert_eq!(redact_path_query(path), path);
@@ -315,4 +315,89 @@ fn free_text_headers_and_fields_are_redacted_as_text() {
     assert_eq!(redact_field("password", "hunter2"), "[redacted]");
     assert_eq!(redact_field("note", "hi"), "hi");
     assert!(!redact_text("net::ERR failed for /x?access_token=hunter2").contains("hunter2"));
+}
+
+const RESET: &str = "CfDJ8Abc1De2Fg3Hi4Jk5Lm6No7Pq8Rs9Tu0VwXyZ1aB2cD3eF4gH5iJ6kL7mN8oP9qR0sT1uV2wX3yZ4aB5cD6eF7gH8iJ9kL0mN1oP2qR3sT4";
+
+#[test]
+fn a_token_written_with_encoded_slashes_and_equals_is_hidden() {
+    // Standard base64 as a query value is written with %2B, %2F and %3D.
+    let token = "CfDJ8Abc1De2Fg3Hi4Jk5Lm%2Bx%2Fy6No7Pq8Rs9Tu0VwXyZ1aB2cD3eF4gH5iJ6kL7mN8oP9qR0sT1uV2wX3yZ4aB5%2Fc%3D%3D";
+    let link = format!("/Account/ResetPassword?userId=7&code={token}");
+    let out = redact_path_query(&link);
+    assert!(!out.contains("CfDJ8") && !out.contains("sT1uV2"), "{out}");
+    assert!(out.starts_with("/Account/ResetPassword?userId=7&code="), "{out}");
+    // The same inside a JSON link, in a form value and in prose.
+    let json = format!(r#"{{"link":"https://hr.example{link}"}}"#);
+    for shown in [
+        redact_body(Some("application/json"), &json),
+        redact_body(Some("text/plain"), &format!("Open https://hr.example{link} to reset")),
+        redact_body(Some("application/x-www-form-urlencoded"), &format!("next={}", urlencoding::encode(&link))),
+    ] {
+        assert!(!shown.contains("CfDJ8") && !shown.contains("sT1uV2"), "{shown}");
+    }
+    // A bare token as a JSON value starting with a slash, and as a path segment.
+    for shown in [
+        redact_body(Some("application/json"), &format!(r#"{{"t":"/{RESET}"}}"#)),
+        redact_path_query(&format!("/reset/{RESET}")),
+        redact_path_query(&format!("/reset/{RESET}/confirm")),
+    ] {
+        assert!(!shown.contains("CfDJ8") && !shown.contains("sT1uV2"), "{shown}");
+        assert!(shown.starts_with('/') || shown.contains("{\"t\":\"/"), "{shown}");
+    }
+    assert_eq!(redact_path_query(&format!("/reset/{RESET}/confirm")), "/reset/(hidden)/confirm");
+    // Addresses stay: a long encoded redirect, a path of short segments.
+    let ret = "/signin?ReturnUrl=%2Fhr%2Fleave%2Frequests%2Fpending%2Fapprovals%2Fdetail%2Fall";
+    assert_eq!(redact_path_query(ret), ret);
+    let path = "/hr/leave/requests/pending/approvals/detail/2024/some-long-slug-here-for-the-test-case";
+    assert_eq!(redact_path_query(path), path);
+}
+
+#[test]
+fn a_long_code_is_hidden_without_a_state() {
+    let long = "AbCd1234EfGh5678IjKl9012";
+    let out = redact_path_query(&format!("/cb?code={long}&x=1"));
+    assert!(!out.contains(long) && out.contains("x=1"), "{out}");
+    let out = redact_body(Some("application/json"), &format!(r#"{{"code":"{long}","n":1}}"#));
+    assert!(!out.contains(long), "{out}");
+    // A short code stays.
+    assert_eq!(redact_path_query("/cb?code=AB12&x=1"), "/cb?code=AB12&x=1");
+    assert_eq!(redact_body(Some("application/json"), r#"{"code":"E101","n":1}"#), r#"{"code":"E101","n":1}"#);
+}
+
+#[test]
+fn key_headers_of_azure_style_services_are_secret() {
+    for name in ["subscription-key", "Ocp-Apim-Subscription-Key", "x-functions-key", "host_key", "master-key", "x-auth-key"] {
+        assert!(secret_name(name), "{name}");
+    }
+    for name in ["sortKey", "primaryKey", "foreignKey", "keyword", "keys", "key-count", "cacheKeyName"] {
+        assert!(!secret_name(name), "{name}");
+    }
+}
+
+#[test]
+fn text_that_is_not_json_still_loses_its_secret_members() {
+    for body in [r#"{"password":"x",}"#, r#"{"a":1,"password":"x" "b":2}"#, r#"[{"token": "x"},]"#, "{'password':\"x\"}"] {
+        let out = redact_body(Some("application/json"), body);
+        assert!(!out.contains("\"x\"") && !out.contains(":\"x") && out.contains("[redacted]"), "{body} -> {out}");
+    }
+}
+
+#[test]
+fn a_short_session_cookie_echoed_in_a_page_is_hidden() {
+    let sid = "5kbsz4dpbtzs1x4aeuvq2o4t";
+    assert_eq!(sid.len(), 24);
+    for page in [
+        format!("<p>Your session: ASP.NET_SessionId={sid}</p>"),
+        format!("Set-Cookie: ASP.NET_SessionId={sid}; path=/; HttpOnly"),
+        format!("Cookie: theme=dark; ASP.NET_SessionId={sid}"),
+        format!("document.cookie = '.ASPXAUTH={}'", "A1B2C3D4E5F6A7B8C9D0E1F2"),
+        format!(".AspNetCore.Cookies = {sid}"),
+    ] {
+        let out = redact_body(Some("text/html"), &page);
+        assert!(!out.contains(sid) && !out.contains("A1B2C3D4E5F6A7B8"), "{page} -> {out}");
+    }
+    // A label with ordinary words after it is left alone.
+    let prose = "The ASP.NET_SessionId cookie improves internationalization of pages";
+    assert_eq!(redact_body(Some("text/plain"), prose), prose);
 }

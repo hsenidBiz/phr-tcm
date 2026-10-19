@@ -32,10 +32,13 @@ const MORE_WORDS: [&str; 13] = [
     "samlrequest", "relaystate", "codeverifier",
 ];
 
-/// What may stand before a bare `key` word to make a compound: `api key`,
-/// `access key`...
-const KEY_PREFIXES: [&str; 9] =
-    ["api", "access", "private", "secret", "client", "encryption", "signing", "master", "license"];
+/// What may stand before a final `key` word to make a compound: `api key`,
+/// `subscription-key`, `x-functions-key`... (`sortKey`, `primaryKey`,
+/// `foreignKey` and `keyword` are not secrets).
+const KEY_PREFIXES: [&str; 14] = [
+    "api", "access", "private", "secret", "client", "subscription", "function", "functions", "master", "host", "auth",
+    "signing", "encryption", "license",
+];
 
 /// The most nesting followed: a value that is a URL whose query holds a URL
 /// ... Past it a value that would nest further is hidden whole.
@@ -93,17 +96,19 @@ pub fn secret_name(name: &str) -> bool {
     if words.iter().any(|w| w == "auth" || w == "authtoken") {
         return true;
     }
-    const WHOLE: [&str; 8] =
-        ["apikey", "accesskey", "privatekey", "secretkey", "clientkey", "encryptionkey", "signingkey", "masterkey"];
+    const WHOLE: [&str; 12] = [
+        "apikey", "accesskey", "privatekey", "secretkey", "clientkey", "encryptionkey", "signingkey", "masterkey",
+        "subscriptionkey", "functionkey", "hostkey", "authkey",
+    ];
     if words.iter().any(|w| WHOLE.contains(&w.as_str())) || words == ["key"] {
         return true;
     }
-    words.windows(2).any(|p| p[1] == "key" && KEY_PREFIXES.contains(&p[0].as_str()))
+    words.len() >= 2 && words[words.len() - 1] == "key" && KEY_PREFIXES.contains(&words[words.len() - 2].as_str())
 }
 
 /// Any JSON member in text that does not parse: group 1 the escape, group 2
 /// the name. Which are secret is `secret_name`'s say.
-static ANY_MEMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(\\?)"([^"\\]*)\\?"\s*:\s*"#).unwrap());
+static ANY_MEMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(\\?)["']([^"'\\]*)\\?["']\s*:\s*"#).unwrap());
 
 /// `name = "value"`, `name: 'value'`, `name=value`, GraphQL's
 /// `password:\"x\"`: the name a bare identifier (checked with
@@ -160,7 +165,7 @@ static JOSE_SPLIT: LazyLock<Regex> = LazyLock::new(|| {
 static DOTTED: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+){2,}").unwrap());
 /// A long run of characters a token is written with.
-static LONG_RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9_\-+/=.%]{64,}").unwrap());
+static LONG_RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9_\-+/=.%]{40,}").unwrap());
 
 /// A JWT-looking run is hidden only when longer than this.
 const JWT_MIN_LEN: usize = 40;
@@ -194,24 +199,82 @@ fn hide_jwts(text: &str) -> String {
         .into_owned()
 }
 
-/// Hides every run of 64 or more token characters holding a letter and a
-/// digit: an echoed session cookie, an opaque token under an innocent name.
-/// An address path (it starts with `/`) and an encoded address (`%2F`, `%3D`:
-/// its parts were redacted by name) are not tokens.
+/// A token this long is hidden: one path segment, one value.
+const OPAQUE_MIN: usize = 40;
+
+/// A letter and a digit both: what a token has and a word or a number lacks.
+fn opaque(text: &str) -> bool {
+    text.chars().any(|c| c.is_ascii_digit()) && text.chars().any(|c| c.is_ascii_alphabetic())
+}
+
+/// `run` (a run of token characters, 40 or more) with the opaque value in it
+/// hidden. The run is percent-decoded first, since a token is almost always
+/// written with `%2F` and `%3D`. After a short `name=` the rest is the value.
+/// A value that starts with `/` is an address: it stays unless one of its
+/// segments is itself an opaque run of 40 or more, which is hidden alone. Any
+/// other value of 40 or more opaque characters is hidden whole. Words,
+/// numbers and text with spaces are not tokens.
+fn hide_run(run: &str) -> String {
+    let (prefix, rest) = match run.find('=') {
+        Some(i)
+            if i > 0
+                && i <= 32
+                && i + 1 < run.len()
+                && run[..i].chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')) =>
+        {
+            (&run[..=i], &run[i + 1..])
+        }
+        _ => ("", run),
+    };
+    let plain = String::from_utf8_lossy(&urlencoding::decode_binary(rest.as_bytes())).into_owned();
+    if plain.chars().any(|c| c.is_whitespace() || c.is_control()) || !opaque(&plain) {
+        return run.to_string();
+    }
+    if plain.starts_with('/') {
+        let mut changed = false;
+        let shown: Vec<&str> = plain
+            .split('/')
+            .map(|seg| {
+                if seg.chars().count() >= OPAQUE_MIN && opaque(seg) {
+                    changed = true;
+                    HIDDEN
+                } else {
+                    seg
+                }
+            })
+            .collect();
+        return if changed { format!("{prefix}{}", shown.join("/")) } else { run.to_string() };
+    }
+    if plain.chars().count() >= OPAQUE_MIN {
+        format!("{prefix}{HIDDEN}")
+    } else {
+        run.to_string()
+    }
+}
+
+/// Hides every opaque token (`hide_run`) in `text`: an echoed session cookie,
+/// a reset token in a link, a token under an innocent name.
 fn hide_long_runs(text: &str) -> String {
-    LONG_RUN
+    LONG_RUN.replace_all(text, |c: &Captures| hide_run(&c[0])).into_owned()
+}
+
+/// A cookie or session label, then within 80 characters an opaque value of 16
+/// or more: `ASP.NET_SessionId=5kbsz4dpbtzs1x4aeuvq2o4t`. Shorter than a
+/// token the long-run rule catches, so the label gives it away.
+static COOKIE_VALUE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)(ASP\.NET_SessionId|\.ASPXAUTH|\.AspNetCore\.[\w.\-]*|Set-Cookie|\bCookie\s*:)([^\r\n]{0,80}?)([A-Za-z0-9][A-Za-z0-9_\-+/=.%]{15,})",
+    )
+    .unwrap()
+});
+
+fn hide_cookie_values(text: &str) -> String {
+    COOKIE_VALUE
         .replace_all(text, |c: &Captures| {
-            let run = &c[0];
-            let lower = run.to_ascii_lowercase();
-            let token = run.chars().any(|c| c.is_ascii_digit())
-                && run.chars().any(|c| c.is_ascii_alphabetic())
-                && !run.starts_with('/')
-                && !lower.contains("%2f")
-                && !lower.contains("%3d");
-            if token {
-                HIDDEN.to_string()
+            if opaque(&c[3]) {
+                format!("{}{}{HIDDEN}", &c[1], &c[2])
             } else {
-                run.to_string()
+                c[0].to_string()
             }
         })
         .into_owned()
@@ -224,7 +287,15 @@ fn hide_bearer(text: &str) -> String {
 /// What every redacted text ends with: bearer values, JWTs and long opaque
 /// runs hidden wherever they sit.
 fn finish(text: String) -> String {
-    hide_long_runs(&hide_jwts(&hide_bearer(&text)))
+    hide_long_runs(&hide_cookie_values(&hide_jwts(&hide_bearer(&text))))
+}
+
+/// A `code` value that is a token and not a short code: 20 or more token
+/// characters with a letter and a digit (a password-reset code).
+fn opaque_code(value: &str) -> bool {
+    value.chars().count() >= 20
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '+' | '/' | '=' | '.' | '%'))
+        && opaque(value)
 }
 
 /// A percent-decoded component (`+` a space); bytes that are not UTF-8 are
@@ -300,7 +371,10 @@ fn redact_value(v: &Value, depth: u8) -> Value {
             Value::Object(
                 map.iter()
                     .map(|(k, x)| {
-                        let hide = secret_name(k) || (oauth && k.eq_ignore_ascii_case("code"));
+                        let code = k.eq_ignore_ascii_case("code");
+                        let hide = secret_name(k)
+                            || (oauth && code)
+                            || (code && x.as_str().is_some_and(opaque_code));
                         let x = if hide { Value::String(REDACTED.to_string()) } else { redact_value(x, depth) };
                         (k.clone(), x)
                     })
@@ -332,10 +406,12 @@ fn form_at(text: &str, depth: u8) -> String {
 
 fn field_at(pair: &str, depth: u8, force: bool) -> String {
     let Some((name, value)) = pair.split_once('=') else { return pair.to_string() };
-    if force || secret_name(&decoded(name)) {
+    let plain_value = decoded(value);
+    let opaque_code_value = decoded(name).eq_ignore_ascii_case("code") && opaque_code(&plain_value);
+    if force || opaque_code_value || secret_name(&decoded(name)) {
         return format!("{name}={REDACTED}");
     }
-    match redact_text_value(&decoded(value), depth) {
+    match redact_text_value(&plain_value, depth) {
         Some(hidden) => format!("{name}={}", urlencoding::encode(&hidden)),
         None => pair.to_string(),
     }
