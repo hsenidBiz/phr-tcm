@@ -845,6 +845,30 @@ async fn a_reset_of_the_persons_browser_is_refused() {
     assert_eq!((b.guarded_case, b.guard_owner.clone()), (Some(9), Some(GuardOwner::Person)));
 }
 
+/// A reset of the assistant's own browser takes it over (`taken_over`, which
+/// in the app forgets where the last replay stood), so the next replay starts
+/// from the beginning - what "already standing before step N" tells the
+/// assistant to do. It does so whether the home page then loads or not.
+#[tokio::test]
+async fn a_reset_forgets_where_the_last_replay_stood() {
+    use v2_lib::commands::autorun::reset_in_for_assistant;
+    let dir = tempfile::tempdir().unwrap();
+    v2_lib::autorun::recipe::save_recipe(dir.path(), "acme", "Web", &crate::common::menu_recipe()).unwrap();
+    let quick = v2_lib::browser::timing::Timing {
+        action_ms: 300,
+        expect_ms: 300,
+        nav_ms: 300,
+        poll_ms: 20,
+        highlight_ms: 0,
+        lease_wait_ms: 300,
+    };
+    let (mut slot, closed) = left_open_by_assistant(true, None);
+    let (status, said) = reset_in_for_assistant(&mut slot, dir.path(), "acme", "Web", &quick).await;
+    assert!(!closed.load(Ordering::SeqCst), "{status}: {said}");
+    let b = slot.as_ref().expect("the browser was let go");
+    assert_eq!(b.taken_over, 1, "the reset kept the replay's stand: {status}: {said}");
+}
+
 /// Review Focus 5: a reset while a replay runs is refused at once, and the
 /// replay is not asked to stop.
 #[tokio::test]

@@ -6718,7 +6718,8 @@ async fn wait_for_replay(
 /// with `ENDED_DISCOVERY_FIRST`.
 ///
 /// The answer is `{ "sentence" }`, and once the browser stands before the
-/// step, or where the replay stopped at a failure, `"page"` beside it: the
+/// step, or where the replay stopped at a failure (not while signing in:
+/// the sign-in page shows the account's login), `"page"` beside it: the
 /// page as `get_autorun_page` shows it, so the assistant can try the step
 /// at once.
 pub async fn autorun_replay_with(
@@ -6897,6 +6898,12 @@ async fn run_assistant_replay(
     };
     match end {
         ReplayEnd::Refused(_) | ReplayEnd::Blocked(_) => (409, sentence),
+        // A sign-in that stopped stands on the sign-in page, whose username
+        // field shows the account's login: accounts are named by key, never
+        // by login, so its page is not answered.
+        ReplayEnd::StoppedAt { phase: crate::autorun::replay_to::ReplayPhase::SignIn, .. } => {
+            (200, with_summary(serde_json::json!({ "sentence": sentence })))
+        }
         // Where the browser stands: before the step, or at the failure it
         // stopped on (a browser that went is never `StoppedAt`).
         ReplayEnd::Ready { .. } | ReplayEnd::StoppedAt { .. } => {

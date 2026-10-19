@@ -575,20 +575,32 @@ pub async fn snapshot_read<D: Driver>(d: &mut D, limit: usize) -> Result<PageRea
 
 /// The DOM node a `within` locator names: its one match. Refused, with the
 /// count, when it matches none or several: a read of "one of these" could
-/// list the wrong part of the page.
+/// list the wrong part of the page. An `nth` on its last link that is past
+/// the end of its matches says so, with how many there are
+/// (`nth_past_the_end`).
 pub async fn within_node<D: Driver>(d: &mut D, within: &Target) -> Result<Result<i64, String>, CdpError> {
     let found = resolve_explained(d, within).await?;
     match found.handles.as_slice() {
         [one] => Ok(Ok(page::backend_id(d, one).await?)),
-        [] => Ok(Err(match found.unreachable_frame {
-            Some(why) => format!("within matched 0 elements: {why}"),
-            None => format!("within matched 0 elements: nothing on the page answers to {}; it must match exactly one", within.describe()),
-        })),
+        [] => {
+            if found.unreachable_frame.is_none() {
+                if let Some(past) = nth_past_the_end(d, within).await? {
+                    return Ok(Err(past));
+                }
+            }
+            Ok(Err(match found.unreachable_frame {
+                Some(why) => format!("within matched 0 elements: {why}"),
+                None => format!(
+                    "within matched 0 elements: nothing on the page answers to {}; it must match exactly one",
+                    within.describe()
+                ),
+            }))
+        }
         many => {
             let by_role = within.links().last().is_some_and(|l| l.role.is_some());
             let mut named = Vec::new();
             for handle in many.iter().take(WITHIN_NAMED) {
-                named.push(within_match(d, handle, by_role).await?);
+                named.push(within_match(d, handle, by_role).await);
             }
             let which = if many.len() > WITHIN_NAMED {
                 format!("The first {WITHIN_NAMED} of {}", many.len())
@@ -605,6 +617,24 @@ pub async fn within_node<D: Driver>(d: &mut D, within: &Target) -> Result<Result
     }
 }
 
+/// Said when the `nth` on `within`'s last link picks past the end of what
+/// that link matches: `nth 5 is past the end: within matches 4 elements
+/// (nth 0 to 3)`. `None` when it has no such `nth`, or nothing matches
+/// without it either (then the plain "matched 0" is the answer).
+async fn nth_past_the_end<D: Driver>(d: &mut D, within: &Target) -> Result<Option<String>, CdpError> {
+    let mut links = within.links();
+    let Some(n) = links.last_mut().and_then(|l| l.nth.take()) else {
+        return Ok(None);
+    };
+    let all = if links.len() == 1 { Target::One(links.remove(0)) } else { Target::Chain(links) };
+    let count = resolve_explained(d, &all).await?.handles.len();
+    Ok(match count {
+        0 => None,
+        1 => Some(format!("nth {n} is past the end: within matches 1 element (nth 0)")),
+        many => Some(format!("nth {n} is past the end: within matches {many} elements (nth 0 to {})", many - 1)),
+    })
+}
+
 /// How many of a `within`'s several matches its refusal names.
 const WITHIN_NAMED: usize = 3;
 
@@ -617,15 +647,20 @@ pub const WITHIN_MATCH_JS: &str = r#"function() {
 
 /// One of a `within`'s several matches, as a page read lists a line: its
 /// role and name for a role locator (`page_read_label`), `tag#id.class`
-/// for a css or text one, or for an element the read gives no name.
-async fn within_match<D: Driver>(d: &mut D, handle: &page::Handle, by_role: bool) -> Result<String, CdpError> {
+/// for a css or text one, or for an element the read gives no name. One
+/// the browser cannot name (it went from the page meanwhile) is "an
+/// element": naming is a help, never a reason to lose the refusal.
+async fn within_match<D: Driver>(d: &mut D, handle: &page::Handle, by_role: bool) -> String {
     if by_role {
         if let Some(label) = page_read_label(d, handle).await {
-            return Ok(label);
+            return label;
         }
     }
-    let said = page::call_value(d, handle, WITHIN_MATCH_JS, &[]).await?;
-    Ok(truncate_name(&sanitize(said.as_str().unwrap_or("an element"))))
+    let said = page::call_value(d, handle, WITHIN_MATCH_JS, &[]).await.ok();
+    match said.as_ref().and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+        Some(said) => truncate_name(&sanitize(said)),
+        None => "an element".to_string(),
+    }
 }
 
 /// [`snapshot_read`], or with `within` (a DOM node, `within_node`) only

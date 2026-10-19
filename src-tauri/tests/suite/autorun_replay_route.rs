@@ -297,6 +297,30 @@ async fn a_replay_that_stops_at_a_failure_answers_the_page_there() {
     assert_eq!(v["page_left_out"], PAGE_LEFT_OUT);
 }
 
+/// A replay that stopped while signing in answers its sentence alone: the
+/// sign-in page's username field shows the account's login, and accounts
+/// are named by key, never by login.
+#[tokio::test]
+async fn a_replay_that_stops_signing_in_answers_no_page() {
+    let _a = crate::serial::autorun();
+    let dir = tempfile::tempdir().unwrap();
+    store::set_root(dir.path().to_path_buf());
+    project(dir.path(), &script(false));
+    let host = leak(FakeHost::ending(ReplayEnd::StoppedAt {
+        phase: v2_lib::autorun::replay_to::ReplayPhase::SignIn,
+        step: 1,
+        why: "the signed-in marker never appeared".into(),
+        outcomes: vec![],
+    }));
+    let (status, text) = autorun_replay_with(&ctx(), &body(3), host, WAIT).await;
+    assert_eq!(status, 200, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v,
+        json!({ "sentence": "Started from the beginning. Replay stopped while signing in: the signed-in marker never appeared" })
+    );
+}
+
 /// A replay that was stopped, or whose browser closed under it, answers
 /// its sentence alone: there is no page to read.
 #[tokio::test]

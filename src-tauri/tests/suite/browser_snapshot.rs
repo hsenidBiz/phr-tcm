@@ -1116,3 +1116,45 @@ async fn a_within_nth_picks_one_of_its_matches() {
     assert!(within_target_nth(Some("main"), Some("-1")).unwrap_err().contains("from 0"));
     assert!(within_target_nth(Some("main"), Some("x")).unwrap_err().contains("from 0"));
 }
+
+/// An `nth` past the end of what `within` matches says so, with how many
+/// it matches, rather than reading as if nothing on the page answered.
+#[tokio::test]
+async fn a_within_nth_past_the_end_says_how_many_there_are() {
+    use v2_lib::ai_bridge::within_target_nth;
+    use v2_lib::browser::snapshot::within_node;
+    let mut d = four_mains();
+    let past = within_target_nth(Some("main"), Some("5")).unwrap().unwrap();
+    let refused = within_node(&mut d, &past).await.unwrap().unwrap_err();
+    assert_eq!(refused, "nth 5 is past the end: within matches 4 elements (nth 0 to 3)");
+    let mut d = four_mains();
+    let past = within_target_nth(Some(r#"{"role":"main","name":"Shell"}"#), Some("1")).unwrap().unwrap();
+    let refused = within_node(&mut d, &past).await.unwrap().unwrap_err();
+    assert_eq!(refused, "nth 1 is past the end: within matches 1 element (nth 0)");
+}
+
+/// A match the browser cannot name while the refusal is written (it went
+/// from the page) is "an element": the refusal is still said.
+#[tokio::test]
+async fn a_within_match_that_cannot_be_named_is_an_element() {
+    use v2_lib::ai_bridge::within_target;
+    use v2_lib::browser::snapshot::{within_node, WITHIN_MATCH_JS};
+    let mut d = ScriptedDriver::new(|method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" if f == WITHIN_MATCH_JS => {
+                Err(CdpError::Protocol { method: "Runtime.callFunctionOn".into(), message: "No node with given id".into() })
+            }
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => Ok(json!({ "result": [
+                { "name": "0", "value": { "objectId": "el-0" } },
+                { "name": "1", "value": { "objectId": "el-1" } }
+            ] })),
+            other => panic!("unexpected {other}"),
+        }
+    });
+    let refused = within_node(&mut d, &within_target("section").unwrap()).await.unwrap().unwrap_err();
+    assert!(refused.starts_with("within matched 2 elements: section must match exactly one"), "{refused}");
+    assert!(refused.ends_with(" They are: an element; an element."), "{refused}");
+}

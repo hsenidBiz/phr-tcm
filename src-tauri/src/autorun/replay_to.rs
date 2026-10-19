@@ -874,8 +874,9 @@ impl ReplayFrom {
         match self {
             ReplayFrom::Beginning => "Started from the beginning.".to_string(),
             ReplayFrom::CarriedOn(k) => format!("Carried on from step {k}."),
-            // A reset drops the stand (`commands::autorun::reset_for_assistant`),
-            // so the next replay starts from the beginning.
+            // A reset takes the browser over (`DiscoveryBrowser::taken_over`
+            // in `commands::autorun::reset_in_for_assistant`), which drops
+            // the stand, so the next replay starts from the beginning.
             ReplayFrom::AlreadyThere => format!(
                 "The browser is already standing before step {step} of case {case_id}: nothing ran. To run it again from the beginning, call reset_autorun_browser first."
             ),

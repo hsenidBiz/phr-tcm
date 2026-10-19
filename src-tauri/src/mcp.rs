@@ -427,7 +427,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The case whose saved script is replayed." },
                 "step": { "type": "number", "description": "The step to stop before: the failing step. Steps 1 to step - 1 run." },
-                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer; get_autorun_page reads it. True when left out." },
+                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer; get_autorun_page reads it. Default true." },
             }), &["case_id", "step"]),
         },
         {
@@ -440,7 +440,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 "mapping": { "type": "boolean", "description": "Optional: true starts a menu mapping run, which only walks the menus and saves each screen as an area. It is read-only: every save the page tries is blocked and counted, and the action's answer carries `blocked`. Needs `modules`. Used by /tcm:map-menus." },
                 "modules": { "type": "array", "items": { "type": "string" }, "description": "The modules to map, by name, for a mapping run. At least one is needed when `mapping` is true." },
                 "case_id": { "type": "number", "description": "Optional: the case this discovery explores for. When its saved script is marked no_save, every save the page tries is BLOCKED (not only reported) from then until the discovery ends, and each answer names the blocked request in `blocked_writes`." },
-                "page": { "type": "boolean", "description": "Optional: false leaves the landing page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). True when left out." },
+                "page": { "type": "boolean", "description": "Optional: false leaves the landing page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). Default true." },
                 "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries from then until the discovery ends, as for a case marked no_save. Pass it, or the case_id, whenever the case you explore for must not save." },
             }), &["account"]),
         },
@@ -459,7 +459,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "type": "object",
                     "description": "Optional, with a use_component action only: the component to try in place of the saved one of that name, exactly as you will send it to save_autorun_component: { name, description, inputs, actions }.",
                 },
-                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). True when left out." },
+                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). Default true." },
             }), &["action"]),
         },
         {
@@ -472,7 +472,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                     "items": { "type": "object" },
                 },
                 "stop_on_failure": { "type": "boolean", "description": "Optional: false carries on past a failed action. True when left out." },
-                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). True when left out." },
+                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). Default true." },
                 "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
                 "case_id": { "type": "number", "description": "Optional: the case this call is for. When its saved script is marked no_save, every save the page tries is BLOCKED (not only reported) for this call only, and the answer names the blocked request in `blocked_writes`; so name it on every call for a case marked no_save. A discovery started guarded stays guarded until it ends." },
                 "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries for this call only, as for a case marked no_save. Pass it, or the case_id, on every call for a case that must not save. A discovery started with no_save stays guarded until it ends." },

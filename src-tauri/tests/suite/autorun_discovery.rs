@@ -307,6 +307,28 @@ async fn start_signs_in_and_returns_the_landing_page() {
     assert!(!file.contains("t0p-secret"), "a query string reached the map: {file}");
 }
 
+/// A start sent `page: false` answers without the landing page, as its route
+/// gives it (`without_page` over `discover_start_in`'s answer); the page is
+/// still read and recorded. The route itself opens a real browser first, so
+/// it is driven here from where the fake browser can stand in.
+#[tokio::test]
+async fn a_start_asked_for_no_page_leaves_it_out() {
+    use v2_lib::ai_bridge::{without_page, PAGE_LEFT_OUT};
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(signin_app(true), opened_for_discovery());
+    let answer = discover_start_in(&mut browser, dir.path(), ORG, PROJECT, "admin", Some("Leave"), &quick()).await;
+    let body = json!({ "account": "admin", "area": "Leave", "page": false }).to_string();
+    let (status, out) = without_page(answer, &body);
+    assert_eq!(status, 200, "{out}");
+    let v = parsed(&out);
+    assert!(v.get("page").is_none(), "{out}");
+    assert_eq!(v["page_left_out"], PAGE_LEFT_OUT);
+    assert_eq!((v["signed_in"].clone(), v["path"].clone()), (json!(true), json!("/hr/home/index")), "{out}");
+    let area = mapped_area(dir.path(), "Leave").expect("the landing page was not recorded");
+    let page = area.pages.iter().find(|p| p.path == "/hr/home/index").expect("no landing page");
+    assert!(page.elements.iter().any(|e| e.name == "Save"), "{:?}", page.elements);
+}
+
 /// Nothing opens while something else holds the browser: an unattended
 /// run, a recording, a replay to a step. A browser already open (the
 /// person's, or a discovery) is refused with the sentence that names what
