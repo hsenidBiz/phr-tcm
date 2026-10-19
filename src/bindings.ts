@@ -5109,15 +5109,15 @@ export type ReplayEnd_Deserialize =
  *  `notice` is said beside it: the preconditions were not checked.
  *  `whole` is how many steps the case has, when `step` is past its last:
  *  the whole case ran, and the browser is on the page its last step left.
- *  `cleanup`, beside a `whole`, says whether the script's clean-up step
- *  ran too (only a replay past it runs it); `None` without a clean-up.
+ *  `cleanup`, beside a `whole`, is the number of the script's clean-up
+ *  step (`None` without one): it ran too when `step` is past it.
  */
 { kind: "ready"; detail: {
 	case_id: number,
 	step: number,
 	notice: string | null,
 	whole?: number | null,
-	cleanup?: boolean | null,
+	cleanup?: number | null,
 } } | 
 /**
  *  The replay failed in `phase`: step `step` when it is `Step`; the
@@ -5169,15 +5169,15 @@ export type ReplayEnd_Serialize =
  *  `notice` is said beside it: the preconditions were not checked.
  *  `whole` is how many steps the case has, when `step` is past its last:
  *  the whole case ran, and the browser is on the page its last step left.
- *  `cleanup`, beside a `whole`, says whether the script's clean-up step
- *  ran too (only a replay past it runs it); `None` without a clean-up.
+ *  `cleanup`, beside a `whole`, is the number of the script's clean-up
+ *  step (`None` without one): it ran too when `step` is past it.
  */
 { kind: "ready"; detail: {
 	case_id: number,
 	step: number,
 	notice: string | null,
 	whole?: number | null,
-	cleanup?: boolean | null,
+	cleanup?: number | null,
 } } | 
 /**
  *  The replay failed in `phase`: step `step` when it is `Step`; the

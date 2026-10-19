@@ -840,7 +840,8 @@ fn shots_of_unpublished_runs(root: &Path) -> std::collections::HashSet<String> {
             continue;
         }
         for case in &run.cases {
-            for step in &case.steps {
+            // The clean-up's pictures are the run's evidence too.
+            for step in case.steps.iter().chain(case.cleanup.iter()) {
                 if let Some(name) = &step.screenshot {
                     out.insert(name.clone());
                 }

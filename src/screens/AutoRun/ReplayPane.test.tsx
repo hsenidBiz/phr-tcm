@@ -950,3 +950,7 @@ test("Escape on the setup still cancels it", async () => {
   fireEvent.keyDown(window, { key: "Escape" });
   await waitFor(() => expect(backgroundRunSnapshot().run).toBeNull());
 });
+
+test("statusOf names a case's clean-up as such, not as a step", () => {
+  expect(statusOf({ phase: "cleanup", step_number: 4, steps: 3, proposed: "" })).toBe("Clean-up");
+});

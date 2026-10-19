@@ -56,8 +56,8 @@ pub enum ReplayEnd {
     /// `notice` is said beside it: the preconditions were not checked.
     /// `whole` is how many steps the case has, when `step` is past its last:
     /// the whole case ran, and the browser is on the page its last step left.
-    /// `cleanup`, beside a `whole`, says whether the script's clean-up step
-    /// ran too (only a replay past it runs it); `None` without a clean-up.
+    /// `cleanup`, beside a `whole`, is the number of the script's clean-up
+    /// step (`None` without one): it ran too when `step` is past it.
     Ready {
         case_id: i32,
         step: i32,
@@ -65,7 +65,7 @@ pub enum ReplayEnd {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         whole: Option<i32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        cleanup: Option<bool>,
+        cleanup: Option<i32>,
     },
     /// The replay failed in `phase`: step `step` when it is `Step`; the
     /// case's sign-in or its trip to the area before step 1 otherwise (then
@@ -99,12 +99,12 @@ impl ReplayEnd {
             ReplayEnd::Ready { case_id, step, whole: Some(all), cleanup, .. } => {
                 let steps = if *all == 1 { "its 1 step".to_string() } else { format!("all {all} steps") };
                 match cleanup {
-                    Some(true) => format!(
+                    Some(c) if step > c => format!(
                         "replayed the whole of case {case_id} ({steps} and its clean-up) - the browser is on the page its clean-up left"
                     ),
-                    Some(false) => format!(
+                    Some(c) => format!(
                         "replayed the whole of case {case_id} ({steps}; its clean-up did not run - replay to step {} to run it too) - the browser is on the page its last step left",
-                        step + 1
+                        c + 1
                     ),
                     None => format!("replayed the whole of case {case_id} ({steps}) - the browser is on the page its last step left"),
                 }
@@ -743,13 +743,13 @@ pub fn whole_case(script: &CaseScript, step: i32) -> Option<i32> {
     (step > last).then(|| i32::try_from(script.case_steps().count()).unwrap_or(i32::MAX))
 }
 
-/// Whether a replay to `step` that ran the whole case ran its clean-up too:
-/// only one past the clean-up does. `None` when it did not run the whole
-/// case or the script has no clean-up.
-pub fn cleanup_ran(script: &CaseScript, step: i32) -> Option<bool> {
+/// The number of the clean-up step, beside a replay to `step` that ran the
+/// whole case: it ran too when `step` is past it. `None` when the replay
+/// did not run the whole case or the script has no clean-up.
+pub fn cleanup_ran(script: &CaseScript, step: i32) -> Option<i32> {
     let tidy = script.cleanup_step()?;
     whole_case(script, step)?;
-    Some(step > tidy.step_number)
+    Some(tidy.step_number)
 }
 
 /// Run case `script`'s steps `from` to `n` - 1, in its order, in the

@@ -1353,3 +1353,28 @@ fn a_clean_up_step_alone_is_not_a_script() {
         "case 46 step 1: a script with only a clean-up step runs none of the case - write the case's steps first"
     );
 }
+
+/// #46 review: the pictures of an unpublished run's clean-up are kept like
+/// its steps' pictures.
+#[test]
+fn an_unpublished_runs_clean_up_pictures_survive_pruning() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let step_shot = save_and_prune(root, b"S", 2).unwrap();
+    let fail_shot = save_and_prune(root, b"F", 2).unwrap();
+    let run: LocalRun = serde_json::from_value(serde_json::json!({
+        "id": "run-1", "pbi_id": 1, "started_at": "1", "mode": "unattended",
+        "cases": [{
+            "case_id": 1, "title": "t", "verdict": "", "note": "", "steps": [],
+            "cleanup": { "step_number": 2, "screenshot": step_shot,
+                         "outcomes": [{ "ok": false, "detail": "x", "screenshot": fail_shot }] }
+        }]
+    }))
+    .unwrap();
+    save_run(root, &run).unwrap();
+    for i in 0..5u8 {
+        save_and_prune(root, &[i, 9], 2).unwrap();
+    }
+    assert!(root.join("shots").join(&step_shot).is_file(), "the clean-up's step picture was pruned");
+    assert!(root.join("shots").join(&fail_shot).is_file(), "the clean-up's failure picture was pruned");
+}

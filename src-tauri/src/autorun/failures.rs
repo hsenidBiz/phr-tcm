@@ -186,6 +186,27 @@ fn describe_step(step: &StepRecord, script: Option<&CaseScript>, components: &Co
         return;
     }
 
+    describe_failed_actions(step, &format!("step {}", step.step_number), script, components, root, out);
+    push_downloads(step, out);
+}
+
+/// How a failure report names the clean-up step.
+const CLEANUP_NAME: &str = "clean-up (it never fails the case)";
+
+/// The first line of a case listed only because its clean-up failed.
+pub const CLEANUP_ONLY: &str = "the case passed; only its clean-up failed";
+
+/// One block per failed action of `step` (named `name`): its JSON, what the
+/// page said and its picture, and one `  action K: not run (...)` line per
+/// action skipped because an earlier one in the same step failed.
+fn describe_failed_actions(
+    step: &StepRecord,
+    name: &str,
+    script: Option<&CaseScript>,
+    components: &ComponentFile,
+    root: Option<&Path>,
+    out: &mut Vec<String>,
+) {
     let ran = ran_in_step(script, step, components);
     for (i, outcome) in step.outcomes.iter().enumerate() {
         if outcome.ok {
@@ -206,8 +227,8 @@ fn describe_step(step: &StepRecord, script: Option<&CaseScript>, components: &Co
             _ => missing_action_text(script, i),
         };
         match here.and_then(|r| r.component.as_deref()) {
-            Some(c) => out.push(format!("step {}, {c}, action {}: {action_text}", step.step_number, i + 1)),
-            None => out.push(format!("step {}, action {}: {action_text}", step.step_number, i + 1)),
+            Some(c) => out.push(format!("{name}, {c}, action {}: {action_text}", i + 1)),
+            None => out.push(format!("{name}, action {}: {action_text}", i + 1)),
         }
         out.push(format!("  page said: {}", outcome.detail));
         if let Some(shot) = &outcome.screenshot {
@@ -219,7 +240,6 @@ fn describe_step(step: &StepRecord, script: Option<&CaseScript>, components: &Co
             }
         }
     }
-    push_downloads(step, out);
 }
 
 /// `step N downloads: a.xlsx, b.csv` for a step that saved files: the names
@@ -271,12 +291,17 @@ fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>, c
         lines.push(format!("STOP: {reason}"));
     }
 
+    // A case listed only for its clean-up says so before anything else.
+    if !is_failed(case) && case.cleanup_line().is_some() {
+        lines.push(CLEANUP_ONLY.to_string());
+    }
     for step in &case.steps {
         describe_step(step, script, components, root, &mut lines);
     }
-    // The clean-up is no step of the case: only its failure is said.
-    if let Some(line) = case.cleanup_line() {
-        lines.push(line);
+    // The clean-up is no step of the case: what failed in it is said as a
+    // step's failure is, under its own name.
+    if let Some(tidy) = case.cleanup.as_ref().filter(|_| case.cleanup_line().is_some()) {
+        describe_failed_actions(tidy, CLEANUP_NAME, script, components, root, &mut lines);
     }
 
     if !case.note.is_empty() {
@@ -307,7 +332,9 @@ pub fn describe_failures_in(root: Option<&Path>, run: &LocalRun, scripts: &[Case
     let blocks: Vec<String> = run
         .cases
         .iter()
-        .filter(|c| is_failed(c))
+        // A case that passed is listed too when its clean-up failed: a
+        // broken clean-up leaves data behind for the next run.
+        .filter(|c| is_failed(c) || c.cleanup_line().is_some())
         .map(|c| describe_case(&run.id, c, scripts.iter().find(|s| s.case_id == c.case_id), components, root))
         .collect();
 

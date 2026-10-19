@@ -622,7 +622,10 @@ async fn run_case_in<D: Driver>(
         }
         runner::credit_late(&mut steps, late);
         steps.push(StepRecord { step_number: step.step_number, outcomes, screenshot: None, downloads: Vec::new(), tab, dialog, components, duration_ms: Some(ms(asked_at.elapsed())) });
-        page_errors_seen += seen_errors;
+        // Page errors the clean-up met are not the case's.
+        if !step.cleanup {
+            page_errors_seen += seen_errors;
+        }
         if let Some(p) = picture {
             pictures.push((steps.len() - 1, p));
         }
@@ -760,7 +763,8 @@ fn stopped_at_reset(root: &Path, case: &CaseToRun, batch: u32) -> CaseRecord {
 fn left_unrun(root: &Path, case: &CaseToRun, reason: String, step_why: String) -> CaseRecord {
     let mut record = unrun(case.case_id, &case.title, "", reason);
     if let Ok(Some(script)) = store::load_script(root, case.case_id) {
-        record.steps = script.steps.iter().map(|s| not_run(s, &step_why)).collect();
+        record.steps = script.case_steps().map(|s| not_run(s, &step_why)).collect();
+        record.cleanup = script.cleanup_step().map(|s| not_run(s, &step_why));
     }
     record
 }
@@ -824,14 +828,14 @@ fn blocked_before_start(script: &CaseScript, account: Option<&str>, reason: Stri
         title: script.title.clone(),
         verdict: String::new(),
         note: String::new(),
-        steps: script.steps.iter().map(|s| not_run(s, &why)).collect(),
+        steps: script.case_steps().map(|s| not_run(s, &why)).collect(),
         proposed: "Blocked".to_string(),
         reason,
         duration_ms: None,
         account: account.map(str::to_string),
         retried: None,
         notice: None,
-        page_errors_seen: 0, phases: None, cleanup: None,
+        page_errors_seen: 0, phases: None, cleanup: script.cleanup_step().map(|s| not_run(s, &why)),
     }
 }
 
@@ -927,10 +931,13 @@ async fn one_go<B: Browsers>(
             if let Err(e) = d.enable_downloads(&store::downloads_dir(go.root, run_id)).await {
                 crate::applog::warn(format!("{}: downloads could not be switched on: {e}", who(case_id)));
             }
+            // The clean-up is no step of the case: its own phase.
+            let tidy = go.script.cleanup_step().map(|s| s.step_number);
             let mut on_step = |n: i32| {
                 let phase = match n {
                     SIGN_IN_STEP => "signing_in",
                     MODULE_STEP => "module",
+                    _ if Some(n) == tidy => "cleanup",
                     _ => "step",
                 };
                 progress(tell(run_id, index, total, case_id, title, phase, n, count, ""));
@@ -1199,7 +1206,7 @@ pub async fn run_cases_planned<B: Browsers, P: StageDb, G: ResetGate>(
                 Err(why) => unrun(case_id, title, "", format!("the script could not be read: {why}")),
                 Ok(None) => unrun(case_id, title, "", "this case has no script on this machine".into()),
                 Ok(Some(script)) => {
-                    count = script.steps.len() as u32;
+                    count = script.case_steps().count() as u32;
                     let account = run_account.or(script.account.as_deref());
                     // Where the case starts, then the records it relies on -
                     // both before its browser opens, so a case that cannot

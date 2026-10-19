@@ -934,5 +934,42 @@ fn a_failed_clean_up_is_said_after_the_failed_steps() {
     }))
     .unwrap();
     let out = describe_failures(&run, &[]);
-    assert!(out.ends_with("clean-up: button \"Delete\" not found"), "{out}");
+    assert!(
+        out.ends_with("clean-up (it never fails the case), action 1: script: not on this machine\n  page said: button \"Delete\" not found"),
+        "{out}"
+    );
+}
+
+/// #46 review: a case that passed but whose clean-up failed is listed too,
+/// for its clean-up only, with the action and its picture as a failed
+/// step's are.
+#[test]
+fn a_passed_case_whose_clean_up_failed_is_listed_for_its_clean_up() {
+    let run: LocalRun = serde_json::from_value(serde_json::json!({
+        "id": "run-1", "pbi_id": 1, "started_at": "1", "cases": [{
+            "case_id": 5, "title": "Add a rating", "verdict": "", "note": "",
+            "proposed": "Passed", "reason": "every action of 1 steps passed, but its clean-up failed",
+            "steps": [{ "step_number": 1, "outcomes": [{ "ok": true, "detail": "ok" }] }],
+            "cleanup": { "step_number": 2, "outcomes": [{ "ok": false, "detail": "button \"Delete\" not found", "screenshot": "shot-1.jpg" }] }
+        }]
+    }))
+    .unwrap();
+    let script: CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 5, "title": "Add a rating", "steps": [
+            { "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] },
+            { "step_number": 2, "actions": [{ "kind": "click", "selector": "#delete" }], "cleanup": true, "unchecked": "tidy" }
+        ]
+    }))
+    .unwrap();
+    assert_eq!(
+        describe_failures(&run, &[script]),
+        [
+            "## Case 5 \"Add a rating\" (run run-1, proposed Passed)",
+            "the case passed; only its clean-up failed",
+            "clean-up (it never fails the case), action 1: { \"kind\": \"click\", \"selector\": \"#delete\" }",
+            "  page said: button \"Delete\" not found",
+            "  picture: shot-1.jpg",
+        ]
+        .join("\n")
+    );
 }

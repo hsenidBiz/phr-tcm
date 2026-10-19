@@ -2503,7 +2503,7 @@ async fn a_replay_to_the_clean_up_runs_the_whole_case_but_not_the_clean_up() {
     let (mut d, app) = app();
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
     let end = replay(&mut d, dir.path(), &req(4), &mut account, &mut guarded, &cancel, |_, _| {}).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3), cleanup: Some(false) });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 4, notice: None, whole: Some(3), cleanup: Some(4) });
     assert_eq!(
         end.sentence(),
         "replayed the whole of case 77 (all 3 steps; its clean-up did not run - replay to step 5 to run it too) - the browser is on the page its last step left"
@@ -2520,7 +2520,7 @@ async fn a_replay_past_the_clean_up_runs_it_last() {
     let (mut d, app) = app();
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
     let end = replay(&mut d, dir.path(), &req(5), &mut account, &mut guarded, &cancel, |_, _| {}).await;
-    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 5, notice: None, whole: Some(3), cleanup: Some(true) });
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 5, notice: None, whole: Some(3), cleanup: Some(4) });
     assert_eq!(
         end.sentence(),
         "replayed the whole of case 77 (all 3 steps and its clean-up) - the browser is on the page its clean-up left"
@@ -2539,5 +2539,29 @@ async fn a_replay_to_an_earlier_step_runs_no_clean_up() {
     let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
     let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
     assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 3, notice: None, whole: None, cleanup: None });
+    assert!(!clicked(&app, "#tidy"), "{:?}", log(&app));
+}
+
+/// #46 review: the hint names the step past the clean-up, wherever the
+/// clean-up is numbered (the editor does not hold it to last + 1).
+#[tokio::test]
+async fn the_hint_names_the_step_past_the_clean_up_itself() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    project(
+        dir.path(),
+        &script(json!([
+            { "step_number": 1, "actions": [click("#s1")] },
+            { "step_number": 2, "actions": [click("#s2")] },
+            { "step_number": 6, "actions": [click("#tidy")], "cleanup": true, "unchecked": "tidy" }
+        ])),
+    );
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = replay(&mut d, dir.path(), &req(3), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(
+        end.sentence(),
+        "replayed the whole of case 77 (all 2 steps; its clean-up did not run - replay to step 7 to run it too) - the browser is on the page its last step left"
+    );
     assert!(!clicked(&app, "#tidy"), "{:?}", log(&app));
 }

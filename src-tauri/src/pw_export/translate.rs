@@ -208,7 +208,7 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
 
     // A clean-up step runs whether the case's steps passed or failed, as
     // the app runs it: the steps go in a `try`, the clean-up in its
-    // `finally`.
+    // `finally`, in a `try` of its own whose error is noted, not thrown.
     let cleanup = input.script.cleanup_step();
     let at = if cleanup.is_some() { 6 } else { 4 };
     if cleanup.is_some() {
@@ -250,7 +250,13 @@ pub fn raw_spec(input: &RawSpecInput) -> Res<String> {
             em.line(6, &format!("const {mark} = opened.length;"));
             em.tab_from = mark;
         }
-        em.block(n.to_string(), &step.actions, 6)?;
+        // Its own error never replaces the steps' and never fails a spec
+        // whose steps passed: the app never fails a case on its clean-up.
+        em.line(6, "try {");
+        em.block(n.to_string(), &step.actions, 8)?;
+        em.line(6, "} catch (e) {");
+        em.line(8, "test.info().annotations.push({ type: 'cleanup-failed', description: String(e) });");
+        em.line(6, "}");
         em.line(4, "}");
     }
 

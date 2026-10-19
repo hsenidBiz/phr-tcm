@@ -2753,3 +2753,41 @@ async fn a_stopped_run_does_not_run_the_clean_up() {
     assert_eq!(rec.cleanup_line(), None, "a clean-up that never ran did not fail");
     assert!(browsers.returned[0].calls_to("Runtime.callFunctionOn").len() <= 2, "nothing past step 2 ran");
 }
+
+#[tokio::test]
+async fn a_blocked_case_keeps_its_clean_up_apart_from_its_steps() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    menu_project(root);
+    store::save_script(root, &with_cleanup(["yes", "yes", "yes"], "yes")).unwrap();
+    let mut browsers = browsers_of(vec![]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    run_cases(&mut browsers, root, "Acme", "Web", &mut run, &[to_run(1, Some("Leave"))], None, false, &quick(), &cancel, &mut |_| {}).await.unwrap();
+    let rec = &run.cases[0];
+    assert_eq!(rec.proposed, "Blocked");
+    assert_eq!(rec.steps.iter().map(|s| s.step_number).collect::<Vec<_>>(), vec![1, 2, 3]);
+    let tidy = rec.cleanup.as_ref().expect("the clean-up is kept apart");
+    assert_eq!(tidy.step_number, 4);
+    assert!(tidy.outcomes.iter().all(|o| o.detail.starts_with("not run: ")), "{:?}", tidy.outcomes);
+}
+
+#[tokio::test]
+async fn progress_counts_the_cases_steps_and_names_the_clean_up_apart() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    store::save_script(root, &with_cleanup(["yes", "yes", "yes"], "yes")).unwrap();
+    let mut browsers = browsers_of(vec![checking_driver()]);
+    let mut run = new_run("run-x");
+    let cancel = AtomicBool::new(false);
+    let mut heard: Vec<(String, i32, u32)> = vec![];
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &[(1, "case 1".to_string())], &quick(), &cancel, &mut |e: ReplayProgress| {
+        heard.push((e.phase.clone(), e.step_number, e.steps));
+    })
+    .await
+    .unwrap();
+    assert!(heard.iter().all(|(_, _, steps)| *steps == 3), "{heard:?}");
+    let ran: Vec<(&str, i32)> =
+        heard.iter().filter(|(p, _, _)| p == "step" || p == "cleanup").map(|(p, n, _)| (p.as_str(), *n)).collect();
+    assert_eq!(ran, vec![("step", 1), ("step", 2), ("step", 3), ("cleanup", 4)]);
+}
