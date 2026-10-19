@@ -130,6 +130,12 @@ pub struct ScriptedDriver {
     /// (mark, record position), at most `MAX_NET_MARKS`, the oldest let go
     /// first; a mark let go reads from the start of the record.
     pub mark_ring: Option<Mutex<(u64, VecDeque<(u64, u64)>)>>,
+    /// What the sign-in told the capture about the current page, in order:
+    /// `login` (the account name or password was typed on it,
+    /// `note_capture_login_site`) and `confirm` (the signed-in marker
+    /// showed on it, `confirm_capture_site`). This fake keeps no capture;
+    /// it keeps only that it was told, and when.
+    pub capture_notes: Vec<&'static str>,
 }
 
 /// A test's yes or no to a call, by method and parameters.
@@ -222,6 +228,7 @@ impl ScriptedDriver {
             on_idle_after_call: vec![],
             arriving: vec![],
             mark_ring: None,
+            capture_notes: vec![],
         }
     }
 
@@ -278,6 +285,12 @@ impl ScriptedDriver {
 }
 
 impl Driver for ScriptedDriver {
+    fn confirm_capture_site(&mut self) {
+        self.capture_notes.push("confirm");
+    }
+    fn note_capture_login_site(&mut self) {
+        self.capture_notes.push("login");
+    }
     async fn call(
         &mut self,
         method: &str,

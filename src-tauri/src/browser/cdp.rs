@@ -2603,6 +2603,16 @@ impl<T: Transport> Cdp<T> {
         }
     }
 
+    /// The sign-in typed the account name or password on the current tab's
+    /// page: its site is a login page's, never taken for the application's
+    /// (`NetCapture::note_login_site`).
+    pub fn note_capture_login_site(&mut self) {
+        let Some(url) = self.current().map(|t| t.url.clone()) else { return };
+        if let Some(c) = self.capture.as_mut() {
+            c.note_login_site(&url);
+        }
+    }
+
     /// Read the bodies the capture is waiting on: at most `MAX_BODY_READS`
     /// of them, within `budget` in all, each on the tab it came from; the
     /// rest wait for the next time. Called only where no call of this
@@ -2841,6 +2851,9 @@ pub trait Driver {
     /// The signed-in marker shows on the current page: its site is the
     /// application's (`Cdp::confirm_capture_site`).
     fn confirm_capture_site(&mut self) {}
+    /// The sign-in typed the account name or password on the current page:
+    /// its site is a login page's (`Cdp::note_capture_login_site`).
+    fn note_capture_login_site(&mut self) {}
     /// See `Cdp::idle`: a wait loop's pause between two looks.
     fn idle(&mut self, wait: Duration) -> impl Future<Output = ()> {
         tokio::time::sleep(wait)
@@ -2960,6 +2973,9 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn confirm_capture_site(&mut self) {
         Cdp::confirm_capture_site(self)
+    }
+    fn note_capture_login_site(&mut self) {
+        Cdp::note_capture_login_site(self)
     }
     fn take_dialogs(&mut self) -> Vec<String> {
         Cdp::take_dialogs(self)

@@ -650,6 +650,97 @@ fn a_provisional_app_address_keeps_only_requests_made_from_its_pages() {
 }
 
 #[test]
+fn the_identity_providers_page_the_password_was_typed_on_is_never_confirmed() {
+    let login = "https://login.idp.example/login?client_id=hr";
+    let signed_in_at_idp = "https://login.idp.example/signed-in";
+    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    // The environment's address is the application's; it sends the sign-in
+    // to the identity provider, where the account name and password are
+    // typed.
+    cap.set_app_site(Some("https://hr.example/Account/Login"));
+    cap.note_login_site(login);
+    // The application's own request, held back while the site is
+    // provisional; the identity provider's own, never.
+    feed_on(&mut rec, &mut cap, PAGE, "Network.requestWillBeSent", asked("1", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
+    feed_on(&mut rec, &mut cap, login, "Network.requestWillBeSent", asked("2", "XHR", "POST", "https://login.idp.example/token", json!({}), Some("client_secret=s3cr3t")));
+    assert_eq!(cap.list(0, 10).1, 0);
+    // The recipe's signed-in marker shows on the identity provider's own
+    // "you are signed in" page too: not the application's.
+    cap.confirm_app_site(signed_in_at_idp);
+    assert!(!cap.knows_app_site(), "the page the password was typed on is never the application's");
+    assert_eq!(cap.list(0, 10).1, 0, "nothing new is shown");
+    feed_on(&mut rec, &mut cap, signed_in_at_idp, "Network.requestWillBeSent", asked("3", "XHR", "GET", "https://login.idp.example/me", json!({}), None));
+    feed_on(&mut rec, &mut cap, signed_in_at_idp, "Network.requestWillBeSent", asked("4", "Document", "GET", signed_in_at_idp, json!({}), None));
+    assert_eq!(cap.list(0, 10).1, 0, "the identity provider's requests are never kept");
+    assert_eq!(cap.queued_reads(), 0, "nor read");
+    // Then the redirect to the application, where the marker shows again.
+    cap.confirm_app_site("https://hr.example/hr/home");
+    assert!(cap.knows_app_site());
+    assert_eq!(kept_paths(&cap), ["/api/menu"], "what was held back for the application is shown");
+    feed_on(&mut rec, &mut cap, PAGE, "Network.requestWillBeSent", asked("5", "XHR", "GET", "https://hr.example/api/menu2", json!({}), None));
+    feed_on(&mut rec, &mut cap, signed_in_at_idp, "Network.requestWillBeSent", asked("6", "XHR", "GET", "https://login.idp.example/me2", json!({}), None));
+    assert_eq!(kept_paths(&cap), ["/api/menu", "/api/menu2"]);
+    // A later trip that meets the marker on the identity provider's page
+    // again never moves the confirmed site.
+    cap.confirm_app_site(signed_in_at_idp);
+    assert!(cap.knows_app_site());
+    feed_on(&mut rec, &mut cap, PAGE, "Network.requestWillBeSent", asked("7", "XHR", "GET", "https://hr.example/api/menu3", json!({}), None));
+    assert_eq!(kept_paths(&cap), ["/api/menu", "/api/menu2", "/api/menu3"]);
+}
+
+#[test]
+fn an_application_with_its_own_login_form_still_confirms_its_site() {
+    let login = "https://hr.example/Account/Login?ReturnUrl=%2Fhr%2Fhome";
+    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    // The password is typed on the configured address's own site: that is
+    // the application itself, not an identity provider.
+    cap.set_app_site(Some("https://hr.example/Account/Login"));
+    cap.note_login_site(login);
+    feed_on(&mut rec, &mut cap, login, "Network.requestWillBeSent", asked("1", "Document", "POST", "https://hr.example/Account/Login", json!({}), Some("UserName=a")));
+    cap.confirm_app_site("https://hr.example/hr/home");
+    assert!(cap.knows_app_site(), "its own login page is the application's");
+    feed_on(&mut rec, &mut cap, PAGE, "Network.requestWillBeSent", asked("2", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
+    assert_eq!(kept_paths(&cap), ["/Account/Login", "/api/menu"]);
+
+    // With no configured address at all, the page the password was typed
+    // on is not the application's either.
+    let (mut rec, mut cap) = (NetRecord::default(), NetCapture::default());
+    cap.note_login_site(login);
+    cap.confirm_app_site("https://hr.example/hr/home");
+    assert!(!cap.knows_app_site());
+    feed_on(&mut rec, &mut cap, PAGE, "Network.requestWillBeSent", asked("3", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
+    assert_eq!(cap.list(0, 10).1, 0);
+}
+
+#[tokio::test]
+async fn the_browser_notes_the_login_page_from_the_tab_it_is_on() {
+    let fake = FakeBrowser { incoming: VecDeque::new(), sent: vec![], bodies: HashMap::new(), posts: HashMap::new(), stall: false };
+    let mut cdp = Cdp::over(fake);
+    cdp.drive_first_page("T-main", "https://hr.example/Account/Login").await.unwrap();
+    cdp.capture_requests();
+    cdp.set_capture_site(Some("https://hr.example/Account/Login"));
+    let navigated = |url: &str| json!({ "frame": { "id": "T-main", "loaderId": format!("L-{url}"), "url": url } });
+    // Sent to the identity provider, where the sign-in types the password.
+    on(&mut cdp, MAIN, "Page.frameNavigated", navigated("https://login.idp.example/login?client_id=hr"));
+    settle(&mut cdp).await;
+    Driver::note_capture_login_site(&mut cdp);
+    // Its own "signed in" page shows the marker.
+    on(&mut cdp, MAIN, "Page.frameNavigated", navigated("https://login.idp.example/signed-in"));
+    on(&mut cdp, MAIN, "Network.requestWillBeSent", asked("1", "XHR", "GET", "https://login.idp.example/me", json!({}), None));
+    settle(&mut cdp).await;
+    Driver::confirm_capture_site(&mut cdp);
+    assert!(!cdp.capture_site_known(), "the identity provider is never the site");
+    assert_eq!(Driver::capture(&cdp).unwrap().list(0, 10).1, 0);
+    // Back on the application, the marker shows: that is the site.
+    on(&mut cdp, MAIN, "Page.frameNavigated", navigated("https://hr.example/hr/home"));
+    on(&mut cdp, MAIN, "Network.requestWillBeSent", asked("2", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
+    settle(&mut cdp).await;
+    Driver::confirm_capture_site(&mut cdp);
+    assert!(cdp.capture_site_known());
+    assert_eq!(Driver::capture(&cdp).unwrap().list(0, 10).1, 1);
+}
+
+#[test]
 fn headers_and_addresses_alone_over_the_budget_drop_the_oldest_requests() {
     let (mut rec, mut cap) = (NetRecord::default(), capture_at_site());
     let big = "v".repeat(100 * 1024);

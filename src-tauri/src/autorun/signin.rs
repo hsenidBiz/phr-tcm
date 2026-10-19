@@ -442,7 +442,8 @@ async fn sign_in_held<D: Driver>(
         return run.done(false, format!("{PAGE_DID_NOT_OPEN}{why}"), false, harness_failure);
     }
     let steps = for_account(&recipe.steps, account);
-    let prompts = Prompts::SignIn { login_field: login_field(&steps) };
+    let login_steps = login_steps(&recipe.steps);
+    let prompts = Prompts::SignIn { login_field: login_field(&steps), login_steps: &login_steps };
     if let Err((n, why, harness_failure)) = run_steps(d, &mut run, &steps, prompts, timing, &policy).await {
         return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, harness_failure);
     }
@@ -537,8 +538,11 @@ enum Prompts<'a> {
     /// The sign-in's own steps. While the login field is already showing
     /// the page has loaded, so a prompt is looked for once, not waited for.
     /// Otherwise (no login field, or the form is gone) it is waited for up
-    /// to its own `within_ms`, as written.
-    SignIn { login_field: Option<&'a Target> },
+    /// to its own `within_ms`, as written. `login_steps` are the indices
+    /// of the steps that fill in the account name or password: the page
+    /// each is typed on is a login page, whose site the capture never
+    /// takes for the application's (`Driver::note_capture_login_site`).
+    SignIn { login_field: Option<&'a Target>, login_steps: &'a [usize] },
     /// `after_sign_in`: each run of consecutive prompts is watched together
     /// in one window of this many ms (`watch_together`).
     Together { window_ms: u64 },
@@ -550,6 +554,20 @@ fn login_field(steps: &[RecipeStep]) -> Option<&Target> {
         RecipeStep::Do(Action::Fill { selector, .. }) => Some(selector),
         _ => None,
     })
+}
+
+/// The indices of the recipe's own steps (before `for_account` fills them
+/// in) that type the account name or password: the fills whose value is a
+/// placeholder.
+fn login_steps(steps: &[RecipeStep]) -> Vec<usize> {
+    steps
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| match s {
+            RecipeStep::Do(Action::Fill { value, .. }) if super::recipe::has_placeholder(value) => Some(i),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Recipe steps in order, each outcome kept. `Err` is the step number,
@@ -571,6 +589,14 @@ async fn run_steps<D: Driver>(
         match (&steps[i], prompts) {
             (RecipeStep::Do(a), _) => {
                 run_action(d, run, n, a, timing, policy).await?;
+                // Typed on this page: a login page's site, never the
+                // application's. Noted once the fill has found its field,
+                // on the page it found it on.
+                if let Prompts::SignIn { login_steps, .. } = prompts {
+                    if login_steps.contains(&i) {
+                        d.note_capture_login_site();
+                    }
+                }
                 i += 1;
             }
             (RecipeStep::WhenVisible(_), Prompts::Together { window_ms }) => {
@@ -589,7 +615,7 @@ async fn run_steps<D: Driver>(
                 watch_together(d, run, &group, window_ms, timing, policy).await?;
                 i = end;
             }
-            (RecipeStep::WhenVisible(w), Prompts::SignIn { login_field }) => {
+            (RecipeStep::WhenVisible(w), Prompts::SignIn { login_field, .. }) => {
                 let shown = match sign_in_prompt_shown(d, w, login_field, timing).await {
                     Ok(shown) => shown,
                     Err(silent) => return Err(silent_at(run, n, silent)),

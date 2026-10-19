@@ -24,6 +24,15 @@
 //! provisional. A request redirected off the application's site never has
 //! its response body read (`Body::OffSite`).
 //!
+//! The page the sign-in typed the account name or password on is the
+//! login page - an identity provider's, when it is not on the configured
+//! address - and its origin is never taken for the application's
+//! (`note_login_site`), even when the signed-in marker shows there too
+//! (a provider's own "you are signed in" page): the site stays as it was
+//! until the marker shows on another page. The one exception is the
+//! configured address itself: an application whose login form is its own
+//! has the password typed on its own site, which is the application's.
+//!
 //! Never kept: the `cookie`, `set-cookie`, `authorization` and
 //! `proxy-authorization` headers, or any header outside the allow-list
 //! (`kept_header`); an `x-` header named like a secret keeps its name only,
@@ -234,6 +243,11 @@ pub struct NetCapture {
     /// (`set_app_site`) until `confirmed` (`confirm_app_site`).
     app_site: Option<String>,
     confirmed: bool,
+    /// The origins the sign-in typed the account name or password on,
+    /// compared, never shown: an identity provider's, unless one is the
+    /// configured address's own. Never confirmed as the application's
+    /// (`confirm_app_site`).
+    login_sites: Vec<String>,
 }
 
 impl NetCapture {
@@ -255,12 +269,35 @@ impl NetCapture {
         self.app_site = site;
     }
 
+    /// The sign-in typed the account name or password on the page at `url`:
+    /// its origin is a login page's, and is never confirmed as the
+    /// application's unless it is the configured address's own
+    /// (`confirm_app_site`).
+    pub fn note_login_site(&mut self, url: &str) {
+        let Some(site) = origin(url) else { return };
+        if !self.login_sites.contains(&site) {
+            self.login_sites.push(site);
+        }
+    }
+
     /// A sign-in arrived: its signed-in marker showed on the page at `url`,
     /// which is the application's. Its site is the site from now on; what
     /// was held back for that site is shown, and anything else held back is
     /// forgotten.
+    ///
+    /// Not when `url` is on a login page's site (`note_login_site`) that is
+    /// not the provisional address's own: that is the identity provider
+    /// showing the marker on its own page, never the application. Then
+    /// nothing changes - the site stays as it was, what was held back stays
+    /// held back - and one line is logged, naming no host.
     pub fn confirm_app_site(&mut self, url: &str) {
         let Some(site) = origin(url) else { return };
+        if self.login_sites.contains(&site) && self.app_site.as_ref() != Some(&site) {
+            crate::applog::info(
+                "Auto Run: the signed-in marker showed on the page the sign-in was typed on, which is not the application's address - its site is not taken for the application's, and nothing is captured until the marker shows on the application's own page",
+            );
+            return;
+        }
         if self.app_site.as_ref() != Some(&site) {
             self.forget_pending();
         }

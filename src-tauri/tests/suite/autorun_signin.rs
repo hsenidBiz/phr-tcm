@@ -44,6 +44,26 @@ async fn the_recipe_signs_in_and_the_session_is_saved() {
     assert_eq!(d.methods().iter().position(|m| m == "Network.clearBrowserCookies"), Some(0));
 }
 
+/// The capture must never take the page the password was typed on for
+/// the application's: the sign-in names that page after each login fill
+/// (the username's and the password's), before the marker confirms the
+/// site. A saved session types nothing and names only the confirmation.
+#[tokio::test]
+async fn the_sign_in_names_the_login_page_to_the_capture_before_confirming_the_site() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut d, _state) = stateful_app(false, None);
+    let out = sign_in(&mut d, dir.path(), &recipe(), &account(), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(d.capture_notes, ["login", "login", "confirm"]);
+
+    let saved = SavedSession { saved_at_ms: now_ms(), cookies: vec![json!({ "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true })], local_storage: vec![] };
+    save_session(dir.path(), "admin", &saved).unwrap();
+    let (mut d, _state) = stateful_app(true, None);
+    let out = sign_in(&mut d, dir.path(), &recipe(), &account(), &quick()).await;
+    assert!(out.ok && out.used_saved_session, "{}", out.detail);
+    assert_eq!(d.capture_notes, ["confirm"]);
+}
+
 #[tokio::test]
 async fn a_fresh_saved_session_skips_the_form_entirely() {
     let dir = tempfile::tempdir().unwrap();
