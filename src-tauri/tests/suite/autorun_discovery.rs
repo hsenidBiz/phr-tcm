@@ -2482,6 +2482,41 @@ async fn a_draft_component_can_be_tried_and_is_fingerprinted() {
     assert_ne!(draft_fingerprint(&fewer), draft_fingerprint(&c));
 }
 
+/// #54/#55: the text a component's `wait_for` waited for, and the element
+/// its `expect_text` read, are filed as seen when that action passed - a
+/// toast gone a few seconds later included (`autorun_bridge`'s try of a
+/// `wait_for` whose text is gone): the read one as one. Saving the
+/// component that waits for it then passes the seen check.
+#[tokio::test]
+async fn a_tried_components_wait_for_and_expect_text_file_what_they_found() {
+    let dir = root_with_recipe_and_account();
+    let (mut browser, _) = slot(leave_page("Input.dispatchMouseEvent", "https://hr.example.internal/hr/leave/new?x=1"), exploring("Leave"));
+    let c = draft(json!([
+        { "kind": "click", "selector": { "input": "field" } },
+        { "kind": "fill", "selector": { "input": "field" }, "value": "{{day}}" },
+        { "kind": "wait_for", "selector": { "text": "Proficiency profile saved" }, "timeout_ms": 500 },
+        { "kind": "expect_text", "selector": { "text": "Saved" }, "equals": "Saved" }
+    ]));
+    let (status, body) =
+        discover_action_in(&mut browser, dir.path(), ORG, PROJECT, &pick_a_date_use(), Some(&c), None).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(parsed(&body)["ok"], true, "{body}");
+
+    use v2_lib::browser::locator::SeenKey;
+    let area = mapped_area(dir.path(), "Leave").unwrap();
+    let matched = |t: &str| area.sightings.iter().find(|s| s.key == SeenKey::Text(t.into())).map(|s| s.matched);
+    assert!(matched("Proficiency profile saved").is_some(), "{:?}", area.sightings);
+    assert_eq!(matched("Saved"), Some(1), "{:?}", area.sightings);
+
+    let map = load_map(dir.path(), ORG, PROJECT).unwrap();
+    let waits: Vec<Action> = serde_json::from_value(json!([
+        { "kind": "wait_for", "selector": { "text": "Proficiency profile saved" }, "timeout_ms": 500 },
+        { "kind": "expect_text", "selector": { "text": "Saved" }, "equals": "Saved" }
+    ]))
+    .unwrap();
+    assert_eq!(v2_lib::autorun::seen_check::check_component_seen(&map, Some("Leave"), &waits), Ok(()));
+}
+
 /// A try stops at the first action that fails, as a script step does; the
 /// actions after it are not run and the try is not fingerprinted.
 #[tokio::test]
@@ -3241,6 +3276,16 @@ fn sighted(root: &std::path::Path, area: &str) -> Vec<String> {
     names
 }
 
+/// The names of the elements the map holds for the Leave page now, sorted:
+/// what a discovery's whole read replaces (sightings it never drops).
+fn on_leave_page(root: &std::path::Path) -> Vec<String> {
+    let area = mapped_area(root, "Leave").expect("no area");
+    let page = area.pages.iter().find(|p| p.path == "/hr/leave").expect("no page");
+    let mut names: Vec<String> = page.elements.iter().map(|e| e.name.clone()).collect();
+    names.sort();
+    names
+}
+
 /// `exploring(area)`, as a discovery that started after everything filed so
 /// far: a read of the whole page would drop what it does not show.
 fn exploring_anew(area: &str) -> Option<DiscoveryState> {
@@ -3292,8 +3337,9 @@ async fn a_page_read_outside_discovery_adds_no_answer_line_and_explores_nothing(
 
 /// A read cut short by its limit files only the lines it returned, and
 /// drops nothing past the cut: it never counts as exploring the whole page.
-/// The same page read whole by the same discovery does drop what it does
-/// not show, which is what the cut is kept from.
+/// The same page read whole by a later discovery does drop the page's
+/// elements it does not show, which is what the cut is kept from; the
+/// sightings stay.
 #[tokio::test]
 async fn a_limited_read_records_only_returned_lines() {
     let dir = root_with_recipe_and_account();
@@ -3315,7 +3361,8 @@ async fn a_limited_read_records_only_returned_lines() {
 
     let (mut whole, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), exploring_anew("Leave"));
     page_read_in(whole.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
-    assert_eq!(sighted(dir.path(), "Leave"), ["Save"], "a whole read no longer explores the page");
+    assert_eq!(on_leave_page(dir.path()), ["Save"], "a whole read no longer explores the page");
+    assert_eq!(sighted(dir.path(), "Leave"), ["Earlier", "Older", "Save"], "a whole read dropped a sighting");
 }
 
 /// An action's read is the same path: cut at its limit, it files only what
@@ -3699,10 +3746,12 @@ async fn a_read_with_an_unreadable_frame_drops_nothing() {
     assert_eq!(sighted(dir.path(), "Leave"), ["Earlier", "Help", "Save"], "a read missing a frame dropped a sighting");
     assert_eq!(mapped_area(dir.path(), "Leave").unwrap().explored_at, None, "a read missing a frame stamped the area");
 
-    // The same page with every frame read is whole, and does drop it.
+    // The same page with every frame read is whole, and does drop the
+    // page's elements it does not show; the sightings stay.
     let (mut whole, _) = slot(buttons_page(LEAVE_PAGE, &["Save"]), exploring_anew("Leave"));
     page_read_in(whole.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
-    assert_eq!(sighted(dir.path(), "Leave"), ["Save"]);
+    assert_eq!(on_leave_page(dir.path()), ["Save"]);
+    assert_eq!(sighted(dir.path(), "Leave"), ["Earlier", "Help", "Save"]);
     assert!(mapped_area(dir.path(), "Leave").unwrap().explored_at.is_some());
 }
 
@@ -3722,7 +3771,8 @@ async fn a_page_whose_only_frame_is_from_another_site_is_explored() {
         page_read_in(framed.as_mut().unwrap(), Some(dir.path()), ORG, PROJECT, None, DEFAULT_LIMIT).await;
     assert_eq!(status, 200, "{text}");
     assert!(text.contains("frame contents could not be read"), "{text}");
-    assert_eq!(sighted(dir.path(), "Leave"), ["Help", "Save"], "a whole read kept what it did not show");
+    assert_eq!(on_leave_page(dir.path()), ["Help", "Save"], "a whole read kept what it did not show");
+    assert_eq!(sighted(dir.path(), "Leave"), ["Earlier", "Help", "Save"], "a whole read dropped a sighting");
     assert!(mapped_area(dir.path(), "Leave").unwrap().explored_at.is_some(), "the area was not stamped explored");
 }
 

@@ -773,6 +773,11 @@ async fn run_steps<D: Driver>(
         if outcomes.iter().any(closed) {
             return Some(ReplayEnd::BrowserGone { step: k, why: None, outcomes: Vec::new() });
         }
+        // What the step's components waited for and read is filed as seen
+        // in the case's area, as a probe would file it: a toast is gone
+        // before anyone can probe it.
+        crate::ai_bridge::file_component_finds(d, root, organization, project, script.area.clone(), &step.actions, &outcomes)
+            .await;
         // A save the page sent after the step's last action passed is
         // still this step's.
         if outcomes.iter().all(|o| o.ok) {

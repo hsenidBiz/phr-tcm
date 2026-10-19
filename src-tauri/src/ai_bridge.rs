@@ -3069,6 +3069,82 @@ fn record_matched_targets(at: &Sighting, href: &str, targets: &[Matched]) -> boo
     filed
 }
 
+/// What a step's components found on the page: the locator of each
+/// `wait_for` and `expect_text` a `use_component` ran that passed, with
+/// how many elements it is filed as matching, as a probe would file it. An
+/// `expect_text` reads one element and fails on several, so one (a plain
+/// css link's hidden matches, and a legacy string's count, are not known:
+/// `NOT_ONE`); a `wait_for` passes on one or several, so not known. What
+/// it waited for may be gone a moment later (a toast), so this is filed
+/// from the passed action itself, never a probe after it. `expanded` is
+/// the step's actions as the runner ran them (`components::expand_step`),
+/// paired by position with `outcomes`; only an outcome a component gave,
+/// beside an action of a component, counts.
+pub fn component_finds(
+    expanded: &[(crate::browser::actions::Action, Option<String>)],
+    outcomes: &[crate::browser::actions::ActionOutcome],
+) -> Vec<(crate::browser::locator::Target, usize, usize)> {
+    use crate::autorun::discovery_map::{plain_target, NOT_ONE};
+    use crate::browser::actions::Action;
+    let unknown = NOT_ONE as usize;
+    expanded
+        .iter()
+        .zip(outcomes)
+        .filter(|((_, from), o)| from.is_some() && o.component.is_some() && o.ok)
+        .filter_map(|((action, _), _)| match action {
+            Action::WaitFor { selector, .. } => Some((selector.clone(), unknown, unknown)),
+            Action::ExpectText { selector, .. } => {
+                let css = plain_target(selector) && selector.links().first().is_some_and(|l| l.css.is_some());
+                Some(if selector.is_legacy() {
+                    (selector.clone(), unknown, unknown)
+                } else if css {
+                    (selector.clone(), 1, unknown)
+                } else {
+                    (selector.clone(), 1, 1)
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Files `component_finds` of a step that ran `actions` with `outcomes`, at
+/// the page the browser is on now, under `area`: a try's, a discovery's or
+/// a replay's. Nothing is filed for a step that uses no component, and a
+/// map that could not be written is said in the log.
+#[allow(clippy::too_many_arguments)]
+pub async fn file_component_finds<D: crate::browser::cdp::Driver>(
+    d: &mut D,
+    root: &std::path::Path,
+    organization: &str,
+    project: &str,
+    area: Option<String>,
+    actions: &[crate::browser::actions::Action],
+    outcomes: &[crate::browser::actions::ActionOutcome],
+) {
+    let uses = actions.iter().any(|a| matches!(a, crate::browser::actions::Action::UseComponent { .. }));
+    if !uses || project.trim().is_empty() {
+        return;
+    }
+    let Ok((expanded, _)) = crate::autorun::components::expand_step(root, organization, project, actions) else { return };
+    let finds = component_finds(&expanded, outcomes);
+    if finds.is_empty() {
+        return;
+    }
+    let at = Sighting {
+        root: root.to_path_buf(),
+        org: organization.to_string(),
+        project: project.to_string(),
+        area,
+        account: None,
+        discovering: None,
+        policy: recording_policy(root, organization, project),
+    };
+    let (href, _) = page_address(d).await;
+    let matched: Vec<Matched> = finds.iter().map(|(t, n, all)| (t, *n, *all)).collect();
+    record_matched_targets(&at, &href, &matched);
+}
+
 /// The locators an action that WORKED must have matched at least once,
 /// each with how many elements it matched. Kinds that pass while matching
 /// nothing give none: `expect_hidden`, an `expect_count` of 0,
@@ -7148,7 +7224,8 @@ async fn try_action<D: crate::browser::cdp::Driver>(
     }
     // A `wait_for` passes on one match or several and does not say which,
     // and what it waits for may not be there yet when the try starts: it is
-    // probed once the try worked. Waiting changes no page.
+    // probed once the try worked, and filed as found, its count not known,
+    // when what it waited for is already gone. Waiting changes no page.
     let waited = match action {
         crate::browser::actions::Action::WaitFor { selector, .. } => Some(selector),
         _ => None,
@@ -7179,6 +7256,12 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         Ok(v) => v,
         Err(why) => return Err((500, why)),
     };
+    // What a component's waits and reads found is filed though a later
+    // action of it failed: each passed (`component_finds`).
+    if matches!(action, crate::browser::actions::Action::UseComponent { .. }) {
+        let recorded_in = recording_area(root, discovery_area, Some(case_id));
+        file_component_finds(d, root, organization, project, recorded_in, std::slice::from_ref(action), &outcomes).await;
+    }
     // A `use_component` runs as its component's actions, one outcome each:
     // every one is answered, and the try as a whole is ok only when all are.
     let steps: Vec<(String, crate::browser::actions::ActionOutcome)> = match action {
@@ -7228,12 +7311,14 @@ async fn try_action<D: crate::browser::cdp::Driver>(
                 Ok(text) => counted(d, target, &text).await,
                 Err(_) => None,
             };
-            match found {
-                Some((n, all)) => matched.push((target, n, all)),
-                // Nothing visible now, or the browser did not answer: it was
-                // not seen, so nothing is filed for it.
-                None => crate::applog::info("Auto Run try: a tried locator was not filed, as the probe after it saw nothing visible"),
-            }
+            // Nothing visible now, or the browser did not answer: the wait
+            // found it, so it was there (a toast is gone a few seconds
+            // later), filed with its count not known.
+            let unknown = crate::autorun::discovery_map::NOT_ONE as usize;
+            matched.push(match found {
+                Some((n, all)) => (target, n, all),
+                None => (target, unknown, unknown),
+            });
         }
         record_matched_targets(&at, &started_on, &matched);
     }

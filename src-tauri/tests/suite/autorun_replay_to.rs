@@ -212,6 +212,39 @@ async fn the_last_step_plus_1_replays_every_step() {
     assert_eq!(heard, vec![(1, 3), (2, 3), (3, 3)]);
 }
 
+/// #54/#55: a replayed step's component that waited for a text (a toast)
+/// and found it files that text as seen in the case's area, as a probe
+/// would, so a script or component naming it then saves.
+#[tokio::test]
+async fn a_replayed_components_wait_for_files_the_text_it_found() {
+    let _l = crate::serial::account_leases();
+    let dir = tempfile::tempdir().unwrap();
+    let component: v2_lib::autorun::components::Component = serde_json::from_value(json!({
+        "name": "Save profile", "description": "d", "version": 1, "inputs": [],
+        "actions": [
+            click("#save"),
+            { "kind": "wait_for", "selector": { "text": "Profile saved" }, "timeout_ms": 500 }
+        ]
+    }))
+    .unwrap();
+    v2_lib::autorun::components::put(dir.path(), "acme", "Web", component).unwrap();
+    project(
+        dir.path(),
+        &script(json!([
+            { "step_number": 1, "actions": [{ "kind": "use_component", "component": "Save profile" }] },
+            { "step_number": 2, "actions": [click("#s2")] }
+        ])),
+    );
+    let (mut d, app) = app();
+    let (mut account, mut guarded, cancel) = (None, None, AtomicBool::new(false));
+    let end = replay(&mut d, dir.path(), &req(2), &mut account, &mut guarded, &cancel, |_, _| {}).await;
+    assert_eq!(end, ReplayEnd::Ready { case_id: ID, step: 2, notice: None, whole: None }, "{:?}", log(&app));
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "acme", "Web").unwrap();
+    let area = map.areas.iter().find(|a| a.area == "Leave").expect("nothing filed under the case's area");
+    let key = v2_lib::browser::locator::SeenKey::Text("Profile saved".into());
+    assert!(area.sightings.iter().any(|s| s.key == key), "{:?}", area.sightings);
+}
+
 /// A replayed step that ran in a second tab carries that tab, as a live
 /// step's record does, and a step back in `main` carries none.
 #[tokio::test]

@@ -23,12 +23,15 @@
 //! `elements` are what the page holds now and a read replaces them, so a
 //! wizard that keeps one address for every step forgets the earlier steps
 //! as it moves on; its sightings do not. A sighting is never dropped for
-//! the number of newer ones. It goes when its area is forgotten, or when a
-//! later discovery reads its whole page and it was neither shown by that
-//! read nor seen since that discovery started (exploring again replaces, as
-//! for `elements`). A read cut short by its line limit drops nothing.
-//! `MAX_SIGHTINGS` is only a safety ceiling on the file's size: past it,
-//! the least recently seen sightings go first.
+//! the number of newer ones, nor because a later read did not show it: a
+//! wizard's earlier step on the same address, a dropdown's item and a toast
+//! are all gone from a later read and were real, so a later discovery's
+//! whole-page read replaces the page's `elements` and keeps every sighting.
+//! A sighting goes only when its area is forgotten, when it was not seen
+//! for `STALE_AFTER_MS` (30 days; let go at the area's next recording), or
+//! past `MAX_SIGHTINGS`, a safety ceiling on the file's size, the least
+//! recently seen first. An area's `wholes` are kept and let go the same
+//! way.
 //!
 //! A sighting and an element also keep how many elements they `matched`
 //! on the live page. `1` is filed only for exactly the locator that
@@ -43,7 +46,10 @@
 //! A page read counts, for each line, the listed lines in the same frame
 //! its locator would match: the same role, and a name holding its name
 //! (`locator::name_matches`). Two rows' "Edit" buttons are two; "Save"
-//! beside "Save draft" is two. A read that knows every line of the whole
+//! beside "Save draft" is two. A text line counts every line whose words
+//! hold its text, a text line or a control's name, as a text locator finds
+//! every element whose visible text holds it: "Stage 1" beside "Stage 10"
+//! is two, and "Save" beside a button "Save draft" is two. A read that knows every line of the whole
 //! page (`snapshot::PageRead::page_lines`) counts each line it listed
 //! against all of them, so a read the line limit cut short, or one that
 //! listed only one element's subtree (`within`), still files the page's
@@ -54,6 +60,13 @@
 //! filed as `NOT_ONE`. A probe, a try or the record-on-page check of a
 //! refused save matches a locator against the page and files the number
 //! it found.
+//!
+//! A probe that matched nothing files the locator, each of its links and,
+//! for a chain or a narrowed one, the whole, as seen matching none
+//! (`matched` 0): the seen check takes that only for a use that passes with
+//! nothing there (`expect_hidden`, an `expect_count` of 0, a
+//! `when_visible`'s own locator). A match of none never undoes a count of
+//! some, and a count of some replaces it. It adds no element.
 //!
 //! A sighting and an element also keep `all`: how many elements the key
 //! matched hidden ones included, which is what a legacy string target
@@ -197,9 +210,15 @@ fn one_match() -> u32 {
 
 /// The `matched` a sighting holds after one more sighting matching `new`:
 /// one when either is one, else the newer number, unless that one is not
-/// known (`NOT_ONE`) and the older is.
+/// known (`NOT_ONE`) and the older is. A sighting matching none (`0`, a
+/// probe that found nothing) never undoes a count of some, and a count of
+/// some replaces it.
 fn merged_matches(old: u32, new: u32) -> u32 {
-    if old == 1 || new == 1 {
+    if old == 0 {
+        new
+    } else if new == 0 {
+        old
+    } else if old == 1 || new == 1 {
         1
     } else if new == NOT_ONE {
         old
@@ -241,13 +260,12 @@ pub fn plain_target(target: &Target) -> bool {
     }
 }
 
-/// Takes off page `path` what no page read could print of `target` (`a_read_can_print`):
-/// its links' sightings last seen there, the whole locator, and the
-/// elements filed as it. A role locator a read prints is left to the read.
+/// Takes off page `path` the elements filed as `target` that no page read
+/// could print (`a_read_can_print_target`): a page's elements are what it
+/// holds now, and a probe or a try that finds nothing there is the only
+/// evidence such an element has gone. A role locator a read prints is left
+/// to the read. Sightings are never taken off (see the module's notes).
 fn forget_unprintable(a: &mut AreaMap, path: &str, target: &Target) {
-    let keys: Vec<SeenKey> = target.links().iter().filter_map(LocatorStep::seen_key).filter(|k| !a_read_can_print(k)).collect();
-    a.sightings.retain(|s| s.page != path || !keys.contains(&s.key));
-    a.wholes.retain(|w| w.page != path || w.locator != *target);
     if let Some(page) = a.pages.iter_mut().find(|p| p.path == path) {
         page.elements.retain(|e| e.locator != *target || a_read_can_print_target(&e.locator));
     }
@@ -281,26 +299,32 @@ pub fn a_read_can_print_target(target: &Target) -> bool {
 /// matches (`locator::name_matches`, not exact). A line whose locator is
 /// not a role and a name counts as one, except a text line
 /// (`snapshot::TEXT_ROLE`): a text locator finds every element whose
-/// visible text holds it, a control's own words included, which no read's
-/// lines can count, so it is `NOT_ONE` and only a probe counts it.
+/// visible text holds it, a control's own words included, so it counts
+/// every listed line in its frame whose words hold its text, a text line
+/// or a control's name alike (`"exact"`: whose words are its text).
 fn read_count(line: &SnapLine, lines: &[SnapLine]) -> u32 {
     let links = line.locator.links();
     let Some((own, frames)) = links.split_last() else { return 1 };
-    if own.text.is_some() {
-        return NOT_ONE;
-    }
-    let Some(role) = own.role.as_deref() else { return 1 };
-    let want = own.name.as_deref().unwrap_or("");
-    let n = lines
-        .iter()
-        .filter(|other| {
-            let theirs = other.locator.links();
-            let Some((o, f)) = theirs.split_last() else { return false };
-            f == frames
-                && o.role.as_deref() == Some(role)
-                && (want.is_empty() || crate::browser::locator::name_matches(o.name.as_deref().unwrap_or(""), want, own.exact))
-        })
-        .count();
+    let in_frame = |other: &SnapLine| {
+        let theirs = other.locator.links();
+        theirs.split_last().is_some_and(|(_, f)| f == frames)
+    };
+    let n = if let Some(text) = own.text.as_deref() {
+        lines.iter().filter(|o| in_frame(o) && crate::browser::locator::name_matches(&o.name, text, own.exact)).count()
+    } else {
+        let Some(role) = own.role.as_deref() else { return 1 };
+        let want = own.name.as_deref().unwrap_or("");
+        lines
+            .iter()
+            .filter(|other| {
+                let theirs = other.locator.links();
+                let Some((o, f)) = theirs.split_last() else { return false };
+                f == frames
+                    && o.role.as_deref() == Some(role)
+                    && (want.is_empty() || crate::browser::locator::name_matches(o.name.as_deref().unwrap_or(""), want, own.exact))
+            })
+            .count()
+    };
     u32::try_from(n.max(1)).unwrap_or(u32::MAX)
 }
 
@@ -579,11 +603,11 @@ pub fn record_seen(
 /// Files what one page read showed, `lines` being only the lines it
 /// returned, and answers how many distinct elements it recorded as seen.
 ///
-/// A discovery's read of the WHOLE page (`whole`) explores that page: what
-/// the map held for it and this read did not show goes, unless it was seen
-/// since the discovery started. A read the line limit cut short (`whole`
-/// false) never counts as exploring the page: it adds and refreshes what it
-/// returned and drops nothing, because the lines past the cut were never
+/// A discovery's read of the WHOLE page (`whole`) explores that page: the
+/// page's elements it did not show go, unless seen since the discovery
+/// started; the area's sightings all stay (see the module's notes). A read
+/// the line limit cut short (`whole` false) never counts as exploring the
+/// page: it adds and refreshes what it returned and drops no element, because the lines past the cut were never
 /// looked at, and it leaves the area's `explored_at`, `failed_since` and
 /// `account` as they were.
 #[allow(clippy::too_many_arguments)]
@@ -710,33 +734,19 @@ pub fn record_read_counted(
         // adds what is new, so a read that shows nothing new writes nothing.
         // Each link on its own: a plain one-link line with its count, every
         // link of a chain (a frame and what is inside it) as `NOT_ONE`.
-        let mut shown: HashSet<SeenKey> = HashSet::new();
         for (line, &count) in lines.iter().zip(&counts) {
             let link_count = if plain_target(&line.locator) { count } else { NOT_ONE };
             for link in line.locator.links() {
                 if let Some(key) = link.seen_key() {
-                    shown.insert(key.clone());
                     note_sighting(a, key, link, &path, now, discovery.is_some(), link_count, link_count);
                 }
             }
         }
-        // Only what a read can print is dropped for not being printed: a
-        // css locator, a text locator, a narrowed one or a chain through
-        // css that a probe or a try matched is never on a read's lines, so
-        // its absence there says nothing about the page.
-        if let Some(started) = explores {
-            let fresh = |at: u64| now.saturating_sub(at) <= STALE_AFTER_MS;
-            a.sightings.retain(|s| {
-                s.page != path
-                    || s.last_seen >= started
-                    || shown.contains(&s.key)
-                    || (!a_read_can_print(&s.key) && fresh(s.last_seen))
-            });
-            a.wholes.retain(|w| {
-                w.page != path || w.last_seen >= started || (!a_read_can_print_target(&w.locator) && fresh(w.last_seen))
-            });
-        }
-        trim_sightings(a);
+        // No sighting is dropped for not being shown: a wizard's earlier
+        // step, a dropdown's item and a toast are gone from a later read
+        // and were real. Only time and the ceiling let one go.
+        trim_sightings(a, now);
+        trim_wholes(a, now);
     })?;
     Ok(recorded)
 }
@@ -760,8 +770,11 @@ fn note_sighting(
         Some(s) => {
             if refresh && now >= s.last_seen {
                 s.last_seen = now;
-                s.link = link;
-                s.page = page.to_string();
+                // A match of none keeps where some were last seen.
+                if matched != 0 || s.matched == 0 {
+                    s.link = link;
+                    s.page = page.to_string();
+                }
             }
             let old_all = s.all_matched();
             s.matched = merged_matches(s.matched, matched);
@@ -778,9 +791,12 @@ fn note_sighting(
     }
 }
 
-/// Keeps the area within `MAX_SIGHTINGS`: past it, the least recently seen
-/// go, and among those seen at the same time the earliest kept goes first.
-fn trim_sightings(a: &mut AreaMap) {
+/// Lets go of the area's sightings not seen for more than `STALE_AFTER_MS`
+/// before `now`, then keeps it within `MAX_SIGHTINGS`: past it, the least
+/// recently seen go, and among those seen at the same time the earliest
+/// kept goes first.
+fn trim_sightings(a: &mut AreaMap, now: u64) {
+    a.sightings.retain(|s| now.saturating_sub(s.last_seen) <= STALE_AFTER_MS);
     let over = a.sightings.len().saturating_sub(MAX_SIGHTINGS);
     if over == 0 {
         return;
@@ -796,9 +812,10 @@ fn trim_sightings(a: &mut AreaMap) {
     });
 }
 
-/// Keeps the area's `wholes` within `MAX_SIGHTINGS`, the least recently
-/// seen going first, as `trim_sightings` does.
-fn trim_wholes(a: &mut AreaMap) {
+/// Lets go of the area's `wholes` as `trim_sightings` lets go of its
+/// sightings: not seen for `STALE_AFTER_MS`, or past `MAX_SIGHTINGS`.
+fn trim_wholes(a: &mut AreaMap, now: u64) {
+    a.wholes.retain(|w| now.saturating_sub(w.last_seen) <= STALE_AFTER_MS);
     let over = a.wholes.len().saturating_sub(MAX_SIGHTINGS);
     if over == 0 {
         return;
@@ -853,14 +870,17 @@ pub fn record_matched_count(
 
 /// [`record_matched`] for a target that matched `matched` elements, `all`
 /// of them with hidden ones included (`NOT_ONE` when that is not known).
-/// `0` files nothing: a locator that matched nothing was never seen. It
-/// does take off this page what no page read could ever print of it
-/// (`forget_unprintable`): a probe or a try that finds nothing there is the
-/// only evidence such a locator has gone. A
-/// plain one-link target (`plain_target`) files those numbers on its link;
-/// any other files each link as `NOT_ONE` and keeps the whole target in
-/// the area's `wholes` with `matched`. A link already seen matching one
+/// A plain one-link target (`plain_target`) files those numbers on its
+/// link; any other files each link as `NOT_ONE` and keeps the whole target
+/// in the area's `wholes` with `matched`. A link already seen matching one
 /// stays one (see the module's notes).
+///
+/// `0` files each link, and a chain or a narrowed target whole, as seen
+/// matching none (`matched` 0): what a check that passes with nothing
+/// there may use (`seen_check`), never one that needs it present. It adds
+/// no element, and takes off this page the elements no page read could
+/// print of it (`forget_unprintable`). A sighting already seen matching
+/// some keeps its count.
 #[allow(clippy::too_many_arguments)]
 pub fn record_matched_counts(
     root: &Path,
@@ -873,25 +893,12 @@ pub fn record_matched_counts(
     all: usize,
     now: u64,
 ) -> Result<(), String> {
-    if matched == 0 {
-        let path = self::page_path(page_path);
-        let area = canonical_area(root, org, project, area.unwrap_or(""));
-        // Only an area already mapped: matching nothing never adds one.
-        let key = area_key(&area);
-        if !load_map(root, org, project).is_ok_and(|m| m.areas.iter().any(|a| area_key(&a.area) == key)) {
-            return Ok(());
-        }
-        return update(root, org, project, |map| {
-            if let Some(a) = map.areas.iter_mut().find(|a| area_key(&a.area) == key) {
-                forget_unprintable(a, &path, target);
-            }
-        });
-    }
+    let none = matched == 0;
     let matched = u32::try_from(matched).unwrap_or(NOT_ONE);
-    let all = u32::try_from(all.max(1)).unwrap_or(NOT_ONE);
+    let all = if none { 0 } else { u32::try_from(all.max(1)).unwrap_or(NOT_ONE) };
     let plain = plain_target(target);
-    let link_count = if plain { matched } else { NOT_ONE };
-    let link_all = if plain { all } else { NOT_ONE };
+    let link_count = if plain || none { matched } else { NOT_ONE };
+    let link_all = if plain || none { all } else { NOT_ONE };
     let path = self::page_path(page_path);
     let area = canonical_area(root, org, project, area.unwrap_or(""));
     update(root, org, project, |map| {
@@ -901,7 +908,27 @@ pub fn record_matched_counts(
                 note_sighting(a, key, link, &path, now, true, link_count, link_all);
             }
         }
-        trim_sightings(a);
+        trim_sightings(a, now);
+        if !plain {
+            // The whole locator: what that exact locator matched.
+            match a.wholes.iter_mut().find(|w| w.locator == *target) {
+                Some(w) => {
+                    if now >= w.last_seen {
+                        w.last_seen = now;
+                        if !none || w.matched == 0 {
+                            w.page = path.clone();
+                        }
+                    }
+                    w.matched = merged_matches(w.matched, matched);
+                }
+                None => a.wholes.push(WholeSighting { locator: target.clone(), page: path.clone(), last_seen: now, matched }),
+            }
+        }
+        trim_wholes(a, now);
+        if none {
+            forget_unprintable(a, &path, target);
+            return;
+        }
         let page = page_mut(a, &path, "");
         for link in target.links() {
             let Some(key) = link.seen_key() else { continue };
@@ -931,20 +958,6 @@ pub fn record_matched_counts(
                 all: kept_all(link_count, link_all),
                 locator: Target::One(link),
             });
-        }
-        if !plain {
-            // The whole locator: what that exact locator matched.
-            match a.wholes.iter_mut().find(|w| w.locator == *target) {
-                Some(w) => {
-                    if now >= w.last_seen {
-                        w.last_seen = now;
-                        w.page = path.clone();
-                    }
-                    w.matched = merged_matches(w.matched, matched);
-                }
-                None => a.wholes.push(WholeSighting { locator: target.clone(), page: path.clone(), last_seen: now, matched }),
-            }
-            trim_wholes(a);
         }
     })
 }

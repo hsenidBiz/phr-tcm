@@ -477,8 +477,10 @@ For anything NOT on that list, guard the click with `when_visible`:
   test always expects belongs in the script as a plain action.
 - A save checks the `when_visible` selector, and any `then` action on
   that same locator, against what was seen in every area of the project,
-  not only the script's: a banner seen on the sign-in page counts. It
-  still needs one seen matching exactly one element.
+  not only the script's: a banner seen on the sign-in page counts. The
+  selector is a guard, so it counts seen matching any number of elements,
+  or none (a probe that matched nothing); a `then` click on that same
+  locator still needs one seen matching exactly one element.
 
 ## Resetting a list to a known state
 
@@ -1285,10 +1287,12 @@ browser (see "Discovering the app"):
   `page: false` to any of them to leave the page out of the answer.
 - Visible text that no line's name already says (a span, a div, a
   paragraph: "Self 20%", a status badge) prints as a `text "..."` line
-  with a text locator on its end. A read never counts a text line as
-  matching exactly one element: probe it before an action or a
-  one-element check uses it. Past the line limit, text lines are left out
-  before any control's line.
+  with a text locator on its end. A read counts a text line against every
+  line of the page whose words hold it, a control's name included: one no
+  other line holds counts as matching exactly one element, so a row of
+  text read from a table can go straight into an `expect_visible`. A
+  read that missed a frame does not count it: probe it then. Past the
+  line limit, text lines are left out before any control's line.
 - A line with no locator on its end names nothing a script can act on:
   the page itself, a list bullet, and the options of a native list
   (a customizable one included), which a script picks with `fill` on the
@@ -1545,8 +1549,17 @@ What a save checks:
   `expect_contains_text`, `expect_attribute`, `expect_style`, `expect_enabled`,
   `expect_disabled`, `expect_checked`, `expect_focused`, and the table checks, whose table
   must be one). A locator never seen matching
-  anything is refused for every use, `expect_hidden` included: probe it
-  while what it names is on the page.
+  anything is refused for every use. A probe that matches nothing counts
+  as seen for a check that passes with nothing there: `expect_hidden`, an
+  `expect_count` of 0, and a `when_visible`'s own locator. Probe the
+  locator as written while what it names is not on the page; every other
+  use still needs it seen present.
+- What was seen stays seen: a later discovery that reads the page without
+  it (a wizard's earlier step, a dropdown's item, a toast) keeps it. It
+  is let go only when the area's map is forgotten, or after 30 days not
+  seen. What a `wait_for` or an `expect_text` found counts as seen too,
+  tried, in a discovery, or inside a component a replay ran, even when it
+  is gone a moment later (a toast).
 - A `navigate` or `open_tab` address must be one discovery has visited.
 - Three kinds of locator pass without a sighting:
   1. Text the script typed itself: a locator whose text or name contains,
@@ -1567,7 +1580,7 @@ line, each with a hint when a close one was seen and what that use needs:
 `Step N: <the locator> was never seen on the live app; this click needs
 one seen matching exactly one element.` (at most 50, then how many more).
 A locator that was seen says instead why it does not count: seen only
-matching several elements, never counted as one (probe it as written,
+matching several elements (naming up to 3 it matched), never counted as one (probe it as written,
 with its `nth` when it has one), or used only in saved checks. A part
 of a seen name, where the full name is needed, is told to use the full
 name as seen. Find each on the page with

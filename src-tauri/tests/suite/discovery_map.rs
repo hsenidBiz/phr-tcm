@@ -512,10 +512,10 @@ fn a_locator_matched_in_an_older_discovery_is_dropped_on_re_read() {
     assert_eq!(names_on(dir.path(), "/p"), ["Save"]);
 }
 
-/// A later discovery's whole-page read drops only what a read could have
-/// printed: a css or text locator a probe matched, a narrowed one, or a
-/// chain through css is never on a read's lines, so it stays. A role
-/// locator the read no longer shows is gone, as before.
+/// A later discovery's whole-page read drops no sighting: a css or text
+/// locator a probe matched, a narrowed one, a chain through css, and a
+/// role locator the read no longer shows all stay. Only the page's
+/// elements that a read could have printed are replaced.
 #[test]
 fn a_re_read_keeps_what_no_read_can_print() {
     use v2_lib::autorun::discovery_map::{a_read_can_print, a_read_can_print_target};
@@ -538,8 +538,8 @@ fn a_re_read_keeps_what_no_read_can_print() {
     assert!(keys.contains(&&SeenKey::Text("Pending approval".into())), "{keys:?}");
     assert!(keys.contains(&&SeenKey::Css(".grid".into())), "{keys:?}");
     assert!(
-        !keys.contains(&&SeenKey::Role { role: "button".into(), name: "deep".into() }),
-        "a role a read prints and no longer shows was kept: {keys:?}"
+        keys.contains(&&SeenKey::Role { role: "button".into(), name: "deep".into() }),
+        "a role sighting a later read did not show was dropped: {keys:?}"
     );
     assert!(map.areas[0].wholes.iter().any(|w| w.locator == chain), "{:?}", map.areas[0].wholes);
     let names = names_on(dir.path(), "/p");
@@ -576,11 +576,12 @@ fn a_kept_unprintable_sighting_ages_out() {
     assert_eq!(names_on(dir.path(), "/p"), ["Save"]);
 }
 
-/// A probe or a try that matches nothing on a page takes off that page what
-/// no read could print of the locator; the same locator on another page,
-/// and what a read prints, are left alone.
+/// A probe or a try that matches nothing on a page takes off that page's
+/// elements what no read could print of the locator, and keeps every
+/// sighting: one seen matching elements keeps its count, and the whole
+/// chain stays. The same locator on another page is left alone.
 #[test]
-fn matching_nothing_on_a_page_forgets_what_no_read_prints() {
+fn matching_nothing_on_a_page_forgets_its_elements_but_no_sighting() {
     use v2_lib::autorun::discovery_map::record_matched_counts;
     use v2_lib::browser::locator::SeenKey;
     let dir = tempfile::tempdir().unwrap();
@@ -596,17 +597,59 @@ fn matching_nothing_on_a_page_forgets_what_no_read_prints() {
     record_matched_counts(dir.path(), "Acme", "Web", Some("A"), "/p", &chain, 0, 0, 2000).unwrap();
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
     let a = &map.areas[0];
-    let on = |key: &SeenKey, page: &str| a.sightings.iter().any(|s| s.key == *key && s.page == page);
-    let grid_edit = SeenKey::Css("#grid .row-edit".into());
-    // The css sighting moved to /q when it was matched there last.
-    assert!(on(&grid_edit, "/q"), "{:?}", a.sightings);
-    assert!(!a.sightings.iter().any(|s| s.key == SeenKey::Css(".grid".into())), "{:?}", a.sightings);
-    assert!(a.sightings.iter().any(|s| s.key == SeenKey::Role { role: "button".into(), name: "edit".into() }), "a printable link was dropped");
-    assert!(!a.wholes.iter().any(|w| w.locator == chain), "{:?}", a.wholes);
+    let sighting = |key: &SeenKey| a.sightings.iter().find(|s| s.key == *key).unwrap_or_else(|| panic!("{key:?} dropped"));
+    let grid_edit = sighting(&SeenKey::Css("#grid .row-edit".into()));
+    assert_eq!((grid_edit.matched, grid_edit.page.as_str()), (1, "/q"), "a match of none undid one of one");
+    assert_eq!(grid_edit.last_seen, 2000);
+    sighting(&SeenKey::Css(".grid".into()));
+    sighting(&SeenKey::Role { role: "button".into(), name: "edit".into() });
+    let whole = a.wholes.iter().find(|w| w.locator == chain).expect("the whole chain was dropped");
+    assert_eq!(whole.matched, 1);
     let p = a.pages.iter().find(|p| p.path == "/p").unwrap();
     assert!(!p.elements.iter().any(|e| e.locator == css), "{:?}", p.elements);
     let q = a.pages.iter().find(|p| p.path == "/q").unwrap();
     assert!(q.elements.iter().any(|e| e.locator == css), "the other page lost it");
+}
+
+/// #42/#65: a probe that matches nothing files the locator as seen
+/// matching none (`matched` 0), in every form: a role and a name, css, text
+/// and a chain (each link, and the chain whole). It adds no element, and an
+/// area that was never mapped gets one. A later match of some takes its
+/// count; a later match of none never undoes a count of some.
+#[test]
+fn a_probe_matching_nothing_files_every_form_as_seen_matching_none() {
+    use v2_lib::autorun::discovery_map::record_matched_counts;
+    let dir = tempfile::tempdir().unwrap();
+    let role = Target::One(LocatorStep { role: Some("button".into()), name: Some("Delete FY2026".into()), ..LocatorStep::default() });
+    let css = Target::One(LocatorStep { css: Some(".phr-dropdown-toggle".into()), ..LocatorStep::default() });
+    let text = Target::One(LocatorStep { text: Some("No cycles yet".into()), ..LocatorStep::default() });
+    let chain = Target::Chain(vec![
+        LocatorStep { css: Some(".card".into()), ..LocatorStep::default() },
+        LocatorStep { role: Some("switch".into()), ..LocatorStep::default() },
+    ]);
+    for t in [&role, &css, &text, &chain] {
+        record_matched_counts(dir.path(), "Acme", "Web", Some("Cycles"), "/cycles", t, 0, 0, 1000).unwrap();
+    }
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let a = map.areas.iter().find(|a| a.area == "Cycles").expect("no area was made for a match of none");
+    for t in [&role, &css, &text, &chain] {
+        for link in t.links() {
+            let key = link.seen_key().unwrap();
+            let s = a.sightings.iter().find(|s| s.key == key).unwrap_or_else(|| panic!("{key:?} not filed"));
+            assert_eq!(s.matched, 0, "{key:?}");
+            assert_eq!(s.all_matched(), 0, "{key:?}");
+        }
+    }
+    assert_eq!(a.wholes.iter().find(|w| w.locator == chain).map(|w| w.matched), Some(0));
+    assert!(a.pages.iter().all(|p| p.elements.is_empty()), "a match of none added an element: {:?}", a.pages);
+
+    // Some, then none again: the count of some stays.
+    record_matched_counts(dir.path(), "Acme", "Web", Some("Cycles"), "/cycles", &css, 3, 3, 2000).unwrap();
+    record_matched_counts(dir.path(), "Acme", "Web", Some("Cycles"), "/cycles", &css, 0, 0, 3000).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let a = map.areas.iter().find(|a| a.area == "Cycles").unwrap();
+    let s = a.sightings.iter().find(|s| s.key == css.links()[0].seen_key().unwrap()).unwrap();
+    assert_eq!((s.matched, s.last_seen), (3, 3000));
 }
 
 /// A page read while healing or replaying adds what it shows and drops
@@ -723,8 +766,9 @@ fn sightings_of(dir: &std::path::Path, area: &str) -> Vec<(SeenKey, u64)> {
 
 /// A wizard keeps one address for every step: its later steps replace the
 /// page's elements, and 201 newer sightings and outcome lines come after.
-/// The step seen first is still seen; a later discovery of the page that
-/// no longer shows it replaces it.
+/// The step seen first is still seen, and stays seen when a later
+/// discovery reads the page and no longer shows it: only the page's
+/// elements are replaced.
 #[test]
 fn a_sighting_survives_201_newer_ones() {
     let dir = tempfile::tempdir().unwrap();
@@ -746,13 +790,67 @@ fn a_sighting_survives_201_newer_ones() {
     assert!(keys.contains(&role_key("button", "action 200")));
     assert_eq!(sightings_of(dir.path(), "Cycles").len(), 203);
 
-    // A later discovery reads the page and no longer sees it: replaced.
+    // A later discovery reads the page and no longer sees it: the page's
+    // elements are replaced, the sighting is kept.
     record_seen(dir.path(), "Acme", "Web", Some("Cycles"), "/cycles/new", "New", &[line("progressbar", evaluators)], None, Some(5000), 5000)
         .unwrap();
+    assert_eq!(names_on(dir.path(), "/cycles/new"), [evaluators]);
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
     let keys = seen_keys(&map, &["Cycles"]);
-    assert!(!keys.contains(&role_key("progressbar", eval)));
+    assert!(keys.contains(&role_key("progressbar", eval)), "a later whole-page read dropped a sighting");
     assert!(keys.contains(&role_key("button", "action 0")), "another page was touched");
+}
+
+/// #28/#57: a sighting from one discovery outlives a later discovery's
+/// whole-page read of the same page that does not show it (a draft's Edit
+/// button, a dropdown item, a toast): it goes only when its area is
+/// forgotten, after 30 days unseen, or past the ceiling. The page's
+/// elements are what the page holds now.
+#[test]
+fn a_sighting_outlives_a_later_discoverys_whole_read_without_it() {
+    use v2_lib::browser::locator::SeenKey;
+    let dir = tempfile::tempdir().unwrap();
+    let edit = line("button", "Edit Cycle Setup");
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/preview", "P", &[edit, line("button", "Save")], None, Some(1000), 1000)
+        .unwrap();
+    let toast = Target::One(LocatorStep { text: Some("Profile saved".into()), ..LocatorStep::default() });
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/preview", &toast, 1100).unwrap();
+    // Discovery 2 reads the same page whole, without either.
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/preview", "P", &[line("button", "Save")], None, Some(9000), 9000).unwrap();
+    let names = names_on(dir.path(), "/preview");
+    assert!(names.contains(&"Save".to_string()) && !names.contains(&"Edit Cycle Setup".to_string()), "{names:?}");
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let keys = seen_keys(&map, &["A"]);
+    assert!(keys.contains(&role_key("button", "Edit Cycle Setup")), "{keys:?}");
+    assert!(keys.contains(&SeenKey::Text("Profile saved".into())), "{keys:?}");
+    let edit = map.areas[0].sightings.iter().find(|s| s.key == role_key("button", "Edit Cycle Setup")).unwrap();
+    assert_eq!((edit.matched, edit.last_seen), (1, 1000), "the sighting kept its count and when it was seen");
+}
+
+/// A sighting not seen for 30 days goes at the area's next recording, on
+/// any page; one seen within them stays. So does a whole locator.
+#[test]
+fn a_sighting_unseen_for_thirty_days_goes() {
+    let dir = tempfile::tempdir().unwrap();
+    let chain = Target::Chain(vec![
+        LocatorStep { css: Some(".card".into()), ..LocatorStep::default() },
+        LocatorStep { role: Some("button".into()), name: Some("Edit".into()), ..LocatorStep::default() },
+    ]);
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Old")], None, Some(1000), 1000).unwrap();
+    record_matched(dir.path(), "Acme", "Web", Some("A"), "/p", &chain, 1000).unwrap();
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[line("button", "Kept")], None, Some(2000), 2000).unwrap();
+    // Exactly 30 days after: still kept.
+    let on_time = 1000 + STALE_AFTER_MS;
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/q", "Q", &[line("link", "Elsewhere")], None, None, on_time).unwrap();
+    let keys = seen_keys(&load_map(dir.path(), "Acme", "Web").unwrap(), &["A"]);
+    assert!(keys.contains(&role_key("button", "old")), "dropped before its time");
+    // A millisecond past it: gone, sighting and whole; the newer one stays.
+    record_seen(dir.path(), "Acme", "Web", Some("A"), "/q", "Q", &[line("link", "Elsewhere")], None, None, on_time + 1).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let a = &map.areas[0];
+    assert!(!a.sightings.iter().any(|s| s.key == role_key("button", "old")), "{:?}", a.sightings);
+    assert!(a.sightings.iter().any(|s| s.key == role_key("button", "kept")), "{:?}", a.sightings);
+    assert!(!a.wholes.iter().any(|w| w.locator == chain), "{:?}", a.wholes);
 }
 
 /// The same link seen again is one sighting, stamped with the latest time
@@ -965,28 +1063,54 @@ fn a_part_read_counts_against_the_whole_page_and_explores_nothing() {
     assert_eq!(lone.matched, NOT_ONE, "without the page's lines a cut count of one is not known");
 }
 
-/// A text line of a read is filed as never counted, even from a whole
-/// read: a text locator finds every element whose visible text holds it,
-/// a control's own words among them, which no read's lines can count.
-/// Only a probe counts one.
-#[test]
-fn a_text_line_is_never_counted_as_one_by_a_read() {
-    use v2_lib::autorun::discovery_map::{record_read, NOT_ONE};
-    let dir = tempfile::tempdir().unwrap();
-    let text = SnapLine {
+fn text_line(t: &str) -> SnapLine {
+    SnapLine {
         role: "text".into(),
-        name: "Draft".into(),
-        locator: Target::One(LocatorStep { text: Some("Draft".into()), ..LocatorStep::default() }),
+        name: t.into(),
+        locator: Target::One(LocatorStep { text: Some(t.into()), ..LocatorStep::default() }),
         required: false,
-    };
-    record_read(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &[text, line("button", "Edit")], None, Some(1), true, 5)
-        .unwrap();
+    }
+}
+
+/// #37: a read that knows the page counts a text line too: a text locator
+/// finds every element whose visible text holds it, so it is counted
+/// against every line whose words hold it, a text line or a control's
+/// name. "Pending" with nothing else holding it is one; "Stage 1" beside
+/// "Stage 10" is two; "Save" beside a button "Save draft" is two. A read
+/// listing one part (`within`) counts against the whole page. Without the
+/// page's lines a read cut short files it as never counted, as before.
+#[test]
+fn a_text_line_is_counted_by_a_read_that_knows_the_page() {
+    use v2_lib::autorun::discovery_map::{record_read, record_read_counted, NOT_ONE};
+    let dir = tempfile::tempdir().unwrap();
+    let lines =
+        [text_line("Pending"), line("button", "Edit"), text_line("Stage 1"), text_line("Stage 10"), text_line("Save"), line("button", "Save draft")];
+    record_read(dir.path(), "Acme", "Web", Some("A"), "/p", "P", &lines, None, Some(1), true, 5).unwrap();
     let map = load_map(dir.path(), "Acme", "Web").unwrap();
     let area = &map.areas[0];
-    let draft = area.sightings.iter().find(|s| s.key == SeenKey::Text("Draft".into())).unwrap();
-    assert_eq!(draft.matched, NOT_ONE);
+    let matched = |t: &str| area.sightings.iter().find(|s| s.key == SeenKey::Text(t.into())).map(|s| s.matched);
+    assert_eq!(matched("Pending"), Some(1));
+    assert_eq!(matched("Stage 1"), Some(2), "\"Stage 10\" holds it");
+    assert_eq!(matched("Stage 10"), Some(1));
+    assert_eq!(matched("Save"), Some(2), "a control's own words hold it");
     let edit = area.sightings.iter().find(|s| s.key == role_key("button", "Edit")).unwrap();
     assert_eq!(edit.matched, 1, "a control line of the same whole read is counted");
+
+    // A `within` read of a Timeline table: its rows counted on the page.
+    let page = [text_line("Planning"), text_line("Review"), line("heading", "Timeline"), text_line("Review notes")];
+    let listed = [text_line("Planning"), text_line("Review")];
+    record_read_counted(dir.path(), "Acme", "Web", Some("A"), "/q", "Q", &listed, Some(&page), None, Some(1), false, 6).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let area = &map.areas[0];
+    let matched = |t: &str| area.sightings.iter().find(|s| s.key == SeenKey::Text(t.into())).map(|s| s.matched);
+    assert_eq!(matched("Planning"), Some(1));
+    assert_eq!(matched("Review"), Some(2), "a twin outside what was listed still counts");
+
+    // A cut read that does not know the page: never counted.
+    record_read(dir.path(), "Acme", "Web", Some("A"), "/r", "R", &[text_line("Lone text")], None, None, false, 7).unwrap();
+    let map = load_map(dir.path(), "Acme", "Web").unwrap();
+    let lone = map.areas[0].sightings.iter().find(|s| s.key == SeenKey::Text("Lone text".into())).unwrap();
+    assert_eq!(lone.matched, NOT_ONE);
 }
 
 // ------------------------------------------ the application's refusals

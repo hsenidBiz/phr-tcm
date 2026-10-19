@@ -87,7 +87,9 @@
 //! "this click needs one seen matching exactly one element", "this
 //! expect_hidden needs it seen at least once". Where the reason is more
 //! particular it says that instead: seen only matching several
-//! (`SEEN_ONLY_MANY`), never counted (`NEVER_COUNTED`, or
+//! (`SEEN_ONLY_MANY`, followed by up to 3 of the seen names it matched on
+//! the pages it was seen on, `named_matches`; with `"exact": true` and only
+//! its own name among them, `NEVER_COUNTED`), never counted (`NEVER_COUNTED`, or
 //! `NEVER_COUNTED_NTH` for a locator with an `nth`, which is counted only
 //! as written), or seen only in saved checks (`SEEN_ONLY_IN_CHECKS`). A
 //! part of a seen name, refused for a use that needs one, says to use the
@@ -97,8 +99,10 @@
 //! banner, a session prompt, both of which appear on the sign-in page and
 //! anywhere else. So its selector, and each target in its `then` that is
 //! that same locator, is checked against what was seen in every area of
-//! the project, not only the areas the script reads. Every other rule
-//! holds for them as written: they need one seen matching exactly one.
+//! the project, not only the areas the script reads. Its selector is a
+//! guard, skipped when it matches nothing, so it counts seen in any form
+//! and any count, none included (`seen_many`, `takes_none`); a target in
+//! its `then` keeps its own action's rule.
 //!
 //! A refused save names every locator never seen at once, in step order,
 //! then action order, then link order, each with its own hint, up to
@@ -109,18 +113,21 @@
 //! How many elements a locator was seen matching (`Sighting::matched`)
 //! depends on how it is used (`takes_many`). A check a run can pass with
 //! zero or several matches (`expect_hidden`, `expect_count`, `wait_for`)
-//! may use a locator seen matching one or more elements. Every other use
-//! needs one seen matching exactly one: an action that acts on the element
+//! may use a locator seen matching one or more elements, as may a
+//! `when_visible`'s own selector. Every other use needs one seen matching
+//! exactly one: an action that acts on the element
 //! (click, fill, select, check, upload, press, drag, ...), and the checks
 //! whose run reads one element and fails on several (`expect_visible`,
 //! `expect_text`, `expect_contains_text`, `expect_attribute`, `expect_style`,
 //! `expect_enabled`, `expect_disabled`, `expect_checked`, `expect_focused`, and the table
 //! checks `expect_row`, `expect_no_row`,
-//! `expect_sorted` and `expect_row_count`, whose table must be one), as
-//! must a `when_visible`'s selector, which guards actions rather than
-//! checks. A locator never seen matching anything is refused for every
-//! use. The rule is per locator: each link of a chain is held to it, the
-//! links a chain is scoped by included. A run resolves a scope across every
+//! `expect_sorted` and `expect_row_count`, whose table must be one). A
+//! locator a probe matched none of (`Sighting::matched` 0) counts only
+//! for a use that passes with nothing there (`takes_none`):
+//! `expect_hidden`, an `expect_count` of 0 and a `when_visible`'s selector.
+//! Every use that needs it present refuses it as never seen. The rule is
+//! per locator: each link of a chain is held to it, the links a chain is
+//! scoped by included. A run resolves a scope across every
 //! element it matches, so the scope of a check that may match several may
 //! have been seen matching several too; an action's scope keeps the rule it
 //! always had, one. A link of a saved script that vouches (see below)
@@ -280,13 +287,32 @@ fn named_only_by_placeholder(link: &LocatorStep) -> bool {
 /// never seen on the live app" (`never_seen`), rather than a clause after
 /// it?
 pub fn is_own_sentence(hint: &str) -> bool {
-    [SEEN_ONLY_MANY, SEEN_ONLY_IN_CHECKS, NEVER_COUNTED, NEVER_COUNTED_NTH, NEVER_COUNTED_FILLED, ONLY_A_PLACEHOLDER].contains(&hint)
+    [SEEN_ONLY_IN_CHECKS, NEVER_COUNTED, NEVER_COUNTED_NTH, NEVER_COUNTED_FILLED, ONLY_A_PLACEHOLDER].contains(&hint)
+        || hint.starts_with(SEEN_ONLY_MANY)
 }
 
-/// What a use of a locator needs, in one clause, for a refusal of one never
-/// seen: `kind` is the action's own word, `many` whether it may match
-/// several (`takes_many`), `everywhere` whether it is a `when_visible`'s
-/// locator, checked against every area.
+/// What a locator seen only matching several matched, said after
+/// `SEEN_ONLY_MANY`: up to 3 of the distinct seen names it matches, by role
+/// and name (`Sightings::matching`), then "and more" past 3. One name only
+/// is twins of it. Nothing when no name is known (a css locator).
+fn named_matches(matched: &[&LocatorStep]) -> String {
+    let named = |l: &&LocatorStep| match (&l.role, &l.name, &l.text) {
+        (Some(r), Some(n), _) => format!("{r} \"{n}\""),
+        (_, _, Some(t)) => format!("text \"{t}\""),
+        _ => String::new(),
+    };
+    let names: Vec<String> = matched.iter().take(3).map(named).filter(|n| !n.is_empty()).collect();
+    match (names.as_slice(), matched.len()) {
+        ([], _) => String::new(),
+        ([one], 1) => format!(" It matched {one} more than once."),
+        (some, n) if n > 3 => format!(" It matched {} and more.", some.join(", ")),
+        (some, _) => {
+            let (last, rest) = some.split_last().expect("not empty");
+            format!(" It matched {} and {last}.", rest.join(", "))
+        }
+    }
+}
+
 /// The hint for a part of a name refused for a use that needs one: the
 /// seen name holding it, as `seen` was written, to use in its place.
 pub fn use_full_name(seen: &LocatorStep) -> String {
@@ -298,6 +324,10 @@ pub fn use_full_name(seen: &LocatorStep) -> String {
     }
 }
 
+/// What a use of a locator needs, in one clause, for a refusal of one never
+/// seen: `kind` is the action's own word, `many` whether it may match
+/// several (`takes_many`), `everywhere` whether it is a `when_visible`'s
+/// locator, checked against every area.
 pub fn wants(kind: &str, many: bool, everywhere: bool) -> String {
     let anywhere = if everywhere { ", in any area" } else { "" };
     if many {
@@ -359,6 +389,34 @@ pub fn takes_many(action: &Action) -> bool {
     }
 }
 
+/// Can this action pass with its locator matching nothing on the page:
+/// `expect_hidden`, an `expect_count` of 0, and a `when_visible`, a guard
+/// that is skipped when its locator matches nothing? Such a use takes a
+/// locator a probe matched none of (`Sighting::matched` 0); every other
+/// use needs it seen present.
+pub fn takes_none(action: &Action) -> bool {
+    matches!(action, Action::ExpectHidden { .. } | Action::WhenVisible { .. } | Action::ExpectCount { equals: 0, .. })
+}
+
+/// Does the seen check take this action's own locator seen matching any
+/// number of elements: a check that may match several (`takes_many`), or a
+/// `when_visible`'s own locator, a guard skipped when it does not match
+/// (its `then` actions are held to their own rule)?
+fn seen_many(action: &Action) -> bool {
+    takes_many(action) || matches!(action, Action::WhenVisible { .. })
+}
+
+/// `map` with no sighting or whole seen matching none (`matched` 0): what a
+/// use that needs its locator present is checked against.
+fn present_only(map: &DiscoveryMap) -> DiscoveryMap {
+    let mut out = map.clone();
+    for a in &mut out.areas {
+        a.sightings.retain(|s| s.matched != 0);
+        a.wholes.retain(|w| w.matched != 0);
+    }
+    out
+}
+
 /// `map` with only what was seen matching exactly one element: no sighting
 /// or element seen only matching several, and no saved link used only in a
 /// check that may match several. What a use that needs one is checked
@@ -368,7 +426,10 @@ pub fn takes_many(action: &Action) -> bool {
 fn one_only(map: &DiscoveryMap, legacy: bool) -> DiscoveryMap {
     let mut out = map.clone();
     for a in &mut out.areas {
-        a.sightings.retain(|s| !only_many(if legacy { s.all_matched() } else { s.matched }));
+        a.sightings.retain(|s| {
+            let n = if legacy { s.all_matched() } else { s.matched };
+            n != 0 && !only_many(n)
+        });
         // A legacy use takes only what a saved script wrote as a legacy
         // string: a structured css locator vouched for its visible match.
         if legacy {
@@ -428,7 +489,7 @@ fn whole_matched(map: &DiscoveryMap, areas: &[&str]) -> Vec<Vec<LocatorStep>> {
                 .flat_map(|p| p.elements.iter())
                 .filter(|e| !only_many(e.matched) && !plain_target(&e.locator))
                 .map(|e| e.locator.links());
-            let wholes = a.wholes.iter().filter(|w| !only_many(w.matched)).map(|w| w.locator.links());
+            let wholes = a.wholes.iter().filter(|w| w.matched == 1).map(|w| w.locator.links());
             elements.chain(wholes).chain(saved)
         })
         .collect()
@@ -532,6 +593,9 @@ fn filled_fits(seen: &LocatorStep, saved: &LocatorStep, filled: &LocatorStep) ->
 /// which of the two a refusal is about.
 struct SeenBoth {
     any: Sightings,
+    /// `any` with what a probe matched none of: for a use that passes with
+    /// nothing there (`takes_none`).
+    none: Sightings,
     one: Sightings,
     /// `one` for a legacy string target: hidden matches counted.
     one_legacy: Sightings,
@@ -545,6 +609,8 @@ impl SeenBoth {
         // What was seen inside what (`holds_inside`, for a `:has`) is where
         // elements sit, not how many a locator matched: every seen chain.
         let chains = Sightings::new_strict(map, areas).chains;
+        let none = Sightings::new(map, areas);
+        let map = &present_only(map);
         let any = Sightings::new(map, areas);
         let mut one = Sightings::new_strict(&one_only(map, false), areas);
         one.whole = whole_matched(map, areas);
@@ -557,6 +623,7 @@ impl SeenBoth {
         }
         SeenBoth {
             any,
+            none,
             one,
             one_legacy,
             vouched: Sightings::new(&without_checks, areas),
@@ -586,11 +653,12 @@ impl SeenBoth {
             })
     }
 
-    /// The sightings a locator used this way is checked against: `many`
-    /// for a check that may match several, `legacy` for a legacy string
-    /// target.
-    fn for_use(&self, many: bool, legacy: bool) -> &Sightings {
+    /// The sightings a locator used this way is checked against: `none`
+    /// for a use that passes with nothing there (`takes_none`), `many` for
+    /// a check that may match several, `legacy` for a legacy string target.
+    fn for_use(&self, many: bool, legacy: bool, none: bool) -> &Sightings {
         match (many, legacy) {
+            _ if none => &self.none,
             (true, _) => &self.any,
             (false, false) => &self.one,
             (false, true) => &self.one_legacy,
@@ -612,6 +680,7 @@ impl SeenBoth {
         links: &[LocatorStep],
         many: bool,
         legacy: bool,
+        none: bool,
         page: Option<&str>,
         kind: &str,
         everywhere: bool,
@@ -625,7 +694,13 @@ impl SeenBoth {
             }
             let several = if legacy { &self.many_legacy } else { &self.many };
             if link.seen_key().is_some_and(|k| several.contains(&k)) {
-                return Some(SEEN_ONLY_MANY.to_string());
+                let matched = self.any.matching(link);
+                // Exact, only one name is its own: the count was of the
+                // names holding it, so it was never counted as written.
+                if link.exact && matched.len() <= 1 {
+                    return Some(NEVER_COUNTED.to_string());
+                }
+                return Some(format!("{SEEN_ONLY_MANY}{}", named_matches(&matched)));
             }
             if links.iter().any(link_holds_placeholder) {
                 return Some(NEVER_COUNTED_FILLED.to_string());
@@ -637,7 +712,7 @@ impl SeenBoth {
         }
         let needs = wants(kind, many, everywhere);
         let full = if many { None } else { self.any.holders(link).first().map(|l| use_full_name(l)) };
-        Some(match full.or_else(|| self.for_use(many, legacy).closest(link, page)) {
+        Some(match full.or_else(|| self.for_use(many, legacy, none).closest(link, page)) {
             Some(closest) => format!("{closest} {}{}", needs[..1].to_uppercase(), &needs[1..]),
             None => needs,
         })
@@ -832,6 +907,37 @@ impl Sightings {
         let mut held: Vec<&str> = Vec::new();
         for (k, n, l) in &self.names {
             if *k == kind && n.contains(&want) && !held.contains(&n.as_str()) {
+                held.push(n);
+                out.push(l);
+            }
+        }
+        out
+    }
+
+    /// The distinct seen names `link` matches as a run matches a name
+    /// (`locator::name_matches`, `"exact"` as written), in its role (a
+    /// text, for a text), seen on a page its own key was seen on, as they
+    /// were seen. None for a css link or one with no name.
+    fn matching(&self, link: &LocatorStep) -> Vec<&LocatorStep> {
+        let (kind, raw) = match (&link.role, &link.name, &link.text) {
+            (Some(r), Some(n), _) => (fold_name(r), n.as_str()),
+            (None, _, Some(t)) => ("text".to_string(), t.as_str()),
+            _ => return Vec::new(),
+        };
+        let pages = link.seen_key().and_then(|k| self.pages.get(&k));
+        let mut out: Vec<&LocatorStep> = Vec::new();
+        let mut held: Vec<&str> = Vec::new();
+        for (k, n, l) in &self.names {
+            let words = l.name.as_deref().or(l.text.as_deref()).unwrap_or("");
+            let same_page = match (pages, l.seen_key().and_then(|key| self.pages.get(&key))) {
+                (Some(mine), Some(theirs)) => !mine.is_disjoint(theirs),
+                _ => true,
+            };
+            if *k == kind
+                && same_page
+                && crate::browser::locator::name_matches(words, raw, link.exact)
+                && !held.contains(&n.as_str())
+            {
                 held.push(n);
                 out.push(l);
             }
@@ -1664,8 +1770,11 @@ struct InputLocator {
     target: Target,
     links: Vec<LocatorStep>,
     check: bool,
-    /// Whether its action may match several (`takes_many`).
+    /// Whether its action may match several (`takes_many`), or it is a
+    /// `when_visible`'s own locator (`seen_many`).
     many: bool,
+    /// Whether its action passes with nothing there (`takes_none`).
+    none: bool,
     typed_before: Vec<String>,
     /// Its action's own word (`Action::kind`), for what a refusal says it
     /// needs (`wants`).
@@ -1706,7 +1815,8 @@ fn input_locators(c: &Component, expanded: &[Action]) -> Vec<InputLocator> {
                     target: rt.clone(),
                     links,
                     check: is_check(r),
-                    many: takes_many(r),
+                    many: seen_many(r),
+                    none: takes_none(r),
                     typed_before: typed_before.clone(),
                     kind: r.kind(),
                     everywhere: false,
@@ -1815,7 +1925,8 @@ fn scan(
                             links: checked.links(),
                             target: checked,
                             check: is_check(action),
-                            many: in_row || takes_many(action),
+                            many: in_row || seen_many(action),
+                            none: takes_none(action),
                             typed_before: Vec::new(),
                             kind: action.kind(),
                             everywhere: guards(top, t),
@@ -1864,11 +1975,11 @@ fn scan(
                     if seen.whole(&chain, n.many) {
                         continue;
                     }
-                    if let Some(link) = first_unseen(&n.links, &chain, seen.for_use(n.many, legacy), &own) {
+                    if let Some(link) = first_unseen(&n.links, &chain, seen.for_use(n.many, legacy, n.none), &own) {
                         let page = area_page(map, here.as_deref());
                         unseen.push(Found {
                             unseen: Unseen { step: step.step_number, locator: n.target.describe(), refused: None },
-                            hint: seen.hint(link, &n.links, n.many, legacy, page, &n.kind, n.everywhere),
+                            hint: seen.hint(link, &n.links, n.many, legacy, n.none, page, &n.kind, n.everywhere),
                             target: Some(n.target.clone()),
                         });
                     }
@@ -2005,7 +2116,8 @@ fn component_unseen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) 
                 let t = &checked;
                 let chain = t.links();
                 let links: Vec<LocatorStep> = chain.iter().filter(|l| !input_link(l)).cloned().collect();
-                let many = in_row || takes_many(a);
+                let many = in_row || seen_many(a);
+                let none = takes_none(a);
                 let banner = guards(action, t);
                 let seen = if banner {
                     &*everywhere.get_or_insert_with(|| SeenBoth::new(map, &every_area(map)))
@@ -2016,8 +2128,8 @@ fn component_unseen(map: &DiscoveryMap, area: Option<&str>, actions: &[Action]) 
                     continue;
                 }
                 let legacy = t.is_legacy();
-                if let Some(link) = first_unseen(&links, &chain, seen.for_use(many, legacy), &own) {
-                    let hint = seen.hint(link, &links, many, legacy, area_page(map, area), &a.kind(), banner);
+                if let Some(link) = first_unseen(&links, &chain, seen.for_use(many, legacy, none), &own) {
+                    let hint = seen.hint(link, &links, many, legacy, none, area_page(map, area), &a.kind(), banner);
                     out.push((refused(i, &t.describe(), hint.as_deref()), Some(t.clone())));
                 }
             }
@@ -2122,10 +2234,10 @@ pub fn check_resolved_inputs_with(
                 let chain = ft.links();
                 // A placeholder chain or narrowed locator the save took as
                 // a whole (`SeenBoth::whole`) is fitted as a whole here too.
-                if both.whole_filled(&st.links(), &chain, takes_many(fa)) {
+                if both.whole_filled(&st.links(), &chain, seen_many(fa)) {
                     continue;
                 }
-                let seen = both.for_use(takes_many(fa), ft.is_legacy());
+                let seen = both.for_use(seen_many(fa), ft.is_legacy(), takes_none(fa));
                 let off = st.links().iter().zip(&chain).any(|(sl, fl)| {
                     link_holds_placeholder(sl)
                         && !own_data(fl, &chain, &so_far.typed, is_check(fa), seen)
@@ -2160,10 +2272,10 @@ pub fn check_resolved_inputs_with(
                 for (m, r) in as_saved.iter().flat_map(Action::each).zip(ran.iter().flat_map(Action::each)) {
                     for (mt, rt) in own_targets(m).into_iter().zip(own_targets(r)) {
                         let chain = rt.links();
-                        if both.whole_filled(&mt.links(), &chain, takes_many(r)) {
+                        if both.whole_filled(&mt.links(), &chain, seen_many(r)) {
                             continue;
                         }
-                        let seen = both.for_use(takes_many(r), rt.is_legacy());
+                        let seen = both.for_use(seen_many(r), rt.is_legacy(), takes_none(r));
                         let fed = mt.links().iter().zip(&chain).any(|(ml, rl)| {
                             let changed = ml != rl || link_holds_placeholder(rl);
                             changed && !own_data(rl, &chain, &typed, is_check(r), seen) && !seen.fills(ml, rl)

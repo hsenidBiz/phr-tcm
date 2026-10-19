@@ -2065,11 +2065,16 @@ fn a_checked_selector_matching_one_does_not_let_its_base_vouch_for_a_click() {
     assert_eq!(check_seen(&map, &none(), &clicks(checked), &[], None), Ok(()));
 }
 
-/// Nothing matched: nothing is filed, never a sighting matching one.
+/// Nothing matched: it is filed as seen matching none, never as one, and
+/// a click on it is refused as never seen.
 #[test]
-fn a_target_matching_nothing_files_nothing() {
+fn a_target_matching_nothing_is_filed_as_matching_none() {
     let map = filed(serde_json::json!({ "css": ".gone" }), 0);
-    assert!(map.areas.is_empty(), "{map:?}");
+    let matched: Vec<u32> = map.areas.iter().flat_map(|a| a.sightings.iter()).map(|s| s.matched).collect();
+    assert_eq!(matched, [0], "{map:?}");
+    assert!(map.areas.iter().all(|a| a.pages.iter().all(|p| p.elements.is_empty())), "{map:?}");
+    let refused = check_seen(&map, &none(), &clicks(serde_json::json!({ "css": ".gone" })), &[], None).unwrap_err();
+    assert!(refused.contains(".gone was never seen on the live app"), "{refused}");
 }
 
 /// A saved check that alone vouches for a locator says so when an action
@@ -2335,14 +2340,20 @@ fn a_when_visible_banner_seen_in_another_area_saves() {
     // Another locator in its then is not the banner.
     let other = guarded(click(serde_json::json!({ "css": "#accept-all" })));
     assert_eq!(check_seen(&map, &none(), &other, &[], None), Err(refusal(1, "#accept-all")));
-    // Seen anywhere, but only matching several: still refused.
+    // Seen anywhere, but only matching several: the guard itself passes,
+    // its then click on it is still refused.
     let several = joined(sighted_matching("Sign in", banner, 2), map_with("Cycles", "/cycles", &[]));
     let refused = check_seen(&several, &none(), &s, &[], None).unwrap_err();
     assert!(refused.contains(v2_lib::autorun::seen_check::SEEN_ONLY_MANY), "{refused}");
+    assert_eq!(refused.lines().count(), 1, "{refused}");
     // Never seen anywhere: the refusal says it is looked for in any area.
     let nowhere = map_with("Cycles", "/cycles", &[]);
     let refused = check_seen(&nowhere, &none(), &s, &[], None).unwrap_err();
-    assert!(refused.contains("this when_visible needs one seen matching exactly one element, in any area."), "{refused}");
+    assert!(
+        refused.contains("this when_visible needs it seen on the live app at least once, matching any number of elements, in any area."),
+        "{refused}"
+    );
+    assert!(refused.contains("this click needs one seen matching exactly one element, in any area."), "{refused}");
 }
 
 /// A component's `when_visible` is read the same way.
@@ -2518,4 +2529,114 @@ fn a_style_check_takes_a_seen_target_like_any_check() {
     assert_eq!(check_seen(&two, &none(), &s, &[], None), Err(many_refusal(1, &described)));
     let empty = DiscoveryMap::default();
     assert_eq!(check_seen(&empty, &none(), &s, &[], None), Err(refusal_as(1, &described, "expect_style")));
+}
+
+// ---- a probe that matched none, a guard's locator, which elements matched
+
+/// #42/#65: a locator a probe matched none of is seen for a use that
+/// passes with none matching - `expect_hidden`, `expect_count` of 0, and a
+/// `when_visible`'s own locator - in every form: a role and a name, css,
+/// text and a chain. Every use that needs it present is still refused as
+/// never seen: a click, `expect_visible`, `wait_for`, an `expect_count` of 2.
+#[test]
+fn a_locator_seen_matching_none_counts_only_where_none_may_match() {
+    let forms = [
+        serde_json::json!({ "role": "button", "name": "Delete FY2026" }),
+        serde_json::json!({ "css": ".phr-dropdown-toggle" }),
+        serde_json::json!({ "text": "No cycles yet" }),
+        serde_json::json!([{ "css": ".card" }, { "role": "button", "name": "Delete FY2026" }]),
+    ];
+    for form in forms {
+        let map = filed(form.clone(), 0);
+        for passes in [
+            serde_json::json!({ "kind": "expect_hidden", "selector": form.clone() }),
+            serde_json::json!({ "kind": "expect_count", "selector": form.clone(), "equals": 0 }),
+            serde_json::json!({ "kind": "when_visible", "selector": form.clone(), "then": [] }),
+        ] {
+            let s = one_step("Cycles", serde_json::json!([passes.clone()]));
+            assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()), "{passes}");
+        }
+        for refused in [
+            click(form.clone()),
+            serde_json::json!({ "kind": "expect_visible", "selector": form.clone() }),
+            serde_json::json!({ "kind": "wait_for", "selector": form.clone(), "timeout_ms": 500 }),
+            serde_json::json!({ "kind": "expect_count", "selector": form.clone(), "equals": 2 }),
+        ] {
+            let s = one_step("Cycles", serde_json::json!([refused.clone()]));
+            let why = check_seen(&map, &none(), &s, &[], None).unwrap_err();
+            assert!(why.contains("was never seen on the live app"), "{refused}: {why}");
+        }
+    }
+}
+
+/// #48: a `when_visible` is a guard - when its locator matches nothing it
+/// is skipped - so its own locator counts seen in any form or count: seen
+/// only matching several, or never counted (a link of a chain). Its `then`
+/// click on that same locator still needs one seen matching exactly one.
+#[test]
+fn a_when_visible_guard_takes_its_locator_seen_in_any_count() {
+    use v2_lib::autorun::discovery_map::NOT_ONE;
+    let card = ".card:has(button[aria-label$=' X'])";
+    let guard = |then: serde_json::Value| {
+        one_step("Cycles", serde_json::json!([{ "kind": "when_visible", "selector": { "css": card }, "then": then }]))
+    };
+    for matched in [3, NOT_ONE] {
+        let map = sighted_matching("Cycles", css(card), matched);
+        assert_eq!(check_seen(&map, &none(), &guard(serde_json::json!([])), &[], None), Ok(()), "{matched}");
+        let clicked = guard(serde_json::json!([click(serde_json::json!({ "css": card }))]));
+        assert!(check_seen(&map, &none(), &clicked, &[], None).is_err(), "{matched}: the then click took several");
+    }
+    // A chain whose links were seen only as links of other chains.
+    let chain = serde_json::json!([{ "css": ".card" }, { "role": "button", "name": "Edit" }]);
+    let map = seen_whole("Cycles", &[css(".card"), role("button", "Edit")], &[]);
+    let s = one_step("Cycles", serde_json::json!([{ "kind": "when_visible", "selector": chain, "then": [] }]));
+    assert_eq!(check_seen(&map, &none(), &s, &[], None), Ok(()));
+}
+
+/// #29: a locator seen only matching several is refused for a use that
+/// needs one, naming up to 3 of the elements it matched, by role and name,
+/// as a run matches a name. With `"exact": true` only the elements whose
+/// name is exactly its own count: when that is only one name, it was never
+/// counted as written, so it is to be probed as written.
+#[test]
+fn a_refusal_of_one_seen_only_matching_several_names_what_it_matched() {
+    use v2_lib::autorun::seen_check::{NEVER_COUNTED, SEEN_ONLY_MANY};
+    let dir = tempfile::tempdir().unwrap();
+    let read = |path: &str, names: &[&str]| {
+        let lines: Vec<v2_lib::browser::snapshot::SnapLine> = names
+            .iter()
+            .map(|n| v2_lib::browser::snapshot::SnapLine {
+                role: "button".into(),
+                name: n.to_string(),
+                locator: Target::One(role("button", n)),
+                required: false,
+            })
+            .collect();
+        v2_lib::autorun::discovery_map::record_seen(dir.path(), "Acme", "Web", Some("Cycles"), path, "P", &lines, None, None, 1)
+            .unwrap();
+    };
+    read("/view", &["Participants", "Toggle Participants section"]);
+    read("/list", &["Edit", "Edit row 1", "Edit row 2", "Edit row 3"]);
+    read("/other", &["Participants list elsewhere"]);
+    let map = v2_lib::autorun::discovery_map::load_map(dir.path(), "Acme", "Web").unwrap();
+
+    let refused = check_seen(&map, &none(), &clicks(serde_json::json!({ "role": "button", "name": "Participants" })), &[], None)
+        .unwrap_err();
+    assert_eq!(
+        refused,
+        format!(
+            "Step 1: button \"Participants\" {SEEN_ONLY_MANY} It matched button \"Participants\" and button \"Toggle Participants section\". Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+        )
+    );
+    let refused =
+        check_seen(&map, &none(), &clicks(serde_json::json!({ "role": "button", "name": "Edit" })), &[], None).unwrap_err();
+    assert!(
+        refused.contains(
+            "It matched button \"Edit\", button \"Edit row 1\", button \"Edit row 2\" and more. Find it"
+        ),
+        "{refused}"
+    );
+    let exact = clicks(serde_json::json!({ "role": "button", "name": "Participants", "exact": true }));
+    let refused = check_seen(&map, &none(), &exact, &[], None).unwrap_err();
+    assert!(refused.starts_with(&format!("Step 1: button \"Participants\" {NEVER_COUNTED}")), "{refused}");
 }
