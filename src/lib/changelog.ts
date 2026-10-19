@@ -27,6 +27,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.13",
+    date: "2026-10-19",
+    items: [
+      "Test cases can now carry formatting: bold and italic in steps, and lists, bold, italic and code blocks in the List of Prerequisites. TCM shows it formatted and Azure DevOps shows it the same way.",
+      "A query in a step can sit on its own lines, so it is easy to read in Azure DevOps and in TCM; in the prerequisites it shows as a code block.",
+      "Steps and prerequisites you have not edited are never rewritten when you save, and existing cases look exactly as before.",
+      "The step and prerequisites editors are multi-line, with a Preview.",
+      "A Bug filed from a failed step shows the step's formatting, with each step kept separate.",
+    ],
+  },
+  {
     version: "2.2.3-beta.12",
     date: "2026-10-18",
     items: [
