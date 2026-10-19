@@ -2587,6 +2587,12 @@ impl<T: Transport> Cdp<T> {
         self.capture.as_mut()
     }
 
+    /// Whether this browser captures and knows the application's site:
+    /// until it does, nothing is kept (`NetCapture::set_app_site`).
+    pub fn capture_site_known(&self) -> bool {
+        self.capture.as_ref().is_some_and(|c| c.knows_app_site())
+    }
+
     /// Read the bodies the capture is waiting on: at most `MAX_BODY_READS`
     /// of them, within `budget` in all, each on the tab it came from; the
     /// rest wait for the next time. Called only where no call of this
@@ -2817,6 +2823,10 @@ pub trait Driver {
         if let Some(c) = self.capture_mut() {
             c.set_app_site(url);
         }
+    }
+    /// Whether this driver captures and knows the application's site.
+    fn capture_site_known(&self) -> bool {
+        self.capture().is_some_and(|c| c.knows_app_site())
     }
     /// See `Cdp::idle`: a wait loop's pause between two looks.
     fn idle(&mut self, wait: Duration) -> impl Future<Output = ()> {

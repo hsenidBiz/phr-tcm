@@ -924,7 +924,7 @@ async fn open_into(
     }
     // The page's own requests and responses, for the assistant to read
     // while this browser is open (`net_capture`); gone when it closes.
-    cdp.capture_requests();
+    capture_supervised(&mut cdp, root.as_deref().ok());
     // Downloads are kept while this browser is open, in a folder emptied
     // as it opens and as it closes: they belong to no run. Losing them is
     // no reason not to open the browser either.
@@ -958,6 +958,23 @@ async fn open_into(
     answer_between_commands();
     crate::applog::info(format!("Auto-run opened {}", which.label()));
     Ok(())
+}
+
+/// Switch a supervised browser's capture on, with the application's site
+/// from the active environment's address when it has one - so a browser a
+/// person signs in to by hand captures from the start. A sign-in, or a trip
+/// to a module, names the site again (`Driver::set_capture_site`).
+pub fn capture_supervised<T: crate::browser::cdp::Transport>(cdp: &mut Cdp<T>, root: Option<&std::path::Path>) {
+    cdp.capture_requests();
+    let site = root
+        .and_then(|r| crate::environments::read_active(r).ok().flatten())
+        .map(|e| e.start_url.trim().to_string())
+        .filter(|u| !u.is_empty());
+    if let Some(site) = site {
+        if let Some(c) = cdp.capture_mut() {
+            c.set_app_site(Some(&site));
+        }
+    }
 }
 
 /// How many times, and how far apart, a browser just started is asked

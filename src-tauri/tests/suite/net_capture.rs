@@ -589,3 +589,50 @@ async fn the_sign_in_names_the_site_the_capture_keeps() {
     settle(&mut cdp).await;
     assert_eq!(Driver::capture(&cdp).unwrap().list(0, 10).1, 1);
 }
+
+#[test]
+fn headers_and_addresses_alone_over_the_budget_drop_the_oldest_requests() {
+    let (mut rec, mut cap) = (NetRecord::default(), capture_at_site());
+    let big = "v".repeat(100 * 1024);
+    for i in 0..400 {
+        let p = asked(&format!("h{i}"), "XHR", "GET", &format!("https://hr.example/api/h/{i}"), json!({ "X-Big": big }), None);
+        feed(&mut rec, &mut cap, "Network.requestWillBeSent", p);
+        assert!(cap.kept_bytes() <= MAX_TOTAL_BODY_BYTES, "over the budget at {i}: {}", cap.kept_bytes());
+    }
+    let (all, total) = cap.list(0, MAX_CAPTURED);
+    assert!(total < 400 && total > 0, "{total}");
+    assert_eq!(all[0].url_path_query, "/api/h/399", "the newest stays");
+    assert_eq!(all.last().unwrap().url_path_query, format!("/api/h/{}", 400 - total), "the oldest went first");
+}
+
+/// A supervised browser as `open_into` opens it, in an Auto Run folder
+/// whose active environment has this address.
+async fn opened_with_address(address: &str) -> (Cdp<FakeBrowser>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = v2_lib::environments::active(dir.path()).unwrap();
+    env.start_url = address.into();
+    let known: Vec<String> = ["dev-read", "dev-login", "qa-read", "own"].iter().map(|s| s.to_string()).collect();
+    v2_lib::environments::save_env(dir.path(), env, &known).unwrap();
+    let fake = FakeBrowser { incoming: VecDeque::new(), sent: vec![], bodies: HashMap::new(), posts: HashMap::new(), stall: false };
+    let mut cdp = Cdp::over(fake);
+    cdp.drive_first_page("T-main", "about:blank").await.unwrap();
+    v2_lib::commands::autorun::capture_supervised(&mut cdp, Some(dir.path()));
+    (cdp, dir)
+}
+
+#[tokio::test]
+async fn a_browser_opened_and_signed_in_by_hand_captures_requests() {
+    let (mut cdp, _dir) = opened_with_address("https://hr.example/Account/Login").await;
+    assert!(cdp.capture_site_known(), "the site is known from the moment the browser opens");
+    // A person signs in by hand: no sign-in of TCM's ever names the site.
+    on(&mut cdp, MAIN, "Network.requestWillBeSent", asked("1", "Document", "POST", "https://hr.example/Account/Login", json!({}), Some("UserName=a")));
+    on(&mut cdp, MAIN, "Network.requestWillBeSent", asked("2", "XHR", "GET", "https://hr.example/api/menu", json!({}), None));
+    settle(&mut cdp).await;
+    assert_eq!(Driver::capture(&cdp).unwrap().list(0, 10).1, 2);
+
+    // An environment with no address leaves it to the sign-in or the trip.
+    let (cdp, _dir) = opened_with_address("").await;
+    assert!(Driver::capture(&cdp).is_some(), "it captures");
+    assert!(!cdp.capture_site_known(), "and says it does not know the site yet");
+    assert!(!Driver::capture_site_known(&cdp));
+}

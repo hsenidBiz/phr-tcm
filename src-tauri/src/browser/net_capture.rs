@@ -486,8 +486,9 @@ impl NetCapture {
         self.bytes = self.bytes + added - before.as_ref().map_or(0, Body::bytes);
     }
 
-    /// Drop the oldest bodies until everything fits `MAX_TOTAL_BODY_BYTES`;
-    /// their requests stay.
+    /// Drop the oldest bodies until everything fits `MAX_TOTAL_BODY_BYTES`,
+    /// their requests staying; when addresses and headers alone are still
+    /// over it, the oldest requests go too.
     fn keep_within_budget(&mut self) {
         for slot in self.entries.iter_mut() {
             if self.bytes <= MAX_TOTAL_BODY_BYTES {
@@ -499,6 +500,10 @@ impl NetCapture {
                     *b = Body::Dropped;
                 }
             }
+        }
+        while self.bytes > MAX_TOTAL_BODY_BYTES {
+            let Some(old) = self.entries.pop_front() else { return };
+            self.forget(&old);
         }
     }
 
