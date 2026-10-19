@@ -10,10 +10,11 @@
 //! changes the page (a click, a key, a focus, a scroll) was ever sent.
 
 use crate::common::ScriptedDriver;
+use v2_lib::browser::cdp::CdpError;
 use serde_json::{json, Value};
 use v2_lib::ai_bridge::inspect_page;
 use v2_lib::browser::inspect::{
-    capture_above, ANCESTORS_JS, ANIMATIONS_JS, ATTRIBUTE_HANDLERS_JS, COVER_AT_JS, HANDLER_NOT_SHOWN, NODE_NAME_JS,
+    capture_above, ANCESTORS_CUT_JS, ANCESTORS_JS, ANCESTORS_STOPPED, ANIMATIONS_JS, ATTRIBUTE_HANDLERS_JS, COVER_AT_JS, HANDLER_NOT_SHOWN, NODE_NAME_JS,
     STRUCTURE_JS, STYLES_JS, TEXT_MAX,
 };
 use v2_lib::browser::page::GROUP;
@@ -286,6 +287,89 @@ async fn the_click_listeners_above_the_element_are_counted_and_a_capture_one_is_
     assert!(capture_above(&names).contains("usual reason a click does nothing"));
     assert!(!v.to_string().contains("stopPropagation()"), "a handler's source leaked: {v}");
     read_only(&d);
+}
+
+#[tokio::test]
+async fn the_walk_up_always_asks_for_the_document_and_says_when_it_stopped_short() {
+    // The page holds 70 elements above this one; the document still
+    // listens for clicks (where delegated listeners live).
+    let mut d = ScriptedDriver::new(|method, params| {
+        let on = params["objectId"].as_str().unwrap_or("");
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Runtime.evaluate" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": free_point() } }),
+            "Runtime.callFunctionOn" if f == ANCESTORS_JS => json!({ "result": { "objectId": "anc-arr" } }),
+            "Runtime.callFunctionOn" if f == ANCESTORS_CUT_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" if f == NODE_NAME_JS => {
+                json!({ "result": { "value": if on == "anc-doc" { "document" } else { "div" } } })
+            }
+            "Runtime.callFunctionOn" => json!({ "result": { "objectId": "arr" } }),
+            "Runtime.getProperties" if on == "anc-arr" => json!({ "result": [
+                { "name": "0", "value": { "objectId": "anc-div" } },
+                { "name": "1", "value": { "objectId": "anc-doc" } },
+                { "name": "2", "value": { "objectId": "win" } },
+            ] }),
+            "Runtime.getProperties" => json!({ "result": [{ "name": "0", "value": { "objectId": "el-0" } }] }),
+            "DOMDebugger.getEventListeners" if on == "anc-doc" => json!({ "listeners": [
+                { "type": "click", "useCapture": false, "passive": false, "once": false },
+            ] }),
+            _ => json!({}),
+        })
+    });
+    let (status, v) = inspect(&mut d, json!({ "locator": "#deep", "show": ["listeners"] })).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["listeners"]["ancestors"], json!([{ "name": "document", "listeners": [{ "type": "click", "capture": false, "count": 1 }] }]));
+    assert_eq!(v["listeners"]["ancestors_stopped"], ANCESTORS_STOPPED);
+    let walk = d.calls.iter().find(|(_, p)| p["functionDeclaration"] == ANCESTORS_JS).expect("walked up").1.clone();
+    assert_eq!(walk["arguments"], json!([{ "value": 64 }]));
+
+    // A walk that reached the document says nothing of stopping.
+    let mut d = driver(Page::default());
+    let (_, v) = inspect(&mut d, json!({ "locator": "#save", "show": ["listeners"] })).await;
+    assert!(v["listeners"].get("ancestors_stopped").is_none(), "{v}");
+}
+
+#[tokio::test]
+async fn an_ancestor_whose_listeners_cannot_be_read_is_skipped_not_the_inspect() {
+    let mut d = ScriptedDriver::new(|method, params| {
+        let on = params["objectId"].as_str().unwrap_or("");
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "DOMDebugger.getEventListeners" if on == "anc-frame" => {
+                return Err(CdpError::Protocol { method: method.into(), message: "No node with given id found".into() })
+            }
+            _ => {}
+        }
+        Ok(match method {
+            "Runtime.evaluate" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": free_point() } }),
+            "Runtime.callFunctionOn" if f == ANCESTORS_JS => json!({ "result": { "objectId": "anc-arr" } }),
+            "Runtime.callFunctionOn" if f == NODE_NAME_JS => {
+                json!({ "result": { "value": if on == "anc-frame" { "div#gone" } else { "window" } } })
+            }
+            "Runtime.callFunctionOn" => json!({ "result": { "objectId": "arr" } }),
+            "Runtime.getProperties" if on == "anc-arr" => json!({ "result": [
+                { "name": "0", "value": { "objectId": "anc-frame" } },
+                { "name": "1", "value": { "objectId": "win" } },
+            ] }),
+            "Runtime.getProperties" => json!({ "result": [{ "name": "0", "value": { "objectId": "el-0" } }] }),
+            "DOMDebugger.getEventListeners" if on == "win" => json!({ "listeners": [
+                { "type": "pointerdown", "useCapture": true, "passive": false, "once": false },
+            ] }),
+            _ => json!({}),
+        })
+    });
+    let (status, v) = inspect(&mut d, json!({ "locator": "#save", "show": ["listeners"] })).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(
+        v["listeners"]["ancestors"],
+        json!([
+            { "name": "div#gone (could not read)", "listeners": [] },
+            { "name": "window", "listeners": [{ "type": "pointerdown", "capture": true, "count": 1 }] },
+        ])
+    );
+    assert_eq!(v["listeners"]["ancestors_note"], capture_above(&["window".to_string()]));
 }
 
 #[tokio::test]

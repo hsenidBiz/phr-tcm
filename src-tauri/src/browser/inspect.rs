@@ -344,13 +344,16 @@ async fn listeners<D: Driver>(
     if let Some((name, h, list)) = theirs {
         out.insert("cover".into(), json!({ "name": name, "listeners": shown_listeners(d, &h, &list, &scripts).await? }));
     }
-    let above = ancestor_listeners(d, el).await?;
+    let (above, cut) = ancestor_listeners(d, el).await?;
     let capturing: Vec<String> = above
         .iter()
         .filter(|a| a["listeners"].as_array().into_iter().flatten().any(|l| l["capture"] == true))
         .filter_map(|a| a["name"].as_str().map(str::to_string))
         .collect();
     out.insert("ancestors".into(), json!(above));
+    if cut {
+        out.insert("ancestors_stopped".into(), json!(ANCESTORS_STOPPED));
+    }
     if !capturing.is_empty() {
         out.insert("ancestors_note".into(), json!(capture_above(&capturing)));
     }
@@ -366,21 +369,49 @@ pub fn capture_above(names: &[String]) -> String {
     )
 }
 
-/// The most ancestors looked at, nearest first, besides the window.
-const MAX_ANCESTORS: usize = 64;
+/// The most elements looked at above the element, nearest first. The
+/// document and the window are read whatever the depth: they are where a
+/// page that delegates events listens.
+pub const MAX_ANCESTORS: usize = 64;
 
-/// `this` is the element. Every node above it, nearest first, up to its
-/// document (through a shadow root to its host), then its window.
-pub const ANCESTORS_JS: &str = r#"function() {
+/// Said when the walk up stopped before the document
+/// (`ANCESTORS_CUT_JS`).
+pub const ANCESTORS_STOPPED: &str =
+    "(stopped after 64 ancestors: the ones between them and the document were not read; the document and the window were)";
+
+/// Said in place of an ancestor's listeners when the browser would not
+/// give them: that ancestor is skipped, never the whole inspect.
+pub const COULD_NOT_READ: &str = "(could not read)";
+
+/// `this` is the element. Argument: the most to take. The nodes above it,
+/// nearest first (through a shadow root to its host), at most that many
+/// before its document; then always its document and its window.
+pub const ANCESTORS_JS: &str = r#"function(max) {
+  const doc = this.ownerDocument;
   const out = [];
   let p = this.parentNode;
-  while (p && out.length < 64) {
+  while (p && p !== doc && out.length < max) {
     if (p.nodeType === 11) { p = p.host; continue; }
     out.push(p);
     p = p.parentNode;
   }
-  out.push(this.ownerDocument.defaultView);
+  out.push(doc, doc.defaultView);
   return out;
+}"#;
+
+/// `this` is the element. Argument: the most `ANCESTORS_JS` takes. Whether
+/// there are more nodes than that between the element and its document.
+pub const ANCESTORS_CUT_JS: &str = r#"function(max) {
+  const doc = this.ownerDocument;
+  let n = 0;
+  let p = this.parentNode;
+  while (p && p !== doc) {
+    if (p.nodeType === 11) { p = p.host; continue; }
+    n += 1;
+    if (n > max) return true;
+    p = p.parentNode;
+  }
+  return false;
 }"#;
 
 /// `this` is an ancestor: `tag#id`, or `tag.class` when it has no id, or
@@ -403,15 +434,27 @@ fn click_kind(t: &str) -> bool {
         || t.starts_with("touch")
 }
 
-/// The ancestors of `el` (up to the document, and the window) that listen
-/// for a click kind of event (`click_kind`), nearest first: each named, with
-/// each type and capture flag counted. Handlers are released and never
-/// read, as the element's own are.
-async fn ancestor_listeners<D: Driver>(d: &mut D, el: &Handle) -> Result<Vec<Value>, CdpError> {
-    let above = page::call_elements(d, el, ANCESTORS_JS, &[]).await?;
+/// The ancestors of `el` (up to `MAX_ANCESTORS`, then always the document
+/// and the window) that listen for a click kind of event (`click_kind`),
+/// nearest first: each named, with each type and capture flag counted, and
+/// whether the walk stopped before the document. Handlers are released and
+/// never read, as the element's own are. An ancestor the page will not
+/// give the listeners of is named with `COULD_NOT_READ` and skipped; a
+/// browser that does not answer stops the inspect, as anywhere else.
+async fn ancestor_listeners<D: Driver>(d: &mut D, el: &Handle) -> Result<(Vec<Value>, bool), CdpError> {
+    let above = page::call_elements(d, el, ANCESTORS_JS, &[json!(MAX_ANCESTORS)]).await?;
+    let cut = page::call_value(d, el, ANCESTORS_CUT_JS, &[json!(MAX_ANCESTORS)]).await?.as_bool().unwrap_or(false);
     let mut out = Vec::new();
-    for h in above.iter().take(MAX_ANCESTORS + 1) {
-        let r = d.call("DOMDebugger.getEventListeners", json!({ "objectId": h, "objectGroup": page::GROUP })).await?;
+    for h in above.iter().take(MAX_ANCESTORS + 2) {
+        let r = match d.call("DOMDebugger.getEventListeners", json!({ "objectId": h, "objectGroup": page::GROUP })).await {
+            Ok(r) => r,
+            Err(CdpError::Protocol { .. } | CdpError::Tab(_)) => {
+                let name = ancestor_name(d, h).await?;
+                out.push(json!({ "name": format!("{name} {COULD_NOT_READ}"), "listeners": [] }));
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         let mut counts: std::collections::BTreeMap<(String, bool), usize> = std::collections::BTreeMap::new();
         for l in r["listeners"].as_array().into_iter().flatten() {
             let kind = l["type"].as_str().unwrap_or("");
@@ -422,14 +465,24 @@ async fn ancestor_listeners<D: Driver>(d: &mut D, el: &Handle) -> Result<Vec<Val
         if counts.is_empty() {
             continue;
         }
-        let name = page::call_value(d, h, NODE_NAME_JS, &[]).await?;
+        let name = ancestor_name(d, h).await?;
         let listeners: Vec<Value> = counts
             .into_iter()
             .map(|((kind, capture), count)| json!({ "type": kind, "capture": capture, "count": count }))
             .collect();
-        out.push(json!({ "name": redact_text(name.as_str().unwrap_or("an ancestor")), "listeners": listeners }));
+        out.push(json!({ "name": name, "listeners": listeners }));
     }
-    Ok(out)
+    Ok((out, cut))
+}
+
+/// An ancestor's name (`NODE_NAME_JS`) through the redaction; "an
+/// ancestor" when the page will not say.
+async fn ancestor_name<D: Driver>(d: &mut D, h: &Handle) -> Result<String, CdpError> {
+    match page::call_value(d, h, NODE_NAME_JS, &[]).await {
+        Ok(v) => Ok(redact_text(v.as_str().unwrap_or("an ancestor"))),
+        Err(CdpError::Protocol { .. } | CdpError::Tab(_)) => Ok("an ancestor".to_string()),
+        Err(e) => Err(e),
+    }
 }
 
 /// One node's own listeners. Chrome hands each handler back as an object

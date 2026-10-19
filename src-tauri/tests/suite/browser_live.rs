@@ -3851,4 +3851,19 @@ async fn an_element_is_inspected_without_touching_the_page() {
     assert!(v["covered_by"].as_str().is_some_and(|c| c.contains("div#shield")), "{text}");
     let theirs = v["listeners"]["cover"]["listeners"].as_array().cloned().unwrap_or_default();
     assert!(theirs.iter().any(|l| l["type"] == "click" && l["use_capture"] == true), "{text}");
+
+    // Seventy elements deep, under a click listener on the document: the
+    // walk stops after 64, and still reads the document.
+    page::eval_value(
+        &mut live.cdp,
+        "(() => { document.getElementById('shield').remove(); let p = document.body; for (let i = 0; i < 70; i++) { const d = document.createElement('div'); p.appendChild(d); p = d; } const b = document.createElement('button'); b.id = 'deep'; b.textContent = 'Deep'; p.appendChild(b); document.addEventListener('click', () => {}); return true; })()",
+    )
+    .await
+    .unwrap();
+    let (status, text) = inspect_page(&mut live.cdp, &ask(json!({ "locator": { "css": "#deep" }, "show": ["listeners"] }))).await;
+    assert_eq!(status, 200, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let names: Vec<&str> = v["listeners"]["ancestors"].as_array().unwrap().iter().filter_map(|a| a["name"].as_str()).collect();
+    assert!(names.contains(&"document"), "{text}");
+    assert!(v["listeners"]["ancestors_stopped"].is_string(), "{text}");
 }
