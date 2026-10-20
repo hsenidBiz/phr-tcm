@@ -648,6 +648,67 @@ fn every_intake_question_is_answerable_through_the_mcp_schema() {
     }
 }
 
+/// A client working from a tool list cached before the merge may still call
+/// an old name. It is told where the tool went - checked before the
+/// write-refusal name check, so `remove_autorun_component` does not get the
+/// Azure DevOps refusal - and the bridge is never reached.
+#[test]
+fn a_call_to_a_retired_tool_says_where_it_went() {
+    let call_tool = |name: &str| -> (String, bool) {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{{"name":"{name}","arguments":{{}}}}}}"#
+        );
+        let never = |_m: &str, p: &str, _b: &str| -> Result<(u16, String), String> {
+            panic!("a retired tool reached the bridge: {p}");
+        };
+        let resp = handle_message(&req, "1.0.0", &never).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        (v["result"]["content"][0]["text"].as_str().unwrap().to_string(), v["result"]["isError"] == true)
+    };
+    let (removed, is_error) = call_tool("remove_autorun_component");
+    assert!(is_error);
+    assert!(
+        removed.contains("`remove_autorun_component` is now `save_autorun_component` with `name` and `remove` true"),
+        "{removed}"
+    );
+    assert!(!removed.contains("must be done through the app itself"), "{removed}");
+    let (stop, _) = call_tool("stop_autorun_replay");
+    assert!(stop.contains("`stop_autorun_replay` is now `replay_autorun_to_step` with `stop` true"), "{stop}");
+    let (cookie, _) = call_tool("set_autorun_cookie");
+    assert!(cookie.contains("`autorun_cookies` with `action` \"set\""), "{cookie}");
+}
+
+/// The Rust table of retired names is the webview's `RENAMED_TOOLS`, name
+/// for name, and each names a tool the server offers now.
+#[test]
+fn the_retired_tool_table_matches_the_webviews_renamed_tools() {
+    let ts = include_str!("../../../src/lib/mcpTools.ts");
+    let block = ts.split("export const RENAMED_TOOLS").nth(1).unwrap().split("};").next().unwrap();
+    let mut from_ts: Vec<(String, String)> = block
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            let (old, new) = l.split_once(':')?;
+            if l.starts_with("//") || old.is_empty() || !old.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                return None;
+            }
+            Some((old.to_string(), new.trim().trim_end_matches(',').trim_matches('"').to_string()))
+        })
+        .collect();
+    from_ts.sort();
+    let mut from_rs: Vec<(String, String)> = v2_lib::mcp::RETIRED_TOOLS
+        .iter()
+        .map(|(old, now)| (old.to_string(), now.trim_start_matches('`').split('`').next().unwrap().to_string()))
+        .collect();
+    from_rs.sort();
+    assert_eq!(from_rs, from_ts);
+    let listed = v2_lib::mcp::all_tool_names();
+    for (old, new) in &from_rs {
+        assert!(listed.iter().any(|n| n == new), "{old} is now {new}, which is not a tool");
+        assert!(!listed.iter().any(|n| n == old), "{old} is still a tool");
+    }
+}
+
 /// Audit finding P-8: every tool-call failure used to be reported as
 /// "Could not reach Test Case Manager ... Start the app and sign in",
 /// including a plain typo in the tool name. An assistant that reads that

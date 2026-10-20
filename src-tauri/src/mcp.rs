@@ -1476,12 +1476,59 @@ fn merge_bundle_edits(
     Ok(bundle)
 }
 
+/// Tools that were merged or renamed, as `(old name, the new tool and the
+/// shape to send)`. A client working from a tool list it cached before an
+/// update may still call the old name; it is told the new one rather than
+/// "unknown tool" - or, for a name with "remove" in it, the Azure DevOps
+/// write refusal. The names mirror `RENAMED_TOOLS` in `src/lib/mcpTools.ts`
+/// (a test pins that).
+pub const RETIRED_TOOLS: &[(&str, &str)] = &[
+    ("get_run_failures", "`get_run_results`."),
+    ("record_autorun_quirk", "`record_quirk` with `text` (and `cases`)."),
+    ("record_app_quirk", "`record_quirk` with `text` (and `cases`, `from`)."),
+    ("retire_autorun_quirk", "`record_quirk` with `retire` (the quirk's id) and `reason`."),
+    ("retire_app_quirk", "`record_quirk` with `retire` (the quirk's id) and `reason`."),
+    ("get_writing_guide", "`get_guide` with `topic` \"writing\"."),
+    ("get_autorun_guide", "`get_guide` with `topic` \"autorun\" (and `section`, `quick` or `full`)."),
+    ("get_api_template_guide", "`get_guide` with `topic` \"api_templates\"."),
+    ("get_report_guide", "`get_guide` with `topic` \"reports\"."),
+    ("list_test_files", "`get_accounts`, whose answer carries the project's `test_files`."),
+    ("list_api_fixtures", "`list_api_templates` with `kind` \"fixtures\"."),
+    ("new_report", "`open_report` with `path` and `create` (true, or { title, author, comments })."),
+    ("remove_autorun_component", "`save_autorun_component` with `name` and `remove` true, nothing else."),
+    ("discover_autorun_action", "`discover_autorun_actions` with `action` (one) or `actions` (a list)."),
+    ("inspect_autorun_element", "`probe_autorun_locator` with `selector` and `show` (true, or a list of parts)."),
+    ("stop_autorun_replay", "`replay_autorun_to_step` with `stop` true, nothing else."),
+    ("release_autorun_browser", "`reset_autorun_browser` with `release` true."),
+    ("list_autorun_requests", "`search_autorun_requests` (no filter lists them all)."),
+    ("get_autorun_response", "`get_autorun_request` with `id` and `part` \"response\"."),
+    ("get_autorun_response_body", "`get_autorun_request` with `id` and `part` \"body\"."),
+    ("set_autorun_capture", "`autorun_capture` with the filter fields to set."),
+    ("get_autorun_capture", "`autorun_capture` with no filter fields."),
+    ("export_autorun_requests", "`autorun_har` with `export` (the name to save as)."),
+    ("import_autorun_requests", "`autorun_har` with `import` (the name of a file in the captures folder)."),
+    ("get_autorun_cookies", "`autorun_cookies` with `action` \"list\"."),
+    ("set_autorun_cookie", "`autorun_cookies` with `action` \"set\", `name` and `value`."),
+    ("clear_autorun_cookies", "`autorun_cookies` with `action` \"clear\"."),
+];
+
+/// What a call to a retired tool is told, or `None` for any other name.
+pub fn retired_tool_answer(name: &str) -> Option<String> {
+    let (_, now) = RETIRED_TOOLS.iter().find(|(old, _)| *old == name)?;
+    Some(format!("`{name}` is now {now}"))
+}
+
 fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value {
     let name = params["name"].as_str().unwrap_or_default();
     let args = &params["arguments"];
     // Every bridge request from here on names the tool, so the app logs the
     // call once: a refusal on the `/tools` read, otherwise the route's answer.
     let _naming = CallingTool::set(name);
+    // A tool that was merged away answers with where it went, before any
+    // name-based refusal can misread it.
+    if let Some(text) = retired_tool_answer(name) {
+        return serde_json::json!({ "content": [{ "type": "text", "text": text }], "isError": true });
+    }
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
     let (off, on) = tool_policy(call);
