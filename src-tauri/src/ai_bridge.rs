@@ -3196,7 +3196,10 @@ pub async fn file_component_finds<D: crate::browser::cdp::Driver>(
 /// counted. A `wait_for` passes on one or more and its outcome does not
 /// say how many, so it is left out here and probed once the try worked
 /// (`try_action`), as is any legacy string target: a run takes its first
-/// match, so it passes on several too. Matched without a catch-all, so a
+/// match, so it passes on several too, and so are the list of an
+/// `expect_each` or `expect_order` and an `expect_each`'s child chain
+/// (`list_targets`, `list_chain_of`), whose outcome does not say how many
+/// items it read. Matched without a catch-all, so a
 /// new kind will not compile until it is classified here.
 fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::browser::locator::Target, usize)> {
     use crate::browser::actions::Action;
@@ -3254,6 +3257,27 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::CloseTab { .. }
         | Action::ExpectTabClosed { .. }
         | Action::ExpectDialog { .. } => vec![],
+    }
+}
+
+/// The list an `expect_each` or `expect_order` reads: probed once the try
+/// passed (`try_action`).
+fn list_targets(action: &crate::browser::actions::Action) -> Vec<&crate::browser::locator::Target> {
+    use crate::browser::actions::Action;
+    match action {
+        Action::ExpectEach { selector, .. } | Action::ExpectOrder { selector, .. } if !selector.is_legacy() => vec![selector],
+        _ => vec![],
+    }
+}
+
+/// An `expect_each`'s child as it is looked for inside the list: the list's
+/// links and then its own, the chain the save needs seen whole.
+fn list_chain_of(action: &crate::browser::actions::Action) -> Option<crate::browser::locator::Target> {
+    match action {
+        crate::browser::actions::Action::ExpectEach { selector, child: Some(child), .. } if !selector.is_legacy() => {
+            Some(crate::browser::locator::Target::Chain(selector.links().into_iter().chain(child.links()).collect()))
+        }
+        _ => None,
     }
 }
 
@@ -7607,8 +7631,13 @@ async fn try_action<D: crate::browser::cdp::Driver>(
         crate::browser::actions::Action::WaitFor { selector, .. } => Some(selector),
         _ => None,
     };
-    let started_on =
-        if matched.is_empty() && waited.is_none() { String::new() } else { page_address(d).await.0 };
+    // (A list check changes no page either, so its list is filed at the page
+    // it is probed on, after the try.)
+    let started_on = if matched.is_empty() && waited.is_none() && list_targets(action).is_empty() {
+        String::new()
+    } else {
+        page_address(d).await.0
+    };
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None, cleanup: false };
     // A try fails on a request the application refused: the assistant learns
     // the reason now, not from a wait that times out later.
@@ -7682,7 +7711,21 @@ async fn try_action<D: crate::browser::cdp::Driver>(
             // Only the application's own pages count (`may_record`).
             policy: recording_policy(root, organization, project),
         };
+        // A list check's outcome does not say how many items it read, and a
+        // passed one has proved its list was there: the list is probed once
+        // the try worked, and an `expect_each`'s child as the chain inside
+        // the list (the whole the save asks to have seen), each filed as
+        // found. Nothing visible now files nothing: the check alone does not
+        // say what was there.
+        let list_chain = list_chain_of(action);
         let mut matched = matched;
+        for target in list_targets(action).into_iter().chain(list_chain.as_ref()) {
+            if let Ok(text) = crate::browser::snapshot::probe(d, target).await {
+                if let Some((n, all)) = counted(d, target, &text).await {
+                    matched.push((target, n, all));
+                }
+            }
+        }
         if let Some(target) = waited {
             let found = match crate::browser::snapshot::probe(d, target).await {
                 Ok(text) => counted(d, target, &text).await,

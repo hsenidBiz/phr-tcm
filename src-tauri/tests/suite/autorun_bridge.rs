@@ -2173,6 +2173,61 @@ async fn a_tried_wait_for_whose_text_is_gone_by_the_probe_is_still_filed() {
     assert_eq!(area.sightings.iter().find(|s| s.key == key).map(|s| s.matched), Some(NOT_ONE), "{:?}", area.sightings);
 }
 
+/// A tried `expect_each` or `expect_order` that passed has seen its list, and
+/// an `expect_each`'s child inside it as that chain, so the save does not
+/// ask for a probe of what the try already proved. One that failed files
+/// nothing.
+#[tokio::test]
+async fn a_passing_try_of_a_list_check_files_the_list_and_the_child_chain() {
+    use v2_lib::autorun::components::ComponentFile;
+    use v2_lib::autorun::seen_check::check_seen;
+    use v2_lib::browser::expect::READ_TEXT_JS;
+    let script = |action: serde_json::Value| -> CaseScript {
+        serde_json::from_value(serde_json::json!({
+            "case_id": 7, "title": "T", "steps": [{ "step_number": 1, "actions": [action] }]
+        }))
+        .unwrap()
+    };
+    let each = serde_json::json!({
+        "kind": "expect_each", "selector": { "css": "div.card" }, "child": { "css": "h3" }, "not_empty": true,
+        "timeout_ms": 1500
+    });
+    let order = serde_json::json!({
+        "kind": "expect_order", "selector": { "css": "li.row" }, "texts": ["a", "b"]
+    });
+    let none = ComponentFile::default();
+    for (action, found, passes) in [(each.clone(), 1, true), (order.clone(), 2, true), (each.clone(), 0, false)] {
+        let dir = TempDir::new();
+        let mut account = None;
+        let mut lease = v2_lib::autorun::lease::Held::supervised();
+        let mut d = probed_page(found).answering_first(|method, params| {
+            let f = params["functionDeclaration"].as_str().unwrap_or("");
+            match (method, f) {
+                ("Runtime.callFunctionOn", f) if f == v2_lib::browser::each::CONNECTED_JS => Some(Ok(serde_json::json!({ "result": { "value": true } }))),
+                ("Runtime.callFunctionOn", f) if f == READ_TEXT_JS && params["objectId"] == "el-0" => {
+                    Some(Ok(serde_json::json!({ "result": { "value": "a" } })))
+                }
+                ("Runtime.callFunctionOn", f) if f == READ_TEXT_JS && params["objectId"] == "el-1" => {
+                    Some(Ok(serde_json::json!({ "result": { "value": "b" } })))
+                }
+                ("Runtime.callFunctionOn", f) if f == READ_TEXT_JS => Some(Ok(serde_json::json!({ "result": { "value": "x" } }))),
+                ("Runtime.releaseObjectGroup", _) => Some(Ok(serde_json::json!({}))),
+                ("Page.captureScreenshot", _) => Some(Ok(serde_json::json!({ "data": "" }))),
+                _ => None,
+            }
+        });
+        let tried: Action = serde_json::from_value(action.clone()).unwrap();
+        let (status, text) = try_in(&mut d, &mut account, &mut lease, dir.path(), "acme", "Web", 7, &tried).await;
+        assert_eq!(status, 200, "{text}");
+        assert_eq!(text.starts_with("ok:"), passes, "{action}: {text}");
+        let checked = match load_map(dir.path(), "acme", "Web") {
+            Ok(map) => check_seen(&map, &none, &script(action.clone()), &[], None),
+            Err(_) => Err("no map".to_string()),
+        };
+        assert_eq!(checked.is_ok(), passes, "{action}: {checked:?}");
+    }
+}
+
 /// A try that worked files what it acted on; one that failed files nothing:
 /// a locator that did not work was never seen working.
 #[tokio::test]
