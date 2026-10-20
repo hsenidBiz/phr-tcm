@@ -28,6 +28,17 @@ export function repairText(r: PreconditionRepair): string {
 }
 
 /**
+ * Whether putting `r` back would change `preconditions`: its result is
+ * still there (an added or changed precondition is present, a removed one
+ * is absent). When it is not, a later change has changed it again.
+ */
+export function canPutBack(preconditions: Precondition[], r: PreconditionRepair): boolean {
+  const { before, after } = r;
+  if (r.op === "remove") return !!before && !preconditions.some((p) => same(p, before));
+  return !!after && (r.op === "add" || !!before) && preconditions.some((p) => same(p, after));
+}
+
+/**
  * `preconditions` with the repairs at `putBack` (places in `repairs`)
  * undone, newest first: a removed precondition comes back at the end, an
  * added one goes, a changed one goes back to what it was. A repair whose

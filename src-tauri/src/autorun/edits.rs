@@ -82,11 +82,14 @@ pub const PRECONDITION_REASON_LONG: &str = "a precondition edit's \"reason\" is 
 /// Said when one case's entry carries more than one precondition edit.
 pub const ONE_PRECONDITION_EDIT: &str = "a repair changes at most one precondition per save - send one \"precondition\" edit now and the next in a later save";
 
+/// Said when an entry's `precondition` is not one object.
+pub const PRECONDITION_ONE_OBJECT: &str = "\"precondition\" is one object per \"edits\" entry: { \"op\", \"flow\", \"stage\", \"value\" (optional), \"to\", \"reason\" }";
+
 /// The saved preconditions with `edit` applied, and the record the script
 /// keeps of it. Refused: no reason, or one longer than a line; a saved
 /// precondition that is not there, or not the only one named; an add or a
-/// change with no `to`; an add of one the script has; a change to the
-/// same precondition. Validating the precondition itself against the
+/// change with no `to`; an add of one the script has, or a change into
+/// one; a change to the same precondition. Validating the precondition itself against the
 /// project's flows is the save's (`preconditions::check_saved`), as for
 /// any save.
 pub fn apply_precondition_edit(
@@ -119,8 +122,8 @@ pub fn apply_precondition_edit(
                     .to_string(),
             );
         };
-        if saved.iter().any(|p| p.flow == to.flow && p.stage == to.stage && p.value == to.value) {
-            return Err("the script already has that precondition".to_string());
+        if saved.iter().any(|p| same_record(p, &to)) {
+            return Err(ALREADY_HAS.to_string());
         }
         let mut after = saved.to_vec();
         after.push(to.clone());
@@ -165,8 +168,31 @@ pub fn apply_precondition_edit(
     if to == before {
         return Err("the precondition edit changes nothing - \"to\" is the precondition as it is".to_string());
     }
+    // Changed into one the script already has, besides the one changed:
+    // refused as an add of it is.
+    if saved.iter().enumerate().any(|(i, p)| i != at && same_record(p, &to)) {
+        return Err(ALREADY_HAS.to_string());
+    }
     after[at] = to.clone();
     Ok((after, record(Some(before), Some(to))))
+}
+
+/// Said when an add or a change would give the script a precondition it
+/// already has.
+const ALREADY_HAS: &str = "the script already has that precondition";
+
+/// Two preconditions ask for the same record: the same stage of the same
+/// flow for the same value (their `why` aside).
+fn same_record(a: &Precondition, b: &Precondition) -> bool {
+    a.flow == b.flow && a.stage == b.stage && a.value == b.value
+}
+
+/// The same preconditions, in any order: each side's every entry is on
+/// the other, as often. A script's preconditions are checked one by one
+/// before step 1, so their order is not part of what a repair changes.
+pub fn same_preconditions(a: &[Precondition], b: &[Precondition]) -> bool {
+    let count = |list: &[Precondition], p: &Precondition| list.iter().filter(|q| *q == p).count();
+    a.len() == b.len() && a.iter().all(|p| count(a, p) == count(b, p))
 }
 
 /// Said when a repair would add, change or remove a script's setup.
@@ -286,7 +312,7 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
     match declared.and_then(|e| e.precondition.as_ref()) {
         Some(edit) => {
             let (expected, _) = apply_precondition_edit(&old.preconditions, edit)?;
-            if new.preconditions != expected {
+            if !same_preconditions(&new.preconditions, &expected) {
                 return Err(PRECONDITIONS_UNDECLARED.to_string());
             }
         }

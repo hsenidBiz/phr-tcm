@@ -1377,6 +1377,29 @@ fn a_replay_starts_over_for_another_case_a_later_stand_or_a_changed_script() {
     assert_eq!(from_here(Some(&at_3), &bookkept, 4), ReplayFrom::CarriedOn(3));
 }
 
+/// #28: the record of a precondition repair is bookkeeping, so the
+/// fingerprint ignores it; the preconditions themselves shape the run, so
+/// a changed one starts over.
+#[test]
+fn the_fingerprint_ignores_precondition_repairs_but_not_the_preconditions() {
+    use v2_lib::autorun::replay_to::run_fingerprint;
+    let pre: v2_lib::autorun::Precondition =
+        serde_json::from_value(serde_json::json!({ "flow": "pms-performance-cycle", "stage": "publish", "value": 274 })).unwrap();
+    let mut saved = script(three_steps());
+    saved.preconditions = vec![pre.clone()];
+    let mut recorded = saved.clone();
+    recorded.precondition_repairs = vec![v2_lib::autorun::PreconditionRepair {
+        op: v2_lib::autorun::PreconditionOp::Add,
+        before: None,
+        after: Some(pre),
+        reason: "the case opens a published cycle".into(),
+    }];
+    assert_eq!(run_fingerprint(&recorded, 3), run_fingerprint(&saved, 3));
+    let mut removed = recorded.clone();
+    removed.preconditions.clear();
+    assert_ne!(run_fingerprint(&removed, 3), run_fingerprint(&recorded, 3));
+}
+
 /// Anything at the script's own level that shapes a run starts over:
 /// turning Must not save on, another account, another area, another dialog
 /// or page-error choice.

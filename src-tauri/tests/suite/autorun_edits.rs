@@ -689,3 +689,37 @@ fn a_precondition_edit_that_names_nothing_it_can_act_on_is_refused() {
     assert!(serde_json::from_value::<PreconditionEdit>(json!({ "op": "drop", "reason": "r" })).is_err());
     assert!(serde_json::from_value::<PreconditionEdit>(json!({ "op": "add", "why": "r" })).is_err());
 }
+
+/// A change into a precondition the script already has (another one, not
+/// the one changed) is refused as an add of it is; changing only the
+/// changed one's `why` is not a duplicate.
+#[test]
+fn a_change_into_a_precondition_the_script_has_is_refused() {
+    let saved = vec![pre("publish", json!(274)), pre("rules", json!(274))];
+    let into_rules = pre_edit(json!({
+        "op": "change", "flow": "pms-performance-cycle", "stage": "publish",
+        "to": { "flow": "pms-performance-cycle", "stage": "rules", "value": 274, "why": "another reason" },
+        "reason": "r"
+    }));
+    assert_eq!(apply_precondition_edit(&saved, &into_rules), Err("the script already has that precondition".to_string()));
+    let reworded = pre_edit(json!({
+        "op": "change", "flow": "pms-performance-cycle", "stage": "publish",
+        "to": { "flow": "pms-performance-cycle", "stage": "publish", "value": 274, "why": "it opens a published cycle" },
+        "reason": "r"
+    }));
+    assert!(apply_precondition_edit(&saved, &reworded).is_ok());
+}
+
+/// The preconditions are compared as a set: a script sent with the
+/// declared change made, in another order, is that change.
+#[test]
+fn a_declared_precondition_edit_accepts_the_preconditions_in_any_order() {
+    let old = with_pre(vec![pre("publish", json!(274)), pre("rules", json!(274)), pre("setup", json!(274))]);
+    let declared = pre_only(json!({ "op": "remove", "flow": "pms-performance-cycle", "stage": "publish", "reason": "the steps publish it" }));
+    let reordered = with_pre(vec![pre("setup", json!(274)), pre("rules", json!(274))]);
+    assert_eq!(check_edits(&old, &reordered, Some(&declared)), Ok(()));
+    use v2_lib::autorun::edits::same_preconditions;
+    assert!(same_preconditions(&[pre("a", json!(1)), pre("b", json!(1))], &[pre("b", json!(1)), pre("a", json!(1))]));
+    assert!(!same_preconditions(&[pre("a", json!(1)), pre("a", json!(1))], &[pre("a", json!(1)), pre("b", json!(1))]));
+    assert!(!same_preconditions(&[pre("a", json!(1))], &[pre("a", json!(1)), pre("a", json!(1))]));
+}

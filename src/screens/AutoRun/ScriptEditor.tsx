@@ -25,7 +25,7 @@ import { caseTextLine } from "../../lib/markdown";
 import { sameAreaName } from "../../lib/areaName";
 import { floorOf } from "./floor";
 import SetupSection from "./SetupSection";
-import { preconditionText, putBackPreconditions, repairText } from "./preconditionRepairs";
+import { canPutBack, preconditionText, putBackPreconditions, repairText } from "./preconditionRepairs";
 import { describeAction, sentenceText, UNREADABLE, type Sentence } from "./describeAction";
 
 const PLACEHOLDER = `[
@@ -108,7 +108,8 @@ export default function ScriptEditor({
   const [removedPre, setRemovedPre] = useState<Precondition[]>([]);
   const [putBack, setPutBack] = useState<number[]>([]);
   const preconditionRepairs = existing.data?.precondition_repairs ?? [];
-  const preconditions = putBackPreconditions(existing.data?.preconditions ?? [], preconditionRepairs, putBack)
+  const putBackList = putBackPreconditions(existing.data?.preconditions ?? [], preconditionRepairs, putBack);
+  const preconditions = putBackList
     .map((p, i) => ({ p, n: i + 1 }))
     .filter(({ p }) => !removedPre.includes(p));
 
@@ -322,21 +323,33 @@ export default function ScriptEditor({
             <div className="space-y-1">
               <span className="text-xs font-medium text-muted">Precondition changes by an assistant</span>
               <ul aria-label="Precondition changes by an assistant" className="space-y-1 text-xs">
-                {preconditionRepairs.map((r, i) => (
-                  <li key={i} className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 break-words text-text">{`${repairText(r)} - ${r.reason}`}</span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      aria-label={`Put back precondition change ${i + 1}`}
-                      disabled={putBack.includes(i)}
-                      onClick={() => setPutBack((b) => [...b, i])}
-                    >
-                      <IconUndo aria-hidden />
-                      {putBack.includes(i) ? "Put back on Save" : "Put back"}
-                    </Button>
-                  </li>
-                ))}
+                {preconditionRepairs.map((r, i) => {
+                  const done = putBack.includes(i);
+                  // A later change changed its result again: putting this
+                  // one back first would do nothing.
+                  const changedLater = !done && !canPutBack(putBackList, r);
+                  const label = done ? "Put back on Save" : "Put back";
+                  return (
+                    <li key={i} className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 break-words text-text">
+                        {`${repairText(r)} - ${r.reason}`}
+                        {changedLater && (
+                          <span className="block text-faint">Changed again later - put back the newer change first.</span>
+                        )}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`${label}: precondition change ${i + 1}`}
+                        disabled={done || changedLater}
+                        onClick={() => setPutBack((b) => [...b, i])}
+                      >
+                        <IconUndo aria-hidden />
+                        {label}
+                      </Button>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}

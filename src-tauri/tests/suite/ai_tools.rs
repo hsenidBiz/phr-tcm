@@ -790,6 +790,10 @@ fn the_heal_command_is_an_auto_run_routine_offered_only_with_auto_run() {
     let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(flat.contains("matched on its stable part with a non-exact name"), "{flat}");
     assert!(
+        flat.contains("one `precondition` edit in the case's `edits` entry, with a `reason` saying what now creates that state"),
+        "the heal routine never says a wrong precondition is fixed with a precondition edit: {flat}"
+    );
+    assert!(
         flat.contains("with the case's entry in `edits` - a TOP-LEVEL list beside `scripts`, one entry per case, never inside a script"),
         "{flat}"
     );

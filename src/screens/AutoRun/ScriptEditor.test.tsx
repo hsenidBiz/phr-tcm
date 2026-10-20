@@ -382,16 +382,16 @@ test("Put back then Save sends the preconditions as they were before the repairs
     ACCOUNTS,
     saved,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Put back precondition change 1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Put back: precondition change 1" }));
   // Shown at once in the list, and the button says it waits for Save.
   const shown = within(screen.getByRole("list", { name: "Preconditions" })).getAllByRole("listitem");
   expect(shown.map((r) => r.textContent)).toEqual([
     "pms-performance-cycle / participants: 274Remove",
     "pms-performance-cycle / publish: 274Remove",
   ]);
-  expect(screen.getByRole("button", { name: "Put back precondition change 1" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Put back precondition change 1" })).toHaveTextContent("Put back on Save");
-  fireEvent.click(screen.getByRole("button", { name: "Put back precondition change 2" }));
+  // Its name says what it shows.
+  expect(screen.getByRole("button", { name: "Put back on Save: precondition change 1" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Put back: precondition change 2" }));
   expect(saved).toHaveLength(0);
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
   await waitFor(() => expect(saved).toHaveLength(1));
@@ -412,10 +412,39 @@ test("putting back an added precondition takes it off the script", async () => {
     ACCOUNTS,
     saved,
   );
-  fireEvent.click(await screen.findByRole("button", { name: "Put back precondition change 1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Put back: precondition change 1" }));
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
   await waitFor(() => expect(saved).toHaveLength(1));
   expect((saved[0] as { preconditions?: unknown }).preconditions).toEqual([RULES]);
+});
+
+test("an older change a later one changed again waits for the newer one to be put back", async () => {
+  const saved: unknown[] = [];
+  mountWith(
+    {
+      case_id: 7,
+      title: "t",
+      steps: ONE_STEP,
+      repairs: 2,
+      preconditions: [RULES],
+      precondition_repairs: [
+        { op: "add", after: PUBLISH, reason: "the case opens a published cycle" },
+        { op: "change", before: PUBLISH, after: RULES, reason: "the rules are what it needs" },
+      ],
+    },
+    ACCOUNTS,
+    saved,
+  );
+  const older = await screen.findByRole("button", { name: "Put back: precondition change 1" });
+  expect(older).toBeDisabled();
+  expect(screen.getByText("Changed again later - put back the newer change first.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Put back: precondition change 2" }));
+  expect(screen.getByRole("button", { name: "Put back: precondition change 1" })).toBeEnabled();
+  expect(screen.queryByText("Changed again later - put back the newer change first.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Put back: precondition change 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).not.toHaveProperty("preconditions");
 });
 
 test("a script whose preconditions no repair changed lists no changes", async () => {

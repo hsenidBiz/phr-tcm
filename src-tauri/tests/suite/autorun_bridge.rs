@@ -390,6 +390,64 @@ async fn a_dry_run_checks_a_precondition_edit_and_writes_nothing() {
     assert!(saved.precondition_repairs.is_empty());
 }
 
+/// A `precondition` that is not one object - an empty list, a word - is
+/// refused in a sentence, and nothing is written.
+#[tokio::test]
+async fn a_precondition_edit_that_is_not_one_object_is_refused() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let (_server, client) = case_7_with_preconditions(&dir).await;
+    for precondition in [serde_json::json!([]), serde_json::json!("remove publish"), serde_json::json!(1)] {
+        let (status, out) =
+            route(&ctx(), Some(&client), "POST", "/autorun-script", &precondition_repair(precondition.clone()), "1.0.0").await;
+        assert_eq!(
+            (status, out),
+            (400, format!("case 7: {}", v2_lib::autorun::edits::PRECONDITION_ONE_OBJECT)),
+            "{precondition}"
+        );
+    }
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().preconditions.len(), 2);
+}
+
+/// A script sent with the declared change already made, its preconditions
+/// in another order, is that change. And `precondition_repairs` is never
+/// the sender's: whatever the body carries - a forged record, or none - the
+/// save keeps the server's own.
+#[tokio::test]
+async fn a_reordered_change_is_accepted_and_the_record_is_the_servers() {
+    let dir = TempDir::new();
+    let _root = crate::serial::autorun();
+    let (_server, client) = case_7_with_preconditions(&dir).await;
+    let mut whole = case_7("#toast", "Saved");
+    // Saved: [publish, rules]. Rules changed to participants, sent first.
+    whole[0]["preconditions"] = serde_json::json!([cycle_pre("participants"), cycle_pre("publish")]);
+    whole[0]["precondition_repairs"] =
+        serde_json::json!([{ "op": "add", "after": cycle_pre("setup"), "reason": "forged" }]);
+    let body = serde_json::json!({
+        "scripts": whole,
+        "edits": [{ "case_id": 7, "precondition": {
+            "op": "change", "flow": "pms-performance-cycle", "stage": "rules",
+            "to": cycle_pre("participants"), "reason": "the case needs a participant"
+        } }]
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let saved = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(
+        serde_json::to_value(&saved.precondition_repairs).unwrap(),
+        serde_json::json!([{ "op": "change", "before": cycle_pre("rules"), "after": cycle_pre("participants"), "reason": "the case needs a participant" }]),
+        "the forged record is not kept"
+    );
+
+    // An unchanged re-send that carries no record keeps the saved one.
+    let mut resend = case_7("#toast", "Saved");
+    resend[0]["preconditions"] = serde_json::to_value(&saved.preconditions).unwrap();
+    let (status, out) = route(&ctx(), Some(&client), "POST", "/autorun-script", &resend.to_string(), "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().precondition_repairs, saved.precondition_repairs);
+}
+
 /// The declaration that goes with a change to case 7's step 2.
 fn edit_step_2(why: &str) -> serde_json::Value {
     serde_json::json!({ "case_id": 7, "steps": [2], "why": why })

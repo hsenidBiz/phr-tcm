@@ -2,7 +2,7 @@
 
 import { expect, test } from "vitest";
 import type { PreconditionRepair } from "../../bindings";
-import { putBackPreconditions, repairText } from "./preconditionRepairs";
+import { canPutBack, putBackPreconditions, repairText } from "./preconditionRepairs";
 
 const A = { flow: "f", stage: "a", value: 1 };
 const B = { flow: "f", stage: "b", value: 1 };
@@ -33,4 +33,13 @@ test("a repair reads as what it did", () => {
   expect(repairText({ op: "remove", before: A, reason: "r" })).toBe("Removed f / a: 1");
   expect(repairText({ op: "add", after: C, reason: "r" })).toBe("Added f / c: Q4");
   expect(repairText({ op: "change", before: A, after: B, reason: "r" })).toBe("Changed f / a: 1 to f / b: 1");
+});
+
+test("a repair can be put back only while its result is still there", () => {
+  expect(canPutBack([B], { op: "remove", before: A, reason: "r" })).toBe(true);
+  expect(canPutBack([A, B], { op: "remove", before: A, reason: "r" })).toBe(false);
+  expect(canPutBack([B], { op: "add", after: B, reason: "r" })).toBe(true);
+  expect(canPutBack([A], { op: "add", after: B, reason: "r" })).toBe(false);
+  expect(canPutBack([C], { op: "change", before: A, after: C, reason: "r" })).toBe(true);
+  expect(canPutBack([B], { op: "change", before: A, after: C, reason: "r" })).toBe(false);
 });

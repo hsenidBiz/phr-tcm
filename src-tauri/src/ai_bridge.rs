@@ -8706,16 +8706,16 @@ fn parse_save_request(
     // could only ever read one of them.
     let mut edits: Vec<crate::autorun::edits::Edit> = Vec::with_capacity(edit_values.len());
     for mut value in edit_values {
-        // A list of precondition edits: one is that one, more is refused
-        // in words rather than serde's.
+        // A precondition edit is one object: a list of them, or anything
+        // else, is refused in words rather than serde's.
         if let Some(fields) = value.as_object_mut() {
-            if let Some(serde_json::Value::Array(list)) = fields.get_mut("precondition") {
-                if list.len() > 1 {
-                    let case = fields.get("case_id").map(|c| format!("case {c}: ")).unwrap_or_default();
-                    return Err(format!("{case}{}", crate::autorun::edits::ONE_PRECONDITION_EDIT));
+            let case = fields.get("case_id").map(|c| format!("case {c}: ")).unwrap_or_default();
+            match fields.get("precondition") {
+                None | Some(serde_json::Value::Null | serde_json::Value::Object(_)) => {}
+                Some(serde_json::Value::Array(list)) if list.len() > 1 => {
+                    return Err(format!("{case}{}", crate::autorun::edits::ONE_PRECONDITION_EDIT))
                 }
-                let one = list.pop().unwrap_or(serde_json::Value::Null);
-                fields.insert("precondition".to_string(), one);
+                Some(_) => return Err(format!("{case}{}", crate::autorun::edits::PRECONDITION_ONE_OBJECT)),
             }
         }
         let edit: crate::autorun::edits::Edit = serde_json::from_value(value).map_err(bad_edits)?;
@@ -8739,7 +8739,7 @@ fn parse_save_request(
         let Some(precondition) = edit.precondition.as_ref() else { continue };
         let Some(script) = scripts.iter_mut().find(|s| s.case_id == edit.case_id) else { continue };
         let Some(saved) = load(edit.case_id)? else { continue };
-        if script.preconditions == saved.preconditions {
+        if crate::autorun::edits::same_preconditions(&script.preconditions, &saved.preconditions) {
             let (applied, _) = crate::autorun::edits::apply_precondition_edit(&saved.preconditions, precondition)
                 .map_err(|why| format!("case {}: {why}", edit.case_id))?;
             script.preconditions = applied;
