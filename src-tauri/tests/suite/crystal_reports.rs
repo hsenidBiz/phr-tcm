@@ -274,7 +274,7 @@ fn the_guide_names_every_tool_and_the_units() {
         "edit_report",
         "compare_reports",
         "check_report",
-        "new_report",
+        "`create`",
         "preview_report",
         "preview_report_live",
         "get_guide",

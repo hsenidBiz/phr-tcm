@@ -1220,7 +1220,7 @@ fn the_guide_teaches_components() {
         "It may change anything, dropping a check included.",
         "tried live again",
         // Removing one.
-        "`remove_autorun_component`",
+        "`save_autorun_component` with `remove: true`",
         "while a saved script uses it",
         // Healing.
         "fixed in the component",

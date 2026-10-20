@@ -505,7 +505,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "save_autorun_component",
-            "description": "Save a component: a widget or short flow worked out once on the live app, that any script then runs with one use_component action. Make one the first time a widget or short flow will be needed more than once; use a saved one instead of repeating its actions. Try it first with discover_autorun_action, a use_component of it with this component as its `draft`, and save it unchanged once that works; anything else is refused. Every fixed locator in it must have been seen: an action needs one seen matching exactly one element, while a check that can pass with several matches may use one seen matching several; every input it declares must be used, and every one it uses declared; it cannot sign in, type a username or password, use another component, or build an address from an input. Saving a name already saved is a change: it needs `why` and is tried live again first.",
+            "description": "Save a component: a widget or short flow worked out once on the live app, that any script then runs with one use_component action. Make one the first time a widget or short flow will be needed more than once; use a saved one instead of repeating its actions. Try it first with discover_autorun_action, a use_component of it with this component as its `draft`, and save it unchanged once that works; anything else is refused. Every fixed locator in it must have been seen: an action needs one seen matching exactly one element, while a check that can pass with several matches may use one seen matching several; every input it declares must be used, and every one it uses declared; it cannot sign in, type a username or password, use another component, or build an address from an input. Saving a name already saved is a change: it needs `why` and is tried live again first. `remove: true` with only the `name` removes a saved component instead, refused while a saved script uses it: the refusal names the cases, so change those scripts first.",
             "inputSchema": schema(serde_json::json!({
                 "name": { "type": "string", "description": "Its name, unique in this project, e.g. \"Pick a date\"." },
                 "description": { "type": "string", "description": "One line: what it does and when to use it." },
@@ -529,13 +529,7 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 },
                 "why": { "type": "string", "description": "Only when changing a saved component: one sentence on why it changes." },
                 "dry_run": { "type": "boolean", "description": DRY_RUN_COMPONENT },
-            }), &["name", "description", "inputs", "actions"]),
-        },
-        {
-            "name": "remove_autorun_component",
-            "description": "Remove a saved component. Refused while a saved script uses it: the refusal names the cases, so change those scripts first.",
-            "inputSchema": schema(serde_json::json!({
-                "name": { "type": "string", "description": "The saved component's name." },
+                "remove": { "type": "boolean", "description": "true: remove the saved component `name` instead; send nothing else." },
             }), &["name"]),
         },
         {
@@ -853,9 +847,18 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "open_report",
-            "description": "Open a Crystal Reports .rpt file and read it: you get the report as an IR (format crpt-ir/1), a JSON tree of its areas, sections and objects, each with an id and its position, size, font and text. Take ids from the latest IR a report tool returned: an edit can change them. One report is open at a time; opening another replaces it, and every other report tool works on the open one. Read get_guide (topic reports) before your first edit for the units, the edit ops, the layout plan and the limits. The path must be the full path to a .rpt file on this machine.",
+            "description": "Open a Crystal Reports .rpt file and read it: you get the report as an IR (format crpt-ir/1), a JSON tree of its areas, sections and objects, each with an id and its position, size, font and text. Take ids from the latest IR a report tool returned: an edit can change them. One report is open at a time; opening another replaces it, and every other report tool works on the open one. Read get_guide (topic reports) before your first edit for the units, the edit ops, the layout plan and the limits. The path must be the full path to a .rpt file on this machine. With `create`, a blank report is made at a path that has no file yet and opened - never over an existing file: choose another path, or open that one.",
             "inputSchema": schema(serde_json::json!({
                 "path": { "type": "string", "description": "The full path to the .rpt file" },
+                "create": {
+                    "type": ["object", "boolean"],
+                    "description": "Make a blank report instead: true, or its summary information as { title, author, comments }.",
+                    "properties": {
+                        "title": { "type": "string" },
+                        "author": { "type": "string" },
+                        "comments": { "type": "string" },
+                    },
+                },
             }), &["path"]),
         },
         {
@@ -888,16 +891,6 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "path": { "type": "string", "description": "The full path to a .rpt file; leave out to check the open report" },
             }), &[]),
-        },
-        {
-            "name": "new_report",
-            "description": "Create a blank report at a path that has no file yet and open it. It never writes over an existing file: choose another path, or open that one. The title, author and comments fill the report's summary information. Build it up with edit_report; get_guide (topic reports) describes how.",
-            "inputSchema": schema(serde_json::json!({
-                "path": { "type": "string", "description": "Where to create it: the full path, ending in .rpt, to a file that does not exist" },
-                "title": { "type": "string", "description": "The report's title" },
-                "author": { "type": "string", "description": "The report's author" },
-                "comments": { "type": "string", "description": "Free-form comments" },
-            }), &["path"]),
         },
         {
             "name": "preview_report",
@@ -1066,6 +1059,44 @@ const DRY_RUN_SCRIPT: &str = "true: run every check a save makes, the seen check
 
 /// What `dry_run` does on `save_autorun_component`.
 const DRY_RUN_COMPONENT: &str = "true: run every rule a save makes and answer would_save or the refusal, writing nothing and recording nothing. It is not a try of the component.";
+
+/// Said when `save_autorun_component` is sent `remove: true` with anything
+/// but the name: a removal saves nothing, so a component beside it is a
+/// mistake to name, not to drop without a word.
+pub const REMOVE_TAKES_ONLY_THE_NAME: &str = "`remove: true` takes only the component's `name` - send the rest without `remove` to save it";
+
+/// Said when `save_autorun_component` is sent a `remove` that is not true or
+/// false.
+pub const REMOVE_IS_TRUE_OR_FALSE: &str = "`remove` is true or false";
+
+/// `save_autorun_component`: a save, or with `remove: true` (and only the
+/// name) the removal of a saved one through its own route.
+fn component_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    match args.get("remove") {
+        Some(serde_json::Value::Bool(true)) => {
+            let others = args
+                .as_object()
+                .map(|o| o.iter().any(|(k, v)| k != "name" && k != "remove" && !v.is_null()))
+                .unwrap_or(false);
+            if others {
+                return Ok((400, REMOVE_TAKES_ONLY_THE_NAME.to_string()));
+            }
+            call("POST", "/autorun-component-retire", &serde_json::json!({ "name": args["name"] }).to_string())
+        }
+        None | Some(serde_json::Value::Null) | Some(serde_json::Value::Bool(false)) => {
+            let mut body = args.clone();
+            if let Some(o) = body.as_object_mut() {
+                o.remove("remove");
+            }
+            call("POST", "/autorun-component-save", &body.to_string())
+        }
+        Some(_) => Ok((400, REMOVE_IS_TRUE_OR_FALSE.to_string())),
+    }
+}
+
+/// Said when `open_report` is sent a `create` that is neither a yes nor the
+/// new report's summary information.
+pub const CREATE_REFUSED: &str = "`create` is true, or the new report's { title, author, comments }";
 
 /// Said when `list_api_templates` is sent a `kind` it does not list.
 pub const LIST_KIND_REFUSED: &str = "`kind` is \"templates\" (the default) or \"fixtures\"";
@@ -1426,8 +1457,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "release_autorun_browser" => call("POST", "/autorun-release", &args.to_string()),
         "reset_autorun_browser" => call("POST", "/autorun-reset", &args.to_string()),
         // Components: each route reads its own named fields out of the body.
-        "save_autorun_component" => call("POST", "/autorun-component-save", &args.to_string()),
-        "remove_autorun_component" => call("POST", "/autorun-component-retire", &args.to_string()),
+        "save_autorun_component" => component_call(args, call),
         "get_autorun_failures" => {
             let mut params: Vec<String> = vec![];
             if let Some(id) = args["case_id"].as_i64() {
@@ -1508,12 +1538,26 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "db_query" => call("POST", "/db-query", &args.to_string()),
         // The Crystal Reports routes read their fields out of the body, so
         // the arguments object travels whole, like the database tools'.
-        "open_report" => call("POST", "/crystal-open", &args.to_string()),
+        // `create` makes a blank report first: the new route takes the path
+        // and the summary fields side by side.
+        "open_report" => match args.get("create") {
+            None | Some(serde_json::Value::Null) | Some(serde_json::Value::Bool(false)) => {
+                call("POST", "/crystal-open", &args.to_string())
+            }
+            Some(serde_json::Value::Bool(true)) => {
+                call("POST", "/crystal-new", &serde_json::json!({ "path": args["path"] }).to_string())
+            }
+            Some(serde_json::Value::Object(summary)) => {
+                let mut body = summary.clone();
+                body.insert("path".to_string(), args["path"].clone());
+                call("POST", "/crystal-new", &serde_json::Value::Object(body).to_string())
+            }
+            Some(_) => Ok((400, CREATE_REFUSED.to_string())),
+        },
         "read_report" => call("POST", "/crystal-read", &args.to_string()),
         "edit_report" => call("POST", "/crystal-change", &args.to_string()),
         "compare_reports" => call("POST", "/crystal-compare", &args.to_string()),
         "check_report" => call("POST", "/crystal-check", &args.to_string()),
-        "new_report" => call("POST", "/crystal-new", &args.to_string()),
         "preview_report" => call("POST", "/crystal-preview", &args.to_string()),
         "preview_report_live" => call("POST", "/crystal-preview-live", &args.to_string()),
         "optimize_cases" => {

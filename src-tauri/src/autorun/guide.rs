@@ -1742,8 +1742,9 @@ repair:
 A failure in a component names it beside the action. It is fixed in the
 component, not in the scripts that use it.
 
-`remove_autorun_component` removes one, and is refused while a saved
-script uses it; the refusal names the cases.
+`save_autorun_component` with `remove: true` and only the `name` removes
+one, and is refused while a saved script uses it; the refusal names the
+cases.
 
 ## Two things that make a seen locator wrong
 

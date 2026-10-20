@@ -314,7 +314,7 @@ pub fn new_report(path: &str, opts: rpt_core::blank::NewReportOptions) -> Result
         return Err(format!("{name} is not a .rpt file name. A new report's path must end in .rpt."));
     }
     let exists =
-        format!("{name} already exists. new_report never writes over a file: choose another path, or open it.");
+        format!("{name} already exists. open_report with create never writes over a file: choose another path, or open it without create.");
     if Path::new(path).exists() {
         return Err(exists);
     }

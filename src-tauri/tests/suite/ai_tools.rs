@@ -575,7 +575,6 @@ fn each_tool_belongs_to_its_module() {
             "release_autorun_browser",
             "reset_autorun_browser",
             "save_autorun_component",
-            "remove_autorun_component",
             "get_autorun_failures",
             "record_quirk",
             "record_validation_rule",
@@ -621,7 +620,6 @@ fn each_tool_belongs_to_its_module() {
             "edit_report",
             "compare_reports",
             "check_report",
-            "new_report",
             "preview_report",
             "preview_report_live"
         ]

@@ -255,10 +255,10 @@ test("only the switchable tools are left, as nine rows with every module on", ()
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_results",
-    "save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+stop_autorun_replay+start_autorun_discovery+discover_autorun_action+discover_autorun_actions+save_autorun_area+end_autorun_discovery+release_autorun_browser+reset_autorun_browser+save_autorun_component+remove_autorun_component+get_autorun_failures+record_quirk+record_validation_rule+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+get_autorun_network_wait+list_autorun_requests+search_autorun_requests+get_autorun_request+get_autorun_response+get_autorun_response_body+set_autorun_capture+get_autorun_capture+export_autorun_requests+import_autorun_requests+set_autorun_headers+get_autorun_cookies+set_autorun_cookie+clear_autorun_cookies+inspect_autorun_element",
+    "save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+stop_autorun_replay+start_autorun_discovery+discover_autorun_action+discover_autorun_actions+save_autorun_area+end_autorun_discovery+release_autorun_browser+reset_autorun_browser+save_autorun_component+get_autorun_failures+record_quirk+record_validation_rule+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+get_autorun_network_wait+list_autorun_requests+search_autorun_requests+get_autorun_request+get_autorun_response+get_autorun_response_body+set_autorun_capture+get_autorun_capture+export_autorun_requests+import_autorun_requests+set_autorun_headers+get_autorun_cookies+set_autorun_cookie+clear_autorun_cookies+inspect_autorun_element",
     "list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+save_api_fixture+run_api_fixture+record_quirk",
     "db_lookup+db_query",
-    "open_report+read_report+edit_report+compare_reports+check_report+new_report+preview_report+preview_report_live",
+    "open_report+read_report+edit_report+compare_reports+check_report+preview_report+preview_report_live",
     "get_tags",
     "search_pbis",
     "search_wiki+get_wiki_page",
@@ -293,7 +293,7 @@ test("the two database tools are one switchable row, there while Database Access
 
 /// With Auto Run on, its group is offered as one row and its switch moves
 /// every tool in it together, the same as any other pair.
-test("the Auto Run scripts row carries all thirty-nine tools", () => {
+test("the Auto Run scripts row carries all thirty-eight tools", () => {
   const row = visibleRows().find((r) => r.label === "Auto Run scripts");
   expect(row, "the Auto Run scripts row exists").toBeTruthy();
   expect(row!.names).toEqual([
@@ -313,7 +313,6 @@ test("the Auto Run scripts row carries all thirty-nine tools", () => {
     "release_autorun_browser",
     "reset_autorun_browser",
     "save_autorun_component",
-    "remove_autorun_component",
     "get_autorun_failures",
     "record_quirk",
     "record_validation_rule",
@@ -377,9 +376,9 @@ test("the API templates row carries all eight tools and switches them together",
 });
 
 /// Working on a report is one job - open it, read it, change it, check it,
-/// see it - so its eight tools are one row with one switch, offered while
+/// see it - so its seven tools are one row with one switch, offered while
 /// Crystal Reports is on. Its guide is Core's get_guide.
-test("the Crystal Reports row carries all eight tools and follows its module", () => {
+test("the Crystal Reports row carries all seven tools and follows its module", () => {
   const row = visibleRows().find((r) => r.label === "Crystal Reports");
   expect(row, "the Crystal Reports row exists").toBeTruthy();
   expect(row!.names).toEqual([
@@ -388,7 +387,6 @@ test("the Crystal Reports row carries all eight tools and follows its module", (
     "edit_report",
     "compare_reports",
     "check_report",
-    "new_report",
     "preview_report",
     "preview_report_live",
   ]);

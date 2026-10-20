@@ -114,12 +114,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "save_autorun_component",
     label: "Save a component",
-    summary: "Save a widget or short flow, once tried live, as a component any script can use.",
-  },
-  {
-    name: "remove_autorun_component",
-    label: "Remove a component",
-    summary: "Remove a component no saved script uses.",
+    summary: "Save a widget or short flow, once tried live, as a component any script can use - or remove one no saved script uses.",
   },
   {
     name: "get_autorun_network_wait",
@@ -280,7 +275,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "open_report",
     label: "Open a report",
-    summary: "Open a Crystal Reports .rpt file and read it as a tree of areas, sections and objects.",
+    summary: "Open a Crystal Reports .rpt file and read it as a tree of areas, sections and objects - or create a blank one and open it.",
   },
   {
     name: "read_report",
@@ -301,11 +296,6 @@ export const MCP_TOOLS: McpToolInfo[] = [
     name: "check_report",
     label: "Check a report",
     summary: "Run the offline load checks on a report: what the engine would refuse, and what it would only warn about.",
-  },
-  {
-    name: "new_report",
-    label: "Create a blank report",
-    summary: "Create a blank .rpt at a path with no file yet, and open it.",
   },
   {
     name: "preview_report",
@@ -359,7 +349,6 @@ export const AUTORUN_TOOLS = [
   "release_autorun_browser",
   "reset_autorun_browser",
   "save_autorun_component",
-  "remove_autorun_component",
   "get_autorun_failures",
   "record_quirk",
   "record_validation_rule",
@@ -402,7 +391,6 @@ export const CRYSTAL_TOOLS = [
   "edit_report",
   "compare_reports",
   "check_report",
-  "new_report",
   "preview_report",
   "preview_report_live",
 ] as const;
@@ -483,7 +471,6 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "release_autorun_browser",
     "reset_autorun_browser",
     "save_autorun_component",
-    "remove_autorun_component",
     "get_autorun_failures",
     "record_quirk",
     "record_validation_rule",
@@ -546,7 +533,6 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "edit_report",
     "compare_reports",
     "check_report",
-    "new_report",
     "preview_report",
     "preview_report_live",
   ],
@@ -654,6 +640,8 @@ export const RENAMED_TOOLS: Readonly<Record<string, string>> = {
   // Folded into a sibling as an argument or part of its answer.
   list_test_files: "get_accounts",
   list_api_fixtures: "list_api_templates",
+  new_report: "open_report",
+  remove_autorun_component: "save_autorun_component",
 };
 
 /** Tools that ride in more than one row. Such a tool is off only while

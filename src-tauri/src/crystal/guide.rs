@@ -20,7 +20,7 @@ TCM holds one open report at a time. Opening another replaces it. Every tool bel
 4. `preview_report` to render the report again. It answers with the page count and the renderer's notes, never the PDF itself; the Crystal Reports screen shows the pages.
 5. `check_report` before you call the work done. It runs the bundle's offline load checks and lists errors (Crystal Reports would refuse or garble the file) and warnings (suspect, but usually tolerated).
 
-`compare_reports` takes two `.rpt` paths and lists every difference between them, one `path: before -> after` line each. `new_report` creates a blank report at a path - never over a file that is already there - and opens it. `get_guide` with topic `reports` answers with this guide.
+`compare_reports` takes two `.rpt` paths and lists every difference between them, one `path: before -> after` line each. `open_report` with `create` (true, or `{ title, author, comments }`) creates a blank report at a path - never over a file that is already there - and opens it. `get_guide` with topic `reports` answers with this guide.
 
 ## Ids
 

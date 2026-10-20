@@ -164,7 +164,6 @@ pub const AUTORUN_TOOLS: &[&str] = &[
     "release_autorun_browser",
     "reset_autorun_browser",
     "save_autorun_component",
-    "remove_autorun_component",
     "get_autorun_failures",
     "record_quirk",
     "record_validation_rule",
@@ -220,7 +219,6 @@ pub const CRYSTAL_TOOLS: &[&str] = &[
     "edit_report",
     "compare_reports",
     "check_report",
-    "new_report",
     "preview_report",
     "preview_report_live",
 ];

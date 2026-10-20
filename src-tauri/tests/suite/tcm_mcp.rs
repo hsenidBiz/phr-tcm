@@ -125,7 +125,6 @@ fn tools_list_names_every_tool() {
             "release_autorun_browser",
             "reset_autorun_browser",
             "save_autorun_component",
-            "remove_autorun_component",
             "get_autorun_failures",
             "record_quirk",
             "record_validation_rule",
@@ -162,7 +161,6 @@ fn tools_list_names_every_tool() {
             "edit_report",
             "compare_reports",
             "check_report",
-            "new_report",
             "preview_report",
             "preview_report_live",
             "optimize_cases",
@@ -746,7 +744,7 @@ fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordina
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1467,7 +1465,7 @@ fn with_auto_run_off_and_api_templates_on_the_quirk_tool_stays() {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
             ));
         }
         Ok((200, "ok".into()))
@@ -1496,7 +1494,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","remove_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1918,7 +1916,7 @@ fn rides_with_the_auto_run_tools(tools: &[(&str, &str, serde_json::Value, serde_
 /// `draft`, and the save says it needs that live try first.
 #[test]
 fn the_component_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
-    let tools: [(&str, &str, serde_json::Value, serde_json::Value); 2] = [
+    let tools: [(&str, &str, serde_json::Value, serde_json::Value); 1] = [
         (
             "save_autorun_component",
             "/autorun-component-save",
@@ -1935,12 +1933,8 @@ fn the_component_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
                 ],
                 "why": "the calendar now opens on focus"
             }),
-            serde_json::json!(["name", "description", "inputs", "actions"]),
-        ),
-        (
-            "remove_autorun_component",
-            "/autorun-component-retire",
-            serde_json::json!({ "name": "Pick a date" }),
+            // Only the name: a removal needs nothing else, and the save
+            // route names whatever else a save is missing.
             serde_json::json!(["name"]),
         ),
     ];
@@ -1958,8 +1952,57 @@ fn the_component_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
     for said in ["discover_autorun_action", "draft", "why", "tried live again"] {
         assert!(d.contains(said), "the save tool never says {said:?}: {d}");
     }
-    let d = tool("remove_autorun_component")["description"].as_str().unwrap().to_string();
-    assert!(d.contains("uses it"), "{d}");
+    assert!(d.contains("`remove: true`") && d.contains("uses it"), "{d}");
+    assert!(v["result"]["tools"].as_array().unwrap().iter().all(|t| t["name"] != "remove_autorun_component"));
+}
+
+/// `save_autorun_component` with `remove: true` and only the name reaches
+/// the retire route (the old `remove_autorun_component` is gone); `remove`
+/// beside a component, or a `remove` that is not true or false, is refused
+/// before anything reaches the app; `remove: false` is a plain save.
+#[test]
+fn save_autorun_component_removes_with_remove_and_only_the_name() {
+    use v2_lib::mcp::{REMOVE_IS_TRUE_OR_FALSE, REMOVE_TAKES_ONLY_THE_NAME};
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".to_string()))
+    };
+    let send = |args: serde_json::Value| -> serde_json::Value {
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": { "name": "save_autorun_component", "arguments": args },
+        });
+        serde_json::from_str(&handle_message(&req.to_string(), "1.0.0", &call).unwrap()).unwrap()
+    };
+    let posts = || calls.borrow().iter().filter(|c| c.1 != "/tools").cloned().collect::<Vec<_>>();
+
+    let v = send(serde_json::json!({ "name": "Pick a date", "remove": true }));
+    assert_ne!(v["result"]["isError"], true, "{v}");
+    let (m, p, b) = posts().last().unwrap().clone();
+    assert_eq!((m.as_str(), p.as_str()), ("POST", "/autorun-component-retire"));
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&b).unwrap(), serde_json::json!({ "name": "Pick a date" }));
+
+    let save = serde_json::json!({ "name": "Pick a date", "description": "d", "inputs": [], "actions": [], "remove": false });
+    send(save);
+    let (_, p, b) = posts().last().unwrap().clone();
+    assert_eq!(p, "/autorun-component-save");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&b).unwrap(),
+        serde_json::json!({ "name": "Pick a date", "description": "d", "inputs": [], "actions": [] })
+    );
+
+    let before = posts().len();
+    for (args, said) in [
+        (serde_json::json!({ "name": "Pick a date", "remove": true, "actions": [] }), REMOVE_TAKES_ONLY_THE_NAME),
+        (serde_json::json!({ "name": "Pick a date", "remove": true, "dry_run": true }), REMOVE_TAKES_ONLY_THE_NAME),
+        (serde_json::json!({ "name": "Pick a date", "remove": "yes" }), REMOVE_IS_TRUE_OR_FALSE),
+    ] {
+        let v = send(args.clone());
+        assert_eq!(v["result"]["isError"], true, "{args}: {v}");
+        assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains(said), "{args}: {v}");
+    }
+    assert_eq!(posts().len(), before, "nothing reached the app");
 }
 
 /// The owner's call: scripts are repaired and components changed as often
@@ -2311,7 +2354,6 @@ fn the_crystal_tools_reach_their_routes() {
         ("edit_report", serde_json::json!({ "ops": [] }), "POST", "/crystal-change"),
         ("compare_reports", serde_json::json!({ "a": "a.rpt", "b": "b.rpt" }), "POST", "/crystal-compare"),
         ("check_report", serde_json::json!({}), "POST", "/crystal-check"),
-        ("new_report", serde_json::json!({ "path": "C:/r/n.rpt", "title": "T" }), "POST", "/crystal-new"),
         ("preview_report", serde_json::json!({}), "POST", "/crystal-preview"),
         (
             "preview_report_live",
@@ -2340,6 +2382,68 @@ fn the_crystal_tools_reach_their_routes() {
     }
 }
 
+/// `open_report` with `create` makes a blank report first (the old
+/// `new_report` is gone): true sends the path alone, an object sends its
+/// summary fields beside the path, false or null is a plain open, and
+/// anything else is refused before anything reaches the app.
+#[test]
+fn open_report_creates_a_blank_report_with_create() {
+    use v2_lib::mcp::CREATE_REFUSED;
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".to_string()))
+    };
+    let send = |args: serde_json::Value| -> serde_json::Value {
+        let req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+            "params": { "name": "open_report", "arguments": args },
+        });
+        serde_json::from_str(&handle_message(&req.to_string(), "1.0.0", &call).unwrap()).unwrap()
+    };
+    let last = || calls.borrow().iter().rev().find(|c| c.1 != "/tools").cloned().unwrap();
+    for (args, path, body) in [
+        (
+            serde_json::json!({ "path": "C:/r/n.rpt", "create": { "title": "T", "author": "A", "comments": "C" } }),
+            "/crystal-new",
+            serde_json::json!({ "path": "C:/r/n.rpt", "title": "T", "author": "A", "comments": "C" }),
+        ),
+        (
+            serde_json::json!({ "path": "C:/r/n.rpt", "create": true }),
+            "/crystal-new",
+            serde_json::json!({ "path": "C:/r/n.rpt" }),
+        ),
+        (
+            serde_json::json!({ "path": "C:/r/a.rpt", "create": false }),
+            "/crystal-open",
+            serde_json::json!({ "path": "C:/r/a.rpt", "create": false }),
+        ),
+        (serde_json::json!({ "path": "C:/r/a.rpt" }), "/crystal-open", serde_json::json!({ "path": "C:/r/a.rpt" })),
+    ] {
+        let v = send(args.clone());
+        assert_ne!(v["result"]["isError"], true, "{args}: {v}");
+        let (m, p, b) = last();
+        assert_eq!((m.as_str(), p.as_str()), ("POST", path), "{args}");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&b).unwrap(), body, "{args}");
+    }
+
+    calls.borrow_mut().clear();
+    for create in [serde_json::json!("yes"), serde_json::json!(1), serde_json::json!(["T"])] {
+        let v = send(serde_json::json!({ "path": "C:/r/n.rpt", "create": create }));
+        assert_eq!(v["result"]["isError"], true, "{create}: {v}");
+        assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains(CREATE_REFUSED), "{v}");
+    }
+    assert!(calls.borrow().iter().all(|c| c.1 == "/tools"), "nothing reached the app: {:?}", calls.borrow());
+
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &stub(200, "")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    assert!(tools.iter().all(|t| t["name"] != "new_report"), "new_report is gone");
+    let open = tools.iter().find(|t| t["name"] == "open_report").unwrap();
+    assert!(open["description"].as_str().unwrap().contains("never over an existing file"), "{open}");
+    assert_eq!(open["inputSchema"]["required"], serde_json::json!(["path"]));
+}
+
 /// Each Crystal Reports tool is described for the assistant: the required
 /// arguments are the brief's, the long-form detail lives in the guide, and
 /// edit_report says what saving means and where ids come from.
@@ -2354,13 +2458,12 @@ fn the_crystal_tool_descriptions_guide_the_assistant() {
     };
     assert_eq!(required("open_report"), ["path"]);
     assert_eq!(required("compare_reports"), ["a", "b"]);
-    assert_eq!(required("new_report"), ["path"]);
     assert!(required("edit_report").is_empty());
     for name in CRYSTAL_TOOLS {
         let text = find(name)["description"].as_str().unwrap();
         assert!(!text.contains('\u{2014}'), "{name}: no em dashes in text an assistant reads");
     }
-    for name in ["open_report", "read_report", "edit_report", "new_report"] {
+    for name in ["open_report", "read_report", "edit_report"] {
         let text = find(name)["description"].as_str().unwrap();
         assert!(text.contains("get_guide (topic reports)"), "{name} points at the guide: {text}");
     }
