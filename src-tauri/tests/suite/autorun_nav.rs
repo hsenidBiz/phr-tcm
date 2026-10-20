@@ -1107,6 +1107,32 @@ fn a_repair_reason_is_one_short_line_in_words() {
     assert!(kept.contains("/self/leave"), "{kept}");
 }
 
+/// `without_addresses` (every note an assistant writes goes through it) also
+/// hides a host written without a scheme: a name that ends like a domain
+/// with a path or a port after it, or an IPv4 address - and leaves ordinary
+/// words with dots in them alone.
+#[test]
+fn bare_hosts_with_a_path_or_port_are_hidden_but_ordinary_words_are_not() {
+    use v2_lib::autorun::mapping_summary::without_addresses as hide;
+    assert_eq!(hide("moved to hr.example.com/leave/apply?x=1 today"), "moved to /leave/apply today");
+    assert_eq!(hide("see (hr.example.com/x)."), "see (/x).");
+    assert_eq!(hide("tried hr.example.com:8080 first"), "tried / first");
+    assert_eq!(hide("on 10.0.0.5:8080/hr then"), "on /hr then");
+    assert_eq!(hide("on 10.0.0.5, again"), "on /, again");
+    assert_eq!(hide("on 10.0.0.5."), "on /.");
+    assert_eq!(hide("got hr-test.example.co.uk/a#frag"), "got /a");
+    let words = [
+        "v2.2.3 shipped, e.g. the menu, i.e. the old one",
+        "see cv.txt and notes.md, or Index.cshtml.cs:40 and main.rs:12",
+        "Leave > Apply at 12.30 on 3.5 of 4",
+        "the Save & Continue button (Pages/Leave/Index.cshtml.cs:95)",
+        "version 1.2.3 of example.com", // no path or port: a word
+    ];
+    for w in words {
+        assert_eq!(hide(w), w, "{w}");
+    }
+}
+
 /// A repair is written to the areas file as it is after the browser trips:
 /// an area removed or changed meanwhile is refused and nothing is written;
 /// one as the trips found it is repaired, its note keeping the path it had.

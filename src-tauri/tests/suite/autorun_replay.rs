@@ -615,6 +615,29 @@ fn propose_blames_the_browser_before_the_page() {
     assert_eq!(p.verdict, "Blocked");
 }
 
+/// A "Go to" that died with the browser is the browser's failure, not an
+/// unreachable area: the case reason starts "the browser ...", so the failures
+/// text gives the rerun line and never the area-repair one.
+#[test]
+fn a_go_to_that_died_with_the_browser_is_a_browser_stop_not_an_unreached_area() {
+    use v2_lib::autorun::failures::stop_reason;
+    use v2_lib::autorun::nav::UNREACHED_PREFIX;
+    use v2_lib::autorun::replay::MODULE_STEP;
+    let case = script(1, None, serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }]));
+    let mut gone = ActionOutcome::failed(format!("{UNREACHED_PREFIX}Leave\": the browser did not answer while the home page was opening."));
+    gone.harness = true;
+    let steps = vec![StepRecord { step_number: MODULE_STEP, outcomes: vec![gone], screenshot: None, downloads: vec![], tab: None, dialog: None, components: Vec::new(), duration_ms: None }];
+    let p = propose(&case, &steps, None, false);
+    assert_eq!(p.verdict, "Blocked");
+    assert!(!p.reason.starts_with(UNREACHED_PREFIX), "{}", p.reason);
+    assert!(p.reason.starts_with("the browser stopped answering while going to the module"), "{}", p.reason);
+    let record: v2_lib::autorun::CaseRecord = serde_json::from_value(serde_json::json!({
+        "case_id": 1, "title": "A case", "verdict": "", "note": "", "steps": [], "proposed": p.verdict, "reason": p.reason,
+    }))
+    .unwrap();
+    assert_eq!(stop_reason(&record).as_deref(), Some("the browser stopped answering - rerun before changing anything"));
+}
+
 // ---- Module paths --------------------------------------------------------
 
 const MENU: &[(&str, &str, &str)] = &[("link", "Leave", "/hr/leave"), ("link", "Apply Leave", "/hr/leave/apply")];

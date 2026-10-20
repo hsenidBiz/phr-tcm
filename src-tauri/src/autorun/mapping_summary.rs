@@ -233,8 +233,51 @@ fn clean_word(word: &str) -> String {
         }
     } else if core.starts_with('/') {
         core.split(['?', '#']).next().unwrap_or("").to_string()
+    } else if let Some(path) = bare_host_path(core) {
+        path
     } else {
         core.to_string()
     };
     format!("{}{cleaned}{tail}", &word[..lead])
+}
+
+/// Last labels that name a file far more often than a site, so a word such
+/// as `Index.cshtml.cs:40` (a code location) or `report.pdf/` is left alone.
+const FILE_EXTENSIONS: &[&str] = &[
+    "cs", "rs", "ts", "tsx", "js", "jsx", "mjs", "json", "py", "rb", "go", "java", "php", "cpp", "sh", "md", "txt", "log",
+    "html", "htm", "css", "scss", "xml", "yml", "yaml", "toml", "ini", "sql", "csv", "cshtml", "razor", "pdf", "png", "jpg",
+    "jpeg", "gif", "svg", "docx", "xlsx", "zip", "rpt",
+];
+
+/// The path of a host written without a scheme or `www.`, or `None` when
+/// `core` is not one. It is one only when it is an IPv4 address, or a
+/// dot-separated name whose last label looks like a top-level domain (two
+/// to 24 letters) AND which is followed by a `/` path or a `:port`. So
+/// `hr.example.com/x`, `hr.example.com:8080` and `10.0.0.5:8080/hr` are
+/// hidden, while a version (`v2.2.3`), an abbreviation (`e.g.`), a file
+/// name (`cv.txt`) and a code location (`Index.cshtml.cs:40`) are words.
+fn bare_host_path(core: &str) -> Option<String> {
+    let (authority, rest) = match core.find('/') {
+        Some(i) => (&core[..i], Some(&core[i..])),
+        None => (core, None),
+    };
+    let (host, has_port) = match authority.rsplit_once(':') {
+        Some((h, port)) if !port.is_empty() && port.len() <= 5 && port.bytes().all(|b| b.is_ascii_digit()) => (h, true),
+        Some(_) => return None,
+        None => (authority, false),
+    };
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() < 2 || labels.iter().any(|l| l.is_empty() || !l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')) {
+        return None;
+    }
+    let ipv4 = labels.len() == 4 && labels.iter().all(|l| (1..=3).contains(&l.len()) && l.bytes().all(|b| b.is_ascii_digit()));
+    let last = labels[labels.len() - 1];
+    let tld = (2..=24).contains(&last.len())
+        && last.bytes().all(|b| b.is_ascii_alphabetic())
+        && !FILE_EXTENSIONS.contains(&last.to_ascii_lowercase().as_str());
+    if !(ipv4 || (tld && (rest.is_some() || has_port))) {
+        return None;
+    }
+    let path = rest.unwrap_or("/").split(['?', '#']).next().unwrap_or("");
+    Some(if path.is_empty() { "/".to_string() } else { path.to_string() })
 }
