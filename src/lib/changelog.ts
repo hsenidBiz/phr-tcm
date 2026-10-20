@@ -27,6 +27,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "2.2.3-beta.18",
+    date: "2026-10-20",
+    items: [
+      "AI Bridge: assistants get fewer, leaner tools. Several were merged into one, so each assistant session loads much less, and an assistant still using an old tool name is told the new one.",
+      "AI Bridge: the network, cookie and element tools have their own Network tools switch per environment, off by default.",
+      "Auto Run: when a menu moves and a run cannot reach an area, the assistant can repair the area's menu path itself, with a reason. Areas shows the repair and can put the old path back.",
+      "Auto Run: during discovery, with API Templates on, the assistant builds and proves an API template from the request the page sent.",
+      "Settings, Logs: one line for each assistant tool call, with its name and how it ended.",
+      "The app is a little smaller: unused code and a screen-capture library are gone.",
+    ],
+  },
+  {
     version: "2.2.3-beta.17",
     date: "2026-10-20",
     items: [
