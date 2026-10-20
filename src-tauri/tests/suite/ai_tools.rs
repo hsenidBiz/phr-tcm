@@ -609,8 +609,7 @@ fn each_tool_belongs_to_its_module() {
             "save_api_flow",
             "get_api_flow_progress",
             "save_api_fixture",
-            "run_api_fixture",
-            "list_api_fixtures"
+            "run_api_fixture"
         ]
     );
     assert_eq!(DB_TOOLS, ["db_lookup", "db_query"]);

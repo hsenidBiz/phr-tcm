@@ -155,7 +155,6 @@ fn tools_list_names_every_tool() {
             "get_api_flow_progress",
             "save_api_fixture",
             "run_api_fixture",
-            "list_api_fixtures",
             "db_lookup",
             "db_query",
             "open_report",
@@ -1108,7 +1107,7 @@ fn db_no_ask_needs_an_explicit_yes() {
     assert!(!db_no_ask_from(&Err("the app is closed".into())));
 }
 
-const API_TEMPLATE_TOOLS: [&str; 8] = [
+const API_TEMPLATE_TOOLS: [&str; 7] = [
     "list_api_templates",
     "prove_api_template",
     "run_api_template",
@@ -1116,7 +1115,6 @@ const API_TEMPLATE_TOOLS: [&str; 8] = [
     "get_api_flow_progress",
     "save_api_fixture",
     "run_api_fixture",
-    "list_api_fixtures",
 ];
 
 fn listed_names(call: &dyn Fn(&str, &str, &str) -> Result<(u16, String), String>) -> Vec<String> {
@@ -1150,7 +1148,7 @@ fn the_api_template_tools_are_listed_where_auto_run_is_offered_and_absent_where_
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["list_api_templates","prove_api_template","run_api_template","save_api_flow","get_api_flow_progress","save_api_fixture","run_api_fixture","list_api_fixtures"]}"#
+                r#"{"disabled":["list_api_templates","prove_api_template","run_api_template","save_api_flow","get_api_flow_progress","save_api_fixture","run_api_fixture"]}"#
                     .into(),
             ));
         }
@@ -1164,6 +1162,39 @@ fn the_api_template_tools_are_listed_where_auto_run_is_offered_and_absent_where_
             && !n.contains("app_quirk")),
         "{names:?}"
     );
+}
+
+/// The fixtures list is `list_api_templates` with `kind: "fixtures"` (the old
+/// `list_api_fixtures` is gone); a `kind` it does not list is refused by
+/// name before anything reaches the app, never read as templates.
+#[test]
+fn the_template_list_takes_a_kind_and_refuses_an_unknown_one() {
+    use v2_lib::mcp::LIST_KIND_REFUSED;
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tools = v["result"]["tools"].as_array().unwrap();
+    assert!(tools.iter().all(|t| t["name"] != "list_api_fixtures"), "list_api_fixtures is gone");
+    let list = tools.iter().find(|t| t["name"] == "list_api_templates").unwrap();
+    assert_eq!(list["inputSchema"]["properties"]["kind"]["enum"], serde_json::json!(["templates", "fixtures"]));
+    assert_eq!(list["inputSchema"]["properties"]["full"]["type"], "boolean");
+    assert!(list["description"].as_str().unwrap().contains("answers with the API templates switch off"), "{list}");
+
+    let posted = std::cell::Cell::new(0);
+    let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path != "/tools" {
+            posted.set(posted.get() + 1);
+        }
+        Ok((200, "{}".into()))
+    };
+    for kind in [r#""fixture""#, r#""Fixtures""#, "true", "[]"] {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"list_api_templates","arguments":{{"kind":{kind}}}}}}}"#
+        );
+        let v: serde_json::Value = serde_json::from_str(&handle_message(&req, "1.0.0", &call).unwrap()).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{kind}: {v}");
+        assert!(v["result"]["content"][0]["text"].as_str().unwrap().contains(LIST_KIND_REFUSED), "{kind}: {v}");
+    }
+    assert_eq!(posted.get(), 0, "nothing reached the app");
 }
 
 /// Each tool reaches its own route; prove and run forward the arguments
@@ -1189,9 +1220,13 @@ fn the_api_template_tools_call_their_routes() {
         ("run_api_template", run_args.clone(), "POST", "/api-template-run", Some(run_args)),
         ("save_api_fixture", fixture_args.clone(), "POST", "/api-template-fixture-save", Some(fixture_args)),
         ("run_api_fixture", run_fixture_args.clone(), "POST", "/api-template-fixture-run", Some(run_fixture_args)),
-        ("list_api_fixtures", serde_json::json!({}), "GET", "/api-template-fixtures", None),
-        ("list_api_fixtures", serde_json::json!({ "id": "draft cycle" }), "GET", "/api-template-fixtures?id=draft%20cycle", None),
-        ("list_api_fixtures", serde_json::json!({ "full": true }), "GET", "/api-template-fixtures?full=true", None),
+        ("list_api_templates", serde_json::json!({ "kind": "templates" }), "GET", "/api-templates", None),
+        ("list_api_templates", serde_json::json!({ "kind": null, "id": "x" }), "GET", "/api-templates?id=x", None),
+        ("list_api_templates", serde_json::json!({ "kind": "fixtures" }), "GET", "/api-template-fixtures", None),
+        ("list_api_templates", serde_json::json!({ "kind": "fixtures", "id": "draft cycle" }), "GET", "/api-template-fixtures?id=draft%20cycle", None),
+        ("list_api_templates", serde_json::json!({ "kind": "fixtures", "full": true }), "GET", "/api-template-fixtures?full=true", None),
+        // A template filter means nothing to the fixtures list.
+        ("list_api_templates", serde_json::json!({ "kind": "fixtures", "module": "PMS" }), "GET", "/api-template-fixtures", None),
     ];
     for (name, args, method, path, body) in cases {
         let req = serde_json::json!({

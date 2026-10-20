@@ -201,7 +201,6 @@ pub const API_TEMPLATE_TOOLS: &[&str] = &[
     "get_api_flow_progress",
     "save_api_fixture",
     "run_api_fixture",
-    "list_api_fixtures",
 ];
 
 /// The database tools: the Database Access module's. What they may do is

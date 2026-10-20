@@ -235,7 +235,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
     name: "list_api_templates",
     label: "List API templates",
     summary:
-      "This project's saved templates, filtered by module, search, flow or id and paged: in full when one page holds them, otherwise a compact index.",
+      "This project's saved templates, filtered by module, search, flow or id and paged: in full when one page holds them, otherwise a compact index. Or its fixtures, with their current outputs and last run.",
   },
   {
     name: "prove_api_template",
@@ -266,11 +266,6 @@ export const MCP_TOOLS: McpToolInfo[] = [
     name: "run_api_fixture",
     label: "Run a fixture",
     summary: "Run or rebuild a fixture and return its outputs, what it made and any warnings.",
-  },
-  {
-    name: "list_api_fixtures",
-    label: "List fixtures",
-    summary: "This project's fixtures, with their current outputs and last run.",
   },
   {
     name: "db_lookup",
@@ -397,7 +392,6 @@ export const API_TEMPLATE_TOOLS = [
   "get_api_flow_progress",
   "save_api_fixture",
   "run_api_fixture",
-  "list_api_fixtures",
 ] as const;
 
 export const DB_TOOLS = ["db_lookup", "db_query"] as const;
@@ -530,7 +524,6 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     // A fixture is built from the proven templates, and run like one.
     "save_api_fixture",
     "run_api_fixture",
-    "list_api_fixtures",
     // What a template's author learns about the application goes on the
     // project's one quirks list, through the Auto Run row's own tool: it
     // rides in both rows (SHARED_TOOLS), so switching Auto Run off does not
@@ -660,6 +653,7 @@ export const RENAMED_TOOLS: Readonly<Record<string, string>> = {
   retire_app_quirk: "record_quirk",
   // Folded into a sibling as an argument or part of its answer.
   list_test_files: "get_accounts",
+  list_api_fixtures: "list_api_templates",
 };
 
 /** Tools that ride in more than one row. Such a tool is off only while

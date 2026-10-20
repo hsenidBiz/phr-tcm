@@ -1543,7 +1543,7 @@ fn browser_arg(v: &serde_json::Value) -> Result<crate::browser::launch::Browser,
 
 /// Said beside a summary list of fixtures: how to read one in full.
 pub const FIXTURES_IN_SHORT: &str =
-    "each fixture in short - call list_api_fixtures with id for one in full (its steps, current outputs and last run), or full: true for all";
+    "each fixture in short - call list_api_templates with kind fixtures and id for one in full (its steps, current outputs and last run), or full: true for all";
 
 /// `GET /api-template-fixtures`: the project's saved fixtures. By default a
 /// summary of each - its id, name, output names, what it creates (kind and

@@ -756,14 +756,16 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "list_api_templates",
-            "description": "The API templates saved for the current project, filtered and paged. When at most `limit` templates match, each comes in full: id, title, module, effect (create, edit or delete), params with their types and descriptions, outputs, the flow stage it performs, whether it is proven on this site (one imported from another machine is not: prove it before relying on it), and the newest run - with the project's flows (only the ones those templates are on, when `module` or `search` narrowed the list), each with its stages and the templates on them, and its Test files (names and sizes), the only files a step's `files` may name. When more match, the answer is a compact index (per template the id, title, module, effect, proven state and stage; per flow the id, title and stage count): narrow it with `module`, `search` or `flow`, or pass `id` for one template in full. With `id`, the other filters and the paging are ignored. Every answer has `paging` { total, offset, returned, next_offset }: while `next_offset` is there, call again with `offset` set to it for the next page. Check here before building a template - the one you need may already exist. Also the reference for real endpoints, paths and response fields when a script checks the API (never run from a script).",
+            "description": "The API templates saved for the current project, filtered and paged. When at most `limit` templates match, each comes in full: id, title, module, effect (create, edit or delete), params with their types and descriptions, outputs, the flow stage it performs, whether it is proven on this site (one imported from another machine is not: prove it before relying on it), and the newest run - with the project's flows (only the ones those templates are on, when `module` or `search` narrowed the list), each with its stages and the templates on them, and its Test files (names and sizes), the only files a step's `files` may name. When more match, the answer is a compact index (per template the id, title, module, effect, proven state and stage; per flow the id, title and stage count): narrow it with `module`, `search` or `flow`, or pass `id` for one template in full. With `id`, the other filters and the paging are ignored. Every answer has `paging` { total, offset, returned, next_offset }: while `next_offset` is there, call again with `offset` set to it for the next page. Check here before building a template - the one you need may already exist. Also the reference for real endpoints, paths and response fields when a script checks the API (never run from a script). With `kind: \"fixtures\"` it lists the saved fixtures instead, each in short (id, name, output names, what it creates, last run's status): `id` for one in full (steps, outputs, what it creates, current outputs, last run), `full: true` for all. Read-only; answers with the API templates switch off.",
             "inputSchema": schema(serde_json::json!({
+                "kind": { "type": "string", "enum": ["templates", "fixtures"], "description": "\"templates\" (the default) or \"fixtures\"." },
                 "module": { "type": "string", "description": "Only templates whose module contains this text (case does not matter)." },
                 "search": { "type": "string", "description": "Only templates whose id, title, or a param or output name contains this text (case does not matter)." },
                 "flow": { "type": ["string", "boolean"], "description": "A flow id: only that flow, and the templates on its stages. Or false: leave the flows (every stage) and the Test files out of an answer in full, such as one template by `id`." },
-                "id": { "type": "string", "description": "One template's id: that template in full, with the flow it is on (send flow: false to leave the flow and the Test files out). The other arguments are ignored with it." },
+                "id": { "type": "string", "description": "One template's id: that template in full, with the flow it is on (send flow: false to leave the flow and the Test files out). The other arguments are ignored with it. With kind fixtures, one fixture's id." },
                 "offset": { "type": "number", "description": "How many matching templates to skip: the `next_offset` of the previous answer. 0 by default." },
                 "limit": { "type": "number", "description": "How many templates one answer carries: 25 by default, 100 at most." },
+                "full": { "type": "boolean", "description": "With kind fixtures: true answers every fixture in full. Long; prefer `id`." },
             }), &[]),
         },
         {
@@ -817,17 +819,9 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "name": "run_api_fixture",
             "description": "Run a saved fixture - its templates in order, in one browser signed in once as the fixture's account - and return its sentence, its outputs, what it made and any warnings. The run stops at the first failed step, with that step's own sentence. Whatever it made, even when a later step failed, is recorded as test-made. A successful run's outputs become the fixture's current outputs; a failed one keeps the ones before. Use it to Rebuild a damaged shared draft, never a hand fix. Refused while the API templates switch on the AI Bridge tab is off. While your discovery holds the fixture's account in the Auto Run browser the run is refused, and the answer says so: end the discovery first.",
             "inputSchema": schema(serde_json::json!({
-                "id": { "type": "string", "description": "The fixture's id, from list_api_fixtures." },
+                "id": { "type": "string", "description": "The fixture's id, from list_api_templates (kind fixtures)." },
                 "browser": { "type": "string", "description": "\"edge\" (the default) or \"chrome\"." },
             }), &["id"]),
-        },
-        {
-            "name": "list_api_fixtures",
-            "description": "The fixtures saved for the current project. By default each in short: its id, name, output names, what it creates (kind and name) and its last run's status. Pass `id` for one fixture in full (its steps, outputs, what it creates, its current outputs from its newest successful run, and its last run), or `full: true` for every one in full. Read-only; answers with the API templates switch off.",
-            "inputSchema": schema(serde_json::json!({
-                "id": { "type": "string", "description": "Optional: one fixture's id, answered in full." },
-                "full": { "type": "boolean", "description": "Optional: true answers every fixture in full. Long; prefer `id`." },
-            }), &[]),
         },
         {
             "name": "db_lookup",
@@ -1072,6 +1066,9 @@ const DRY_RUN_SCRIPT: &str = "true: run every check a save makes, the seen check
 
 /// What `dry_run` does on `save_autorun_component`.
 const DRY_RUN_COMPONENT: &str = "true: run every rule a save makes and answer would_save or the refusal, writing nothing and recording nothing. It is not a try of the component.";
+
+/// Said when `list_api_templates` is sent a `kind` it does not list.
+pub const LIST_KIND_REFUSED: &str = "`kind` is \"templates\" (the default) or \"fixtures\"";
 
 /// Said when `record_quirk` is sent a line to record and a quirk to retire
 /// at once: one call does one of them.
@@ -1452,6 +1449,17 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "set_autorun_order" => call("POST", "/autorun-order", &args.to_string()),
         "propose_accounts" => call("POST", "/accounts-propose", &args.to_string()),
         "get_accounts" => call("GET", "/accounts", ""),
+        "list_api_templates" if args["kind"].as_str() == Some("fixtures") => {
+            match args["id"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                Some(id) => call("GET", &format!("/api-template-fixtures?id={}", urlencoding::encode(id)), ""),
+                None if args["full"].as_bool().unwrap_or(false) => call("GET", "/api-template-fixtures?full=true", ""),
+                None => call("GET", "/api-template-fixtures", ""),
+            }
+        }
+        // Any other `kind` is refused by name rather than read as templates.
+        "list_api_templates" if !matches!(args.get("kind"), None | Some(serde_json::Value::Null)) && args["kind"].as_str() != Some("templates") => {
+            Ok((400, LIST_KIND_REFUSED.to_string()))
+        }
         "list_api_templates" => {
             // Text filters pass through percent-encoded. Offset and limit
             // may arrive as numbers or as numeric strings; anything else
@@ -1493,11 +1501,6 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // arguments object travels whole.
         "save_api_fixture" => call("POST", "/api-template-fixture-save", &args.to_string()),
         "run_api_fixture" => call("POST", "/api-template-fixture-run", &args.to_string()),
-        "list_api_fixtures" => match args["id"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
-            Some(id) => call("GET", &format!("/api-template-fixtures?id={}", urlencoding::encode(id)), ""),
-            None if args["full"].as_bool().unwrap_or(false) => call("GET", "/api-template-fixtures?full=true", ""),
-            None => call("GET", "/api-template-fixtures", ""),
-        },
         // Both bridge routes read their fields out of the body, so
         // forwarding the raw arguments object is structurally unable to
         // drop one - the same pattern as `check_spec_coverage`.

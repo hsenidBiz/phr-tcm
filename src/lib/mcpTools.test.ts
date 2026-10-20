@@ -71,7 +71,7 @@ test("every tool carries a summary the settings screen can show", () => {
 test("the template list's summary describes its filters and paging", () => {
   const list = MCP_TOOLS.find((t) => t.name === "list_api_templates");
   expect(list?.summary).toBe(
-    "This project's saved templates, filtered by module, search, flow or id and paged: in full when one page holds them, otherwise a compact index.",
+    "This project's saved templates, filtered by module, search, flow or id and paged: in full when one page holds them, otherwise a compact index. Or its fixtures, with their current outputs and last run.",
   );
 });
 
@@ -256,7 +256,7 @@ test("only the switchable tools are left, as nine rows with every module on", ()
     "search_test_suites+get_suite_test_cases",
     "get_run_results",
     "save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+stop_autorun_replay+start_autorun_discovery+discover_autorun_action+discover_autorun_actions+save_autorun_area+end_autorun_discovery+release_autorun_browser+reset_autorun_browser+save_autorun_component+remove_autorun_component+get_autorun_failures+record_quirk+record_validation_rule+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+get_autorun_network_wait+list_autorun_requests+search_autorun_requests+get_autorun_request+get_autorun_response+get_autorun_response_body+set_autorun_capture+get_autorun_capture+export_autorun_requests+import_autorun_requests+set_autorun_headers+get_autorun_cookies+set_autorun_cookie+clear_autorun_cookies+inspect_autorun_element",
-    "list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+save_api_fixture+run_api_fixture+list_api_fixtures+record_quirk",
+    "list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+save_api_fixture+run_api_fixture+record_quirk",
     "db_lookup+db_query",
     "open_report+read_report+edit_report+compare_reports+check_report+new_report+preview_report+preview_report_live",
     "get_tags",
@@ -345,9 +345,9 @@ test("the Auto Run scripts row carries all thirty-nine tools", () => {
 });
 
 /// Building an API template is one job - guide, list, prove, run, the
-/// flow it belongs to and the fixtures built from it - and the quirks it learns - so its nine tools are one row with one switch, offered while API Templates is on.
+/// flow it belongs to and the fixtures built from it - and the quirks it learns - so its eight tools are one row with one switch, offered while API Templates is on.
 /// The quirk tool is Auto Run's, shared with this row: off only while both rows are.
-test("the API templates row carries all nine tools and switches them together", () => {
+test("the API templates row carries all eight tools and switches them together", () => {
   const row = visibleRows().find((r) => r.label === "API templates");
   expect(row, "the API templates row exists").toBeTruthy();
   expect(row!.names).toEqual([
@@ -358,7 +358,6 @@ test("the API templates row carries all nine tools and switches them together", 
     "get_api_flow_progress",
     "save_api_fixture",
     "run_api_fixture",
-    "list_api_fixtures",
     "record_quirk",
   ]);
   expect(row!.summary).toBe(

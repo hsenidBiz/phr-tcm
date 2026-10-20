@@ -555,7 +555,7 @@ fn the_guide_explains_fixtures() {
     let text = v2_lib::api_templates::guide::text(&[], None);
     let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(one_line.contains("## Fixtures"), "no Fixtures section");
-    for tool in ["save_api_fixture", "run_api_fixture", "list_api_fixtures"] {
+    for tool in ["save_api_fixture", "run_api_fixture", "list_api_templates { kind: \"fixtures\" }"] {
         assert!(one_line.contains(tool), "no {tool}");
     }
     assert!(one_line.contains("Build a fixture from proven templates"), "{one_line}");
@@ -1564,7 +1564,7 @@ fn no_bridge_route_or_mcp_tool_writes_the_test_made_record() {
     let list = &mcp[mcp.find("fn tools_list").unwrap()..];
     let tools: Vec<&str> =
         list.split("\"name\": \"").skip(1).filter_map(|s| s.split('"').next()).collect();
-    for t in ["save_api_fixture", "run_api_fixture", "list_api_fixtures"] {
+    for t in ["save_api_fixture", "run_api_fixture", "list_api_templates"] {
         assert!(tools.contains(&t), "{t} is not listed: {tools:?}");
     }
     assert!(routes.len() > 20 && tools.len() > 20, "the scan found too little: {routes:?} {tools:?}");
