@@ -316,13 +316,13 @@ async fn navigate_refuses_a_javascript_url_without_touching_the_browser() {
 async fn check_text_and_check_url_answer_from_the_page() {
     let mut d = FakePage::default().driver();
     assert!(execute_with(&mut d, &Action::CheckText { value: "Dashboard".into() }, &quick()).await.ok);
-    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into() }, &quick()).await;
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: None }, &quick()).await;
     assert!(out.ok && out.detail.contains("https://app.example/home"), "{}", out.detail);
 
     let mut d = FakePage { body_has_text: false, ..FakePage::default() }.driver();
     let out = execute_with(&mut d, &Action::CheckText { value: "Dashboard".into() }, &quick()).await;
     assert!(!out.ok && out.detail.contains("does NOT contain"), "{}", out.detail);
-    assert!(!execute_with(&mut d, &Action::CheckUrl { contains: "/login".into() }, &quick()).await.ok);
+    assert!(!execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), timeout_ms: None }, &quick()).await.ok);
 }
 
 /// A page that pops an alert no longer freezes the run; the person is told
@@ -381,7 +381,7 @@ async fn a_page_refusal_during_a_check_is_the_pages_doing() {
     };
     for action in [
         Action::CheckText { value: "Dashboard".into() },
-        Action::CheckUrl { contains: "/home".into() },
+        Action::CheckUrl { contains: "/home".into(), timeout_ms: None },
     ] {
         let mut d = refusing();
         let out = execute_with(&mut d, &action, &quick()).await;
@@ -398,7 +398,7 @@ async fn a_closed_browser_at_those_same_sites_is_still_the_harness() {
     for action in [
         Action::Click { selector: "#go".into() },
         Action::CheckText { value: "Dashboard".into() },
-        Action::CheckUrl { contains: "/home".into() },
+        Action::CheckUrl { contains: "/home".into(), timeout_ms: None },
         Action::Navigate { url: "https://app.example/x".into() },
     ] {
         let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
@@ -621,13 +621,13 @@ fn only_checks_and_expectations_are_checks() {
         Action::Fill { selector: "s".into(), value: "v".into() },
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
         Action::CheckText { value: "v".into() },
-        Action::CheckUrl { contains: "c".into() },
+        Action::CheckUrl { contains: "c".into(), timeout_ms: None },
         Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
         Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
-        Action::ExpectText { selector: "s".into(), equals: "v".into(), timeout_ms: None },
+        Action::ExpectText { selector: "s".into(), equals: Some("v".into()), matches: None, timeout_ms: None },
         Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
-        Action::ExpectCount { selector: "s".into(), equals: 1, timeout_ms: None },
-        Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), absent: false, timeout_ms: None },
+        Action::ExpectCount { selector: "s".into(), equals: Some(1), at_least: None, at_most: None, timeout_ms: None },
+        Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: Some("v".into()), matches: None, absent: false, timeout_ms: None },
         serde_json::from_value(json!({ "kind": "expect_style", "selector": "s", "property": "color", "equals": "red" })).unwrap(),
         Action::ExpectEnabled { selector: "s".into(), timeout_ms: None },
         Action::ExpectDisabled { selector: "s".into(), timeout_ms: None },
@@ -1227,4 +1227,56 @@ fn comma_spacing_is_normalised() {
     assert!(judge("transform", computed, Want::Equals("matrix(1,0,0,1,0,0)")).is_ok());
     assert!(judge("transform", computed, Want::Contains("1,0,0")).is_ok());
     assert!(judge("transform", computed, Want::NotEquals("matrix(1,0,0,1,0,0)")).is_err());
+}
+
+#[tokio::test]
+async fn check_url_looks_again_until_the_address_holds() {
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = reads.clone();
+    let mut d = ScriptedDriver::new(move |method, _| {
+        Ok(match method {
+            "Runtime.evaluate" => {
+                let n = seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                json!({ "result": { "value": if n < 2 { "https://app.example/login" } else { "https://app.example/home" } } })
+            }
+            _ => json!({}),
+        })
+    });
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/home".into(), timeout_ms: Some(2000) }, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "url is https://app.example/home");
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn check_url_still_fails_naming_the_address_it_last_saw() {
+    let mut d = FakePage::default().driver();
+    let out = execute_with(&mut d, &Action::CheckUrl { contains: "/login".into(), timeout_ms: None }, &quick()).await;
+    assert!(!out.ok && !out.harness, "{}", out.detail);
+    assert_eq!(out.detail, "url is https://app.example/home");
+}
+
+#[test]
+fn the_new_check_options_are_validated() {
+    use v2_lib::browser::actions::{ATTRIBUTE_NEEDS_ONE, ATTRIBUTE_ONE_OF, COUNT_NEEDS_ONE, TEXT_NEEDS_ONE};
+    let bad = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate().unwrap_err();
+    assert_eq!(bad(json!({ "kind": "expect_text", "selector": "s", "equals": "a", "matches": "b" })), TEXT_NEEDS_ONE);
+    assert_eq!(bad(json!({ "kind": "expect_text", "selector": "s" })), TEXT_NEEDS_ONE);
+    assert_eq!(bad(json!({ "kind": "expect_attribute", "selector": "s", "name": "n", "matches": "a", "equals": "b" })), ATTRIBUTE_ONE_OF);
+    assert_eq!(bad(json!({ "kind": "expect_attribute", "selector": "s", "name": "n", "matches": "a", "absent": true })), ATTRIBUTE_ONE_OF);
+    assert_eq!(bad(json!({ "kind": "expect_attribute", "selector": "s", "name": "n" })), ATTRIBUTE_NEEDS_ONE);
+    assert_eq!(bad(json!({ "kind": "expect_count", "selector": "s" })), COUNT_NEEDS_ONE);
+    assert_eq!(bad(json!({ "kind": "expect_count", "selector": "s", "equals": 1, "at_least": 1 })), COUNT_NEEDS_ONE);
+    assert!(bad(json!({ "kind": "expect_text", "selector": "s", "matches": ".*" })).contains("fits any text"));
+    assert!(bad(json!({ "kind": "expect_attribute", "selector": "s", "name": "n", "matches": "(?i)x" })).starts_with("expect_attribute: "));
+
+    for old in [
+        json!({ "kind": "expect_count", "selector": "s", "equals": 3 }),
+        json!({ "kind": "expect_text", "selector": "s", "equals": "v" }),
+        json!({ "kind": "check_url", "contains": "/x" }),
+    ] {
+        let a: Action = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(a.validate(), Ok(()));
+        assert_eq!(serde_json::to_value(&a).unwrap(), old);
+    }
 }

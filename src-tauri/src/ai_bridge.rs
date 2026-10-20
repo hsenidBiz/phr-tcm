@@ -3213,13 +3213,12 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         | Action::ExpectDisabled { selector, .. }
         | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. } => vec![(selector, 1)],
-        Action::ExpectCount { selector, equals, .. } => {
-            if *equals >= 1 {
-                vec![(selector, *equals as usize)]
-            } else {
-                vec![]
-            }
-        }
+        // Only an exact count says how many elements it saw; a bound
+        // (`at_least`, `at_most`) does not.
+        Action::ExpectCount { selector, equals, .. } => match equals {
+            Some(n) if *n >= 1 => vec![(selector, *n as usize)],
+            _ => vec![],
+        },
         Action::Drag { from, to, .. } => vec![(from, 1), (to, 1)],
         Action::ExpectRow { table, .. } | Action::ExpectSorted { table, .. } => vec![(table, 1)],
         Action::ExpectRowCount { table, equals, at_least, .. } => {
@@ -3718,7 +3717,7 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         // Its path only: a host and a query string never reach a log line
         // or the discovery map, and a query can carry a token.
         Action::Navigate { url } => crate::autorun::discovery_map::path_only(url),
-        Action::CheckUrl { contains } => contains.clone(),
+        Action::CheckUrl { contains, .. } => contains.clone(),
         Action::UseComponent { component, .. } => component.trim().to_string(),
         Action::CheckText { .. }
         | Action::SignIn { .. }

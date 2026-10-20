@@ -431,3 +431,13 @@ fn a_style_mismatch_is_its_own_class() {
     let style: Action = serde_json::from_value(serde_json::json!({ "kind": "expect_style", "selector": { "role": "button", "name": "Save" }, "property": "color", "equals": "red" })).unwrap();
     assert_eq!(action_target(&style).as_deref(), Some(save));
 }
+
+
+#[test]
+fn pattern_and_bound_failures_fall_in_their_classes() {
+    let n = Some("#n");
+    assert_eq!(classify("waited 300ms: #n expected text to match /^a/ but saw \"b\"", n), ErrorClass::TextMismatch);
+    assert_eq!(classify("waited 300ms: li expected at least 4, counted 3", Some("li")), ErrorClass::CountMismatch);
+    assert_eq!(classify("waited 300ms: li expected at most 2, counted 3", Some("li")), ErrorClass::CountMismatch);
+    assert_eq!(classify("waited 300ms: #n expected aria-label=/^View / but saw \"Edit\"", n), ErrorClass::AttributeMismatch);
+}

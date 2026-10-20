@@ -46,7 +46,14 @@ pub enum Action {
     Fill { selector: Target, value: String },
     WaitFor { selector: Target, timeout_ms: u32 },
     CheckText { value: String },
-    CheckUrl { contains: String },
+    /// The address holds `contains`. Looked at again until it does, like
+    /// every `expect_` check: a page that is still redirecting is not a
+    /// failure yet.
+    CheckUrl {
+        contains: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
     ExpectVisible {
         selector: Target,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,9 +64,14 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
+    /// The one element's text (whitespace collapsed) is `equals`, or
+    /// matches the pattern `matches` (`pattern`) - exactly one of the two.
     ExpectText {
         selector: Target,
-        equals: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        matches: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
@@ -69,19 +81,30 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
+    /// How many elements match: exactly `equals`, or `at_least` / `at_most`
+    /// - exactly one of the three. Only `at_most` (like `equals: 0`) waits
+    /// for the count to hold still, since too few passes it.
     ExpectCount {
         selector: Target,
-        equals: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_least: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at_most: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
-    /// The one element's attribute `name` is `equals`, or, with `absent`,
-    /// the element has no such attribute. Exactly one of the two is given.
+    /// The one element's attribute `name` is `equals`, matches the pattern
+    /// `matches`, or, with `absent`, the element has no such attribute.
+    /// Exactly one of the three is given.
     ExpectAttribute {
         selector: Target,
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         equals: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        matches: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         absent: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1135,27 +1158,42 @@ impl Action {
             | Action::WaitFor { selector, .. }
             | Action::ExpectVisible { selector, .. }
             | Action::ExpectHidden { selector, .. }
-            | Action::ExpectText { selector, .. }
-            | Action::ExpectCount { selector, .. }
             | Action::ExpectEnabled { selector, .. }
             | Action::ExpectDisabled { selector, .. }
             | Action::ExpectChecked { selector, .. } => selector.validate(),
+            Action::ExpectText { selector, equals, matches, .. } => {
+                selector.validate()?;
+                match (equals, matches) {
+                    (Some(_), None) => Ok(()),
+                    (None, Some(p)) => super::pattern::check_pattern("expect_text", p),
+                    _ => Err(TEXT_NEEDS_ONE.to_string()),
+                }
+            }
+            Action::ExpectCount { selector, equals, at_least, at_most, .. } => {
+                selector.validate()?;
+                table::row_count(*equals, *at_least, *at_most).map(|_| ()).map_err(|_| COUNT_NEEDS_ONE.to_string())
+            }
             Action::ExpectContainsText { selector, value, .. } => {
                 if value.trim().is_empty() {
                     return Err("expect_contains_text has an empty value - everything contains nothing".to_string());
                 }
                 selector.validate()
             }
-            Action::ExpectAttribute { selector, name, equals, absent, .. } => {
+            Action::ExpectAttribute { selector, name, equals, matches, absent, .. } => {
                 if name.trim().is_empty() {
                     return Err("expect_attribute has an empty name".to_string());
                 }
-                match (equals.is_some(), *absent) {
-                    (true, true) => return Err(ATTRIBUTE_EQUALS_OR_ABSENT.to_string()),
-                    (false, false) => return Err(ATTRIBUTE_NEEDS_ONE.to_string()),
+                match (equals.is_some(), matches.is_some(), *absent) {
+                    (true, false, true) => return Err(ATTRIBUTE_EQUALS_OR_ABSENT.to_string()),
+                    (false, false, false) => return Err(ATTRIBUTE_NEEDS_ONE.to_string()),
+                    (_, true, _) if equals.is_some() || *absent => return Err(ATTRIBUTE_ONE_OF.to_string()),
                     _ => {}
                 }
-                selector.validate()
+                selector.validate()?;
+                match matches {
+                    Some(p) => super::pattern::check_pattern("expect_attribute", p),
+                    None => Ok(()),
+                }
             }
             Action::ExpectStyle { selector, property, equals, contains, not_equals, .. } => {
                 if let Some(why) = super::style::property_problem(property) {
@@ -1175,7 +1213,7 @@ impl Action {
             Action::CheckText { value } if value.trim().is_empty() => {
                 Err("check_text has an empty value".to_string())
             }
-            Action::CheckUrl { contains } if contains.trim().is_empty() => {
+            Action::CheckUrl { contains, .. } if contains.trim().is_empty() => {
                 Err("check_url has an empty value".to_string())
             }
             Action::CheckText { .. } | Action::CheckUrl { .. } => Ok(()),
@@ -1524,8 +1562,13 @@ impl Action {
 pub const ATTRIBUTE_EQUALS_OR_ABSENT: &str =
     "expect_attribute takes \"equals\" or \"absent\": true, not both - a missing attribute has no value to compare";
 /// `expect_attribute` given neither.
-pub const ATTRIBUTE_NEEDS_ONE: &str =
-    "expect_attribute needs \"equals\" (the value it must have) or \"absent\": true (it must not be there)";
+pub const ATTRIBUTE_NEEDS_ONE: &str = "expect_attribute needs \"equals\" (the value it must have), \"matches\" (a pattern its value must match) or \"absent\": true (it must not be there)";
+/// `expect_attribute` given `matches` together with `equals` or `absent`.
+pub const ATTRIBUTE_ONE_OF: &str = "expect_attribute takes one of \"equals\", \"matches\" or \"absent\": true, not two";
+/// `expect_text` given both `equals` and `matches`, or neither.
+pub const TEXT_NEEDS_ONE: &str = "expect_text takes exactly one of \"equals\" (the whole text) or \"matches\" (a pattern)";
+/// `expect_count` given none, or more than one, of its bounds.
+pub const COUNT_NEEDS_ONE: &str = "expect_count takes one of equals, at_least or at_most";
 /// `expect_style` comparing with `currentcolor`.
 pub const STYLE_CURRENTCOLOR: &str = "expect_style cannot compare currentcolor: the computed value is always the actual colour - write that colour instead.";
 /// `expect_style` given none, or more than one, of its comparisons.
@@ -1788,6 +1831,57 @@ pub async fn settle<D: Driver>(d: &mut D, timing: &Timing) -> Duration {
     began.elapsed()
 }
 
+/// `check_url`: does the address hold `contains`? Looked at again until it
+/// does or time runs out, like every `expect_` check - a page still
+/// redirecting is not a failure yet. The deadline is cleared on every way
+/// out, each look releases what it held, a transient error counts as a
+/// look, and a call the browser did not answer keeps going until the
+/// deadline decides.
+pub async fn check_url<D: Driver>(d: &mut D, contains: &str, timeout_ms: u64, poll_ms: u64) -> ActionOutcome {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    d.set_deadline(Some(deadline));
+    let out = keep_checking_url(d, contains, timeout_ms, poll_ms, deadline).await;
+    d.set_deadline(None);
+    out
+}
+
+async fn keep_checking_url<D: Driver>(
+    d: &mut D,
+    contains: &str,
+    timeout_ms: u64,
+    poll_ms: u64,
+    deadline: Instant,
+) -> ActionOutcome {
+    // The address as last read; None until a look has read one. A page
+    // refusing the read mid-navigation is the page answering, so it counts
+    // as a look (`refused`), just not one that read an address.
+    let mut last: Option<String> = None;
+    let mut refused: Option<ActionOutcome> = None;
+    loop {
+        page::release(d).await;
+        match page::eval_value(d, "location.href").await {
+            Ok(v) => {
+                let href = v.as_str().unwrap_or("").to_string();
+                if href.contains(contains) {
+                    return ActionOutcome::passed(format!("{URL_IS}{href}"));
+                }
+                last = Some(href);
+            }
+            Err(e) if e.is_transient() => refused = Some(failed_by(e)),
+            Err(CdpError::Timeout { .. }) => {}
+            Err(e) => return failed_by(e),
+        }
+        if Instant::now() >= deadline {
+            return match (last, refused) {
+                (Some(href), _) => ActionOutcome::failed(format!("{URL_IS}{href}")),
+                (None, Some(why)) => why,
+                (None, None) => harness_timeout(timeout_ms, "the page address"),
+            };
+        }
+        d.idle(Duration::from_millis(poll_ms)).await;
+    }
+}
+
 async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Policy) -> ActionOutcome {
     match action {
         Action::Navigate { url } => navigate(d, url.trim(), timing, policy).await,
@@ -1833,38 +1927,55 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 Err(e) => failed_by(e),
             }
         }
-        Action::CheckUrl { contains } => match page::eval_value(d, "location.href").await {
-            Ok(v) => {
-                let href = v.as_str().unwrap_or("");
-                let detail = format!("{URL_IS}{href}");
-                if href.contains(contains.as_str()) {
-                    ActionOutcome::passed(detail)
-                } else {
-                    ActionOutcome::failed(detail)
-                }
-            }
-            Err(e) => failed_by(e),
-        },
+        Action::CheckUrl { contains, timeout_ms } => {
+            check_url(d, contains, wait(timeout_ms, timing), timing.poll_ms).await
+        }
         Action::ExpectVisible { selector, timeout_ms } => {
             expect::expect(d, selector, Check::Visible, wait(timeout_ms, timing), timing.poll_ms).await
         }
         Action::ExpectHidden { selector, timeout_ms } => {
             expect::expect(d, selector, Check::Hidden, wait(timeout_ms, timing), timing.poll_ms).await
         }
-        Action::ExpectText { selector, equals, timeout_ms } => {
-            expect::expect(d, selector, Check::Text(equals), wait(timeout_ms, timing), timing.poll_ms).await
+        Action::ExpectText { selector, equals, matches, timeout_ms } => {
+            // `validate` holds the two to exactly one.
+            let re;
+            let check = match (equals, matches) {
+                (Some(equals), _) => Check::Text(equals),
+                (_, Some(p)) => {
+                    re = match super::pattern::compiled(p) {
+                        Ok(re) => re,
+                        Err(why) => return ActionOutcome::failed(why),
+                    };
+                    Check::TextMatches { pattern: p, re: &re }
+                }
+                _ => return ActionOutcome::failed(TEXT_NEEDS_ONE),
+            };
+            expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
         }
         Action::ExpectContainsText { selector, value, timeout_ms } => {
             expect::expect(d, selector, Check::ContainsText(value), wait(timeout_ms, timing), timing.poll_ms).await
         }
-        Action::ExpectCount { selector, equals, timeout_ms } => {
-            expect::expect(d, selector, Check::Count(*equals), wait(timeout_ms, timing), timing.poll_ms).await
+        Action::ExpectCount { selector, equals, at_least, at_most, timeout_ms } => {
+            let check = match table::row_count(*equals, *at_least, *at_most) {
+                Ok(table::RowCount::Equals(n)) => Check::Count(n),
+                Ok(bound) => Check::CountBound(bound),
+                Err(_) => return ActionOutcome::failed(COUNT_NEEDS_ONE),
+            };
+            expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
         }
-        Action::ExpectAttribute { selector, name, equals, timeout_ms, .. } => {
-            // `validate` holds `equals` and `absent` to exactly one.
-            let check = match equals {
-                Some(equals) => Check::Attribute { name, equals },
-                None => Check::NoAttribute { name },
+        Action::ExpectAttribute { selector, name, equals, matches, timeout_ms, .. } => {
+            // `validate` holds `equals`, `matches` and `absent` to exactly one.
+            let re;
+            let check = match (equals, matches) {
+                (Some(equals), _) => Check::Attribute { name, equals },
+                (_, Some(p)) => {
+                    re = match super::pattern::compiled(p) {
+                        Ok(re) => re,
+                        Err(why) => return ActionOutcome::failed(why),
+                    };
+                    Check::AttributeMatches { name, pattern: p, re: &re }
+                }
+                _ => Check::NoAttribute { name },
             };
             expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
         }

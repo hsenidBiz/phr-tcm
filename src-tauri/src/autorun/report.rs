@@ -80,17 +80,29 @@ pub fn action_words(action: &Action) -> String {
         Action::Fill { selector, .. } => format!("fill in {}", selector.describe()),
         Action::WaitFor { selector, .. } => format!("wait for {}", selector.describe()),
         Action::CheckText { value } => format!("check the page says \"{value}\""),
-        Action::CheckUrl { contains } => format!("check the address contains \"{contains}\""),
+        Action::CheckUrl { contains, .. } => format!("check the address contains \"{contains}\""),
         Action::ExpectVisible { selector, .. } => format!("expect {} to be visible", selector.describe()),
         Action::ExpectHidden { selector, .. } => format!("expect {} to be hidden", selector.describe()),
+        Action::ExpectText { selector, matches: Some(p), .. } => {
+            format!("expect {} to match {}", selector.describe(), crate::browser::pattern::shown(p))
+        }
         Action::ExpectText { selector, equals, .. } => {
-            format!("expect {} to read \"{equals}\"", selector.describe())
+            format!("expect {} to read \"{}\"", selector.describe(), equals.as_deref().unwrap_or(""))
         }
         Action::ExpectContainsText { selector, value, .. } => {
             format!("expect {} to contain \"{value}\"", selector.describe())
         }
+        Action::ExpectCount { selector, at_least: Some(n), .. } => {
+            format!("expect at least {n} of {}", selector.describe())
+        }
+        Action::ExpectCount { selector, at_most: Some(n), .. } => {
+            format!("expect at most {n} of {}", selector.describe())
+        }
         Action::ExpectCount { selector, equals, .. } => {
-            format!("expect {equals} of {}", selector.describe())
+            format!("expect {} of {}", equals.unwrap_or(0), selector.describe())
+        }
+        Action::ExpectAttribute { selector, name, matches: Some(p), .. } => {
+            format!("expect {}'s {name} to match {}", selector.describe(), crate::browser::pattern::shown(p))
         }
         Action::ExpectAttribute { selector, name, equals: Some(equals), .. } => {
             format!("expect {}'s {name} to be \"{equals}\"", selector.describe())

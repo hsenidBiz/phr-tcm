@@ -300,7 +300,7 @@ fn text_url_download_and_session_actions() {
     .run()
     .unwrap();
     assert!(got.contains("await expect(cur.locator('body')).toContainText('it\\'s `x` ${y}', { ignoreCase: true, useInnerText: true });"), "{got}");
-    assert!(got.contains("await expect(cur).toHaveURL(new RegExp('\\\\/a\\\\.b\\\\?c=\\\\(1\\\\)'));"), "{got}");
+    assert!(got.contains("await expect(cur).toHaveURL(new RegExp('\\\\/a\\\\.b\\\\?c=\\\\(1\\\\)'), { timeout: 10000 });"), "{got}");
     assert!(got.contains("await cur.reload();"));
     assert!(got.contains("await cur.context().clearCookies();"));
     let arm = got.find("const dl1_0 = cur.waitForEvent('download', { timeout: 30000 });").unwrap();
@@ -785,4 +785,22 @@ fn a_clean_up_error_is_caught_and_noted_never_thrown() {
     let got = lf(&fx.run().unwrap());
     let want = "    } finally {\n      // Clean-up: removes what step 1 made\n      try {\n        await cur.locator('#delete').first().click();\n      } catch (e) {\n        test.info().annotations.push({ type: 'cleanup-failed', description: String(e) });\n      }\n    }\n";
     assert!(got.contains(want), "{got}");
+}
+
+#[test]
+fn pattern_and_bound_checks_translate() {
+    let got = one_step(json!([
+        { "kind": "expect_text", "selector": { "css": "#n" }, "matches": "^Showing \\d+$" },
+        { "kind": "expect_attribute", "selector": { "css": "#n" }, "name": "aria-label", "matches": "^View " },
+        { "kind": "expect_count", "selector": { "css": "#n" }, "at_least": 2 },
+        { "kind": "expect_count", "selector": "li", "at_most": 4, "timeout_ms": 300 }
+    ]))
+    .run()
+    .unwrap();
+    assert!(got.contains("await expect.poll(() => cur.locator('#n').filter({ visible: true }).first().evaluate(readText), { timeout: 10000 }).toMatch(new RegExp('^Showing \\\\d+$'));"), "{got}");
+    assert!(got.contains("await expect(cur.locator('#n').filter({ visible: true }).first()).toHaveAttribute('aria-label', new RegExp('^View '), { timeout: 10000 });"), "{got}");
+    assert!(got.contains("await expect.poll(() => cur.locator('#n').filter({ visible: true }).count(), { timeout: 10000 }).toBeGreaterThanOrEqual(2);"), "{got}");
+    assert!(got.contains("await expect.poll(() => cur.locator('li').count(), { timeout: 300 }).toBeLessThanOrEqual(4);"), "{got}");
+    let url = one_step(json!([{ "kind": "check_url", "contains": "/x", "timeout_ms": 5000 }])).run().unwrap();
+    assert!(url.contains("toHaveURL(new RegExp('\\\\/x'), { timeout: 5000 });"), "{url}");
 }

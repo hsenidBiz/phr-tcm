@@ -777,9 +777,13 @@ impl Em<'_> {
                 indent,
                 &format!("await expect(cur.locator('body')).toContainText({}, {{ ignoreCase: true, useInnerText: true }});", lit(value)),
             ),
-            Action::CheckUrl { contains } => self.line(
+            Action::CheckUrl { contains, timeout_ms } => self.line(
                 indent,
-                &format!("await expect(cur).toHaveURL(new RegExp({}));", lit(&escape_regex(contains))),
+                &format!(
+                    "await expect(cur).toHaveURL(new RegExp({}), {{ timeout: {} }});",
+                    lit(&escape_regex(contains)),
+                    expect_timeout(*timeout_ms)
+                ),
             ),
             Action::ExpectVisible { selector, timeout_ms } => {
                 self.line(indent, &format!("await expect({}).{};", one(selector), call("toBeVisible", &[], *timeout_ms)))
@@ -790,15 +794,22 @@ impl Em<'_> {
             // The app reads a field's value, a list's chosen label, else the
             // rendered text (READ_TEXT_JS), collapses whitespace on both sides
             // and compares case-sensitively: whole, or as a substring.
-            Action::ExpectText { selector, equals, timeout_ms } => self.line(
-                indent,
-                &format!(
-                    "await expect.poll(() => {}.evaluate(readText){}).toBe({});",
-                    one(selector),
-                    poll_opts(*timeout_ms),
-                    lit(&collapse(equals))
-                ),
-            ),
+            Action::ExpectText { selector, equals, matches, timeout_ms } => {
+                // `validate` holds the two to exactly one.
+                let want = match (equals, matches) {
+                    (Some(equals), _) => format!("toBe({})", lit(&collapse(equals))),
+                    (_, Some(p)) => format!("toMatch(new RegExp({}))", lit(p)),
+                    _ => return no("expect_text takes exactly one of equals or matches"),
+                };
+                self.line(
+                    indent,
+                    &format!(
+                        "await expect.poll(() => {}.evaluate(readText){}).{want};",
+                        one(selector),
+                        poll_opts(*timeout_ms)
+                    ),
+                )
+            }
             Action::ExpectContainsText { selector, value, timeout_ms } => self.line(
                 indent,
                 &format!(
@@ -808,12 +819,39 @@ impl Em<'_> {
                     lit(&collapse(value))
                 ),
             ),
-            Action::ExpectCount { selector, equals, timeout_ms } => self.line(
+            Action::ExpectCount { selector, equals, at_least, at_most, timeout_ms } => {
+                match table::row_count(*equals, *at_least, *at_most).map_err(Untranslatable)? {
+                    table::RowCount::Equals(n) => self.line(
+                        indent,
+                        &format!(
+                            "await expect({}).{};",
+                            locator("cur", selector),
+                            call("toHaveCount", &[n.to_string()], *timeout_ms)
+                        ),
+                    ),
+                    bound => {
+                        let (matcher, n) = match bound {
+                            table::RowCount::AtLeast(n) => ("toBeGreaterThanOrEqual", n),
+                            table::RowCount::AtMost(n) => ("toBeLessThanOrEqual", n),
+                            table::RowCount::Equals(n) => ("toBe", n),
+                        };
+                        self.line(
+                            indent,
+                            &format!(
+                                "await expect.poll(() => {}.count(){}).{matcher}({n});",
+                                locator("cur", selector),
+                                poll_opts(*timeout_ms)
+                            ),
+                        )
+                    }
+                }
+            }
+            Action::ExpectAttribute { selector, name, matches: Some(p), timeout_ms, .. } => self.line(
                 indent,
                 &format!(
                     "await expect({}).{};",
-                    locator("cur", selector),
-                    call("toHaveCount", &[equals.to_string()], *timeout_ms)
+                    one(selector),
+                    call("toHaveAttribute", &[lit(name), format!("new RegExp({})", lit(p))], *timeout_ms)
                 ),
             ),
             Action::ExpectAttribute { selector, name, equals: Some(equals), timeout_ms, .. } => self.line(

@@ -73,6 +73,7 @@ pub mod locator;
 pub mod input;
 pub mod expect;
 pub mod style;
+pub mod pattern;
 pub mod keys;
 pub mod drag;
 pub mod dialogs;

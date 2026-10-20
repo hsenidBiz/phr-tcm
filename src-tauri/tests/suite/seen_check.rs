@@ -2887,3 +2887,17 @@ fn a_clean_up_steps_locators_must_be_seen_like_any_steps() {
         Err(refusal(2, "button \"Remove\""))
     );
 }
+
+/// An `at_most: 0` count passes with nothing there, so a locator seen
+/// matching none vouches for it, as for `equals: 0`; a bound that needs
+/// something there (`at_least: 1`) is refused on a locator never seen.
+#[test]
+fn an_at_most_zero_count_takes_a_probe_of_none_like_equals_zero() {
+    let form = serde_json::json!({ "css": ".gone" });
+    let map = filed(form.clone(), 0);
+    let at_most = one_step("Cycles", serde_json::json!([{ "kind": "expect_count", "selector": form.clone(), "at_most": 0 }]));
+    assert_eq!(check_seen(&map, &none(), &at_most, &[], None), Ok(()));
+    let at_least = one_step("Cycles", serde_json::json!([{ "kind": "expect_count", "selector": form.clone(), "at_least": 1 }]));
+    let refused = check_seen(&map, &none(), &at_least, &[], None).unwrap_err();
+    assert!(refused.contains("never seen"), "{refused}");
+}

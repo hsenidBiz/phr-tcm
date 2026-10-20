@@ -401,7 +401,13 @@ pub fn takes_many(action: &Action) -> bool {
 /// locator a probe matched none of (`Sighting::matched` 0); every other
 /// use needs it seen present.
 pub fn takes_none(action: &Action) -> bool {
-    matches!(action, Action::ExpectHidden { .. } | Action::WhenVisible { .. } | Action::ExpectCount { equals: 0, .. })
+    matches!(
+        action,
+        Action::ExpectHidden { .. }
+            | Action::WhenVisible { .. }
+            | Action::ExpectCount { equals: Some(0), .. }
+            | Action::ExpectCount { at_most: Some(0), .. }
+    )
 }
 
 /// Does the seen check take this action's own locator seen matching any

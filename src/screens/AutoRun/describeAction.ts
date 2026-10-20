@@ -340,10 +340,12 @@ function tabAddress(contains: unknown): string {
 
 /** `check_url`'s part of an address: a path, a handler, or neither (a
  * query only), never a host or the rest of a query string. */
-function urlPart(contains: string): Sentence {
+function urlPart(contains: string, timeout: unknown): Sentence {
   const { path, handler } = splitAddress(contains);
   const shown = handler ? `${path}?handler=${handler}` : path;
-  return shown ? [words(`Check the address contains "${shown}"`)] : [words("Check the address has the expected query")];
+  return shown
+    ? [words(`Check the address contains "${shown}"${upTo(timeout)}`)]
+    : [words(`Check the address has the expected query${upTo(timeout)}`)];
 }
 
 /** A row's wanted cells: `Status "Active" and Name "Ann"`. */
@@ -390,23 +392,51 @@ function describeKnown(a: Action): Sentence {
     case "check_text":
       return [words(`Check the page shows "${withoutHosts(str(a.value))}"`)];
     case "check_url":
-      return urlPart(str(a.contains));
+      return urlPart(str(a.contains), a.timeout_ms);
     case "expect_visible":
       return [words("Check "), ...describeTarget(a.selector), words(` is showing${upTo(a.timeout_ms)}`)];
     case "expect_hidden":
       return [words("Check "), ...describeTarget(a.selector), words(` is not showing${upTo(a.timeout_ms)}`)];
-    case "expect_text":
-      return [words("Check "), ...describeTarget(a.selector), words(` reads "${withoutHosts(str(a.equals))}"${upTo(a.timeout_ms)}`)];
+    case "expect_text": {
+      const equals = optStr(a.equals);
+      const matches = optStr(a.matches);
+      if ((equals === undefined) === (matches === undefined)) throw new Unreadable();
+      const said = matches !== undefined ? ` matches /${matches}/` : ` reads "${withoutHosts(equals as string)}"`;
+      return [words("Check "), ...describeTarget(a.selector), words(`${said}${upTo(a.timeout_ms)}`)];
+    }
     case "expect_contains_text":
       return [words("Check "), ...describeTarget(a.selector), words(` contains "${str(a.value)}"${upTo(a.timeout_ms)}`)];
     case "expect_count": {
-      num(a.equals);
-      const times = a.equals === 0 ? " is nowhere on the page" : a.equals === 1 ? " shows once" : ` shows ${a.equals} times`;
-      return [words("Check "), ...describeTarget(a.selector), words(`${times}${upTo(a.timeout_ms)}`)];
+      const given = [
+        ["equals", optNum(a.equals)],
+        ["at_least", optNum(a.at_least)],
+        ["at_most", optNum(a.at_most)],
+      ].filter(([, n]) => n !== undefined) as [string, number][];
+      if (given.length !== 1) throw new Unreadable();
+      const [how, n] = given[0];
+      const said =
+        how === "equals"
+          ? n === 0
+            ? " is nowhere on the page"
+            : n === 1
+              ? " shows once"
+              : ` shows ${n} times`
+          : how === "at_least"
+            ? ` shows at least ${n} ${n === 1 ? "time" : "times"}`
+            : n === 0
+              ? " is nowhere on the page"
+              : ` shows at most ${n} ${n === 1 ? "time" : "times"}`;
+      return [words("Check "), ...describeTarget(a.selector), words(`${said}${upTo(a.timeout_ms)}`)];
     }
     case "expect_attribute":
       if (a.absent === true)
         return [words("Check "), ...describeTarget(a.selector), words(` has no ${str(a.name)}${upTo(a.timeout_ms)}`)];
+      if (optStr(a.matches) !== undefined)
+        return [
+          words("Check "),
+          ...describeTarget(a.selector),
+          words(` has ${str(a.name)} matching /${optStr(a.matches)}/${upTo(a.timeout_ms)}`),
+        ];
       return [
         words("Check "),
         ...describeTarget(a.selector),

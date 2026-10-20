@@ -31,7 +31,17 @@ pub enum Check<'a> {
     Text(&'a str),
     ContainsText(&'a str),
     Count(u32),
+    /// `expect_count` with `at_least` or `at_most` (never `Equals`, which
+    /// is `Count`). `AtMost` is passed by too FEW, so it settles in
+    /// `keep_looking`; `equals: 0` and `expect_hidden` keep passing on the
+    /// first look that holds.
+    CountBound(super::table::RowCount),
+    /// The one match's text (collapsed) matches `re`; `pattern` is how it
+    /// is written. Not anchored unless the pattern is (`pattern`).
+    TextMatches { pattern: &'a str, re: &'a regex::Regex },
     Attribute { name: &'a str, equals: &'a str },
+    /// The one match has attribute `name` and its value matches `re`.
+    AttributeMatches { name: &'a str, pattern: &'a str, re: &'a regex::Regex },
     /// The one match has no attribute `name`.
     NoAttribute { name: &'a str },
     /// The focus is on the one match, or inside it.
@@ -275,6 +285,38 @@ pub(crate) async fn look<D: Driver>(
                 Err(format!("expected {n}{COUNTED}{}", handles.len()))
             }
         }
+        Check::CountBound(want) => {
+            let n = handles.len() as u32;
+            match want {
+                super::table::RowCount::AtLeast(k) if n < *k => Err(format!("expected at least {k}{COUNTED}{n}")),
+                super::table::RowCount::AtMost(k) if n > *k => Err(format!("expected at most {k}{COUNTED}{n}")),
+                super::table::RowCount::Equals(k) if n != *k => Err(format!("expected {k}{COUNTED}{n}")),
+                _ => Ok(format!("counted {n}: {what}")),
+            }
+        }
+        Check::TextMatches { pattern, re } => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let got = page::call_value(d, h, READ_TEXT_JS, &[]).await?;
+                let got = collapse(got.as_str().unwrap_or(""));
+                if re.is_match(&got) {
+                    Ok(format!("{what} matches {}: {got:?}", super::pattern::shown(pattern)))
+                } else {
+                    Err(format!("{EXPECTED_TEXT}to match {} but saw {got:?}", super::pattern::shown(pattern)))
+                }
+            }
+        },
+        Check::AttributeMatches { name, pattern, re } => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let got = page::call_value(d, h, READ_ATTR_JS, &[json!(name)]).await?;
+                match got.as_str() {
+                    None => Err(format!("{HAS_NO}{name}{ATTRIBUTE_TAIL}")),
+                    Some(v) if re.is_match(v) => Ok(format!("{what} has {name}={v:?}, matching {}", super::pattern::shown(pattern))),
+                    Some(v) => Err(format!("expected {name}={} but saw {v:?}", super::pattern::shown(pattern))),
+                }
+            }
+        },
         Check::Text(want) => match only(&handles) {
             Err(why) => Err(why),
             Ok(h) => {
@@ -406,18 +448,38 @@ async fn keep_looking<D: Driver>(
     // stopped answering, and the two must not be reported the same way.
     let mut looked = false;
     let mut last = STILL_LOOKING.to_string();
+    // `at_most` passes on too few, so a page whose rows have not arrived
+    // would pass it at once: it passes only once the same pass has held for
+    // `table::SETTLE_MS`. The pass held so far, and since when.
+    let settling = matches!(check, Check::CountBound(super::table::RowCount::AtMost(_)));
+    let mut held: Option<(String, Instant)> = None;
     loop {
         page::release(d).await;
         match look(d, target, &check).await {
-            Ok(Ok(detail)) => return ActionOutcome::passed(detail),
+            Ok(Ok(detail)) => {
+                if !settling {
+                    return ActionOutcome::passed(detail);
+                }
+                looked = true;
+                let since = match &held {
+                    Some((before, t)) if *before == detail => *t,
+                    _ => Instant::now(),
+                };
+                if since.elapsed() >= Duration::from_millis(super::table::SETTLE_MS) {
+                    return ActionOutcome::passed(detail);
+                }
+                held = Some((detail, since));
+            }
             Ok(Err(why)) => {
                 looked = true;
+                held = None;
                 last = why;
             }
             // The page refusing mid-navigation is the page answering, just
             // between two documents - it counts as a completed look.
             Err(e) if e.is_transient() => {
                 looked = true;
+                held = None;
                 last = e.to_string();
             }
             // No new information about the page: the browser did not
@@ -427,12 +489,21 @@ async fn keep_looking<D: Driver>(
             Err(e) => return harness(e),
         }
         if Instant::now() >= deadline {
+            // Still held when time ran out: what it held is the answer.
+            if let Some((detail, _)) = held {
+                return ActionOutcome::passed(detail);
+            }
             return if looked {
                 ActionOutcome::failed(format!("waited {timeout_ms}ms: {} {last}", target.describe()))
             } else {
                 harness_timeout(timeout_ms, &target.describe())
             };
         }
-        d.idle(Duration::from_millis(poll_ms)).await;
+        let mut poll = Duration::from_millis(poll_ms);
+        if settling {
+            let left = deadline.saturating_duration_since(Instant::now());
+            poll = poll.max(Duration::from_millis(super::table::SETTLE_POLL_MS)).min(left);
+        }
+        d.idle(poll).await;
     }
 }

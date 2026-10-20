@@ -220,17 +220,17 @@ no script step for it, and do not renumber the steps that come after it.
 - `{ "kind": "wait_for", "selector": ..., "timeout_ms": 5000 }`
 - `{ "kind": "expect_visible", "selector": ... }`
 - `{ "kind": "expect_hidden", "selector": ... }` - gone counts as hidden
-- `{ "kind": "expect_text", "selector": ..., "equals": "..." }`
+- `{ "kind": "expect_text", "selector": ..., "equals": "..." }` - or `"matches": "^Showing 1-10 of \\d+$"` (a pattern) in place of `equals`
 - `{ "kind": "expect_contains_text", "selector": ..., "value": "..." }`
-- `{ "kind": "expect_count", "selector": ..., "equals": 3 }`
-- `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute
+- `{ "kind": "expect_count", "selector": ..., "equals": 3 }` - or `at_least` / `at_most` in its place
+- `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }` - with `"absent": true` in place of `equals`, the element has no such attribute; with `"matches": "^View "` (a pattern) in place of `equals`, the value must match it
 - `{ "kind": "expect_style", "selector": ..., "property": "color", "equals": "red" }` - the element's computed style (what the browser draws after every stylesheet), with exactly one of `equals`, `contains` or `not_equals`. A colour is compared as the rgb() the browser reports, however it is written (`red`, `#f00`, `rgb(255 0 0)`, `hsl(0, 100%, 50%)`); any other value ignores case and surrounding spaces (not inside quotes). Write the property as CSS does (`background-color`, never `backgroundColor`). A transition or animation still changing that property is waited out. `contains` reads a colour word as a colour (`"contains": "black"` matches `rgb(0, 0, 0) 0px 1px 2px`). A `not_equals` on a property that is always animating can pass by chance. `currentcolor` cannot be compared: write the colour itself
 - `{ "kind": "expect_enabled", "selector": ... }` - the element can be used
 - `{ "kind": "expect_checked", "selector": ..., "checked": true }` - the checkbox or radio is ticked (`"checked": false`: it is not), read from its live state, which follows clicks; any other element answers by its `aria-checked`, and a partly ticked box (`mixed`) is neither. `checked` is true when left out
 - `{ "kind": "expect_disabled", "selector": ... }` - the element is disabled: its `disabled` property is set, it or an element around it has `aria-disabled="true"`, or it is a form control (button, input, select, textarea) a disabled fieldset holds outside that fieldset's first legend; a link in a disabled fieldset is not disabled. A click waits out the same rule
 - `{ "kind": "sign_in", "account": "hr.supervisor" }` - change who is signed in, in the middle of a case
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page (same-origin frames included), right now? A hidden frame is not searched, and a frame holding a page from another site is not searched.
-- `{ "kind": "check_url", "contains": "..." }` - is this in the address, right now?
+- `{ "kind": "check_url", "contains": "..." }` - is this in the address? Looked for again until it is, like every expect_ check (timeout_ms optional)
 - `{ "kind": "upload", "selector": ..., "file": "appraisal-form.pdf" }` - put a file into the page
 - `{ "kind": "expect_response", "method": "POST", "url_contains": "/PerformanceCycle/Save", "status": 200, "json": { "success": true } }` - a request the page made during this step finished with that status (and, with `json`, those fields); `method`, `status` (default 200), `json` and `timeout_ms` are optional
 - `{ "kind": "api_request", "path": "/api/cycles/42", "query": { "include": "rules" }, "expect": { "status": 200, "json": { "name": "Q4 Cycle" } } }` - the page asks its own site a GET question and checks the answer; `path` is a path on the site, never an address, and `query`, `status` (default 200) and `json` are optional
@@ -304,7 +304,7 @@ assume what the case made was removed. Its failure, a failed
 never fails the case. Its locators must have been seen like any step's,
 and every other run rule (Must not save included) applies to it.
 
-Every `expect_` action looks again until it holds, for up to 10 seconds
+Every `expect_` action, and `check_url`, looks again until it holds, for up to 10 seconds
 (add `"timeout_ms"` to change that), and a failure says what it actually
 saw. Prefer them to `check_text`, which looks once and cannot tell you
 where on the page the words were. Text is compared with runs of

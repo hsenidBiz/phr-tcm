@@ -693,3 +693,21 @@ fn a_clean_up_is_its_own_block_and_its_failure_its_own_line() {
     assert!(html.contains("<p><strong>Clean-up:</strong> button &quot;Delete&quot; not found</p>"), "{html}");
     assert!(!html.contains("<h4>Step 2</h4>"), "{html}");
 }
+
+
+#[test]
+fn the_new_check_options_have_words() {
+    let say = |v: serde_json::Value| action_words(&serde_json::from_value(v).unwrap());
+    let sel = serde_json::json!({ "css": "#n" });
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_text", "selector": sel, "matches": "^Showing" })),
+        "expect #n to match /^Showing/"
+    );
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_attribute", "selector": sel, "name": "aria-label", "matches": "^View " })),
+        "expect #n's aria-label to match /^View /"
+    );
+    assert_eq!(say(serde_json::json!({ "kind": "expect_count", "selector": sel, "at_least": 2 })), "expect at least 2 of #n");
+    assert_eq!(say(serde_json::json!({ "kind": "expect_count", "selector": sel, "at_most": 5 })), "expect at most 5 of #n");
+    assert_eq!(say(serde_json::json!({ "kind": "expect_count", "selector": sel, "equals": 3 })), "expect 3 of #n");
+}

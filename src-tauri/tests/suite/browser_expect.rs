@@ -372,3 +372,89 @@ fn an_expectation_is_validated_like_any_other_action() {
     assert!(action(json!({ "kind": "expect_text", "selector": "#a", "equals": "" })).validate().is_ok());
     assert!(action(json!({ "kind": "expect_contains_text", "selector": "#a", "value": "" })).validate().is_err());
 }
+
+#[test]
+fn a_pattern_is_refused_when_it_cannot_be_carried_or_fits_any_text() {
+    let check = |p: &str| v2_lib::browser::pattern::check_pattern("expect_text", p);
+    let carried = |what: &str| {
+        format!("expect_text: \"matches\" uses {what}, which a Playwright export cannot carry - write the pattern without it")
+    };
+    assert_eq!(check("").unwrap_err(), "expect_text has an empty \"matches\" - it would match any text");
+    assert_eq!(check("   ").unwrap_err(), "expect_text has an empty \"matches\" - it would match any text");
+    assert_eq!(check(&"a".repeat(501)).unwrap_err(), "expect_text: \"matches\" is longer than 500 characters");
+    assert!(check(&"a".repeat(500)).is_ok());
+    assert_eq!(check("(?i)draft").unwrap_err(), carried("a (?...) flag or group other than (?:...)"));
+    assert_eq!(check("\\Adraft").unwrap_err(), carried("\\A, \\z or \\Z"));
+    assert_eq!(check("draft\\z").unwrap_err(), carried("\\A, \\z or \\Z"));
+    assert_eq!(check("\\p{L}+").unwrap_err(), carried("\\p{...} or \\P{...}"));
+    assert_eq!(check("[[:alpha:]]").unwrap_err(), carried("a [[:class:]]"));
+    assert!(check("a{").unwrap_err().starts_with("expect_text: \"matches\" is not a valid pattern: "));
+    let any = "expect_text: \"matches\" fits any text, even an empty one - write what the text must hold";
+    assert_eq!(check(".*").unwrap_err(), any);
+    for ok in ["^Draft \\(\\d+\\)$", "^$", "^\\(?\\d+\\)?$", "[(?]x", "(?:ab)+c", "\\\\Adraft"] {
+        assert_eq!(check(ok), Ok(()), "{ok}");
+    }
+}
+
+#[tokio::test]
+async fn text_matches_a_pattern_on_the_collapsed_text() {
+    let check = action(json!({ "kind": "expect_text", "selector": { "css": "#n" }, "matches": "^Showing 1-10 of \\d+$" }));
+    let mut d = FakePage { texts: vec!["Showing  1-10 of 57"], ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &check, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "#n matches /^Showing 1-10 of \\d+$/: \"Showing 1-10 of 57\"");
+
+    let mut d = FakePage { texts: vec!["Showing 1-10 of many"], ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &check, &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.ends_with("expected text to match /^Showing 1-10 of \\d+$/ but saw \"Showing 1-10 of many\""), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn a_pattern_is_not_anchored_unless_written() {
+    let pattern = |p: &str| action(json!({ "kind": "expect_text", "selector": { "css": "#n" }, "matches": p }));
+    let mut d = FakePage { texts: vec!["Draft (3)"], ..FakePage::default() }.driver();
+    assert!(execute_with(&mut d, &pattern("Draft"), &quick()).await.ok);
+    assert!(!execute_with(&mut d, &pattern("^raft"), &quick()).await.ok);
+}
+
+#[tokio::test]
+async fn attribute_matches_a_pattern_and_names_a_missing_attribute() {
+    let check = action(json!({ "kind": "expect_attribute", "selector": { "css": "#b" }, "name": "aria-label", "matches": "^View " }));
+    let mut d = FakePage { attribute: Some("View A"), ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &check, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "#b has aria-label=\"View A\", matching /^View /");
+    let mut d = FakePage { attribute: None, ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &check, &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("has no aria-label attribute"), "{}", out.detail);
+    let mut d = FakePage { attribute: Some("Edit x"), ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &check, &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("expected aria-label=/^View / but saw \"Edit x\""), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn count_bounds_pass_and_fail_with_the_count_seen() {
+    let bound = |k: &str, n: u32| action(json!({ "kind": "expect_count", "selector": { "css": "li" }, k: n }));
+    let mut d = FakePage { found: 3, ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &bound("at_least", 2), &quick()).await;
+    assert!(out.ok && out.detail.starts_with("counted 3: "), "{}", out.detail);
+    let out = execute_with(&mut d, &bound("at_least", 4), &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("expected at least 4, counted 3"), "{}", out.detail);
+    let out = execute_with(&mut d, &bound("at_most", 3), &quick()).await;
+    assert!(out.ok && out.detail.starts_with("counted 3: "), "{}", out.detail);
+    let out = execute_with(&mut d, &bound("at_most", 2), &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("expected at most 2, counted 3"), "{}", out.detail);
+}
+
+/// `at_most` passes on too few, so the first empty looks of a list still
+/// loading must not pass it: the count has to hold still first.
+#[tokio::test]
+async fn at_most_waits_for_the_count_to_hold_still() {
+    let mut d = FakePage { found: 3, appears_on_look: 3, ..FakePage::default() }.driver();
+    let check = action(json!({ "kind": "expect_count", "selector": { "css": "li" }, "at_most": 5, "timeout_ms": 3000 }));
+    let began = std::time::Instant::now();
+    let out = execute_with(&mut d, &check, &quick()).await;
+    assert!(out.ok && out.detail.starts_with("counted 3:"), "{}", out.detail);
+    assert!(began.elapsed() >= Duration::from_millis(750), "{:?}", began.elapsed());
+}
