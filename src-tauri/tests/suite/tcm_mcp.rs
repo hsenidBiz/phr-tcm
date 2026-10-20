@@ -94,9 +94,9 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the forty-seven dev-only
-    // tools (Auto Run's thirty-nine, then the API templates row's eight) are listed
-    // like any other switchable tool - between merge_case_files and
+    // debug assertions on), so with nothing disabled the thirty-four dev-only
+    // tools (Auto Run's twenty-seven, then the API templates row's seven) are
+    // listed like any other switchable tool - between merge_case_files and
     // db_lookup, where they sit in the source.
     assert_eq!(
         names,
@@ -116,13 +116,10 @@ fn tools_list_names_every_tool() {
             "probe_autorun_locator",
             "try_autorun_action",
             "replay_autorun_to_step",
-            "stop_autorun_replay",
             "start_autorun_discovery",
-            "discover_autorun_action",
             "discover_autorun_actions",
             "save_autorun_area",
             "end_autorun_discovery",
-            "release_autorun_browser",
             "reset_autorun_browser",
             "save_autorun_component",
             "get_autorun_failures",
@@ -133,20 +130,12 @@ fn tools_list_names_every_tool() {
             "propose_accounts",
             "get_accounts",
             "get_autorun_network_wait",
-            "list_autorun_requests",
             "search_autorun_requests",
             "get_autorun_request",
-            "get_autorun_response",
-            "get_autorun_response_body",
-            "set_autorun_capture",
-            "get_autorun_capture",
-            "export_autorun_requests",
-            "import_autorun_requests",
+            "autorun_capture",
+            "autorun_har",
             "set_autorun_headers",
-            "get_autorun_cookies",
-            "set_autorun_cookie",
-            "clear_autorun_cookies",
-            "inspect_autorun_element",
+            "autorun_cookies",
             "list_api_templates",
             "prove_api_template",
             "run_api_template",
@@ -744,7 +733,7 @@ fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordina
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1046,11 +1035,11 @@ fn db_query_describes_the_object_allowance_and_the_size_cap() {
     assert!(!text.contains('\u{2014}'), "no em dashes in text an assistant reads");
 }
 
-/// The network, cookie and element tools say when they answer 409 (a
-/// replay, a step or a discovery action using the browser), which headers
-/// are refused - the URL-rewrite ones with the method overrides - that a
-/// sign-out reaches a parent-domain cookie, and what `listeners.ancestors`
-/// holds.
+/// The network tools say when they answer 409 (a replay, a step or a
+/// discovery action using the browser), which headers are refused - the
+/// URL-rewrite ones with the method overrides - which cookies are refused,
+/// that a clear is a real sign-out reaching a parent-domain cookie, and the
+/// probe's `show` says what `listeners.ancestors` holds and what is hidden.
 #[test]
 fn the_network_tools_name_their_refusals_and_the_busy_answer() {
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "1.0.0", &stub(200, "")).unwrap();
@@ -1064,33 +1053,29 @@ fn the_network_tools_name_their_refusals_and_the_busy_answer() {
             .unwrap_or_else(|| panic!("no tool {name}"))
             .to_string()
     };
-    for name in [
-        "list_autorun_requests",
-        "search_autorun_requests",
-        "get_autorun_request",
-        "get_autorun_response",
-        "get_autorun_response_body",
-        "set_autorun_capture",
-        "get_autorun_capture",
-        "export_autorun_requests",
-        "get_autorun_cookies",
-    ] {
+    for name in ["search_autorun_requests", "get_autorun_request", "autorun_capture", "autorun_har", "autorun_cookies"] {
         let text = desc(name);
-        assert!(
-            text.contains("409") || text.contains("Same browser, `from` and paging rules as list_autorun_requests"),
-            "{name} does not say it answers 409 while the browser is busy: {text}"
-        );
+        assert!(text.contains("409"), "{name} does not say it answers 409 while the browser is busy: {text}");
     }
-    assert!(desc("list_autorun_requests").contains("409 while a replay, a step or a discovery action is using it"));
+    assert!(desc("search_autorun_requests").contains("409 while a replay, a step or a discovery action is using it"));
+    assert!(desc("search_autorun_requests").contains("redacted"));
+    assert!(desc("get_autorun_request").contains("never cookies or authorization"));
+    assert!(desc("autorun_har").contains("never anywhere else"));
     let headers = desc("set_autorun_headers");
     for name in ["X-HTTP-Method-Override", "X-HTTP-Method", "X-Method-Override", "X-Original-URL", "X-Rewrite-URL"] {
         assert!(headers.contains(name), "set_autorun_headers does not name {name}: {headers}");
     }
-    let clear = desc("clear_autorun_cookies");
-    assert!(!clear.contains("never the identity provider's"), "{clear}");
-    assert!(clear.contains("parent domains") && clear.contains("sibling host"), "{clear}");
-    assert!(desc("inspect_autorun_element").contains("`listeners.ancestors`"));
-    for name in ["set_autorun_headers", "clear_autorun_cookies", "inspect_autorun_element", "get_autorun_cookies"] {
+    assert!(headers.contains("Refused in the person's browser and while a replay runs"), "{headers}");
+    let cookies = desc("autorun_cookies");
+    assert!(!cookies.contains("never the identity provider's"), "{cookies}");
+    assert!(cookies.contains("parent domains") && cookies.contains("sibling host"), "{cookies}");
+    for said in [".ASPXAUTH", "__RequestVerificationToken*", "sign out for real", "with no default", "refused in the person's browser and while a replay runs"] {
+        assert!(cookies.contains(said), "autorun_cookies never says {said:?}: {cookies}");
+    }
+    let probe = desc("probe_autorun_locator");
+    assert!(probe.contains("`listeners.ancestors`"), "{probe}");
+    assert!(probe.contains("A password field's value, attributes named like a secret and tokens in text are hidden"), "{probe}");
+    for name in ["set_autorun_headers", "autorun_cookies", "probe_autorun_locator", "search_autorun_requests", "get_autorun_request", "autorun_capture", "autorun_har"] {
         let text = desc(name);
         assert!(!text.contains('\u{2014}') && !text.contains('\u{2013}'), "no em or en dashes: {name}");
     }
@@ -1465,7 +1450,7 @@ fn with_auto_run_off_and_api_templates_on_the_quirk_tool_stays() {
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies"]}"#.into(),
             ));
         }
         Ok((200, "ok".into()))
@@ -1494,7 +1479,7 @@ fn the_account_tools_are_listed_only_with_the_auto_run_row_where_auto_run_is_off
         if path == "/tools" {
             return Ok((
                 200,
-                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","stop_autorun_replay","start_autorun_discovery","discover_autorun_action","discover_autorun_actions","save_autorun_area","end_autorun_discovery","release_autorun_browser","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","list_autorun_requests","search_autorun_requests","get_autorun_request","get_autorun_response","get_autorun_response_body","set_autorun_capture","get_autorun_capture","export_autorun_requests","import_autorun_requests","set_autorun_headers","get_autorun_cookies","set_autorun_cookie","clear_autorun_cookies","inspect_autorun_element"]}"#.into(),
+                r#"{"disabled":["save_autorun_script","get_autorun_script","delete_autorun_script","get_autorun_network_wait","get_autorun_page","probe_autorun_locator","try_autorun_action","replay_autorun_to_step","start_autorun_discovery","discover_autorun_actions","save_autorun_area","end_autorun_discovery","reset_autorun_browser","save_autorun_component","get_autorun_failures","record_autorun_quirk","retire_autorun_quirk","record_validation_rule","mark_autorun_suspected_defect","set_autorun_order","propose_accounts","get_accounts","search_autorun_requests","get_autorun_request","autorun_capture","autorun_har","set_autorun_headers","autorun_cookies"]}"#.into(),
             ));
         }
         Ok((200, "{}".into()))
@@ -1632,14 +1617,16 @@ fn the_replay_tool_rides_with_the_auto_run_tools() {
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let tool = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == NAME).unwrap();
-    assert_eq!(tool["inputSchema"]["required"], serde_json::json!(["case_id", "step"]));
+    // Nothing is required: `stop: true` stops a replay with no case or step.
+    assert_eq!(tool["inputSchema"]["required"], serde_json::json!([]));
+    assert_eq!(tool["inputSchema"]["properties"]["stop"]["type"], "boolean");
     let d = tool["description"].as_str().unwrap();
     assert!(d.contains("Needs no browser open"), "{d}");
     assert!(d.contains("must not save replays at once too, its saves stopped throughout"), "{d}");
     assert!(!d.contains("Allow"), "{d}");
     assert!(d.contains("call again with the same case and step to keep waiting"), "{d}");
     assert!(d.contains("Do not release it between replays"), "{d}");
-    assert!(d.contains("release_autorun_browser is for a broken browser"), "{d}");
+    assert!(d.contains("its `release` is for a broken browser only"), "{d}");
     assert!(d.contains("goes straight to the area (\"Signed in already: went to <area>.\")"), "{d}");
     assert!(d.contains("start_autorun_discovery takes the browser over (its other tabs closed) and goes home"), "{d}");
     assert!(!d.contains("closes a browser your replay opened"), "{d}");
@@ -1661,23 +1648,23 @@ fn the_descriptions_keep_the_browser_between_replays() {
     let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("no tool {name}")).clone();
     let desc = |name: &str| tool(name)["description"].as_str().unwrap().to_string();
 
-    let release = desc("release_autorun_browser");
-    assert!(release.contains("Only when the browser is broken"), "{release}");
-    assert!(release.contains("frozen, on the wrong account, its session gone"), "{release}");
-    assert!(release.contains("\"the browser did not answer\""), "{release}");
-    assert!(release.contains("never between replays"), "{release}");
-    assert!(release.contains("reset_autorun_browser"), "{release}");
-    // Row 33: neither a release nor a reset stops a replay; the stop tool
-    // does, and both say so.
-    assert!(release.contains("It never stops a replay that is going: stop_autorun_replay does."), "{release}");
+    // Release is reset's `release`, kept for a broken browser: never between
+    // replays, and never a stop.
     let reset = desc("reset_autorun_browser");
-    assert!(reset.contains("Refused while a replay is running (stop_autorun_replay stops one)"), "{reset}");
-    let stop = tool("stop_autorun_replay");
-    assert_eq!(stop["inputSchema"]["properties"], serde_json::json!({}));
-    let stop = desc("stop_autorun_replay");
+    assert!(reset.contains("only when it is broken"), "{reset}");
+    assert!(reset.contains("frozen, on the wrong account, its session gone"), "{reset}");
+    assert!(reset.contains("\"the browser did not answer\""), "{reset}");
+    assert!(reset.contains("Never release between replays"), "{reset}");
+    assert!(reset.contains("never stops a replay that is going"), "{reset}");
+    assert!(reset.contains("Refused while a replay is running (replay_autorun_to_step with `stop: true` stops one)"), "{reset}");
+    let release = &tool("reset_autorun_browser")["inputSchema"]["properties"]["release"];
+    assert_eq!(release["type"], "boolean", "{release}");
+    assert!(release["description"].as_str().unwrap().contains("Never between replays"), "{release}");
+    // Stop is replay's `stop`, with the stop tool's own sentences.
+    let stop = desc("replay_autorun_to_step");
     for said in [
-        "Stop your replay that is still going",
-        "A failed action already ends a replay at once",
+        "`stop: true`, sent alone, stops your replay that is still going",
+        "a failed action already ends one",
         "before its next action",
         "stopped on request, after which action of which step, with no page",
         "With no replay going it answers 404",
@@ -1685,7 +1672,6 @@ fn the_descriptions_keep_the_browser_between_replays() {
     ] {
         assert!(stop.contains(said), "{said:?} missing from {stop}");
     }
-    assert!(!stop.contains('\u{2014}'), "{stop}");
 
     let start = desc("start_autorun_discovery");
     assert!(start.contains("takes over a browser your own replay left open"), "{start}");
@@ -1697,7 +1683,7 @@ fn the_descriptions_keep_the_browser_between_replays() {
     // end whose guard will not lift.
     let end = desc("end_autorun_discovery");
     assert!(!end.contains("Only the person's End discovery button closes it"), "{end}");
-    assert!(end.contains("the person's End discovery button, release_autorun_browser"), "{end}");
+    assert!(end.contains("the person's End discovery button, a release (reset_autorun_browser)"), "{end}");
     assert!(end.contains("an end whose save guard will not lift"), "{end}");
 
     // A takeover closes the other tabs and goes home, as the start says.
@@ -1713,7 +1699,7 @@ fn the_descriptions_keep_the_browser_between_replays() {
         "{batch}"
     );
 
-    for name in ["discover_autorun_action", "discover_autorun_actions", "start_autorun_discovery"] {
+    for name in ["discover_autorun_actions", "start_autorun_discovery"] {
         let props = &tool(name)["inputSchema"]["properties"];
         let case_id = props["case_id"]["description"].as_str().unwrap().to_string();
         let no_save = props["no_save"]["description"].as_str().unwrap().to_string();
@@ -1726,7 +1712,7 @@ fn the_descriptions_keep_the_browser_between_replays() {
             assert!(no_save.contains("for this call only"), "{name}: {no_save}");
         }
     }
-    for name in ["release_autorun_browser", "start_autorun_discovery", "end_autorun_discovery", "replay_autorun_to_step"] {
+    for name in ["reset_autorun_browser", "start_autorun_discovery", "end_autorun_discovery", "replay_autorun_to_step"] {
         assert!(!desc(name).contains('\u{2014}'), "{name} has an em dash");
     }
 }
@@ -1789,7 +1775,7 @@ fn the_order_tool_rides_with_the_auto_run_tools() {
 /// arguments whole to its own bridge route.
 #[test]
 fn the_discovery_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
-    let tools: [(&str, &str, serde_json::Value, serde_json::Value); 8] = [
+    let tools: [(&str, &str, serde_json::Value, serde_json::Value); 5] = [
         (
             "start_autorun_discovery",
             "/autorun-discover-start",
@@ -1797,16 +1783,10 @@ fn the_discovery_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
             serde_json::json!(["account"]),
         ),
         (
-            "discover_autorun_action",
-            "/autorun-discover-action",
-            serde_json::json!({ "action": { "kind": "click", "selector": { "role": "button", "name": "Add" } }, "area": "Leave Apply" }),
-            serde_json::json!(["action"]),
-        ),
-        (
             "discover_autorun_actions",
             "/autorun-discover-actions",
             serde_json::json!({ "actions": [{ "kind": "click", "selector": { "role": "button", "name": "Add" } }], "stop_on_failure": false, "area": "Leave Apply" }),
-            serde_json::json!(["actions"]),
+            serde_json::json!([]),
         ),
         (
             "save_autorun_area",
@@ -1815,15 +1795,163 @@ fn the_discovery_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
             serde_json::json!(["name", "module", "clicks"]),
         ),
         ("end_autorun_discovery", "/autorun-discover-end", serde_json::json!({}), serde_json::json!([])),
-        ("release_autorun_browser", "/autorun-release", serde_json::json!({}), serde_json::json!([])),
         ("reset_autorun_browser", "/autorun-reset", serde_json::json!({}), serde_json::json!([])),
-        ("stop_autorun_replay", "/autorun-replay-stop", serde_json::json!({}), serde_json::json!([])),
     ];
     rides_with_the_auto_run_tools(&tools);
 }
 
-/// The batch tool takes a list of actions and an optional boolean
-/// `stop_on_failure`, and says its limit, that it stops at a failure, and
+/// A tools/call of `name` with `args` through a recording bridge: the
+/// result, and every call that reached the app other than `/tools`.
+fn call_recorded(name: &str, args: serde_json::Value) -> (serde_json::Value, Vec<(String, String, String)>) {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| -> Result<(u16, String), String> {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "{}".into()))
+    };
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": { "name": name, "arguments": args },
+    });
+    let v: serde_json::Value = serde_json::from_str(&handle_message(&req.to_string(), "1.0.0", &call).unwrap()).unwrap();
+    let reached = calls.into_inner().into_iter().filter(|c| c.1 != "/tools").collect();
+    (v, reached)
+}
+
+/// The tool said `want` and nothing reached the app.
+fn refused_before_the_app(name: &str, args: serde_json::Value, want: &str) {
+    let (v, reached) = call_recorded(name, args.clone());
+    assert_eq!(v["result"]["isError"], true, "{name} {args}: {v}");
+    let text = v["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains(want), "{name} {args}: {text}");
+    assert!(reached.is_empty(), "{name} {args} reached the app: {reached:?}");
+}
+
+/// The one route `name` with `args` reached, and the body it sent.
+fn reached(name: &str, args: serde_json::Value) -> (String, String, serde_json::Value) {
+    let (v, reached) = call_recorded(name, args.clone());
+    assert_ne!(v["result"]["isError"], true, "{name} {args}: {v}");
+    assert_eq!(reached.len(), 1, "{name} {args}: {reached:?}");
+    let (m, p, b) = reached.into_iter().next().unwrap();
+    let body = if b.is_empty() { serde_json::Value::Null } else { serde_json::from_str(&b).unwrap() };
+    (m, p, body)
+}
+
+/// `discover_autorun_actions` takes one `action` (the one-action route,
+/// whose answer is the richer one) or `actions` (the batch route), the
+/// arguments whole either way; both, neither, or `stop_on_failure` beside
+/// one `action` are refused before anything reaches the app.
+#[test]
+fn discover_autorun_actions_takes_one_action_or_several() {
+    use v2_lib::mcp::{DISCOVER_ACTION_OR_ACTIONS, STOP_ON_FAILURE_GOES_WITH_ACTIONS};
+    let one = serde_json::json!({ "action": { "kind": "click", "selector": { "role": "button", "name": "Add" } }, "area": "Leave Apply", "case_id": 7, "no_save": true, "page": false });
+    assert_eq!(reached("discover_autorun_actions", one.clone()), ("POST".into(), "/autorun-discover-action".into(), one));
+    let several = serde_json::json!({ "actions": [{ "kind": "reload" }], "stop_on_failure": false });
+    assert_eq!(reached("discover_autorun_actions", several.clone()), ("POST".into(), "/autorun-discover-actions".into(), several));
+    let draft = serde_json::json!({ "action": { "kind": "use_component", "name": "Pick a date" }, "draft": { "name": "Pick a date" }, "actions": null });
+    assert_eq!(reached("discover_autorun_actions", draft.clone()).1, "/autorun-discover-action");
+
+    for args in [
+        serde_json::json!({ "action": { "kind": "reload" }, "actions": [{ "kind": "reload" }] }),
+        serde_json::json!({}),
+        serde_json::json!({ "area": "Leave Apply" }),
+    ] {
+        refused_before_the_app("discover_autorun_actions", args, DISCOVER_ACTION_OR_ACTIONS);
+    }
+    refused_before_the_app(
+        "discover_autorun_actions",
+        serde_json::json!({ "action": { "kind": "reload" }, "stop_on_failure": false }),
+        STOP_ON_FAILURE_GOES_WITH_ACTIONS,
+    );
+    let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
+    assert!(!names.iter().any(|n| n == "discover_autorun_action"), "the one-action tool is gone: {names:?}");
+}
+
+/// `replay_autorun_to_step` with `stop: true` alone stops the assistant's
+/// replay through the stop route (the old `stop_autorun_replay` is gone);
+/// `stop` beside anything else, or not a boolean, is refused before the
+/// app; `stop: false` is a plain replay without the flag.
+#[test]
+fn replay_autorun_to_step_stops_with_stop_and_nothing_else() {
+    use v2_lib::mcp::STOP_TAKES_NOTHING_ELSE;
+    assert_eq!(
+        reached("replay_autorun_to_step", serde_json::json!({ "stop": true })),
+        ("POST".into(), "/autorun-replay-stop".into(), serde_json::json!({}))
+    );
+    assert_eq!(
+        reached("replay_autorun_to_step", serde_json::json!({ "case_id": 7, "step": 3, "stop": false })),
+        ("POST".into(), "/autorun-replay".into(), serde_json::json!({ "case_id": 7, "step": 3 }))
+    );
+    refused_before_the_app("replay_autorun_to_step", serde_json::json!({ "stop": true, "case_id": 7, "step": 3 }), STOP_TAKES_NOTHING_ELSE);
+    refused_before_the_app("replay_autorun_to_step", serde_json::json!({ "stop": true, "page": false }), STOP_TAKES_NOTHING_ELSE);
+    refused_before_the_app("replay_autorun_to_step", serde_json::json!({ "stop": "yes" }), "`stop` is true or false");
+    let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
+    assert!(!names.iter().any(|n| n == "stop_autorun_replay"), "{names:?}");
+}
+
+/// `reset_autorun_browser` with `release: true` reaches the release route
+/// (the old `release_autorun_browser` is gone); a `release` that is not a
+/// boolean is refused before the app.
+#[test]
+fn reset_autorun_browser_releases_with_release() {
+    assert_eq!(
+        reached("reset_autorun_browser", serde_json::json!({ "release": true })),
+        ("POST".into(), "/autorun-release".into(), serde_json::json!({}))
+    );
+    for args in [serde_json::json!({}), serde_json::json!({ "release": false }), serde_json::json!({ "release": null })] {
+        assert_eq!(reached("reset_autorun_browser", args.clone()), ("POST".into(), "/autorun-reset".into(), serde_json::json!({})), "{args}");
+    }
+    refused_before_the_app("reset_autorun_browser", serde_json::json!({ "release": "now" }), "`release` is true or false");
+    let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
+    assert!(!names.iter().any(|n| n == "release_autorun_browser"), "{names:?}");
+}
+
+/// `probe_autorun_locator` with `show` looks deeper at one element through
+/// the inspect route (the old `inspect_autorun_element` is gone): the
+/// selector travels as the route's `locator`, `show: true` asks for every
+/// part, a list asks for those; `properties` without `show`, or a `show`
+/// that is neither, is refused before the app.
+#[test]
+fn probe_autorun_locator_shows_one_element_with_show() {
+    use v2_lib::mcp::{PROPERTIES_GO_WITH_SHOW, SHOW_IS_TRUE_OR_PARTS};
+    let chain = serde_json::json!([{ "role": "dialog", "name": "Add Rating" }, { "role": "button", "name": "Save" }]);
+    assert_eq!(
+        reached("probe_autorun_locator", serde_json::json!({ "selector": chain.clone() })),
+        ("POST".into(), "/autorun-probe".into(), serde_json::json!({ "selector": chain.clone() }))
+    );
+    assert_eq!(
+        reached(
+            "probe_autorun_locator",
+            serde_json::json!({ "selector": chain.clone(), "show": ["styles", "listeners"], "properties": ["color", "pointer-events"] })
+        ),
+        (
+            "POST".into(),
+            "/autorun-inspect".into(),
+            serde_json::json!({ "locator": chain.clone(), "show": ["styles", "listeners"], "properties": ["color", "pointer-events"] })
+        )
+    );
+    assert_eq!(
+        reached("probe_autorun_locator", serde_json::json!({ "selector": "#save", "show": true })),
+        ("POST".into(), "/autorun-inspect".into(), serde_json::json!({ "locator": "#save" }))
+    );
+    assert_eq!(reached("probe_autorun_locator", serde_json::json!({ "selector": "#save", "show": false })).1, "/autorun-probe");
+    refused_before_the_app("probe_autorun_locator", serde_json::json!({ "selector": "#save", "properties": ["color"] }), PROPERTIES_GO_WITH_SHOW);
+    refused_before_the_app("probe_autorun_locator", serde_json::json!({ "selector": "#save", "show": "styles" }), SHOW_IS_TRUE_OR_PARTS);
+
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let probe = v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "probe_autorun_locator").unwrap();
+    assert_eq!(probe["inputSchema"]["required"], serde_json::json!(["selector"]));
+    assert_eq!(probe["inputSchema"]["properties"]["show"]["items"]["enum"], serde_json::json!(v2_lib::mcp::SHOW_PARTS));
+    let d = probe["description"].as_str().unwrap();
+    for said in ["refused when the locator matches nothing or more than one", "Read only: nothing is clicked, typed, focused or scrolled", "recorded as seen"] {
+        assert!(d.contains(said), "{said:?} missing from {d}");
+    }
+    let names = listed_names(&stub(200, r#"{"disabled":[]}"#));
+    assert!(!names.iter().any(|n| n == "inspect_autorun_element"), "{names:?}");
+}
+
+/// The discovery tool takes one action or a list of them and an optional
+/// boolean `stop_on_failure`, and says its limit, that it stops at a failure, and
 /// that it answers the page once.
 #[test]
 fn discover_autorun_actions_documents_its_list_its_limit_and_stopping() {
@@ -1836,8 +1964,10 @@ fn discover_autorun_actions_documents_its_list_its_limit_and_stopping() {
     assert_eq!(props["stop_on_failure"]["type"], "boolean");
     assert_eq!(props["area"]["type"], "string");
     assert_eq!(props["draft"]["type"], "object");
+    assert_eq!(props["action"]["type"], "object");
+    assert_eq!(tool["inputSchema"]["required"], serde_json::json!([]));
     let d = tool["description"].as_str().unwrap();
-    for said in ["At most 20 actions", "stop_on_failure", "the page once", "if any would be refused, none runs", "A `draft` that no use_component action names is refused", "start_autorun_discovery"] {
+    for said in ["at most 20 actions", "never both", "stop_on_failure", "the page once", "if any would be refused, none runs", "A `draft` that no use_component action names is refused", "start_autorun_discovery"] {
         assert!(d.contains(said), "the description never says {said}: {d}");
     }
 }
@@ -1912,7 +2042,7 @@ fn rides_with_the_auto_run_tools(tools: &[(&str, &str, serde_json::Value, serde_
 
 /// The two component tools ride with the Auto Run tools as discovery's
 /// do, and reach the save and retire routes with their arguments whole.
-/// `discover_autorun_action` says it takes a `use_component` with a
+/// `discover_autorun_actions` says it takes a `use_component` with a
 /// `draft`, and the save says it needs that live try first.
 #[test]
 fn the_component_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
@@ -1943,13 +2073,13 @@ fn the_component_tools_ride_with_the_auto_run_tools_and_reach_their_routes() {
     let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &stub(200, "{}")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let tool = |name: &str| v["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap().clone();
-    let discover = tool("discover_autorun_action");
+    let discover = tool("discover_autorun_actions");
     let d = discover["description"].as_str().unwrap();
     assert!(d.contains("use_component") && d.contains("draft"), "{d}");
     assert!(discover["inputSchema"]["properties"]["draft"].is_object(), "{discover}");
     let save = tool("save_autorun_component");
     let d = save["description"].as_str().unwrap();
-    for said in ["discover_autorun_action", "draft", "why", "tried live again"] {
+    for said in ["discover_autorun_actions", "draft", "why", "tried live again"] {
         assert!(d.contains(said), "the save tool never says {said:?}: {d}");
     }
     assert!(d.contains("`remove: true`") && d.contains("uses it"), "{d}");
@@ -2236,107 +2366,98 @@ fn the_network_wait_tool_is_an_auto_run_read_of_its_own_route() {
     assert!(list.contains("nothing you call can"), "{list}");
 }
 
-/// The capture tools ride with the Auto Run tools: listed where Auto Run
-/// is offered, refused as "not available" where it is not, and each a call
-/// of its own bridge route with the arguments whole as the body (the filter
-/// read is the one GET, with none).
+/// `search_autorun_requests` with no filter is the plain list's route, with
+/// any filter the search's; the arguments travel whole either way.
 #[test]
-fn the_capture_tools_are_auto_run_tools_on_their_own_routes() {
-    let calls = std::cell::RefCell::new(vec![]);
-    let call = |method: &str, path: &str, body: &str| {
-        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
-        Ok((200, "{}".to_string()))
-    };
-    let (_, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
-    for (tool, args, method, path) in [
-        ("list_autorun_requests", serde_json::json!({ "offset": 25, "from": "edge" }), "POST", "/autorun-requests"),
-        ("search_autorun_requests", serde_json::json!({ "path": "/api", "status": "4xx" }), "POST", "/autorun-requests-search"),
-        ("get_autorun_request", serde_json::json!({ "id": 3 }), "POST", "/autorun-request"),
-        ("get_autorun_response", serde_json::json!({ "id": 3 }), "POST", "/autorun-response"),
-        ("get_autorun_response_body", serde_json::json!({ "id": 3, "offset": 20000 }), "POST", "/autorun-response-body"),
-        ("set_autorun_capture", serde_json::json!({ "include_types": ["XHR"] }), "POST", "/autorun-capture"),
-        ("get_autorun_capture", serde_json::json!({}), "GET", "/autorun-capture"),
-        ("export_autorun_requests", serde_json::json!({ "name": "flow" }), "POST", "/autorun-requests-export"),
-        ("import_autorun_requests", serde_json::json!({ "name": "flow" }), "POST", "/autorun-requests-import"),
+fn search_autorun_requests_lists_with_no_filter() {
+    for (args, path) in [
+        (serde_json::json!({ "offset": 25, "from": "edge" }), "/autorun-requests"),
+        (serde_json::json!({}), "/autorun-requests"),
+        (serde_json::json!({ "path": null, "limit": 5 }), "/autorun-requests"),
+        (serde_json::json!({ "path": "/api", "status": "4xx" }), "/autorun-requests-search"),
+        (serde_json::json!({ "response_contains": "Annual" }), "/autorun-requests-search"),
     ] {
-        assert!(module_of_tool(tool) == Some(Module::AutoRun), "{tool}");
-        assert!(listed_names(&stub(200, r#"{"disabled":[]}"#)).iter().any(|n| n == tool), "{tool} listed");
-        assert!(v2_lib::mcp::refusal_text(tool, &on).contains("not available"), "{tool}");
-        let req = serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": { "name": tool, "arguments": args },
-        });
-        let resp = handle_message(&req.to_string(), "1.0.0", &call).unwrap();
-        assert!(!resp.contains("Unknown tool"), "{resp}");
-        let (m, p, body) = calls.borrow().last().unwrap().clone();
-        assert_eq!((m.as_str(), p.as_str()), (method, path), "{tool}");
-        if method == "POST" {
-            assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap(), args, "{tool}: the arguments travel whole");
-        }
+        assert_eq!(reached("search_autorun_requests", args.clone()), ("POST".into(), path.into(), args.clone()), "{args}");
     }
 }
 
-/// The test header and cookie tools ride with the Auto Run tools: listed
-/// where Auto Run is offered, refused as "not available" where it is not,
-/// and each a POST of its own bridge route with the arguments whole.
+/// `get_autorun_request` reads the request (the default), the response or
+/// its body through each one's own route, `part` taken off; an unknown
+/// part, or an `offset` on the response, is refused before the app.
 #[test]
-fn the_header_and_cookie_tools_are_auto_run_tools_on_their_own_routes() {
-    let calls = std::cell::RefCell::new(vec![]);
-    let call = |method: &str, path: &str, body: &str| {
-        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
-        Ok((200, "{}".to_string()))
-    };
-    let (_, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
-    for (tool, args, path) in [
-        ("set_autorun_headers", serde_json::json!({ "headers": { "X-Feature": "beta", "Accept-Language": null } }), "/autorun-headers"),
-        ("get_autorun_cookies", serde_json::json!({ "url": "https://hr.example/" }), "/autorun-cookies"),
-        ("set_autorun_cookie", serde_json::json!({ "name": "culture", "value": "fr-FR", "same_site": "Lax" }), "/autorun-cookie"),
-        ("clear_autorun_cookies", serde_json::json!({}), "/autorun-cookies-clear"),
+fn get_autorun_request_reads_each_part_through_its_route() {
+    use v2_lib::mcp::{PART_REFUSED, RESPONSE_HAS_NO_OFFSET};
+    for (args, path, body) in [
+        (serde_json::json!({ "id": 3 }), "/autorun-request", serde_json::json!({ "id": 3 })),
+        (serde_json::json!({ "id": 3, "part": "request", "offset": 20000 }), "/autorun-request", serde_json::json!({ "id": 3, "offset": 20000 })),
+        (serde_json::json!({ "id": 3, "part": "response", "from": "flow" }), "/autorun-response", serde_json::json!({ "id": 3, "from": "flow" })),
+        (serde_json::json!({ "id": 3, "part": "body", "offset": 20000 }), "/autorun-response-body", serde_json::json!({ "id": 3, "offset": 20000 })),
     ] {
-        assert!(module_of_tool(tool) == Some(Module::AutoRun), "{tool}");
-        assert!(listed_names(&stub(200, r#"{"disabled":[]}"#)).iter().any(|n| n == tool), "{tool} listed");
-        assert!(v2_lib::mcp::refusal_text(tool, &on).contains("not available"), "{tool}");
-        let req = serde_json::json!({
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": { "name": tool, "arguments": args },
-        });
-        let resp = handle_message(&req.to_string(), "1.0.0", &call).unwrap();
-        assert!(!resp.contains("Unknown tool"), "{resp}");
-        let (m, p, body) = calls.borrow().last().unwrap().clone();
-        assert_eq!((m.as_str(), p.as_str()), ("POST", path), "{tool}");
-        assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap(), args, "{tool}: the arguments travel whole");
+        assert_eq!(reached("get_autorun_request", args.clone()), ("POST".into(), path.into(), body), "{args}");
+    }
+    refused_before_the_app("get_autorun_request", serde_json::json!({ "id": 3, "part": "headers" }), PART_REFUSED);
+    refused_before_the_app("get_autorun_request", serde_json::json!({ "id": 3, "part": 2 }), PART_REFUSED);
+    refused_before_the_app("get_autorun_request", serde_json::json!({ "id": 3, "part": "response", "offset": 10 }), RESPONSE_HAS_NO_OFFSET);
+}
+
+/// `autorun_capture` reads the filter with no filter field and sets it with
+/// any - an empty list included, which keeps every request again.
+#[test]
+fn autorun_capture_reads_or_sets_the_filter() {
+    assert_eq!(reached("autorun_capture", serde_json::json!({})), ("GET".into(), "/autorun-capture".into(), serde_json::Value::Null));
+    for args in [
+        serde_json::json!({ "include_types": ["XHR"] }),
+        serde_json::json!({ "include_types": [] }),
+        serde_json::json!({ "path_contains": "/api", "exclude_types": ["Document"] }),
+    ] {
+        assert_eq!(reached("autorun_capture", args.clone()), ("POST".into(), "/autorun-capture".into(), args.clone()), "{args}");
     }
 }
 
-/// The element inspect rides with the Auto Run tools: listed where Auto Run
-/// is offered, refused as "not available" where it is not, and a POST of
-/// its own bridge route with the arguments whole.
+/// `autorun_har` exports or imports, the file's name sent as the route's
+/// own `name`; both or neither is refused before the app.
 #[test]
-fn the_element_inspect_is_an_auto_run_tool_on_its_own_route() {
-    let calls = std::cell::RefCell::new(vec![]);
-    let call = |method: &str, path: &str, body: &str| {
-        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
-        Ok((200, "{}".to_string()))
-    };
-    let (_, on) = tool_policy_from(Ok((200, r#"{"disabled":[],"modules":["db_access","writing_style"]}"#.into())));
-    let tool = "inspect_autorun_element";
-    assert!(module_of_tool(tool) == Some(Module::AutoRun));
-    assert!(listed_names(&stub(200, r#"{"disabled":[]}"#)).iter().any(|n| n == tool));
-    assert!(v2_lib::mcp::refusal_text(tool, &on).contains("not available"));
-    let args = serde_json::json!({
-        "locator": [{ "role": "dialog", "name": "Add Rating" }, { "role": "button", "name": "Save" }],
-        "show": ["styles", "listeners"],
-        "properties": ["color", "pointer-events"],
-    });
-    let req = serde_json::json!({
-        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": { "name": tool, "arguments": args },
-    });
-    let resp = handle_message(&req.to_string(), "1.0.0", &call).unwrap();
-    assert!(!resp.contains("Unknown tool"), "{resp}");
-    let (m, p, body) = calls.borrow().last().unwrap().clone();
-    assert_eq!((m.as_str(), p.as_str()), ("POST", "/autorun-inspect"));
-    assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap(), args, "the arguments travel whole");
+fn autorun_har_exports_or_imports() {
+    use v2_lib::mcp::HAR_EXPORT_OR_IMPORT;
+    assert_eq!(
+        reached("autorun_har", serde_json::json!({ "export": "flow" })),
+        ("POST".into(), "/autorun-requests-export".into(), serde_json::json!({ "name": "flow" }))
+    );
+    assert_eq!(
+        reached("autorun_har", serde_json::json!({ "import": "flow", "export": null })),
+        ("POST".into(), "/autorun-requests-import".into(), serde_json::json!({ "name": "flow" }))
+    );
+    refused_before_the_app("autorun_har", serde_json::json!({ "export": "a", "import": "b" }), HAR_EXPORT_OR_IMPORT);
+    refused_before_the_app("autorun_har", serde_json::json!({}), HAR_EXPORT_OR_IMPORT);
+}
+
+/// `set_autorun_headers` forwards its arguments whole; `autorun_cookies`
+/// needs an `action` (there is no default: clear signs out), sends each
+/// action's own fields to its own route, and refuses a field another action
+/// takes - so a clear meant for one cookie never signs the site out.
+#[test]
+fn the_header_and_cookie_tools_reach_their_routes() {
+    use v2_lib::mcp::COOKIE_ACTION_REFUSED;
+    let headers = serde_json::json!({ "headers": { "X-Feature": "beta", "Accept-Language": null } });
+    assert_eq!(reached("set_autorun_headers", headers.clone()), ("POST".into(), "/autorun-headers".into(), headers));
+    for (args, path, body) in [
+        (serde_json::json!({ "action": "list", "url": "https://hr.example/" }), "/autorun-cookies", serde_json::json!({ "url": "https://hr.example/" })),
+        (serde_json::json!({ "action": "list" }), "/autorun-cookies", serde_json::json!({})),
+        (
+            serde_json::json!({ "action": "set", "name": "culture", "value": "fr-FR", "same_site": "Lax" }),
+            "/autorun-cookie",
+            serde_json::json!({ "name": "culture", "value": "fr-FR", "same_site": "Lax" }),
+        ),
+        (serde_json::json!({ "action": "clear" }), "/autorun-cookies-clear", serde_json::json!({})),
+    ] {
+        assert_eq!(reached("autorun_cookies", args.clone()), ("POST".into(), path.into(), body), "{args}");
+    }
+    for args in [serde_json::json!({}), serde_json::json!({ "action": "delete" }), serde_json::json!({ "action": true })] {
+        refused_before_the_app("autorun_cookies", args, COOKIE_ACTION_REFUSED);
+    }
+    refused_before_the_app("autorun_cookies", serde_json::json!({ "action": "clear", "name": "culture" }), "takes nothing else - not name");
+    refused_before_the_app("autorun_cookies", serde_json::json!({ "action": "list", "value": "x" }), "not value");
+    refused_before_the_app("autorun_cookies", serde_json::json!({ "action": "set", "name": "a", "value": "b", "url": "https://hr.example/" }), "not url");
 }
 
 /// The Crystal Reports tools forward to their bridge routes: the arguments
@@ -2486,7 +2607,7 @@ fn page_false_reaches_the_bridge_for_every_tool_that_answers_the_page() {
     let find = |name: &str| tools.iter().find(|t| t["name"] == name).cloned().unwrap_or_else(|| panic!("{name} is listed"));
     for (tool, path, args) in [
         ("start_autorun_discovery", "/autorun-discover-start", serde_json::json!({ "account": "admin", "page": false })),
-        ("discover_autorun_action", "/autorun-discover-action", serde_json::json!({ "action": { "kind": "reload" }, "page": false })),
+        ("discover_autorun_actions", "/autorun-discover-action", serde_json::json!({ "action": { "kind": "reload" }, "page": false })),
         ("discover_autorun_actions", "/autorun-discover-actions", serde_json::json!({ "actions": [{ "kind": "reload" }], "page": false })),
         ("replay_autorun_to_step", "/autorun-replay", serde_json::json!({ "case_id": 7, "step": 2, "page": false })),
     ] {

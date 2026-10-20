@@ -130,8 +130,8 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
 - Discover the live app; never read the application's code to write scripts.
   A save refuses any locator the app has not seen. During a discovery with
   an area, `get_autorun_page` records what it shows as seen under that area.
-- `discover_autorun_actions` carries out up to 20 actions in order and
-  answers the page once. If any would be refused, none runs. It stops at the
+- `discover_autorun_actions` with `actions` carries out up to 20 actions in
+  order and answers the page once. If any would be refused, none runs. It stops at the
   first action that fails unless `stop_on_failure` is false, and ending the
   discovery stops it before its next action.
 - Probe every final locator with `probe_autorun_locator`, exactly as it is
@@ -158,8 +158,8 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
   discovery first, keeping what it mapped. When the sign-in fails, the session
   expires or you reach a cap, stop and report to the person; never try again
   in a loop. Name the `case_id` on every discovery call for a `no_save` case.
-- `reset_autorun_browser` gives a clean page, sign-in kept. Use
-  `release_autorun_browser` only for a broken browser (frozen, wrong account,
+- `reset_autorun_browser` gives a clean page, sign-in kept. Use its
+  `release: true` only for a broken browser (frozen, wrong account,
   session gone), never between replays. Never ask the person to restart the app.
 - Test headers and cookies stay until removed or reset; do that before proving a fix.
 - If a case creates, deletes, publishes or submits shared data, or needs the
@@ -1288,7 +1288,7 @@ fragile - they break when the wording changes, which is exactly when a
 human would notice anyway.
 
 Every locator comes from the live page: what `get_autorun_page` printed,
-what `probe_autorun_locator` matched, or what `discover_autorun_action`
+what `probe_autorun_locator` matched, or what `discover_autorun_actions`
 acted on (see "Discovering the app").
 
 ## Seeing the page
@@ -1307,8 +1307,8 @@ browser (see "Discovering the app"):
   or several is refused with the count, naming up to 3 of several; a css
   string counts every visible match. `nth` beside `within` picks one of
   several, counting from 0 as a locator's `nth` does. The page a replay,
-  `start_autorun_discovery`, `discover_autorun_action` and
-  `discover_autorun_actions` answer stops at 120 lines too; send
+  `start_autorun_discovery` and `discover_autorun_actions` answer stops
+  at 120 lines too; send
   `page: false` to any of them to leave the page out of the answer.
 - Visible text that no line's name already says (a span, a div, a
   paragraph: "Self 20%", a status badge) prints as a `text "..."` line
@@ -1353,31 +1353,29 @@ signs in.
 ## Network, cookies and elements
 
 Look under the page, and test an edge case, in the Auto Run browser. The
-reads and `set_autorun_capture` work in the person's browser too; the
-headers and cookies tools that change something need one you opened (a
-discovery or your replay).
+reads and `autorun_capture` work in the person's browser too; the header and
+cookie changes need one you opened (a discovery or your replay).
 
-- `list_autorun_requests` and `search_autorun_requests` list the requests
-  the page made on the application's site, newest first and paged;
-  `get_autorun_request`, `get_autorun_response` and
-  `get_autorun_response_body` read one by its id. A body comes in pages
-  of 20 000 characters: pass `offset` for the next.
-- `set_autorun_capture` and `get_autorun_capture` set and show what the
-  capture keeps from now on. Each `set_autorun_capture` replaces the whole
-  filter, and what it leaves out is gone: it cannot be brought back.
-  `export_autorun_requests` and `import_autorun_requests` save it as a HAR
-  file in TCM's own captures folder and read it back as a set, each by a
-  `name`; read an imported set with `from`.
+- `search_autorun_requests` lists the requests the page made on the
+  application's site, newest first and paged; with filters, only those that
+  match. `get_autorun_request` reads one by its id: the request, or with
+  `part` its response or the response's body. A body comes in pages of
+  20 000 characters: pass `offset` for the next.
+- `autorun_capture` shows, or with filter fields sets, what the capture
+  keeps from now on. Each set replaces the whole filter, and what it leaves
+  out is gone: it cannot be brought back. `autorun_har` with `export` or
+  `import` saves it as a HAR file in TCM's own captures folder and reads it
+  back as a set, by name; read an imported set with `from`.
 - Build API templates from captured requests: read the real call with
-  `get_autorun_request` / `get_autorun_response_body` instead of guessing its
-  shape (see `get_guide`, topic `api_templates`).
+  `get_autorun_request` (the request, then `part: "body"`) instead of
+  guessing its shape (see `get_guide`, topic `api_templates`).
 - Passwords, tokens, session cookies and keys are hidden in everything these
   tools show, and headers are an allow-list: never cookies or authorization.
 - Nothing is captured until the app's site is confirmed by a sign-in: a
   replay or a discovery.
 - `set_autorun_headers` sends extra headers with every request;
-  `get_autorun_cookies` lists the app's cookies; `set_autorun_cookie` sets
-  one; `clear_autorun_cookies` signs out for real.
+  `autorun_cookies` with `action` "list" lists the app's cookies, "set" sets
+  one and "clear" signs out for real. It has no default action.
 - Test headers and cookies stay until you remove them, reset the browser
   (`reset_autorun_browser`) or release it, and every answer names them
   ("Changed for testing: ..."). Reset or remove them before proving a fix:
@@ -1385,15 +1383,14 @@ discovery or your replay).
 - The sign-in's cookies (HttpOnly, `.ASPXAUTH`, `.AspNetCore.*`, the session
   and anti-forgery cookies, names like a secret) and method-override headers
   are refused, and so are `X-Original-URL` and `X-Rewrite-URL`, which send a
-  request to another path. `get_autorun_cookies` reads the app's confirmed
-  site, or a `url` on it or a parent domain of it; a parent domain's `url`
-  lists only the cookies set for that domain or above it, not the app
-  host's own.
-- `inspect_autorun_element` shows one element's styles, listeners,
-  animations and structure, and whether a click at its centre reaches it. It
-  also shows the listeners above the element: a capture-phase listener above
-  it is the usual reason a click does nothing. A script checks a computed
-  style with `expect_style`.
+  request to another path. A cookie list reads the app's confirmed site, or
+  a `url` on it or a parent domain of it; a parent domain's `url` lists only
+  the cookies set for that domain or above it, not the app host's own.
+- `probe_autorun_locator` with `show` (no switch needed) shows one element's
+  styles, listeners, animations and structure, and whether a click at its
+  centre reaches it. It also shows the listeners above the element: a
+  capture-phase listener above it is the usual reason a click does nothing.
+  A script checks a computed style with `expect_style`.
 
 ## Discovering the app
 
@@ -1412,11 +1409,11 @@ You open and drive a browser of your own to find what a script needs:
   save the page tries is blocked, not only reported, until the discovery
   ends. An action whose save was blocked fails with the guard's sentence,
   and its answer names the request in `blocked_writes`. On each
-  `discover_autorun_action` and `discover_autorun_actions`, name the case
-  (`case_id`) again: a call that names a marked case is guarded for that call
-  only, and so is `no_save: true` on one action or batch.
-- `discover_autorun_action` carries out one action and answers what it
-  did: the page afterwards, an address change, a dialog or message that
+  `discover_autorun_actions` call, name the case (`case_id`) again: a call
+  that names a marked case is guarded for that call only, and so is
+  `no_save: true` on one action or batch.
+- `discover_autorun_actions` with one `action` carries it out and answers
+  what it did: the page afterwards, an address change, a dialog or message that
   appeared, and the requests that wrote data. Carry each of the case's
   steps out with it, the way a person would, and write the script from
   what happened. `get_autorun_page` and `probe_autorun_locator` work in
@@ -1428,8 +1425,8 @@ You open and drive a browser of your own to find what a script needs:
   `within` an element, records what it listed and drops nothing, and
   each line it listed counts the elements its locator matches on the
   whole page.
-- `discover_autorun_actions` carries out up to 20 actions in order, each
-  carried out as `discover_autorun_action` would, and what each one's page
+- `discover_autorun_actions` with `actions` carries out up to 20 actions in
+  order, each carried out as one `action` would be, and what each one's page
   showed is recorded as seen. Every action is checked first: if any would
   be refused, none runs and the answer names it, and a `draft` that no
   use_component action names is refused. It answers one line per action,
@@ -1465,8 +1462,8 @@ You open and drive a browser of your own to find what a script needs:
   keeping what it mapped. If the sign-in has gone it says so, and the next
   replay signs in again. It is refused while a replay is running, and for the
   person's own browser.
-- `release_autorun_browser` is only for a broken browser (frozen, wrong account,
-  session gone), never between replays: a browser that is signed in and
+- `reset_autorun_browser` with `release: true` is only for a broken browser
+  (frozen, wrong account, session gone), never between replays: a browser that is signed in and
   answering is kept, and your next replay or discovery uses it. It lets go of an
   Auto Run browser the app still holds after it closed, ends your own discovery
   the way `end_autorun_discovery` does, and closes a browser your replay left
@@ -1502,11 +1499,11 @@ Name the area you explore, so what you see is filed under it:
 
 - When the case's area is listed in "This project's areas", pass `area`
   with its name to `start_autorun_discovery`. Reach it by carrying out
-  its menu path, click by click, with `discover_autorun_action`.
+  its menu path, click by click, with `discover_autorun_actions`.
 - When it is not listed, find the screen through the menus and call
   `save_autorun_area` as soon as you are on it. That names the area, and
   what you see after it is filed under it.
-- When you move to another area, pass `area` on `discover_autorun_action`.
+- When you move to another area, pass `area` on `discover_autorun_actions`.
 
 What you see with no area named is filed under no area. Starting a
 discovery does not mark its area explored; what you see in the area
@@ -1565,7 +1562,7 @@ gave it, or the area you started discovery in. A script also gets credit
 for what was seen in the areas it goes to with `return_to_area`.
 
 Write the script the way you explored: carry each step's actions out
-live with `discover_autorun_action` as you write them, in order, and fix
+live with `discover_autorun_actions` as you write them, in order, and fix
 a step that does not do what the case says before you go on. Save with
 `save_autorun_script` only once every step has been carried out. After
 the save you may replay to the last step with `replay_autorun_to_step`
@@ -1624,7 +1621,7 @@ matching several elements (naming up to 3 it matched), never counted as one (pro
 with its `nth` when it has one), or used only in saved checks. A part
 of a seen name, where the full name is needed, is told to use the full
 name as seen. Find each on the page with
-`probe_autorun_locator` or `discover_autorun_action`, then save again.
+`probe_autorun_locator` or `discover_autorun_actions`, then save again.
 Never swap in a locator you did not see to get past the check.
 
 Save every script you write with `save_autorun_script`. Do not hand the
@@ -1707,9 +1704,9 @@ own, as a script save does (see "Saving it").
 
 Make it during discovery:
 
-1. Work the widget out with `discover_autorun_action` as usual.
+1. Work the widget out with `discover_autorun_actions` as usual.
 2. Try the whole component: a use_component action naming it, on
-   `discover_autorun_action`, with the component itself sent as its
+   `discover_autorun_actions`, with the component itself sent as its
    `draft`. The answer lists each of its actions with what it did.
 3. Save it with `save_autorun_component`, unchanged from the draft that
    worked. Anything else is refused: try it again first.
@@ -1939,12 +1936,12 @@ the answer says so; start a new one to explore again.
   goes straight to its area ("Signed in already: went to <area>."), and
   `start_autorun_discovery` takes it over (its other tabs closed, then home).
   Until you start a discovery, discovery actions and component saves are
-  refused; template runs as the case's account stay refused until
-  `release_autorun_browser` frees it, as a discovery keeps the sign-in. Do not
-  release the browser between replays:
-  `release_autorun_browser` is only for a broken one (frozen, wrong account,
-  session gone, "the browser did not answer"), and `reset_autorun_browser` gives
-  a clean page with the sign-in kept.
+  refused; template runs as the case's account stay refused until a release
+  (`reset_autorun_browser` with `release: true`) frees it, as a discovery
+  keeps the sign-in. Do not release the browser between replays: a release
+  is only for a broken one (frozen, wrong account, session gone, "the
+  browser did not answer"), and `reset_autorun_browser` gives a clean page
+  with the sign-in kept.
 - Replaying the same case to a later step carries on from where your last
   replay of it stood, when that browser is yours and nothing (a step, a
   try, a discovery action or another replay) has used it since; the
@@ -1957,7 +1954,8 @@ the answer says so; start a new one to explore again.
   at step N of M". Call `replay_autorun_to_step` again with the same case
   and step to keep waiting on that same replay; it is never started twice.
 - A failed action ends a replay at once. To end one you no longer need,
-  call `stop_autorun_replay`: it stops before the next action and says where.
+  call `replay_autorun_to_step` with only `stop: true`: it stops before the
+  next action and says where.
 
 Its `STOP:` lines are final, and mean the script must not be touched at
 all:

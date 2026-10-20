@@ -666,7 +666,7 @@ async fn the_answer_of_a_replay_that_ended_unwatched_goes_to_the_next_call() {
     assert_eq!(host.replays().len(), 1);
 }
 
-// ---- stopping a replay (stop_autorun_replay) ---------------------------------
+// ---- stopping a replay (replay_autorun_to_step with stop: true) -------------
 
 /// Row 33: the assistant's replay still going is stopped on request. The
 /// call sets the replay's own stop (the one the person's Stop sets), waits
@@ -693,10 +693,10 @@ async fn a_replay_going_is_stopped_on_request_and_says_where() {
     // refuse name the stop tool.
     let (status, said) = v2_lib::commands::autorun::reset_for_assistant("acme", "Web").await;
     assert_eq!(status, 409, "{said}");
-    assert!(said.ends_with("Or stop it first with stop_autorun_replay."), "{said}");
+    assert!(said.ends_with("Or stop it first with replay_autorun_to_step and stop: true."), "{said}");
     let (status, said) = v2_lib::commands::autorun::release_for_assistant().await;
     assert_eq!(status, 409, "{said}");
-    assert!(said.contains("or stop_autorun_replay to stop it"), "{said}");
+    assert!(said.contains("or replay_autorun_to_step with stop: true to stop it"), "{said}");
 
     let (status, text) = autorun_replay_stop_with(WAIT).await;
     assert_eq!(status, 200, "{text}");
@@ -820,7 +820,7 @@ async fn a_stop_between_the_replays_end_and_its_answer_stops_nothing() {
     assert_eq!(v["status"], "not_stopped", "{v}");
     assert_eq!(
         v["sentence"],
-        "not asked to stop: the replay of case 77 to step 3 was not running a step (it was starting, or had ended and its answer was being made ready) - call stop_autorun_replay again to stop it, or replay_autorun_to_step with case 77 and step 3 for its answer"
+        "not asked to stop: the replay of case 77 to step 3 was not running a step (it was starting, or had ended and its answer was being made ready) - send replay_autorun_to_step stop: true again to stop it, or replay_autorun_to_step with case 77 and step 3 for its answer"
     );
     assert!(!CANCEL.load(Ordering::SeqCst), "a stop was asked with nothing of the assistant's going");
 
@@ -866,7 +866,7 @@ async fn a_stop_not_heard_within_the_wait_says_it_was_asked_and_how_to_wait() {
     assert_eq!(v["status"], "stopping", "{v}");
     assert_eq!(
         v["sentence"],
-        "asked to stop: the replay of case 77 to step 3 ends once the action it is on finishes (now at step 2 of 2) - call stop_autorun_replay again to wait for it"
+        "asked to stop: the replay of case 77 to step 3 ends once the action it is on finishes (now at step 2 of 2) - send replay_autorun_to_step stop: true again to wait for it"
     );
     assert!(v2_lib::autorun::replay_to::CANCEL.load(std::sync::atomic::Ordering::SeqCst));
     host.release.as_ref().unwrap().notify_one();
@@ -916,12 +916,12 @@ async fn a_replay_that_leaves_the_browser_open_says_what_it_blocks() {
     let mine = LeftOpen { account: Some("admin".into()), by_assistant: true };
     assert_eq!(
         left_open_line(&mine),
-        "The Auto Run browser stays open on this step, signed in: discovery actions and component saves are refused until start_autorun_discovery takes it over, and template runs as admin until release_autorun_browser frees it (a discovery keeps its sign-in). Do not release it between replays; release_autorun_browser is for a broken browser."
+        "The Auto Run browser stays open on this step, signed in: discovery actions and component saves are refused until start_autorun_discovery takes it over, and template runs as admin until a release (reset_autorun_browser) frees it (a discovery keeps its sign-in). Do not release it between replays: reset_autorun_browser's release is for a broken browser."
     );
     let nobody = LeftOpen { account: None, by_assistant: true };
     assert_eq!(
         left_open_line(&nobody),
-        "The Auto Run browser stays open on this step: discovery actions and component saves are refused until start_autorun_discovery takes it over. Do not release it between replays; release_autorun_browser is for a broken browser."
+        "The Auto Run browser stays open on this step: discovery actions and component saves are refused until start_autorun_discovery takes it over. Do not release it between replays: reset_autorun_browser's release is for a broken browser."
     );
     let theirs = LeftOpen { account: None, by_assistant: false };
     assert_eq!(

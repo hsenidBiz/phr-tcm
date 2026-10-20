@@ -1,5 +1,5 @@
 //! The test headers and cookies the assistant sets in its own Auto Run
-//! browser (`set_autorun_headers`, `set_autorun_cookie`), so it can test an
+//! browser (`set_autorun_headers`, `autorun_cookies`' set), so it can test an
 //! edge case - a changed header, a feature cookie - and what TCM recorded of
 //! them (`Overrides`, kept on the session), so every try, discovery and
 //! replay answer names them while they are in place and a reset takes away
@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 
 /// What the assistant changed for testing in its Auto Run browser, as TCM
 /// set it. Gone with the browser; a reset takes it away
-/// (`undo`), and so does a clear of the cookies (`clear_autorun_cookies`).
+/// (`undo`), and so does a clear of the cookies (`autorun_cookies`' clear).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Overrides {
     /// Extra request headers sent on every tab, by name as the assistant
@@ -146,7 +146,7 @@ pub fn refused_header_sentence(name: &str) -> String {
         );
     }
     format!(
-        "{name} is never set as a test header: cookie, authorization, proxy-authorization and host belong to the sign-in and the browser. Set a cookie that is not the sign-in's with set_autorun_cookie."
+        "{name} is never set as a test header: cookie, authorization, proxy-authorization and host belong to the sign-in and the browser. Set a cookie that is not the sign-in's with autorun_cookies."
     )
 }
 
@@ -248,14 +248,14 @@ pub fn protected_cookie(name: &str, http_only: bool) -> bool {
 /// Said when a protected cookie is asked to be set.
 pub fn protected_cookie_sentence(name: &str) -> String {
     format!(
-        "{name} is the sign-in's cookie (HttpOnly, the sign-in or anti-forgery cookie, or named like a secret): it is never set or deleted for testing. clear_autorun_cookies signs out for real."
+        "{name} is the sign-in's cookie (HttpOnly, the sign-in or anti-forgery cookie, or named like a secret): it is never set or deleted for testing. autorun_cookies' clear signs out for real."
     )
 }
 
-/// What `set_autorun_cookie` takes.
+/// What `autorun_cookies`' set takes.
 pub const COOKIE_SHAPE: &str = "{ \"name\": \"<name>\", \"value\": \"<value>\", \"path\": \"/\" (optional), \"expires\": <seconds since 1970, optional>, \"secure\": true | false (optional), \"same_site\": \"Strict\" | \"Lax\" | \"None\" (optional) }";
 
-/// One cookie `set_autorun_cookie` asks for.
+/// One cookie `autorun_cookies`' set asks for.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CookieAsk {
     pub name: String,
@@ -315,7 +315,7 @@ pub fn cookie_ask(body: &Value) -> Result<CookieAsk, String> {
     Ok(CookieAsk { name: name.to_string(), value: value.to_string(), path, expires, secure, same_site })
 }
 
-/// One cookie as `get_autorun_cookies` shows it: name, domain, path,
+/// One cookie as `autorun_cookies`' list shows it: name, domain, path,
 /// expiry, flags and size, and the value - `(hidden)` for a protected
 /// cookie, and every other one redacted as free text (a token under an
 /// innocent name is hidden too). `set_for_testing` when the assistant set it.

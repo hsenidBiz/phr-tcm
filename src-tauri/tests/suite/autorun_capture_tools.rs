@@ -616,7 +616,7 @@ fn an_import_is_read_with_from_and_needs_no_browser() {
 fn an_unknown_set_is_named_as_not_loaded() {
     let (status, out) = call(&mut None, &mut BTreeMap::new(), None, CaptureTool::List, json!({ "from": "nope" }));
     assert_eq!(status, 400);
-    assert!(out.contains("import_autorun_requests"), "{out}");
+    assert!(out.contains("autorun_har's import"), "{out}");
     let (status, _) = call(&mut None, &mut BTreeMap::new(), None, CaptureTool::List, json!({ "from": "../x" }));
     assert_eq!(status, 400);
 }

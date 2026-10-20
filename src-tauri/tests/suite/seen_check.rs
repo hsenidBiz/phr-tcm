@@ -88,7 +88,7 @@ fn refusal(step: i32, describe: &str) -> String {
 fn refusal_as(step: i32, describe: &str, kind: &str) -> String {
     if describe.starts_with('/') {
         return format!(
-            "Step {step}: {describe} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+            "Step {step}: {describe} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again."
         );
     }
     let many = matches!(kind, "expect_hidden" | "expect_count" | "wait_for");
@@ -96,7 +96,7 @@ fn refusal_as(step: i32, describe: &str, kind: &str) -> String {
     // 0) passes with nothing there: a probe of none counts.
     let none = matches!(kind, "expect_hidden" | "expect_count");
     format!(
-        "Step {step}: {describe} was never seen on the live app; {} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
+        "Step {step}: {describe} was never seen on the live app; {} Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again.",
         v2_lib::autorun::seen_check::wants(kind, many, false, none)
     )
 }
@@ -697,7 +697,7 @@ fn refusal_hinted(step: i32, describe: &str, hint: &str) -> String {
 fn refusal_hinted_as(step: i32, describe: &str, hint: &str, kind: &str) -> String {
     let needs = v2_lib::autorun::seen_check::wants(kind, false, false, false);
     format!(
-        "Step {step}: {describe} was never seen on the live app; {hint} {}{} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
+        "Step {step}: {describe} was never seen on the live app; {hint} {}{} Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again.",
         needs[..1].to_uppercase(),
         &needs[1..]
     )
@@ -1136,11 +1136,11 @@ fn the_suggestion_comes_from_the_same_area() {
         serde_json::from_value(serde_json::json!([click(button("Publsh"))])).unwrap();
     assert_eq!(
         check_component_seen(&map, Some("Ratings"), &actions),
-        Err("Action 1: button \"Publsh\" was never seen on the live app; did you mean button \"Publish\"? This click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.".to_string())
+        Err("Action 1: button \"Publsh\" was never seen on the live app; did you mean button \"Publish\"? This click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again.".to_string())
     );
     assert_eq!(
         check_component_seen(&map, Some("Leave"), &actions),
-        Err("Action 1: button \"Publsh\" was never seen on the live app; this click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.".to_string())
+        Err("Action 1: button \"Publsh\" was never seen on the live app; this click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again.".to_string())
     );
 }
 
@@ -1280,7 +1280,7 @@ fn a_placeholder_the_run_would_not_fill_is_literal_text() {
 /// The refusal of a locator named only by a placeholder.
 fn only_placeholder(step: i32, describe: &str) -> String {
     format!(
-        "Step {step}: {describe} {} Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.",
+        "Step {step}: {describe} {} Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again.",
         v2_lib::autorun::seen_check::ONLY_A_PLACEHOLDER
     )
 }
@@ -1851,7 +1851,7 @@ fn a_refusal_that_is_not_an_unseen_locator_comes_back_alone() {
     .unwrap();
     assert_eq!(
         check_component_seen(&map, Some("Ratings"), &actions),
-        Err("Action 2: /elsewhere was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again.".to_string())
+        Err("Action 2: /elsewhere was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again.".to_string())
     );
 }
 
@@ -1867,8 +1867,8 @@ fn a_component_refusal_lists_every_unseen_locator_in_order() {
     ]))
     .unwrap();
     let line = |i: usize, what: &str, hint: Option<&str>| match hint {
-        Some(h) => format!("Action {i}: {what} was never seen on the live app; {h} This click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."),
-        None => format!("Action {i}: {what} was never seen on the live app; this click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."),
+        Some(h) => format!("Action {i}: {what} was never seen on the live app; {h} This click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again."),
+        None => format!("Action {i}: {what} was never seen on the live app; this click needs one seen matching exactly one element. Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again."),
     };
     let expected =
         [line(1, "button \"Publsh\"", Some("did you mean button \"Publish\"?")), line(3, "button \"Archive\"", None)];
@@ -1906,7 +1906,7 @@ fn sighted_matching(area: &str, link: LocatorStep, matched: u32) -> DiscoveryMap
 
 fn many_refusal(step: i32, describe: &str) -> String {
     format!(
-        "Step {step}: {describe} was seen on the live app only matching several elements, and this use needs one seen matching exactly one: narrow it with a name, \"exact\": true, a scope or \"nth\". Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+        "Step {step}: {describe} was seen on the live app only matching several elements, and this use needs one seen matching exactly one: narrow it with a name, \"exact\": true, a scope or \"nth\". Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again."
     )
 }
 
@@ -2167,7 +2167,7 @@ fn a_link_never_counted_says_probe_it_as_written() {
     let refused = check_seen(&chain, &none(), &clicks(serde_json::json!({ "css": ".card" })), &[], None).unwrap_err();
     assert_eq!(
         refused,
-        "Step 1: .card was seen on the live app, but never counted as matching exactly one element: probe it as written, then save again. Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+        "Step 1: .card was seen on the live app, but never counted as matching exactly one element: probe it as written, then save again. Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again."
     );
     let three = filed(serde_json::json!({ "css": ".card" }), 3);
     let refused = check_seen(&three, &none(), &clicks(serde_json::json!({ "css": ".card" })), &[], None).unwrap_err();
@@ -2639,7 +2639,7 @@ fn a_refusal_of_one_seen_only_matching_several_names_what_it_matched() {
     assert_eq!(
         refused,
         format!(
-            "Step 1: button \"Participants\" {SEEN_ONLY_MANY} It matched button \"Participants\" and button \"Toggle Participants section\". Find it on the page first with probe_autorun_locator or discover_autorun_action, then save again."
+            "Step 1: button \"Participants\" {SEEN_ONLY_MANY} It matched button \"Participants\" and button \"Toggle Participants section\". Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again."
         )
     );
     let refused =

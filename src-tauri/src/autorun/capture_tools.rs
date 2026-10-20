@@ -112,9 +112,9 @@ impl<'a> Set<'a> {
             return (404, NOTHING_CAPTURED_YET.to_string());
         }
         let said = if self.name == "live" {
-            format!("No request {id} in the capture: it may have been dropped (the capture keeps the newest {MAX_CAPTURED}). list_autorun_requests shows the ids kept.")
+            format!("No request {id} in the capture: it may have been dropped (the capture keeps the newest {MAX_CAPTURED}). search_autorun_requests shows the ids kept.")
         } else {
-            format!("No request {id} in the imported set \"{}\". list_autorun_requests with from: \"{}\" shows its ids.", self.name, self.name)
+            format!("No request {id} in the imported set \"{}\". search_autorun_requests with from: \"{}\" shows its ids.", self.name, self.name)
         };
         (404, said)
     }
@@ -175,7 +175,7 @@ pub fn imported_set<'a>(imported: &'a ImportedSets, name: &str) -> Result<Set<'a
             } else {
                 format!("loaded: {}", imported.keys().cloned().collect::<Vec<_>>().join(", "))
             };
-            Err((400, format!("No imported set named \"{name}\" ({loaded}): load it with import_autorun_requests first.")))
+            Err((400, format!("No imported set named \"{name}\" ({loaded}): load it with autorun_har's import first.")))
         }
     }
 }
@@ -276,7 +276,7 @@ fn paged(set: &Set, matched: &[&Captured], offset: usize, limit: usize) -> Value
     out
 }
 
-/// `list_autorun_requests`: newest first, paged.
+/// `search_autorun_requests` with no filter: newest first, paged.
 pub fn list(set: &Set, args: &Value) -> (u16, String) {
     let (offset, limit) = match paging(args) {
         Ok(p) => p,
@@ -490,7 +490,7 @@ fn body_page(redacted: &str, offset: usize) -> Result<Value, (u16, String)> {
 }
 
 fn id_of(args: &Value) -> Result<u64, (u16, String)> {
-    number(args, "id")?.ok_or_else(|| (400, "id is needed: the request's id, as list_autorun_requests shows it".to_string()))
+    number(args, "id")?.ok_or_else(|| (400, "id is needed: the request's id, as search_autorun_requests shows it".to_string()))
 }
 
 /// `get_autorun_request`: one request - its allow-listed headers and its
@@ -529,9 +529,9 @@ pub fn request(set: &Set, args: &Value) -> (u16, String) {
     (200, out.to_string())
 }
 
-/// `get_autorun_response`: one response - status, allow-listed headers,
+/// `get_autorun_request`'s response part: one response - status, allow-listed headers,
 /// mime, size, timing, its first redirect and whether its body is there
-/// (`get_autorun_response_body` reads it).
+/// (the body part reads it).
 pub fn response(set: &Set, args: &Value) -> (u16, String) {
     let id = match id_of(args) {
         Ok(id) => id,
@@ -563,7 +563,7 @@ pub fn response(set: &Set, args: &Value) -> (u16, String) {
     (200, out.to_string())
 }
 
-/// `get_autorun_response_body`: the response body's redacted text, a page
+/// `get_autorun_request`'s body part: the response body's redacted text, a page
 /// of `BODY_PAGE_CHARS` characters from `offset`.
 pub fn response_body(set: &Set, args: &Value) -> (u16, String) {
     let id = match id_of(args) {
@@ -618,7 +618,7 @@ fn types_of(args: &Value, key: &str) -> Result<Vec<String>, (u16, String)> {
     Ok(out)
 }
 
-/// What the filter is and what is kept, for `get_autorun_capture` and the
+/// What the filter is and what is kept, for `autorun_capture`'s read and the
 /// answer of a set.
 pub fn filter_answer(cap: &NetCapture, imported: &ImportedSets) -> Value {
     let f = cap.filter();
@@ -638,7 +638,7 @@ pub fn filter_answer(cap: &NetCapture, imported: &ImportedSets) -> Value {
     out
 }
 
-/// `set_autorun_capture`: the filter from now on, whole - what is left out
+/// `autorun_capture`'s set: the filter from now on, whole - what is left out
 /// is left as no filter.
 pub fn set_filter(cap: &mut NetCapture, imported: &ImportedSets, args: &Value) -> (u16, String) {
     let include_types = match types_of(args, "include_types") {
@@ -662,7 +662,7 @@ pub fn set_filter(cap: &mut NetCapture, imported: &ImportedSets, args: &Value) -
     (200, out.to_string())
 }
 
-/// `export_autorun_requests`: the live capture, oldest first, as HAR 1.2
+/// `autorun_har`'s export: the live capture, oldest first, as HAR 1.2
 /// redacted exactly as the reads are (`har::to_har`), written atomically to
 /// `<root>/captures/<name>.har`. Answers the file's name and how many
 /// requests it holds.
@@ -731,12 +731,12 @@ pub fn write_export(root: &Path, taken: TakenExport) -> (u16, String) {
         "folder": CAPTURES_DIR,
         "requests": oldest_first.len(),
         "replaced": replaced,
-        "said": format!("Saved {} requests, redacted, to {stem}.har in TCM's captures folder. import_autorun_requests with name \"{stem}\" reads it back as its own set.", oldest_first.len()),
+        "said": format!("Saved {} requests, redacted, to {stem}.har in TCM's captures folder. autorun_har with import \"{stem}\" reads it back as its own set.", oldest_first.len()),
     });
     (200, out.to_string())
 }
 
-/// `import_autorun_requests`: `read_import` then `store_import`.
+/// `autorun_har`'s import: `read_import` then `store_import`.
 pub fn import(root: &Path, imported: &mut ImportedSets, args: &Value) -> (u16, String) {
     match read_import(root, args) {
         Ok((stem, entries)) => store_import(imported, stem, entries),
@@ -761,7 +761,7 @@ pub fn read_import(root: &Path, args: &Value) -> Result<(String, Vec<Captured>),
         _ => {
             return Err((
                 404,
-                format!("No {stem}.har in TCM's captures folder: export one with export_autorun_requests, or have the person put the HAR file there."),
+                format!("No {stem}.har in TCM's captures folder: export one with autorun_har, or have the person put the HAR file there."),
             ))
         }
     };
@@ -792,7 +792,7 @@ pub fn store_import(imported: &mut ImportedSets, stem: String, entries: Vec<Capt
         "set": stem,
         "requests": n,
         "replaced": replaced,
-        "said": format!("Loaded {n} requests as the set \"{stem}\": read it with from: \"{stem}\" on list_autorun_requests, search_autorun_requests and the get tools. It is never replayed into the browser."),
+        "said": format!("Loaded {n} requests as the set \"{stem}\": read it with from: \"{stem}\" on search_autorun_requests and get_autorun_request. It is never replayed into the browser."),
     });
     (200, out.to_string())
 }

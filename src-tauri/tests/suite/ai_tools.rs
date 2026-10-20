@@ -566,13 +566,10 @@ fn each_tool_belongs_to_its_module() {
             "probe_autorun_locator",
             "try_autorun_action",
             "replay_autorun_to_step",
-            "stop_autorun_replay",
             "start_autorun_discovery",
-            "discover_autorun_action",
             "discover_autorun_actions",
             "save_autorun_area",
             "end_autorun_discovery",
-            "release_autorun_browser",
             "reset_autorun_browser",
             "save_autorun_component",
             "get_autorun_failures",
@@ -583,20 +580,12 @@ fn each_tool_belongs_to_its_module() {
             "propose_accounts",
             "get_accounts",
             "get_autorun_network_wait",
-            "list_autorun_requests",
             "search_autorun_requests",
             "get_autorun_request",
-            "get_autorun_response",
-            "get_autorun_response_body",
-            "set_autorun_capture",
-            "get_autorun_capture",
-            "export_autorun_requests",
-            "import_autorun_requests",
+            "autorun_capture",
+            "autorun_har",
             "set_autorun_headers",
-            "get_autorun_cookies",
-            "set_autorun_cookie",
-            "clear_autorun_cookies",
-            "inspect_autorun_element"
+            "autorun_cookies"
         ]
     );
     assert_eq!(
@@ -1719,7 +1708,7 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
         "get_test_cases",
         "start_autorun_discovery",
         "save_autorun_area",
-        "discover_autorun_action",
+        "discover_autorun_actions",
         "save_autorun_script",
         // Optional, after the save: never part of writing the script.
         "replay_autorun_to_step",
@@ -1746,7 +1735,7 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
     );
     let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
     for said in [
-        "carrying each step's actions out live with `discover_autorun_action` as you write them",
+        "carrying each step's actions out live with `discover_autorun_actions` as you write them",
         "Only once every step has been carried out, save it",
         "Any fix after the save is a repair, declared in `edits`.",
         "ask the person to record the area in Auto Run",
@@ -1754,7 +1743,7 @@ fn the_discover_command_writes_a_script_from_the_live_app() {
         "delete only records carrying that prefix",
         "never read the application's code to write scripts",
         "Choosing a model for the work",
-        "`discover_autorun_actions` carries out up to 20 in one call",
+        "send them as `actions`: up to 20 in one call",
     ] {
         assert!(flat.contains(said), "/tcm:discover never says {said:?}: {flat}");
     }
@@ -1782,7 +1771,7 @@ fn the_map_menus_command_walks_the_menus_and_never_submits() {
     assert!(body.contains("$ARGUMENTS"), "{body}");
     let mcp = include_str!("../../src/mcp.rs");
     let is_tool = |name: &str| mcp.contains(&format!("\"name\": \"{name}\""));
-    let order = ["start_autorun_discovery", "discover_autorun_action", "save_autorun_area", "end_autorun_discovery"];
+    let order = ["start_autorun_discovery", "discover_autorun_actions", "save_autorun_area", "end_autorun_discovery"];
     let mut from = 0;
     for tool in order {
         let at = body[from..]
@@ -1839,7 +1828,7 @@ fn heal_explores_a_stale_area_first_and_setup_names_discover() {
 /// Final review, finding 1: a discovery that names no area files
 /// everything in the bucket for no area. `/tcm:discover` and `/tcm:heal`
 /// both say to pass `area` to `start_autorun_discovery`, how to reach a
-/// listed area (click its menu path with `discover_autorun_action`), and to
+/// listed area (click its menu path with `discover_autorun_actions`), and to
 /// pass `area` when moving to another one; discover also says to save an
 /// unlisted screen with `save_autorun_area` as soon as it is found.
 #[test]
@@ -1852,7 +1841,7 @@ fn discover_and_heal_say_to_pass_the_area_to_discovery() {
             assert!(flat.contains(said), "/tcm:{stem} never says {said:?}: {flat}");
         }
         assert!(
-            flat.contains("`area` on `discover_autorun_action`"),
+            flat.contains("`area` on `discover_autorun_actions`"),
             "/tcm:{stem} never says to pass `area` when moving: {flat}"
         );
     }

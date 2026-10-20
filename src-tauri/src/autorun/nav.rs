@@ -1095,7 +1095,7 @@ fn areas_section(nav: &NavFile) -> String {
          Before step 1 a run signs in and goes to an area by the menu path recorded for it in the app. \
          Each line is one area: its name, the test case Module it belongs to, the address path it lands on, \
          and its menu path: the clicks from the home page, in order. In a discovery, reach a listed area by \
-         carrying out those clicks with `discover_autorun_action`.\n\n",
+         carrying out those clicks with `discover_autorun_actions`.\n\n",
     );
     for m in &nav.modules {
         let menu = menu_path(&m.clicks);

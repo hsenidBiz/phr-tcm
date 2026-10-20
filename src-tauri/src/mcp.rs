@@ -378,12 +378,22 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "probe_autorun_locator",
-            "description": "Ask the open browser what a locator matches RIGHT NOW: how many elements, and for each one its tag, its text, whether it is visible and where it sits, and the role and name the page read gives it when it has one (an icon button's text is empty, its name is its label). Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. What it matched is recorded as seen, with how many elements it matched: an action needs a locator seen matching exactly one, while a check that can pass with several matches (expect_hidden, expect_count, wait_for) may use one seen matching several. A chain can pass through a same-origin iframe: name the iframe as one step and the element inside as the next. Needs a supervised or discovery browser to be open.",
+            "description": "Ask the open browser what a locator matches RIGHT NOW: how many elements, and for each one its tag, its text, whether it is visible and where it sits, and the role and name the page read gives it when it has one (an icon button's text is empty, its name is its label). Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. What it matched is recorded as seen, with how many elements it matched: an action needs a locator seen matching exactly one, while a check that can pass with several matches (expect_hidden, expect_count, wait_for) may use one seen matching several. A chain can pass through a same-origin iframe: name the iframe as one step and the element inside as the next. Needs a supervised or discovery browser to be open. With `show` it looks deeper at ONE element instead (refused when the locator matches nothing or more than one, and nothing is recorded as seen), to diagnose a failing step or an edge case such as a field turning red, a button that only looks disabled or a click that lands on something else: `styles` (computed values, all or the `properties` you name), `listeners` (each event listener's type, capture, once and passive flags, and where its handler was written - a script path, line and column, never its source; the listeners of an element covering its centre; under `listeners.ancestors` the click, pointer, mouse, touch and submit listeners above it up to the window, where a capture-phase one is the usual reason a click does nothing), `animations` (running animations and transitions, and the computed transition-* and animation-* values) and `structure` (tag, attributes, text up to 500 characters, children counted by tag, its frame). It also says whether a click at its centre reaches it, or what covers it. A password field's value, attributes named like a secret and tokens in text are hidden. Read only: nothing is clicked, typed, focused or scrolled, so it works in the person's browser too.",
             "inputSchema": schema(serde_json::json!({
                 "selector": {
                     "type": ["object", "string", "array"],
                     "items": { "type": "object" },
                     "description": "A script target, exactly as the script writes it: a CSS selector string, the role-and-accessible-name object a snapshot line ends with, or a chain - a list of those objects, outermost first (a dialog, then the button inside it). A chain is recorded as seen as a whole.",
+                },
+                "show": {
+                    "type": ["array", "boolean"],
+                    "items": { "type": "string", "enum": SHOW_PARTS },
+                    "description": "Optional: the parts of the one element to show, or true for all four.",
+                },
+                "properties": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional, with `show`: only these computed styles, e.g. [\"color\", \"pointer-events\"].",
                 },
             }), &["selector"]),
         },
@@ -403,17 +413,13 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "replay_autorun_to_step",
-            "description": "Replay a case's saved script in the supervised Auto Run browser, steps 1 to `step` - 1, and stop before `step` runs, so you can heal the failing step where it failed. Needs no browser open: when none is, the app opens one. A discovery of yours holding the browser is ended first, as end_autorun_discovery ends it (what it mapped is kept), and the answer says so; start a new one to explore again. The replay checks the case's preconditions, signs in as the case's account (unless the browser is already signed in as it) and goes to its area, as a run does. A script marked must not save replays at once too, its saves stopped throughout. Answers a sentence, and once the browser stands before `step`, or where the replay stopped at a failing step, the page as get_autorun_page shows it, so you can try that step at once with try_autorun_action. Replay to the failing step and never past it to see what happens. The browser stays open on that step afterwards, signed in, and the answer says what that blocks. Do not release it between replays: release_autorun_browser is for a broken browser (frozen, wrong account, session gone, \"the browser did not answer\"), and reset_autorun_browser gives a clean page with the sign-in kept. A replay in a browser already signed in as the case's account goes straight to the area (\"Signed in already: went to <area>.\"), and start_autorun_discovery takes the browser over (its other tabs closed) and goes home. Replaying the same case to a later step, in the browser your last replay of it left before an earlier step with nothing used in it since, carries on from there; the answer starts with Carried on from step K, or Started from the beginning. One replay at a time. A replay still going after about 45 seconds answers that it is still running, at which step and on which action of it (for how long), and whether an action of that step failed (action K failed - the replay ends at this step): call again with the same case and step to keep waiting on that same replay (never a new one); a different case or step is refused until it ends. A finished answer nobody collected is kept for 90 seconds, while the script and the browser are unchanged; after that the same call starts a new replay. While a replay runs, get_autorun_page, probes and tries answer at once that a replay is going.",
+            "description": "Replay a case's saved script in the supervised Auto Run browser, steps 1 to `step` - 1, and stop before `step` runs, so you can heal the failing step where it failed. Needs no browser open: when none is, the app opens one. A discovery of yours holding the browser is ended first, as end_autorun_discovery ends it (what it mapped is kept), and the answer says so. The replay checks the case's preconditions, signs in as the case's account (unless the browser is already signed in as it) and goes to its area, as a run does. A script marked must not save replays at once too, its saves stopped throughout. Answers a sentence, and once the browser stands before `step`, or where the replay stopped at a failing step, the page as get_autorun_page shows it, so you can try that step at once with try_autorun_action. Replay to the failing step and never past it to see what happens. The browser stays open on that step afterwards, signed in, and the answer says what that blocks. Do not release it between replays: reset_autorun_browser gives a clean page with the sign-in kept, and its `release` is for a broken browser only. A replay in a browser already signed in as the case's account goes straight to the area (\"Signed in already: went to <area>.\"), and start_autorun_discovery takes the browser over (its other tabs closed) and goes home. Replaying the same case to a later step, in the browser your last replay of it left before an earlier step with nothing used in it since, carries on from there; the answer starts with Carried on from step K, or Started from the beginning. One replay at a time. A replay still going after about 45 seconds answers that it is still running, at which step and on which action of it (for how long), and whether an action of that step failed (action K failed - the replay ends at this step): call again with the same case and step to keep waiting on that same replay (never a new one); a different case or step is refused until it ends. A finished answer nobody collected is kept for 90 seconds, while the script and the browser are unchanged; after that the same call starts a new replay. While a replay runs, get_autorun_page, probes and tries answer at once that a replay is going. `stop: true`, sent alone, stops your replay that is still going when you no longer need it (a failed action already ends one): before its next action, after an action already waiting on the page finishes its wait, answering that it was stopped on request, after which action of which step, with no page; one that failed or reached its step first answers as it ended. Not stopped within about 45 seconds, it says it was asked to stop: send `stop: true` again to keep waiting. With no replay going it answers 404; the person's own replay is refused (only they can stop it).",
             "inputSchema": schema(serde_json::json!({
                 "case_id": { "type": "number", "description": "The case whose saved script is replayed." },
                 "step": { "type": "number", "description": "The step to stop before: the failing step. Steps 1 to step - 1 run." },
                 "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer; get_autorun_page reads it. Default true." },
-            }), &["case_id", "step"]),
-        },
-        {
-            "name": "stop_autorun_replay",
-            "description": "Stop your replay that is still going (one replay_autorun_to_step answered still running for), when you no longer need it: say the script is wrong and every later action would only wait out its timeout. A failed action already ends a replay at once; this is for one you want ended before it gets there. It stops the replay before its next action - an action already waiting on the page finishes its wait first - and answers once it has stopped: that it was stopped on request, after which action of which step, with no page (get_autorun_page reads it). A replay that stopped at a failing step first answers that failure, with its page; one that had already reached its step before the stop was heard answers as a finished replay does (\"Replayed case ... to step ...\"), with its page. Not stopped within about 45 seconds, it answers that it was asked to stop: call it again to keep waiting. With no replay going it answers 404; the person's own replay is refused (only they can stop it). The browser stays open where the replay stopped.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
+                "stop": { "type": "boolean", "description": "true, with nothing else: stop your replay that is going instead." },
+            }), &[]),
         },
         {
             "name": "start_autorun_discovery",
@@ -430,42 +436,28 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             }), &["account"]),
         },
         {
-            "name": "discover_autorun_action",
-            "description": "Carry out ONE script action in the discovery browser and see what it did: the page afterwards, an address change, a dialog or message that appeared, and the requests that wrote data (method and path only). In a discovery that must not save (a no_save case named by `case_id`, or `no_save: true`), a save is blocked instead: the action fails with the guard's sentence and `blocked_writes` names the request. A guard this call's own `case_id` or `no_save` sets lasts for this call only; one the discovery started with lasts until it ends. Use it to find each element a case's step needs by carrying the step out. Any one action in the script vocabulary works, such as a click, a fill, a key press or a navigate (held to the environment's allowed sites); sign_in and file addresses are refused. Anything you create uses the environment's test name prefix, and you delete only records whose name carries that prefix. Every write is logged. A use_component action runs a component's actions with its inputs put in, and answers each of them as `steps`; send `draft` with it to try a component not saved yet, or a change to a saved one, before save_autorun_component. Needs start_autorun_discovery first.",
+            "name": "discover_autorun_actions",
+            "description": "Carry out script actions in the discovery browser and see what they did; send `action` for ONE or `actions` for SEVERAL, never both. One answers the page afterwards, an address change, a dialog or message that appeared, and the requests that wrote data (method and path only): use it to find each element a case's step needs by carrying the step out. Several (at most 20 actions, for a run of steps you already know such as a menu path or a form) run in order: every action is checked first - if any would be refused, none runs and the answer names it; it stops at the first action that fails unless `stop_on_failure` is false; the answer is one line per action that ran, ok or failed with the reason, then the page once. What each page showed is recorded as seen. Any action in the script vocabulary works (a click, a fill, a key press, a navigate held to the environment's allowed sites); sign_in and file addresses are refused. In a discovery that must not save (a no_save case named by `case_id`, or `no_save: true`) or a mapping run, a save is blocked: the action fails with the guard's sentence and `blocked_writes` names the request. A guard this call's own `case_id` or `no_save` sets lasts for this call only; one the discovery started with lasts until it ends. Anything you create uses the environment's test name prefix, and you delete only records whose name carries that prefix. Every write is logged. A use_component action runs a component's actions with its inputs put in, answering each as `steps`; send `draft` with it to try a component not saved yet, or a change to a saved one, before save_autorun_component. A `draft` that no use_component action names is refused. Needs start_autorun_discovery first.",
             "inputSchema": schema(serde_json::json!({
                 "action": {
                     "type": "object",
                     "description": "One action in the script vocabulary, e.g. { \"kind\": \"click\", \"selector\": ... } - call get_guide (topic autorun) for all of them.",
                 },
-                "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
-                "case_id": { "type": "number", "description": "Optional: the case this call is for. When its saved script is marked no_save, every save the page tries is BLOCKED (not only reported) for this call only, and the answer names the blocked request in `blocked_writes`; so name it on every call for a case marked no_save. A discovery started guarded stays guarded until it ends." },
-                "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries for this call only, as for a case marked no_save. Pass it, or the case_id, on every call for a case that must not save. A discovery started with no_save stays guarded until it ends." },
-                "draft": {
-                    "type": "object",
-                    "description": "Optional, with a use_component action only: the component to try in place of the saved one of that name, exactly as you will send it to save_autorun_component: { name, description, inputs, actions }.",
-                },
-                "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). Default true." },
-            }), &["action"]),
-        },
-        {
-            "name": "discover_autorun_actions",
-            "description": "Carry out SEVERAL script actions in the discovery browser in one call, in order, each as discover_autorun_action would carry it out: the same blocked saves in a mapping run, and what each action's page showed is recorded as seen. Every action is checked first: if any would be refused, none runs and the answer names it. A `draft` that no use_component action names is refused. Use it for a run of steps you already know, such as a menu path or filling a form. At most 20 actions. A guard this call's own `case_id` or `no_save` sets lasts for this call only; one the discovery started with lasts until it ends. It stops at the first action that fails unless `stop_on_failure` is false. The answer is one line per action that ran, ok or failed with the reason, then the page once, after the last action. Needs start_autorun_discovery first.",
-            "inputSchema": schema(serde_json::json!({
                 "actions": {
                     "type": "array",
-                    "description": "The actions, in order, each one action in the script vocabulary - call get_guide (topic autorun) for all of them. At most 20.",
+                    "description": "Instead of `action`: several, in order, at most 20.",
                     "items": { "type": "object" },
                 },
-                "stop_on_failure": { "type": "boolean", "description": "Optional: false carries on past a failed action. True when left out." },
+                "stop_on_failure": { "type": "boolean", "description": "Optional, with `actions`: false carries on past a failed action. True when left out." },
                 "page": { "type": "boolean", "description": "Optional: false leaves the page out of the answer (it is still read and recorded as seen; get_autorun_page reads it). Default true." },
                 "area": { "type": "string", "description": "Optional: the area this exploring belongs to, by name; what is seen from now on is filed under it." },
                 "case_id": { "type": "number", "description": "Optional: the case this call is for. When its saved script is marked no_save, every save the page tries is BLOCKED (not only reported) for this call only, and the answer names the blocked request in `blocked_writes`; so name it on every call for a case marked no_save. A discovery started guarded stays guarded until it ends." },
                 "no_save": { "type": "boolean", "description": "Optional: true blocks every save the page tries for this call only, as for a case marked no_save. Pass it, or the case_id, on every call for a case that must not save. A discovery started with no_save stays guarded until it ends." },
                 "draft": {
                     "type": "object",
-                    "description": "Optional: a component to try in place of the saved one of that name, for each use_component action that names it, exactly as you will send it to save_autorun_component.",
+                    "description": "Optional: a component to try in place of the saved one of that name, for each use_component action that names it, exactly as you will send it to save_autorun_component: { name, description, inputs, actions }.",
                 },
-            }), &["actions"]),
+            }), &[]),
         },
         {
             "name": "save_autorun_area",
@@ -490,22 +482,19 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
         },
         {
             "name": "end_autorun_discovery",
-            "description": "End your discovery: what it mapped is kept, and its browser stays open and signed in for your next replay or discovery. It is closed only by the person's End discovery button, release_autorun_browser, or an end whose save guard will not lift (the answer then says its browser is closed). Call it when you have finished exploring. Safe to call when no discovery is going.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
-        },
-        {
-            "name": "release_autorun_browser",
-            "description": "Let go of an Auto Run browser that is broken or that the app still holds after it closed. Only when the browser is broken (frozen, on the wrong account, its session gone), or the app refuses with 'close the supervised browser first' or answers \"the browser did not answer\" while no Auto Run browser is really open; never between replays, because replays, discovery and resets share one browser and its sign-in, and a browser that is signed in and answering is kept for the next one. For only a clean page use reset_autorun_browser, which keeps the sign-in. Never ask the person to restart the app. It frees a held browser that has gone, ends your own discovery as end_autorun_discovery does (what it mapped is kept), and closes a browser your own replay left open, which frees its account for discovery, component saves and template runs. It never closes the person's own browser while it is open and answering: then it answers that the person must close it or press Release Auto Run browser. It never stops a replay that is going: stop_autorun_replay does.",
+            "description": "End your discovery: what it mapped is kept, and its browser stays open and signed in for your next replay or discovery. It is closed only by the person's End discovery button, a release (reset_autorun_browser), or an end whose save guard will not lift (the answer then says its browser is closed). Call it when you have finished exploring. Safe to call when no discovery is going.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "reset_autorun_browser",
-            "description": "Start clean in the Auto Run browser your replay or discovery left open, without signing out: it closes the other tabs, forgets any dialog a replay expected or saw, lifts your save guard, forgets where your last replay stopped, and loads the home page with the sign-in kept. Use it instead of release_autorun_browser when you only want a clean page; release is for a broken browser. It ends your discovery if one is going, as end_autorun_discovery does (what it mapped is kept). If the sign-in has gone it says so, and the next replay signs in again. Refused while a replay is running (stop_autorun_replay stops one), and for the person's own browser.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
+            "description": "Start clean in the Auto Run browser your replay or discovery left open, without signing out: it closes the other tabs, forgets any dialog a replay expected or saw, lifts your save guard, forgets where your last replay stopped, and loads the home page with the sign-in kept. It ends your discovery if one is going, as end_autorun_discovery does (what it mapped is kept). If the sign-in has gone it says so, and the next replay signs in again. Refused while a replay is running (replay_autorun_to_step with `stop: true` stops one), and for the person's own browser. `release: true` lets go of the browser instead - only when it is broken (frozen, on the wrong account, its session gone), or the app refuses with 'close the supervised browser first' or answers \"the browser did not answer\" while no Auto Run browser is really open. Never release between replays: replays, discovery and resets share one browser and its sign-in, and a browser that is signed in and answering is kept for the next one. Never ask the person to restart the app. A release frees a held browser that has gone, ends your own discovery as end_autorun_discovery does, and closes a browser your own replay left open, which frees its account for discovery, component saves and template runs. It never closes the person's own browser while it is open and answering (it says the person must close it or press Release Auto Run browser), and never stops a replay that is going.",
+            "inputSchema": schema(serde_json::json!({
+                "release": { "type": "boolean", "description": "true only for a broken browser: let it go instead of resetting it. Never between replays." },
+            }), &[]),
         },
         {
             "name": "save_autorun_component",
-            "description": "Save a component: a widget or short flow worked out once on the live app, that any script then runs with one use_component action. Make one when a widget or flow is needed more than once; reuse a saved one rather than repeat its actions. Try it first with discover_autorun_action, a use_component of it with this component as its `draft`, and save it unchanged once that works; anything else is refused. Every fixed locator in it must have been seen: an action needs one seen matching exactly one element, while a check that can pass with several matches may use one seen matching several; every input it declares must be used, and every one it uses declared; it cannot sign in, type a username or password, use another component, or build an address from an input. Saving a name already saved is a change: it needs `why` and is tried live again first. `remove: true` and only the `name` removes a saved one instead, refused while a script uses it (the refusal names the cases).",
+            "description": "Save a component: a widget or short flow worked out once on the live app, that any script then runs with one use_component action. Make one when a widget or flow is needed more than once; reuse a saved one rather than repeat its actions. Try it first with discover_autorun_actions, a use_component of it with this component as its `draft`, and save it unchanged once that works; anything else is refused. Every fixed locator in it must have been seen: an action needs one seen matching exactly one element, while a check that can pass with several matches may use one seen matching several; every input it declares must be used, and every one it uses declared; it cannot sign in, type a username or password, use another component, or build an address from an input. Saving a name already saved is a change: it needs `why` and is tried live again first. `remove: true` and only the `name` removes a saved one instead, refused while a script uses it (the refusal names the cases).",
             "inputSchema": schema(serde_json::json!({
                 "name": { "type": "string", "description": "Its name, unique in this project, e.g. \"Pick a date\"." },
                 "description": { "type": "string", "description": "One line: what it does and when to use it." },
@@ -619,17 +608,8 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
-            "name": "list_autorun_requests",
-            "description": "The requests the page in the Auto Run browser made - its own XHR, fetch and page loads on the application's site, polls left out - newest first: id, method, path and query, status, type, sizes, start and duration. Read only, and redacted: passwords, tokens and session values show as [redacted]. Use it to build an API template from a real request instead of guessing its shape. Needs the Auto Run browser open (404 \"No browser is open.\" otherwise), and answers 409 while a replay, a step or a discovery action is using it: ask again when it has finished. Nothing shows until TCM's sign-in has confirmed the application's site. With `from`, it reads a set loaded with import_autorun_requests instead, browser or not. Paged: while `next_offset` is there, call again with `offset` set to it.",
-            "inputSchema": schema(serde_json::json!({
-                "offset": { "type": "number", "description": "How many to skip: the `next_offset` of the previous answer. 0 by default." },
-                "limit": { "type": "number", "description": "How many one answer carries: 25 by default, 100 at most." },
-                "from": { "type": "string", "description": "Optional: the name of a set loaded with import_autorun_requests. Left out, the live capture." },
-            }), &[]),
-        },
-        {
             "name": "search_autorun_requests",
-            "description": "Find captured requests: every filter given must match, each compared in any case - `path` a part of the path and query, `method` and `type` whole, `status` a code (404) or a class (4xx), `request_contains` and `response_contains` a part of the request or response body. Bodies and paths are searched as they show, redacted, so a secret's value never matches. Newest first, paged, with `total` matched. Same browser, `from` and paging rules as list_autorun_requests.",
+            "description": "The requests the page in the Auto Run browser made - its own XHR, fetch and page loads on the application's site, polls left out - newest first: id, method, path and query, status, type, sizes, start and duration; with no filter, all of them. Every filter given must match, each compared in any case: `path` a part of the path and query, `method` and `type` whole, `status` a code (404) or a class (4xx), `request_contains` and `response_contains` a part of the request or response body. Read only, and redacted: passwords, tokens and session values show as [redacted], and a secret's value never matches. Use it to build an API template from a real request instead of guessing its shape. Needs the Auto Run browser open (404 \"No browser is open.\" otherwise), and answers 409 while a replay, a step or a discovery action is using it: ask again when it has finished. Nothing shows until TCM's sign-in has confirmed the application's site. With `from`, it reads a set loaded with autorun_har instead, browser or not. Paged, with `total`: while `next_offset` is there, call again with `offset` set to it.",
             "inputSchema": schema(serde_json::json!({
                 "path": { "type": "string", "description": "A part of the path and query, e.g. /api/leave." },
                 "method": { "type": "string", "description": "GET, POST, PUT, PATCH..." },
@@ -637,116 +617,58 @@ fn tools_list(disabled: Vec<String>, db_no_ask: bool) -> serde_json::Value {
                 "type": { "type": "string", "description": "XHR, Fetch or Document." },
                 "request_contains": { "type": "string", "description": "A part of the request body." },
                 "response_contains": { "type": "string", "description": "A part of the response body." },
-                "offset": { "type": "number", "description": "How many matches to skip: the `next_offset` of the previous answer." },
+                "offset": { "type": "number", "description": "How many to skip: the `next_offset` of the previous answer." },
                 "limit": { "type": "number", "description": "How many one answer carries: 25 by default, 100 at most." },
-                "from": { "type": "string", "description": "Optional: an imported set's name. Left out, the live capture." },
+                "from": { "type": "string", "description": "Optional: the name of a set loaded with autorun_har. Left out, the live capture." },
             }), &[]),
         },
         {
             "name": "get_autorun_request",
-            "description": "One captured request by its id: method, path and query, type, tab, start, its headers (an allow-list: content-type, accept, x- headers and the like - never cookies or authorization) and its body, redacted. A body longer than 20 000 characters comes in pages: call again with `offset` set to `next_offset`. Same browser and `from` rules as list_autorun_requests (404 with no browser, 409 while it is busy).",
+            "description": "One captured exchange by its id, redacted. `part` \"request\" (the default): method, path and query, type, tab, start, its headers (an allow-list: content-type, accept, x- headers and the like - never cookies or authorization) and its body. \"response\": status, mime, headers (allow-listed, values redacted), size, start and duration, a failure, its first redirect, and whether its body was kept and how long it is. \"body\": the response body as text; only text bodies (JSON, text, HTML, XML, forms) are kept, at most 2 MB each, and one that is not there says why. A body longer than 20 000 characters comes in pages: `chars` is its whole length, and while `next_offset` is there, call again with `offset` set to it. Same browser and `from` rules as search_autorun_requests (404 with no browser, 409 while it is busy).",
             "inputSchema": schema(serde_json::json!({
-                "id": { "type": "number", "description": "The request's id, from list_autorun_requests or search_autorun_requests." },
-                "offset": { "type": "number", "description": "Optional: where the body's page starts, in characters (the `next_offset` of the previous answer)." },
+                "id": { "type": "number", "description": "The request's id, from search_autorun_requests." },
+                "part": { "type": "string", "enum": ["request", "response", "body"], "description": "Optional: request (the default), response, or body (the response's)." },
+                "offset": { "type": "number", "description": "Optional, for a request or a body: where the page starts, in characters." },
                 "from": { "type": "string", "description": "Optional: an imported set's name. Left out, the live capture." },
             }), &["id"]),
         },
         {
-            "name": "get_autorun_response",
-            "description": "One captured request's response by its id: status, mime, headers (allow-listed, values redacted), size, start and duration, a failure, its first redirect, and whether its body was kept and how long it is - get_autorun_response_body reads the body. Same browser and `from` rules as list_autorun_requests (404 with no browser, 409 while it is busy).",
+            "name": "autorun_capture",
+            "description": "The Auto Run browser's capture filter: with no arguments, read it (`include_types`, `exclude_types`, `path_contains`), how many requests it keeps now (1000 at most, the oldest dropped first), whether the application's site is confirmed yet, and the names of the sets loaded with autorun_har. With any filter field, set what the capture keeps FROM NOW ON: only these resource types, not these, only paths containing `path_contains`. A set replaces the whole filter (send `include_types: []` alone to keep every request again); what was left out before cannot be brought back, and what is kept stays. Works in the person's browser too; 404 with no browser, 409 while a replay, a step or a discovery action is using it.",
             "inputSchema": schema(serde_json::json!({
-                "id": { "type": "number", "description": "The request's id." },
-                "from": { "type": "string", "description": "Optional: an imported set's name. Left out, the live capture." },
-            }), &["id"]),
-        },
-        {
-            "name": "get_autorun_response_body",
-            "description": "One captured response's body as text, redacted, in pages of 20 000 characters: `chars` is its whole length and, while `next_offset` is there, call again with `offset` set to it. Only text bodies (JSON, text, HTML, XML, forms) are kept, at most 2 MB each; one that is not there says why. Same browser and `from` rules as list_autorun_requests (404 with no browser, 409 while it is busy).",
-            "inputSchema": schema(serde_json::json!({
-                "id": { "type": "number", "description": "The request's id." },
-                "offset": { "type": "number", "description": "Where the page starts, in characters. 0 by default." },
-                "from": { "type": "string", "description": "Optional: an imported set's name. Left out, the live capture." },
-            }), &["id"]),
-        },
-        {
-            "name": "set_autorun_capture",
-            "description": "Set what the Auto Run browser's capture keeps FROM NOW ON: only these resource types (`include_types`), not these (`exclude_types`), only paths containing `path_contains`. Each call replaces the whole filter; leave everything out to keep every request again. What was left out before cannot be brought back, and what is kept stays. Answers the filter as get_autorun_capture does. Works in the person's browser too; 404 with no browser, 409 while a replay, a step or a discovery action is using it.",
-            "inputSchema": schema(serde_json::json!({
-                "include_types": { "type": "array", "items": { "type": "string", "enum": ["XHR", "Fetch", "Document"] }, "description": "Keep only these types. Empty or left out: every type." },
+                "include_types": { "type": "array", "items": { "type": "string", "enum": ["XHR", "Fetch", "Document"] }, "description": "Keep only these types. Empty: every type." },
                 "exclude_types": { "type": "array", "items": { "type": "string", "enum": ["XHR", "Fetch", "Document"] }, "description": "Never keep these types." },
                 "path_contains": { "type": "string", "description": "Keep only requests whose path and query contain this, in any case; at most 200 characters." },
             }), &[]),
         },
         {
-            "name": "get_autorun_capture",
-            "description": "The Auto Run browser's capture filter (`include_types`, `exclude_types`, `path_contains`), how many requests it keeps now (1000 at most, the oldest dropped first), whether the application's site is confirmed yet, and the names of the sets loaded with import_autorun_requests. 404 with no browser, 409 while a replay, a step or a discovery action is using it.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
-        },
-        {
-            "name": "export_autorun_requests",
-            "description": "Save the live capture, redacted exactly as the reads show it, as a HAR 1.2 file in TCM's own captures folder (`<name>.har` - never anywhere else); a file of that name is replaced. Answers the file's name and how many requests it holds. import_autorun_requests reads it back. 404 with no browser, 409 while a replay, a step or a discovery action is using it.",
+            "name": "autorun_har",
+            "description": "HAR 1.2 files in TCM's own captures folder (`<name>.har` - never anywhere else). `export`: save the live capture, redacted exactly as the reads show it, under that name (a file of that name is replaced), answering how many requests it holds; 404 with no browser, 409 while a replay, a step or a discovery action is using it. `import`: load that file (an export of yours, or a HAR file the person saved there from a browser) as a separate read-only set, redacted again on the way in, read with `from: \"<name>\"` on search_autorun_requests and get_autorun_request; it is never replayed into the browser, needs no browser, and is forgotten when the person signs in or out of TCM.",
             "inputSchema": schema(serde_json::json!({
-                "name": { "type": "string", "description": "The file's name without .har: letters, digits, spaces, dots, dashes or underscores, at most 80 characters, no folder." },
-            }), &["name"]),
-        },
-        {
-            "name": "import_autorun_requests",
-            "description": "Load `<name>.har` from TCM's own captures folder (an export of yours, or a HAR file the person saved there from a browser) as a separate read-only set, redacted again on the way in. Read it with `from: \"<name>\"` on list_autorun_requests, search_autorun_requests and the get tools; it is never replayed into the browser. Needs no browser. The sets are forgotten when the person signs in or out of TCM.",
-            "inputSchema": schema(serde_json::json!({
-                "name": { "type": "string", "description": "The file's name in the captures folder, without .har." },
-            }), &["name"]),
+                "export": { "type": "string", "description": "The name to save as, without .har: letters, digits, spaces, dots, dashes or underscores, at most 80 characters, no folder." },
+                "import": { "type": "string", "description": "Instead: the name of a file in the captures folder, without .har." },
+            }), &[]),
         },
         {
             "name": "set_autorun_headers",
-            "description": "Send extra request headers with every request of the Auto Run browser you opened (your discovery or replay) - every tab, and any tab the page opens - to test an edge case such as a feature header or another language. Merged into the headers already set; `null` removes one you set. Never cookie, authorization, proxy-authorization or host, nor one that routes a request to another method or path (X-HTTP-Method-Override, X-HTTP-Method, X-Method-Override, X-Original-URL, X-Rewrite-URL). The save guard is not touched: a blocked save stays blocked. They stay until you remove them, or reset_autorun_browser, clear_autorun_cookies or a release takes them away, and every try, discovery and replay answer ends naming them (\"Changed for testing: header ...\"). Refused in the person's browser and while a replay runs.",
+            "description": "Send extra request headers with every request of the Auto Run browser you opened (your discovery or replay) - every tab, and any tab the page opens - to test an edge case such as a feature header or another language. Merged into the headers already set; `null` removes one you set. Never cookie, authorization, proxy-authorization or host, nor one that routes a request to another method or path (X-HTTP-Method-Override, X-HTTP-Method, X-Method-Override, X-Original-URL, X-Rewrite-URL). The save guard is not touched: a blocked save stays blocked. They stay until you remove them, or reset_autorun_browser, autorun_cookies' clear or a release takes them away, and every try, discovery and replay answer ends naming them (\"Changed for testing: header ...\"). Refused in the person's browser and while a replay runs.",
             "inputSchema": schema(serde_json::json!({
                 "headers": { "type": "object", "additionalProperties": { "type": ["string", "null"] }, "description": "Header name to value, or to null to remove a header you set." },
             }), &["headers"]),
         },
         {
-            "name": "get_autorun_cookies",
-            "description": "The cookies the Auto Run browser holds for the app's own site - the one TCM's sign-in confirmed, whatever page shows (409 before it is) - whatever their path: name, domain, path, expiry, flags (http_only, secure, same_site), size, and the value. The sign-in's cookies (HttpOnly, the sign-in and anti-forgery cookies, names like a secret) show their value as (hidden). `set_for_testing` marks the ones you set. A read: works in the person's browser too. 409 while a replay runs or a step or a discovery action is using the browser: ask again when it has finished.",
+            "name": "autorun_cookies",
+            "description": "The Auto Run browser's cookies on the app's own site - the one TCM's sign-in confirmed, whatever page shows (409 before it is). `action` is needed, with no default. \"list\": every cookie whatever its path - name, domain, path, expiry, flags (http_only, secure, same_site), size and value - with the sign-in's cookies (HttpOnly, the sign-in and anti-forgery cookies, names like a secret) showing their value as (hidden) and `set_for_testing` marking yours; a read, so it works in the person's browser too. \"set\": one cookie to test an edge case (culture, tenant, a feature flag), never the sign-in's: an HttpOnly one, .ASPXAUTH, .AspNetCore.*, ASP.NET_SessionId, __RequestVerificationToken*, or a name like a secret (session, auth, token, password, secret, cookie) is refused, and it never makes TCM think the sign-in changed; it stays until reset_autorun_browser (which deletes only the cookies you set), a clear or a release, and every try, discovery and replay answer ends naming it. \"clear\", with nothing else: sign out for real - delete every cookie of the app's confirmed site, including the ones set for its parent domains (the sign-in's included; an identity provider on a sibling host that shares a parent-domain cookie is signed out too), forget the signed-in account and let its lease go, and take away your test headers; the next replay signs in again, and a discovery going keeps going, signed out. Each action takes only its own fields. list answers 409 while a replay runs or a step or a discovery action is using the browser; set and clear are refused in the person's browser and while a replay runs.",
             "inputSchema": schema(serde_json::json!({
-                "url": { "type": "string", "description": "Optional: an http or https address on the app's site or one of its parent domains (anything else is refused). A parent domain lists only the cookies set for it or above it, not the app host's own. Left out, the app's site." },
-            }), &[]),
-        },
-        {
-            "name": "set_autorun_cookie",
-            "description": "Set one cookie on the app's own site - the one TCM's sign-in confirmed, whatever page shows - in the Auto Run browser you opened, to test an edge case (culture, tenant, a feature flag). Never the sign-in's cookies: an HttpOnly one, .ASPXAUTH, .AspNetCore.*, ASP.NET_SessionId, __RequestVerificationToken*, or a name like a secret (session, auth, token, password, secret, cookie) - those are refused. It never makes TCM think the sign-in changed. It stays until reset_autorun_browser (which deletes only the cookies you set), clear_autorun_cookies or a release, and every try, discovery and replay answer ends naming it. Refused in the person's browser and while a replay runs.",
-            "inputSchema": schema(serde_json::json!({
-                "name": { "type": "string", "description": "The cookie's name." },
-                "value": { "type": "string", "description": "Its value: one line, no ;." },
-                "path": { "type": "string", "description": "Optional: its path, / by default." },
-                "expires": { "type": "number", "description": "Optional: when it expires, in seconds since 1970. Left out, it lasts for the browser's session." },
-                "secure": { "type": "boolean", "description": "Optional: sent only over https." },
-                "same_site": { "type": "string", "enum": ["Strict", "Lax", "None"], "description": "Optional: its SameSite rule (None needs secure)." },
-            }), &["name", "value"]),
-        },
-        {
-            "name": "clear_autorun_cookies",
-            "description": "Sign out for real in the Auto Run browser you opened: delete every cookie of the app's confirmed site, including the ones set for its parent domains (the sign-in's included) - an identity provider on a sibling host that shares a parent-domain cookie is signed out too - forget the signed-in account and let its lease go, and take away your test headers. The next replay signs in again; a discovery going keeps going, signed out. Refused in the person's browser, while a replay runs, and before TCM's sign-in has confirmed the app's site.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
-        },
-        {
-            "name": "inspect_autorun_element",
-            "description": "Look at ONE element in the open Auto Run browser without touching it, to diagnose a failing step or check an edge case (a field turning red, a button that only looks disabled, a click that lands on something else). The locator is resolved as a try resolves it: refused when it matches nothing or more than one. Shows any of: `styles` (computed values, all or the `properties` you name), `listeners` (each event listener's type, capture, once and passive flags, and where its handler was written - a script path, line and column, never its source; plus the listeners of the element a click at its centre would land on when another covers it, named, and under `listeners.ancestors` the click, pointer, mouse, touch and submit listeners above it up to the document and the window, where a capture-phase one is the usual reason a click does nothing), `animations` (running animations and transitions with duration, delay, iterations and play state, and the computed transition-* and animation-* values) and `structure` (tag, attributes, text up to 500 characters, children counted by tag, the frame it sits in) - all four when `show` is left out. Every answer says whether a click at its centre reaches it, or what covers it. A password field's value, attributes named like a secret and tokens in text are hidden. Read only: nothing is clicked, typed, focused or scrolled (an element outside the visible part of the page is not scrolled to), so it works in the person's browser too.",
-            "inputSchema": schema(serde_json::json!({
-                "locator": {
-                    "type": ["object", "string", "array"],
-                    "items": { "type": "object" },
-                    "description": "A script target, exactly as the script writes it: a CSS selector string, the role-and-accessible-name object a snapshot line ends with, or a chain - a list of those objects, outermost first.",
-                },
-                "show": {
-                    "type": "array",
-                    "items": { "type": "string", "enum": ["styles", "listeners", "animations", "structure"] },
-                    "description": "Optional: which parts to show. All four when left out.",
-                },
-                "properties": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Optional: only these computed style properties, e.g. [\"color\", \"border-color\", \"pointer-events\"]. Every computed value when left out.",
-                },
-            }), &["locator"]),
+                "action": { "type": "string", "enum": ["list", "set", "clear"], "description": "list, set or clear. Needed." },
+                "url": { "type": "string", "description": "list, optional: an http or https address on the app's site or one of its parent domains (anything else is refused). A parent domain lists only the cookies set for it or above it." },
+                "name": { "type": "string", "description": "set: the cookie's name." },
+                "value": { "type": "string", "description": "set: its value, one line, no ;." },
+                "path": { "type": "string", "description": "set, optional: its path, / by default." },
+                "expires": { "type": "number", "description": "set, optional: when it expires, in seconds since 1970. Left out, it lasts for the browser's session." },
+                "secure": { "type": "boolean", "description": "set, optional: sent only over https." },
+                "same_site": { "type": "string", "enum": ["Strict", "Lax", "None"], "description": "set, optional: its SameSite rule (None needs secure)." },
+            }), &["action"]),
         },
         {
             "name": "list_api_templates",
@@ -1094,6 +1016,237 @@ fn component_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, St
     }
 }
 
+/// Whether the arguments carry `key` with a value: a `null` is the same as
+/// leaving it out.
+fn given(args: &serde_json::Value, key: &str) -> bool {
+    args.get(key).is_some_and(|v| !v.is_null())
+}
+
+/// The arguments' keys with a value, other than `allowed`.
+fn others<'a>(args: &'a serde_json::Value, allowed: &[&str]) -> Vec<&'a str> {
+    args.as_object()
+        .map(|o| {
+            o.iter()
+                .filter(|(k, v)| !v.is_null() && !allowed.contains(&k.as_str()))
+                .map(|(k, _)| k.as_str())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A boolean switch argument: absent, null or false is no; anything but a
+/// boolean is refused by name.
+fn flag(args: &serde_json::Value, key: &str) -> Result<bool, String> {
+    match args.get(key) {
+        None | Some(serde_json::Value::Null) | Some(serde_json::Value::Bool(false)) => Ok(false),
+        Some(serde_json::Value::Bool(true)) => Ok(true),
+        Some(_) => Err(format!("`{key}` is true or false")),
+    }
+}
+
+/// Said when `discover_autorun_actions` is sent both `action` and
+/// `actions`, or neither.
+pub const DISCOVER_ACTION_OR_ACTIONS: &str =
+    "send `action` (one action) or `actions` (a list of at most 20) - one of them, not both";
+
+/// Said when `discover_autorun_actions` is sent `stop_on_failure` with one
+/// `action`: there is nothing after it to stop.
+pub const STOP_ON_FAILURE_GOES_WITH_ACTIONS: &str =
+    "`stop_on_failure` goes with `actions`: one `action` has nothing after it to stop";
+
+/// `discover_autorun_actions`: one `action` through the one-action route,
+/// whose answer is the richer one (dialogs, address change, writes), or
+/// `actions` through the batch route. The arguments travel whole either
+/// way: each route reads its own named fields.
+fn discover_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    match (given(args, "action"), given(args, "actions")) {
+        (true, false) if given(args, "stop_on_failure") => Ok((400, STOP_ON_FAILURE_GOES_WITH_ACTIONS.to_string())),
+        (true, false) => call("POST", "/autorun-discover-action", &args.to_string()),
+        (false, true) => call("POST", "/autorun-discover-actions", &args.to_string()),
+        _ => Ok((400, DISCOVER_ACTION_OR_ACTIONS.to_string())),
+    }
+}
+
+/// The parts of one element `probe_autorun_locator` shows with `show`.
+pub const SHOW_PARTS: [&str; 4] = ["styles", "listeners", "animations", "structure"];
+
+/// Said when `probe_autorun_locator` is sent a `show` that is neither true
+/// nor a list of parts.
+pub const SHOW_IS_TRUE_OR_PARTS: &str =
+    "`show` is true (every part) or a list of the parts to show: styles, listeners, animations, structure";
+
+/// Said when `probe_autorun_locator` is sent `properties` without `show`:
+/// a plain probe reads no styles.
+pub const PROPERTIES_GO_WITH_SHOW: &str =
+    "`properties` goes with `show`: a plain probe reads no styles - send `show: [\"styles\"]` (or true) with them";
+
+/// `probe_autorun_locator`: a probe through its own route, or with `show`
+/// the read-only look at one element (the inspect route, which takes the
+/// locator as `locator`; `show: true` is every part, the route's default).
+fn probe_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    let show = match args.get("show") {
+        None | Some(serde_json::Value::Null) | Some(serde_json::Value::Bool(false)) => None,
+        Some(serde_json::Value::Bool(true)) => Some(None),
+        Some(parts @ serde_json::Value::Array(_)) => Some(Some(parts.clone())),
+        Some(_) => return Ok((400, SHOW_IS_TRUE_OR_PARTS.to_string())),
+    };
+    let Some(parts) = show else {
+        if given(args, "properties") {
+            return Ok((400, PROPERTIES_GO_WITH_SHOW.to_string()));
+        }
+        return call("POST", "/autorun-probe", &args.to_string());
+    };
+    let mut body = serde_json::Map::new();
+    body.insert("locator".to_string(), args["selector"].clone());
+    if let Some(parts) = parts {
+        body.insert("show".to_string(), parts);
+    }
+    if given(args, "properties") {
+        body.insert("properties".to_string(), args["properties"].clone());
+    }
+    call("POST", "/autorun-inspect", &serde_json::Value::Object(body).to_string())
+}
+
+/// Said when `replay_autorun_to_step` is sent `stop: true` with anything
+/// else: a stop is of the replay going, whichever it is.
+pub const STOP_TAKES_NOTHING_ELSE: &str =
+    "`stop: true` takes nothing else - it stops your replay that is going, whichever case and step it is at";
+
+/// `replay_autorun_to_step`: a replay, or with `stop: true` (alone) the stop
+/// of the assistant's own replay that is going.
+fn replay_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    match flag(args, "stop") {
+        Err(refused) => Ok((400, refused)),
+        Ok(true) if !others(args, &["stop"]).is_empty() => Ok((400, STOP_TAKES_NOTHING_ELSE.to_string())),
+        Ok(true) => call("POST", "/autorun-replay-stop", "{}"),
+        Ok(false) => {
+            let mut body = args.clone();
+            if let Some(o) = body.as_object_mut() {
+                o.remove("stop");
+            }
+            call("POST", "/autorun-replay", &body.to_string())
+        }
+    }
+}
+
+/// `reset_autorun_browser`: a reset, or with `release: true` the release of
+/// a broken browser.
+fn reset_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    match flag(args, "release") {
+        Err(refused) => Ok((400, refused)),
+        Ok(true) => call("POST", "/autorun-release", "{}"),
+        Ok(false) => call("POST", "/autorun-reset", "{}"),
+    }
+}
+
+/// The search filters of `search_autorun_requests`: with none of them it
+/// is the plain list.
+pub const REQUEST_FILTERS: [&str; 6] = ["path", "method", "status", "type", "request_contains", "response_contains"];
+
+/// `search_autorun_requests`: the plain list (the cheaper read: it takes
+/// only the page) when no filter is given, the search otherwise. The
+/// arguments travel whole.
+fn requests_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    if REQUEST_FILTERS.iter().any(|k| given(args, k)) {
+        call("POST", "/autorun-requests-search", &args.to_string())
+    } else {
+        call("POST", "/autorun-requests", &args.to_string())
+    }
+}
+
+/// Said when `get_autorun_request` is sent a `part` it does not read.
+pub const PART_REFUSED: &str = "`part` is \"request\" (the default), \"response\" or \"body\" (the response's body)";
+
+/// Said when `get_autorun_request` is sent an `offset` for the response's
+/// part, which has no text to page.
+pub const RESPONSE_HAS_NO_OFFSET: &str =
+    "`offset` pages a body: it goes with part \"request\" or \"body\", not \"response\"";
+
+/// `get_autorun_request`: one captured exchange - the request, its
+/// response or the response's body - through that part's own route, the
+/// arguments whole but for `part`.
+fn request_part_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    let route = match args.get("part") {
+        None | Some(serde_json::Value::Null) => "/autorun-request",
+        Some(p) => match p.as_str() {
+            Some("request") => "/autorun-request",
+            Some("response") => "/autorun-response",
+            Some("body") => "/autorun-response-body",
+            _ => return Ok((400, PART_REFUSED.to_string())),
+        },
+    };
+    if route == "/autorun-response" && given(args, "offset") {
+        return Ok((400, RESPONSE_HAS_NO_OFFSET.to_string()));
+    }
+    let mut body = args.clone();
+    if let Some(o) = body.as_object_mut() {
+        o.remove("part");
+    }
+    call("POST", route, &body.to_string())
+}
+
+/// The fields `autorun_capture` sets; with none of them it reads.
+pub const CAPTURE_FILTER_FIELDS: [&str; 3] = ["include_types", "exclude_types", "path_contains"];
+
+/// `autorun_capture`: the filter read, or - with any filter field, even an
+/// empty one - the whole filter set from now on.
+fn capture_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    if CAPTURE_FILTER_FIELDS.iter().any(|k| given(args, k)) {
+        call("POST", "/autorun-capture", &args.to_string())
+    } else {
+        call("GET", "/autorun-capture", "")
+    }
+}
+
+/// Said when `autorun_har` is sent both `export` and `import`, or neither.
+pub const HAR_EXPORT_OR_IMPORT: &str =
+    "send `export` (a name to save the live capture as) or `import` (the name of a file in TCM's captures folder) - one of them, not both";
+
+/// `autorun_har`: the export or the import route, each with the file's
+/// name as its own `name`.
+fn har_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    let route = match (given(args, "export"), given(args, "import")) {
+        (true, false) => ("/autorun-requests-export", &args["export"]),
+        (false, true) => ("/autorun-requests-import", &args["import"]),
+        _ => return Ok((400, HAR_EXPORT_OR_IMPORT.to_string())),
+    };
+    call("POST", route.0, &serde_json::json!({ "name": route.1 }).to_string())
+}
+
+/// What `autorun_cookies` takes with each `action`.
+pub const COOKIE_LIST_FIELDS: [&str; 1] = ["url"];
+pub const COOKIE_SET_FIELDS: [&str; 6] = ["name", "value", "path", "expires", "secure", "same_site"];
+
+/// Said when `autorun_cookies` is sent no `action`, or one it does not take.
+/// There is no default: `clear` signs out.
+pub const COOKIE_ACTION_REFUSED: &str =
+    "`action` is needed: \"list\" (read the cookies), \"set\" (one test cookie) or \"clear\" (a real sign-out) - there is no default";
+
+/// `autorun_cookies`: one route per action, each sent only the fields its
+/// action takes - anything else is refused by name, so a `clear` meant for
+/// one cookie never signs out the whole site.
+fn cookies_call(args: &serde_json::Value, call: BridgeCall) -> Result<(u16, String), String> {
+    let (route, fields): (&str, &[&str]) = match args.get("action").and_then(|a| a.as_str()) {
+        Some("list") => ("/autorun-cookies", &COOKIE_LIST_FIELDS[..]),
+        Some("set") => ("/autorun-cookie", &COOKIE_SET_FIELDS[..]),
+        Some("clear") => ("/autorun-cookies-clear", &[]),
+        _ => return Ok((400, COOKIE_ACTION_REFUSED.to_string())),
+    };
+    let mut allowed = vec!["action"];
+    allowed.extend_from_slice(fields);
+    let wrong = others(args, &allowed);
+    if !wrong.is_empty() {
+        let action = args["action"].as_str().unwrap_or_default();
+        let takes = if fields.is_empty() { "nothing else".to_string() } else { fields.join(", ") };
+        return Ok((400, format!("`action: \"{action}\"` takes {takes} - not {}", wrong.join(", "))));
+    }
+    let mut body = args.clone();
+    if let Some(o) = body.as_object_mut() {
+        o.remove("action");
+    }
+    call("POST", route, &body.to_string())
+}
+
 /// Said when `open_report` is sent a `create` that is neither a yes nor the
 /// new report's summary information.
 pub const CREATE_REFUSED: &str = "`create` is true, or the new report's { title, author, comments }";
@@ -1400,25 +1553,15 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         "delete_autorun_script" => call("POST", "/autorun-script-delete", &args.to_string()),
         "get_autorun_network_wait" => call("GET", "/autorun-network-wait", ""),
-        // The capture tools: each route reads its own named fields out of
-        // the body, so the arguments object travels whole.
-        "list_autorun_requests" => call("POST", "/autorun-requests", &args.to_string()),
-        "search_autorun_requests" => call("POST", "/autorun-requests-search", &args.to_string()),
-        "get_autorun_request" => call("POST", "/autorun-request", &args.to_string()),
-        "get_autorun_response" => call("POST", "/autorun-response", &args.to_string()),
-        "get_autorun_response_body" => call("POST", "/autorun-response-body", &args.to_string()),
-        "set_autorun_capture" => call("POST", "/autorun-capture", &args.to_string()),
-        "get_autorun_capture" => call("GET", "/autorun-capture", ""),
-        "export_autorun_requests" => call("POST", "/autorun-requests-export", &args.to_string()),
-        "import_autorun_requests" => call("POST", "/autorun-requests-import", &args.to_string()),
-        // Test headers and cookies: each route reads its own named fields
-        // out of the body, so the arguments object travels whole.
+        // The network tools: each route reads its own named fields out of
+        // the body; a tool that chooses between routes says why in its
+        // own function.
+        "search_autorun_requests" => requests_call(args, call),
+        "get_autorun_request" => request_part_call(args, call),
+        "autorun_capture" => capture_call(args, call),
+        "autorun_har" => har_call(args, call),
         "set_autorun_headers" => call("POST", "/autorun-headers", &args.to_string()),
-        "get_autorun_cookies" => call("POST", "/autorun-cookies", &args.to_string()),
-        "set_autorun_cookie" => call("POST", "/autorun-cookie", &args.to_string()),
-        "clear_autorun_cookies" => call("POST", "/autorun-cookies-clear", &args.to_string()),
-        // Read only: the arguments object travels whole.
-        "inspect_autorun_element" => call("POST", "/autorun-inspect", &args.to_string()),
+        "autorun_cookies" => cookies_call(args, call),
         "get_autorun_page" => {
             let mut params: Vec<String> = Vec::new();
             if let Some(n) = args["limit"].as_u64() {
@@ -1443,19 +1586,16 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         // The bridge reads one named field out of the body, so forwarding
         // the raw arguments object is structurally unable to drop it -
         // the same pattern as `check_spec_coverage`.
-        "probe_autorun_locator" => call("POST", "/autorun-probe", &args.to_string()),
+        "probe_autorun_locator" => probe_call(args, call),
         "try_autorun_action" => call("POST", "/autorun-try", &args.to_string()),
-        "replay_autorun_to_step" => call("POST", "/autorun-replay", &args.to_string()),
-        "stop_autorun_replay" => call("POST", "/autorun-replay-stop", &args.to_string()),
+        "replay_autorun_to_step" => replay_call(args, call),
         // Discovery: each route reads its own named fields out of the body,
         // so the arguments object travels whole.
         "start_autorun_discovery" => call("POST", "/autorun-discover-start", &args.to_string()),
-        "discover_autorun_action" => call("POST", "/autorun-discover-action", &args.to_string()),
-        "discover_autorun_actions" => call("POST", "/autorun-discover-actions", &args.to_string()),
+        "discover_autorun_actions" => discover_call(args, call),
         "save_autorun_area" => call("POST", "/autorun-discover-area", &args.to_string()),
         "end_autorun_discovery" => call("POST", "/autorun-discover-end", &args.to_string()),
-        "release_autorun_browser" => call("POST", "/autorun-release", &args.to_string()),
-        "reset_autorun_browser" => call("POST", "/autorun-reset", &args.to_string()),
+        "reset_autorun_browser" => reset_call(args, call),
         // Components: each route reads its own named fields out of the body.
         "save_autorun_component" => component_call(args, call),
         "get_autorun_failures" => {

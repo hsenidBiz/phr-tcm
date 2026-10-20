@@ -268,8 +268,9 @@ fn the_release_sentence_says_what_was_released() {
     }
 }
 
-/// The assistant's tool and route: `release_autorun_browser` posts to
-/// `/autorun-release`, which answers the same release.
+/// The assistant's tool and route: `reset_autorun_browser` with
+/// `release: true` posts to `/autorun-release`, which answers the same
+/// release.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_assistant_releases_through_its_route() {
     let _a = crate::serial::autorun();
@@ -280,14 +281,15 @@ async fn the_assistant_releases_through_its_route() {
     assert_eq!(status, 200, "{said}");
     assert!(said.contains("release") || said.contains("released"), "{said}");
     let mcp = include_str!("../../src/mcp.rs");
-    assert!(mcp.contains("\"release_autorun_browser\" => call(\"POST\", \"/autorun-release\""), "the tool does not reach the route");
+    assert!(mcp.contains("Ok(true) => call(\"POST\", \"/autorun-release\", \"{}\")"), "the tool does not reach the route");
+    assert!(mcp.contains("\"reset_autorun_browser\" => reset_call(args, call)"), "the tool does not reach the route");
     assert_eq!(
-        v2_lib::ai_tools::module_of_tool("release_autorun_browser"),
+        v2_lib::ai_tools::module_of_tool("reset_autorun_browser"),
         Some(v2_lib::modules::Module::AutoRun),
         "not on the Auto Run gate"
     );
     let guide = include_str!("../../src/autorun/guide.rs");
-    assert!(guide.contains("`release_autorun_browser`"), "the guide does not name it");
+    assert!(guide.contains("`reset_autorun_browser` with `release: true`"), "the guide does not name it");
 }
 
 /// Every refusal made only because a browser is held asks first whether
@@ -714,7 +716,7 @@ fn the_browser_is_marked_with_who_opened_it() {
 }
 
 /// A template refused its account because the Auto Run browser holds it
-/// names release_autorun_browser when the assistant opened that browser.
+/// names the release when the assistant opened that browser.
 #[test]
 fn a_template_held_off_by_the_assistants_browser_names_the_release() {
     use v2_lib::ai_bridge::{template_report_hint, FREE_IT_WITH_RELEASE};
@@ -724,7 +726,7 @@ fn a_template_held_off_by_the_assistants_browser_names_the_release() {
     let refused = report(in_use_by_browser("automation"));
     let v: serde_json::Value = serde_json::from_str(&template_report_hint(refused.clone(), "automation", true)).unwrap();
     assert_eq!(v["free_it"], FREE_IT_WITH_RELEASE);
-    assert!(FREE_IT_WITH_RELEASE.contains("release_autorun_browser"));
+    assert!(FREE_IT_WITH_RELEASE.contains("reset_autorun_browser and `release: true`"));
     assert_eq!(template_report_hint(refused.clone(), "automation", false), refused, "a browser not the assistant's, or holding another account, named the release");
     // Another account's refusal is not this template's.
     assert_eq!(template_report_hint(refused.clone(), "evelyn1", true), refused);
@@ -746,7 +748,7 @@ async fn the_assistants_release_never_stops_a_replay() {
     assert!(said.contains("call replay_autorun_to_step"), "{said}");
     // The person's replay (no call of the assistant's waits on it): the
     // stop tool, which never stops it, is not offered.
-    assert!(!said.contains("stop_autorun_replay"), "{said}");
+    assert!(!said.contains("stop: true"), "{said}");
     assert!(!v2_lib::autorun::replay_to::CANCEL.load(Ordering::SeqCst), "the replay was asked to stop");
     drop(replay);
 }
@@ -915,7 +917,7 @@ async fn the_assistant_resets_through_its_route() {
     let answer = v2_lib::ai_bridge::route(&ctx, None, "POST", "/autorun-reset", "{}", "1.0.0").await;
     assert_eq!(answer, (404, v2_lib::commands::autorun::NO_BROWSER_OPEN.to_string()), "the route is missing");
     let mcp = include_str!("../../src/mcp.rs");
-    assert!(mcp.contains("\"reset_autorun_browser\" => call(\"POST\", \"/autorun-reset\""), "the tool does not reach the route");
+    assert!(mcp.contains("Ok(false) => call(\"POST\", \"/autorun-reset\", \"{}\")"), "the tool does not reach the route");
     assert_eq!(
         v2_lib::ai_tools::module_of_tool("reset_autorun_browser"),
         Some(v2_lib::modules::Module::AutoRun),

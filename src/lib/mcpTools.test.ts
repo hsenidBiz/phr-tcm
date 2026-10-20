@@ -8,6 +8,7 @@ import {
   CORE_TOOLS,
   CRYSTAL_TOOLS,
   DB_TOOLS,
+  RENAMED_TOOLS,
   dbReadAccessOn,
   disabledToolsSnapshot,
   loadDisabledTools,
@@ -223,6 +224,38 @@ test("the quirk tool rides in both rows and is off only while both are off", () 
   localStorage.clear();
 });
 
+/// The Auto Run tools merged into one with an argument: a row switched off
+/// under the old names stays off under the new ones, and every old name maps
+/// to a tool that is still there.
+test("the merged Auto Run tools' old names switched off carry over", () => {
+  setModulesForTest(["db_access", "auto_run"]);
+  const merged: Record<string, string> = {
+    discover_autorun_action: "discover_autorun_actions",
+    inspect_autorun_element: "probe_autorun_locator",
+    stop_autorun_replay: "replay_autorun_to_step",
+    release_autorun_browser: "reset_autorun_browser",
+    list_autorun_requests: "search_autorun_requests",
+    get_autorun_response: "get_autorun_request",
+    get_autorun_response_body: "get_autorun_request",
+    set_autorun_capture: "autorun_capture",
+    get_autorun_capture: "autorun_capture",
+    export_autorun_requests: "autorun_har",
+    import_autorun_requests: "autorun_har",
+    get_autorun_cookies: "autorun_cookies",
+    set_autorun_cookie: "autorun_cookies",
+    clear_autorun_cookies: "autorun_cookies",
+  };
+  for (const [old, now] of Object.entries(merged)) {
+    expect(RENAMED_TOOLS[old]).toBe(now);
+    localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify([old]));
+    const loaded = loadDisabledTools();
+    expect(loaded).toContain(now);
+    expect(loaded).not.toContain(old);
+  }
+  for (const now of Object.values(RENAMED_TOOLS)) expect(MCP_TOOLS.map((t) => t.name)).toContain(now);
+  localStorage.clear();
+});
+
 /// The four quirk tools became one. A row switched off under the old names
 /// stays off under the new one.
 test("the old quirk tools' names switched off carry over to the one quirk tool", () => {
@@ -255,7 +288,7 @@ test("only the switchable tools are left, as nine rows with every module on", ()
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_results",
-    "save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+stop_autorun_replay+start_autorun_discovery+discover_autorun_action+discover_autorun_actions+save_autorun_area+end_autorun_discovery+release_autorun_browser+reset_autorun_browser+save_autorun_component+get_autorun_failures+record_quirk+record_validation_rule+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+get_autorun_network_wait+list_autorun_requests+search_autorun_requests+get_autorun_request+get_autorun_response+get_autorun_response_body+set_autorun_capture+get_autorun_capture+export_autorun_requests+import_autorun_requests+set_autorun_headers+get_autorun_cookies+set_autorun_cookie+clear_autorun_cookies+inspect_autorun_element",
+    "save_autorun_script+get_autorun_script+delete_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+replay_autorun_to_step+start_autorun_discovery+discover_autorun_actions+save_autorun_area+end_autorun_discovery+reset_autorun_browser+save_autorun_component+get_autorun_failures+record_quirk+record_validation_rule+mark_autorun_suspected_defect+set_autorun_order+propose_accounts+get_accounts+get_autorun_network_wait+search_autorun_requests+get_autorun_request+autorun_capture+autorun_har+set_autorun_headers+autorun_cookies",
     "list_api_templates+prove_api_template+run_api_template+save_api_flow+get_api_flow_progress+save_api_fixture+run_api_fixture+record_quirk",
     "db_lookup+db_query",
     "open_report+read_report+edit_report+compare_reports+check_report+preview_report+preview_report_live",
@@ -293,7 +326,7 @@ test("the two database tools are one switchable row, there while Database Access
 
 /// With Auto Run on, its group is offered as one row and its switch moves
 /// every tool in it together, the same as any other pair.
-test("the Auto Run scripts row carries all thirty-eight tools", () => {
+test("the Auto Run scripts row carries all twenty-seven tools", () => {
   const row = visibleRows().find((r) => r.label === "Auto Run scripts");
   expect(row, "the Auto Run scripts row exists").toBeTruthy();
   expect(row!.names).toEqual([
@@ -304,13 +337,10 @@ test("the Auto Run scripts row carries all thirty-eight tools", () => {
     "probe_autorun_locator",
     "try_autorun_action",
     "replay_autorun_to_step",
-    "stop_autorun_replay",
     "start_autorun_discovery",
-    "discover_autorun_action",
     "discover_autorun_actions",
     "save_autorun_area",
     "end_autorun_discovery",
-    "release_autorun_browser",
     "reset_autorun_browser",
     "save_autorun_component",
     "get_autorun_failures",
@@ -321,20 +351,12 @@ test("the Auto Run scripts row carries all thirty-eight tools", () => {
     "propose_accounts",
     "get_accounts",
     "get_autorun_network_wait",
-    "list_autorun_requests",
     "search_autorun_requests",
     "get_autorun_request",
-    "get_autorun_response",
-    "get_autorun_response_body",
-    "set_autorun_capture",
-    "get_autorun_capture",
-    "export_autorun_requests",
-    "import_autorun_requests",
+    "autorun_capture",
+    "autorun_har",
     "set_autorun_headers",
-    "get_autorun_cookies",
-    "set_autorun_cookie",
-    "clear_autorun_cookies",
-    "inspect_autorun_element",
+    "autorun_cookies",
   ]);
   for (const name of row!.names) expect(AUTORUN_TOOLS as readonly string[]).toContain(name);
 

@@ -775,7 +775,7 @@ fn the_guide_teaches_replaying_to_the_failing_step() {
     // A takeover keeps the account's lease: template runs as it stay
     // refused until release, not until a discovery starts.
     assert!(
-        flat.contains("template runs as the case's account stay refused until `release_autorun_browser` frees it"),
+        flat.contains("template runs as the case's account stay refused until a release (`reset_autorun_browser` with `release: true`) frees it"),
         "{flat}"
     );
     assert!(flat.contains("\"Signed in already: went to <area>.\""), "{flat}");
@@ -1009,8 +1009,8 @@ fn the_guide_names_the_discovery_tools_and_the_three_exceptions() {
     let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
     for tool in [
         "`start_autorun_discovery`",
-        "`discover_autorun_action`",
-        "`discover_autorun_actions`",
+        "`discover_autorun_actions` with one `action`",
+        "`discover_autorun_actions` with `actions`",
         "`save_autorun_area`",
         "`end_autorun_discovery`",
         "`probe_autorun_locator`",
@@ -1102,7 +1102,7 @@ fn the_guide_saves_a_script_only_after_every_step_was_carried_out() {
     let section = g.split("## Discovering the app").nth(1).unwrap().split("\n## ").next().unwrap();
     let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
     for said in [
-        "carry each step's actions out live with `discover_autorun_action` as you write them",
+        "carry each step's actions out live with `discover_autorun_actions` as you write them",
         "Save with `save_autorun_script` only once every step has been carried out",
         "any fix after the save is a repair, declared in `edits`",
     ] {
@@ -1205,7 +1205,7 @@ fn the_guide_teaches_components() {
         "instead of repeating its actions",
         "This project's components",
         // Trying it live as a draft, then saving it unchanged.
-        "`discover_autorun_action`",
+        "`discover_autorun_actions`",
         "`draft`",
         "`save_autorun_component`",
         "unchanged",
@@ -1460,10 +1460,10 @@ fn the_guide_opens_with_the_quick_rules() {
     assert!(quick.contains("call `get_guide` (topic `autorun`) with a `section`, or `full` true."), "{quick}");
 }
 
-/// The capture, header, cookie and inspect tools are taught in one section:
-/// every tool by name, the template-building advice, what is hidden, when
-/// nothing is captured, how long test changes last, what is refused, and the
-/// capture-phase listener that makes a click do nothing.
+/// The network tools and the probe's `show` are taught in one section:
+/// every tool by name, the template-building advice, what is hidden, when nothing is captured,
+/// how long test changes last, what is refused, and the capture-phase
+/// listener that makes a click do nothing. No retired tool is named.
 #[test]
 fn the_guide_teaches_the_network_cookie_and_element_tools() {
     use v2_lib::autorun::guide::quick_rules;
@@ -1472,27 +1472,20 @@ fn the_guide_teaches_the_network_cookie_and_element_tools() {
     let at = g.find("\n## Network, cookies and elements\n").expect("the guide has no Network, cookies and elements section");
     let section = flat(g[at + 1..].split("\n## ").next().unwrap());
     for tool in [
-        "list_autorun_requests",
         "search_autorun_requests",
         "get_autorun_request",
-        "get_autorun_response",
-        "get_autorun_response_body",
-        "set_autorun_capture",
-        "get_autorun_capture",
-        "export_autorun_requests",
-        "import_autorun_requests",
+        "autorun_capture",
+        "autorun_har",
         "set_autorun_headers",
-        "get_autorun_cookies",
-        "set_autorun_cookie",
-        "clear_autorun_cookies",
-        "inspect_autorun_element",
+        "autorun_cookies",
+        "probe_autorun_locator",
         "expect_style",
     ] {
         assert!(section.contains(&format!("`{tool}`")), "the section never names `{tool}`: {section}");
     }
     for said in [
         "Build API templates from captured requests",
-        "`get_autorun_request` / `get_autorun_response_body`",
+        "`get_autorun_request` (the request, then `part: \"body\"`)",
         "Passwords, tokens, session cookies and keys are hidden",
         "never cookies or authorization",
         "Nothing is captured until the app's site is confirmed by a sign-in",
@@ -1504,16 +1497,32 @@ fn the_guide_teaches_the_network_cookie_and_element_tools() {
         "a `url` on it or a parent domain of it",
         "It also shows the listeners above the element",
         "a capture-phase listener above it is the usual reason a click does nothing",
-        "The reads and `set_autorun_capture` work in the person's browser too; the headers and cookies tools that change something need one you opened",
-        "Each `set_autorun_capture` replaces the whole filter, and what it leaves out is gone: it cannot be brought back.",
+        "The reads and `autorun_capture` work in the person's browser too; the header and cookie changes need one you opened",
+        "Each set replaces the whole filter, and what it leaves out is gone: it cannot be brought back.",
         "A body comes in pages of 20 000 characters: pass `offset` for the next.",
-        "each by a `name`",
+        "\"clear\" signs out for real. It has no default action.",
         "`X-Original-URL` and `X-Rewrite-URL`",
         "a parent domain's `url` lists only the cookies set for that domain or above it, not the app host's own",
     ] {
         assert!(section.contains(said), "the section never says {said:?}: {section}");
     }
     assert!(!section.contains('\u{2014}') && !section.contains('\u{2013}'), "no em or en dashes");
+    for gone in [
+        "list_autorun_requests",
+        "get_autorun_response",
+        "set_autorun_capture",
+        "get_autorun_capture",
+        "export_autorun_requests",
+        "import_autorun_requests",
+        "get_autorun_cookies",
+        "set_autorun_cookie",
+        "clear_autorun_cookies",
+        "inspect_autorun_element",
+        "stop_autorun_replay",
+        "release_autorun_browser",
+    ] {
+        assert!(!g.contains(gone), "the guide still names {gone}");
+    }
 
     let quick = flat(&quick_rules());
     assert!(quick.contains("Test headers and cookies stay until removed or reset; do that before proving a fix."), "{quick}");
@@ -1539,7 +1548,7 @@ fn every_quick_rule_is_in_the_full_guide() {
         ("A save refuses any locator the app has not seen", "Discovering the app"),
         ("During a discovery with an area", "Discovering the app"),
         ("`get_autorun_page` records what it shows as seen under that area", "Discovering the app"),
-        ("`discover_autorun_actions` carries out up to 20 actions in order", "Discovering the app"),
+        ("`discover_autorun_actions` with `actions` carries out up to 20 actions in order", "Discovering the app"),
         ("none runs", "Discovering the app"),
         ("stops at the first action that fails unless `stop_on_failure` is false", "Discovering the app"),
         ("ending the discovery stops it before its next action", "Discovering the app"),
@@ -1750,11 +1759,11 @@ fn the_replay_part_teaches_stopping_a_replay() {
     let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(flat.contains("A failed action ends a replay at once."), "{flat}");
     assert!(
-        flat.contains("call `stop_autorun_replay`: it stops before the next action and says where."),
+        flat.contains("call `replay_autorun_to_step` with only `stop: true`: it stops before the next action and says where."),
         "{flat}"
     );
     let quick = autorun_guide().split("\n## ").next().unwrap().to_string();
-    assert!(!quick.contains("stop_autorun_replay"), "the quick rules are at their cap");
+    assert!(!quick.contains("stop: true"), "the quick rules are at their cap");
 }
 
 /// Rows 32, 44 and 66 (tool errors 2026-10-19), and the `when_visible`

@@ -178,7 +178,7 @@ pub fn pw_written(clone: &str) -> String {
 /// with everything else when a different account signs in (`claim_for`).
 pub const IMPORTED_CAPTURES_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 
-/// The capture sets imported from HAR files with `import_autorun_requests`,
+/// The capture sets imported from HAR files with `autorun_har`,
 /// by name (session tier only, `commands::autorun::imported_captures`): at
 /// most `capture_tools::MAX_IMPORTED_SETS`, read-only, readable with no
 /// browser open.

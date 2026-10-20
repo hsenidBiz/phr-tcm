@@ -735,7 +735,7 @@ async fn the_person_never_runs_with_the_assistants_test_changes() {
 
 // ---- the sign-out ---------------------------------------------------------------
 
-/// clear_autorun_cookies is a real sign-out: every cookie of the app's
+/// autorun_cookies' clear is a real sign-out: every cookie of the app's
 /// confirmed site is deleted (its host's and its parent domain's, the
 /// sign-in's too, never the identity provider's - even with the IdP's page
 /// showing), the account is forgotten with its cookie fingerprint, the lease

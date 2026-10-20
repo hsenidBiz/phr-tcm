@@ -1,4 +1,4 @@
-//! Looking at one element without touching it: what `inspect_autorun_element`
+//! Looking at one element without touching it: what `probe_autorun_locator` with `show`
 //! shows the assistant when it diagnoses a failing step or checks an edge
 //! case (a field turning red, a button that only looks disabled).
 //!

@@ -838,7 +838,7 @@ pub fn page_wanted(body: &str) -> bool {
 
 /// `answer` with its `page` dump left out when the call's body sent
 /// `"page": false` (`page_wanted`): start_autorun_discovery,
-/// discover_autorun_action and replay_autorun_to_step answer the whole
+/// discover_autorun_actions and replay_autorun_to_step answer the whole
 /// page, which a caller that only wants the outcome can do without. The
 /// page is still read, so what it shows is still recorded as seen;
 /// `page_left_out` says where to read it. Any other body, an answer that
@@ -1501,7 +1501,7 @@ async fn run_api_template_request<B: crate::api_templates::held::Keeps, D: crate
 /// Said beside a template run refused its account because the Auto Run
 /// browser holds it, when the assistant's replay opened that browser.
 pub const FREE_IT_WITH_RELEASE: &str =
-    "The Auto Run browser your replay left open holds this account: close it with release_autorun_browser, then run the template again.";
+    "The Auto Run browser your replay left open holds this account: close it with reset_autorun_browser and `release: true`, then run the template again.";
 
 /// Does a template run's report say its account `key` was refused because
 /// the Auto Run browser holds it (the lease's own sentence,
@@ -2183,11 +2183,11 @@ fn with_overrides_seen(
 pub enum OverrideTool {
     /// `set_autorun_headers`
     SetHeaders,
-    /// `get_autorun_cookies`: a read, in any supervised browser.
+    /// `autorun_cookies`' list: a read, in any supervised browser.
     Cookies,
-    /// `set_autorun_cookie`
+    /// `autorun_cookies`' set
     SetCookie,
-    /// `clear_autorun_cookies`: a real sign-out.
+    /// `autorun_cookies`' clear: a real sign-out.
     ClearCookies,
 }
 
@@ -2293,7 +2293,7 @@ pub(crate) fn overrides_answer(said: String, o: &crate::autorun::overrides::Over
 }
 
 /// What a set of test headers or a cookie lasts for, said once it is set.
-const LASTS_UNTIL: &str = "Every try, discovery and replay answer names it until you remove it, or reset_autorun_browser, clear_autorun_cookies or a release takes it away.";
+const LASTS_UNTIL: &str = "Every try, discovery and replay answer names it until you remove it, or reset_autorun_browser, autorun_cookies' clear or a release takes it away.";
 
 /// `set_autorun_headers` over `slot`: the headers asked for merged into the
 /// set in place (a `null` removes one), sent on every tab and on any tab
@@ -2342,7 +2342,7 @@ pub async fn set_headers_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &se
     overrides_answer(said, o)
 }
 
-/// `get_autorun_cookies` over `slot`: every cookie the browser holds for
+/// `autorun_cookies`' list over `slot`: every cookie the browser holds for
 /// the app's site - the one TCM's sign-in confirmed (`overrides::confirmed_origin`),
 /// never whatever page shows, which may be the identity provider's - whatever
 /// its path, as `overrides::shown_cookie` shows it (the sign-in's values
@@ -2394,12 +2394,12 @@ pub async fn cookies_in<B: DiscoveryBrowser>(slot: &mut Option<B>, args: &serde_
         "total": cookies.len(),
         "returned": shown.len(),
         "cookies": shown,
-        "note": "The sign-in's cookies (HttpOnly, the sign-in and anti-forgery cookies, names like a secret) show their value as (hidden), and are never set by set_autorun_cookie.",
+        "note": "The sign-in's cookies (HttpOnly, the sign-in and anti-forgery cookies, names like a secret) show their value as (hidden), and are never set by autorun_cookies.",
     });
     (200, answer.to_string())
 }
 
-/// `set_autorun_cookie` over `slot`: one cookie on the app's own site - the
+/// `autorun_cookies`' set over `slot`: one cookie on the app's own site - the
 /// one TCM's sign-in confirmed (`overrides::confirmed_origin`), never
 /// whatever page shows - on its host only, `path` `/` unless asked;
 /// recorded exactly (`SetCookie`) so a reset deletes it only while it is
@@ -2712,7 +2712,7 @@ pub async fn supervised_page_within(
 
 /// Said at the end of a page read during a discovery that has no area yet:
 /// nothing was recorded.
-pub const READ_WITH_NO_AREA: &str = "Recorded nothing as seen: this discovery has no area yet. Save the area with save_autorun_area, or name it with \"area\" on discover_autorun_action, then read the page again.";
+pub const READ_WITH_NO_AREA: &str = "Recorded nothing as seen: this discovery has no area yet. Save the area with save_autorun_area, or name it with \"area\" on discover_autorun_actions, then read the page again.";
 
 /// Said at the end of a page read during a discovery when the page is not
 /// on the application's own origins: nothing was recorded.
@@ -3524,7 +3524,7 @@ fn call_the_replay_going() -> String {
 /// Said, with 409, to the assistant's release while a replay holds the
 /// browser: a release never stops a replay, so it says how to wait for it.
 pub fn replay_going_for_a_release() -> String {
-    let stop = if assistant_replay_going() { ", or stop_autorun_replay to stop it" } else { "" };
+    let stop = if assistant_replay_going() { ", or replay_autorun_to_step with stop: true to stop it" } else { "" };
     format!(
         "a replay is going and holds the browser, and a release never stops one - {} to wait for it{stop}, then release",
         call_the_replay_going()
@@ -3532,19 +3532,19 @@ pub fn replay_going_for_a_release() -> String {
 }
 
 /// Whether the replay going is the assistant's own: its call's slot holds
-/// no answer yet. Only then does a refusal point at `stop_autorun_replay`,
+/// no answer yet. Only then does a refusal point at the replay tool's `stop`,
 /// which never stops the person's.
 pub fn assistant_replay_going() -> bool {
     assistant_run().as_ref().is_some_and(|r| r.answer.borrow().is_none())
 }
 
 /// `commands::autorun::REPLAY_RUNNING_AT_RESET`, as the assistant's reset,
-/// cookie and header tools say it: naming `stop_autorun_replay` when the
+/// cookie and header tools say it: naming the replay tool's `stop` when the
 /// replay going is the assistant's own.
 pub fn replay_running_refusal() -> String {
     let said = crate::commands::autorun::REPLAY_RUNNING_AT_RESET;
     if assistant_replay_going() {
-        format!("{said} Or stop it first with stop_autorun_replay.")
+        format!("{said} Or stop it first with replay_autorun_to_step and stop: true.")
     } else {
         said.to_string()
     }
@@ -3602,7 +3602,7 @@ fn inspect_ask(body: &str) -> Result<(crate::browser::locator::Target, crate::br
     Ok((target, ask))
 }
 
-/// `inspect_autorun_element` on the page `d` shows: the body read
+/// `probe_autorun_locator` with `show` on the page `d` shows: the body read
 /// (`inspect_ask`), then the one element its locator matches inspected
 /// (`browser::inspect`). Read only.
 pub async fn inspect_page<D: crate::browser::cdp::Driver>(d: &mut D, body: &str) -> (u16, String) {
@@ -6838,7 +6838,7 @@ struct AssistantRun {
     saved_at: Option<String>,
     answer: tokio::sync::watch::Receiver<Option<ReplayDone>>,
     /// Whether the call that started it wanted the page (`page_wanted`): an
-    /// answer `stop_autorun_replay` collects honours it too.
+    /// answer the replay tool's `stop` collects honours it too.
     page: bool,
 }
 
@@ -7136,14 +7136,14 @@ async fn replay_answer_with(
     wait_for_replay(answer, id, case_id, step, wait).await
 }
 
-/// Said by `stop_autorun_replay` when no replay is going.
+/// Said by the replay tool's `stop` when no replay is going.
 pub const NO_REPLAY_RUNNING: &str = "no replay is running - there is nothing to stop";
 
-/// Said by `stop_autorun_replay` while the replay going is the person's own.
+/// Said by the replay tool's `stop` while the replay going is the person's own.
 pub const PERSONS_REPLAY_GOING: &str =
     "the replay going is the person's own - only they can stop it, with Stop in the Auto Run pane";
 
-/// Said by `stop_autorun_replay` when the assistant's last replay has
+/// Said by the replay tool's `stop` when the assistant's last replay has
 /// already ended, its answer not yet collected.
 pub fn replay_already_ended(case_id: i32, step: i32) -> String {
     format!(
@@ -7151,7 +7151,7 @@ pub fn replay_already_ended(case_id: i32, step: i32) -> String {
     )
 }
 
-/// The 202 `stop_autorun_replay` answers when the replay has not ended
+/// The 202 the replay tool's `stop` answers when the replay has not ended
 /// within the call's wait: it was asked to stop, and hears it once the
 /// action it is on finishes (an action's own wait for the page runs out
 /// first).
@@ -7163,23 +7163,23 @@ pub fn replay_stopping_answer(case_id: i32, step: i32) -> serde_json::Value {
         now.push_str(&format!(", on action {} of {}", action.index, action.of));
     }
     let sentence = format!(
-        "asked to stop: the replay of case {case_id} to step {step} ends once the action it is on finishes ({now}) - call stop_autorun_replay again to wait for it"
+        "asked to stop: the replay of case {case_id} to step {step} ends once the action it is on finishes ({now}) - send replay_autorun_to_step stop: true again to wait for it"
     );
     serde_json::json!({ "status": "stopping", "sentence": sentence, "step": at, "of": of })
 }
 
-/// The 202 `stop_autorun_replay` answers when the assistant's replay was
+/// The 202 the replay tool's `stop` answers when the assistant's replay was
 /// running no step to stop - it had not yet started, or had ended and its
 /// answer was still being made ready - and no answer came within the wait.
 /// Nothing was asked to stop.
 pub fn replay_not_asked_answer(case_id: i32, step: i32) -> serde_json::Value {
     let sentence = format!(
-        "not asked to stop: the replay of case {case_id} to step {step} was not running a step (it was starting, or had ended and its answer was being made ready) - call stop_autorun_replay again to stop it, or replay_autorun_to_step with case {case_id} and step {step} for its answer"
+        "not asked to stop: the replay of case {case_id} to step {step} was not running a step (it was starting, or had ended and its answer was being made ready) - send replay_autorun_to_step stop: true again to stop it, or replay_autorun_to_step with case {case_id} and step {step} for its answer"
     );
     serde_json::json!({ "status": "not_stopped", "sentence": sentence })
 }
 
-/// `/autorun-replay-stop`, the assistant's `stop_autorun_replay`, waiting
+/// `/autorun-replay-stop`, the assistant's `replay_autorun_to_step` with `stop`, waiting
 /// up to `wait` for the replay to end. Its replay still going is asked to
 /// stop through the replay's own stop (`replay_to::stop_on_request`, the
 /// one the person's Stop sets), which every replay hears before each
@@ -7249,7 +7249,7 @@ async fn run_assistant_replay(
     // already there (then nothing ran, and that is all there is to say).
     // A browser signed in already says so next, where a sign-in would be.
     let reused = reuse.said().map(|line| format!("{line} ")).unwrap_or_default();
-    // Stopped by stop_autorun_replay: said as stopped on request, after the
+    // Stopped by the replay tool's `stop`: said as stopped on request, after the
     // last action to begin of the step it was on.
     let on_request = matches!(end, ReplayEnd::Stopped { .. }) && crate::autorun::replay_to::stop_was_requested();
     // The case's clean-up is said as such, never as a step number.

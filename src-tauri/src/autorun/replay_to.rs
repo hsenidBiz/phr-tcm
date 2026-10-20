@@ -207,12 +207,12 @@ pub fn left_open_line(left: &LeftOpen) -> String {
         let (signed, templates) = match &left.account {
             Some(key) => (
                 ", signed in",
-                format!(", and template runs as {key} until release_autorun_browser frees it (a discovery keeps its sign-in)"),
+                format!(", and template runs as {key} until a release (reset_autorun_browser) frees it (a discovery keeps its sign-in)"),
             ),
             None => ("", String::new()),
         };
         return format!(
-            "The Auto Run browser stays open on this step{signed}: discovery actions and component saves are refused until start_autorun_discovery takes it over{templates}. Do not release it between replays; release_autorun_browser is for a broken browser."
+            "The Auto Run browser stays open on this step{signed}: discovery actions and component saves are refused until start_autorun_discovery takes it over{templates}. Do not release it between replays: reset_autorun_browser's release is for a broken browser."
         );
     }
     let blocked = match &left.account {
@@ -281,12 +281,12 @@ pub fn stop() {
 }
 
 /// Whether the replay going was asked to stop by the assistant's
-/// `stop_autorun_replay` (`stop_on_request`), not by the person's Stop,
+/// the replay tool's `stop` (`stop_on_request`), not by the person's Stop,
 /// Close or Release. Cleared by a claim, and when the assistant starts a
 /// replay (`forget_stop_request`).
 static ON_REQUEST: AtomicBool = AtomicBool::new(false);
 
-/// The assistant's `stop_autorun_replay`: the same stop as `stop`, noted
+/// The assistant's replay `stop`: the same stop as `stop`, noted
 /// as asked for, so the replay's answer says it was stopped on request.
 pub fn stop_on_request() {
     ON_REQUEST.store(true, Ordering::SeqCst);
@@ -303,7 +303,7 @@ pub fn forget_stop_request() {
     ON_REQUEST.store(false, Ordering::SeqCst);
 }
 
-/// What the assistant's replay that `stop_autorun_replay` stopped answers:
+/// What the assistant's replay that its `stop` stopped answers:
 /// where the stop was heard, from the step it was on (`at`, 0 before step
 /// 1) and the last action of that step to begin (`action`, from 1; 0 when
 /// none had): "at" that action when the stop ended it inside its own wait
@@ -333,7 +333,7 @@ impl OneReplay {
     }
 
     /// The assistant's replay (`replay_autorun_to_step`) takes the slot:
-    /// the only replay `stop_autorun_replay` may stop
+    /// the only replay the replay tool's `stop` may stop
     /// (`assistants_replay_running`).
     pub fn claim_for_assistant() -> Result<OneReplay, String> {
         Self::claim_as(ASSISTANT)
