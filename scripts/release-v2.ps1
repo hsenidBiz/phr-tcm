@@ -1,13 +1,10 @@
 # Ship a release: gates, push source, build, pack with Velopack, publish to
 # the company repository's GitHub Releases (https://github.com/hsenidBiz/phr-tcm).
-# -AlsoLegacy also publishes to the old personal feed (mirrored through
-# 1.23.6; not needed since, kept for a straggler).
 # Pure ASCII on purpose (PS 5.1).
 # Token comes from gh auth token in-process and is never printed.
 param(
     [Parameter(Mandatory = $true)][string]$Version,
     [switch]$SkipChecks,
-    [switch]$AlsoLegacy,
     [switch]$DryRun
 )
 $ErrorActionPreference = "Stop"
@@ -19,14 +16,9 @@ trap {
 }
 $v2 = Split-Path -Parent $PSScriptRoot            # repo root (the app used to live in v2/)
 $repoUrl = "https://github.com/hsenidBiz/phr-tcm"
-# The old feed. 1.23.3 - 1.23.6 were mirrored there so every install
-# crossed over to $repoUrl; -AlsoLegacy publishes there again if a
-# straggler ever needs it.
-$legacyRepoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases"
 
 if ($Version -notmatch '^\d+\.\d+\.\d+(-beta\.\d+)?$') { throw "Version must be X.Y.Z or X.Y.Z-beta.N, got '$Version'" }
 $IsBeta = $Version -match '-beta\.\d+$'
-if ($IsBeta -and $AlsoLegacy) { throw "-AlsoLegacy does not take a beta: the old feed has no beta readers." }
 
 
 # -Version is only the Velopack tag. The version the APP reports - in the
@@ -147,22 +139,15 @@ Pop-Location
 & (Join-Path $PSScriptRoot "pack.ps1") -Version $Version -DeltaFrom $repoUrl
 
 # --- Publish ---------------------------------------------------------------
-# phr-tcm is the feed. The old personal feed is published only on
-# -AlsoLegacy (see $legacyRepoUrl above); that failure is fatal too, since
-# half-published is the state that strands people.
+# phr-tcm is the feed. A failed upload is fatal: half-published is the state
+# that strands people.
 $token = (gh auth token | Out-String).Trim()
 if (-not $token) { throw "gh auth token returned nothing - run gh auth login" }
 & vpk @uploadArgs --token $token --outputDir (Join-Path $v2 "Releases")
 if ($LASTEXITCODE -ne 0) { throw "vpk upload failed with exit code $LASTEXITCODE" }
-# How To Use is downloaded by the app from THIS release (phr-tcm only, never
-# the legacy feed). Failure is fatal: an app without its guide asset shows
+# How To Use is downloaded by the app from THIS release. Failure is fatal: an app without its guide asset shows
 # "not available for this version". Re-run just: scripts/publish-guide.ps1
 & (Join-Path $PSScriptRoot "publish-guide.ps1") -Version $Version
-if ($AlsoLegacy) {
-    vpk upload github --repoUrl $legacyRepoUrl --publish --releaseName "v$Version" --tag "v$Version" --token $token --outputDir (Join-Path $v2 "Releases")
-    if ($LASTEXITCODE -ne 0) { throw "vpk upload to the legacy feed failed with exit code $LASTEXITCODE" }
-    gh release view "v$Version" --repo AvinAlwis/azure-devops-test-case-manager-v2-releases
-}
 gh release view "v$Version" --repo hsenidBiz/phr-tcm
 # The caller's shell keeps whatever we set here, so put it back - on the
 # error paths too, which is why this is a trap rather than a last line.

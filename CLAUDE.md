@@ -79,8 +79,7 @@ v1 and went with it. The suites above are the gate.
   tries the GitHub API first and the `latest/download` mirror second - the
   comment there explains why that order matters. The old personal feed was
   mirrored through 1.23.6 so every install crossed over; from 1.23.7 only
-  phr-tcm is published (`release-v2.ps1 -AlsoLegacy` still exists for a
-  straggler). Source is pushed to BOTH repositories - `origin` (phr-tcm)
+  phr-tcm is published. Source is pushed to BOTH repositories - `origin` (phr-tcm)
   and `personal` (AvinAlwis/azure-devops-test-case-creator) hold the same
   `main`.
 
@@ -162,9 +161,8 @@ v1 and went with it. The suites above are the gate.
   `git log -1`.
 - **Releases: run `scripts/release-v2.ps1 -Version X.Y.Z`.** It gates
   (cargo test + vitest + a production build), pushes source **first**,
-  builds, packs with Velopack, and publishes to **both** release repos:
-  `hsenidBiz/phr-tcm` (the real one) and the old personal repo as a mirror.
-  Never publish without the source pushed. A failure on either upload is
+  builds, packs with Velopack, and publishes to `hsenidBiz/phr-tcm`.
+  Never publish without the source pushed. A failed upload is
   fatal — half-published is what strands people — and the fix is to re-run
   the one named upload, never the whole release. A version `X.Y.Z-beta.N`
   is published as a GitHub prerelease that only installs with Download
