@@ -595,6 +595,20 @@ fn the_transform_description_names_every_supported_op_and_nothing_else() {
         assert!(desc.contains(name), "description omits {name}");
     }
     assert!(!desc.contains("set_comment"), "a removed op must not be advertised");
+    // Which keys each op reads is the writing guide's "Transform ops" part,
+    // which the description points at; the never-written `comment` and the
+    // `ignored` report stay in the description too.
+    assert!(desc.contains("get_guide (topic writing), its \"Transform ops\" part"), "{desc}");
+    assert!(desc.contains("There is no op for `comment`") && desc.contains("`ignored`"), "{desc}");
+    let reference = v2_lib::transform::ops_reference();
+    assert!(reference.starts_with("## Transform ops\n"), "{reference}");
+    for name in v2_lib::transform::SUPPORTED_OPS {
+        assert!(reference.contains(name), "the guide's reference omits {name}");
+    }
+    for said in ["{find, replace}", "{action, expected}", "at_index", "There is no op for `comment`", "read all three"] {
+        assert!(reference.contains(said), "the reference never says {said:?}");
+    }
+    assert!(!reference.contains("set_comment"));
 }
 
 /// The intake's questions and `begin_test_case_writing`'s inputSchema are
@@ -1704,11 +1718,11 @@ fn the_save_tool_documents_a_scripts_area() {
     let description = tool["description"].as_str().unwrap();
     assert!(description.contains(v2_lib::autorun::nav::SET_AREA_RULE), "{description}");
     // The edit's `area` flag stays optional: true only when it changed.
-    assert!(description.contains("area (optional: true when you changed the script's area"), "{description}");
+    assert!(description.contains("its section \"Saving it\" has the seen-locator rules and the shape of `edits`"), "{description}");
     let props = &tool["inputSchema"]["properties"];
     let scripts = props["scripts"]["description"].as_str().unwrap();
     assert!(scripts.contains("area,") && !scripts.contains("area?"), "{props}");
-    assert!(props["edits"]["description"].as_str().unwrap().contains("area?"), "{props}");
+    assert!(props["edits"]["description"].as_str().unwrap().contains("area? (true when you changed the script's area"), "{props}");
 }
 
 /// The project's Test files come with `get_accounts` (the old
@@ -1773,13 +1787,22 @@ fn the_replay_tool_rides_with_the_auto_run_tools() {
     assert!(d.contains("call again with the same case and step to keep waiting"), "{d}");
     assert!(d.contains("Do not release it between replays"), "{d}");
     assert!(d.contains("its `release` is for a broken browser only"), "{d}");
-    assert!(d.contains("goes straight to the area (\"Signed in already: went to <area>.\")"), "{d}");
-    assert!(d.contains("start_autorun_discovery takes the browser over (its other tabs closed) and goes home"), "{d}");
     assert!(!d.contains("closes a browser your replay opened"), "{d}");
-    assert!(d.contains("carries on from there; the answer starts with Carried on from step K, or Started from the beginning"), "{d}");
     assert!(d.contains("never past it"), "{d}");
     assert!(d.contains("try_autorun_action"), "{d}");
     assert!(!d.contains('\u{2014}'), "{d}");
+    // How a replay carries on, and a browser already signed in, are the
+    // guide's: the description points at the section that has them.
+    assert!(d.contains("get_guide (topic autorun), section \"Repairing a script that failed\""), "{d}");
+    let g = v2_lib::autorun::guide::autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "goes straight to its area (\"Signed in already: went to <area>.\")",
+        "`start_autorun_discovery` takes it over (its other tabs closed, then home)",
+        "the answer starts with \"Carried on from step K\" or \"Started from the beginning\"",
+        "A finished answer nobody collected is kept for 90 seconds",
+    ] {
+        assert!(g.contains(said), "the guide never says {said:?}");
+    }
 }
 
 /// The browser is shared by replays, discovery and resets, and the tool
@@ -1810,18 +1833,25 @@ fn the_descriptions_keep_the_browser_between_replays() {
     let stop = desc("replay_autorun_to_step");
     for said in [
         "`stop: true`, sent alone, stops your replay that is still going",
-        "a failed action already ends one",
-        "before its next action",
-        "stopped on request, after which action of which step, with no page",
-        "With no replay going it answers 404",
+        "with no replay going it answers 404",
         "the person's own replay is refused",
     ] {
         assert!(stop.contains(said), "{said:?} missing from {stop}");
     }
+    // How a stop ends is the guide's, in the replay part.
+    let guide = v2_lib::autorun::guide::autorun_guide().split_whitespace().collect::<Vec<_>>().join(" ");
+    for said in [
+        "A failed action ends a replay at once.",
+        "it stops before the next action and says where",
+        "stopped on request, after which action of which step, with no page",
+        "send `stop: true` again to keep waiting",
+    ] {
+        assert!(guide.contains(said), "the guide never says {said:?}");
+    }
 
     let start = desc("start_autorun_discovery");
     assert!(start.contains("takes over a browser your own replay left open"), "{start}");
-    assert!(start.contains("Took over the browser your replay left open"), "{start}");
+    assert!(guide.contains("Took over the browser your replay left open"), "the guide quotes the takeover");
     assert!(!start.contains("is closed first, and the answer says"), "{start}");
     assert!(start.contains("until the discovery ends"), "{start}");
 
@@ -1836,7 +1866,7 @@ fn the_descriptions_keep_the_browser_between_replays() {
     let replay = desc("replay_autorun_to_step");
     assert!(!replay.contains("so does start_autorun_discovery"), "{replay}");
     assert!(!replay.contains("as it is"), "{replay}");
-    assert!(replay.contains("start_autorun_discovery takes the browser over (its other tabs closed) and goes home"), "{replay}");
+    assert!(guide.contains("`start_autorun_discovery` takes it over (its other tabs closed, then home)"), "the guide says how a takeover goes");
 
     // A batch's guard lasts as its parameters say.
     let batch = desc("discover_autorun_actions");

@@ -11138,6 +11138,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         Reuse these wherever one fits - a near-duplicate ('smoke-test' next to\n\
         an existing 'smoke') fragments the project's tags. A genuinely new tag\n\
         is allowed when nothing here matches.\n\n{tag_lines}\n\n\
+        {transform_ops}\n\
         ## Workflow\n\
         0. Call `begin_test_case_writing` FIRST and put its questions to the\n\
         developer. What the file is called (it lives in the repository's\n\
@@ -11162,6 +11163,22 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         grouped run sequence). Keep those two fields exactly as it set them -\n\
         do not renumber them by hand, and do not strip them; the app uses\n\
         them to flip the queue between the two readings.\n\
+        Its options: `dry_run: true` answers only the report (run it first and\n\
+        read `expected_rewritten`, every expected result it would shorten,\n\
+        before and after). `entry` is the first step of every preamble\n\
+        (default \"Launch the application.\"); a non-launch entry, such as\n\
+        opening a module, goes after the sign-in step. `reorder: false` keeps a\n\
+        set meant to be read against the specification in document order -\n\
+        navigation and expected results are still cleaned up. `trim_expected:\n\
+        false` leaves every expected result exactly as written and still does\n\
+        the navigation, ordering and dedupe work: use it when the value of the\n\
+        set is in what each expected result ASSERTS (arithmetic, formulas,\n\
+        quoted messages), or when a dry run reports that reordering saved 0\n\
+        environment switches. For a large draft pass `path`, and `in_place:\n\
+        true` to write the result back to that file (atomic) and get only the\n\
+        report; an in-place write keeps the file's other fields (`specs`,\n\
+        `comments`), and without it the response carries the file's `specs`\n\
+        for you to write back.\n\
         4. Call `validate_cases` and fix every warning. For a large draft,\n\
         pass a local file via its `path` argument instead of inlining the\n\
         JSON.\n\
@@ -11169,6 +11186,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         `transform_cases` instead of rewriting the file yourself.\n",
         org = ctx.org,
         project = ctx.project,
+        transform_ops = crate::transform::ops_reference(),
         granularity = custom.as_deref().unwrap_or(GRANULARITY),
         edge_cases = if custom.is_some() { "" } else { EDGE_CASES },
         scenario_step = if custom.is_some() { CUSTOM_STYLE_STEP } else { "" },

@@ -100,6 +100,48 @@ pub const SUPPORTED_OPS: [&str; 25] = [
     "sort_by", "group_by", "dedupe", "remove_cases", "insert_cases",
 ];
 
+/// The writing guide's "Transform ops" section: which keys each op reads,
+/// the `where` selectors and how replaces count. `transform_cases`'s own
+/// description lists the ops (`SUPPORTED_OPS`) and points here.
+pub fn ops_reference() -> String {
+    format!(
+        "## Transform ops\n\
+        `transform_cases` applies its `operations` in order. Every op it accepts: {ops}.\n\n\
+        Which keys each op reads:\n\
+        - set_tags, add_tags, remove_tags, set_module, set_automation_status, set_preconditions, \
+        set_area, set_reviewer_notes, prefix_title, suffix_title, sort_by and group_by take `{{value}}`. \
+        sort_by and group_by values: title, module, tags, preconditions.\n\
+        - set_findings takes `{{value: [...]}}`, a list of `{{kind, subject, title, detail}}` objects \
+        (kind is test_case, spec or code) that REPLACES the matched cases' findings - the problems you \
+        found in the case, its spec or the code.\n\
+        - replace_in_title, replace_in_steps, replace_in_notes and replace_in_preconditions take \
+        `{{find, replace}}`. replace_in_notes edits the local reviewer_notes - the bulk repair for \
+        check_spec_coverage findings. Replace ops are literal, case-sensitive and replace EVERY \
+        occurrence; the report gives the occurrence count and names cases left alone for differing \
+        capitalisation.\n\
+        - normalise_citations takes only `where`: it moves a Spec: line above its blockquote and quotes \
+        it, or writes the exemption form for a table or code block, and leaves anything with two \
+        pointers or two blocks for a person.\n\
+        - prepend_step and append_step take `{{action, expected}}`; remove_step_matching takes \
+        `{{value|find|action}}` (a substring of a step's action); split_step takes \
+        `{{find, into: [{{action, expected}}, ...]}}` and replaces each matching step with that sequence.\n\
+        - remove_cases takes only a required `where`; insert_cases takes `{{cases}}` and optionally ONE \
+        of at_index (zero-based), before or after (a title fragment) - without one it appends; dedupe \
+        takes nothing (the first copy wins, nothing is merged).\n\n\
+        Every op accepts `where` with title_contains, has_tag, module_is, area_is and at_index. area_is \
+        matches the normalised area path case-insensitively (\"\" selects cases with no area); at_index \
+        (zero-based position in the current draft) is the selector of last resort when two cases share \
+        a title.\n\n\
+        There is no op for `comment`: it is the developer's field and is never written by an assistant. \
+        A key an op does not read is reported in `ignored`, never silently dropped. An in-place write \
+        (`path` with `in_place: true`) keeps the file's other fields (`specs`, `comments`); without it \
+        the response carries the file's `specs` for you to write back. The report's `applied` lines give \
+        the count of cases actually MODIFIED for find-driven ops, its `warnings` what an op declined to \
+        do, and its `ignored` everything passed that was not used - read all three.\n",
+        ops = SUPPORTED_OPS.join(", ")
+    )
+}
+
 /// Where `insert_cases` puts its cases.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InsertPos {

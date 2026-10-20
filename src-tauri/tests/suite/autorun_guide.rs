@@ -1521,6 +1521,48 @@ fn the_guide_teaches_the_network_cookie_and_element_tools() {
     assert!(quick.contains("Test headers and cookies stay until removed or reset; do that before proving a fix."), "{quick}");
 }
 
+/// A request discovery saw that makes a case's starting state becomes an
+/// API template, built the moment it is seen: the template guide first
+/// (once per session), the real request read, then proven. The "API
+/// templates to make" list is only for when the template tools are off.
+/// The network section fetches the template guide first too, and a
+/// debounced search waits on its request. The quick rule that says so took
+/// the place of the dry-run rule, which `save_autorun_script`'s own
+/// `dry_run` argument already says word for word.
+#[test]
+fn discovery_makes_an_api_template_from_the_request_it_saw() {
+    use v2_lib::autorun::guide::quick_rules;
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let g = autorun_guide();
+    let part = |title: &str| {
+        let at = g.find(&format!("\n## {title}\n")).unwrap_or_else(|| panic!("no section {title:?}"));
+        flat(g[at + 1..].split("\n## ").next().unwrap())
+    };
+    let discovering = part("Discovering the app");
+    for said in [
+        "When the API template tools are on:",
+        "call `get_guide` with topic `api_templates` once per session, before the first template",
+        "with the network tools on, `get_autorun_request` by its id, `part` \"request\" for its headers and body, then \"body\"",
+        "with them off, the method and path the write answer listed",
+        "`prove_api_template` runs the draft and saves it only when every step passes",
+        "When the API template tools are off, keep each one on a list instead",
+        "under \"API templates to make\"",
+        "Never make one from a request you only guessed",
+    ] {
+        assert!(discovering.contains(said), "Discovering the app never says {said:?}: {discovering}");
+    }
+    let network = part("Network, cookies and elements");
+    assert!(network.contains("Fetch the template guide first (`get_guide` with topic `api_templates`"), "{network}");
+    assert!(!network.contains("(see `get_guide`, topic `api_templates`)"), "the network section only pointed at the guide");
+    let grids = part("Tables and grids");
+    assert!(grids.contains("For a debounced search, an `expect_response` on the search request"), "{grids}");
+    assert!(grids.contains("`get_autorun_network_wait`"), "{grids}");
+
+    let quick = flat(&quick_rules());
+    assert!(quick.contains("template guide first, build it from the captured request, prove it"), "{quick}");
+    assert!(!quick.contains("dry_run"), "the dry-run rule was the one replaced: {quick}");
+}
+
 /// Review Focus 5: the quick guide never contradicts the full guide. Each
 /// quick rule's key phrase is in the quick rules and in the full guide's
 /// own section for that rule, so a rule cannot change in one place only.
@@ -1549,9 +1591,10 @@ fn every_quick_rule_is_in_the_full_guide() {
             "Probe every final locator with `probe_autorun_locator`, exactly as it is written in the script, immediately before saving",
             "Saving it",
         ),
-        ("`\"dry_run\": true` checks a save, writing and recording nothing", "Saving it"),
-        ("A refused save lists every locator never seen", "Discovering the app"),
-        ("each with a hint when a close one was seen", "Discovering the app"),
+        (
+            "A request discovery saw that makes a case's starting state becomes an API template: template guide first, build it from the captured request, prove it",
+            "Discovering the app",
+        ),
         (
             "Try a component with `use_component` and `draft` before `save_autorun_component`, then save it unchanged from the draft that worked",
             "Components",

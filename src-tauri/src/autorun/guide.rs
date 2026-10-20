@@ -140,8 +140,6 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
   part of another, such as "Continue" and "Save & Continue".
 - After typing in a search box, wait for the list to settle (the other rows
   gone, the target visible) before clicking.
-- `"dry_run": true` checks a save, writing and recording nothing. A refused
-  save lists every locator never seen, each with a hint when a close one was seen.
 - Try a component with `use_component` and `draft` before
   `save_autorun_component`, then save it unchanged from the draft that worked.
 - A step is either `unchecked` (no checks at all, and the reason) or
@@ -167,6 +165,8 @@ Not covered here: call `get_guide` (topic `autorun`) with a `section`, or `full`
   reusing one name for one change across the PBI; a setting it needs at one
   value goes in `needs_state`. Then call `set_autorun_order` if an order is
   needed and report the order and any reset points. State needed before a run: a precondition.
+- A request discovery saw that makes a case's starting state becomes an API
+  template: template guide first, build it from the captured request, prove it.
 - `page_said` and "the app refused" are the app's own words; judge them against
   the case (see `## Known validation rules` and "Discovering the app").
 "##;
@@ -778,7 +778,12 @@ to headers by their position in the row.
 After typing in a search box, wait for the list to settle (the other rows
 gone, the target visible) before clicking. A click sent while the list
 redraws for the filter is lost: a `wait_for` on the target's own control,
-and an `expect_hidden` on the rows the filter removes, come first.
+and an `expect_hidden` on the rows the filter removes, come first. For a
+debounced search, an `expect_response` on the search request in the step
+that types makes it wait for the new results, so a stale list cannot
+satisfy the wait; if an unattended run seems stuck there,
+`get_autorun_network_wait` says whether it is paused because the company
+network is unreachable.
 
 ## Browser dialogs
 
@@ -1371,9 +1376,11 @@ or your replay).
   out is gone: it cannot be brought back. `autorun_har` with `export` or
   `import` saves it as a HAR file in TCM's own captures folder and reads it
   back as a set, by name; read an imported set with `from`.
-- Build API templates from captured requests: read the real call with
-  `get_autorun_request` (the request, then `part: "body"`) instead of
-  guessing its shape (see `get_guide`, topic `api_templates`).
+- Build API templates from captured requests. Fetch the template guide
+  first (`get_guide` with topic `api_templates`, once per session, before
+  the first template), then read the real call with `get_autorun_request`
+  (the request, then `part: "body"`) instead of guessing its shape, and
+  prove it with `prove_api_template` (see "Discovering the app").
 - Passwords, tokens, session cookies and keys are hidden in everything these
   tools show, and headers are an allow-list: never cookies or authorization.
 - Nothing is captured until the app's site is confirmed by a sign-in: a
@@ -1641,23 +1648,35 @@ that prefix. The app logs every write discovery sends.
 An area listed under "Areas to explore" has no map yet, or a stale one:
 explore it again before you write or repair a script there.
 
-Note down the API templates you come across. Every answer that changed
+Look out for the API templates a case needs. Every answer that changed
 data lists the requests the page sent that wrote it (method and path).
 Each one that creates or changes something a case needs ready before it
 runs (a cycle, a draft, a record, a setting) is a candidate API template,
 so the next script can make that state through the app's own endpoint
-instead of clicking through the screens. For each one:
+instead of clicking through the screens. For each one, call
+`list_api_templates` and check whether a template already sends that
+method and path; if one does, use it (in a fixture or setup) rather than
+scripting the screens again.
 
-- call `list_api_templates` and check whether a template already sends
-  that method and path; if one does, use it (in a fixture or setup) rather
-  than scripting the screens again;
-- if none does, keep it on a list: the request's method and path, the
-  case and step that sent it, and what it made.
+A request discovery saw that makes a case's starting state becomes an API
+template: template guide first, build it from the captured request, prove
+it. When the API template tools are on:
 
-End your discovery summary with that list under "API templates to make",
-so they can be made with the API template tools (`get_guide`, topic `api_templates`,
-says how) and reused by every case that needs the same state. Never make
-one from a request you only guessed: only from a request discovery saw.
+- call `get_guide` with topic `api_templates` once per session, before
+  the first template, and follow it;
+- read the real request: with the network tools on, `get_autorun_request`
+  by its id, `part` "request" for its headers and body, then "body" for
+  the response the template's outputs come from; with them off, the
+  method and path the write answer listed;
+- save it by proving it: `prove_api_template` runs the draft and saves it
+  only when every step passes.
+
+When the API template tools are off, keep each one on a list instead: the
+request's method and path, the case and step that sent it, and what it
+made. End your discovery summary with that list under "API templates to
+make", so they can be made with the API template tools and reused by
+every case that needs the same state. Never make one from a request you
+only guessed: only from a request discovery saw.
 
 ## Components
 
@@ -1860,6 +1879,25 @@ Before every save:
   pass with several matches may use such a locator; an action still needs
   one that matched exactly one. A locator holding a placeholder is not
   checked this way, and nothing is clicked or typed.
+- Every locator must have been seen on the live app. An action needs one
+  seen matching exactly one element; a check that can pass with several
+  matches (`expect_hidden`, `expect_count`, `wait_for`) may use one seen
+  matching several, and for those a part (at least 3 characters) of a
+  seen name in the same role counts too. Every other use needs the full
+  name as seen. A `when_visible`'s own locator may have been seen in any
+  area. The whole rule is "What a save checks", under "Discovering the
+  app".
+- Changing a script that already exists is a repair, with `edits` beside
+  `scripts`: one entry per case, `{ case_id, steps, why, area?, quirk?,
+  precondition? }`. `steps` is every step number you changed; `area` is
+  true when you changed the script's area, leaving out one it had
+  included; `quirk` is something you learned about the application; and
+  `precondition` adds, removes or changes ONE precondition (`{ op, flow,
+  stage, to, reason }`). Steps you leave out of `edits` must stay exactly
+  as they were; a declared step may change in any way, removing a check
+  included. A precondition removed or changed without a precondition edit
+  is refused. A repair may send `patch_steps` in place of `steps`.
+  "Repairing a script that failed" has the shapes and every refusal.
 
 `save_autorun_script` does NOT take the steps array on its own - it takes
 a LIST of scripts, one entry per case, so a whole PBI can be saved in one
@@ -1956,11 +1994,23 @@ the answer says so; start a new one to explore again.
   + 1: the answer says "replayed the whole of case N (all M steps)", and
   the browser stands on the page that last step left.
 - A replay still going after about 45 seconds answers "still running, now
-  at step N of M". Call `replay_autorun_to_step` again with the same case
-  and step to keep waiting on that same replay; it is never started twice.
+  at step N of M", with the action of that step it is on (and for how
+  long) and whether an action of that step failed. Call
+  `replay_autorun_to_step` again with the same case and step to keep
+  waiting on that same replay; it is never started twice, and a different
+  case or step is refused until it ends. While it runs,
+  `get_autorun_page`, probes and tries answer at once that a replay is
+  going. A finished answer nobody collected is kept for 90 seconds, while
+  the script and the browser are unchanged; after that the same call
+  starts a new replay.
 - A failed action ends a replay at once. To end one you no longer need,
   call `replay_autorun_to_step` with only `stop: true`: it stops before the
-  next action and says where.
+  next action and says where. An action already waiting on the page
+  finishes its wait first; the answer says it was stopped on request,
+  after which action of which step, with no page. A replay that failed or
+  reached its step first answers as it ended. Not stopped within about 45
+  seconds, it says it was asked to stop: send `stop: true` again to keep
+  waiting.
 
 Its `STOP:` lines are final, and mean the script must not be touched at
 all:
