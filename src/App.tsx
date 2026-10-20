@@ -64,9 +64,8 @@ import { useFieldRefs } from "./hooks/useFieldRefs";
 import { isBetaVersion, markChangelogSeen, SHOW_CHANGELOG_EVENT, updatedFrom } from "./lib/changelogSeen";
 import type { ChangelogEntry } from "./lib/changelog";
 import SessionExpiredModal from "./components/SessionExpiredModal";
-import RunWindow from "./screens/AutoRun/ReplayPane";
 import RunPill from "./components/RunPill";
-import { clearReviewRequest } from "./lib/backgroundRun";
+import { clearReviewRequest, useBackgroundRun } from "./lib/backgroundRun";
 import { useOpenOnExportRequest } from "./lib/playwrightExport";
 import { useBackgroundRunHost } from "./hooks/useBackgroundRunHost";
 import { useAutoRunScriptsSync } from "./hooks/useAutoRunScriptsSync";
@@ -152,6 +151,11 @@ const Settings = lazy(() => import("./screens/Settings"));
 const Suites = lazy(() => import("./screens/Suites"));
 const ManageCases = lazy(() => import("./screens/ManageCases"));
 const WorkBoard = lazy(() => import("./screens/WorkBoard"));
+// The unattended run's window, with the step text renderer it shows cases
+// in (lib/markdown and its sanitiser): loaded the first time a run's window
+// opens, not at every launch. `RunWindowHost` below keeps it unrendered -
+// and so unloaded - until then.
+const RunWindow = lazy(() => import("./screens/AutoRun/ReplayPane"));
 import { IconRefresh } from "./lib/actionIcons";
 
 /** How often to look for a new release, in the background. */
@@ -205,6 +209,19 @@ const TITLES: Record<Section, string> = {
   "crystal-reports": "Crystal Reports",
   settings: "Settings",
 };
+
+/** Mounts the run window only while a run's window is open, so its code
+ * loads on first use. Its own component, so a run's progress re-renders
+ * this and not the whole of App. */
+function RunWindowHost() {
+  const { run } = useBackgroundRun();
+  if (!run?.open) return null;
+  return (
+    <Suspense fallback={null}>
+      <RunWindow />
+    </Suspense>
+  );
+}
 
 /** Status pill beside the heading - features shipped before they are done. */
 const TITLE_NOTES: Partial<Record<Section, string>> = {};
@@ -1468,7 +1485,7 @@ export default function App() {
           run's progress and its pauses can be opened from any section (the
           title-bar pill), and Run in background closes it without touching
           the run. It shows only while the run's store says it is open. */}
-      <RunWindow />
+      <RunWindowHost />
 
       {/* Only over a signed-in app: before sign-in the SignIn screen IS the
           prompt. "Not now" just closes it - cached data stays readable and
