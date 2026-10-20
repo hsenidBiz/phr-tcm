@@ -384,7 +384,7 @@ pub const PLACED_TS: &str = r#"const placed = async (a: ReturnType<typeof page.l
     const n = await loc.count();
     if (n === 0) return `${who} is not on the page`;
     if (n > 1) return `${who} matched ${n} elements, not one`;
-    const box = await loc.evaluate(readBox, undefined, { timeout: 2000 });
+    const box = await loc.evaluate(readBox, undefined, { timeout: left() });
     if (box.w <= 0 || box.h <= 0) return `${who} is drawn at no size, so it has no place`;
     found.push(box);
   }
@@ -768,23 +768,36 @@ impl Em<'_> {
     /// that fails (or throws, an item re-rendered under it) starts the hold
     /// over, a look that differs from the one the hold began with - the
     /// item count, the texts read, a box more than a pixel off - restarts
-    /// it too, and a pass still held at the deadline passes. It answers why
-    /// not, or null.
+    /// it too, and a pass still held at the deadline passes - also when the
+    /// look that reached the deadline was cut off by it, as the app's loop
+    /// keeps a pass through a look that ran out of time. It answers why not,
+    /// or null. `left` is what every call of a look may take: two seconds,
+    /// or what the check has left, so a page that stopped answering cannot
+    /// carry a look of many items far past the check's timeout.
     fn settle_helper(&mut self) {
         let poll = SETTLE_POLL_MS.to_string();
         let settle = SETTLE_MS.to_string();
         for l in [
+            "let lookEnd = 0;",
+            "const left = () => Math.max(1, Math.min(2000, lookEnd - Date.now()));",
             "type Held = { read: string; boxes?: number[] };",
             "const settle = async (look: () => Promise<string | Held>, timeout: number): Promise<string | null> => {",
             "  const end = Date.now() + timeout;",
+            "  lookEnd = end;",
             "  let held: Held | null = null;",
             "  let since = 0;",
             "  let last = 'it was not looked at';",
             "  for (;;) {",
-            "    const got = await look().catch((e: Error) => String(e.message).split('\\n')[0]);",
+            "    let cut = false;",
+            "    const got = await look().catch((e: Error) => {",
+            "      cut = Date.now() >= end;",
+            "      return String(e.message).split('\\n')[0];",
+            "    });",
             "    if (typeof got === 'string') {",
-            "      held = null;",
-            "      last = got;",
+            "      if (!(cut && held !== null)) {",
+            "        held = null;",
+            "        last = got;",
+            "      }",
             "    } else {",
             "      const was = held;",
             "      const before = was?.boxes ?? [];",
@@ -811,7 +824,7 @@ impl Em<'_> {
     fn saw(&mut self) {
         for l in [
             "const saw = async (el: ReturnType<typeof page.locator>, got: string | null): Promise<string> =>",
-            "  (await el.evaluate((e: Element) => e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement, undefined, { timeout: 2000 })) ? '(a field)' : JSON.stringify(got);",
+            "  (await el.evaluate((e: Element) => e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement, undefined, { timeout: left() })) ? '(a field)' : JSON.stringify(got);",
         ] {
             self.line(4, l);
         }
@@ -1052,8 +1065,8 @@ impl Em<'_> {
                 _ => return no("expect_each takes exactly one of visible, equals, contains, matches or not_empty"),
             };
             match attribute {
-                Some(name) => self.line(at(2), &format!("const got = await el.getAttribute({}, {{ timeout: 2000 }});", lit(name))),
-                None => self.line(at(2), "const got = await el.evaluate(readText, undefined, { timeout: 2000 });"),
+                Some(name) => self.line(at(2), &format!("const got = await el.getAttribute({}, {{ timeout: left() }});", lit(name))),
+                None => self.line(at(2), "const got = await el.evaluate(readText, undefined, { timeout: left() });"),
             }
             self.line(at(2), &format!("if ({judge}) {fail}"));
         }
@@ -1081,7 +1094,7 @@ impl Em<'_> {
         self.line(at(0), "const texts: string[] = [];");
         self.line(
             at(0),
-            "for (let i = 0; i < n; i++) texts.push(await items.nth(i).evaluate(readText, undefined, { timeout: 2000 }));",
+            "for (let i = 0; i < n; i++) texts.push(await items.nth(i).evaluate(readText, undefined, { timeout: left() }));",
         );
         self.line(at(0), "if ((await items.count()) !== n) return 'the list changed while it was read';");
         self.line(at(0), &format!("const order = [{order}];"));

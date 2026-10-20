@@ -835,7 +835,7 @@ fn an_each_check_translates_to_a_settled_look_over_every_item() {
         "const found = await el.count();",
         "if (found !== 1) return `item ${i + 1} of ${n}: found ${found} of ` + 'h3';",
         "const el = item;",
-        "const got = await el.evaluate(readText, undefined, { timeout: 2000 });",
+        "const got = await el.evaluate(readText, undefined, { timeout: left() });",
         "if (got === null || !new RegExp('^AUTOTEST ').test(got)) return `item ${i + 1} of ${n}: saw ${await saw(el, got)}`;",
         // The text is collapsed, as the app collapses both sides.
         "if (got === null || !got.includes('AUTO TEST')) return",
@@ -868,7 +868,7 @@ fn an_each_check_reads_what_the_run_reads() {
     .unwrap();
     for want in [
         // An attribute is read raw, and missing is not the empty string.
-        "const got = await el.getAttribute('href', { timeout: 2000 });",
+        "const got = await el.getAttribute('href', { timeout: left() });",
         "if (got !== '/x') return `item ${i + 1} of ${n}: saw ${JSON.stringify(got)}`;",
         "if (!got || !got.trim()) return `item ${i + 1} of ${n}: saw ${JSON.stringify(got)}`;",
         "if (got === null || !got.includes('Open')) return `item ${i + 1} of ${n}: saw ${JSON.stringify(got)}`;",
@@ -907,6 +907,102 @@ fn the_settling_helper_holds_a_pass_as_the_app_does() {
     assert!(got.contains(".catch("), "{got}");
 }
 
+/// Every call a look makes is held to the time the check has left, so a page
+/// that has stopped answering cannot keep a look of n items going for n times
+/// two seconds past the check's own timeout.
+#[test]
+fn every_call_of_a_list_look_is_held_to_the_time_the_check_has_left() {
+    let got = one_step(json!([
+        { "kind": "expect_each", "selector": { "css": "li" }, "attribute": "title", "not_empty": true },
+        { "kind": "expect_each", "selector": { "css": "li" }, "not_empty": true },
+        { "kind": "expect_order", "selector": { "css": "li" }, "texts": ["a", "b"] },
+        { "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": { "css": "#bar" }, "relation": "right_of" }
+    ]))
+    .run()
+    .unwrap();
+    assert!(!got.contains("timeout: 2000"), "a fixed two seconds per call is left:\n{got}");
+    for want in [
+        "let lookEnd = 0;",
+        "const left = () => Math.max(1, Math.min(2000, lookEnd - Date.now()));",
+        "el.getAttribute('title', { timeout: left() })",
+        "el.evaluate(readText, undefined, { timeout: left() })",
+        "items.nth(i).evaluate(readText, undefined, { timeout: left() })",
+        "e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement, undefined, { timeout: left() })",
+        "loc.evaluate(readBox, undefined, { timeout: left() })",
+    ] {
+        assert!(got.contains(want), "missing {want}\n{got}");
+    }
+}
+
+/// The settling helper as the spec declares it, run in node: a look the
+/// deadline cuts off leaves a held pass standing (as the app's own loop does),
+/// nothing held reports why, and a call's time is what the check has left.
+#[test]
+fn the_exported_settle_keeps_a_held_pass_when_the_deadline_cuts_a_look_off() {
+    let got = lf(&one_step(json!([{ "kind": "expect_order", "selector": { "css": "li" }, "texts": ["a", "b"] }])).run().unwrap());
+    let from = got.find("    let lookEnd = 0;").expect("the helper declares lookEnd");
+    let settle_at = got.find("    const settle = async (").unwrap();
+    let end = settle_at + got[settle_at..].find("\n    };\n").unwrap() + "\n    };\n".len();
+    let helper = &got[from..end];
+    let source = format!(
+        "{helper}\n{}",
+        r#"const fs = require('node:fs');
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const main = async () => {
+  const out: Record<string, unknown> = {};
+  // Two passes, then a look that outlasts the deadline: the pass held stands.
+  {
+    let calls = 0;
+    out.cutAfterPass = await settle(async () => {
+      calls++;
+      if (calls <= 2) return { read: '2' };
+      await sleep(left() + 50);
+      throw new Error('Timeout exceeded.\nCall log');
+    }, 1500);
+  }
+  // The same look with nothing held: it is why.
+  out.cutWithNothing = await settle(async () => {
+    await sleep(left() + 50);
+    throw new Error('Timeout exceeded.\nCall log');
+  }, 400);
+  // A look that throws well before the deadline starts the hold over.
+  {
+    let calls = 0;
+    out.throwsEarly = await settle(async () => {
+      calls++;
+      if (calls === 2) throw new Error('detached');
+      return { read: '2' };
+    }, 3000);
+  }
+  // Each call's time is what is left, never more than two seconds, never nothing.
+  {
+    const budgets: number[] = [];
+    await settle(async () => {
+      budgets.push(left());
+      return 'not yet';
+    }, 700);
+    out.budgets = budgets;
+  }
+  fs.writeFileSync(process.argv[2], JSON.stringify(out));
+};
+main().catch((e) => { console.error(e); process.exit(1); });
+"#
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (script, output) = (dir.path().join("settle.ts"), dir.path().join("out.json"));
+    std::fs::write(&script, source).unwrap();
+    let run = std::process::Command::new("node").arg("--no-warnings").arg(&script).arg(&output).output().expect("node is needed for this test");
+    assert!(run.status.success(), "node failed: {}", String::from_utf8_lossy(&run.stderr));
+    let out: Value = serde_json::from_str(&std::fs::read_to_string(&output).unwrap()).unwrap();
+    assert_eq!(out["cutAfterPass"], Value::Null, "{out}");
+    assert_eq!(out["cutWithNothing"], json!("Timeout exceeded."), "{out}");
+    assert_eq!(out["throwsEarly"], Value::Null, "{out}");
+    let budgets = out["budgets"].as_array().unwrap();
+    assert!(budgets.len() >= 2, "{out}");
+    assert!(budgets.iter().all(|b| (1..=700).contains(&b.as_i64().unwrap())), "{out}");
+    assert!(budgets[1].as_i64().unwrap() < budgets[0].as_i64().unwrap(), "{out}");
+}
+
 #[test]
 fn an_order_check_translates_to_a_settled_read_of_every_item() {
     let got = one_step(json!([
@@ -919,7 +1015,7 @@ fn an_order_check_translates_to_a_settled_read_of_every_item() {
         "const items = cur.getByRole('option').filter({ visible: true });",
         "if (n === 0) return 'is not on the page';",
         "if (n > 200) return `matched ${n} items, more than the 200 expect_order reads`;",
-        "texts.push(await items.nth(i).evaluate(readText, undefined, { timeout: 2000 }));",
+        "texts.push(await items.nth(i).evaluate(readText, undefined, { timeout: left() }));",
         "const order = ['All', 'Draft', 'Published'];",
         "const at = texts.findIndex((t, i) => i >= from && t.includes(want));",
         "from = at + 1;",
