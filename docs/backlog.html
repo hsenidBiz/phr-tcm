@@ -42,7 +42,28 @@
 <body>
 <main>
   <h1>Test Case Manager backlog</h1>
-  <p class="sub">Updated 20 October 2026, after 2.2.3-beta.18 (fewer, leaner assistant tools; area path repair; cleanup). What is left is below.</p>
+  <p class="sub">Updated 20 October 2026, after 2.2.3-beta.19 (thorough checks, for every module). What is left is below.</p>
+
+  <h2>Thorough checks (2.2.3-beta.19, 20 October 2026)</h2>
+  <div class="item">
+    <div class="head"><span class="title">Hand checks owed</span><span class="status todo">Waiting on you</span></div>
+    <ul>
+      <li>Have the assistant rewrite one Manage Cycle case that only counted cards (141699 or 141700) with expect_each: every card's name and subtitle checked; then blank one card's name in a test environment and the case fails.</li>
+      <li>141720: the status options checked with expect_order, so Published can no longer be satisfied by Unpublished.</li>
+      <li>141698: the New Cycle button checked with expect_position (in the top right of the header).</li>
+      <li>Save a script whose only check is "there is no switch" on a Published card: the save asks for a positive control until the script also shows a switch on a Draft card.</li>
+      <li>Export one of those cases to Playwright and run it there: it passes and fails the same way.</li>
+      <li>Then the next designs, for you to review first: all projects as one, and several agents with their own browsers.</li>
+    </ul>
+  </div>
+  <div class="item">
+    <div class="head"><span class="title">Not fully done</span><span class="status todo">Follow-ups</span></div>
+    <ul>
+      <li>A pattern's \w and \d match English letters and digits only (as in Playwright); a name with an accent needs an explicit set of letters.</li>
+      <li>A position check does not undo CSS transforms on the page.</li>
+      <li>The note about a record named without a precondition does not look inside components or API requests that make the record.</li>
+    </ul>
+  </div>
 
   <h2>Cleanup and area path repair (2.2.3-beta.18, 20 October 2026)</h2>
   <div class="item">
