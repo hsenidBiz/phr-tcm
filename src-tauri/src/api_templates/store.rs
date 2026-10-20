@@ -38,8 +38,8 @@ fn invalid_id(id: &str) -> String {
     format!("'{id}' is not a valid template id")
 }
 
-/// What a history line was: the prove that saved the template, or a run.
-pub const MODE_PROVE: &str = "prove";
+/// What a history line was: a run (the prove that saved the template is
+/// written as "prove").
 pub const MODE_RUN: &str = "run";
 
 fn run_mode() -> String {

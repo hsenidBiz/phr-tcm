@@ -4,13 +4,6 @@
 
 use std::path::Path;
 
-/// Create `<root>/.test-cases` if needed and return its path.
-#[tauri::command]
-#[specta::specta]
-pub fn ensure_cases_dir(root: String) -> Result<String, String> {
-    crate::workspace::ensure_cases_dir(Path::new(&root)).map(|p| p.to_string_lossy().to_string())
-}
-
 /// Where a picked file landed, and where the copy it replaced went.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct CopiedIn {

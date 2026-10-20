@@ -313,19 +313,3 @@ pub fn state_for_column(
 pub fn wiql_str(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
-
-/// A WIQL clause scoping to a team's area(s), ported from v1
-/// _team_area_clause: tree fields use UNDER when includeChildren, else '='.
-pub fn team_area_clause(field_ref: &str, values: &[(String, bool)]) -> String {
-    let field = format!("[{field_ref}]");
-    let tree = field_ref.ends_with("AreaPath") || field_ref.ends_with("IterationPath");
-    values
-        .iter()
-        .filter(|(v, _)| !v.is_empty())
-        .map(|(v, include_children)| {
-            let op = if tree && *include_children { "UNDER" } else { "=" };
-            format!("{field} {op} {}", wiql_str(v))
-        })
-        .collect::<Vec<_>>()
-        .join(" OR ")
-}

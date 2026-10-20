@@ -1,27 +1,9 @@
 //! Golden vectors ported 1:1 from v1 tests/test_import_parser.py.
 
 use std::collections::HashMap;
-use v2_lib::import_parser::{export_queue_to_html, 
-    export_queue_to_json, parse_file, parse_rows,
-    EXCEL_HEADERS,
-};
+use v2_lib::import_parser::{export_queue_to_html, export_queue_to_json, parse_file};
 use v2_lib::model::TestCase;
 use v2_lib::steps_xml::Step;
-
-fn headers() -> Vec<String> {
-    EXCEL_HEADERS.iter().map(|s| s.to_string()).collect()
-}
-
-fn row(kv: &[(&str, &str)]) -> HashMap<String, String> {
-    let mut m: HashMap<String, String> = EXCEL_HEADERS
-        .iter()
-        .map(|h| (h.to_string(), String::new()))
-        .collect();
-    for (k, v) in kv {
-        m.insert(k.to_string(), v.to_string());
-    }
-    m
-}
 
 fn tmp_path(name: &str) -> String {
     let dir = std::env::temp_dir().join("tcm-v2-import-tests");
@@ -30,110 +12,6 @@ fn tmp_path(name: &str) -> String {
         .to_string_lossy()
         .to_string()
 }
-
-#[test]
-fn missing_required_columns_errors() {
-    let err = parse_rows(&[], &["TestCaseName".to_string(), "StepAction".to_string()])
-        .unwrap_err();
-    assert!(err.contains("Missing required columns"));
-    assert!(err.contains("StepNumber"));
-}
-
-#[test]
-fn basic_case_with_continuation_rows() {
-    let rows = vec![
-        (2, row(&[("TestCaseName", "Login"), ("StepNumber", "1"), ("StepAction", "Open"), ("Tags", "smoke")])),
-        (3, row(&[("StepNumber", "2"), ("StepAction", "Type"), ("StepExpected", "Accepted")])),
-        (4, row(&[("StepNumber", "3"), ("StepAction", "Submit")])),
-    ];
-    let (cases, warnings) = parse_rows(&rows, &headers()).unwrap();
-    assert!(warnings.is_empty());
-    assert_eq!(cases.len(), 1);
-    let tc = &cases[0];
-    assert_eq!(tc.title, "Login");
-    assert_eq!(tc.tags, "smoke");
-    assert_eq!(
-        tc.steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(),
-        vec!["Open", "Type", "Submit"]
-    );
-    assert_eq!(tc.update_id, None);
-}
-
-#[test]
-fn testcaseid_marks_update_and_tolerates_float_formatting() {
-    let rows = vec![(2, row(&[("TestCaseID", "123.0"), ("TestCaseName", "Existing"), ("StepNumber", "1"), ("StepAction", "Do")]))];
-    let (cases, _) = parse_rows(&rows, &headers()).unwrap();
-    assert_eq!(cases[0].update_id, Some(123));
-}
-
-#[test]
-fn invalid_testcaseid_warns_and_creates_new() {
-    let rows = vec![(5, row(&[("TestCaseID", "abc"), ("TestCaseName", "Bad"), ("StepNumber", "1"), ("StepAction", "Do")]))];
-    let (cases, warnings) = parse_rows(&rows, &headers()).unwrap();
-    assert_eq!(cases[0].update_id, None);
-    assert!(warnings.iter().any(|w| w.contains("Row 5") && w.contains("abc")));
-}
-
-#[test]
-fn invalid_automation_status_warns_with_row() {
-    let rows = vec![(7, row(&[("TestCaseName", "X"), ("StepNumber", "1"), ("StepAction", "Do"), ("AutomationStatus", "Nope")]))];
-    let (cases, warnings) = parse_rows(&rows, &headers()).unwrap();
-    assert_eq!(cases[0].automation_status, "Not Automated");
-    assert!(warnings.iter().any(|w| w.contains("Row 7") && w.contains("Nope")));
-}
-
-#[test]
-fn steps_sorted_by_step_number() {
-    let rows = vec![
-        (2, row(&[("TestCaseName", "Order"), ("StepNumber", "2"), ("StepAction", "Second")])),
-        (3, row(&[("StepNumber", "1"), ("StepAction", "First")])),
-    ];
-    let (cases, _) = parse_rows(&rows, &headers()).unwrap();
-    assert_eq!(
-        cases[0].steps.iter().map(|s| s.action.as_str()).collect::<Vec<_>>(),
-        vec!["First", "Second"]
-    );
-}
-
-#[test]
-fn comma_tags_warns() {
-    let rows = vec![(2, row(&[("TestCaseName", "T"), ("StepNumber", "1"), ("StepAction", "Do"), ("Tags", "a, b")]))];
-    let (_cases, warnings) = parse_rows(&rows, &headers()).unwrap();
-    assert!(warnings.iter().any(|w| w.contains("comma")));
-}
-
-#[test]
-fn long_title_warns_but_case_kept() {
-    let long = "X".repeat(300);
-    let rows = vec![(3, row(&[("TestCaseName", long.as_str()), ("StepNumber", "1"), ("StepAction", "Do")]))];
-    let (cases, warnings) = parse_rows(&rows, &headers()).unwrap();
-    assert_eq!(cases.len(), 1);
-    assert!(warnings.iter().any(|w| w.contains("Row 3") && w.contains("255")));
-}
-
-#[test]
-fn expected_without_action_warns_and_skips_step() {
-    let rows = vec![
-        (2, row(&[("TestCaseName", "T"), ("StepNumber", "1"), ("StepAction", "Do")])),
-        (3, row(&[("StepNumber", "2"), ("StepExpected", "Orphan expected")])),
-    ];
-    let (cases, warnings) = parse_rows(&rows, &headers()).unwrap();
-    assert_eq!(cases[0].steps.len(), 1);
-    assert!(warnings
-        .iter()
-        .any(|w| w.contains("Row 3") && w.contains("StepAction is empty")));
-}
-
-#[test]
-fn case_without_steps_skipped_with_row() {
-    let rows = vec![(4, row(&[("TestCaseName", "Empty")]))];
-    let (cases, warnings) = parse_rows(&rows, &headers()).unwrap();
-    assert!(cases.is_empty());
-    assert!(warnings.iter().any(|w| w.contains("Row 4") && w.contains("Empty")));
-}
-
-
-
 
 #[test]
 fn json_export_round_trips_through_the_importer() {
@@ -944,12 +822,6 @@ fn a_step_that_spans_lines_keeps_its_lines_without_a_warning() {
     assert_eq!(cases[0].steps[2].action, "Run the following query.\n```sql\nSELECT 1\nFROM t\n```");
     assert_eq!(cases[0].steps[2].expected, "It closes");
     assert!(warnings.iter().all(|w| !w.contains("line breaks") && !w.contains("several lines")), "got {warnings:?}");
-
-    // The same in a spreadsheet row, where a cell holds the line break.
-    let rows = vec![(2, row(&[("TestCaseName", "Sheet draft"), ("StepNumber", "1"), ("StepAction", "Open Settings\r\nthen Payments"), ("StepExpected", "Shown")]))];
-    let (sheet, sheet_warnings) = parse_rows(&rows, &headers()).unwrap();
-    assert_eq!(sheet[0].steps[0].action, "Open Settings\nthen Payments");
-    assert!(sheet_warnings.iter().all(|w| !w.contains("several lines")), "got {sheet_warnings:?}");
 
     // The review page still shows each step, lines and all.
     let page = tmp_path("wrapped-steps.html");

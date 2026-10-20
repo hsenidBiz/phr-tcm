@@ -4,30 +4,14 @@
 use std::collections::HashMap;
 use v2_lib::ado::AdoClient;
 use v2_lib::work_board::{
-    column_for_state, state_for_column, team_area_clause, wiql_str, BoardParent, StateInfo,
+    column_for_state, state_for_column, wiql_str, BoardParent, StateInfo,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[test]
-fn wiql_clause_builders_match_v1() {
+fn wiql_str_matches_v1() {
     assert_eq!(wiql_str("it's"), "'it''s'");
-    // Tree field + includeChildren -> UNDER; flat value -> '='.
-    let clause = team_area_clause(
-        "System.AreaPath",
-        &[
-            ("Proj\\Team".to_string(), true),
-            ("Proj\\Other".to_string(), false),
-            (String::new(), true), // empty values dropped
-        ],
-    );
-    assert_eq!(
-        clause,
-        "[System.AreaPath] UNDER 'Proj\\Team' OR [System.AreaPath] = 'Proj\\Other'"
-    );
-    // Non-tree fields never use UNDER.
-    let clause = team_area_clause("Custom.Squad", &[("Alpha".to_string(), true)]);
-    assert_eq!(clause, "[Custom.Squad] = 'Alpha'");
 }
 
 #[tokio::test]

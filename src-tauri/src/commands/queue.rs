@@ -89,17 +89,6 @@ pub fn export_queue_json(path: String, queue: Vec<model::TestCase>) -> Result<()
     import_parser::export_queue_to_json(&queue, &path)
 }
 
-#[tauri::command(async)]
-#[specta::specta]
-pub fn export_queue_html(path: String, queue: Vec<model::TestCase>, subtitle: String) -> Result<(), String> {
-    // A saved-to-disk export is shared/archived - no autosaving note boxes,
-    // and no palette either: a file that leaves this machine opens in the
-    // neutral light styling rather than in whatever theme the sender
-    // happened to be using. The page's own switch still gets the reader to
-    // dark in one click.
-    import_parser::export_queue_to_html(&queue, &path, &subtitle, None, &Default::default())
-}
-
 #[derive(serde::Serialize, specta::Type)]
 pub struct SharedQueue {
     /// The PBI the sender drafted against. When it differs from the

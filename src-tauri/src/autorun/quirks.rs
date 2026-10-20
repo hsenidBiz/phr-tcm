@@ -146,10 +146,9 @@ pub const MAX_QUIRK_CHARS: usize = 300;
 /// refusal and in both guides.
 pub const RETIRE_TOOL: &str = "retire_autorun_quirk";
 
-/// The same two tools as the API templates assistant has them: in the API
+/// The retire tool as the API templates assistant has it: in the API
 /// templates tool row, so a person who switches Auto Run's row off still
-/// leaves that assistant able to file and retire what it learns.
-pub const RECORD_APP_TOOL: &str = "record_app_quirk";
+/// leaves that assistant able to retire what it learns.
 pub const RETIRE_APP_TOOL: &str = "retire_app_quirk";
 
 /// The retire tool an assistant working from `from` has.
