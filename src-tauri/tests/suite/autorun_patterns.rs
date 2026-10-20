@@ -482,6 +482,37 @@ fn each_failures_fall_in_their_classes() {
     assert_eq!(action_target(&each).as_deref(), Some(list));
 }
 
+/// An `expect_order` and an `expect_position` fail in their own sentences;
+/// the words of the page inside them decide nothing.
+#[test]
+fn order_and_position_failures_fall_in_their_classes() {
+    // An order failure is text that did not come in order, whatever the
+    // items say.
+    let order = "waited 300ms: li expected text order \"A\", \"B\" but \"B\" is not after \"A\"; saw \"B\", \"A\"";
+    assert_eq!(classify(order, Some("li")), ErrorClass::TextMismatch);
+    assert_eq!(classify(order, None), ErrorClass::TextMismatch);
+    let words = "waited 300ms: li expected text order \"A\", \"B\" but \"A\" is in none of them; saw \"x is not on the page\"";
+    assert_eq!(classify(words, Some("li")), ErrorClass::TextMismatch);
+    // A position that is not where it was wanted.
+    let place = "waited 300ms: #a is not left of #bar: it is at (300, 10) 80x30, and #bar at (0, 0) 400x60";
+    assert_eq!(classify(place, Some("#a")), ErrorClass::PositionMismatch);
+    assert_eq!(classify(place, None), ErrorClass::PositionMismatch);
+    let corner = "waited 300ms: #a is not in the top-right of #bar: it is at (3, 1) 8x3, and #bar at (0, 0) 40x6";
+    assert_eq!(classify(corner, Some("#a")), ErrorClass::PositionMismatch);
+    // A reference that is not there is a thing not found.
+    let missing = "waited 300ms: #a cannot be placed: #bar is not on the page";
+    assert_eq!(classify(missing, Some("#a")), ErrorClass::NotFound);
+    assert_eq!(classify(missing, None), ErrorClass::NotFound);
+    // And the keys and words are fixed.
+    assert_eq!(ErrorClass::PositionMismatch.key(), "position_mismatch");
+    assert_eq!(ErrorClass::PositionMismatch.label(), "a different position");
+    // The element is what a pattern is about; for a position, the first.
+    let pos: Action = serde_json::from_value(serde_json::json!({ "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": { "css": "#bar" }, "relation": "above" })).unwrap();
+    assert_eq!(action_target(&pos).as_deref(), Some("#a"));
+    let ord: Action = serde_json::from_value(serde_json::json!({ "kind": "expect_order", "selector": { "css": "li" }, "texts": ["a", "b"] })).unwrap();
+    assert_eq!(action_target(&ord).as_deref(), Some("li"));
+}
+
 /// The item prefix is read only at the start of the reason: page text
 /// that merely looks like it, further along, decides nothing.
 #[test]

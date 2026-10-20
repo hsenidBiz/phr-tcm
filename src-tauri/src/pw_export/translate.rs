@@ -81,8 +81,11 @@ fn check_action(a: &Action, origins: &[String]) -> Res<()> {
         | Action::SwitchTab { .. }
         | Action::ExpectTabClosed { .. } => Ok(()),
         Action::PressKey { key, .. } => key_name(key).map(|_| ()),
-        // The export of the list check is a later piece of this batch.
+        // The export of the list, order and position checks is a later
+        // piece of this batch.
         Action::ExpectEach { .. } => no("expect_each cannot be exported yet"),
+        Action::ExpectOrder { .. } => no("expect_order cannot be exported yet"),
+        Action::ExpectPosition { .. } => no("expect_position cannot be exported yet"),
         Action::Click { selector }
         | Action::Fill { selector, .. }
         | Action::WaitFor { selector, .. }
@@ -1130,7 +1133,9 @@ impl Em<'_> {
             | Action::UseComponent { .. }
             | Action::Upload { .. }
             | Action::ExpectDialog { .. }
-            | Action::ExpectEach { .. } => {
+            | Action::ExpectEach { .. }
+            | Action::ExpectOrder { .. }
+            | Action::ExpectPosition { .. } => {
                 return check_action(a, self.input.origins)
             }
         }

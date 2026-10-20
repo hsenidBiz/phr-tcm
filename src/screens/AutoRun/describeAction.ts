@@ -253,6 +253,19 @@ function isPasswordField(target: unknown): boolean {
 
 const quoted = (list: readonly string[]) => list.map((s) => `"${s}"`).join(", ");
 
+/** What an `expect_position` relation reads as. */
+const RELATIONS: Record<string, string | undefined> = {
+  left_of: "left of",
+  right_of: "right of",
+  above: "above",
+  below: "below",
+  inside: "inside",
+  in_top_left: "in the top-left of",
+  in_top_right: "in the top-right of",
+  in_bottom_left: "in the bottom-left of",
+  in_bottom_right: "in the bottom-right of",
+};
+
 /** The details an `expect_download` reads in the file, as a clause each. */
 function downloadDetails(a: Extract<Action, { kind: "expect_download" }>): string {
   const parts: string[] = [];
@@ -580,6 +593,26 @@ function describeKnown(a: Action): Sentence {
         words(": "),
         ...describeTarget(a.child),
         words(` in it ${tail}`),
+      ];
+    }
+    case "expect_order": {
+      const texts = strList(a.texts);
+      if (texts.length < 2) throw new Unreadable();
+      return [
+        words("Check "),
+        ...describeTarget(a.selector),
+        words(` lists ${quoted(texts.map(withoutHosts))} in that order${upTo(a.timeout_ms)}`),
+      ];
+    }
+    case "expect_position": {
+      const where = RELATIONS[str(a.relation)];
+      if (where === undefined) throw new Unreadable();
+      return [
+        words("Check "),
+        ...describeTarget(a.selector),
+        words(` is ${where} `),
+        ...describeTarget(a.relative_to),
+        words(upTo(a.timeout_ms)),
       ];
     }
     case "drag": {

@@ -661,6 +661,8 @@ fn only_checks_and_expectations_are_checks() {
         serde_json::from_value(serde_json::json!({ "kind": "expect_sorted", "table": "t", "column": "A", "order": "ascending" })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_row_count", "table": "t", "equals": 1 })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_each", "selector": "s", "not_empty": true })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_order", "selector": "s", "texts": ["a", "b"] })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_position", "selector": "s", "relative_to": "t", "relation": "inside" })).unwrap(),
         Action::UseComponent { component: "c".into(), inputs: serde_json::Map::new() },
     ];
     assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
@@ -691,6 +693,8 @@ fn only_checks_and_expectations_are_checks() {
                 | "expect_sorted"
                 | "expect_row_count"
                 | "expect_each"
+                | "expect_order"
+                | "expect_position"
         )
     };
     for (action, kind) in samples.iter().zip(ACTION_KINDS.iter()) {
@@ -1232,6 +1236,95 @@ fn expect_each_is_validated() {
     let a: Action = serde_json::from_value(json!({ "kind": "expect_each", "selector": { "css": "li" }, "child": { "css": "h3" }, "not_empty": true })).unwrap();
     assert!(a.is_check());
     assert_eq!(a.targets().len(), 2);
+}
+
+#[test]
+fn expect_order_and_position_are_validated() {
+    let bad = |v: serde_json::Value| serde_json::from_value::<Action>(v).unwrap().validate().unwrap_err();
+    let order = |texts: serde_json::Value| json!({ "kind": "expect_order", "selector": { "role": "option" }, "texts": texts });
+    // The selector is checked first, and is a locator object: a string
+    // reaches only the first match.
+    assert!(bad(json!({ "kind": "expect_order", "selector": {}, "texts": ["a", "b"] })).contains("role, text or css"));
+    assert_eq!(
+        bad(json!({ "kind": "expect_order", "selector": "li", "texts": ["a", "b"] })),
+        "expect_order needs a locator object for selector, not a selector string - a string reaches only the first match, and this reads every item"
+    );
+    assert_eq!(bad(order(json!([]))), "expect_order needs at least two texts - for one, use expect_contains_text");
+    assert_eq!(bad(order(json!(["a"]))), "expect_order needs at least two texts - for one, use expect_contains_text");
+    let fifty_one: Vec<String> = (0..51).map(|i| format!("t{i}")).collect();
+    assert_eq!(bad(order(json!(fifty_one))), "expect_order takes at most 50 texts");
+    assert_eq!(bad(order(json!(["a", " "]))), "expect_order has an empty text - everything contains nothing");
+    assert_eq!(bad(order(json!(["", "b"]))), "expect_order has an empty text - everything contains nothing");
+    // The list must be seen holding still, which takes time.
+    for t in [0, 300, 1499] {
+        let mut v = order(json!(["a", "b"]));
+        v["timeout_ms"] = json!(t);
+        assert_eq!(bad(v), "expect_order: needs at least 1500 ms to see the list hold still", "{t}");
+    }
+    let fifty: Vec<String> = (0..50).map(|i| format!("t{i}")).collect();
+    for good in [
+        json!({ "kind": "expect_order", "selector": { "role": "option" }, "texts": ["All", "Draft", "Published", "Unpublished"] }),
+        json!({ "kind": "expect_order", "selector": { "css": "li" }, "texts": ["a", "b"], "timeout_ms": 1500 }),
+        json!({ "kind": "expect_order", "selector": [{ "role": "list" }, { "role": "listitem" }], "texts": fifty }),
+        json!({ "kind": "expect_order", "selector": { "input": "list" }, "texts": ["a", "b"] }),
+    ] {
+        let a: Action = serde_json::from_value(good.clone()).unwrap();
+        assert_eq!(a.validate(), Ok(()), "{good}");
+        assert_eq!(serde_json::to_value(&a).unwrap(), good);
+        assert!(a.is_check());
+        assert_eq!(a.targets().len(), 1);
+    }
+
+    let pos = |relation: serde_json::Value| {
+        json!({ "kind": "expect_position", "selector": { "role": "button", "name": "New Cycle", "exact": true }, "relative_to": { "css": "#bar" }, "relation": relation })
+    };
+    // Every relation, written as the guide writes it.
+    for relation in
+        ["left_of", "right_of", "above", "below", "inside", "in_top_left", "in_top_right", "in_bottom_left", "in_bottom_right"]
+    {
+        let good = pos(json!(relation));
+        let a: Action = serde_json::from_value(good.clone()).unwrap();
+        assert_eq!(a.validate(), Ok(()), "{relation}");
+        assert_eq!(serde_json::to_value(&a).unwrap(), good);
+        assert!(a.is_check());
+        assert_eq!(a.targets().len(), 2);
+    }
+    let mut with_time = pos(json!("above"));
+    with_time["timeout_ms"] = json!(500);
+    let a: Action = serde_json::from_value(with_time.clone()).unwrap();
+    assert_eq!(a.validate(), Ok(()));
+    assert_eq!(serde_json::to_value(&a).unwrap(), with_time);
+    // A relation it does not know is not read.
+    let err = serde_json::from_value::<Action>(pos(json!("near"))).unwrap_err().to_string();
+    assert!(err.contains("unknown variant `near`"), "{err}");
+    // Each locator is checked, the reference under its own name.
+    assert!(bad(json!({ "kind": "expect_position", "selector": {}, "relative_to": { "css": "#bar" }, "relation": "above" }))
+        .contains("role, text or css"));
+    assert_eq!(
+        bad(json!({ "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": {}, "relation": "above" })),
+        "expect_position relative_to: a locator needs one of role, text or css"
+    );
+    assert_eq!(
+        bad(json!({ "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": " ", "relation": "above" })),
+        "expect_position relative_to: a selector is empty"
+    );
+    // The same locator twice compares an element with itself, however written.
+    for (selector, relative_to) in [
+        (json!({ "css": "#a" }), json!({ "css": "#a" })),
+        (json!({ "css": "#a" }), json!([{ "css": "#a" }])),
+        (json!("#a"), json!({ "css": "#a" })),
+    ] {
+        assert_eq!(
+            bad(json!({ "kind": "expect_position", "selector": selector, "relative_to": relative_to, "relation": "inside" })),
+            "expect_position compares two elements - relative_to is the same locator as selector"
+        );
+    }
+    // A different locator for the same words is a different element.
+    let ok: Action = serde_json::from_value(
+        json!({ "kind": "expect_position", "selector": { "css": "li", "nth": 0 }, "relative_to": { "css": "li", "nth": 1 }, "relation": "above" }),
+    )
+    .unwrap();
+    assert_eq!(ok.validate(), Ok(()));
 }
 
 /// The colour rule on its own: the CSS basic colours and `transparent`,

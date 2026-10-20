@@ -59,6 +59,12 @@ pub enum Check<'a> {
     /// `want` (`each::look_each`): the item's text, its `attribute`, or the
     /// one element `child` finds inside it. At least `min` items.
     Each { min: u32, child: Option<&'a Target>, attribute: Option<&'a str>, want: super::each::EachWant<'a> },
+    /// The matches, in page order, contain these texts in this order, others
+    /// between allowed (`order::look_order`).
+    Order(&'a [String]),
+    /// The one match sits `relation` the one element `relative_to` finds
+    /// (`position::holds`).
+    Position { relative_to: &'a Target, relation: super::position::Relation },
 }
 
 /// `this` is the element. Why it is disabled, in a few words, or `""` when
@@ -179,6 +185,9 @@ pub const HIDDEN: &str = "is there but cannot be seen";
 pub const NOT_ON_PAGE: &str = "is not on the page";
 /// `expect_hidden` still sees one of them.
 pub const STILL_VISIBLE: &str = "is still visible";
+/// `expect_position` when the element it is placed against cannot be found
+/// (or is not one element): followed by that element and why.
+pub const CANNOT_BE_PLACED: &str = "cannot be placed: ";
 /// `expect_text`: followed by the wanted text and what was seen.
 pub const EXPECTED_TEXT: &str = "expected text ";
 /// `expect_contains_text`: followed by the wanted text and what was seen.
@@ -415,6 +424,45 @@ pub(crate) async fn look<D: Driver>(
                 other => other,
             };
         }
+        Check::Order(want) => {
+            // As for a list of items: a look that runs out of time partway
+            // is the check's own failure.
+            return match super::order::look_order(d, &what, &handles, want).await {
+                Err(CdpError::Timeout { .. }) => Ok(Err(super::each::TOO_SLOW.to_string())),
+                other => other,
+            };
+        }
+        Check::Position { relative_to, relation } => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
+                let reference = relative_to.describe();
+                let found = resolve_explained(d, relative_to).await?;
+                // Nothing found because a frame could not be entered is not
+                // "not on the page".
+                let placed = match (found.handles.is_empty(), found.unreachable_frame.clone()) {
+                    (true, Some(why)) => Err(why),
+                    _ => only(&found.handles).map(Handle::clone),
+                };
+                match placed {
+                    Err(why) => Err(format!("{CANNOT_BE_PLACED}{reference} {why}")),
+                    Ok(other) => {
+                        let (a, b) = (super::position::read_box(d, h).await?, super::position::read_box(d, &other).await?);
+                        match (a, b) {
+                            (Some(a), Some(b)) if super::position::holds(*relation, a, b) => {
+                                Ok(format!("{what} is {} {reference}", relation.words()))
+                            }
+                            (Some(a), Some(b)) => Err(format!(
+                                "is not {} {reference}: it is at {}, and {reference} at {}",
+                                relation.words(),
+                                super::position::shown(&a),
+                                super::position::shown(&b)
+                            )),
+                            _ => Err(format!("{CANNOT_BE_PLACED}{what} has no box on the page")),
+                        }
+                    }
+                }
+            }
+        },
         Check::Focused => match only(&handles) {
             Err(why) => Err(why),
             Ok(h) => {
@@ -464,10 +512,10 @@ async fn keep_looking<D: Driver>(
     // `at_most` passes on too few, so a page whose rows have not arrived
     // would pass it at once: it passes only once the same pass has held for
     // `table::SETTLE_MS`. The pass held so far, and since when.
-    // An `expect_each` is settled the same way: a list still filling in
-    // passes on the items drawn so far, so it passes only once its count
-    // and its items have held for the same time.
-    let settling = matches!(check, Check::CountBound(super::table::RowCount::AtMost(_)) | Check::Each { .. });
+    // An `expect_each` or `expect_order` is settled the same way: a list
+    // still filling in passes on the items drawn so far, so it passes only
+    // once its count and its items have held for the same time.
+    let settling = matches!(check, Check::CountBound(super::table::RowCount::AtMost(_)) | Check::Each { .. } | Check::Order(_));
     let mut held: Option<(String, Instant)> = None;
     loop {
         page::release(d).await;

@@ -50,6 +50,9 @@ pub enum ErrorClass {
     /// An `expect_style`'s computed value was not the one wanted
     /// (`style::judge`).
     StyleMismatch,
+    /// An `expect_position`'s element was not where it was wanted
+    /// (`expect::look`'s `is not ...: it is at (...)`).
+    PositionMismatch,
     StillVisible,
     PageTextMissing,
     UrlMismatch,
@@ -100,6 +103,7 @@ impl ErrorClass {
             ErrorClass::CountMismatch => "count_mismatch",
             ErrorClass::AttributeMismatch => "attribute_mismatch",
             ErrorClass::StyleMismatch => "style_mismatch",
+            ErrorClass::PositionMismatch => "position_mismatch",
             ErrorClass::StillVisible => "still_visible",
             ErrorClass::PageTextMissing => "page_text_missing",
             ErrorClass::UrlMismatch => "url_mismatch",
@@ -134,6 +138,7 @@ impl ErrorClass {
             ErrorClass::CountMismatch => "a different number of elements".to_string(),
             ErrorClass::AttributeMismatch => "a different attribute".to_string(),
             ErrorClass::StyleMismatch => "a different style".to_string(),
+            ErrorClass::PositionMismatch => "a different position".to_string(),
             ErrorClass::StillVisible => "still visible".to_string(),
             ErrorClass::PageTextMissing => "the page lacked the words".to_string(),
             ErrorClass::UrlMismatch => "a different address".to_string(),
@@ -418,6 +423,10 @@ fn item_reason(t: &str, anchored: bool) -> Option<&str> {
     None
 }
 
+/// What an `expect_position` failure says between the relation and the
+/// boxes: `is not left of #bar: it is at (300, 10) 80x30, and ...`.
+const POSITION_AT: &str = ": it is at (";
+
 /// The reason words that a target-prefixed sentence starts with, once
 /// the target is gone.
 fn by_start(t: &str) -> Option<ErrorClass> {
@@ -456,6 +465,9 @@ fn by_start(t: &str) -> Option<ErrorClass> {
     }
     if (t.starts_with(exp::HAS_NO) && t.ends_with(exp::ATTRIBUTE_TAIL)) || (t.starts_with("expected ") && t.contains("=")) {
         return Some(ErrorClass::AttributeMismatch);
+    }
+    if t.starts_with("is not ") && t.contains(POSITION_AT) {
+        return Some(ErrorClass::PositionMismatch);
     }
     style_class(t, false)
 }
@@ -516,6 +528,9 @@ fn by_end(t: &str) -> Option<ErrorClass> {
     if let Some((_, class)) = endings.into_iter().find(|(words, _)| t.ends_with(&format!(" {words}")) || t.ends_with(words)) {
         return Some(class);
     }
+    if t.contains(" is not ") && t.contains(POSITION_AT) {
+        return Some(ErrorClass::PositionMismatch);
+    }
     // Before the text checks: a style's `contains` fails in their words
     // (`expected it to contain`), after its own `<property> is <value>`.
     if let Some(class) = style_class(t, true) {
@@ -566,6 +581,8 @@ pub fn action_target(action: &Action) -> Option<String> {
         | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. }
         | Action::ExpectEach { selector, .. }
+        | Action::ExpectOrder { selector, .. }
+        | Action::ExpectPosition { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. }
         | Action::RepeatWhileVisible { selector, .. } => Some(selector.describe()),

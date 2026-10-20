@@ -433,6 +433,25 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
+    /// The matches of `selector` (a list), in page order, contain `texts` in
+    /// that order, others between allowed. Each text is compared as
+    /// `expect_contains_text` compares.
+    ExpectOrder {
+        selector: Target,
+        texts: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    /// The one element `selector` finds sits `relation` the one element
+    /// `relative_to` finds: left of, right of, above, below, inside it, or
+    /// in one of its four corners. No pixel sizes.
+    ExpectPosition {
+        selector: Target,
+        relative_to: Target,
+        relation: super::position::Relation,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
 }
 
 /// How an `expect_dialog` answers: OK, or Cancel.
@@ -1292,6 +1311,34 @@ impl Action {
                 }
                 Ok(())
             }
+            Action::ExpectOrder { selector, texts, timeout_ms } => {
+                selector.validate()?;
+                if selector.is_legacy() {
+                    return Err(ORDER_SELECTOR_LEGACY.to_string());
+                }
+                if texts.len() < super::order::TEXTS_MIN {
+                    return Err(ORDER_FEW_TEXTS.to_string());
+                }
+                if texts.len() > super::order::TEXTS_MAX {
+                    return Err(ORDER_MANY_TEXTS.to_string());
+                }
+                if texts.iter().any(|t| t.trim().is_empty()) {
+                    return Err(ORDER_EMPTY_TEXT.to_string());
+                }
+                // The list passes only once it has held still, like `at_most`.
+                if timeout_ms.is_some_and(|t| t < AT_MOST_MIN_MS) {
+                    return Err(ORDER_TIME.to_string());
+                }
+                Ok(())
+            }
+            Action::ExpectPosition { selector, relative_to, .. } => {
+                selector.validate()?;
+                relative_to.validate().map_err(|why| format!("expect_position relative_to: {why}"))?;
+                if selector.links() == relative_to.links() {
+                    return Err(POSITION_SAME.to_string());
+                }
+                Ok(())
+            }
             Action::CheckText { value } if value.trim().is_empty() => {
                 Err("check_text has an empty value".to_string())
             }
@@ -1515,6 +1562,8 @@ impl Action {
             | Action::Upload { selector, .. }
             | Action::ExpectFocused { selector, .. } => vec![selector],
             Action::ExpectEach { selector, child, .. } => std::iter::once(selector).chain(child.as_ref()).collect(),
+            Action::ExpectOrder { selector, .. } => vec![selector],
+            Action::ExpectPosition { selector, relative_to, .. } => vec![selector, relative_to],
             Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter().flat_map(Action::targets)).collect()
             }
@@ -1564,6 +1613,8 @@ impl Action {
             | Action::Upload { selector, .. }
             | Action::ExpectFocused { selector, .. } => vec![selector],
             Action::ExpectEach { selector, child, .. } => std::iter::once(selector).chain(child.as_mut()).collect(),
+            Action::ExpectOrder { selector, .. } => vec![selector],
+            Action::ExpectPosition { selector, relative_to, .. } => vec![selector, relative_to],
             Action::WhenVisible { selector, then, .. } | Action::RepeatWhileVisible { selector, then, .. } => {
                 std::iter::once(selector).chain(then.iter_mut().flat_map(Action::targets_mut)).collect()
             }
@@ -1639,6 +1690,8 @@ impl Action {
                 | Action::ExpectSorted { .. }
                 | Action::ExpectRowCount { .. }
                 | Action::ExpectEach { .. }
+                | Action::ExpectOrder { .. }
+                | Action::ExpectPosition { .. }
         )
     }
 }
@@ -1671,6 +1724,21 @@ pub const EACH_CHILD_LEGACY: &str =
 /// `expect_each` with a child holding a component input.
 pub const EACH_CHILD_INPUT: &str =
     "expect_each's child cannot hold a component input - put the input in the list's locator";
+/// `expect_order` with a selector string, which reaches only one match.
+pub const ORDER_SELECTOR_LEGACY: &str =
+    "expect_order needs a locator object for selector, not a selector string - a string reaches only the first match, and this reads every item";
+/// `expect_order` with a `timeout_ms` under `AT_MOST_MIN_MS`: the list must
+/// hold still for `table::SETTLE_MS`, and be seen to.
+pub const ORDER_TIME: &str = "expect_order: needs at least 1500 ms to see the list hold still";
+/// `expect_order` with fewer than two texts.
+pub const ORDER_FEW_TEXTS: &str = "expect_order needs at least two texts - for one, use expect_contains_text";
+/// `expect_order` with more than `order::TEXTS_MAX` texts.
+pub const ORDER_MANY_TEXTS: &str = "expect_order takes at most 50 texts";
+/// `expect_order` with a blank text.
+pub const ORDER_EMPTY_TEXT: &str = "expect_order has an empty text - everything contains nothing";
+/// `expect_position` whose two locators are the same.
+pub const POSITION_SAME: &str =
+    "expect_position compares two elements - relative_to is the same locator as selector";
 /// `expect_text` given both `equals` and `matches`, or neither.
 pub const TEXT_NEEDS_ONE: &str = "expect_text takes exactly one of \"equals\" (the whole text) or \"matches\" (a pattern)";
 /// The shortest `timeout_ms` an `expect_count` with `at_most` may have: the
@@ -2160,6 +2228,17 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
                 _ => return ActionOutcome::failed(EACH_NEEDS_ONE),
             };
             let check = Check::Each { min: min.unwrap_or(1), child: child.as_ref(), attribute: attribute.as_deref(), want };
+            expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectOrder { selector, texts, timeout_ms } => {
+            // `validate` holds the texts to two or more.
+            if texts.len() < super::order::TEXTS_MIN {
+                return ActionOutcome::failed(ORDER_FEW_TEXTS);
+            }
+            expect::expect(d, selector, Check::Order(texts), wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectPosition { selector, relative_to, relation, timeout_ms } => {
+            let check = Check::Position { relative_to, relation: *relation };
             expect::expect(d, selector, check, wait(timeout_ms, timing), timing.poll_ms).await
         }
         Action::ExpectRowCount { table, equals, at_least, at_most, timeout_ms } => match table::row_count(*equals, *at_least, *at_most) {

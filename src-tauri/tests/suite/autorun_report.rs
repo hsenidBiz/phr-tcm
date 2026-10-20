@@ -745,3 +745,30 @@ fn an_each_check_has_words() {
         "expect each of div.card to have a title"
     );
 }
+
+#[test]
+fn an_order_check_and_a_position_check_have_words() {
+    let say = |v: serde_json::Value| action_words(&serde_json::from_value(v).unwrap());
+    assert_eq!(
+        say(serde_json::json!({ "kind": "expect_order", "selector": { "css": "li" }, "texts": ["All", "Draft", "Published"] })),
+        "expect li to list \"All\", \"Draft\", \"Published\" in that order"
+    );
+    let bar = serde_json::json!({ "css": "#bar" });
+    let new = serde_json::json!({ "css": "#new" });
+    for (relation, words) in [
+        ("left_of", "left of"),
+        ("right_of", "right of"),
+        ("above", "above"),
+        ("below", "below"),
+        ("inside", "inside"),
+        ("in_top_left", "in the top-left of"),
+        ("in_top_right", "in the top-right of"),
+        ("in_bottom_left", "in the bottom-left of"),
+        ("in_bottom_right", "in the bottom-right of"),
+    ] {
+        assert_eq!(
+            say(serde_json::json!({ "kind": "expect_position", "selector": new, "relative_to": bar, "relation": relation })),
+            format!("expect #new to be {words} #bar")
+        );
+    }
+}

@@ -192,6 +192,13 @@ pub fn action_words(action: &Action) -> String {
                 None => format!("expect each of {} to {to}{at_least}", selector.describe()),
             }
         }
+        Action::ExpectOrder { selector, texts, .. } => {
+            let texts: Vec<String> = texts.iter().map(|t| format!("\"{t}\"")).collect();
+            format!("expect {} to list {} in that order", selector.describe(), texts.join(", "))
+        }
+        Action::ExpectPosition { selector, relative_to, relation, .. } => {
+            format!("expect {} to be {} {}", selector.describe(), relation.words(), relative_to.describe())
+        }
         Action::ExpectDialog { text, contains, answer, prompt_text, .. } => {
             let said = match (text, contains) {
                 (Some(t), _) => format!(" saying \"{t}\""),

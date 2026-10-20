@@ -91,7 +91,7 @@ fn refusal_as(step: i32, describe: &str, kind: &str) -> String {
             "Step {step}: {describe} was never seen on the live app. Find it on the page first with probe_autorun_locator or discover_autorun_actions, then save again."
         );
     }
-    let many = matches!(kind, "expect_hidden" | "expect_count" | "expect_each" | "wait_for");
+    let many = matches!(kind, "expect_hidden" | "expect_count" | "expect_each" | "expect_order" | "wait_for");
     // `expect_hidden` (and, as these tests write it, an `expect_count` of
     // 0) passes with nothing there: a probe of none counts.
     let none = matches!(kind, "expect_hidden" | "expect_count");
@@ -2900,6 +2900,53 @@ fn an_at_most_zero_count_takes_a_probe_of_none_like_equals_zero() {
     let at_least = one_step("Cycles", serde_json::json!([{ "kind": "expect_count", "selector": form.clone(), "at_least": 1 }]));
     let refused = check_seen(&map, &none(), &at_least, &[], None).unwrap_err();
     assert!(refused.contains("never seen"), "{refused}");
+}
+
+// ------------------------- expect_order and expect_position
+
+/// A list read in order may have been seen matching several elements; a
+/// click on the same locator may not.
+#[test]
+fn an_order_check_takes_its_list_seen_matching_several() {
+    let order = one_step(
+        "Cycles",
+        serde_json::json!([{ "kind": "expect_order", "selector": { "css": LIST }, "texts": ["All", "Draft"] }]),
+    );
+    let map = sighted_matching("Cycles", css(LIST), 12);
+    assert_eq!(check_seen(&map, &none(), &order, &[], None), Ok(()));
+    // Not seen at all: refused as a check that takes any number.
+    assert_eq!(check_seen(&DiscoveryMap::default(), &none(), &order, &[], None), Err(refusal_as(1, LIST, "expect_order")));
+    // A click on it needs one.
+    assert!(check_seen(&map, &none(), &clicks(serde_json::json!({ "css": LIST })), &[], None).is_err());
+}
+
+/// `#new` and `#bar` seen in Cycles, matching this many elements each.
+fn two_sighted(new: u32, bar: u32) -> DiscoveryMap {
+    let mut map = sighted_matching("Cycles", css("#new"), new);
+    map.areas[0].sightings.extend(sighted_matching("Cycles", css("#bar"), bar).areas.remove(0).sightings);
+    map
+}
+
+/// Both locators are the one element each: an element and the box it is
+/// placed against.
+#[test]
+fn a_position_check_takes_both_locators_seen_matching_one() {
+    let place = one_step(
+        "Cycles",
+        serde_json::json!([{ "kind": "expect_position", "selector": { "css": "#new" }, "relative_to": { "css": "#bar" }, "relation": "in_top_right" }]),
+    );
+    let both = two_sighted(1, 1);
+    assert_eq!(check_seen(&both, &none(), &place, &[], None), Ok(()));
+    // The reference seen matching several is not one box.
+    let wide = two_sighted(1, 2);
+    assert_eq!(check_seen(&wide, &none(), &place, &[], None), Err(many_refusal(1, "#bar")));
+    // The element seen matching several is not either.
+    let wide = two_sighted(2, 1);
+    assert_eq!(check_seen(&wide, &none(), &place, &[], None), Err(many_refusal(1, "#new")));
+    // The reference never seen is refused by name.
+    let only_new = sighted_matching("Cycles", css("#new"), 1);
+    let refused = check_seen(&only_new, &none(), &place, &[], None).unwrap_err();
+    assert!(refused.contains("#bar was never seen on the live app"), "{refused}");
 }
 
 // ------------------------- expect_each: a list, and a child looked for in it

@@ -568,6 +568,8 @@ struct ListPage {
     /// a list still filling in.
     grows_at: usize,
     grown: std::collections::HashMap<(String, String), Vec<String>>,
+    /// Where an element is drawn: `(x, y, width, height)` in the window.
+    boxes: std::collections::HashMap<String, (f64, f64, f64, f64)>,
 }
 
 impl ListPage {
@@ -585,6 +587,15 @@ impl ListPage {
         self.attrs.insert(id.to_string(), value.to_string());
         self
     }
+    /// The one element matching `css` in the document, with id `id`.
+    fn one(mut self, css: &str, id: &str) -> Self {
+        self.found.insert(("doc".to_string(), css.to_string()), vec![id.to_string()]);
+        self
+    }
+    fn at(mut self, id: &str, x: f64, y: f64, w: f64, h: f64) -> Self {
+        self.boxes.insert(id.to_string(), (x, y, w, h));
+        self
+    }
     /// Item `c{item}` holds `n` elements matching `css`: `c{item}-{css}-1`...
     fn inside(mut self, item: usize, css: &str, n: usize) -> Self {
         let ids = (1..=n).map(|k| format!("c{item}-{css}-{k}")).collect();
@@ -597,6 +608,7 @@ impl ListPage {
         use v2_lib::browser::expect::{READ_ATTR_JS, READ_TEXT_JS};
         use v2_lib::browser::input::SHOWN_JS;
         use v2_lib::browser::locator::{FRAME_JS, VISIBLE_JS};
+        use v2_lib::browser::position::READ_BOX_JS;
         common::ScriptedDriver::new(move |method, params| {
             let f = params["functionDeclaration"].as_str().unwrap_or("");
             let id = params["objectId"].as_str().unwrap_or("").to_string();
@@ -611,6 +623,10 @@ impl ListPage {
                 "Runtime.callFunctionOn" if f == CONNECTED_JS => {
                     let gone = self.detached.contains(&id) && looks.load(Ordering::SeqCst) <= self.detached_looks;
                     json!({ "result": { "value": !gone } })
+                }
+                "Runtime.callFunctionOn" if f == READ_BOX_JS => {
+                    let (x, y, w, h) = self.boxes.get(&id).copied().unwrap_or((0.0, 0.0, 0.0, 0.0));
+                    json!({ "result": { "value": { "x": x, "y": y, "w": w, "h": h } } })
                 }
                 "Runtime.callFunctionOn" if f == FRAME_JS => {
                     json!({ "result": { "value": self.frames.get(&id).map_or("element", String::as_str) } })
@@ -967,4 +983,253 @@ async fn each_overrunning_look_is_the_lists_own_failure() {
         v2_lib::autorun::patterns::classify(&out.detail, Some("div.card")),
         v2_lib::autorun::patterns::ErrorClass::TimedOut
     );
+}
+
+// ---- expect_order: the texts of a list come in this order -------------
+
+fn order(texts: Value) -> Action {
+    action(json!({ "kind": "expect_order", "selector": { "css": "li" }, "texts": texts }))
+}
+
+/// `li` items with these texts, `c1..cn`.
+fn items(texts: &[&str]) -> ListPage {
+    let mut page = ListPage::default().list("li", texts.len());
+    for (i, t) in texts.iter().enumerate() {
+        page = page.text(&format!("c{}", i + 1), t);
+    }
+    page
+}
+
+#[tokio::test]
+async fn order_passes_when_the_texts_come_in_that_order_with_others_between() {
+    let page = items(&["All (12)", "Draft (3)", "Archived (1)", "Published (5)", "Unpublished (4)"]);
+    let mut d = page.driver(Arc::default());
+    let out = execute_with(&mut d, &order(json!(["All", "Draft", "Published", "Unpublished"])), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "li reads \"All\", \"Draft\", \"Published\", \"Unpublished\" in that order");
+    assert!(d.deadline_was_cleared());
+}
+
+#[tokio::test]
+async fn order_fails_when_unpublished_comes_before_published() {
+    let page = items(&["All (12)", "Draft (3)", "Unpublished (4)", "Published (5)"]);
+    let out = execute_with(&mut page.driver(Arc::default()), &order(json!(["All", "Draft", "Published", "Unpublished"])), &quick()).await;
+    assert!(!out.ok);
+    assert!(
+        out.detail.ends_with(
+            "expected text order \"All\", \"Draft\", \"Published\", \"Unpublished\" but \"Unpublished\" is not after \"Published\"; saw \"All (12)\", \"Draft (3)\", \"Unpublished (4)\", \"Published (5)\""
+        ),
+        "{}",
+        out.detail
+    );
+    assert!(out.detail.starts_with("waited 250ms: li expected text order"), "{}", out.detail);
+}
+
+#[tokio::test]
+async fn order_names_a_first_text_found_nowhere() {
+    let page = items(&["Draft (3)", "Published (5)"]);
+    let out = execute_with(&mut page.driver(Arc::default()), &order(json!(["All", "Draft"])), &quick()).await;
+    assert!(!out.ok);
+    assert!(
+        out.detail.ends_with("expected text order \"All\", \"Draft\" but \"All\" is in none of them; saw \"Draft (3)\", \"Published (5)\""),
+        "{}",
+        out.detail
+    );
+}
+
+#[tokio::test]
+async fn order_cuts_a_long_list_in_its_failure() {
+    let texts: Vec<String> = (1..=15).map(|i| format!("Item {i}")).collect();
+    let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let out = execute_with(&mut items(&refs).driver(Arc::default()), &order(json!(["Item 3", "Nowhere"])), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("\"Nowhere\" is not after \"Item 3\"; saw \"Item 1\", \"Item 2\""), "{}", out.detail);
+    assert!(out.detail.ends_with("\"Item 10\" and 5 more"), "{}", out.detail);
+
+    // Each item shown is cut, and says so.
+    let long = "x".repeat(60);
+    let out = execute_with(&mut items(&[&long, "b"]).driver(Arc::default()), &order(json!(["b", "zzz"])), &quick()).await;
+    assert!(out.detail.contains(&format!("saw \"{}...\", \"b\"", "x".repeat(40))), "{}", out.detail);
+}
+
+/// Texts are compared as `expect_contains_text` compares: collapsed, and
+/// with case.
+#[tokio::test]
+async fn order_collapses_whitespace_and_keeps_case() {
+    let page = items(&["  All \n (12)", "Draft"]);
+    let out = execute_with(&mut page.driver(Arc::default()), &order(json!(["All (12)", "Draft"])), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    let page = items(&["  All \n (12)", "Draft"]);
+    let out = execute_with(&mut page.driver(Arc::default()), &order(json!(["all", "Draft"])), &quick()).await;
+    assert!(!out.ok, "{}", out.detail);
+}
+
+#[tokio::test]
+async fn order_says_when_its_list_is_missing_or_too_long() {
+    let out = execute_with(&mut ListPage::default().driver(Arc::default()), &order(json!(["a", "b"])), &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("li is not on the page"), "{}", out.detail);
+
+    let out = execute_with(&mut ListPage::default().list("li", 201).driver(Arc::default()), &order(json!(["a", "b"])), &quick()).await;
+    assert!(
+        !out.ok && out.detail.ends_with("matched 201 items, more than the 200 expect_order reads - narrow the list"),
+        "{}",
+        out.detail
+    );
+}
+
+#[tokio::test]
+async fn order_looks_again_when_an_item_is_detached_mid_read() {
+    let build = |detached_looks: usize| {
+        let mut page = items(&["All", "Draft"]);
+        page.detached = vec!["c1".to_string()];
+        page.detached_looks = detached_looks;
+        page
+    };
+    let looks = Arc::new(AtomicUsize::new(0));
+    let out = execute_with(&mut build(1).driver(looks.clone()), &order(json!(["All", "Draft"])), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(looks.load(Ordering::SeqCst) >= 2, "a second look was made");
+
+    let out = execute_with(&mut build(usize::MAX).driver(Arc::default()), &order(json!(["All", "Draft"])), &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("the list changed while it was read"), "{}", out.detail);
+}
+
+/// A list that has not finished drawing passes only once it has held still,
+/// like `expect_each`: the items drawn so far may already hold the texts in
+/// order.
+#[tokio::test]
+async fn order_passes_a_stable_list_only_after_it_has_held_still() {
+    let page = items(&["All", "Draft"]);
+    let looks = Arc::new(AtomicUsize::new(0));
+    let started = std::time::Instant::now();
+    let out = execute_with(
+        &mut page.driver(looks.clone()),
+        &action(json!({ "kind": "expect_order", "selector": { "css": "li" }, "texts": ["All", "Draft"], "timeout_ms": 2000 })),
+        &quick(),
+    )
+    .await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(looks.load(Ordering::SeqCst) >= 3, "passed on {} look(s)", looks.load(Ordering::SeqCst));
+    assert!(started.elapsed() >= Duration::from_millis(700), "passed after {:?}", started.elapsed());
+}
+
+/// A look that runs out of time on a long list is the list check's own
+/// failure, not a silent browser.
+#[tokio::test]
+async fn order_overrunning_look_is_the_lists_own_failure() {
+    use v2_lib::browser::expect::READ_TEXT_JS;
+    let mut d = items(&["a", "b", "c"]).driver(Arc::default()).answering_first(|method, params| {
+        (method == "Runtime.callFunctionOn" && params["functionDeclaration"] == READ_TEXT_JS)
+            .then(|| Err(CdpError::Timeout { what: "Runtime.callFunctionOn".to_string(), ms: 50 }))
+    });
+    let out = execute_with(&mut d, &order(json!(["a", "b"])), &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(out.detail, "waited 250ms: li could not read every item in time - narrow the list, or allow more time");
+}
+
+/// A form control in the list is shown by its label, never by what was
+/// typed into it.
+#[tokio::test]
+async fn order_names_a_control_by_its_label_not_its_value() {
+    let mut page = ListPage::default().list("input.secret", 2).text("c1", "hunter2").text("c2", "swordfish");
+    page.names.insert("c1".to_string(), "Password".to_string());
+    page.names.insert("c2".to_string(), "Confirm".to_string());
+    let out = execute_with(
+        &mut page.driver(Arc::default()),
+        &action(json!({ "kind": "expect_order", "selector": { "css": "input.secret" }, "texts": ["nope", "never"] })),
+        &quick(),
+    )
+    .await;
+    assert!(!out.ok);
+    assert!(!out.detail.contains("hunter2") && !out.detail.contains("swordfish"), "a typed value reached the failure: {}", out.detail);
+    assert!(out.detail.contains("saw \"Password\", \"Confirm\""), "{}", out.detail);
+}
+
+// ---- expect_position: where one element sits against another ----------
+
+fn rect(x: f64, y: f64, w: f64, h: f64) -> v2_lib::browser::position::Rect {
+    v2_lib::browser::position::Rect { x, y, w, h }
+}
+
+#[test]
+fn position_relations_hold_within_one_pixel() {
+    use v2_lib::browser::position::{holds, shown, Relation::*};
+    let b = rect(100.0, 100.0, 200.0, 100.0); // 100..300 by 100..200
+    let table = [
+        (LeftOf, rect(0.0, 100.0, 100.0, 10.0), true), // a's right edge is b's left edge
+        (LeftOf, rect(0.0, 100.0, 101.0, 10.0), true), // one pixel over
+        (LeftOf, rect(0.0, 100.0, 101.01, 10.0), false),
+        (RightOf, rect(299.0, 100.0, 10.0, 10.0), true), // a.x == b.x + b.w - 1
+        (RightOf, rect(298.99, 100.0, 10.0, 10.0), false),
+        (RightOf, rect(300.0, 100.0, 10.0, 10.0), true),
+        (Above, rect(100.0, 0.0, 10.0, 101.0), true),
+        (Above, rect(100.0, 0.0, 10.0, 101.01), false),
+        (Below, rect(100.0, 199.0, 10.0, 10.0), true),
+        (Below, rect(100.0, 198.99, 10.0, 10.0), false),
+        (Inside, rect(100.0, 100.0, 200.0, 100.0), true), // the same box
+        (Inside, rect(99.0, 99.0, 202.0, 102.0), true),   // one pixel out all round
+        (Inside, rect(98.99, 100.0, 50.0, 10.0), false),
+        (Inside, rect(100.0, 100.0, 201.01, 10.0), false),
+        (Inside, rect(150.0, 100.0, 10.0, 101.01), false),
+        (InTopLeft, rect(100.0, 100.0, 20.0, 20.0), true),
+        (InTopLeft, rect(200.0, 100.0, 20.0, 20.0), false), // centre at 210: the right half
+        (InTopRight, rect(280.0, 100.0, 20.0, 20.0), true),
+        (InTopRight, rect(100.0, 100.0, 20.0, 20.0), false),
+        (InBottomLeft, rect(100.0, 180.0, 20.0, 20.0), true),
+        (InBottomLeft, rect(100.0, 100.0, 20.0, 20.0), false),
+        (InBottomRight, rect(280.0, 180.0, 20.0, 20.0), true),
+        (InBottomRight, rect(280.0, 100.0, 20.0, 20.0), false),
+        // A corner is inside first.
+        (InTopLeft, rect(0.0, 0.0, 20.0, 20.0), false),
+    ];
+    for (relation, a, expected) in table {
+        assert_eq!(holds(relation, a, b), expected, "{relation:?} {}", shown(&a));
+    }
+    // A box on the centre is inside, and in no corner.
+    let centred = rect(190.0, 140.0, 20.0, 20.0);
+    for corner in [InTopLeft, InTopRight, InBottomLeft, InBottomRight] {
+        assert!(!holds(corner, centred, b), "{corner:?}");
+    }
+    assert!(holds(Inside, centred, b));
+    assert_eq!(shown(&rect(0.4, 9.6, 399.5, 60.0)), "(0, 10) 400x60");
+}
+
+fn position(relation: &str) -> Action {
+    action(json!({ "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": { "css": "#bar" }, "relation": relation, "timeout_ms": 300 }))
+}
+
+fn bar_page() -> ListPage {
+    ListPage::default().one("#a", "a").one("#bar", "bar").at("a", 300.0, 10.0, 80.0, 30.0).at("bar", 0.0, 0.0, 400.0, 60.0)
+}
+
+#[tokio::test]
+async fn position_passes_and_fails_naming_both_boxes() {
+    let mut d = bar_page().driver(Arc::default());
+    let out = execute_with(&mut d, &position("in_top_right"), &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(out.detail, "#a is in the top-right of #bar");
+    assert!(d.deadline_was_cleared());
+
+    let out = execute_with(&mut bar_page().driver(Arc::default()), &position("left_of"), &quick()).await;
+    assert!(!out.ok);
+    assert_eq!(out.detail, "waited 300ms: #a is not left of #bar: it is at (300, 10) 80x30, and #bar at (0, 0) 400x60");
+}
+
+#[tokio::test]
+async fn position_says_when_its_reference_is_missing() {
+    let page = ListPage::default().one("#a", "a").at("a", 300.0, 10.0, 80.0, 30.0);
+    let out = execute_with(&mut page.driver(Arc::default()), &position("inside"), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.ends_with("cannot be placed: #bar is not on the page"), "{}", out.detail);
+
+    // The element itself missing is said as every one-element check says it.
+    let page = ListPage::default().one("#bar", "bar").at("bar", 0.0, 0.0, 400.0, 60.0);
+    let out = execute_with(&mut page.driver(Arc::default()), &position("inside"), &quick()).await;
+    assert!(!out.ok && out.detail.ends_with("#a is not on the page"), "{}", out.detail);
+
+    // A reference that matches several cannot say where it is.
+    let mut page = bar_page();
+    page.found.insert(("doc".to_string(), "#bar".to_string()), vec!["bar".into(), "bar2".into()]);
+    let out = execute_with(&mut page.driver(Arc::default()), &position("inside"), &quick()).await;
+    assert!(!out.ok && out.detail.contains("cannot be placed: #bar matched 2 elements"), "{}", out.detail);
 }

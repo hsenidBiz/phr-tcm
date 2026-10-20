@@ -3220,6 +3220,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
             _ => vec![],
         },
         Action::Drag { from, to, .. } => vec![(from, 1), (to, 1)],
+        Action::ExpectPosition { selector, relative_to, .. } => vec![(selector, 1), (relative_to, 1)],
         Action::ExpectRow { table, .. } | Action::ExpectSorted { table, .. } => vec![(table, 1)],
         Action::ExpectRowCount { table, equals, at_least, .. } => {
             if equals.is_some_and(|n| n >= 1) || at_least.is_some_and(|n| n >= 1) {
@@ -3231,6 +3232,7 @@ fn matched_targets(action: &crate::browser::actions::Action) -> Vec<(&crate::bro
         Action::ExpectHidden { .. }
         | Action::WaitFor { .. }
         | Action::ExpectEach { .. }
+        | Action::ExpectOrder { .. }
         | Action::UseComponent { .. }
         | Action::ExpectNoRow { .. }
         | Action::WhenVisible { .. }
@@ -3762,6 +3764,8 @@ pub fn describe_action(action: &crate::browser::actions::Action) -> String {
         | Action::ExpectChecked { selector, .. }
         | Action::ExpectFocused { selector, .. }
         | Action::ExpectEach { selector, .. }
+        | Action::ExpectOrder { selector, .. }
+        | Action::ExpectPosition { selector, .. }
         | Action::Upload { selector, .. }
         | Action::WhenVisible { selector, .. }
         | Action::RepeatWhileVisible { selector, .. } => selector.describe(),

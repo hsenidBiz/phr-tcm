@@ -73,6 +73,8 @@ pub mod locator;
 pub mod input;
 pub mod expect;
 pub mod each;
+pub mod order;
+pub mod position;
 pub mod style;
 pub mod pattern;
 pub mod keys;

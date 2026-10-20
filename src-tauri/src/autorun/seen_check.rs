@@ -361,6 +361,7 @@ pub fn takes_many(action: &Action) -> bool {
         Action::ExpectHidden { .. }
         | Action::ExpectCount { .. }
         | Action::ExpectEach { .. }
+        | Action::ExpectOrder { .. }
         | Action::WaitFor { .. }
         | Action::RepeatWhileVisible { .. } => true,
         Action::Click { .. }
@@ -378,6 +379,7 @@ pub fn takes_many(action: &Action) -> bool {
         | Action::ExpectDisabled { .. }
         | Action::ExpectChecked { .. }
         | Action::ExpectFocused { .. }
+        | Action::ExpectPosition { .. }
         | Action::ExpectRow { .. }
         | Action::ExpectNoRow { .. }
         | Action::ExpectSorted { .. }
@@ -840,6 +842,8 @@ fn is_check(action: &Action) -> bool {
             | Action::ExpectContainsText { .. }
             | Action::ExpectCount { .. }
             | Action::ExpectEach { .. }
+            | Action::ExpectOrder { .. }
+            | Action::ExpectPosition { .. }
             | Action::ExpectAttribute { .. }
             | Action::ExpectStyle { .. }
             | Action::ExpectEnabled { .. }

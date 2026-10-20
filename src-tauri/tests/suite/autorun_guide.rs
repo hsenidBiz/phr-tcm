@@ -68,6 +68,8 @@ fn the_guide_names_every_action_the_executor_can_run() {
         serde_json::from_value(serde_json::json!({ "kind": "expect_sorted", "table": "t", "column": "A", "order": "ascending" })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_row_count", "table": "t", "equals": 1 })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "expect_each", "selector": "s", "not_empty": true })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_order", "selector": "s", "texts": ["a", "b"] })).unwrap(),
+        serde_json::from_value(serde_json::json!({ "kind": "expect_position", "selector": "s", "relative_to": "t", "relation": "inside" })).unwrap(),
         serde_json::from_value(serde_json::json!({ "kind": "use_component", "component": "c" })).unwrap(),
     ];
     let emitted: Vec<String> = samples
@@ -1885,6 +1887,61 @@ fn the_guide_teaches_expect_each() {
     for word in ["`min` (default 1)", "at most 200 items", "`\"not_empty\": true`", "`child`", "`attribute`"] {
         assert!(line.contains(word), "the line never says {word}");
     }
-    assert!(g.contains("Only `expect_count`, `expect_each`, `expect_hidden` and `wait_for` are"), "the selectors section never names expect_each");
+    assert!(
+        g.contains("Only `expect_count`, `expect_each`, `expect_order`, `expect_hidden` and `wait_for` are"),
+        "the selectors section never names expect_each"
+    );
     assert!(!line.contains('\u{2014}') && !line.contains('\u{2013}'));
+}
+
+/// `expect_order` is taught with a sample that is a real, valid action; the
+/// selectors section lets it match several.
+#[test]
+fn the_guide_teaches_expect_order() {
+    let g = autorun_guide();
+    let line = g.lines().find(|l| l.starts_with("- `{ \"kind\": \"expect_order\"")).expect("a vocabulary line for expect_order");
+    let sample = first_balanced(line, line.find('{').unwrap(), '{', '}');
+    let action: Action = serde_json::from_str(sample).expect("the sample parses");
+    assert_eq!(action.validate(), Ok(()));
+    assert!(matches!(action, Action::ExpectOrder { .. }));
+    for word in ["in page order", "others may sit between", "case matters"] {
+        assert!(line.contains(word), "the line never says {word}");
+    }
+    assert!(!line.contains('\u{2014}') && !line.contains('\u{2013}'));
+    assert!(
+        g.contains("(`expect_hidden`, `expect_count`, `expect_each`, `expect_order`, `wait_for`)"),
+        "the part-of-a-seen-name rule never names expect_order"
+    );
+}
+
+/// `expect_position` names every relation the check knows and says that no
+/// pixel size is involved.
+#[test]
+fn the_guide_teaches_expect_position() {
+    let g = autorun_guide();
+    let line = g.lines().find(|l| l.starts_with("- `{ \"kind\": \"expect_position\"")).expect("a vocabulary line for expect_position");
+    for word in [
+        "`left_of`",
+        "`right_of`",
+        "`above`",
+        "`below`",
+        "`inside`",
+        "`in_top_left`",
+        "`in_top_right`",
+        "`in_bottom_left`",
+        "`in_bottom_right`",
+        "no pixel sizes",
+        "\"relative_to\"",
+    ] {
+        assert!(line.contains(word), "the line never says {word}");
+    }
+    assert!(!line.contains('\u{2014}') && !line.contains('\u{2013}'));
+    // Every relation it names is one the action reads.
+    for relation in ["left_of", "right_of", "above", "below", "inside", "in_top_left", "in_top_right", "in_bottom_left", "in_bottom_right"] {
+        let a: Action = serde_json::from_value(serde_json::json!({
+            "kind": "expect_position", "selector": { "css": "#a" }, "relative_to": { "css": "#b" }, "relation": relation
+        }))
+        .unwrap();
+        assert_eq!(a.validate(), Ok(()), "{relation}");
+    }
 }

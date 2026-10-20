@@ -166,6 +166,55 @@ describe("a sentence for every action kind", () => {
       "Check each match of the row: the heading in it is not empty (at least 3) (up to 2.5 s)",
     ],
     [
+      { kind: "expect_order", selector: { role: "option" }, texts: ["All", "Draft", "Published"] },
+      'Check the option lists "All", "Draft", "Published" in that order',
+    ],
+    [
+      { kind: "expect_order", selector: { css: "li" }, texts: ["a", "b"], timeout_ms: 3000 },
+      'Check the element li lists "a", "b" in that order (up to 3 s)',
+    ],
+    [
+      {
+        kind: "expect_position",
+        selector: { role: "button", name: "New Cycle", exact: true },
+        relative_to: { css: "#bar" },
+        relation: "in_top_right",
+      },
+      'Check the "New Cycle" button is in the top-right of the element #bar',
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "left_of", timeout_ms: 2000 },
+      "Check the element #a is left of the element #b (up to 2 s)",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "right_of" },
+      "Check the element #a is right of the element #b",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "above" },
+      "Check the element #a is above the element #b",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "below" },
+      "Check the element #a is below the element #b",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "inside" },
+      "Check the element #a is inside the element #b",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "in_top_left" },
+      "Check the element #a is in the top-left of the element #b",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "in_bottom_left" },
+      "Check the element #a is in the bottom-left of the element #b",
+    ],
+    [
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "in_bottom_right" },
+      "Check the element #a is in the bottom-right of the element #b",
+    ],
+    [
       { kind: "expect_sorted", table: { role: "grid", name: "Employees" }, column: "Joined", order: "descending", as: "date" },
       'Check the "Employees" table is sorted by Joined, descending, as dates',
     ],
@@ -278,7 +327,7 @@ describe("a sentence for every action kind", () => {
         "expect_response", "api_request", "when_visible", "reload", "expire_session", "return_to_area",
         "press_key", "expect_focused", "expect_download", "expect_tab", "open_tab", "switch_tab", "close_tab",
         "expect_tab_closed", "drag", "expect_dialog", "expect_row", "expect_no_row", "expect_sorted", "expect_row_count",
-        "expect_each",
+        "expect_each", "expect_order", "expect_position",
       ].sort(),
     );
   });
@@ -434,6 +483,15 @@ describe("an action that is not the right shape reads as one plain line, never a
     ["a count with no bound", { kind: "expect_count", selector: "#a" }],
     ["an each check with two checks", { kind: "expect_each", selector: { css: "li" }, equals: "a", not_empty: true }],
     ["an each check with none", { kind: "expect_each", selector: { css: "li" } }],
+    ["an order check with one text", { kind: "expect_order", selector: { css: "li" }, texts: ["a"] }],
+    ["an order check with no texts", { kind: "expect_order", selector: { css: "li" } }],
+    ["an order check with a text that is not text", { kind: "expect_order", selector: { css: "li" }, texts: ["a", 2] }],
+    [
+      "a position with a relation it does not know",
+      { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" }, relation: "near" },
+    ],
+    ["a position with no relation", { kind: "expect_position", selector: { css: "#a" }, relative_to: { css: "#b" } }],
+    ["a position with no reference", { kind: "expect_position", selector: { css: "#a" }, relation: "above" }],
     ["a row count with two counts", { kind: "expect_row_count", table: "#t", equals: 1, at_most: 2 }],
     ["a style check with two comparisons", { kind: "expect_style", selector: "#a", property: "color", equals: "red", contains: "r" }],
     ["a style check with no comparison", { kind: "expect_style", selector: "#a", property: "color" }],
